@@ -29,6 +29,7 @@ The design is a numbered package in `docs/`, in English.
 | [08-agent.md](docs/08-agent.md) | Same operations for an AI agent, Schema catalog, thin transport |
 | [09-isolation.md](docs/09-isolation.md) | No network by default (**core**); isolated git root and age encryption (**later**) |
 | [10-roadmap.md](docs/10-roadmap.md) | Phases (core / search / agent / later), acceptance, size targets, open questions, deferrals |
+| [11-core-plan.md](docs/11-core-plan.md) | Rust **core** work order: stages C0–C9, checkboxes, out-of-core stubs |
 
 ## Layout
 

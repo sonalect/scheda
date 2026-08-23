@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.3, 23 August 2026.
+Document 10 of the Scheda package. Version 0.4, 23 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. Terms are in `02`. Codes: `OPS`.
 
@@ -50,7 +50,7 @@ Until the journal `id` map exists, **core** `find_one` on `journal` may scan seg
 4. Implementation source does not name a consumer's collections (SCH-1, MOD-1).
 5. `auto_sync` off: writes and `commit` succeed with the network disabled (GIT-8, ISO-1).
 
-Suggested order inside the crate (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map. Remote operations are **core** but may land after local `commit`. Isolated roots and `encrypt` wait for **later**.
+Suggested order inside the crate (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map. Remote operations are **core** but may land after local `commit`. Isolated roots and `encrypt` wait for **later**. The stage checklist for the Rust binding is `11`; it does not add requirements.
 
 ---
 

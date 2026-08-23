@@ -8,6 +8,10 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- Core development plan in `docs/11-core-plan.md` (stages C0–C9).
+
 ### Changed
 
 - Target crates link with `+crt-static` (Bazel `extra_rustc_flags` and
