@@ -24,6 +24,10 @@ API or on-disk format changes bump the minor.
 - `open` / `check` load Schema from `schema/` (`05` §8 keys); illegal
   declarations are `invalid`.
 - Rust crate rustdoc on GitHub Pages (`bazel build //rust/scheda:scheda_doc`).
+- `document` / `singleton` `insert_one` / `replace_one` / `find_one` (C3):
+  YAML+Markdown or YAML-only files, atomic sibling-temp writes, Schema
+  validation on write, `valid: false` on old files that fail the current
+  Schema. `replace_one` on `journal` is `unsupported`.
 
 ### Changed
 
@@ -38,6 +42,8 @@ API or on-disk format changes bump the minor.
   `OpenOptions`, `Record`) instead of parallel hand-written structs.
 - Schema tests load YAML/JSON fixtures from `rust/scheda/testdata/schema/`
   instead of inlined strings.
+- `Collection::find_one` returns `Result<Record, Error>`; a missing `id` is
+  `not_found` (LIB-8).
 
 ### Removed
 

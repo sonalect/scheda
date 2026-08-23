@@ -1,0 +1,13 @@
+name: north_notes
+kind: document
+schema_version: 1
+layout: north/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true
+  - name: tag
+    type: string
+    nullable: true
+  - name: count
+    type: integer

@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::git;
 use crate::schema::{self, CollectionDecl, Kind, Schema};
+use crate::store;
 use crate::{Error, OpenOptions, Record};
 
 /// A git working tree that holds collections of records.
@@ -20,15 +21,9 @@ pub struct Vault {
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
 #[derive(Debug)]
 pub struct Collection {
-    name: String,
-    kind: Kind,
-    schema_version: u32,
-    id_field: String,
-    layout: Vec<String>,
-    filter_keys: std::collections::BTreeSet<String>,
-    segment_max_bytes: Option<u64>,
-    singleton_id: Option<String>,
-    fields: Vec<crate::schema::FieldDecl>,
+    vault: PathBuf,
+    can_write: bool,
+    decl: CollectionDecl,
 }
 
 /// Field filter for `find`. Shape is not modelled yet.
@@ -157,7 +152,11 @@ impl Vault {
                 "collection {name} is not in Schema"
             )));
         };
-        Ok(Collection::from_decl(decl))
+        Ok(Collection {
+            vault: self.path.clone(),
+            can_write: self.write_lock.is_some(),
+            decl: decl.clone(),
+        })
     }
 
     /// Create one git commit for changes already written to the working tree.
@@ -179,7 +178,8 @@ impl Vault {
     }
 
     pub fn check(&self) -> Result<(), Error> {
-        schema::load(&self.path).map(|_| ())
+        let schema = schema::load(&self.path)?;
+        store::check_documents(&self.path, &schema)
     }
 
     pub fn reindex(&self) -> Result<(), Error> {
@@ -188,73 +188,64 @@ impl Vault {
 }
 
 impl Collection {
-    fn from_decl(decl: &CollectionDecl) -> Self {
-        Self {
-            name: decl.name.clone(),
-            kind: decl.kind,
-            schema_version: decl.schema_version,
-            id_field: decl.id_field.clone(),
-            layout: decl.layout.clone(),
-            filter_keys: decl.filter_keys.clone(),
-            segment_max_bytes: decl.segment_max_bytes,
-            singleton_id: decl.singleton_id.clone(),
-            fields: decl.fields.clone(),
-        }
-    }
-
     #[cfg(test)]
     fn stub() -> Self {
         Self {
-            name: String::from("c"),
-            kind: Kind::Document,
-            schema_version: 1,
-            id_field: String::from("id"),
-            layout: vec![String::from("c/{id}.md")],
-            filter_keys: std::collections::BTreeSet::new(),
-            segment_max_bytes: None,
-            singleton_id: None,
-            fields: Vec::new(),
+            vault: PathBuf::new(),
+            can_write: true,
+            decl: CollectionDecl {
+                name: String::from("c"),
+                kind: Kind::Document,
+                schema_version: 1,
+                layout: vec![String::from("c/{id}.md")],
+                id_field: String::from("id"),
+                id_pattern: None,
+                filter_keys: std::collections::BTreeSet::new(),
+                segment_max_bytes: None,
+                singleton_id: None,
+                fields: Vec::new(),
+            },
         }
     }
 
     #[must_use]
     pub fn name(&self) -> &str {
-        &self.name
+        &self.decl.name
     }
 
     #[must_use]
     pub fn kind(&self) -> Kind {
-        self.kind
+        self.decl.kind
     }
 
     #[must_use]
     pub fn schema_version(&self) -> u32 {
-        self.schema_version
+        self.decl.schema_version
     }
 
     #[must_use]
     pub fn id_field(&self) -> &str {
-        &self.id_field
+        &self.decl.id_field
     }
 
     #[must_use]
     pub fn is_filter_key(&self, field: &str) -> bool {
-        self.filter_keys.contains(field)
+        self.decl.filter_keys.contains(field)
     }
 
     #[must_use]
     pub fn segment_max_bytes(&self) -> Option<u64> {
-        self.segment_max_bytes
+        self.decl.segment_max_bytes
     }
 
     #[must_use]
     pub fn layout(&self) -> &[String] {
-        &self.layout
+        &self.decl.layout
     }
 
     #[must_use]
     pub fn singleton_id(&self) -> Option<&str> {
-        self.singleton_id.as_deref()
+        self.decl.singleton_id.as_deref()
     }
 
     #[must_use]
@@ -274,7 +265,7 @@ impl Collection {
 
     #[must_use]
     pub fn field_has_default(&self, name: &str) -> Option<bool> {
-        self.field(name).map(|field| field.has_default)
+        self.field(name).map(|field| field.default.is_some())
     }
 
     fn field(&self, name: &str) -> Option<&crate::schema::FieldDecl> {
@@ -292,23 +283,47 @@ impl Collection {
             }
             None
         }
-        walk(&self.fields, name)
+        walk(&self.decl.fields, name)
     }
 
+    fn require_write(&self) -> Result<(), Error> {
+        if self.can_write {
+            Ok(())
+        } else {
+            Err(Error::invalid("vault is open read-only"))
+        }
+    }
+
+    /// Create a `document` file or the first write of a `singleton`.
     pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
         record.require_valid()?;
-        todo!("Collection::insert_one is not implemented (C3)")
+        self.require_write()?;
+        match self.decl.kind {
+            Kind::Journal => todo!("Collection::insert_one for journal is not implemented (C4)"),
+            Kind::Document | Kind::Singleton => {
+                let id = store::insert_document(&self.vault, &self.decl, record)?;
+                Ok(InsertOne { id })
+            }
+        }
     }
 
-    pub fn find_one(&self, id: &str) -> Result<Option<Record>, Error> {
-        let _id = id;
-        todo!("Collection::find_one is not implemented (C3)")
+    /// Read one Record by `id`. Missing → `not_found`.
+    pub fn find_one(&self, id: &str) -> Result<Record, Error> {
+        match self.decl.kind {
+            Kind::Journal => todo!("Collection::find_one for journal is not implemented (C4)"),
+            Kind::Document | Kind::Singleton => store::find_document(&self.vault, &self.decl, id),
+        }
     }
 
-    /// Replace a whole `document`. Errors on `journal`.
-    pub fn replace_one(&self, _id: &str, record: Record) -> Result<ReplaceOne, Error> {
+    /// Replace a whole `document` or `singleton`. Errors on `journal`.
+    pub fn replace_one(&self, id: &str, record: Record) -> Result<ReplaceOne, Error> {
         record.require_valid()?;
-        todo!("Collection::replace_one is not implemented (C3)")
+        if self.decl.kind == Kind::Journal {
+            return Err(Error::unsupported("replace_one is not offered for journal"));
+        }
+        self.require_write()?;
+        let id = store::replace_document(&self.vault, &self.decl, id, record)?;
+        Ok(ReplaceOne { id })
     }
 
     pub fn find(&self, filter: &Filter) -> Result<Vec<Record>, Error> {

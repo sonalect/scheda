@@ -12,6 +12,7 @@
 mod error;
 mod git;
 mod schema;
+mod store;
 mod vault;
 
 pub use error::Code;

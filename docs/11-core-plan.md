@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.4, 23 August 2026.
+Document 11 of the Scheda package. Version 0.5, 23 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -41,7 +41,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
 | [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, Index path, ISO-1 local |
 | [C2](#c2-schema) | done | Load and reject Schema |
-| [C3](#c3-document-and-singleton) | not started | Whole-file writes and `find_one` |
+| [C3](#c3-document-and-singleton) | done | Whole-file writes and `find_one` |
 | [C4](#c4-journal-segments) | not started | Append, rotate, scan `find_one` |
 | [C5](#c5-find-check-reindex) | not started | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | not started | `commit`, `history` of a path |
@@ -146,34 +146,34 @@ hard-code a consumer's collection names (SCH-1, MOD-1).
 
 ## C3. `document` and `singleton`
 
-**Status:** not started
+**Status:** done
 
 **Codes:** MOD-2, MOD-5–8, MOD-11–15, MOD-17, MOD-18, STO-2, STO-5, SCH-5,
 SCH-6, SCH-7 (store body; do not index), SCH-12, SCH-13, LIB-3, LIB-7–9,
 QRY-1.
 
-- [ ] `insert_one` / `replace_one` / `find_one` round-trip fields (QRY-1,
+- [x] `insert_one` / `replace_one` / `find_one` round-trip fields (QRY-1,
       LIB-7, LIB-8). Missing `id` → `not_found`, not an empty Record.
-- [ ] `document` Markdown+YAML and YAML-only; empty body allowed (MOD-11,
+- [x] `document` Markdown+YAML and YAML-only; empty body allowed (MOD-11,
       MOD-14, STO-2). Body is stored; no search Index yet (SCH-7).
-- [ ] Header `id` matches path-derived `id` (MOD-13, SCH-6).
-- [ ] Path template with extra slots; `find` path-prefix is C5, but
+- [x] Header `id` matches path-derived `id` (MOD-13, SCH-6).
+- [x] Path template with extra slots; `find` path-prefix is C5, but
       `insert_one` must write the derived path (MOD-8).
-- [ ] Rename of a `document` file so path ≠ `id` → `check` fails; `find_one`
+- [x] Rename of a `document` file so path ≠ `id` → `check` fails; `find_one`
       does not follow the rename (MOD-5). May land with C5 `check`.
-- [ ] Missing optional field is absent on read-back (MOD-12). Stored `null`
+- [x] Missing optional field is absent on read-back (MOD-12). Stored `null`
       stays `null` (MOD-18, SCH-5).
-- [ ] `id` pattern from Schema; library does not invent a consumer scheme
+- [x] `id` pattern from Schema; library does not invent a consumer scheme
       (MOD-6).
-- [ ] `singleton`: Schema-fixed `id`; second `insert_one` rejected; then
+- [x] `singleton`: Schema-fixed `id`; second `insert_one` rejected; then
       `replace_one` only (MOD-7, MOD-17).
-- [ ] `replace_one` is whole-file; no field patch (MOD-15, LIB-3).
-- [ ] Failed / interrupted write does not become the new file (STO-5).
-- [ ] Invalid Record vs current Schema: write rejected; old file `find_one`
+- [x] `replace_one` is whole-file; no field patch (MOD-15, LIB-3).
+- [x] Failed / interrupted write does not become the new file (STO-5).
+- [x] Invalid Record vs current Schema: write rejected; old file `find_one`
       with `valid: false` (SCH-12, LIB-8).
-- [ ] Schema N+1 that only adds an optional field still reads N files
+- [x] Schema N+1 that only adds an optional field still reads N files
       (SCH-13).
-- [ ] A fixture Vault opens in an editor and in `git` with no Scheda (STO-2).
+- [x] A fixture Vault opens in an editor and in `git` with no Scheda (STO-2).
 
 ---
 

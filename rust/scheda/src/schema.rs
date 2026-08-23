@@ -137,7 +137,7 @@ pub(crate) struct FieldDecl {
     pub required: bool,
     pub nullable: bool,
     pub filter: bool,
-    pub has_default: bool,
+    pub default: Option<serde_json::Value>,
     pub fields: Vec<FieldDecl>,
 }
 
@@ -148,6 +148,7 @@ pub(crate) struct CollectionDecl {
     pub schema_version: u32,
     pub layout: Vec<String>,
     pub id_field: String,
+    pub id_pattern: Option<Regex>,
     pub filter_keys: BTreeSet<String>,
     pub segment_max_bytes: Option<u64>,
     pub singleton_id: Option<String>,
@@ -163,6 +164,10 @@ impl Schema {
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&CollectionDecl> {
         self.collections.get(name)
+    }
+
+    pub(crate) fn collections(&self) -> impl Iterator<Item = &CollectionDecl> {
+        self.collections.values()
     }
 
     #[must_use]
@@ -341,11 +346,12 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         Some(field) => field.to_owned(),
         None => DEFAULT_ID_FIELD.to_owned(),
     };
-    if let Some(pattern) = raw.id.as_ref().and_then(|id| id.pattern.as_deref()) {
-        Regex::new(pattern).map_err(|err| {
+    let id_pattern = match raw.id.as_ref().and_then(|id| id.pattern.as_deref()) {
+        Some(pattern) => Some(Regex::new(pattern).map_err(|err| {
             Error::invalid(format!("schema {loc}: id.pattern is not a regex: {err}"))
-        })?;
-    }
+        })?),
+        None => None,
+    };
     let fields = finish_fields(raw.fields, path)?;
     let mut filter_keys = BTreeSet::new();
     collect_filter_keys(&fields, &mut filter_keys);
@@ -355,6 +361,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         schema_version: raw.schema_version,
         layout: raw.layout,
         id_field,
+        id_pattern,
         filter_keys,
         segment_max_bytes,
         singleton_id: raw.singleton_id,
@@ -382,7 +389,7 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
             required: field.required,
             nullable: field.nullable,
             filter: field.filter,
-            has_default: field.default.is_some(),
+            default: field.default,
             fields: nested,
         });
     }
@@ -405,7 +412,7 @@ fn read_utf8(path: &Path) -> Result<String, Error> {
         .map_err(|_| Error::invalid(format!("schema {} is not UTF-8", path.display())))
 }
 
-fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
+pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
         return Err(Error::invalid(

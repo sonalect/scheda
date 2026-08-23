@@ -1,0 +1,9 @@
+name: north_inbox
+kind: singleton
+schema_version: 1
+layout: north/inbox.yaml
+singleton_id: inbox
+fields:
+  - name: title
+    type: string
+    required: true
