@@ -1,6 +1,12 @@
 # Build output
 /target/
 
+# Bazel
+/.bazel/
+
+# Node (markdownlint-cli2 via aspect_rules_js)
+node_modules/
+
 # Editors and OS
 .DS_Store
 *.swp

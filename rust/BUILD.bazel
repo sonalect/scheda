@@ -1,0 +1,15 @@
+load("@bazel_utils_rust//:rust.bzl", "cargo_audit_test")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+
+rust_clippy_test(
+    name = "lint",
+    size = "small",
+    targets = [
+        "//rust/scheda:scheda",
+    ],
+)
+
+cargo_audit_test(
+    name = "vuln",
+    size = "small",
+)

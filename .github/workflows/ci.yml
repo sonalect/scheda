@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: Bazel
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    timeout-minutes: 90
+    env:
+      BAZELISK_VERSION: 1.29.0
+      BAZELISK_SHA256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
+      # Portable caches only. Do not persist output_user_root (~/.cache/bazel):
+      # it includes sandbox, execroot, and a live Bazel server.
+      BAZEL_DISK_CACHE: /github/home/.cache/bazel-disk
+      BAZEL_REPO_CACHE: /github/home/.cache/bazel-repo
+    steps:
+      - name: Install dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils \
+            ca-certificates \
+            curl \
+            gcc \
+            git \
+            libc6-dev \
+            patch
+
+      - name: Install Bazelisk
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/bazelisk \
+            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-linux-amd64"
+          echo "${BAZELISK_SHA256}  /tmp/bazelisk" | sha256sum -c
+          install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
+
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Cache Bazel
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ${{ env.BAZEL_DISK_CACHE }}
+            ${{ env.BAZEL_REPO_CACHE }}
+          key: bazel-debian13-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
+          restore-keys: |
+            bazel-debian13-cas-
+
+      - name: Configure Bazel caches
+        run: |
+          set -euo pipefail
+          mkdir -p "${BAZEL_DISK_CACHE}" "${BAZEL_REPO_CACHE}"
+          {
+            echo "common --disk_cache=${BAZEL_DISK_CACHE}"
+            echo "common --repository_cache=${BAZEL_REPO_CACHE}"
+          } >> "${HOME}/.bazelrc"
+
+      - name: Build
+        run: bazel build //... --keep_going
+
+      - name: Test
+        run: bazel test //... --keep_going --test_output=all
+
+      # Stop the server so repository/disk caches are idle before actions/cache tars them.
+      # Unprivileged debian:13 containers often cannot reap the JVM after SIGKILL
+      # (Bazel exit 36). That must not fail the job, or the cache post step is skipped.
+      - name: Stop Bazel
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          bazel shutdown
+          for pidfile in "${HOME}"/.cache/bazel/_bazel_*/server/server.pid; do
+            if [ -f "${pidfile}" ]; then
+              kill -9 "$(cat "${pidfile}")" 2>/dev/null || true
+            fi
+          done
+          exit 0

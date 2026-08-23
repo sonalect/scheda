@@ -1,0 +1,3 @@
+"""Ignore generated node_modules so Bazel does not index pnpm install trees."""
+
+ignore_directories(["**/node_modules"])

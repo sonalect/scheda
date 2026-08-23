@@ -1,0 +1,8 @@
+# Static PIE against glibc. Host crates (proc-macros, build scripts) stay
+# dynamic because [build].target forces Cargo's host/target split even when
+# the triple matches the machine.
+[build]
+target = "x86_64-unknown-linux-gnu"
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

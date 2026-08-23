@@ -36,18 +36,40 @@ The design is a numbered package in `docs/`, in English.
 |---|---|
 | [`Cargo.toml`](Cargo.toml) | Workspace: members, pinned dependency versions, lints |
 | [`rust/scheda`](rust/scheda) | First implementation: Rust crate `scheda` |
+| [`MODULE.bazel`](MODULE.bazel) | Bazel module: host toolchain, crate_universe, linters |
 
 Dependency versions live only in the root `[workspace.dependencies]`. Member
 crates refer to them with `workspace = true`.
 
 ## Build
 
-The Rust implementation requires Rust 1.98.
+The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.2.0**).
+Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
+Host architecture only: no linux `amd64` / `arm64` cross targets.
+Target crates link with `+crt-static` (glibc PIE); proc-macros and build
+scripts stay dynamic.
 
 ```bash
-cargo test
-cargo clippy --all-targets --all-features
+bazel build //rust/scheda:scheda
+bazel test //...
 ```
+
+Lint (`bazel test` never rewrites files; format is `bazel run` only):
+
+```bash
+bazel test //rust:lint          # clippy
+bazel test //bazel:lint         # Starlark (buildifier)
+bazel test //bazel:markdown     # markdownlint-cli2
+bazel test //rust:vuln          # cargo-audit (needs network)
+
+bazel run //bazel:format        # buildifier -mode=fix
+```
+
+`cargo test` / `cargo clippy` still work for local iteration. CI runs Bazel.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 

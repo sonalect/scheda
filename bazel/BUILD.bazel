@@ -1,0 +1,21 @@
+load("@bazel_utils_bazel//:bazel.bzl", "buildifier_format", "buildifier_test")
+load("@bazel_utils_md//:markdown.bzl", "markdownlint_test")
+
+buildifier_test(
+    name = "lint",
+    size = "small",
+    exclude_patterns = [
+        "./.bazel/*",
+    ],
+)
+
+buildifier_format(
+    name = "format",
+    exclude_patterns = [
+        "./.bazel/*",
+    ],
+)
+
+markdownlint_test(
+    name = "markdown",
+)

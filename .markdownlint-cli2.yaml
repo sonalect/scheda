@@ -1,0 +1,19 @@
+# markdownlint-cli2 config (https://github.com/DavidAnson/markdownlint-cli2)
+config:
+  default: true
+  # READMEs and design docs wrap poorly in tables / long URLs.
+  MD013: false
+  # Allow HTML in docs if needed later.
+  MD033: false
+  # Headings may repeat under different parents (e.g. "What this document does not decide").
+  MD024:
+    siblings_only: true
+  # Design docs use compact GFM separator rows (`|---|---|`).
+  MD060: false
+
+globs:
+  - "**/*.md"
+
+ignores:
+  - "**/node_modules/**"
+  - ".bazel/**"

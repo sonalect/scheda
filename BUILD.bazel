@@ -1,0 +1,24 @@
+exports_files([
+    "MODULE.bazel",
+    "Cargo.lock",
+    "Cargo.toml",
+    ".markdownlint-cli2.yaml",
+])
+
+# Configuration setting for fastbuild mode.
+config_setting(
+    name = "fastbuild",
+    values = {"compilation_mode": "fastbuild"},
+)
+
+# Configuration setting for debug mode.
+config_setting(
+    name = "debug",
+    values = {"compilation_mode": "dbg"},
+)
+
+# Configuration setting for optimized mode.
+config_setting(
+    name = "optimized",
+    values = {"compilation_mode": "opt"},
+)

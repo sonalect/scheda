@@ -1,0 +1,36 @@
+"""Rust toolchain and crate_universe for the host architecture only."""
+
+RUST_EDITION = "2024"
+
+RUST_VERSION = "1.98.0"
+
+rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
+
+# Static PIE against glibc. Exec crates (proc-macros, build scripts) stay
+# dynamically linked: extra_exec_rustc_flags is intentionally empty.
+rust.toolchain(
+    edition = RUST_EDITION,
+    extra_exec_rustc_flags = [],
+    extra_rustc_flags = [
+        "-C",
+        "target-feature=+crt-static",
+    ],
+    versions = [RUST_VERSION],
+)
+use_repo(rust, "rust_toolchains")
+
+register_toolchains("@rust_toolchains//:all")
+
+cargo = use_extension(
+    "@rules_rust//crate_universe:extensions.bzl",
+    "crate",
+)
+cargo.from_cargo(
+    name = "cargo",
+    cargo_lockfile = "//:Cargo.lock",
+    generate_binaries = True,
+    manifests = [
+        "//:Cargo.toml",
+    ],
+)
+use_repo(cargo, "cargo")
