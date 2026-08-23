@@ -12,4 +12,7 @@ package api.v1;
 message OpenOptions {
   bool write = 1;
   bool auto_sync = 2;
+  // GIT-9. Empty means unset. `open` of an existing repository with this set
+  // is `invalid`. `init` with this set is `clone`.
+  string remote_repo = 3;
 }

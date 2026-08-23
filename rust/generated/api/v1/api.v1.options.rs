@@ -18,6 +18,16 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub auto_sync: ::core::option::Option<bool>,
+    /// GIT-9. Empty means unset. `open` of an existing repository with this set
+    /// is `invalid`. `init` with this set is `clone`.
+    ///
+    /// Field 3: `remote_repo`
+    #[serde(
+        rename = "remoteRepo",
+        alias = "remote_repo",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub remote_repo: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -27,6 +37,7 @@ impl ::core::fmt::Debug for OpenOptions {
         f.debug_struct("OpenOptions")
             .field("write", &self.write)
             .field("auto_sync", &self.auto_sync)
+            .field("remote_repo", &self.remote_repo)
             .finish()
     }
 }
@@ -50,6 +61,16 @@ impl OpenOptions {
     ///Sets [`Self::auto_sync`] to `Some(value)`, consuming and returning `self`.
     pub fn with_auto_sync(mut self, value: bool) -> Self {
         self.auto_sync = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::remote_repo`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_remote_repo(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.remote_repo = Some(value.into());
         self
     }
 }
@@ -79,6 +100,9 @@ impl ::buffa::Message for OpenOptions {
         if self.auto_sync.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if let Some(ref v) = self.remote_repo {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -94,6 +118,9 @@ impl ::buffa::Message for OpenOptions {
         }
         if let Some(v) = self.auto_sync {
             ::buffa::types::put_bool_field(2u32, v, buf);
+        }
+        if let Some(ref v) = self.remote_repo {
+            ::buffa::types::put_string_field(3u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -126,6 +153,18 @@ impl ::buffa::Message for OpenOptions {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .remote_repo
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -136,6 +175,7 @@ impl ::buffa::Message for OpenOptions {
     fn clear(&mut self) {
         self.write = ::core::option::Option::None;
         self.auto_sync = ::core::option::Option::None;
+        self.remote_repo = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

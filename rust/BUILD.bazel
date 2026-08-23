@@ -11,6 +11,7 @@ rust_clippy_test(
         "//rust/scheda:journal_test",
         "//rust/scheda:query_test",
         "//rust/scheda:git_test",
+        "//rust/scheda:remote_test",
         "//rust/scheda:schema_test",
     ],
 )

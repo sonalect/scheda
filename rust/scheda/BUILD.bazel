@@ -56,6 +56,19 @@ rust_test(
 )
 
 rust_test(
+    name = "remote_test",
+    srcs = ["tests/remote.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/remote.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:git2",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "scheda_test",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",

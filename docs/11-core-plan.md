@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.9, 24 August 2026.
+Document 11 of the Scheda package. Version 0.10, 24 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -44,7 +44,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | [C4](#c4-journal-segments) | done | Append, rotate, scan `find_one` |
 | [C5](#c5-find-check-reindex) | done | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | done | `commit`, `history` of a path |
-| [C7](#c7-remote) | not started | `clone`, `auto_sync`, push/pull/sync |
+| [C7](#c7-remote) | done | `clone`, `auto_sync`, push/pull/sync |
 | [C8](#c8-journal-id-map-and-size) | not started | IDX-5, OPS-1, OPS-3 |
 | [C9](#c9-core-acceptance) | not started | `10` §2 acceptance |
 
@@ -239,22 +239,22 @@ SCH-12.
 
 ## C7. Remote
 
-**Status:** not started
+**Status:** done
 
 **Codes:** GIT-8–12, LIB-13, LIB-14, ISO-1.
 
-- [ ] `clone(url, path)` produces a Vault whose `origin` is that URL;
+- [x] `clone(url, path)` produces a Vault whose `origin` is that URL;
       `open`+`remote_repo` on an existing repo fails (GIT-9).
-- [ ] `auto_sync` default off: `open` does not change `HEAD` when Remote has
+- [x] `auto_sync` default off: `open` does not change `HEAD` when Remote has
       new commits (GIT-10).
-- [ ] `auto_sync` on + fast-forward → `HEAD` matches Remote after `open`;
+- [x] `auto_sync` on + fast-forward → `HEAD` matches Remote after `open`;
       diverged → `not_fast_forward`, no conflict markers from Scheda
       (GIT-10).
-- [ ] `pull_remote` / `push_remote` / `sync_remote` with `auto_sync` off
+- [x] `pull_remote` / `push_remote` / `sync_remote` with `auto_sync` off
       (GIT-11, LIB-14). Diverged `sync_remote` fails before push.
-- [ ] Unreachable Remote after `commit`: `HEAD` is the new commit; later
+- [x] Unreachable Remote after `commit`: `HEAD` is the new commit; later
       `push_remote` publishes it (GIT-12).
-- [ ] Writes and local `commit` with `auto_sync` off succeed with the
+- [x] Writes and local `commit` with `auto_sync` off succeed with the
       network disabled (GIT-8, ISO-1, `10` §2 item 5).
 
 ---

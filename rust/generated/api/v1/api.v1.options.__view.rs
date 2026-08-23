@@ -10,6 +10,11 @@ pub struct OpenOptionsView<'a> {
     pub write: ::core::option::Option<bool>,
     /// Field 2: `auto_sync`
     pub auto_sync: ::core::option::Option<bool>,
+    /// GIT-9. Empty means unset. `open` of an existing repository with this set
+    /// is `invalid`. `init` with this set is `clone`.
+    ///
+    /// Field 3: `remote_repo`
+    pub remote_repo: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -54,6 +59,13 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 )?;
                 view.auto_sync = Some(::buffa::types::decode_bool(&mut cur)?);
             }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.remote_repo = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -78,6 +90,7 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
         ::core::result::Result::Ok(super::super::OpenOptions {
             write: self.write,
             auto_sync: self.auto_sync,
+            remote_repo: self.remote_repo.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -95,6 +108,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if self.auto_sync.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if let Some(ref v) = self.remote_repo {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -111,6 +127,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         }
         if let Some(v) = self.auto_sync {
             ::buffa::types::put_bool_field(2u32, v, buf);
+        }
+        if let Some(ref v) = self.remote_repo {
+            ::buffa::types::put_string_field(3u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -138,6 +157,9 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.auto_sync {
             __map.serialize_entry("autoSync", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.remote_repo {
+            __map.serialize_entry("remoteRepo", __v)?;
         }
         __map.end()
     }
@@ -239,6 +261,14 @@ impl OpenOptionsOwnedView {
     #[must_use]
     pub fn auto_sync(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().auto_sync
+    }
+    /// GIT-9. Empty means unset. `open` of an existing repository with this set
+    /// is `invalid`. `init` with this set is `clone`.
+    ///
+    /// Field 3: `remote_repo`
+    #[must_use]
+    pub fn remote_repo(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().remote_repo
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

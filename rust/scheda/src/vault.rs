@@ -51,8 +51,13 @@ pub struct SearchHits;
 
 impl Vault {
     /// Create a Vault at `path` (`git init`, no Remote). LIB-2 / GIT-9.
+    /// `remote_repo` set → [`clone`](Self::clone) (LIB-13).
     pub fn init(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
         options.require_valid()?;
+        if let Some(url) = remote_repo_url(&options) {
+            let url = url.to_owned();
+            return Self::clone(&url, path, without_remote_repo(options));
+        }
         let path = path.as_ref();
         prepare_new_work_tree(path)?;
         git::init(path)?;
@@ -62,15 +67,30 @@ impl Vault {
     /// Clone `url` into `path`. LIB-2 name `clone` (GIT-9).
     pub fn clone(url: &str, path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
         options.require_valid()?;
-        let _url = url;
-        let _path = path.as_ref();
-        Err(Error::unsupported("Vault::clone is not implemented (C7)"))
+        let url = url.trim();
+        if url.is_empty() {
+            return Err(Error::invalid("clone URL is empty"));
+        }
+        let path = path.as_ref();
+        prepare_new_work_tree(path)?;
+        git::clone(url, path)?;
+        Self::open(path, without_remote_repo(options))
     }
 
     /// Open an existing Vault at `path`.
     pub fn open(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
         options.require_valid()?;
         let path = path.as_ref();
+        if let Some(url) = remote_repo_url(&options) {
+            if git::is_work_tree(path) {
+                return Err(Error::invalid(format!(
+                    "remote_repo cannot be set on an existing repository: {}",
+                    path.display()
+                )));
+            }
+            let url = url.to_owned();
+            return Self::clone(&url, path, without_remote_repo(options));
+        }
         if !git::is_work_tree(path) {
             return Err(Error::invalid(format!(
                 "path is not a git working tree: {}",
@@ -96,16 +116,17 @@ impl Vault {
             Error::io(format!("canonicalize index {}: {err}", index_dir.display()))
         })?;
         let remotes = git::remotes(&path)?;
-        if auto_sync && !remotes.is_empty() {
-            return Err(Error::unsupported(
-                "auto_sync with a Remote is not implemented until C7",
-            ));
+        if auto_sync && !remotes.is_empty() && !write {
+            return Err(Error::locked("auto_sync pull needs a write lock"));
         }
         let write_lock = if write {
             Some(acquire_write_lock(&index_dir)?)
         } else {
             None
         };
+        if auto_sync && !remotes.is_empty() {
+            git::pull(&path)?;
+        }
         let schema = schema::load(&path)?;
         let schema_versions = schema.versions();
         let written = Arc::new(Mutex::new(BTreeSet::new()));
@@ -208,15 +229,27 @@ impl Vault {
     }
 
     pub fn push_remote(&self) -> Result<(), Error> {
-        todo!("Vault::push_remote is not implemented (C7)")
+        self.require_write_lock("push_remote")?;
+        git::push(&self.path)
     }
 
     pub fn pull_remote(&self) -> Result<(), Error> {
-        todo!("Vault::pull_remote is not implemented (C7)")
+        self.require_write_lock("pull_remote")?;
+        git::pull(&self.path)
     }
 
     pub fn sync_remote(&self) -> Result<(), Error> {
-        todo!("Vault::sync_remote is not implemented (C7)")
+        self.require_write_lock("sync_remote")?;
+        git::pull(&self.path)?;
+        git::push(&self.path)
+    }
+
+    fn require_write_lock(&self, op: &str) -> Result<(), Error> {
+        if self.write_lock.is_some() {
+            Ok(())
+        } else {
+            Err(Error::locked(format!("{op} needs a write lock")))
+        }
     }
 
     pub fn check(&self) -> Result<(), Error> {
@@ -420,6 +453,19 @@ impl Collection {
     }
 }
 
+fn remote_repo_url(options: &OpenOptions) -> Option<&str> {
+    options
+        .remote_repo
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+}
+
+fn without_remote_repo(mut options: OpenOptions) -> OpenOptions {
+    options.remote_repo = None;
+    options
+}
+
 fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
     if git::is_work_tree(path) {
         return Err(Error::invalid(format!(
@@ -554,15 +600,10 @@ mod tests {
     }
 
     #[test]
-    fn clone_is_unsupported_until_c7() {
+    fn empty_remote_repo_option_is_local_init() {
         let scratch = Scratch::new();
-        let err = Vault::clone(
-            "https://example.invalid/scheda.git",
-            scratch.vault(),
-            OpenOptions::new(),
-        )
-        .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Unsupported));
+        let vault = Vault::init(scratch.vault(), OpenOptions::new().remote_repo("")).unwrap();
+        assert!(!vault.has_remote());
     }
 
     #[test]
@@ -672,7 +713,7 @@ mod tests {
     }
 
     #[test]
-    fn auto_sync_with_remote_is_unsupported_until_c7() {
+    fn reader_auto_sync_with_remote_is_locked() {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
         git::add_remote(vault.path(), "origin", "https://example.invalid/x.git").unwrap();
@@ -682,7 +723,8 @@ mod tests {
             scratch.options().write(false).auto_sync(true),
         )
         .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Unsupported));
+        assert_eq!(Code::of(&err), Some(Code::Locked));
+        assert_eq!(err.code.as_deref(), Some("locked"));
     }
 
     #[test]

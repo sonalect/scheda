@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.13, 24 August 2026.
+Document 7 of the Scheda package. Version 0.14, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -24,7 +24,7 @@ An assertion without a check is not a requirement.
 
 **LIB-3. Whole-record writes.** Mutation is `insert_one` or `replace_one` of the whole Record. There is no partial field patch. SQL against the Index is not a caller API. *Check:* `replace_one` on `journal` is a failure (`unsupported`).
 
-**LIB-4. Observable `open`.** After `open`, the caller can read: Vault path, Index path (`{vault}/.scheda/index`), whether this handle holds the write lock, Schema version(s), whether a Remote exists. **Later:** whether this isolated root is encrypted (ISO-5). No process-global singleton that forbids a second Vault. Options at `open` include read vs write, `auto_sync` (GIT-10), and an embedder (IDX-8). The Index directory is not a caller option (GIT-13). **Later:** for an isolated root the encryption **secret** when `encrypt` was set at `init` (ISO-5). *Check (**core**):* two `open`s on different roots in one process. *Check:* `init` writes `.gitignore` with `.scheda/`; Index files are ignored; deleting `.scheda/` does not delete Records.
+**LIB-4. Observable `open`.** After `open`, the caller can read: Vault path, Index path (`{vault}/.scheda/index`), whether this handle holds the write lock, Schema version(s), whether a Remote exists. **Later:** whether this isolated root is encrypted (ISO-5). No process-global singleton that forbids a second Vault. Options at `open` include read vs write, `auto_sync` (GIT-10), `remote_repo` (GIT-9), and an embedder (IDX-8). The Index directory is not a caller option (GIT-13). **Later:** for an isolated root the encryption **secret** when `encrypt` was set at `init` (ISO-5). *Check (**core**):* two `open`s on different roots in one process. *Check:* `init` writes `.gitignore` with `.scheda/`; Index files are ignored; deleting `.scheda/` does not delete Records.
 
 **LIB-5. Failures are coded.** Every failure has a stable code plus an optional human message. The message must not replace the code. Codes in **core** include at least: `not_found`, `invalid`, `conflict` (git markers / unique `id`), `not_fast_forward` (GIT-10, GIT-11), `locked` (STO-4), `io`, `git`, `index_unusable` (QRY-4), `unsupported` (`replace_one` on `journal`). **Later:** `crypto` (ISO-5). *Check:* negative tests assert codes, not only message text.
 

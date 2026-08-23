@@ -39,6 +39,9 @@ API or on-disk format changes bump the minor.
 - `commit(message)` stages only paths this handle wrote and creates one
   git commit; `history(path)` returns `HistoryEntry` snapshots that match
   `git show` for `document` / `singleton` / journal segment files (C6).
+- `clone` / `remote_repo`, `auto_sync` fast-forward only, and
+  `pull_remote` / `push_remote` / `sync_remote` (C7). Diverged histories
+  are `not_fast_forward`; a failed push does not roll back the local commit.
 
 ### Changed
 

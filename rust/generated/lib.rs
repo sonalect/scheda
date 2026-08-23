@@ -116,6 +116,12 @@ impl api::v1::OpenOptions {
         self.with_auto_sync(auto_sync)
     }
 
+    /// GIT-9. Empty string is unset (`init` stays local; `open` does not clone).
+    #[must_use]
+    pub fn remote_repo(self, remote_repo: impl Into<String>) -> Self {
+        self.with_remote_repo(remote_repo)
+    }
+
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
@@ -170,6 +176,10 @@ mod tests {
         assert_eq!(json["write"], true);
         assert_eq!(json["autoSync"], false);
         assert!(json.get("indexDir").is_none());
+        assert!(json.get("remoteRepo").is_none());
+        let cloned = OpenOptions::new().remote_repo("file:///tmp/scheda.git");
+        let json = serde_json::to_value(&cloned).expect("json");
+        assert_eq!(json["remoteRepo"], "file:///tmp/scheda.git");
     }
 
     #[test]

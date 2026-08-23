@@ -4,14 +4,18 @@ use std::path::Path;
 #[cfg(test)]
 use git2::Config;
 use git2::{
-    Commit as GitCommit, DiffOptions, ErrorCode, Repository, RepositoryInitOptions,
-    RepositoryOpenFlags, Signature, Sort,
+    AnnotatedCommit, Commit as GitCommit, DiffOptions, ErrorCode, Repository,
+    RepositoryInitOptions, RepositoryOpenFlags, Signature, Sort,
 };
 
 use crate::{Error, HistoryEntry};
 
 fn map_err(err: git2::Error) -> Error {
-    Error::git(err.message().to_owned())
+    if err.code() == ErrorCode::NotFastForward {
+        Error::not_fast_forward(err.message().to_owned())
+    } else {
+        Error::git(err.message().to_owned())
+    }
 }
 
 fn open_at(dir: &Path) -> Result<Repository, git2::Error> {
@@ -72,6 +76,94 @@ pub(crate) fn remotes(dir: &Path) -> Result<Vec<String>, Error> {
         out.push(name.to_owned());
     }
     Ok(out)
+}
+
+pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
+    let _repo = Repository::clone(url, path).map_err(map_err)?;
+    Ok(())
+}
+
+fn default_remote_name(dir: &Path) -> Result<String, Error> {
+    let names = remotes(dir)?;
+    if let Some(origin) = names.iter().find(|name| name.as_str() == "origin") {
+        return Ok(origin.clone());
+    }
+    names
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("no Remote configured"))
+}
+
+fn branch_refname(repo: &Repository) -> Result<String, Error> {
+    match repo.head() {
+        Ok(head) => {
+            if !head.is_branch() {
+                return Err(Error::git("HEAD is not a branch"));
+            }
+            Ok(head.name().map_err(map_err)?.to_owned())
+        }
+        Err(err) if is_unborn(&err) => {
+            let head = repo.find_reference("HEAD").map_err(map_err)?;
+            match head.symbolic_target().map_err(map_err)? {
+                Some(name) => Ok(name.to_owned()),
+                None => Err(Error::git("unborn HEAD has no branch name")),
+            }
+        }
+        Err(err) => Err(map_err(err)),
+    }
+}
+
+fn fast_forward(repo: &Repository, fetch_commit: &AnnotatedCommit<'_>) -> Result<(), Error> {
+    let refname = branch_refname(repo)?;
+    match repo.find_reference(&refname) {
+        Ok(mut local) => {
+            let msg = format!("Fast-forward: setting {refname} to {}", fetch_commit.id());
+            local.set_target(fetch_commit.id(), &msg).map_err(map_err)?;
+        }
+        Err(err) if err.code() == ErrorCode::NotFound => {
+            let msg = format!("Setting {refname} to {}", fetch_commit.id());
+            repo.reference(&refname, fetch_commit.id(), true, &msg)
+                .map_err(map_err)?;
+        }
+        Err(err) => return Err(map_err(err)),
+    }
+    repo.set_head(&refname).map_err(map_err)?;
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
+        .map_err(map_err)?;
+    Ok(())
+}
+
+pub(crate) fn pull(dir: &Path) -> Result<(), Error> {
+    let name = default_remote_name(dir)?;
+    let repo = open_work_tree(dir)?;
+    {
+        let mut remote = repo.find_remote(&name).map_err(map_err)?;
+        remote.fetch(&[] as &[&str], None, None).map_err(map_err)?;
+    }
+    let fetch_head = repo.find_reference("FETCH_HEAD").map_err(map_err)?;
+    let fetch_commit = repo
+        .reference_to_annotated_commit(&fetch_head)
+        .map_err(map_err)?;
+    let (analysis, _) = repo.merge_analysis(&[&fetch_commit]).map_err(map_err)?;
+    if analysis.is_up_to_date() {
+        return Ok(());
+    }
+    if analysis.is_fast_forward() || analysis.is_unborn() {
+        return fast_forward(&repo, &fetch_commit);
+    }
+    Err(Error::not_fast_forward(
+        "Remote is not a fast-forward of HEAD",
+    ))
+}
+
+pub(crate) fn push(dir: &Path) -> Result<(), Error> {
+    let name = default_remote_name(dir)?;
+    let repo = open_work_tree(dir)?;
+    let refname = branch_refname(&repo)?;
+    let spec = format!("{refname}:{refname}");
+    let mut remote = repo.find_remote(&name).map_err(map_err)?;
+    remote.push(&[spec.as_str()], None).map_err(map_err)?;
+    Ok(())
 }
 
 pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), Error> {
