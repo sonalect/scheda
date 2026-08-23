@@ -28,6 +28,10 @@ API or on-disk format changes bump the minor.
   YAML+Markdown or YAML-only files, atomic sibling-temp writes, Schema
   validation on write, `valid: false` on old files that fail the current
   Schema. `replace_one` on `journal` is `unsupported`.
+- `journal` `insert_one` appends RFC 8785 JSONL (C4); size cap rotates
+  eight-digit hex segments (`00000001.jsonl`) without rewriting closed
+  files; `find_one` / empty `find` / `scan` read by `(collection, id)` in
+  append order.
 
 ### Changed
 

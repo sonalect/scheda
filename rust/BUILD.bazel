@@ -8,6 +8,7 @@ rust_clippy_test(
         "//rust/generated:generated_v1",
         "//rust/scheda:scheda",
         "//rust/scheda:document_test",
+        "//rust/scheda:journal_test",
         "//rust/scheda:schema_test",
     ],
 )

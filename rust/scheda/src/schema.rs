@@ -64,7 +64,7 @@ impl FieldType {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum SegmentRotate {
+pub(crate) enum SegmentRotate {
     Daily,
 }
 
@@ -151,6 +151,8 @@ pub(crate) struct CollectionDecl {
     pub id_pattern: Option<Regex>,
     pub filter_keys: BTreeSet<String>,
     pub segment_max_bytes: Option<u64>,
+    pub segment_max_lines: Option<u64>,
+    pub segment_rotate: Option<SegmentRotate>,
     pub singleton_id: Option<String>,
     pub fields: Vec<FieldDecl>,
 }
@@ -328,16 +330,21 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
             }
         }
     }
-    let segment_max_bytes = if raw.kind == Kind::Journal {
+    let (segment_max_bytes, segment_max_lines, segment_rotate) = if raw.kind == Kind::Journal {
         let cap = raw.segment_max_bytes.unwrap_or(DEFAULT_SEGMENT_MAX_BYTES);
         if cap > MAX_SEGMENT_MAX_BYTES {
             return Err(Error::invalid(format!(
                 "schema {loc}: segment_max_bytes {cap} exceeds 32 MiB"
             )));
         }
-        Some(cap)
+        if raw.segment_max_lines == Some(0) {
+            return Err(Error::invalid(format!(
+                "schema {loc}: segment_max_lines must be >= 1"
+            )));
+        }
+        (Some(cap), raw.segment_max_lines, raw.segment_rotate)
     } else {
-        None
+        (None, None, None)
     };
     let id_field = match raw.id.as_ref().and_then(|id| id.field.as_deref()) {
         Some("") => {
@@ -364,6 +371,8 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         id_pattern,
         filter_keys,
         segment_max_bytes,
+        segment_max_lines,
+        segment_rotate,
         singleton_id: raw.singleton_id,
         fields,
     })

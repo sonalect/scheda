@@ -2,6 +2,7 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use crate::git;
+use crate::journal;
 use crate::schema::{self, CollectionDecl, Kind, Schema};
 use crate::store;
 use crate::{Error, OpenOptions, Record};
@@ -179,7 +180,8 @@ impl Vault {
 
     pub fn check(&self) -> Result<(), Error> {
         let schema = schema::load(&self.path)?;
-        store::check_documents(&self.path, &schema)
+        store::check_documents(&self.path, &schema)?;
+        journal::check_journals(&self.path, &schema)
     }
 
     pub fn reindex(&self) -> Result<(), Error> {
@@ -202,6 +204,8 @@ impl Collection {
                 id_pattern: None,
                 filter_keys: std::collections::BTreeSet::new(),
                 segment_max_bytes: None,
+                segment_max_lines: None,
+                segment_rotate: None,
                 singleton_id: None,
                 fields: Vec::new(),
             },
@@ -294,12 +298,15 @@ impl Collection {
         }
     }
 
-    /// Create a `document` file or the first write of a `singleton`.
+    /// Create a `document` file, append a `journal` line, or the first write of a `singleton`.
     pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
         record.require_valid()?;
         self.require_write()?;
         match self.decl.kind {
-            Kind::Journal => todo!("Collection::insert_one for journal is not implemented (C4)"),
+            Kind::Journal => {
+                let id = journal::insert_journal(&self.vault, &self.decl, record)?;
+                Ok(InsertOne { id })
+            }
             Kind::Document | Kind::Singleton => {
                 let id = store::insert_document(&self.vault, &self.decl, record)?;
                 Ok(InsertOne { id })
@@ -310,7 +317,7 @@ impl Collection {
     /// Read one Record by `id`. Missing → `not_found`.
     pub fn find_one(&self, id: &str) -> Result<Record, Error> {
         match self.decl.kind {
-            Kind::Journal => todo!("Collection::find_one for journal is not implemented (C4)"),
+            Kind::Journal => journal::find_journal(&self.vault, &self.decl, id),
             Kind::Document | Kind::Singleton => store::find_document(&self.vault, &self.decl, id),
         }
     }
@@ -326,9 +333,13 @@ impl Collection {
         Ok(ReplaceOne { id })
     }
 
+    /// SCH-8 filters. An empty filter (or [`scan`](Self::scan)) returns every Record.
     pub fn find(&self, filter: &Filter) -> Result<Vec<Record>, Error> {
         let _filter = filter;
-        todo!("Collection::find is not implemented (C5)")
+        match self.decl.kind {
+            Kind::Journal => journal::scan_journal(&self.vault, &self.decl),
+            Kind::Document | Kind::Singleton => store::scan_documents(&self.vault, &self.decl),
+        }
     }
 
     /// `find` with an empty filter (LIB-10).

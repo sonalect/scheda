@@ -11,6 +11,7 @@
 
 mod error;
 mod git;
+mod journal;
 mod schema;
 mod store;
 mod vault;

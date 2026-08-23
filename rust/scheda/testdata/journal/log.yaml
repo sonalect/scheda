@@ -1,0 +1,8 @@
+name: south_log
+kind: journal
+schema_version: 1
+layout: south/log/
+segment_max_bytes: 45
+fields:
+  - name: msg
+    type: string

@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.5, 23 August 2026.
+Document 5 of the Scheda package. Version 0.6, 23 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index behaviour is in `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -81,7 +81,10 @@ Values are Record `id`s, not URLs and not wiki labels.
 
 **SCH-14. Size cap is required for `journal`.** Schema sets `segment_max_bytes`. If omitted, the default is **8 MiB** (8 × 1024 × 1024). The implementation rejects a cap greater than **32 MiB** (still under typical host warn/reject limits of ~50 / ~100 MiB; GIT-6). Optional: `segment_max_lines`, `segment_rotate` calendar (`daily` UTC). Rotation is still size-first: a cap hit closes the segment even mid-day. *Check:* default Vault without the key rotates at 8 MiB; Schema with `48 MiB` is rejected; after the cap, the next `insert_one` does not grow the closed file (MOD-10).
 
-Closed segments are never rewritten. The open segment's name is Schema's pattern (sequence `0001.jsonl`, or `YYYY-MM-DD.jsonl` plus a sequence suffix if the day already closed on size).
+Closed segments are never rewritten. Sequence files are eight lowercase hex
+digits (`00000001.jsonl` … `ffffffff.jsonl`) so name order matches numeric
+order. With `segment_rotate: daily`, the open name is `YYYY-MM-DD.jsonl`, then
+`YYYY-MM-DD-00000002.jsonl` if that day already closed on size.
 
 ---
 

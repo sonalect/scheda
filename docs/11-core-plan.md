@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.5, 23 August 2026.
+Document 11 of the Scheda package. Version 0.6, 23 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -42,7 +42,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, Index path, ISO-1 local |
 | [C2](#c2-schema) | done | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | done | Whole-file writes and `find_one` |
-| [C4](#c4-journal-segments) | not started | Append, rotate, scan `find_one` |
+| [C4](#c4-journal-segments) | done | Append, rotate, scan `find_one` |
 | [C5](#c5-find-check-reindex) | not started | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | not started | `commit`, `history` of a path |
 | [C7](#c7-remote) | not started | `clone`, `auto_sync`, push/pull/sync |
@@ -179,25 +179,25 @@ QRY-1.
 
 ## C4. `journal` segments
 
-**Status:** not started
+**Status:** done
 
 **Codes:** MOD-2–4, MOD-9–11, MOD-16, STO-3, STO-5, SCH-14, LIB-3, LIB-7,
 LIB-9, LIB-18, QRY-7 (empty `find` / `scan`).
 
 `find_one` **may scan segments** until C8 (IDX-5, `03` §6).
 
-- [ ] `insert_one` appends one RFC 8785 canonical JSON object plus `\n`
+- [x] `insert_one` appends one RFC 8785 canonical JSON object plus `\n`
       (MOD-16, LIB-18).
-- [ ] `replace_one` → `unsupported` (MOD-2, MOD-16, LIB-3, LIB-9).
-- [ ] Duplicate `id` across segments is rejected (MOD-4).
-- [ ] After the size cap, the next `insert_one` does not grow the closed
+- [x] `replace_one` → `unsupported` (MOD-2, MOD-16, LIB-3, LIB-9).
+- [x] Duplicate `id` across segments is rejected (MOD-4).
+- [x] After the size cap, the next `insert_one` does not grow the closed
       file; previous bytes unchanged (MOD-10, SCH-14).
-- [ ] `find_one` uses `(collection, id)`, not a segment name (MOD-3, MOD-9).
-- [ ] Empty `find` / `scan` after insert A, B, rotate, insert C → A, B, C
+- [x] `find_one` uses `(collection, id)`, not a segment name (MOD-3, MOD-9).
+- [x] Empty `find` / `scan` after insert A, B, rotate, insert C → A, B, C
       (QRY-7, LIB-10).
-- [ ] Mid-segment corruption → `check` fails; Scheda does not rewrite the
+- [x] Mid-segment corruption → `check` fails; Scheda does not rewrite the
       file to “fix” it (STO-3, MOD-16).
-- [ ] A tail without `\n` is not a Record (STO-3, STO-5).
+- [x] A tail without `\n` is not a Record (STO-3, STO-5).
 
 ---
 

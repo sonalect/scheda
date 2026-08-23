@@ -1,4 +1,4 @@
-//! On-disk `document` / `singleton` files (C3). Journal writes are C4.
+//! On-disk `document` / `singleton` files (C3). Journal segments are `journal`.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -145,8 +145,8 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
         )));
     }
     if decl.kind == Kind::Journal {
-        return Err(Error::unsupported(
-            "journal insert_one / replace_one wait for C4",
+        return Err(Error::invalid(
+            "document write used on a journal collection",
         ));
     }
     if let Some(pattern) = &decl.id_pattern
@@ -309,13 +309,21 @@ fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<P
     Ok(found)
 }
 
-fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
+pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
     let mut out = Vec::new();
     for template in &decl.layout {
         out.extend(match_template(vault, template, None)?);
     }
     out.sort();
     out.dedup();
+    Ok(out)
+}
+
+pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
+    let mut out = Vec::new();
+    for path in list_files(vault, decl)? {
+        out.push(read_file(vault, decl, &path)?);
+    }
     Ok(out)
 }
 
@@ -434,7 +442,7 @@ fn consume_slot(after: &str, name: &str, id: Option<&str>) -> bool {
     (1..=name.len()).any(|i| match_component(after, &name[i..], id))
 }
 
-fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Result<Record, Error> {
+pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Result<Record, Error> {
     let rel = rel_posix(vault, path)?;
     let raw = fs::read(path).map_err(|err| Error::io(format!("read {rel}: {err}")))?;
     let mut record = Record::default()
@@ -586,7 +594,7 @@ fn encode_file(
     Ok(yaml.as_bytes().to_vec())
 }
 
-fn apply_defaults(fields: &mut Map<String, Value>, decls: &[FieldDecl]) {
+pub(crate) fn apply_defaults(fields: &mut Map<String, Value>, decls: &[FieldDecl]) {
     for decl in decls {
         if let Some(default) = &decl.default {
             fields
@@ -596,7 +604,7 @@ fn apply_defaults(fields: &mut Map<String, Value>, decls: &[FieldDecl]) {
     }
 }
 
-fn validate_fields(
+pub(crate) fn validate_fields(
     fields: &Map<String, Value>,
     decls: &[FieldDecl],
     id_field: Option<&str>,
@@ -764,7 +772,7 @@ fn is_finite_number(value: &Value) -> bool {
     }
 }
 
-fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
+pub(crate) fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
     let value = serde_json::to_value(record)
         .map_err(|err| Error::invalid(format!("encode fields: {err}")))?;
     match value.get("fields") {
@@ -774,7 +782,7 @@ fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
     }
 }
 
-fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result<(), Error> {
+pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result<(), Error> {
     let mut envelope = serde_json::Map::new();
     if let Some(id) = &record.id {
         envelope.insert(String::from("id"), Value::String(id.clone()));
@@ -836,7 +844,7 @@ fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Er
     })
 }
 
-fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
+pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
     let rel = path
         .strip_prefix(vault)
         .map_err(|_| Error::invalid(format!("path {} is outside the Vault", path.display())))?;
@@ -861,7 +869,7 @@ fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
     Ok(out)
 }
 
-fn has_conflict_markers(text: &str) -> bool {
+pub(crate) fn has_conflict_markers(text: &str) -> bool {
     text.contains("\n<<<<<<< ") || text.starts_with("<<<<<<< ")
 }
 
