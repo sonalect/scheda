@@ -15,7 +15,7 @@ pub(crate) fn insert_journal(
     vault: &Path,
     decl: &CollectionDecl,
     record: Record,
-) -> Result<String, Error> {
+) -> Result<(String, String), Error> {
     let (id, line) = prepare_line(decl, record)?;
     if id_exists(vault, decl, &id)? {
         return Err(Error::conflict(format!(
@@ -28,7 +28,8 @@ pub(crate) fn insert_journal(
         .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;
     let path = open_segment_path(&dir, decl, line.len() as u64)?;
     append_line(&path, &line)?;
-    Ok(id)
+    let rel = store::rel_posix(vault, &path)?;
+    Ok((id, rel))
 }
 
 pub(crate) fn find_journal(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {

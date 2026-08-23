@@ -36,6 +36,9 @@ API or on-disk format changes bump the minor.
 - SCH-8 `find` filters (`equal` / `set` / `exists` / `path_prefix`),
   `scan` as empty `find`, `check` with code+path, and `reindex` that
   writes Index format version `1` and returns `ReindexCounts` (C5).
+- `commit(message)` stages only paths this handle wrote and creates one
+  git commit; `history(path)` returns `HistoryEntry` snapshots that match
+  `git show` for `document` / `singleton` / journal segment files (C6).
 
 ### Changed
 

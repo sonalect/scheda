@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.9, 23 August 2026.
+Document 7 of the Scheda package. Version 0.13, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -60,7 +60,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-16. `reindex`.** IDX-1. Returns `api/v1` `ReindexCounts`: Records read, skipped invalid, segments seen. Needs the write lock. Writes Index format version `1` as `{vault}/.scheda/index/format` (one decimal integer and a newline).
 
-**LIB-17. `history(path)`.** GIT-3. **Core** for `document` / `singleton` / segment files. Line-level journal blame is **later**.
+**LIB-17. `history(path)`.** GIT-3. **Core** for `document` / `singleton` / segment files. Line-level journal blame is **later**. Returns `api/v1` `HistoryEntry` values, newest first: commit hash, `google.protobuf.Timestamp` `time` (UTC; git stores whole seconds since epoch), author, message, and file bytes (`raw`). *Check:* two commits editing one `document`; snapshots match `git show`.
 
 **LIB-18. Canonical journal line.** `insert_one` on `journal` writes one object per line whose object key order is RFC 8785 (JSON Canonicalization Scheme) so a consumer can hash bytes. *Check:* two inserts of equal fields produce equal line bytes aside from field values that differ.
 

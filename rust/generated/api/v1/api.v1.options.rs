@@ -8,10 +8,10 @@
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct OpenOptions {
-    /// Field 2: `write`
+    /// Field 1: `write`
     #[serde(rename = "write", skip_serializing_if = "::core::option::Option::is_none")]
     pub write: ::core::option::Option<bool>,
-    /// Field 3: `auto_sync`
+    /// Field 2: `auto_sync`
     #[serde(
         rename = "autoSync",
         alias = "auto_sync",
@@ -90,10 +90,10 @@ impl ::buffa::Message for OpenOptions {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         if let Some(v) = self.write {
-            ::buffa::types::put_bool_field(2u32, v, buf);
+            ::buffa::types::put_bool_field(1u32, v, buf);
         }
         if let Some(v) = self.auto_sync {
-            ::buffa::types::put_bool_field(3u32, v, buf);
+            ::buffa::types::put_bool_field(2u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -108,7 +108,7 @@ impl ::buffa::Message for OpenOptions {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         match tag.field_number() {
-            2u32 => {
+            1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -117,7 +117,7 @@ impl ::buffa::Message for OpenOptions {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            3u32 => {
+            2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,

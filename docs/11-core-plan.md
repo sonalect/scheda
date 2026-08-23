@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.8, 23 August 2026.
+Document 11 of the Scheda package. Version 0.9, 24 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -43,7 +43,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | [C3](#c3-document-and-singleton) | done | Whole-file writes and `find_one` |
 | [C4](#c4-journal-segments) | done | Append, rotate, scan `find_one` |
 | [C5](#c5-find-check-reindex) | done | Filters, `check`, disposable Index |
-| [C6](#c6-local-commit-and-history) | not started | `commit`, `history` of a path |
+| [C6](#c6-local-commit-and-history) | done | `commit`, `history` of a path |
 | [C7](#c7-remote) | not started | `clone`, `auto_sync`, push/pull/sync |
 | [C8](#c8-journal-id-map-and-size) | not started | IDX-5, OPS-1, OPS-3 |
 | [C9](#c9-core-acceptance) | not started | `10` §2 acceptance |
@@ -225,14 +225,14 @@ SCH-12.
 
 ## C6. Local `commit` and `history`
 
-**Status:** not started
+**Status:** done
 
 **Codes:** GIT-2, GIT-3, LIB-12, LIB-17.
 
-- [ ] Several `insert_one` without `commit` → `git log` unchanged (GIT-2).
-- [ ] One `commit(message)` → one commit whose paths are those writes, not
+- [x] Several `insert_one` without `commit` → `git log` unchanged (GIT-2).
+- [x] One `commit(message)` → one commit whose paths are those writes, not
       `git add` of junk at the Vault root (GIT-2, LIB-12).
-- [ ] `history` of a `document` / `singleton` / segment path matches
+- [x] `history` of a `document` / `singleton` / segment path matches
       `git show` (GIT-3, LIB-17). Not line-level journal blame.
 
 ---

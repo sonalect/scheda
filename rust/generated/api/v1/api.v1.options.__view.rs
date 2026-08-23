@@ -6,9 +6,9 @@
 /// callers do not pass an Index directory.
 #[derive(Clone, Debug, Default)]
 pub struct OpenOptionsView<'a> {
-    /// Field 2: `write`
+    /// Field 1: `write`
     pub write: ::core::option::Option<bool>,
-    /// Field 3: `auto_sync`
+    /// Field 2: `auto_sync`
     pub auto_sync: ::core::option::Option<bool>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -40,14 +40,14 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
-            2u32 => {
+            1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.write = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            3u32 => {
+            2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -107,10 +107,10 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         if let Some(v) = self.write {
-            ::buffa::types::put_bool_field(2u32, v, buf);
+            ::buffa::types::put_bool_field(1u32, v, buf);
         }
         if let Some(v) = self.auto_sync {
-            ::buffa::types::put_bool_field(3u32, v, buf);
+            ::buffa::types::put_bool_field(2u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -230,12 +230,12 @@ impl OpenOptionsOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Field 2: `write`
+    /// Field 1: `write`
     #[must_use]
     pub fn write(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().write
     }
-    /// Field 3: `auto_sync`
+    /// Field 2: `auto_sync`
     #[must_use]
     pub fn auto_sync(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().auto_sync

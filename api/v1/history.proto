@@ -1,0 +1,26 @@
+// Path history (`07` LIB-17; GIT-3). Bindings and agent transport (`08`) use
+// proto3 JSON of these messages, not binary protobuf. Newest first.
+// Line-level journal blame is later.
+
+edition = "2024";
+
+package api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// One git commit that changed a Vault-relative path (`document`, `singleton`,
+// or journal segment). `raw` is the file bytes at that commit (`git show`).
+message HistoryEntry {
+  string hash = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Commit instant (UTC). Proto3 JSON is RFC 3339. Git `Time.seconds` is
+  // already seconds since epoch; the display timezone is not stored.
+  google.protobuf.Timestamp time = 2;
+  // Git author as `Name <email>`.
+  string author = 3;
+  string message = 4;
+  bytes raw = 5;
+}

@@ -136,11 +136,20 @@ impl api::v1::Record {
     }
 }
 
+impl api::v1::HistoryEntry {
+    /// UTC commit instant. Git `Time.seconds` is already seconds since epoch.
+    #[must_use]
+    pub fn with_time(mut self, unix_seconds: i64) -> Self {
+        self.time = buffa_types::google::protobuf::Timestamp::from_unix_secs(unix_seconds).into();
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use protovalidate_buffa::Validate;
 
-    use super::api::v1::{Error, Filter, OpenOptions, Record};
+    use super::api::v1::{Error, Filter, HistoryEntry, OpenOptions, Record};
 
     #[test]
     fn error_json_uses_lib5_code_string() {
@@ -207,5 +216,11 @@ mod tests {
             .require_valid()
             .expect_err("missing id and collection");
         assert_eq!(err.code.as_deref(), Some("invalid"));
+    }
+
+    #[test]
+    fn history_entry_time_json_is_rfc3339() {
+        let json = serde_json::to_value(HistoryEntry::default().with_time(0)).expect("json");
+        assert_eq!(json["time"], "1970-01-01T00:00:00Z");
     }
 }

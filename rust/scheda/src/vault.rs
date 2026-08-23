@@ -1,5 +1,7 @@
+use std::collections::BTreeSet;
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::git;
 use crate::index;
@@ -7,7 +9,7 @@ use crate::journal;
 use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema};
 use crate::store;
-use crate::{Error, Filter, OpenOptions, Record, ReindexCounts};
+use crate::{Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts};
 
 /// A git working tree that holds collections of records.
 #[derive(Debug)]
@@ -19,6 +21,7 @@ pub struct Vault {
     write_lock: Option<File>,
     schema: Schema,
     schema_versions: Vec<u32>,
+    written: Arc<Mutex<BTreeSet<String>>>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
@@ -27,6 +30,7 @@ pub struct Collection {
     vault: PathBuf,
     can_write: bool,
     decl: CollectionDecl,
+    written: Arc<Mutex<BTreeSet<String>>>,
 }
 
 /// Result of inserting a record.
@@ -52,7 +56,6 @@ impl Vault {
         let path = path.as_ref();
         prepare_new_work_tree(path)?;
         git::init(path)?;
-        ensure_gitignore(path)?;
         Self::open(path, options)
     }
 
@@ -78,8 +81,9 @@ impl Vault {
         let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path)
             .map_err(|err| Error::io(format!("canonicalize vault {}: {err}", path.display())))?;
+        let mut wrote_gitignore = false;
         if write {
-            ensure_gitignore(&path)?;
+            wrote_gitignore = ensure_gitignore(&path)?;
         }
         let index_dir = path.join(".scheda").join("index");
         fs::create_dir_all(&index_dir).map_err(|err| {
@@ -104,7 +108,8 @@ impl Vault {
         };
         let schema = schema::load(&path)?;
         let schema_versions = schema.versions();
-        Ok(Self {
+        let written = Arc::new(Mutex::new(BTreeSet::new()));
+        let vault = Self {
             path,
             index_dir,
             remotes,
@@ -112,7 +117,12 @@ impl Vault {
             write_lock,
             schema,
             schema_versions,
-        })
+            written,
+        };
+        if wrote_gitignore {
+            vault.note_write(String::from(".gitignore"));
+        }
+        Ok(vault)
     }
 
     #[must_use]
@@ -161,13 +171,40 @@ impl Vault {
             vault: self.path.clone(),
             can_write: self.write_lock.is_some(),
             decl: decl.clone(),
+            written: Arc::clone(&self.written),
         })
     }
 
-    /// Create one git commit for changes already written to the working tree.
+    /// Create one git commit for paths this handle wrote (GIT-2, LIB-12).
     pub fn commit(&self, message: &str) -> Result<(), Error> {
-        let _message = message;
-        todo!("Vault::commit is not implemented (C6)")
+        if self.write_lock.is_none() {
+            return Err(Error::locked("commit needs a write lock"));
+        }
+        let paths: Vec<String> = {
+            let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            set.iter().cloned().collect()
+        };
+        git::commit(&self.path, message, &paths)?;
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear();
+        if self.auto_sync && !self.remotes.is_empty() {
+            self.push_remote()?;
+        }
+        Ok(())
+    }
+
+    /// Git commits that changed `path` (GIT-3, LIB-17). Newest first.
+    pub fn history(&self, path: &str) -> Result<Vec<HistoryEntry>, Error> {
+        git::history(&self.path, path)
+    }
+
+    fn note_write(&self, rel: String) {
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(rel);
     }
 
     pub fn push_remote(&self) -> Result<(), Error> {
@@ -217,6 +254,7 @@ impl Collection {
                 singleton_id: None,
                 fields: Vec::new(),
             },
+            written: Arc::new(Mutex::new(BTreeSet::new())),
         }
     }
 
@@ -306,17 +344,26 @@ impl Collection {
         }
     }
 
+    fn note_write(&self, rel: String) {
+        self.written
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(rel);
+    }
+
     /// Create a `document` file, append a `journal` line, or the first write of a `singleton`.
     pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
         record.require_valid()?;
         self.require_write()?;
         match self.decl.kind {
             Kind::Journal => {
-                let id = journal::insert_journal(&self.vault, &self.decl, record)?;
+                let (id, rel) = journal::insert_journal(&self.vault, &self.decl, record)?;
+                self.note_write(rel);
                 Ok(InsertOne { id })
             }
             Kind::Document | Kind::Singleton => {
-                let id = store::insert_document(&self.vault, &self.decl, record)?;
+                let (id, rel) = store::insert_document(&self.vault, &self.decl, record)?;
+                self.note_write(rel);
                 Ok(InsertOne { id })
             }
         }
@@ -337,7 +384,8 @@ impl Collection {
             return Err(Error::unsupported("replace_one is not offered for journal"));
         }
         self.require_write()?;
-        let id = store::replace_document(&self.vault, &self.decl, id, record)?;
+        let (id, rel) = store::replace_document(&self.vault, &self.decl, id, record)?;
+        self.note_write(rel);
         Ok(ReplaceOne { id })
     }
 
@@ -406,7 +454,7 @@ fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn ensure_gitignore(vault: &Path) -> Result<(), Error> {
+fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
     let path = vault.join(".gitignore");
     let mut text = if path.exists() {
         fs::read_to_string(&path)
@@ -419,13 +467,14 @@ fn ensure_gitignore(vault: &Path) -> Result<(), Error> {
         line == ".scheda/" || line == ".scheda"
     });
     if already {
-        return Ok(());
+        return Ok(false);
     }
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
     text.push_str(".scheda/\n");
-    fs::write(&path, text).map_err(|err| Error::io(format!("write {}: {err}", path.display())))
+    fs::write(&path, text).map_err(|err| Error::io(format!("write {}: {err}", path.display())))?;
+    Ok(true)
 }
 
 fn acquire_write_lock(index_dir: &Path) -> Result<File, Error> {

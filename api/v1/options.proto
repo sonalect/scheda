@@ -10,6 +10,6 @@ package api.v1;
 // Unset `auto_sync` means off. Index lives at `{vault}/.scheda/index` (GIT-13);
 // callers do not pass an Index directory.
 message OpenOptions {
-  bool write = 2;
-  bool auto_sync = 3;
+  bool write = 1;
+  bool auto_sync = 2;
 }

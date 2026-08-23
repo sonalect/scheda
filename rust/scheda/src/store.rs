@@ -16,7 +16,7 @@ pub(crate) fn insert_document(
     vault: &Path,
     decl: &CollectionDecl,
     record: Record,
-) -> Result<String, Error> {
+) -> Result<(String, String), Error> {
     let prepared = prepare_write(vault, decl, record)?;
     if prepared.path.exists() {
         return Err(Error::conflict(format!(
@@ -25,7 +25,8 @@ pub(crate) fn insert_document(
         )));
     }
     atomic_write(&prepared.path, &prepared.bytes)?;
-    Ok(prepared.id)
+    let rel = rel_posix(vault, &prepared.path)?;
+    Ok((prepared.id, rel))
 }
 
 pub(crate) fn replace_document(
@@ -33,7 +34,7 @@ pub(crate) fn replace_document(
     decl: &CollectionDecl,
     id: &str,
     record: Record,
-) -> Result<String, Error> {
+) -> Result<(String, String), Error> {
     let Some(existing) = locate_file(vault, decl, id)? else {
         return Err(Error::not_found(format!(
             "record {id} is not in {}",
@@ -54,7 +55,8 @@ pub(crate) fn replace_document(
         )));
     }
     atomic_write(&prepared.path, &prepared.bytes)?;
-    Ok(prepared.id)
+    let rel = rel_posix(vault, &prepared.path)?;
+    Ok((prepared.id, rel))
 }
 
 pub(crate) fn find_document(

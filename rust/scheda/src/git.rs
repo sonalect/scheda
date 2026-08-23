@@ -2,10 +2,13 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 #[cfg(test)]
-use git2::{Config, ErrorCode};
-use git2::{Repository, RepositoryInitOptions, RepositoryOpenFlags};
+use git2::Config;
+use git2::{
+    Commit as GitCommit, DiffOptions, ErrorCode, Repository, RepositoryInitOptions,
+    RepositoryOpenFlags, Signature, Sort,
+};
 
-use crate::Error;
+use crate::{Error, HistoryEntry};
 
 fn map_err(err: git2::Error) -> Error {
     Error::git(err.message().to_owned())
@@ -28,6 +31,21 @@ fn open_work_tree(dir: &Path) -> Result<Repository, Error> {
         )));
     }
     Ok(repo)
+}
+
+fn signature(repo: &Repository) -> Result<Signature<'static>, Error> {
+    if let Ok(sig) = repo.signature()
+        && let (Ok(name), Ok(email)) = (sig.name(), sig.email())
+        && !name.is_empty()
+        && !email.is_empty()
+    {
+        return Signature::now(name, email).map_err(map_err);
+    }
+    Signature::now("Scheda", "scheda@invalid").map_err(map_err)
+}
+
+fn is_unborn(err: &git2::Error) -> bool {
+    matches!(err.code(), ErrorCode::UnbornBranch | ErrorCode::NotFound)
 }
 
 pub(crate) fn init(dir: &Path) -> Result<(), Error> {
@@ -54,6 +72,122 @@ pub(crate) fn remotes(dir: &Path) -> Result<Vec<String>, Error> {
         out.push(name.to_owned());
     }
     Ok(out)
+}
+
+pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), Error> {
+    if message.trim().is_empty() {
+        return Err(Error::invalid("commit message is empty"));
+    }
+    if paths.is_empty() {
+        return Err(Error::invalid("nothing to commit"));
+    }
+    let repo = open_work_tree(dir)?;
+    let mut index = repo.index().map_err(map_err)?;
+    let mut staged = 0usize;
+    for rel in paths {
+        let abs = dir.join(rel);
+        if !abs.is_file() {
+            continue;
+        }
+        index.add_path(Path::new(rel)).map_err(map_err)?;
+        staged += 1;
+    }
+    if staged == 0 {
+        return Err(Error::invalid("nothing to commit"));
+    }
+    index.write().map_err(map_err)?;
+    let tree_id = index.write_tree().map_err(map_err)?;
+    let tree = repo.find_tree(tree_id).map_err(map_err)?;
+    let sig = signature(&repo)?;
+    let parent = match repo.head() {
+        Ok(head) => Some(head.peel_to_commit().map_err(map_err)?),
+        Err(err) if is_unborn(&err) => None,
+        Err(err) => return Err(map_err(err)),
+    };
+    if parent
+        .as_ref()
+        .is_some_and(|parent| parent.tree_id() == tree_id)
+    {
+        return Ok(());
+    }
+    let parents: Vec<&GitCommit<'_>> = parent.as_ref().into_iter().collect();
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+        .map_err(map_err)?;
+    Ok(())
+}
+
+pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<HistoryEntry>, Error> {
+    require_vault_rel(path)?;
+    let repo = open_work_tree(dir)?;
+    match repo.head() {
+        Ok(_) => {}
+        Err(err) if is_unborn(&err) => return Ok(Vec::new()),
+        Err(err) => return Err(map_err(err)),
+    }
+    let mut revwalk = repo.revwalk().map_err(map_err)?;
+    revwalk.set_sorting(Sort::TIME).map_err(map_err)?;
+    revwalk.push_head().map_err(map_err)?;
+    let mut out = Vec::new();
+    for oid in revwalk {
+        let oid = oid.map_err(map_err)?;
+        let commit = repo.find_commit(oid).map_err(map_err)?;
+        if !path_changed(&repo, &commit, path)? {
+            continue;
+        }
+        let tree = commit.tree().map_err(map_err)?;
+        let Ok(entry) = tree.get_path(Path::new(path)) else {
+            continue;
+        };
+        let blob = repo.find_blob(entry.id()).map_err(map_err)?;
+        let author = commit.author();
+        let name = author.name().unwrap_or("");
+        let email = author.email().unwrap_or("");
+        let author = if email.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{name} <{email}>")
+        };
+        out.push(
+            HistoryEntry::default()
+                .with_hash(oid.to_string())
+                .with_time(commit.time().seconds())
+                .with_author(author)
+                .with_message(commit.message().unwrap_or("").to_owned())
+                .with_raw(blob.content().to_vec()),
+        );
+    }
+    out.sort_by_key(|entry| std::cmp::Reverse(entry.time.seconds));
+    Ok(out)
+}
+
+fn require_vault_rel(path: &str) -> Result<(), Error> {
+    if path.is_empty() {
+        return Err(Error::invalid("path is empty"));
+    }
+    if path.starts_with('/') || path.starts_with('\\') {
+        return Err(Error::invalid("path must be vault-relative"));
+    }
+    for part in path.split(['/', '\\']) {
+        if part.is_empty() || part == "." || part == ".." {
+            return Err(Error::invalid("path must be vault-relative"));
+        }
+    }
+    Ok(())
+}
+
+fn path_changed(repo: &Repository, commit: &GitCommit<'_>, path: &str) -> Result<bool, Error> {
+    let new_tree = commit.tree().map_err(map_err)?;
+    let old_tree = if commit.parent_count() == 0 {
+        None
+    } else {
+        Some(commit.parent(0).map_err(map_err)?.tree().map_err(map_err)?)
+    };
+    let mut opts = DiffOptions::new();
+    opts.pathspec(path);
+    let diff = repo
+        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), Some(&mut opts))
+        .map_err(map_err)?;
+    Ok(diff.deltas().next().is_some())
 }
 
 #[cfg(test)]
