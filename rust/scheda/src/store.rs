@@ -844,7 +844,7 @@ pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result
     Ok(())
 }
 
-fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;

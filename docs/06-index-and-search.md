@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.7, 23 August 2026.
+Document 6 of the Scheda package. Version 0.8, 24 August 2026.
 
 Normative rules for the derived Index, `find_one` / `find` / `search`, embedders, and edge walks. Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`, `REL`. Phase **core** or **search** as marked.
 
@@ -18,7 +18,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 **IDX-4. Sealed fields stay out (**later**).** Isolated collections and sealed fields (SCH-15) are not copied into the main Vault Index. *Check (**later**):* grep of Index files does not contain a fixture sealed value.
 
-**IDX-5. Journal `id` lookup.** After **core** Index exists, `find_one` on a `journal` must not scan every segment. The Index (or an equivalent map rebuilt by `reindex`) maps `(collection, id)` → segment path. Until that map exists, a correct full scan is allowed (MOD / `03` §6). *Check (**core**, once the map is implemented):* `find_one` cost does not grow linearly with unrelated segments.
+**IDX-5. Journal `id` lookup.** After **core** Index exists, `find_one` on a `journal` must not scan every segment. The Index maps `(collection, id)` → segment path. File: `{vault}/.scheda/index/journal/{collection directory}/ids` (the same FNV-1a-64 directory name as the collection files, MOD-8). JSONL, one object per Record, keys `id` and `path` (vault-relative POSIX path of the segment). Format version stays `1` (IDX-2). `reindex` rewrites the files from Vault text. Missing or unreadable map: `find_one` scans segment files (IDX-2). Until that map exists, a correct full scan is allowed (MOD / `03` §6). *Check (**core**, once the map is implemented):* `find_one` cost does not grow linearly with unrelated segments.
 
 Writes (`insert_one` / `replace_one`) update this map in the same process when the writer holds the lock. Human edits in an editor are not watched by default: the caller runs `reindex` or `check`. A file watcher is **later**.
 

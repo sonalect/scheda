@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.10, 24 August 2026.
+Document 11 of the Scheda package. Version 0.11, 24 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -45,7 +45,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | [C5](#c5-find-check-reindex) | done | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | done | `commit`, `history` of a path |
 | [C7](#c7-remote) | done | `clone`, `auto_sync`, push/pull/sync |
-| [C8](#c8-journal-id-map-and-size) | not started | IDX-5, OPS-1, OPS-3 |
+| [C8](#c8-journal-id-map-and-size) | done | IDX-5, OPS-1, OPS-3 |
 | [C9](#c9-core-acceptance) | not started | `10` §2 acceptance |
 
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
@@ -261,17 +261,17 @@ SCH-12.
 
 ## C8. Journal `id` map and size
 
-**Status:** not started
+**Status:** done
 
 **Codes:** IDX-5, OPS-1, OPS-3.
 
-- [ ] `find_one` on `journal` does not scan every unrelated segment (IDX-5).
+- [x] `find_one` on `journal` does not scan every unrelated segment (IDX-5).
       Writer updates the map under the lock; human editor edits still need
       `reindex`.
-- [ ] Fixture ≥ 10⁴ journal Records and ≥ 10³ `document` Records: sampled
+- [x] Fixture ≥ 10⁴ journal Records and ≥ 10³ `document` Records: sampled
       `find_one` / journal `insert_one` stay in milliseconds, not hundreds
       (OPS-1).
-- [ ] Full `reindex` on that fixture completes; counts match a hand tally
+- [x] Full `reindex` on that fixture completes; counts match a hand tally
       (OPS-3, LIB-16).
 
 ---

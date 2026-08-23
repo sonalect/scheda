@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use crate::git;
-use crate::index;
+use crate::index::{self, JournalIdMaps};
 use crate::journal;
 use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema};
@@ -22,15 +22,18 @@ pub struct Vault {
     schema: Schema,
     schema_versions: Vec<u32>,
     written: Arc<Mutex<BTreeSet<String>>>,
+    journal_ids: Arc<Mutex<JournalIdMaps>>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
 #[derive(Debug)]
 pub struct Collection {
     vault: PathBuf,
+    index_dir: PathBuf,
     can_write: bool,
     decl: CollectionDecl,
     written: Arc<Mutex<BTreeSet<String>>>,
+    journal_ids: Arc<Mutex<JournalIdMaps>>,
 }
 
 /// Result of inserting a record.
@@ -129,6 +132,7 @@ impl Vault {
         }
         let schema = schema::load(&path)?;
         let schema_versions = schema.versions();
+        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&index_dir, &schema)?));
         let written = Arc::new(Mutex::new(BTreeSet::new()));
         let vault = Self {
             path,
@@ -139,6 +143,7 @@ impl Vault {
             schema,
             schema_versions,
             written,
+            journal_ids,
         };
         if wrote_gitignore {
             vault.note_write(String::from(".gitignore"));
@@ -190,9 +195,11 @@ impl Vault {
         };
         Ok(Collection {
             vault: self.path.clone(),
+            index_dir: self.index_dir.clone(),
             can_write: self.write_lock.is_some(),
             decl: decl.clone(),
             written: Arc::clone(&self.written),
+            journal_ids: Arc::clone(&self.journal_ids),
         })
     }
 
@@ -263,7 +270,12 @@ impl Vault {
             return Err(Error::locked("reindex needs a write lock"));
         }
         let schema = schema::load(&self.path)?;
-        index::rebuild(&self.path, &schema, &self.index_dir)
+        let (counts, maps) = index::rebuild(&self.path, &schema, &self.index_dir)?;
+        *self
+            .journal_ids
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = maps;
+        Ok(counts)
     }
 }
 
@@ -272,6 +284,7 @@ impl Collection {
     fn stub() -> Self {
         Self {
             vault: PathBuf::new(),
+            index_dir: PathBuf::new(),
             can_write: true,
             decl: CollectionDecl {
                 name: String::from("c"),
@@ -288,6 +301,7 @@ impl Collection {
                 fields: Vec::new(),
             },
             written: Arc::new(Mutex::new(BTreeSet::new())),
+            journal_ids: Arc::new(Mutex::new(JournalIdMaps::default())),
         }
     }
 
@@ -390,7 +404,18 @@ impl Collection {
         self.require_write()?;
         match self.decl.kind {
             Kind::Journal => {
-                let (id, rel) = journal::insert_journal(&self.vault, &self.decl, record)?;
+                let mut maps = self
+                    .journal_ids
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                let (id, rel) = journal::insert_journal(
+                    &self.vault,
+                    &self.decl,
+                    record,
+                    &self.index_dir,
+                    &mut maps,
+                )?;
+                drop(maps);
                 self.note_write(rel);
                 Ok(InsertOne { id })
             }
@@ -405,7 +430,13 @@ impl Collection {
     /// Read one Record by `id`. Missing → `not_found`.
     pub fn find_one(&self, id: &str) -> Result<Record, Error> {
         match self.decl.kind {
-            Kind::Journal => journal::find_journal(&self.vault, &self.decl, id),
+            Kind::Journal => {
+                let maps = self
+                    .journal_ids
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                journal::find_journal(&self.vault, &self.decl, id, &maps)
+            }
             Kind::Document | Kind::Singleton => store::find_document(&self.vault, &self.decl, id),
         }
     }

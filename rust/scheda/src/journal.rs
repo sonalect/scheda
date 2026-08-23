@@ -1,5 +1,6 @@
 //! On-disk `journal` JSONL segments (C4).
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -7,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
+use crate::index::{self, JournalIdMaps};
 use crate::schema::{self, CollectionDecl, Kind, Schema, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
@@ -15,13 +17,26 @@ pub(crate) fn insert_journal(
     vault: &Path,
     decl: &CollectionDecl,
     record: Record,
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
 ) -> Result<(String, String), Error> {
     let (id, line) = prepare_line(decl, record)?;
-    if id_exists(vault, decl, &id)? {
-        return Err(Error::conflict(format!(
-            "record {id} already exists in {}",
-            decl.name
-        )));
+    match maps.contains(&decl.name, &id) {
+        Some(true) => {
+            return Err(Error::conflict(format!(
+                "record {id} already exists in {}",
+                decl.name
+            )));
+        }
+        Some(false) => {}
+        None => {
+            if id_exists(vault, decl, &id)? {
+                return Err(Error::conflict(format!(
+                    "record {id} already exists in {}",
+                    decl.name
+                )));
+            }
+        }
     }
     let dir = journal_dir(vault, decl)?;
     fs::create_dir_all(&dir)
@@ -29,14 +44,54 @@ pub(crate) fn insert_journal(
     let path = open_segment_path(&dir, decl, line.len() as u64)?;
     append_line(&path, &line)?;
     let rel = store::rel_posix(vault, &path)?;
+    if maps.contains(&decl.name, &id).is_some() {
+        index::remember_id(index_dir, maps, &decl.name, &id, &rel)?;
+    } else {
+        let ids = map_from_files(vault, decl)?;
+        index::rewrite_collection(index_dir, maps, &decl.name, ids)?;
+    }
     Ok((id, rel))
 }
 
-pub(crate) fn find_journal(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
+pub(crate) fn find_journal(
+    vault: &Path,
+    decl: &CollectionDecl,
+    id: &str,
+    maps: &JournalIdMaps,
+) -> Result<Record, Error> {
     if id.is_empty() {
         return Err(Error::invalid("id is empty"));
     }
+    match maps.lookup(&decl.name, id) {
+        index::MapLookup::UnknownId => Err(Error::not_found(format!(
+            "record {id} is not in {}",
+            decl.name
+        ))),
+        index::MapLookup::Path(rel) => find_in_segment(vault, decl, rel, id),
+        index::MapLookup::MissingMap => find_journal_scan(vault, decl, id),
+    }
+}
+
+fn find_journal_scan(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
     for (path, parsed) in scan_parsed(vault, decl)? {
+        if parsed.id == id {
+            return record_from_parsed(vault, decl, &path, parsed);
+        }
+    }
+    Err(Error::not_found(format!(
+        "record {id} is not in {}",
+        decl.name
+    )))
+}
+
+fn find_in_segment(
+    vault: &Path,
+    decl: &CollectionDecl,
+    rel: &str,
+    id: &str,
+) -> Result<Record, Error> {
+    let path = vault.join(rel);
+    for parsed in parse_segment(decl, &path)? {
         if parsed.id == id {
             return record_from_parsed(vault, decl, &path, parsed);
         }
@@ -60,7 +115,7 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
         if decl.kind != Kind::Journal {
             continue;
         }
-        let mut seen = std::collections::BTreeSet::new();
+        let mut seen = BTreeSet::new();
         for path in list_segments(&journal_dir(vault, decl)?)? {
             let rel = store::rel_posix(vault, &path)?;
             let raw = fs::read(&path)
@@ -422,17 +477,58 @@ fn scan_parsed(vault: &Path, decl: &CollectionDecl) -> Result<Vec<(PathBuf, Pars
     Ok(out)
 }
 
-pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64, u64), Error> {
+pub(crate) fn reindex_map(
+    vault: &Path,
+    decl: &CollectionDecl,
+) -> Result<(u64, u64, u64, BTreeMap<String, String>), Error> {
     let segments = list_segments(&journal_dir(vault, decl)?)?.len() as u64;
     let mut records = 0u64;
     let mut invalid = 0u64;
-    for record in scan_journal(vault, decl)? {
+    let mut ids = std::collections::BTreeMap::new();
+    for (path, parsed) in scan_parsed(vault, decl)? {
         records += 1;
+        let record = record_from_parsed(vault, decl, &path, parsed)?;
         if record.valid != Some(true) {
             invalid += 1;
         }
+        if let (Some(id), Some(rel)) = (record.id, record.path) {
+            ids.insert(id, rel);
+        }
     }
-    Ok((records, invalid, segments))
+    Ok((records, invalid, segments, ids))
+}
+
+fn map_from_files(vault: &Path, decl: &CollectionDecl) -> Result<BTreeMap<String, String>, Error> {
+    let mut ids = std::collections::BTreeMap::new();
+    for (path, parsed) in scan_parsed(vault, decl)? {
+        let rel = store::rel_posix(vault, &path)?;
+        ids.insert(parsed.id, rel);
+    }
+    Ok(ids)
+}
+
+fn parse_segment(decl: &CollectionDecl, path: &Path) -> Result<Vec<ParsedLine>, Error> {
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(err) => {
+            return Err(Error::io(format!("read {}: {err}", path.display())));
+        }
+    };
+    let Ok(text) = str::from_utf8(&raw) else {
+        return Ok(Vec::new());
+    };
+    if store::has_conflict_markers(text) {
+        return Ok(Vec::new());
+    }
+    let (complete, _) = split_complete(text);
+    let mut out = Vec::new();
+    for line in complete {
+        match parse_line(decl, line) {
+            Ok(parsed) => out.push(parsed),
+            Err(_) => break,
+        }
+    }
+    Ok(out)
 }
 
 fn split_complete(text: &str) -> (Vec<&str>, Option<&str>) {

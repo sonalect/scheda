@@ -42,6 +42,9 @@ API or on-disk format changes bump the minor.
 - `clone` / `remote_repo`, `auto_sync` fast-forward only, and
   `pull_remote` / `push_remote` / `sync_remote` (C7). Diverged histories
   are `not_fast_forward`; a failed push does not roll back the local commit.
+- Journal `id` map under `{vault}/.scheda/index/journal/` so `find_one` does
+  not scan unrelated segments; writer updates it on `insert_one`, `reindex`
+  rebuilds it (C8, IDX-5, OPS-1, OPS-3).
 
 ### Changed
 

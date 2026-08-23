@@ -1,33 +1,110 @@
-//! Disposable Index under `{vault}/.scheda/index` (IDX-1, IDX-2, LIB-16).
+//! Disposable Index under `{vault}/.scheda/index` (IDX-1, IDX-2, IDX-5, LIB-16).
 
-use std::fs;
-use std::path::Path;
+use std::collections::BTreeMap;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
 
 use crate::journal;
-use crate::schema::{Kind, Schema};
+use crate::schema::{self, Kind, Schema};
 use crate::store;
 use crate::{Error, ReindexCounts};
 
 pub(crate) const FORMAT_VERSION: u32 = 1;
 const FORMAT_FILE: &str = "format";
 const WRITE_LOCK: &str = "write.lock";
+const JOURNAL_DIR: &str = "journal";
+const IDS_FILE: &str = "ids";
+
+/// In-memory journal `(id → segment path)` maps, keyed by collection name.
+///
+/// A collection is absent until a map file has been written (`reindex` or the
+/// first writer `insert_one`). Absent means `find_one` must scan files.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct JournalIdMaps {
+    collections: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+#[derive(Debug)]
+pub(crate) enum MapLookup<'a> {
+    MissingMap,
+    UnknownId,
+    Path(&'a str),
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct IdMapLine {
+    id: String,
+    path: String,
+}
+
+impl JournalIdMaps {
+    pub(crate) fn lookup(&self, collection: &str, id: &str) -> MapLookup<'_> {
+        match self.collections.get(collection) {
+            None => MapLookup::MissingMap,
+            Some(ids) => match ids.get(id) {
+                Some(path) => MapLookup::Path(path.as_str()),
+                None => MapLookup::UnknownId,
+            },
+        }
+    }
+
+    pub(crate) fn contains(&self, collection: &str, id: &str) -> Option<bool> {
+        self.collections
+            .get(collection)
+            .map(|ids| ids.contains_key(id))
+    }
+
+    fn put(&mut self, collection: String, id: String, path: String) {
+        self.collections
+            .entry(collection)
+            .or_default()
+            .insert(id, path);
+    }
+
+    fn replace_collection(&mut self, collection: String, ids: BTreeMap<String, String>) {
+        self.collections.insert(collection, ids);
+    }
+}
+
+pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<JournalIdMaps, Error> {
+    let mut maps = JournalIdMaps::default();
+    for decl in schema.collections() {
+        if decl.kind != Kind::Journal {
+            continue;
+        }
+        let path = ids_path(index_dir, &decl.name);
+        if !path.is_file() {
+            continue;
+        }
+        if let Some(ids) = read_ids_file(&path)? {
+            maps.replace_collection(decl.name.clone(), ids);
+        }
+    }
+    Ok(maps)
+}
 
 pub(crate) fn rebuild(
     vault: &Path,
     schema: &Schema,
     index_dir: &Path,
-) -> Result<ReindexCounts, Error> {
+) -> Result<(ReindexCounts, JournalIdMaps), Error> {
     clear_except_lock(index_dir)?;
     let mut records_read = 0u64;
     let mut skipped_invalid = 0u64;
     let mut segments_seen = 0u64;
+    let mut maps = JournalIdMaps::default();
     for decl in schema.collections() {
         match decl.kind {
             Kind::Journal => {
-                let (records, invalid, segments) = journal::reindex_stats(vault, decl)?;
+                let (records, invalid, segments, ids) = journal::reindex_map(vault, decl)?;
                 records_read += records;
                 skipped_invalid += invalid;
                 segments_seen += segments;
+                write_ids_file(index_dir, &decl.name, &ids)?;
+                maps.replace_collection(decl.name.clone(), ids);
             }
             Kind::Document | Kind::Singleton => {
                 let (records, invalid) = store::reindex_stats(vault, decl)?;
@@ -37,10 +114,107 @@ pub(crate) fn rebuild(
         }
     }
     write_format(index_dir)?;
-    Ok(ReindexCounts::default()
-        .with_records_read(records_read)
-        .with_skipped_invalid(skipped_invalid)
-        .with_segments_seen(segments_seen))
+    Ok((
+        ReindexCounts::default()
+            .with_records_read(records_read)
+            .with_skipped_invalid(skipped_invalid)
+            .with_segments_seen(segments_seen),
+        maps,
+    ))
+}
+
+pub(crate) fn remember_id(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    collection: &str,
+    id: &str,
+    rel: &str,
+) -> Result<(), Error> {
+    append_ids_line(index_dir, collection, id, rel)?;
+    maps.put(collection.to_owned(), id.to_owned(), rel.to_owned());
+    Ok(())
+}
+
+pub(crate) fn rewrite_collection(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    collection: &str,
+    ids: BTreeMap<String, String>,
+) -> Result<(), Error> {
+    write_ids_file(index_dir, collection, &ids)?;
+    maps.replace_collection(collection.to_owned(), ids);
+    Ok(())
+}
+
+fn ids_path(index_dir: &Path, collection: &str) -> PathBuf {
+    index_dir
+        .join(JOURNAL_DIR)
+        .join(schema::collection_dir(collection))
+        .join(IDS_FILE)
+}
+
+fn read_ids_file(path: &Path) -> Result<Option<BTreeMap<String, String>>, Error> {
+    let raw = fs::read(path).map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
+    let Ok(text) = str::from_utf8(&raw) else {
+        return Ok(None);
+    };
+    let mut ids = BTreeMap::new();
+    for line in text.lines() {
+        if line.is_empty() {
+            continue;
+        }
+        let Ok(parsed) = serde_json::from_str::<IdMapLine>(line) else {
+            return Ok(None);
+        };
+        if parsed.id.is_empty() || parsed.path.is_empty() {
+            return Ok(None);
+        }
+        ids.insert(parsed.id, parsed.path);
+    }
+    Ok(Some(ids))
+}
+
+fn write_ids_file(
+    index_dir: &Path,
+    collection: &str,
+    ids: &BTreeMap<String, String>,
+) -> Result<(), Error> {
+    let path = ids_path(index_dir, collection);
+    let mut bytes = Vec::new();
+    for (id, rel) in ids {
+        let line = IdMapLine {
+            id: id.clone(),
+            path: rel.clone(),
+        };
+        let mut encoded = serde_json::to_vec(&line)
+            .map_err(|err| Error::io(format!("encode journal id map: {err}")))?;
+        encoded.push(b'\n');
+        bytes.extend_from_slice(&encoded);
+    }
+    store::atomic_write(&path, &bytes)
+}
+
+fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> Result<(), Error> {
+    let path = ids_path(index_dir, collection);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)
+            .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;
+    }
+    let line = IdMapLine {
+        id: id.to_owned(),
+        path: rel.to_owned(),
+    };
+    let mut encoded = serde_json::to_vec(&line)
+        .map_err(|err| Error::io(format!("encode journal id map: {err}")))?;
+    encoded.push(b'\n');
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|err| Error::io(format!("open {}: {err}", path.display())))?;
+    file.write_all(&encoded)
+        .map_err(|err| Error::io(format!("write {}: {err}", path.display())))?;
+    Ok(())
 }
 
 fn write_format(index_dir: &Path) -> Result<(), Error> {

@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.14, 24 August 2026.
+Document 7 of the Scheda package. Version 0.15, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -58,7 +58,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-15. `check`.** Validates Schema, encodings (STO-2), journal lines (STO-3), `id` uniqueness, conflict markers (GIT-4). **Later:** on an encrypted isolated root, validates age armor (ISO-8) and, when `secret` is present, that files decrypt. Does not write Records. Reports each problem with a code and path.
 
-**LIB-16. `reindex`.** IDX-1. Returns `api/v1` `ReindexCounts`: Records read, skipped invalid, segments seen. Needs the write lock. Writes Index format version `1` as `{vault}/.scheda/index/format` (one decimal integer and a newline).
+**LIB-16. `reindex`.** IDX-1. Returns `api/v1` `ReindexCounts`: Records read, skipped invalid, segments seen. Needs the write lock. Writes Index format version `1` as `{vault}/.scheda/index/format` (one decimal integer and a newline) and the journal `id` map (IDX-5).
 
 **LIB-17. `history(path)`.** GIT-3. **Core** for `document` / `singleton` / segment files. Line-level journal blame is **later**. Returns `api/v1` `HistoryEntry` values, newest first: commit hash, `google.protobuf.Timestamp` `time` (UTC; git stores whole seconds since epoch), author, message, and file bytes (`raw`). *Check:* two commits editing one `document`; snapshots match `git show`.
 
