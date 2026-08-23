@@ -60,8 +60,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
 
-      - name: Cache Bazel
-        uses: actions/cache@v6.1.0
+      - name: Restore Bazel cache
+        uses: actions/cache/restore@v6.1.0
         with:
           path: |
             ${{ env.BAZEL_DISK_CACHE }}
