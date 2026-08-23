@@ -6,5 +6,5 @@
 mod error;
 mod vault;
 
-pub use error::Error;
+pub use error::{Code, Error};
 pub use vault::{Collection, Document, Filter, InsertOne, ReplaceOne, SearchHits, Vault};

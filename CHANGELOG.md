@@ -11,6 +11,9 @@ API or on-disk format changes bump the minor.
 ### Added
 
 - Core development plan in `docs/11-core-plan.md` (stages C0–C9).
+- LIB-5 error codes on the Rust crate; LIB-2 names including `init` /
+  `clone` / `scan` / remote / `check` / `reindex`; `search` returns
+  `unsupported`.
 
 ### Changed
 

@@ -38,7 +38,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 
 | Stage | Status | What closes |
 |---|---|---|
-| [C0](#c0-skeleton) | in progress | Names, error codes, stubs; crate builds |
+| [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
 | [C1](#c1-working-tree-and-lock) | not started | `init` / `open`, lock, Index path, ISO-1 local |
 | [C2](#c2-schema) | not started | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | not started | Whole-file writes and `find_one` |
@@ -72,22 +72,18 @@ ranking).
 
 ## C0. Skeleton
 
-**Status:** in progress
+**Status:** done
 
 **Codes:** LIB-2 (required names exist), LIB-5 (typed codes exist), `07` §5.
 
-Today: the crate compiles; several methods are `todo!`. LIB-5 is a single
-`Rejected` variant. Missing names include `init`, `clone`, `scan`,
-`push_remote`, `pull_remote`, `sync_remote`, `check`, `reindex`, `history`.
-
 - [x] `bazel test //...` is green on the host.
 - [x] Library path has no `panic!` / `unwrap` / `expect` / `assert!` (`07` §5).
-- [ ] Every LIB-2 required name exists on the public surface (`search` may be
+- [x] Every LIB-2 required name exists on the public surface (`search` may be
       `unsupported`).
-- [ ] `Error` carries LIB-5 **core** codes: `not_found`, `invalid`, `conflict`,
+- [x] `Error` carries LIB-5 **core** codes: `not_found`, `invalid`, `conflict`,
       `not_fast_forward`, `locked`, `io`, `git`, `index_unusable`,
       `unsupported`. Negative tests assert **codes**, not only message text.
-- [ ] `search` (LIB-11) is `unsupported` or an empty stub that does not write.
+- [x] `search` (LIB-11) is `unsupported` or an empty stub that does not write.
 
 ---
 
