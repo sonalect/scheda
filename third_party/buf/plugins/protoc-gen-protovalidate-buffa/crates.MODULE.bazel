@@ -1,0 +1,25 @@
+"""crate_universe hub for protoc-gen-protovalidate-buffa."""
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "protoc_gen_protovalidate_buffa",
+    cargo_lockfile = "//third_party/buf/plugins/protoc-gen-protovalidate-buffa:Cargo.lock",
+    generate_binaries = True,
+    manifests = [
+        "//third_party/buf/plugins/protoc-gen-protovalidate-buffa:Cargo.toml",
+    ],
+)
+
+_PREFIX = "@scheda//third_party/buf/plugins/protoc-gen-protovalidate-buffa"
+
+crate.annotation(
+    build_script_data = ["{}:protoc_prefix".format(_PREFIX)],
+    build_script_env = {
+        "PROTOC": "$(execpath {}:protoc_prefix)/bin/protoc".format(_PREFIX),
+    },
+    crate = "protovalidate-buffa-protos",
+    data_glob = ["proto/**"],
+    label_injections = {"@scheda": "@scheda"},
+    repositories = ["protoc_gen_protovalidate_buffa"],
+)
+use_repo(crate, "protoc_gen_protovalidate_buffa")

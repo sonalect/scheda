@@ -10,7 +10,7 @@ readme = "../../README.md"
 
 [dependencies]
 git2 = { workspace = true }
-thiserror = { workspace = true }
+scheda-generated = { workspace = true }
 
 [lints]
 workspace = true

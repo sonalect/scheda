@@ -25,7 +25,7 @@ The design is a numbered package in `docs/`, in English.
 | [04-files-and-git.md](docs/04-files-and-git.md) | Files as truth, write lock, commit, `auto_sync`, `sync_remote`, clone, no LFS |
 | [05-schema.md](docs/05-schema.md) | Schema as Vault data: fields, versions, index marks, edges, journal size cap |
 | [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, find vs search, embedder, hybrid ranks, edge walks |
-| [07-api.md](docs/07-api.md) | Language-neutral library operations, error codes, git helpers; Rust as first binding |
+| [07-api.md](docs/07-api.md) | Language-neutral library operations; message fields in `api/v1` |
 | [08-agent.md](docs/08-agent.md) | Same operations for an AI agent, Schema catalog, thin transport |
 | [09-isolation.md](docs/09-isolation.md) | No network by default (**core**); isolated git root and age encryption (**later**) |
 | [10-roadmap.md](docs/10-roadmap.md) | Phases (core / search / agent / later), acceptance, size targets, open questions, deferrals |
@@ -36,8 +36,10 @@ The design is a numbered package in `docs/`, in English.
 | Path | Role |
 |---|---|
 | [`Cargo.toml`](Cargo.toml) | Workspace: members, pinned dependency versions, lints |
+| [`api/v1`](api/v1) | Library API messages (Protobuf edition 2024; not the Vault on-disk format) |
+| [`rust/generated`](rust/generated) | Generated Rust stubs (`scheda-generated`) from `api/v1` |
 | [`rust/scheda`](rust/scheda) | First implementation: Rust crate `scheda` |
-| [`MODULE.bazel`](MODULE.bazel) | Bazel module: host toolchain, crate_universe, linters |
+| [`MODULE.bazel`](MODULE.bazel) | Bazel module: host toolchain, crate_universe, Buf, linters |
 
 Dependency versions live only in the root `[workspace.dependencies]`. Member
 crates refer to them with `workspace = true`.
@@ -56,14 +58,23 @@ bazel build //rust/scheda:scheda
 bazel test //...
 ```
 
+Generate Rust stubs from `api/v1` (writes `rust/generated/api/v1/`; CI checks they match):
+
+```bash
+bazel run //api/v1:generate
+bazel test //api/v1:generate_tests
+```
+
 Lint (`bazel test` never rewrites files; format is `bazel run` only):
 
 ```bash
+bazel test //api/v1:lint        # Protobuf (buf)
 bazel test //rust:lint          # clippy
 bazel test //bazel:lint         # Starlark (buildifier)
 bazel test //bazel:markdown     # markdownlint-cli2
 bazel test //rust:vuln          # cargo-audit (needs network)
 
+bazel run //api/v1:format       # buf format
 bazel run //bazel:format        # buildifier -mode=fix
 ```
 

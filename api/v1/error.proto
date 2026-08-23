@@ -1,0 +1,31 @@
+// Library API failures (`07` LIB-5). Bindings and agent transport (`08`) use
+// proto3 JSON of these messages, not binary protobuf. Vault files stay
+// YAML / JSONL (`04`).
+
+edition = "2024";
+
+package api.v1;
+
+import "buf/validate/validate.proto";
+
+// Recoverable failure. `code` is the stable LIB-5 string; `message` must not
+// replace it.
+message Error {
+  string code = 1 [(buf.validate.field) = {
+    required: true
+    string: {
+      in: [
+        "not_found",
+        "invalid",
+        "conflict",
+        "not_fast_forward",
+        "locked",
+        "io",
+        "git",
+        "index_unusable",
+        "unsupported"
+      ]
+    }
+  }];
+  string message = 2;
+}

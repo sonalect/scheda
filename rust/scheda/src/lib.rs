@@ -7,7 +7,6 @@ mod error;
 mod git;
 mod vault;
 
-pub use error::{Code, Error};
-pub use vault::{
-    Collection, Document, Filter, InsertOne, OpenOptions, ReplaceOne, SearchHits, Vault,
-};
+pub use error::Code;
+pub use scheda_generated::api::v1::{Error, OpenOptions, Record};
+pub use vault::{Collection, Filter, InsertOne, ReplaceOne, SearchHits, Vault};

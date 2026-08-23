@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.4, 23 August 2026.
+Document 10 of the Scheda package. Version 0.5, 23 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. Terms are in `02`. Codes: `OPS`.
 
@@ -145,7 +145,7 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 
 **Hooks.** `04` already: Vault hooks are the consumer's and must not recurse into the same write lock. Worth a binding note when a CLI lands.
 
-Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); isolated Remote (no); homemade ciphertext (no); Git LFS (no).
+Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); isolated Remote (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`).
 
 ---
 

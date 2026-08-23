@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.1, 23 August 2026.
+Document 11 of the Scheda package. Version 0.3, 23 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -74,7 +74,8 @@ ranking).
 
 **Status:** done
 
-**Codes:** LIB-2 (required names exist), LIB-5 (typed codes exist), `07` §5.
+**Codes:** LIB-2 (required names exist), LIB-4 / LIB-7 / LIB-9 (`api/v1`
+envelope rules), LIB-5 (typed codes exist), `07` §5.
 
 - [x] `bazel test //...` is green on the host.
 - [x] Library path has no `panic!` / `unwrap` / `expect` / `assert!` (`07` §5).
@@ -84,6 +85,10 @@ ranking).
       `not_fast_forward`, `locked`, `io`, `git`, `index_unusable`,
       `unsupported`. Negative tests assert **codes**, not only message text.
 - [x] `search` (LIB-11) is `unsupported` or an empty stub that does not write.
+- [x] `init` / `open` / `clone` reject `OpenOptions` that fail `api/v1` field
+      rules (`invalid`) before creating a tree or taking the lock (`07` LIB-4).
+- [x] `insert_one` / `replace_one` reject a `Record` that fails `api/v1`
+      envelope rules (`invalid`) before Schema writes (`07` LIB-7, LIB-9).
 
 ---
 

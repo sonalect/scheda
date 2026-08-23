@@ -1,0 +1,14 @@
+version: v2
+plugins:
+  - remote: buf.build/anthropics/buffa:v0.9.1
+    out: rust/generated/api/v1
+    opt:
+      - json=true
+  - local: protoc-gen-buffa-packaging
+    out: rust/generated/api/v1
+    strategy: all
+  - local: protoc-gen-protovalidate-buffa
+    out: rust/generated/api/v1/validate
+    strategy: all
+    opt:
+      - proto_module=crate::generated

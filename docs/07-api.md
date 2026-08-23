@@ -1,8 +1,14 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.5, 23 August 2026.
+Document 7 of the Scheda package. Version 0.7, 23 August 2026.
 
-Language-neutral contract: operations, arguments, outcomes, and error codes. Bindings (Rust first; later Python, Java, Go, TypeScript, and others) use these names or a documented 1:1 mapping. Agent transport (`08`) is a shell over this API. Codes: `LIB`. Phase **core** unless marked **search** or **agent**.
+Language-neutral contract: operations, arguments, outcomes, and error codes.
+Message field names and constraints live in `api/v1` (Protobuf edition 2024,
+protovalidate rules). Bindings (Rust first; later Python, Java, Go,
+TypeScript, and others) use these names or a documented 1:1 mapping. A
+caller-supplied message that fails those rules is `invalid`, before Schema,
+git, or the write lock. Agent transport (`08`) is proto3 JSON of those
+messages. Codes: `LIB`. Phase **core** unless marked **search** or **agent**.
 
 Idioms of one language appear only in a sentence that names that language (`02`).
 
@@ -18,7 +24,7 @@ An assertion without a check is not a requirement.
 
 **LIB-3. Whole-record writes.** Mutation is `insert_one` or `replace_one` of the whole Record. There is no partial field patch. SQL against the Index is not a caller API. *Check:* `replace_one` on `journal` is a failure (`unsupported`).
 
-**LIB-4. Observable `open`.** After `open`, the caller can read: Vault path, Index path, whether this handle holds the write lock, Schema version(s), whether a Remote exists. **Later:** whether this isolated root is encrypted (ISO-5). No process-global singleton that forbids a second Vault. Options at `open` include Index directory, read vs write, `auto_sync` (GIT-10), and an embedder (IDX-8). **Later:** for an isolated root the encryption **secret** when `encrypt` was set at `init` (ISO-5). *Check (**core**):* two `open`s on different roots in one process.
+**LIB-4. Observable `open`.** After `open`, the caller can read: Vault path, Index path, whether this handle holds the write lock, Schema version(s), whether a Remote exists. **Later:** whether this isolated root is encrypted (ISO-5). No process-global singleton that forbids a second Vault. Options at `open` include Index directory, read vs write, `auto_sync` (GIT-10), and an embedder (IDX-8). **Later:** for an isolated root the encryption **secret** when `encrypt` was set at `init` (ISO-5). Missing or empty Index directory (`api/v1` `OpenOptions`) is `invalid` before the working tree is created or the lock is taken. *Check (**core**):* two `open`s on different roots in one process. *Check:* `init` / `open` with empty `index_dir` → `invalid`; the path is not a git working tree.
 
 **LIB-5. Failures are coded.** Every failure has a stable code plus an optional human message. The message must not replace the code. Codes in **core** include at least: `not_found`, `invalid`, `conflict` (git markers / unique `id`), `not_fast_forward` (GIT-10, GIT-11), `locked` (STO-4), `io`, `git`, `index_unusable` (QRY-4), `unsupported` (`replace_one` on `journal`). **Later:** `crypto` (ISO-5). *Check:* negative tests assert codes, not only message text.
 
@@ -30,11 +36,11 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 ## 2. Record I/O
 
-**LIB-7. `insert_one(collection, record)`.** Creates a `document` file, appends a journal line, or creates a `singleton` if absent (MOD-15–17). Returns the `id`. Validates Schema (SCH-12). Does not `commit`, `push_remote`, or `pull_remote`. *Check:* round-trip with `find_one`.
+**LIB-7. `insert_one(collection, record)`.** Creates a `document` file, appends a journal line, or creates a `singleton` if absent (MOD-15–17). Returns the `id`. The Record envelope must satisfy `api/v1` (`id` and `collection` present and non-empty) before Schema (SCH-12). Does not `commit`, `push_remote`, or `pull_remote`. *Check:* `insert_one` with empty `id` → `invalid`. *Check:* round-trip with `find_one`.
 
 **LIB-8. `find_one(collection, id)`.** Returns fields, body, path, raw bytes, and `valid` (false if the file exists but fails current Schema). Missing Record → code `not_found`, not an empty Record. **Later:** on an encrypted isolated root, fields/body/raw bytes are the **decrypted** Record (STO-2 plaintext), not the age armor on disk. *Check:* missing id → `not_found`; invalid old file → `valid: false` and bytes still present (SCH-12). *Check (**later**):* encrypted fixture → `find_one` bytes match `age -d` of the path.
 
-**LIB-9. `replace_one(collection, id, record)`.** Whole `document` or `singleton` only. `journal` → `unsupported`. *Check:* journal call fails; `find_one` matches the new record. **Later:** on an encrypted isolated root, the file at the path is age armor, not plaintext YAML.
+**LIB-9. `replace_one(collection, id, record)`.** Whole `document` or `singleton` only. `journal` → `unsupported`. The Record envelope must satisfy `api/v1` before Schema (SCH-12). *Check:* `replace_one` with empty `id` on the Record → `invalid`. *Check:* journal call fails; `find_one` matches the new record. **Later:** on an encrypted isolated root, the file at the path is age armor, not plaintext YAML.
 
 **LIB-10. `find(collection, filter)` / `scan(collection)`.** SCH-8 filters. List of Records (or ids plus optional bodies per request flag). No ranking. Empty filter or `scan` = every Record in the collection. Journal order is append order (QRY-7). `scan` is `find` with an empty filter; a binding may expose only one name if the other is a documented alias. *Check:* QRY-2, QRY-7.
 
@@ -83,8 +89,7 @@ That panic policy is **Rust**, not a requirement on other languages (Python, Jav
 
 ## 6. What this document does not decide
 
-Exact type field names in each binding — that binding's module docs, as long as LIB-2 holds.
-
-Agent JSON envelope — `08`.
+How a binding wraps generated types (builders, `Result`, exceptions) as long
+as proto field names and LIB-2 operation names hold.
 
 Isolated `encrypt` / `secret` / age armor — `09` (**later**).

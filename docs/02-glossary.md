@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.8, 23 August 2026.
+Document 2 of the Scheda package. Version 0.9, 23 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -134,7 +134,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 ## 6. Access
 
-**Library API** — the operations every implementation must provide, named in `07`. Language-neutral as a contract. The first binding is Rust.
+**Library API** — the operations every implementation must provide, named in `07`. Message fields are `api/v1` (Protobuf edition 2024). Language-neutral as a contract. The first binding is Rust.
 
 **`open`** — attach to an existing Vault working tree. Reads remotes locally (no fetch). Takes the write lock if opened for write. More than one Vault may be open in one process. Roots do not leak into each other's search.
 

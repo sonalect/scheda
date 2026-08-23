@@ -1,0 +1,18 @@
+load("@bazel_utils_buf//:protoc_prefix.bzl", "protoc_prefix")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+])
+
+# protovalidate-buffa-protos build.rs finds WKTs at $PROTOC/../../include.
+# protoc comes from protobuf's prebuilt toolchain, not @protobuf//:protoc.
+protoc_prefix(
+    name = "protoc_prefix",
+    wkts = [
+        "@protobuf//:descriptor_proto_srcs",
+        "@protobuf//:well_known_type_protos",
+    ],
+)

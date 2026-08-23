@@ -1,0 +1,28 @@
+// Record envelope (`07` LIB-7–10). Bindings and agent transport (`08`) use
+// proto3 JSON of these messages, not binary protobuf. Vault files stay
+// YAML / JSONL (`04`). Collection field names are Schema data, not this file.
+
+edition = "2024";
+
+package api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+
+// One collection record as the library returns it. `fields` is a JSON object
+// so missing keys stay missing (MOD-12) and JSON `null` stays null (MOD-18).
+message Record {
+  string id = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  string collection = 2 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  string path = 3;
+  bool valid = 4;
+  google.protobuf.Struct fields = 5;
+  string body = 6;
+  bytes raw = 7;
+}

@@ -1,0 +1,15 @@
+# Workspace buf config. Generate/lint copy this file; BSR deps stay remote.
+version: v2
+modules:
+  - path: .
+    includes:
+      - api
+deps:
+  - buf.build/bufbuild/protovalidate:v1.2.2
+  - buf.build/protocolbuffers/wellknowntypes
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

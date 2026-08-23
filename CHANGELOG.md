@@ -16,6 +16,11 @@ API or on-disk format changes bump the minor.
   `unsupported`.
 - `Vault::init` / `Vault::open` with explicit Index path, exclusive write
   lock (`locked`), and local Remote detection without fetch.
+- Language-neutral library messages in `api/v1` (Protobuf edition 2024);
+  Rust stubs via hermetic `buf generate` (buffa + protovalidate).
+- `init` / `open` / `clone` / `insert_one` / `replace_one` reject
+  `api/v1` input messages that fail generated protovalidate rules
+  (`invalid`).
 
 ### Changed
 
@@ -23,6 +28,15 @@ API or on-disk format changes bump the minor.
   `.cargo/config.toml`); proc-macros and build scripts stay dynamically
   linked.
 - Git operations go through `git2` (libgit2), not the `git` CLI.
+- Generated Rust stubs live in `rust/generated` (crate `scheda-generated`):
+  one buffa file per `.proto`, packaging `mod.rs`, and protovalidate
+  `Validate` impls.
+- The `scheda` crate uses generated `api/v1` messages (`Error`,
+  `OpenOptions`, `Record`) instead of parallel hand-written structs.
+
+### Removed
+
+- Unused workspace pins `thiserror` and `tempfile`.
 
 ## [0.0.1] - 2026-08-23
 

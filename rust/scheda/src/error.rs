@@ -1,5 +1,3 @@
-use thiserror::Error;
-
 /// Stable failure code shared by tests and agent transport (`07` LIB-5).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -16,7 +14,7 @@ pub enum Code {
     Locked,
     /// Filesystem failure.
     Io,
-    /// git subprocess or repository failure.
+    /// git2 or repository failure.
     Git,
     /// Index is missing, corrupt, or the wrong format.
     IndexUnusable,
@@ -41,84 +39,33 @@ impl Code {
             Self::Unsupported => "unsupported",
         }
     }
-}
 
-/// Recoverable failure from a Scheda operation.
-#[derive(Clone, Debug, Error, Eq, PartialEq)]
-#[error("{message}")]
-pub struct Error {
-    code: Code,
-    message: String,
-}
-
-impl Error {
     #[must_use]
-    pub fn new(code: Code, message: impl Into<String>) -> Self {
-        Self {
-            code,
-            message: message.into(),
+    pub fn parse(code: &str) -> Option<Self> {
+        match code {
+            "not_found" => Some(Self::NotFound),
+            "invalid" => Some(Self::Invalid),
+            "conflict" => Some(Self::Conflict),
+            "not_fast_forward" => Some(Self::NotFastForward),
+            "locked" => Some(Self::Locked),
+            "io" => Some(Self::Io),
+            "git" => Some(Self::Git),
+            "index_unusable" => Some(Self::IndexUnusable),
+            "unsupported" => Some(Self::Unsupported),
+            _ => None,
         }
     }
 
     #[must_use]
-    pub const fn code(&self) -> Code {
-        self.code
-    }
-
-    #[must_use]
-    pub fn message(&self) -> &str {
-        &self.message
-    }
-
-    #[must_use]
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self::new(Code::NotFound, message)
-    }
-
-    #[must_use]
-    pub fn invalid(message: impl Into<String>) -> Self {
-        Self::new(Code::Invalid, message)
-    }
-
-    #[must_use]
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self::new(Code::Conflict, message)
-    }
-
-    #[must_use]
-    pub fn not_fast_forward(message: impl Into<String>) -> Self {
-        Self::new(Code::NotFastForward, message)
-    }
-
-    #[must_use]
-    pub fn locked(message: impl Into<String>) -> Self {
-        Self::new(Code::Locked, message)
-    }
-
-    #[must_use]
-    pub fn io(message: impl Into<String>) -> Self {
-        Self::new(Code::Io, message)
-    }
-
-    #[must_use]
-    pub fn git(message: impl Into<String>) -> Self {
-        Self::new(Code::Git, message)
-    }
-
-    #[must_use]
-    pub fn index_unusable(message: impl Into<String>) -> Self {
-        Self::new(Code::IndexUnusable, message)
-    }
-
-    #[must_use]
-    pub fn unsupported(message: impl Into<String>) -> Self {
-        Self::new(Code::Unsupported, message)
+    pub fn of(err: &crate::Error) -> Option<Self> {
+        err.code.as_deref().and_then(Self::parse)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Code, Error};
+    use super::Code;
+    use crate::Error;
 
     #[test]
     fn code_strings_are_stable() {
@@ -136,21 +83,27 @@ mod tests {
     #[test]
     fn negative_tests_assert_code_not_only_message() {
         let err = Error::not_found("missing id");
-        assert_eq!(err.code(), Code::NotFound);
-        assert_eq!(err.code().as_str(), "not_found");
-        assert_eq!(err.message(), "missing id");
+        assert_eq!(Code::of(&err), Some(Code::NotFound));
+        assert_eq!(err.code.as_deref(), Some("not_found"));
+        assert_eq!(err.message.as_deref(), Some("missing id"));
         assert_eq!(err.to_string(), "missing id");
     }
 
     #[test]
     fn each_constructor_sets_its_code() {
-        assert_eq!(Error::invalid("x").code(), Code::Invalid);
-        assert_eq!(Error::conflict("x").code(), Code::Conflict);
-        assert_eq!(Error::not_fast_forward("x").code(), Code::NotFastForward);
-        assert_eq!(Error::locked("x").code(), Code::Locked);
-        assert_eq!(Error::io("x").code(), Code::Io);
-        assert_eq!(Error::git("x").code(), Code::Git);
-        assert_eq!(Error::index_unusable("x").code(), Code::IndexUnusable);
-        assert_eq!(Error::unsupported("x").code(), Code::Unsupported);
+        assert_eq!(Code::of(&Error::invalid("x")), Some(Code::Invalid));
+        assert_eq!(Code::of(&Error::conflict("x")), Some(Code::Conflict));
+        assert_eq!(
+            Code::of(&Error::not_fast_forward("x")),
+            Some(Code::NotFastForward)
+        );
+        assert_eq!(Code::of(&Error::locked("x")), Some(Code::Locked));
+        assert_eq!(Code::of(&Error::io("x")), Some(Code::Io));
+        assert_eq!(Code::of(&Error::git("x")), Some(Code::Git));
+        assert_eq!(
+            Code::of(&Error::index_unusable("x")),
+            Some(Code::IndexUnusable)
+        );
+        assert_eq!(Code::of(&Error::unsupported("x")), Some(Code::Unsupported));
     }
 }

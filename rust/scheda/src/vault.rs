@@ -2,39 +2,7 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use crate::git;
-use crate::Error;
-
-/// Options for [`Vault::init`] and [`Vault::open`] (LIB-4).
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct OpenOptions {
-    index_dir: PathBuf,
-    write: bool,
-    auto_sync: bool,
-}
-
-impl OpenOptions {
-    /// Index directory (GIT-13). Tests pass this explicitly (`10` §7).
-    #[must_use]
-    pub fn new(index_dir: impl Into<PathBuf>) -> Self {
-        Self {
-            index_dir: index_dir.into(),
-            write: true,
-            auto_sync: false,
-        }
-    }
-
-    #[must_use]
-    pub fn write(mut self, write: bool) -> Self {
-        self.write = write;
-        self
-    }
-
-    #[must_use]
-    pub fn auto_sync(mut self, auto_sync: bool) -> Self {
-        self.auto_sync = auto_sync;
-        self
-    }
-}
+use crate::{Error, OpenOptions, Record};
 
 /// A git working tree that holds collections of records.
 #[derive(Debug)]
@@ -50,12 +18,6 @@ pub struct Vault {
 #[derive(Debug)]
 pub struct Collection {
     name: String,
-}
-
-/// One collection record. Fields and body are not modelled yet.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Document {
-    pub id: String,
 }
 
 /// Field filter for `find`. Shape is not modelled yet.
@@ -81,6 +43,7 @@ pub struct SearchHits;
 impl Vault {
     /// Create a Vault at `path` (`git init`, no Remote). LIB-2 / GIT-9.
     pub fn init(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
+        options.require_valid()?;
         let path = path.as_ref();
         prepare_new_work_tree(path)?;
         git::init(path)?;
@@ -88,7 +51,8 @@ impl Vault {
     }
 
     /// Clone `url` into `path`. LIB-2 name `clone` (GIT-9).
-    pub fn clone(url: &str, path: impl AsRef<Path>, _options: OpenOptions) -> Result<Self, Error> {
+    pub fn clone(url: &str, path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
+        options.require_valid()?;
         let _url = url;
         let _path = path.as_ref();
         todo!("Vault::clone is not implemented (C7)")
@@ -96,6 +60,7 @@ impl Vault {
 
     /// Open an existing Vault at `path`.
     pub fn open(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
+        options.require_valid()?;
         let path = path.as_ref();
         if !git::is_work_tree(path) {
             return Err(Error::invalid(format!(
@@ -103,29 +68,28 @@ impl Vault {
                 path.display()
             )));
         }
+        let Some(index_dir) = options.index_dir.as_deref() else {
+            unreachable!("OpenOptions validate requires index_dir");
+        };
+        let write = options.write.unwrap_or(true);
+        let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path).map_err(|err| {
             Error::io(format!("canonicalize vault {}: {err}", path.display()))
         })?;
-        fs::create_dir_all(&options.index_dir).map_err(|err| {
-            Error::io(format!(
-                "create index directory {}: {err}",
-                options.index_dir.display()
-            ))
+        fs::create_dir_all(index_dir).map_err(|err| {
+            Error::io(format!("create index directory {index_dir}: {err}"))
         })?;
-        let index_dir = fs::canonicalize(&options.index_dir).map_err(|err| {
-            Error::io(format!(
-                "canonicalize index {}: {err}",
-                options.index_dir.display()
-            ))
+        let index_dir = fs::canonicalize(index_dir).map_err(|err| {
+            Error::io(format!("canonicalize index {index_dir}: {err}"))
         })?;
         reject_index_inside_vault(&path, &index_dir)?;
         let remotes = git::remotes(&path)?;
-        if options.auto_sync && !remotes.is_empty() {
+        if auto_sync && !remotes.is_empty() {
             return Err(Error::unsupported(
                 "auto_sync with a Remote is not implemented until C7",
             ));
         }
-        let write_lock = if options.write {
+        let write_lock = if write {
             Some(acquire_write_lock(&index_dir)?)
         } else {
             None
@@ -134,7 +98,7 @@ impl Vault {
             path,
             index_dir,
             remotes,
-            auto_sync: options.auto_sync,
+            auto_sync,
             write_lock,
         })
     }
@@ -213,30 +177,29 @@ impl Collection {
         &self.name
     }
 
-    pub fn insert_one(&self, document: Document) -> Result<InsertOne, Error> {
-        let _document = document;
+    pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
+        record.require_valid()?;
         todo!("Collection::insert_one is not implemented (C3)")
     }
 
-    pub fn find_one(&self, id: &str) -> Result<Option<Document>, Error> {
+    pub fn find_one(&self, id: &str) -> Result<Option<Record>, Error> {
         let _id = id;
         todo!("Collection::find_one is not implemented (C3)")
     }
 
     /// Replace a whole `document`. Errors on `journal`.
-    pub fn replace_one(&self, id: &str, document: Document) -> Result<ReplaceOne, Error> {
-        let _id = id;
-        let _document = document;
+    pub fn replace_one(&self, _id: &str, record: Record) -> Result<ReplaceOne, Error> {
+        record.require_valid()?;
         todo!("Collection::replace_one is not implemented (C3)")
     }
 
-    pub fn find(&self, filter: &Filter) -> Result<Vec<Document>, Error> {
+    pub fn find(&self, filter: &Filter) -> Result<Vec<Record>, Error> {
         let _filter = filter;
         todo!("Collection::find is not implemented (C5)")
     }
 
     /// `find` with an empty filter (LIB-10).
-    pub fn scan(&self) -> Result<Vec<Document>, Error> {
+    pub fn scan(&self) -> Result<Vec<Record>, Error> {
         self.find(&Filter)
     }
 
@@ -325,7 +288,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Code, Error};
+    use crate::{Code, Error, Record};
 
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -361,6 +324,57 @@ mod tests {
     }
 
     #[test]
+    fn init_rejects_empty_index_dir_before_creating_tree() {
+        let scratch = Scratch::new();
+        let err = Vault::init(scratch.vault(), OpenOptions::new("")).unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert!(!git::is_work_tree(&scratch.vault()));
+    }
+
+    #[test]
+    fn open_rejects_missing_index_dir() {
+        let scratch = Scratch::new();
+        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
+        drop(vault);
+        let err = Vault::open(scratch.vault(), OpenOptions::default()).unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn clone_rejects_invalid_options_before_c7() {
+        let scratch = Scratch::new();
+        let err = Vault::clone(
+            "https://example.invalid/scheda.git",
+            scratch.vault(),
+            OpenOptions::default(),
+        )
+        .unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn insert_one_rejects_empty_record_envelope() {
+        let collection = Collection {
+            name: String::from("notes"),
+        };
+        let err = collection
+            .insert_one(Record::default())
+            .expect_err("empty Record must fail envelope rules");
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn replace_one_rejects_empty_record_envelope() {
+        let collection = Collection {
+            name: String::from("notes"),
+        };
+        let err = collection
+            .replace_one("alpha", Record::default())
+            .expect_err("empty Record must fail envelope rules");
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
     fn search_is_unsupported_and_does_not_write() {
         let collection = Collection {
             name: String::from("notes"),
@@ -368,14 +382,14 @@ mod tests {
         let err = collection
             .search("anything")
             .expect_err("search must fail in core");
-        assert_eq!(err.code(), Code::Unsupported);
-        assert_eq!(err.code().as_str(), "unsupported");
+        assert_eq!(Code::of(&err), Some(Code::Unsupported));
+        assert_eq!(err.code.as_deref(), Some("unsupported"));
     }
 
     #[test]
     fn unsupported_code_is_not_only_the_message() {
         let err = Error::unsupported("replace_one on journal");
-        assert_eq!(err.code(), Code::Unsupported);
+        assert_eq!(Code::of(&err), Some(Code::Unsupported));
         assert_ne!(err.to_string(), "unsupported");
     }
 
@@ -424,8 +438,8 @@ mod tests {
         let scratch = Scratch::new();
         let _writer = Vault::init(scratch.vault(), scratch.options()).unwrap();
         let err = Vault::open(scratch.vault(), scratch.options()).unwrap_err();
-        assert_eq!(err.code(), Code::Locked);
-        assert_eq!(err.code().as_str(), "locked");
+        assert_eq!(Code::of(&err), Some(Code::Locked));
+        assert_eq!(err.code.as_deref(), Some("locked"));
     }
 
     #[test]
@@ -471,7 +485,7 @@ mod tests {
             OpenOptions::new(vault_path.join("nested-index")),
         )
         .unwrap_err();
-        assert_eq!(err.code(), Code::Invalid);
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
     }
 
     #[test]
@@ -485,7 +499,7 @@ mod tests {
             scratch.options().write(false).auto_sync(true),
         )
         .unwrap_err();
-        assert_eq!(err.code(), Code::Unsupported);
+        assert_eq!(Code::of(&err), Some(Code::Unsupported));
     }
 
     #[test]

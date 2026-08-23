@@ -1,0 +1,13 @@
+[package]
+name = "protoc-gen-protovalidate-buffa-v0-6-0"
+version = "0.6.0"
+edition = "2024"
+rust-version = "1.98.0"
+publish = false
+description = "Pins protoc-gen-protovalidate-buffa v0.6.0 (not an application crate)."
+
+[lib]
+path = "lib.rs"
+
+[dependencies]
+protoc-gen-protovalidate-buffa = { git = "https://github.com/mathematic-inc/protovalidate-buffa", tag = "v0.6.0" }

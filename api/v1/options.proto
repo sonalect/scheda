@@ -1,0 +1,20 @@
+// Options for `init` / `open` (`07` LIB-4, LIB-13). Bindings and agent
+// transport (`08`) use proto3 JSON of these messages, not binary protobuf.
+// Vault files stay YAML / JSONL (`04`).
+
+edition = "2024";
+
+package api.v1;
+
+import "buf/validate/validate.proto";
+
+// Index path, lock, and remote policy. Unset `write` means the binding default
+// (write). Unset `auto_sync` means off.
+message OpenOptions {
+  string index_dir = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  bool write = 2;
+  bool auto_sync = 3;
+}

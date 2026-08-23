@@ -47,7 +47,6 @@ Set the same `MAJOR.MINOR.PATCH` everywhere:
 - Root `MODULE.bazel`: `module(version = …)`
 - Root `Cargo.toml`: `[workspace.package] version` (members use
   `version.workspace = true`)
-- `rust/scheda/BUILD.bazel`: `rust_library` `version = …`
 - `CHANGELOG.md`: move `## [Unreleased]` notes into `## [MAJOR.MINOR.PATCH] -
   YYYY-MM-DD`; add the version to `## Links` and the reference definitions
   (`[Unreleased]` compare from the new tag, `[MAJOR.MINOR.PATCH]` release URL)

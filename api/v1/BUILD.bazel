@@ -1,0 +1,53 @@
+load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@bazel_utils_buf//:buf.bzl", "buf_format", "buf_generate", "buf_lint_test", "buf_module", "buf_plugin")
+
+filegroup(
+    name = "protos",
+    srcs = glob(["*.proto"]),
+    visibility = ["//visibility:public"],
+)
+
+buf_module(
+    name = "module",
+    srcs = [":protos"],
+    visibility = ["//visibility:public"],
+)
+
+buf_lint_test(
+    name = "lint",
+    size = "small",
+    module = ":module",
+)
+
+buf_format(
+    name = "format",
+    module = ":module",
+)
+
+buf_plugin(
+    name = "protoc-gen-buffa-packaging",
+    actual = "@protoc_gen_buffa_packaging_src//:protoc-gen-buffa-packaging",
+)
+
+buf_plugin(
+    name = "protoc-gen-protovalidate-buffa",
+    actual = "@protoc_gen_protovalidate_buffa//:protoc-gen-protovalidate-buffa__protoc-gen-protovalidate-buffa",
+)
+
+buf_generate(
+    name = "rust",
+    module = ":module",
+    plugins = [
+        ":protoc-gen-buffa-packaging",
+        ":protoc-gen-protovalidate-buffa",
+    ],
+    template = "//:buf.gen.rust.yaml",
+)
+
+write_source_files(
+    name = "generate",
+    check_that_out_file_exists = False,
+    files = {
+        "//rust/generated:api/v1": ":rust",
+    },
+)

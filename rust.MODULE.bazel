@@ -31,10 +31,12 @@ cargo.annotation(
     build_script_data_glob = ["libgit2/**"],
     build_script_use_default_shell_env = "on",
     crate = "libgit2-sys",
+    repositories = ["cargo"],
 )
 cargo.annotation(
     build_script_use_default_shell_env = "on",
     crate = "libz-sys",
+    repositories = ["cargo"],
 )
 cargo.from_cargo(
     name = "cargo",

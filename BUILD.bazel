@@ -2,6 +2,8 @@ exports_files([
     "MODULE.bazel",
     "Cargo.lock",
     "Cargo.toml",
+    "buf.yaml",
+    "buf.gen.rust.yaml",
     ".markdownlint-cli2.yaml",
 ])
 

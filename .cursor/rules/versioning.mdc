@@ -9,9 +9,9 @@ alwaysApply: false
 
 Follow `.cursor/skills/versioning/SKILL.md`.
 
-One `MAJOR.MINOR.PATCH` for Cargo workspace version, `MODULE.bazel`
-`module(version)`, and `rust/scheda/BUILD.bazel` `version`. Tags are `v` plus
-that number (`v0.0.1`). No `v` in Bazel/Cargo.
+One `MAJOR.MINOR.PATCH` for Cargo workspace version and `MODULE.bazel`
+`module(version)`. Tags are `v` plus that number (`v0.0.1`). No `v` in
+Bazel/Cargo.
 
 While major is 0: breaking API or on-disk format → minor; compatible work →
 patch. Do not tag or bump unless the user asked to release.

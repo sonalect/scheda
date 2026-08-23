@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.11, 23 August 2026.
+Document 1 of the Scheda package. Version 0.12, 23 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -74,7 +74,7 @@ A **Record** has a stable `id` in its collection and a path derived from the col
 
 **Index** is derived, lives outside git, is not part of a Vault backup, and can be deleted. Rebuild reads files. Search that needs the Index fails closed if the Index is junk: empty or error, not stale ids from a corrupt file.
 
-**Scheda** is a library in the caller's process. The first implementation is the Rust crate `scheda`; others (Python, Java, Go, TypeScript, and more) may follow. Every implementation must speak the same Vault layout and the same operations. A Scheda daemon or HTTP server is not required to read and write. Opening a Vault, writing, and lexical search do not call the network unless `auto_sync` or an explicit remote operation is on. An embedder, if any, is supplied by the caller; without it, vector search is off and the rest still works.
+**Scheda** is a library in the caller's process. The first implementation is the Rust crate `scheda`; others (Python, Java, Go, TypeScript, and more) may follow. Every implementation must speak the same Vault layout and the same operations. Shared message fields live in `api/v1` (Protobuf edition 2024); Vault files stay text. A Scheda daemon or HTTP server is not required to read and write. Opening a Vault, writing, and lexical search do not call the network unless `auto_sync` or an explicit remote operation is on. An embedder, if any, is supplied by the caller; without it, vector search is off and the rest still works.
 
 A collection may be **isolated** (**later**, `09`): another git working tree, never a Remote. `init` may set `encrypt` (default off). Encrypted Record files are [age](https://age-encryption.org/) ASCII armor; `open` takes one `secret` (passphrase or age identity). The main Vault is not encrypted.
 

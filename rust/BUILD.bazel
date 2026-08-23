@@ -5,6 +5,7 @@ rust_clippy_test(
     name = "lint",
     size = "small",
     targets = [
+        "//rust/generated:generated_v1",
         "//rust/scheda:scheda",
     ],
 )

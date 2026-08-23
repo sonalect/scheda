@@ -1,0 +1,25 @@
+"""crate_universe hub and crate source for protoc-gen-buffa-packaging."""
+
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Checksum from https://crates.io/api/v1/crates/protoc-gen-buffa-packaging/0.9.1
+http_archive(
+    name = "protoc_gen_buffa_packaging_src",
+    build_file = "//third_party/buf/plugins/protoc-gen-buffa-packaging:protoc-gen-buffa-packaging.BUILD.bazel",
+    sha256 = "3c7511e0e3c5d2aca80d4138b72b219c141cd6decb879c6a6fb697036c4f27f8",
+    strip_prefix = "protoc-gen-buffa-packaging-0.9.1",
+    type = "tar.gz",
+    urls = [
+        "https://static.crates.io/crates/protoc-gen-buffa-packaging/protoc-gen-buffa-packaging-0.9.1.crate",
+    ],
+)
+
+crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+crate.from_cargo(
+    name = "protoc_gen_buffa_packaging",
+    cargo_lockfile = "//third_party/buf/plugins/protoc-gen-buffa-packaging:Cargo.lock",
+    manifests = [
+        "//third_party/buf/plugins/protoc-gen-buffa-packaging:Cargo.toml",
+    ],
+)
+use_repo(crate, "protoc_gen_buffa_packaging")

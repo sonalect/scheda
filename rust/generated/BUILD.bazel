@@ -1,0 +1,29 @@
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+exports_files([
+    "Cargo.toml",
+    # Destination for //api/v1:generate → rust/generated/api/v1 (directory sync).
+    "api/v1",
+])
+
+rust_library(
+    name = "generated_v1",
+    srcs = ["lib.rs"] + glob(
+        ["api/v1/**/*.rs"],
+        allow_empty = True,
+    ),
+    crate_name = "scheda_generated",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@cargo//:buffa",
+        "@cargo//:buffa-types",
+        "@cargo//:protovalidate-buffa",
+        "@cargo//:serde",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "generated_v1_test",
+    crate = ":generated_v1",
+)
