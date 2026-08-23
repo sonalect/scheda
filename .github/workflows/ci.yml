@@ -37,6 +37,7 @@ jobs:
             binutils \
             ca-certificates \
             curl \
+            g++ \
             gcc \
             git \
             libc6-dev \
