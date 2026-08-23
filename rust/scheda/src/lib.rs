@@ -13,13 +13,15 @@
 mod error;
 mod fnv;
 mod git;
+mod index;
 mod journal;
+mod query;
 mod schema;
 mod store;
 mod vault;
 
 pub use error::Code;
 #[doc(inline)]
-pub use scheda_generated::api::v1::{Error, OpenOptions, Record};
+pub use scheda_generated::api::v1::{Error, Filter, OpenOptions, Record, ReindexCounts};
 pub use schema::{Kind, collection_dir};
-pub use vault::{Collection, Filter, InsertOne, ReplaceOne, SearchHits, Vault};
+pub use vault::{Collection, InsertOne, ReplaceOne, SearchHits, Vault};

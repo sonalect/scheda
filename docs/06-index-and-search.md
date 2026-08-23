@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.6, 23 August 2026.
+Document 6 of the Scheda package. Version 0.7, 23 August 2026.
 
 Normative rules for the derived Index, `find_one` / `find` / `search`, embedders, and edge walks. Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`, `REL`. Phase **core** or **search** as marked.
 
@@ -12,7 +12,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 **IDX-1. Rebuild from files.** The Index directory is `{vault}/.scheda/` (gitignored; GIT-13). It is not part of a Vault commit or backup. `reindex` reads Schema and Records and rebuilds it. *Check (**core**):* delete `.scheda/`, `reindex`; `find_one` and (when **search** is on) a fixture query set match the files.
 
-**IDX-2. Versioned format.** The Index carries its own format version. An incompatible file is not read “as best effort”: `reindex` or error. *Check (**core**):* corrupt or unknown version → `search` returns no hits or a failure, never another Vault's ids (QRY-4).
+**IDX-2. Versioned format.** The Index carries its own format version. **Core** writes `{vault}/.scheda/index/format`: one decimal integer (currently `1`) and a newline. An incompatible or corrupt file is not read “as best effort”: `reindex` or `index_unusable`. `find_one` / `find` still read Vault files. *Check (**core**):* corrupt or unknown version → `search` returns no hits or a failure, never another Vault's ids (QRY-4); `find_one` still matches the files.
 
 **IDX-3. Invalid Records stay out of search.** Files that fail current Schema (SCH-12) are omitted from lexical, vector, and edge indexes until they validate. `find_one` still returns them with a validity flag (`07`). *Check (**search**):* tightened Schema; old file is absent from `search` and present in `find_one`.
 
@@ -28,7 +28,7 @@ Writes (`insert_one` / `replace_one`) update this map in the same process when t
 
 **QRY-1. `find_one`.** Read by `(collection, id)` returns fields, body (if any), path, and file bytes. Missing Record is a failure, or a documented empty result if `07` chooses that shape — one shape per implementation. It is not a blank document. Encrypted isolated: returned bytes are decrypted (LIB-8). That clause is **later**. *Check (**core**):* round-trip `insert_one` / `find_one` matches stored fields under MOD-12.
 
-**QRY-2. `find`.** Field filters declared in SCH-8: equality (including `null`), set membership, existence, and `document` path-prefix. Applied before any ranking. Unmarked fields cannot be filtered. An empty filter (no constraints) returns every Record in the collection. *Check (**core**):* a Record that fails the filter is absent from the result list, not only from a later top-k; empty filter on a three-Record fixture returns three.
+**QRY-2. `find`.** Field filters declared in SCH-8: equality (including `null`), set membership, existence, and `document` / `singleton` path-prefix (`07` LIB-10). Applied before any ranking. Unmarked fields cannot be filtered. An empty filter (no constraints) returns every Record in the collection. *Check (**core**):* a Record that fails the filter is absent from the result list, not only from a later top-k; empty filter on a three-Record fixture returns three.
 
 `find` does not use vectors or FTS. That is `search`.
 

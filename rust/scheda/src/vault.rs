@@ -2,10 +2,12 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use crate::git;
+use crate::index;
 use crate::journal;
+use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema};
 use crate::store;
-use crate::{Error, OpenOptions, Record};
+use crate::{Error, Filter, OpenOptions, Record, ReindexCounts};
 
 /// A git working tree that holds collections of records.
 #[derive(Debug)]
@@ -26,10 +28,6 @@ pub struct Collection {
     can_write: bool,
     decl: CollectionDecl,
 }
-
-/// Field filter for `find`. Shape is not modelled yet.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Filter;
 
 /// Result of inserting a record.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -190,8 +188,12 @@ impl Vault {
         journal::check_journals(&self.path, &schema)
     }
 
-    pub fn reindex(&self) -> Result<(), Error> {
-        todo!("Vault::reindex is not implemented (C5)")
+    pub fn reindex(&self) -> Result<ReindexCounts, Error> {
+        if self.write_lock.is_none() {
+            return Err(Error::locked("reindex needs a write lock"));
+        }
+        let schema = schema::load(&self.path)?;
+        index::rebuild(&self.path, &schema, &self.index_dir)
     }
 }
 
@@ -341,16 +343,24 @@ impl Collection {
 
     /// SCH-8 filters. An empty filter (or [`scan`](Self::scan)) returns every Record.
     pub fn find(&self, filter: &Filter) -> Result<Vec<Record>, Error> {
-        let _filter = filter;
-        match self.decl.kind {
-            Kind::Journal => journal::scan_journal(&self.vault, &self.decl),
-            Kind::Document | Kind::Singleton => store::scan_documents(&self.vault, &self.decl),
+        filter.require_valid()?;
+        query::validate(&self.decl, filter)?;
+        let records = match self.decl.kind {
+            Kind::Journal => journal::scan_journal(&self.vault, &self.decl)?,
+            Kind::Document | Kind::Singleton => store::scan_documents(&self.vault, &self.decl)?,
+        };
+        let mut out = Vec::new();
+        for record in records {
+            if query::matches(&self.decl, &record, filter)? {
+                out.push(record);
+            }
         }
+        Ok(out)
     }
 
     /// `find` with an empty filter (LIB-10).
     pub fn scan(&self) -> Result<Vec<Record>, Error> {
-        self.find(&Filter)
+        self.find(&Filter::default())
     }
 
     /// Hybrid retrieval. Not in **core** (LIB-11).

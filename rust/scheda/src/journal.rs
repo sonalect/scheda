@@ -85,6 +85,14 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
                         parsed.id, decl.name
                     )));
                 }
+                if let Err(err) = store::validate_fields(
+                    &parsed.fields,
+                    &decl.fields,
+                    Some(decl.id_field.as_str()),
+                    false,
+                ) {
+                    return Err(Error::invalid(format!("{rel}: {err}")));
+                }
             }
         }
     }
@@ -411,6 +419,19 @@ fn scan_parsed(vault: &Path, decl: &CollectionDecl) -> Result<Vec<(PathBuf, Pars
         }
     }
     Ok(out)
+}
+
+pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64, u64), Error> {
+    let segments = list_segments(&journal_dir(vault, decl)?)?.len() as u64;
+    let mut records = 0u64;
+    let mut invalid = 0u64;
+    for record in scan_journal(vault, decl)? {
+        records += 1;
+        if record.valid != Some(true) {
+            invalid += 1;
+        }
+    }
+    Ok((records, invalid, segments))
 }
 
 fn split_complete(text: &str) -> (Vec<&str>, Option<&str>) {

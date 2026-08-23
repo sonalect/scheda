@@ -2,6 +2,7 @@
 
 include!("api.v1.error.rs");
 include!("api.v1.options.rs");
+include!("api.v1.query.rs");
 include!("api.v1.record.rs");
 #[allow(
     non_camel_case_types,
@@ -22,12 +23,30 @@ pub mod __buffa {
         use super::*;
         include!("api.v1.error.__view.rs");
         include!("api.v1.options.__view.rs");
+        include!("api.v1.query.__view.rs");
         include!("api.v1.record.__view.rs");
+        pub mod oneof {
+            #[allow(unused_imports)]
+            use super::*;
+            include!("api.v1.query.__view_oneof.rs");
+        }
+    }
+    pub mod oneof {
+        #[allow(unused_imports)]
+        use super::*;
+        include!("api.v1.query.__oneof.rs");
     }
     /// Register this package's `Any` type entries and extension entries.
     pub fn register_types(reg: &mut ::buffa::type_registry::TypeRegistry) {
         reg.register_json_any(super::__ERROR_JSON_ANY);
         reg.register_json_any(super::__OPEN_OPTIONS_JSON_ANY);
+        reg.register_json_any(super::__FILTER_JSON_ANY);
+        reg.register_json_any(super::__FILTER_CLAUSE_JSON_ANY);
+        reg.register_json_any(super::__EQUAL_JSON_ANY);
+        reg.register_json_any(super::__SET_JSON_ANY);
+        reg.register_json_any(super::__EXISTS_JSON_ANY);
+        reg.register_json_any(super::__PATH_PREFIX_JSON_ANY);
+        reg.register_json_any(super::__REINDEX_COUNTS_JSON_ANY);
         reg.register_json_any(super::__RECORD_JSON_ANY);
     }
 }
@@ -39,6 +58,34 @@ pub use self::__buffa::view::ErrorOwnedView;
 pub use self::__buffa::view::OpenOptionsView;
 #[doc(inline)]
 pub use self::__buffa::view::OpenOptionsOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::FilterView;
+#[doc(inline)]
+pub use self::__buffa::view::FilterOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::FilterClauseView;
+#[doc(inline)]
+pub use self::__buffa::view::FilterClauseOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::EqualView;
+#[doc(inline)]
+pub use self::__buffa::view::EqualOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SetView;
+#[doc(inline)]
+pub use self::__buffa::view::SetOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::ExistsView;
+#[doc(inline)]
+pub use self::__buffa::view::ExistsOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::PathPrefixView;
+#[doc(inline)]
+pub use self::__buffa::view::PathPrefixOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::ReindexCountsView;
+#[doc(inline)]
+pub use self::__buffa::view::ReindexCountsOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::RecordView;
 #[doc(inline)]

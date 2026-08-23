@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.7, 23 August 2026.
+Document 11 of the Scheda package. Version 0.8, 23 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -42,7 +42,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | [C2](#c2-schema) | done | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | done | Whole-file writes and `find_one` |
 | [C4](#c4-journal-segments) | done | Append, rotate, scan `find_one` |
-| [C5](#c5-find-check-reindex) | not started | Filters, `check`, disposable Index |
+| [C5](#c5-find-check-reindex) | done | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | not started | `commit`, `history` of a path |
 | [C7](#c7-remote) | not started | `clone`, `auto_sync`, push/pull/sync |
 | [C8](#c8-journal-id-map-and-size) | not started | IDX-5, OPS-1, OPS-3 |
@@ -201,25 +201,25 @@ LIB-9, LIB-18, QRY-7 (empty `find` / `scan`).
 
 ## C5. `find`, `check`, `reindex`
 
-**Status:** not started
+**Status:** done
 
 **Codes:** QRY-2, LIB-10, LIB-15, LIB-16, IDX-1, IDX-2, STO-1, GIT-4, SCH-8,
 SCH-12.
 
-- [ ] SCH-8 filters: equality (including `null`), set, existence, `document`
+- [x] SCH-8 filters: equality (including `null`), set, existence, `document`
       path-prefix. Unmarked field → error. Empty filter returns every Record
       (QRY-2, LIB-10).
-- [ ] `scan` is empty `find` or a documented alias (LIB-10).
-- [ ] `check` reports Schema, encoding, journal lines, `id` uniqueness,
+- [x] `scan` is empty `find` or a documented alias (LIB-10).
+- [x] `check` reports Schema, encoding, journal lines, `id` uniqueness,
       conflict markers — with a code and path; it does not write Records
       (LIB-15, GIT-4, STO-2, STO-3).
-- [ ] Conflict markers in a `document` → unreadable; `check` fails (GIT-4).
-- [ ] `reindex` rebuilds the Index from files; returns Records read, skipped
+- [x] Conflict markers in a `document` → unreadable; `check` fails (GIT-4).
+- [x] `reindex` rebuilds the Index from files; returns Records read, skipped
       invalid, segments seen (IDX-1, LIB-16).
-- [ ] Delete the Index, `reindex`; Records match the files (STO-1, IDX-1).
-- [ ] Index format version: unknown/corrupt → `reindex` or `index_unusable`;
+- [x] Delete the Index, `reindex`; Records match the files (STO-1, IDX-1).
+- [x] Index format version: unknown/corrupt → `reindex` or `index_unusable`;
       never another Vault's ids (IDX-2). `find_one` still reads files.
-- [ ] Invalid old files stay `find_one`-able with `valid: false` (SCH-12).
+- [x] Invalid old files stay `find_one`-able with `valid: false` (SCH-12).
 
 ---
 

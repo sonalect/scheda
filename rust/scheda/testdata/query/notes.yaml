@@ -1,0 +1,14 @@
+name: query_notes
+kind: document
+schema_version: 1
+layout: notes/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true
+  - name: tag
+    type: string
+    nullable: true
+    filter: true
+  - name: secret
+    type: string

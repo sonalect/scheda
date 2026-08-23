@@ -1,0 +1,8 @@
+name: query_log
+kind: journal
+schema_version: 1
+layout: log/
+fields:
+  - name: tag
+    type: string
+    filter: true

@@ -93,6 +93,7 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
         if !matches!(decl.kind, Kind::Document | Kind::Singleton) {
             continue;
         }
+        let mut seen = std::collections::BTreeSet::new();
         for path in list_files(vault, decl)? {
             let rel = rel_posix(vault, &path)?;
             let raw = fs::read(&path)
@@ -103,6 +104,20 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
                 return Err(Error::conflict(format!("{rel} has git conflict markers")));
             }
             let parsed = parse_file(decl, text)?;
+            if !seen.insert(parsed.id.clone()) {
+                return Err(Error::conflict(format!(
+                    "duplicate id {} in {}",
+                    parsed.id, decl.name
+                )));
+            }
+            if let Err(err) = validate_fields(
+                &parsed.fields,
+                &decl.fields,
+                Some(decl.id_field.as_str()),
+                false,
+            ) {
+                return Err(Error::invalid(format!("{rel}: {err}")));
+            }
             let expected = vault_rel(decl, &instantiate_path(decl, &parsed.id, &parsed.fields)?);
             if expected != rel {
                 return Err(Error::invalid(format!(
@@ -329,6 +344,19 @@ pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<
         out.push(read_file(vault, decl, &path)?);
     }
     Ok(out)
+}
+
+pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64), Error> {
+    let mut records = 0u64;
+    let mut invalid = 0u64;
+    for path in list_files(vault, decl)? {
+        let record = read_file(vault, decl, &path)?;
+        records += 1;
+        if record.valid != Some(true) {
+            invalid += 1;
+        }
+    }
+    Ok((records, invalid))
 }
 
 fn match_template(

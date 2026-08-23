@@ -189,7 +189,7 @@ fn empty_find_and_scan_keep_append_order_across_rotate() {
         .map(|record| record.id.unwrap())
         .collect();
     let find_ids: Vec<_> = collection
-        .find(&Filter)
+        .find(&Filter::default())
         .unwrap()
         .into_iter()
         .map(|record| record.id.unwrap())

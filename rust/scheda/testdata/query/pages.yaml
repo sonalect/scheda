@@ -1,0 +1,12 @@
+name: query_pages
+kind: document
+schema_version: 1
+layout:
+  - personal/{id}.md
+  - projects/{project}/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true
+  - name: project
+    type: string

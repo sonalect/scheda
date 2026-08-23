@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.8, 23 August 2026.
+Document 7 of the Scheda package. Version 0.9, 23 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -42,7 +42,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-9. `replace_one(collection, id, record)`.** Whole `document` or `singleton` only. `journal` → `unsupported`. The Record envelope must satisfy `api/v1` before Schema (SCH-12). *Check:* `replace_one` with empty `id` on the Record → `invalid`. *Check:* journal call fails; `find_one` matches the new record. **Later:** on an encrypted isolated root, the file at the path is age armor, not plaintext YAML.
 
-**LIB-10. `find(collection, filter)` / `scan(collection)`.** SCH-8 filters. List of Records (or ids plus optional bodies per request flag). No ranking. Empty filter or `scan` = every Record in the collection. Journal order is append order (QRY-7). `scan` is `find` with an empty filter; a binding may expose only one name if the other is a documented alias. *Check:* QRY-2, QRY-7.
+**LIB-10. `find(collection, filter)` / `scan(collection)`.** SCH-8 filters as `api/v1` `Filter`: `equal` (JSON `null` is stored `null`, not absent), `set`, `exists`, and `path_prefix` (vault-relative POSIX prefix of Record `path`; `document` / `singleton` only). Clauses AND. Unmarked field → `invalid`. Empty `clauses` or `scan` = every Record. Journal order is append order (QRY-7). `scan` is `find` with an empty filter; a binding may expose only one name if the other is a documented alias. *Check:* QRY-2, QRY-7.
 
 **LIB-11. `search(query)`.** Hybrid retrieval (QRY-3–6). Input: text, optional collection scope, optional `find` filter, `k`, optional merge weights. Output: ordered hits with `(collection, id)`, path, per-leg scores. **Search.** *Check:* fixture ids all appear at the given `k`.
 
@@ -58,7 +58,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-15. `check`.** Validates Schema, encodings (STO-2), journal lines (STO-3), `id` uniqueness, conflict markers (GIT-4). **Later:** on an encrypted isolated root, validates age armor (ISO-8) and, when `secret` is present, that files decrypt. Does not write Records. Reports each problem with a code and path.
 
-**LIB-16. `reindex`.** IDX-1. Returns counts: Records read, skipped invalid, segments seen.
+**LIB-16. `reindex`.** IDX-1. Returns `api/v1` `ReindexCounts`: Records read, skipped invalid, segments seen. Needs the write lock. Writes Index format version `1` as `{vault}/.scheda/index/format` (one decimal integer and a newline).
 
 **LIB-17. `history(path)`.** GIT-3. **Core** for `document` / `singleton` / segment files. Line-level journal blame is **later**.
 

@@ -122,6 +122,13 @@ impl api::v1::OpenOptions {
     }
 }
 
+impl api::v1::Filter {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
 impl api::v1::Record {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
@@ -133,7 +140,7 @@ impl api::v1::Record {
 mod tests {
     use protovalidate_buffa::Validate;
 
-    use super::api::v1::{Error, OpenOptions, Record};
+    use super::api::v1::{Error, Filter, OpenOptions, Record};
 
     #[test]
     fn error_json_uses_lib5_code_string() {
@@ -178,6 +185,12 @@ mod tests {
     fn open_options_default_is_valid() {
         assert!(OpenOptions::default().validate().is_ok());
         assert!(OpenOptions::new().require_valid().is_ok());
+    }
+
+    #[test]
+    fn empty_filter_is_valid() {
+        assert!(Filter::default().validate().is_ok());
+        assert!(Filter::default().require_valid().is_ok());
     }
 
     #[test]

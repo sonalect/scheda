@@ -33,6 +33,9 @@ API or on-disk format changes bump the minor.
   eight-digit hex segments (`00000001.jsonl`) without rewriting closed
   files; `find_one` / empty `find` / `scan` read by `(collection, id)` in
   append order.
+- SCH-8 `find` filters (`equal` / `set` / `exists` / `path_prefix`),
+  `scan` as empty `find`, `check` with code+path, and `reindex` that
+  writes Index format version `1` and returns `ReindexCounts` (C5).
 
 ### Changed
 

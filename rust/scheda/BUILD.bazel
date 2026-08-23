@@ -31,6 +31,18 @@ rust_test(
 )
 
 rust_test(
+    name = "query_test",
+    srcs = ["tests/query.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/query.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "scheda_test",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
