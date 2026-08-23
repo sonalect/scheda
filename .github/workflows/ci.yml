@@ -36,12 +36,16 @@ jobs:
           apt-get install -y --no-install-recommends \
             binutils \
             ca-certificates \
+            cmake \
             curl \
             g++ \
             gcc \
             git \
             libc6-dev \
-            patch
+            make \
+            patch \
+            pkg-config \
+            zlib1g-dev
 
       - name: Install Bazelisk
         run: |

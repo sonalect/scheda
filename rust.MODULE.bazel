@@ -25,6 +25,17 @@ cargo = use_extension(
     "@rules_rust//crate_universe:extensions.bzl",
     "crate",
 )
+
+# libgit2-sys / libz-sys need cmake and pkg-config on PATH.
+cargo.annotation(
+    build_script_data_glob = ["libgit2/**"],
+    build_script_use_default_shell_env = "on",
+    crate = "libgit2-sys",
+)
+cargo.annotation(
+    build_script_use_default_shell_env = "on",
+    crate = "libz-sys",
+)
 cargo.from_cargo(
     name = "cargo",
     cargo_lockfile = "//:Cargo.lock",

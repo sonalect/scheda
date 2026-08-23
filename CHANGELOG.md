@@ -22,6 +22,7 @@ API or on-disk format changes bump the minor.
 - Target crates link with `+crt-static` (Bazel `extra_rustc_flags` and
   `.cargo/config.toml`); proc-macros and build scripts stay dynamically
   linked.
+- Git operations go through `git2` (libgit2), not the `git` CLI.
 
 ## [0.0.1] - 2026-08-23
 

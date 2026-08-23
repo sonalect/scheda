@@ -9,6 +9,7 @@ description = "Git-backed document store: text files as truth, derived index, li
 readme = "../../README.md"
 
 [dependencies]
+git2 = { workspace = true }
 thiserror = { workspace = true }
 
 [lints]

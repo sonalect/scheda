@@ -48,7 +48,8 @@ The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.2.0**
 Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
 Target crates link with `+crt-static` (glibc PIE); proc-macros and build
-scripts stay dynamic.
+scripts stay dynamic. Vendored libgit2 (`git2`) needs **cmake**, **pkg-config**,
+and zlib headers on the host; CI installs them.
 
 ```bash
 bazel build //rust/scheda:scheda

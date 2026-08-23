@@ -10,7 +10,10 @@ rust_library(
     rustc_flags = ["-Dwarnings"],
     version = "0.0.1",
     visibility = ["//visibility:public"],
-    deps = ["@cargo//:thiserror"],
+    deps = [
+        "@cargo//:git2",
+        "@cargo//:thiserror",
+    ],
 )
 
 rust_test(

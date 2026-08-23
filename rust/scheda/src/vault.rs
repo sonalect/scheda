@@ -83,7 +83,7 @@ impl Vault {
     pub fn init(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
         let path = path.as_ref();
         prepare_new_work_tree(path)?;
-        git::run(path, &["init", "--quiet"])?;
+        git::init(path)?;
         Self::open(path, options)
     }
 
@@ -320,7 +320,7 @@ fn acquire_write_lock(index_dir: &Path) -> Result<File, Error> {
 mod tests {
     use std::fs;
     use std::path::PathBuf;
-    use std::process::{self, Command};
+    use std::process;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{Collection, OpenOptions, Vault};
@@ -399,11 +399,9 @@ mod tests {
             scratch.index().canonicalize().unwrap().as_path()
         );
         assert!(!vault.index_dir().starts_with(vault.path()));
-        let status = git::run(vault.path(), &["status", "--porcelain", "--untracked-files=all"])
-            .unwrap();
         assert!(
-            !status.contains("index"),
-            "Index must not appear in git status: {status}"
+            git::worktree_is_clean(vault.path()).unwrap(),
+            "Index must not appear in the Vault working tree"
         );
         assert!(scratch.index().join("write.lock").exists());
         fs::remove_dir_all(vault.index_dir()).unwrap();
@@ -444,14 +442,10 @@ mod tests {
     fn open_reports_origin_without_network() {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        git::run(
+        git::add_remote(
             vault.path(),
-            &[
-                "remote",
-                "add",
-                "origin",
-                "https://example.invalid/scheda.git",
-            ],
+            "origin",
+            "https://example.invalid/scheda.git",
         )
         .unwrap();
         drop(vault);
@@ -465,11 +459,7 @@ mod tests {
     fn init_does_not_configure_lfs() {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        let listed = git::run(vault.path(), &["config", "--local", "--list"]).unwrap();
-        assert!(
-            !listed.contains("filter.lfs"),
-            "library must not configure Git LFS: {listed}"
-        );
+        assert!(!git::local_config_mentions_lfs(vault.path()).unwrap());
     }
 
     #[test]
@@ -488,11 +478,7 @@ mod tests {
     fn auto_sync_with_remote_is_unsupported_until_c7() {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        git::run(
-            vault.path(),
-            &["remote", "add", "origin", "https://example.invalid/x.git"],
-        )
-        .unwrap();
+        git::add_remote(vault.path(), "origin", "https://example.invalid/x.git").unwrap();
         drop(vault);
         let err = Vault::open(
             scratch.vault(),
@@ -503,17 +489,9 @@ mod tests {
     }
 
     #[test]
-    fn git_is_spawned_without_an_async_runtime() {
+    fn git2_works_without_an_async_runtime() {
         let scratch = Scratch::new();
-        let _vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        assert!(
-            Command::new("git")
-                .current_dir(scratch.vault())
-                .args(["rev-parse", "--is-inside-work-tree"])
-                .output()
-                .unwrap()
-                .status
-                .success()
-        );
+        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
+        assert!(git::is_work_tree(vault.path()));
     }
 }
