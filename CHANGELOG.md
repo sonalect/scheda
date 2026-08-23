@@ -24,3 +24,11 @@ API or on-disk format changes bump the minor.
 - Rust crate skeleton `scheda` (`todo!` bodies; workspace lints deny warnings).
 - Hermetic Bazel on the host architecture: library build and tests, Clippy,
   cargo-audit, buildifier, markdownlint-cli2, and GitHub Actions CI.
+
+## Links
+
+- [Unreleased]
+- [0.0.1]
+
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/amsokol/scheda/releases/tag/v0.0.1
