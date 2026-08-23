@@ -2,7 +2,7 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 #[cfg(test)]
-use git2::{Config, ErrorCode, StatusOptions};
+use git2::{Config, ErrorCode};
 use git2::{Repository, RepositoryInitOptions, RepositoryOpenFlags};
 
 use crate::Error;
@@ -64,14 +64,9 @@ pub(crate) fn add_remote(dir: &Path, name: &str, url: &str) -> Result<(), Error>
 }
 
 #[cfg(test)]
-pub(crate) fn worktree_is_clean(dir: &Path) -> Result<bool, Error> {
+pub(crate) fn is_ignored(dir: &Path, rel: &Path) -> Result<bool, Error> {
     let repo = open_work_tree(dir)?;
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .include_unmodified(false);
-    let statuses = repo.statuses(Some(&mut opts)).map_err(map_err)?;
-    Ok(statuses.is_empty())
+    repo.status_should_ignore(rel).map_err(map_err)
 }
 
 #[cfg(test)]

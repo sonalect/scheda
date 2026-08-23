@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, Record, Vault};
+use scheda::{Code, Filter, OpenOptions, Record, Vault, collection_dir};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -26,12 +26,8 @@ impl Scratch {
         self.root.join("vault")
     }
 
-    fn index(&self) -> PathBuf {
-        self.root.join("index")
-    }
-
     fn options(&self) -> OpenOptions {
-        OpenOptions::new(self.index())
+        OpenOptions::new()
     }
 
     fn init(&self) -> Vault {
@@ -49,7 +45,9 @@ impl Scratch {
     }
 
     fn log_dir(&self) -> PathBuf {
-        self.vault().join("south/log")
+        self.vault()
+            .join(collection_dir("south_log"))
+            .join("south/log")
     }
 }
 

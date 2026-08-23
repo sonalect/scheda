@@ -26,12 +26,8 @@ impl Scratch {
         self.root.join("vault")
     }
 
-    fn index(&self) -> PathBuf {
-        self.root.join("index")
-    }
-
     fn options(&self) -> OpenOptions {
-        OpenOptions::new(self.index())
+        OpenOptions::new()
     }
 
     fn init(&self) -> Vault {

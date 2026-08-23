@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.9, 23 August 2026.
+Document 2 of the Scheda package. Version 0.11, 23 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -96,7 +96,7 @@ Schema may require a pattern (ULID, `kebab-case`, or another). Scheda checks the
 
 **Path** — location of the Record in the Vault.
 
-For `document`, derived from the collection's layout template plus `id`. For `journal`, the segment file that contains the line (the Record is still addressed by `(collection, id)`, not by segment name). For `singleton`, the single file named by Schema.
+For `document`, derived from the FNV-1a-64 collection directory plus the layout template plus `id`. For `journal`, the segment file that contains the line (the Record is still addressed by `(collection, id)`, not by segment name). For `singleton`, the single file named by Schema, under the same collection directory.
 
 **Fields** — structured values.
 
@@ -116,7 +116,7 @@ In a `document` or `singleton`, fields live in the YAML (or JSON) header or file
 
 **Index** — the disposable search layer.
 
-Built from Vault files. Stored outside the Vault's git tree, not backed up with the Vault, safe to delete. Rebuild (`reindex`) reads files. A corrupt Index must not serve stale ids: search returns empty or an error.
+Built from Vault files. Stored under `{vault}/.scheda/` (gitignored), not committed with the Vault, safe to delete. Rebuild (`reindex`) reads files. A corrupt Index must not serve stale ids: search returns empty or an error.
 
 Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win.
 

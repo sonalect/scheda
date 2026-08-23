@@ -103,7 +103,7 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
                 return Err(Error::conflict(format!("{rel} has git conflict markers")));
             }
             let parsed = parse_file(decl, text)?;
-            let expected = instantiate_path(decl, &parsed.id, &parsed.fields)?;
+            let expected = vault_rel(decl, &instantiate_path(decl, &parsed.id, &parsed.fields)?);
             if expected != rel {
                 return Err(Error::invalid(format!(
                     "{rel} path does not match id {}",
@@ -196,7 +196,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
     }
     validate_fields(&fields, &decl.fields, Some(decl.id_field.as_str()), false)?;
     let rel = instantiate_path(decl, &id, &fields)?;
-    let path = schema::join_inside(vault, &rel)?;
+    let path = schema::join_in_collection(vault, &decl.name, &rel)?;
     let body = record.body.filter(|body| !body.is_empty());
     let bytes = encode_file(decl, &fields, body.as_deref())?;
     Ok(Prepared { id, path, bytes })
@@ -231,6 +231,10 @@ fn instantiate_path(
             decl.name
         ))
     })
+}
+
+fn vault_rel(decl: &CollectionDecl, layout_rel: &str) -> String {
+    format!("{}/{layout_rel}", schema::collection_dir(&decl.name))
 }
 
 fn placeholder_count(template: &str) -> usize {
@@ -296,7 +300,7 @@ fn fill_template(
 fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<PathBuf>, Error> {
     let mut found = None;
     for template in &decl.layout {
-        for path in match_template(vault, template, Some(id))? {
+        for path in match_template(vault, decl, template, Some(id))? {
             if found.is_some() {
                 return Err(Error::invalid(format!(
                     "id {id} matches more than one file in {}",
@@ -312,7 +316,7 @@ fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<P
 pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
     let mut out = Vec::new();
     for template in &decl.layout {
-        out.extend(match_template(vault, template, None)?);
+        out.extend(match_template(vault, decl, template, None)?);
     }
     out.sort();
     out.dedup();
@@ -327,10 +331,16 @@ pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<
     Ok(out)
 }
 
-fn match_template(vault: &Path, template: &str, id: Option<&str>) -> Result<Vec<PathBuf>, Error> {
+fn match_template(
+    vault: &Path,
+    decl: &CollectionDecl,
+    template: &str,
+    id: Option<&str>,
+) -> Result<Vec<PathBuf>, Error> {
+    let root = schema::join_in_collection(vault, &decl.name, "")?;
     let segs: Vec<&str> = template.split('/').collect();
     let mut out = Vec::new();
-    walk_match(vault, &segs, id, &mut out)?;
+    walk_match(&root, &segs, id, &mut out)?;
     Ok(out)
 }
 
@@ -477,7 +487,7 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
             .is_ok()
                 && id_matches_header(decl, &parsed)
                 && instantiate_path(decl, &parsed.id, &parsed.fields)
-                    .is_ok_and(|expected| expected == rel)
+                    .is_ok_and(|expected| vault_rel(decl, &expected) == rel)
                 && decl
                     .id_pattern
                     .as_ref()

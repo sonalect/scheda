@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.4, 23 August 2026.
+Document 4 of the Scheda package. Version 0.5, 23 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push_remote` / `pull_remote` / `sync_remote`, and `clone`. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -20,7 +20,7 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `find_one` during `insert_one` without tearing the file (STO-5).
 
-The lock is an OS file lock on a lockfile the implementation owns (typically next to the Index, not a pid-file). It is released when the process dies because the kernel closes the descriptor. Stale pid-files are not the mechanism: they would survive a crash. Locks do not travel with `git push` / `git pull`. Two clones are two working trees: each may have a writer. NFS/SMB lock semantics are not relied on; Vaults on those shares are outside **core**.
+The lock is an OS file lock on a lockfile the implementation owns (typically inside `.scheda/`, not a pid-file). It is released when the process dies because the kernel closes the descriptor. Stale pid-files are not the mechanism: they would survive a crash. Locks do not travel with `git push` / `git pull`. Two clones are two working trees: each may have a writer. NFS/SMB lock semantics are not relied on; Vaults on those shares are outside **core**.
 
 **STO-5. A failed write is not the new truth.** Validation failure, a full disk, or a killed process must not leave a half-written `document` or `singleton` as the file at the Record path, and must not leave a `journal` segment cut in the middle of a line as an accepted Record. *Check:* interrupt `replace_one` / `insert_one`; after reopen, the set of accepted Records equals the last successful write. Technique for `document`/`singleton`: write a sibling temp file in the same directory, `fsync`, rename over the target. Technique for `journal`: write one complete line including `\n`; a tail without `\n` is not a Record (STO-3).
 
@@ -28,7 +28,7 @@ The lock is an OS file lock on a lockfile the implementation owns (typically nex
 
 ## 2. The Vault is a git working tree
 
-**GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **outside** that tree (path chosen at `open`) and is not committed. A Remote is optional. *Check:* `git status` at the Vault root lists collection files and does not list the Index; a Vault with no `remote` still `commit`s.
+**GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s.
 
 **GIT-2. `commit` is the caller's.** Scheda writes the working tree. It does not create a git commit on `insert_one` or `replace_one`. `commit(message)` stages the paths this process wrote (records and Schema it changed) and creates one commit with the caller's message. It must not `git add` the whole tree in a way that stages junk at the Vault root. *Check:* several inserts without `commit` → `git log` unchanged; one `commit` → one new commit whose paths are those writes.
 
@@ -89,7 +89,7 @@ Hooks on the Vault repository are the consumer's. They must not assume they may 
 
 ## 4. Index location (git)
 
-**GIT-13. Index is not in the Vault tree.** `open` takes (or derives) an Index directory outside the repository. If a consumer puts a cache inside the working tree, it must be gitignored and must not be the Index Scheda uses for **core**. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting that directory does not delete Records (STO-1).
+**GIT-13. Index is in the Vault tree and gitignored.** `init` writes a `.gitignore` entry for `.scheda/`. The Index (and later additional indexes) live under `{vault}/.scheda/`. Callers do not choose an Index directory. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1).
 
 Format and rebuild semantics: `06`.
 

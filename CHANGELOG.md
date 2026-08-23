@@ -14,8 +14,9 @@ API or on-disk format changes bump the minor.
 - LIB-5 error codes on the Rust crate; LIB-2 names including `init` /
   `clone` / `scan` / remote / `check` / `reindex`; `search` returns
   `unsupported`.
-- `Vault::init` / `Vault::open` with explicit Index path, exclusive write
-  lock (`locked`), and local Remote detection without fetch.
+- `Vault::init` / `Vault::open` with exclusive write lock (`locked`) and
+  local Remote detection without fetch. Index lives at `{vault}/.scheda/`
+  (gitignored).
 - Language-neutral library messages in `api/v1` (Protobuf edition 2024);
   Rust stubs via hermetic `buf generate` (buffa + protovalidate).
 - `init` / `open` / `clone` / `insert_one` / `replace_one` reject
@@ -35,6 +36,11 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- Collection files live under a 16-hex FNV-1a-64 directory of the collection
+  name (any characters in `name` are allowed). Layout templates are relative
+  to that directory.
+- Index is stored inside the Vault at `.scheda/` and listed in `.gitignore`.
+  `OpenOptions` has no Index path field.
 - Target crates link with `+crt-static` (Bazel `extra_rustc_flags` and
   `.cargo/config.toml`); proc-macros and build scripts stay dynamically
   linked.

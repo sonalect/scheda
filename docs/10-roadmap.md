@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.6, 23 August 2026.
+Document 10 of the Scheda package. Version 0.7, 23 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. Terms are in `02`. Codes: `OPS`.
 
@@ -132,8 +132,6 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 ---
 
 ## 7. Open questions
-
-**Default Index path.** `open` may derive a directory next to the Vault or require an explicit path. Either is fine if GIT-13 holds. Prefer explicit in tests.
 
 **When a human edits a file.** Default is `reindex` / `check`. A watcher is **later**. Not decided: whether `open` should refuse a dirty Index (mtime/hash mismatch) or only warn via `check`.
 

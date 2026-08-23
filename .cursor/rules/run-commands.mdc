@@ -1,0 +1,30 @@
+---
+description: Run Bazel, Cargo, and buf from the Scheda repo root, never sandboxed
+alwaysApply: true
+---
+
+# Run commands from this repository
+
+This Cursor window may have another folder as the default cwd. Every `bazel`,
+`cargo`, and `buf` command for Scheda **must** set `working_directory` to the
+directory that contains `MODULE.bazel` and the workspace `Cargo.toml` (this
+clone's root). Do not run them from a sibling project, a sandbox tmp dir, or
+an inferred workspace root that is not Scheda.
+
+## Generate
+
+After changing `api/v1/*.proto`, regenerate stubs **before** tests:
+
+```bash
+bazel run //api/v1:generate
+```
+
+That writes `rust/generated/api/v1/`. Optional check: `bazel test //api/v1:generate_tests`.
+
+## No sandbox
+
+Do not run Bazel inside the Cursor command sandbox. Bazelisk needs network
+(version pin in `.bazelversion`, GCS), the Bazel cache lives under
+`~/.cache/bazel`, and generate writes into the source tree. Request
+unrestricted permissions (`required_permissions: ["all"]` on the Shell tool).
+The same applies to `bazel test` / `bazel run` for lint and format.

@@ -54,6 +54,7 @@ impl Vault {
         let path = path.as_ref();
         prepare_new_work_tree(path)?;
         git::init(path)?;
+        ensure_gitignore(path)?;
         Self::open(path, options)
     }
 
@@ -62,7 +63,7 @@ impl Vault {
         options.require_valid()?;
         let _url = url;
         let _path = path.as_ref();
-        todo!("Vault::clone is not implemented (C7)")
+        Err(Error::unsupported("Vault::clone is not implemented (C7)"))
     }
 
     /// Open an existing Vault at `path`.
@@ -75,18 +76,23 @@ impl Vault {
                 path.display()
             )));
         }
-        let Some(index_dir) = options.index_dir.as_deref() else {
-            unreachable!("OpenOptions validate requires index_dir");
-        };
         let write = options.write.unwrap_or(true);
         let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path)
             .map_err(|err| Error::io(format!("canonicalize vault {}: {err}", path.display())))?;
-        fs::create_dir_all(index_dir)
-            .map_err(|err| Error::io(format!("create index directory {index_dir}: {err}")))?;
-        let index_dir = fs::canonicalize(index_dir)
-            .map_err(|err| Error::io(format!("canonicalize index {index_dir}: {err}")))?;
-        reject_index_inside_vault(&path, &index_dir)?;
+        if write {
+            ensure_gitignore(&path)?;
+        }
+        let index_dir = path.join(".scheda").join("index");
+        fs::create_dir_all(&index_dir).map_err(|err| {
+            Error::io(format!(
+                "create index directory {}: {err}",
+                index_dir.display()
+            ))
+        })?;
+        let index_dir = fs::canonicalize(&index_dir).map_err(|err| {
+            Error::io(format!("canonicalize index {}: {err}", index_dir.display()))
+        })?;
         let remotes = git::remotes(&path)?;
         if auto_sync && !remotes.is_empty() {
             return Err(Error::unsupported(
@@ -390,15 +396,26 @@ fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-fn reject_index_inside_vault(vault: &Path, index: &Path) -> Result<(), Error> {
-    if index == vault || index.starts_with(vault) {
-        return Err(Error::invalid(format!(
-            "index directory {} must be outside the Vault {}",
-            index.display(),
-            vault.display()
-        )));
+fn ensure_gitignore(vault: &Path) -> Result<(), Error> {
+    let path = vault.join(".gitignore");
+    let mut text = if path.exists() {
+        fs::read_to_string(&path)
+            .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?
+    } else {
+        String::new()
+    };
+    let already = text.lines().any(|line| {
+        let line = line.trim();
+        line == ".scheda/" || line == ".scheda"
+    });
+    if already {
+        return Ok(());
     }
-    Ok(())
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(".scheda/\n");
+    fs::write(&path, text).map_err(|err| Error::io(format!("write {}: {err}", path.display())))
 }
 
 fn acquire_write_lock(index_dir: &Path) -> Result<File, Error> {
@@ -426,7 +443,7 @@ fn acquire_write_lock(index_dir: &Path) -> Result<File, Error> {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process;
     use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -452,12 +469,8 @@ mod tests {
             self.root.join("vault")
         }
 
-        fn index(&self) -> PathBuf {
-            self.root.join("index")
-        }
-
         fn options(&self) -> OpenOptions {
-            OpenOptions::new(self.index())
+            OpenOptions::new()
         }
     }
 
@@ -468,32 +481,29 @@ mod tests {
     }
 
     #[test]
-    fn init_rejects_empty_index_dir_before_creating_tree() {
+    fn init_writes_gitignore_for_scheda_index() {
         let scratch = Scratch::new();
-        let err = Vault::init(scratch.vault(), OpenOptions::new("")).unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
-        assert!(!git::is_work_tree(&scratch.vault()));
+        let vault = Vault::init(scratch.vault(), OpenOptions::new()).unwrap();
+        let gitignore = fs::read_to_string(scratch.vault().join(".gitignore")).unwrap();
+        assert!(gitignore.lines().any(|line| line.trim() == ".scheda/"));
+        assert!(git::is_ignored(vault.path(), Path::new(".scheda/index")).unwrap());
+        assert!(vault.index_dir().starts_with(vault.path()));
+        assert!(vault.index_dir().ends_with("index"));
+        assert!(vault.index_dir().join("write.lock").exists());
+        fs::remove_dir_all(vault.index_dir()).unwrap();
+        assert!(scratch.vault().join(".git").exists());
     }
 
     #[test]
-    fn open_rejects_missing_index_dir() {
-        let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        drop(vault);
-        let err = Vault::open(scratch.vault(), OpenOptions::default()).unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
-    }
-
-    #[test]
-    fn clone_rejects_invalid_options_before_c7() {
+    fn clone_is_unsupported_until_c7() {
         let scratch = Scratch::new();
         let err = Vault::clone(
             "https://example.invalid/scheda.git",
             scratch.vault(),
-            OpenOptions::default(),
+            OpenOptions::new(),
         )
         .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(Code::of(&err), Some(Code::Unsupported));
     }
 
     #[test]
@@ -543,19 +553,12 @@ mod tests {
     }
 
     #[test]
-    fn open_uses_index_outside_the_tree() {
+    fn open_keeps_index_inside_tree_and_gitignored() {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options()).unwrap();
-        assert_eq!(
-            vault.index_dir(),
-            scratch.index().canonicalize().unwrap().as_path()
-        );
-        assert!(!vault.index_dir().starts_with(vault.path()));
-        assert!(
-            git::worktree_is_clean(vault.path()).unwrap(),
-            "Index must not appear in the Vault working tree"
-        );
-        assert!(scratch.index().join("write.lock").exists());
+        assert!(vault.index_dir().starts_with(vault.path()));
+        assert!(git::is_ignored(vault.path(), Path::new(".scheda")).unwrap());
+        assert!(vault.index_dir().join("write.lock").exists());
         fs::remove_dir_all(vault.index_dir()).unwrap();
         assert!(scratch.vault().join(".git").exists());
     }
@@ -607,18 +610,6 @@ mod tests {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
         assert!(!git::local_config_mentions_lfs(vault.path()).unwrap());
-    }
-
-    #[test]
-    fn index_inside_vault_is_invalid() {
-        let scratch = Scratch::new();
-        let vault_path = scratch.vault();
-        let err = Vault::init(
-            &vault_path,
-            OpenOptions::new(vault_path.join("nested-index")),
-        )
-        .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
     }
 
     #[test]

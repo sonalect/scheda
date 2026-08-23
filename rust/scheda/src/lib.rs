@@ -1,7 +1,8 @@
 //! Git-backed document store.
 //!
 //! Records live as text files in a **Vault** (a git working tree). The search
-//! index is derived and lives outside git. Scheda does not know a consumer's types.
+//! index is derived and lives under `{vault}/.scheda/`, which `init` gitignores.
+//! Scheda does not know a consumer's types.
 //!
 //! This crate is the Rust binding of the [design
 //! package](https://github.com/amsokol/scheda/tree/main/docs). HTML rustdoc is
@@ -10,6 +11,7 @@
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
 mod error;
+mod fnv;
 mod git;
 mod journal;
 mod schema;
@@ -19,5 +21,5 @@ mod vault;
 pub use error::Code;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{Error, OpenOptions, Record};
-pub use schema::Kind;
+pub use schema::{Kind, collection_dir};
 pub use vault::{Collection, Filter, InsertOne, ReplaceOne, SearchHits, Vault};

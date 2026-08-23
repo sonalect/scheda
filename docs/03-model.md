@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.2, 23 August 2026.
+Document 3 of the Scheda package. Version 0.4, 23 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -42,7 +42,7 @@ A rare immutable note can still be a `document` the consumer never replaces. `jo
 
 ## 3. Paths
 
-**MOD-8. Path comes from Schema, not from browsing.** Layout is a template: directory, extra slots (so one collection may occupy more than one subdirectory), `id`, extension. The extra slots are fields or constants Schema names; they are not a second `id`. *Check:* one `document` collection with two prefixes (for example `personal/{id}.md` and `projects/{project}/{id}.md`) validates as one kind; `find` with a path prefix distinguishes the trees.
+**MOD-8. Path comes from Schema, not from browsing.** Each collection occupies a directory whose name is sixteen lowercase hex digits of FNV-1a-64 of the collection name's UTF-8 bytes (offset `0xcbf29ce484222325`, prime `0x100000001b3`; not a cryptographic hash). Layout is a template relative to that directory: extra slots (so one collection may occupy more than one subdirectory), `id`, extension. The extra slots are fields or constants Schema names; they are not a second `id`. Collection names may contain any characters, including path separators; they never appear as path components. Two different names that hash to the same directory are `invalid`. *Check:* one `document` collection with two prefixes (for example `personal/{id}.md` and `projects/{project}/{id}.md`) validates as one kind; files land under the hash directory; `find` with a path prefix distinguishes the trees; a collection named `a/b` writes under the hash of `a/b`, not a nested `a/b/` path.
 
 **MOD-9. Journal path is the segment, not the `id`.** The Record still lives at `(collection, id)`. The file path is the open or closed segment that contains the line. Callers must not treat the segment name as `id`. *Check:* `find_one` does not require the caller to pass a segment name.
 

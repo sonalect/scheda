@@ -211,7 +211,7 @@ fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
             decl.name
         )));
     }
-    schema::join_inside(vault, rel)
+    schema::join_in_collection(vault, &decl.name, rel)
 }
 
 fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {

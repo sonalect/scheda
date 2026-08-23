@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.6, 23 August 2026.
+Document 5 of the Scheda package. Version 0.8, 23 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index behaviour is in `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -118,10 +118,10 @@ extractors (SCH-3). The file stem is not the collection name.
 
 | Key | Required | Meaning |
 |---|---|---|
-| `name` | yes | Collection name. Unique in the Vault. Non-empty. |
+| `name` | yes | Collection name. Unique in the Vault. Non-empty UTF-8. Any characters are allowed (including `/`). The on-disk directory is sixteen lowercase hex digits of FNV-1a-64 of the name (MOD-8), not the name itself. |
 | `kind` | yes | `document` \| `journal` \| `singleton` |
 | `schema_version` | yes | Integer ≥ `1` |
-| `layout` | yes | One template string, or a list of them (MOD-8). Non-empty. Each `document` template contains `{id}`. |
+| `layout` | yes | One template string, or a list of them (MOD-8), **relative to the collection directory**. Non-empty. Each `document` template contains `{id}`. |
 | `id` | no | Mapping: `field` (default `id`), `pattern` (regex; omitted means any non-empty `id`). |
 | `fields` | yes | List of field declarations (may be empty). |
 | `segment_max_bytes` | `journal` only | Integer bytes. Default **8 MiB**. Greater than **32 MiB** is rejected (SCH-14). |

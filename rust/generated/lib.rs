@@ -4,7 +4,6 @@
 //! protovalidate plugins). Call sites use `scheda_generated::api::v1::{...}`.
 
 use std::fmt;
-use std::path::Path;
 
 use protovalidate_buffa::Validate;
 
@@ -100,11 +99,11 @@ impl fmt::Display for api::v1::Error {
 impl std::error::Error for api::v1::Error {}
 
 impl api::v1::OpenOptions {
-    /// Index directory (GIT-13). Unset `write` means write; unset `auto_sync`
-    /// means off (`07` LIB-4).
+    /// Unset `write` means write; unset `auto_sync` means off (`07` LIB-4).
+    /// Index is always `{vault}/.scheda/index` (GIT-13).
     #[must_use]
-    pub fn new(index_dir: impl AsRef<Path>) -> Self {
-        Self::default().with_index_dir(index_dir.as_ref().to_string_lossy().into_owned())
+    pub fn new() -> Self {
+        Self::default()
     }
 
     #[must_use]
@@ -149,13 +148,12 @@ mod tests {
     #[test]
     fn open_options_json_uses_proto3_names() {
         let opts = OpenOptions::default()
-            .with_index_dir("/tmp/index")
             .with_write(true)
             .with_auto_sync(false);
         let json = serde_json::to_value(&opts).expect("json");
-        assert_eq!(json["indexDir"], "/tmp/index");
         assert_eq!(json["write"], true);
         assert_eq!(json["autoSync"], false);
+        assert!(json.get("indexDir").is_none());
     }
 
     #[test]
@@ -177,24 +175,9 @@ mod tests {
     }
 
     #[test]
-    fn open_options_index_dir_is_required() {
-        assert!(OpenOptions::default().validate().is_err());
-        assert!(
-            OpenOptions::default()
-                .with_index_dir("/tmp/index")
-                .validate()
-                .is_ok()
-        );
-        let err = OpenOptions::default()
-            .require_valid()
-            .expect_err("missing index_dir");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
-        assert!(
-            OpenOptions::default()
-                .with_index_dir("")
-                .require_valid()
-                .is_err()
-        );
+    fn open_options_default_is_valid() {
+        assert!(OpenOptions::default().validate().is_ok());
+        assert!(OpenOptions::new().require_valid().is_ok());
     }
 
     #[test]

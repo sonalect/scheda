@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.5, 23 August 2026.
+Document 6 of the Scheda package. Version 0.6, 23 August 2026.
 
 Normative rules for the derived Index, `find_one` / `find` / `search`, embedders, and edge walks. Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`, `REL`. Phase **core** or **search** as marked.
 
@@ -10,7 +10,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 ## 1. The Index is disposable
 
-**IDX-1. Rebuild from files.** The Index directory is outside the Vault git tree. It is not part of a Vault backup. `reindex` reads Schema and Records and rebuilds it. *Check (**core**):* delete the Index, `reindex`; `find_one` and (when **search** is on) a fixture query set match the files.
+**IDX-1. Rebuild from files.** The Index directory is `{vault}/.scheda/` (gitignored; GIT-13). It is not part of a Vault commit or backup. `reindex` reads Schema and Records and rebuilds it. *Check (**core**):* delete `.scheda/`, `reindex`; `find_one` and (when **search** is on) a fixture query set match the files.
 
 **IDX-2. Versioned format.** The Index carries its own format version. An incompatible file is not read “as best effort”: `reindex` or error. *Check (**core**):* corrupt or unknown version → `search` returns no hits or a failure, never another Vault's ids (QRY-4).
 

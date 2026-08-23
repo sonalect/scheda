@@ -198,6 +198,7 @@ pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
         )));
     }
     let mut collections = BTreeMap::new();
+    let mut by_hash = BTreeMap::new();
     let entries = fs::read_dir(&dir)
         .map_err(|err| Error::io(format!("read schema directory {}: {err}", dir.display())))?;
     for entry in entries {
@@ -221,6 +222,14 @@ pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
                 decl.name
             )));
         }
+        let hash_dir = collection_dir(&decl.name);
+        if let Some(other) = by_hash.get(&hash_dir) {
+            return Err(Error::invalid(format!(
+                "collections {} and {other} hash to the same directory {hash_dir}",
+                decl.name
+            )));
+        }
+        by_hash.insert(hash_dir, decl.name.clone());
         collections.insert(decl.name.clone(), decl);
     }
     Ok(Schema { collections })
@@ -267,11 +276,6 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     let loc = path.display();
     if raw.name.is_empty() {
         return Err(Error::invalid(format!("schema {loc}: name is required")));
-    }
-    if raw.name.contains('/') || raw.name.contains('\\') {
-        return Err(Error::invalid(format!(
-            "schema {loc}: name must not contain a path separator"
-        )));
     }
     if raw.schema_version < 1 {
         return Err(Error::invalid(format!(
@@ -421,6 +425,22 @@ fn read_utf8(path: &Path) -> Result<String, Error> {
         .map_err(|_| Error::invalid(format!("schema {} is not UTF-8", path.display())))
 }
 
+/// On-disk directory for a collection: 16 lowercase hex digits of FNV-1a-64
+/// of the UTF-8 name (MOD-8).
+#[must_use]
+pub fn collection_dir(name: &str) -> String {
+    crate::fnv::hex(name.as_bytes())
+}
+
+pub(crate) fn join_in_collection(vault: &Path, name: &str, rel: &str) -> Result<PathBuf, Error> {
+    let dir = collection_dir(name);
+    if rel.is_empty() {
+        join_inside(vault, &dir)
+    } else {
+        join_inside(vault, &format!("{dir}/{rel}"))
+    }
+}
+
 pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
@@ -461,6 +481,16 @@ mod tests {
         let raw: super::RawCollection =
             yaml_serde::from_str(yaml).map_err(|err| crate::Error::invalid(err.to_string()))?;
         finish_collection(raw, Path::new("schema/c.yaml"))
+    }
+
+    #[test]
+    fn collection_name_may_contain_a_slash() {
+        let decl = parse(
+            "name: team/notes\nkind: document\nschema_version: 1\nlayout: n/{id}.md\nfields: []\n",
+        )
+        .unwrap();
+        assert_eq!(decl.name, "team/notes");
+        assert_eq!(super::collection_dir("team/notes").len(), 16);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.6, 23 August 2026.
+Document 11 of the Scheda package. Version 0.7, 23 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -25,9 +25,8 @@ Each stage has **Status:** `not started` | `in progress` | `done`. Set `done`
 only when every box in that stage is `[x]` and Clippy is clean.
 
 If `03`–`10` do not decide something the stage needs (for example Schema YAML
-key names, `10` §7), stop. Amend the spec; do not invent a silent default in
-code. Open questions that already have a test preference: Index path is
-**explicit in tests** (`10` §7).
+key names), stop. Amend the spec; do not invent a silent default in
+code.
 
 Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 `singleton` → `journal` segments → `commit` / Remote → journal `id` map.
@@ -39,7 +38,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | Stage | Status | What closes |
 |---|---|---|
 | [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
-| [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, Index path, ISO-1 local |
+| [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, gitignored Index, ISO-1 local |
 | [C2](#c2-schema) | done | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | done | Whole-file writes and `find_one` |
 | [C4](#c4-journal-segments) | done | Append, rotate, scan `find_one` |
@@ -101,9 +100,8 @@ GIT-5, GIT-6, GIT-7, GIT-8 (local writes once they exist), GIT-9 (`init` /
 `open`; `clone` is C7), GIT-13, ISO-1 (no network on `open` / `init`).
 
 - [x] `init(path)` creates a git working tree with no Remote (GIT-9).
-- [x] `open(path)` on that tree succeeds; Index directory is **outside** the
-      tree and not committed (GIT-1, GIT-13). Tests pass an explicit Index
-      path (`10` §7).
+- [x] `open(path)` on that tree succeeds; Index is `{vault}/.scheda/index`,
+      gitignored, not committed (GIT-1, GIT-13). `init` writes `.gitignore`.
 - [x] Two `open`s on different roots in one process (GIT-5, LIB-4).
 - [x] Write lock: second write `open` → `locked`; a reader `find_one` is not
       blocked once C3 exists (STO-4). Until C3, lock vs second writer is
