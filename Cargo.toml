@@ -1,0 +1,23 @@
+[workspace]
+resolver = "3"
+members = ["rust/scheda"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98.0"
+license = "Apache-2.0"
+repository = "https://github.com/amsokol/scheda"
+version = "0.0.1"
+
+[workspace.dependencies]
+scheda = { path = "rust/scheda" }
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.151"
+tempfile = "=3.27.0"
+thiserror = "=2.0.20"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+all = "deny"

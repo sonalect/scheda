@@ -1,0 +1,15 @@
+[package]
+name = "scheda"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Git-backed document store: text files as truth, derived index, library API"
+readme = "../../README.md"
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

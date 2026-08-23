@@ -1,0 +1,46 @@
+---
+description: Delegate command execution and file creation to a Cursor Grok subagent
+alwaysApply: true
+---
+
+# Delegate execution and creation
+
+**Applies to Claude models only.** If you are a Claude model, follow this rule. If you are any other model — Grok in particular — ignore it entirely and do the work yourself: a Grok agent spawning a Grok subagent for its own commands is pointless.
+
+Do not run commands yourself and do not create files yourself. Both go to a subagent on `cursor-grok-4.6-high`.
+
+## Always delegate
+
+- Any shell command: `cargo` builds and tests, `git`, clippy, formatters, scans, scripts, one-off measurements.
+- Creating new files, new crates, new packages.
+
+Launch it with the Task tool: `subagent_type: "shell"` for pure command work, `subagent_type: "generalPurpose"` when the subagent must also write files. Always pass `model: "cursor-grok-4.6-high"`.
+
+The subagent starts with no context. Give it absolute paths, the exact content or a full specification, and the repository conventions it must obey:
+
+- workspace lints deny all rustc and clippy warnings; `cargo test` and `cargo clippy` must be clean;
+- no `panic!`, `unwrap`, `expect`, `assert!` in `src/` — only `todo!`, `unimplemented!`, `unreachable!`; recoverable failure is `Result`;
+- every workspace crate carries `[lints] workspace = true`;
+- pinned dependency versions come from `[workspace.dependencies]` in the root `Cargo.toml`.
+
+## Keep for yourself
+
+- Reading, searching, reviewing: Read, Grep, Glob, ReadLints.
+- Editing files that already exist.
+- Design, analysis, and the reply to the user.
+
+## After it returns
+
+Read what the subagent produced and verify it. Never report success on the subagent's word alone.
+
+## Example
+
+```
+Task(
+  description: "Build scheda crate",
+  subagent_type: "generalPurpose",
+  model: "cursor-grok-4.6-high",
+  prompt: "Create /home/amsokol/.../rust/scheda/src/lib.rs with <full spec>.
+           Then run `cargo clippy -p scheda --all-targets` and report the output verbatim."
+)
+```

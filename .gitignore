@@ -1,0 +1,6 @@
+# Build output
+/target/
+
+# Editors and OS
+.DS_Store
+*.swp

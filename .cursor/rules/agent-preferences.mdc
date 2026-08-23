@@ -1,0 +1,16 @@
+---
+description: Subagent model and English-only language policy for the Scheda repository
+alwaysApply: true
+---
+
+# Agent preferences
+
+## Subagent model
+
+- When launching subagents via the Task tool, default the model to `cursor-grok-4.6-high` (Cursor Grok 4.6).
+- Do not substitute another model and do not leave `inherit`, unless the user explicitly asked for a different model.
+- If `cursor-grok-4.6-high` is not in the list of available models, do not pick a replacement silently; tell the user and stop.
+
+## Language
+
+English only: chat, commits, code comments, README, rules, `docs/`, and anything else in this repository. Do not switch unless the user explicitly asks.
