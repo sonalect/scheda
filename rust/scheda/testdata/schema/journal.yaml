@@ -1,0 +1,5 @@
+name: c
+kind: journal
+schema_version: 1
+layout: c/
+fields: []

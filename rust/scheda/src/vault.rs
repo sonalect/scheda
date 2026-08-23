@@ -2,6 +2,7 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 
 use crate::git;
+use crate::schema::{self, CollectionDecl, Kind, Schema};
 use crate::{Error, OpenOptions, Record};
 
 /// A git working tree that holds collections of records.
@@ -12,12 +13,22 @@ pub struct Vault {
     remotes: Vec<String>,
     auto_sync: bool,
     write_lock: Option<File>,
+    schema: Schema,
+    schema_versions: Vec<u32>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
 #[derive(Debug)]
 pub struct Collection {
     name: String,
+    kind: Kind,
+    schema_version: u32,
+    id_field: String,
+    layout: Vec<String>,
+    filter_keys: std::collections::BTreeSet<String>,
+    segment_max_bytes: Option<u64>,
+    singleton_id: Option<String>,
+    fields: Vec<crate::schema::FieldDecl>,
 }
 
 /// Field filter for `find`. Shape is not modelled yet.
@@ -73,15 +84,12 @@ impl Vault {
         };
         let write = options.write.unwrap_or(true);
         let auto_sync = options.auto_sync.unwrap_or(false);
-        let path = fs::canonicalize(path).map_err(|err| {
-            Error::io(format!("canonicalize vault {}: {err}", path.display()))
-        })?;
-        fs::create_dir_all(index_dir).map_err(|err| {
-            Error::io(format!("create index directory {index_dir}: {err}"))
-        })?;
-        let index_dir = fs::canonicalize(index_dir).map_err(|err| {
-            Error::io(format!("canonicalize index {index_dir}: {err}"))
-        })?;
+        let path = fs::canonicalize(path)
+            .map_err(|err| Error::io(format!("canonicalize vault {}: {err}", path.display())))?;
+        fs::create_dir_all(index_dir)
+            .map_err(|err| Error::io(format!("create index directory {index_dir}: {err}")))?;
+        let index_dir = fs::canonicalize(index_dir)
+            .map_err(|err| Error::io(format!("canonicalize index {index_dir}: {err}")))?;
         reject_index_inside_vault(&path, &index_dir)?;
         let remotes = git::remotes(&path)?;
         if auto_sync && !remotes.is_empty() {
@@ -94,12 +102,16 @@ impl Vault {
         } else {
             None
         };
+        let schema = schema::load(&path)?;
+        let schema_versions = schema.versions();
         Ok(Self {
             path,
             index_dir,
             remotes,
             auto_sync,
             write_lock,
+            schema,
+            schema_versions,
         })
     }
 
@@ -133,15 +145,19 @@ impl Vault {
         self.auto_sync
     }
 
-    /// Schema `schema_version` values. Empty until C2.
+    /// Schema `schema_version` values present in this Vault.
     #[must_use]
     pub fn schema_versions(&self) -> &[u32] {
-        &[]
+        &self.schema_versions
     }
 
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
-        let _name = name;
-        todo!("Vault::collection is not implemented (C2)")
+        let Some(decl) = self.schema.get(name) else {
+            return Err(Error::not_found(format!(
+                "collection {name} is not in Schema"
+            )));
+        };
+        Ok(Collection::from_decl(decl))
     }
 
     /// Create one git commit for changes already written to the working tree.
@@ -163,7 +179,7 @@ impl Vault {
     }
 
     pub fn check(&self) -> Result<(), Error> {
-        todo!("Vault::check is not implemented (C5)")
+        schema::load(&self.path).map(|_| ())
     }
 
     pub fn reindex(&self) -> Result<(), Error> {
@@ -172,9 +188,111 @@ impl Vault {
 }
 
 impl Collection {
+    fn from_decl(decl: &CollectionDecl) -> Self {
+        Self {
+            name: decl.name.clone(),
+            kind: decl.kind,
+            schema_version: decl.schema_version,
+            id_field: decl.id_field.clone(),
+            layout: decl.layout.clone(),
+            filter_keys: decl.filter_keys.clone(),
+            segment_max_bytes: decl.segment_max_bytes,
+            singleton_id: decl.singleton_id.clone(),
+            fields: decl.fields.clone(),
+        }
+    }
+
+    #[cfg(test)]
+    fn stub() -> Self {
+        Self {
+            name: String::from("c"),
+            kind: Kind::Document,
+            schema_version: 1,
+            id_field: String::from("id"),
+            layout: vec![String::from("c/{id}.md")],
+            filter_keys: std::collections::BTreeSet::new(),
+            segment_max_bytes: None,
+            singleton_id: None,
+            fields: Vec::new(),
+        }
+    }
+
     #[must_use]
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    #[must_use]
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    #[must_use]
+    pub fn schema_version(&self) -> u32 {
+        self.schema_version
+    }
+
+    #[must_use]
+    pub fn id_field(&self) -> &str {
+        &self.id_field
+    }
+
+    #[must_use]
+    pub fn is_filter_key(&self, field: &str) -> bool {
+        self.filter_keys.contains(field)
+    }
+
+    #[must_use]
+    pub fn segment_max_bytes(&self) -> Option<u64> {
+        self.segment_max_bytes
+    }
+
+    #[must_use]
+    pub fn layout(&self) -> &[String] {
+        &self.layout
+    }
+
+    #[must_use]
+    pub fn singleton_id(&self) -> Option<&str> {
+        self.singleton_id.as_deref()
+    }
+
+    #[must_use]
+    pub fn field_type(&self, name: &str) -> Option<&'static str> {
+        self.field(name).map(|field| field.type_.as_str())
+    }
+
+    #[must_use]
+    pub fn field_is_required(&self, name: &str) -> Option<bool> {
+        self.field(name).map(|field| field.required)
+    }
+
+    #[must_use]
+    pub fn field_is_nullable(&self, name: &str) -> Option<bool> {
+        self.field(name).map(|field| field.nullable)
+    }
+
+    #[must_use]
+    pub fn field_has_default(&self, name: &str) -> Option<bool> {
+        self.field(name).map(|field| field.has_default)
+    }
+
+    fn field(&self, name: &str) -> Option<&crate::schema::FieldDecl> {
+        fn walk<'a>(
+            fields: &'a [crate::schema::FieldDecl],
+            name: &str,
+        ) -> Option<&'a crate::schema::FieldDecl> {
+            for field in fields {
+                if field.name == name {
+                    return Some(field);
+                }
+                if let Some(found) = walk(&field.fields, name) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+        walk(&self.fields, name)
     }
 
     pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
@@ -226,13 +344,13 @@ fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
                 path.display()
             )));
         }
-        let mut entries = fs::read_dir(path).map_err(|err| {
-            Error::io(format!("read init directory {}: {err}", path.display()))
-        })?;
-        if entries.next().transpose().map_err(|err| {
-            Error::io(format!("read init directory {}: {err}", path.display()))
-        })?
-        .is_some()
+        let mut entries = fs::read_dir(path)
+            .map_err(|err| Error::io(format!("read init directory {}: {err}", path.display())))?;
+        if entries
+            .next()
+            .transpose()
+            .map_err(|err| Error::io(format!("read init directory {}: {err}", path.display())))?
+            .is_some()
         {
             return Err(Error::invalid(format!(
                 "init path is not empty: {}",
@@ -354,9 +472,7 @@ mod tests {
 
     #[test]
     fn insert_one_rejects_empty_record_envelope() {
-        let collection = Collection {
-            name: String::from("notes"),
-        };
+        let collection = Collection::stub();
         let err = collection
             .insert_one(Record::default())
             .expect_err("empty Record must fail envelope rules");
@@ -365,9 +481,7 @@ mod tests {
 
     #[test]
     fn replace_one_rejects_empty_record_envelope() {
-        let collection = Collection {
-            name: String::from("notes"),
-        };
+        let collection = Collection::stub();
         let err = collection
             .replace_one("alpha", Record::default())
             .expect_err("empty Record must fail envelope rules");
@@ -376,9 +490,7 @@ mod tests {
 
     #[test]
     fn search_is_unsupported_and_does_not_write() {
-        let collection = Collection {
-            name: String::from("notes"),
-        };
+        let collection = Collection::stub();
         let err = collection
             .search("anything")
             .expect_err("search must fail in core");
@@ -456,12 +568,7 @@ mod tests {
     fn open_reports_origin_without_network() {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        git::add_remote(
-            vault.path(),
-            "origin",
-            "https://example.invalid/scheda.git",
-        )
-        .unwrap();
+        git::add_remote(vault.path(), "origin", "https://example.invalid/scheda.git").unwrap();
         drop(vault);
         let opened = Vault::open(scratch.vault(), scratch.options().write(false)).unwrap();
         assert!(opened.has_remote());

@@ -1,0 +1,19 @@
+name: c
+kind: document
+schema_version: 1
+layout: c/{id}.md
+fields:
+  - name: s
+    type: string
+  - name: i
+    type: integer
+  - name: n
+    type: number
+  - name: b
+    type: boolean
+  - name: sl
+    type: string_list
+  - name: o
+    type: object
+  - name: ol
+    type: object_list

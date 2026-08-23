@@ -21,6 +21,8 @@ API or on-disk format changes bump the minor.
 - `init` / `open` / `clone` / `insert_one` / `replace_one` reject
   `api/v1` input messages that fail generated protovalidate rules
   (`invalid`).
+- `open` / `check` load Schema from `schema/` (`05` §8 keys); illegal
+  declarations are `invalid`.
 
 ### Changed
 
@@ -33,6 +35,8 @@ API or on-disk format changes bump the minor.
   `Validate` impls.
 - The `scheda` crate uses generated `api/v1` messages (`Error`,
   `OpenOptions`, `Record`) instead of parallel hand-written structs.
+- Schema tests load YAML/JSON fixtures from `rust/scheda/testdata/schema/`
+  instead of inlined strings.
 
 ### Removed
 

@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.4, 23 August 2026.
+Document 5 of the Scheda package. Version 0.5, 23 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index behaviour is in `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -91,9 +91,69 @@ Closed segments are never rewritten. The open segment's name is Schema's pattern
 
 ---
 
-## 8. What this document does not decide
+## 8. On-disk keys (**core**)
 
-On-disk YAML key names beyond the information above may be fixed in an appendix later; **core** implementations must round-trip the information in SCH-2–SCH-14, not a particular pretty-print. SCH-15 is **later**.
+UTF-8 YAML 1.2 or JSON. JSON uses the same keys. Unknown keys on a declaration
+are rejected, so an executable blob cannot hide as an extra field (SCH-3).
+Keys are snake_case. Values that `03`–`05` already name as literals stay those
+literals (`document`, `journal`, `singleton`, field types in SCH-4).
+
+### Root `schema.yaml`
+
+Optional file at the Vault root. If absent, collection files live in `schema/`.
+If present, it may contain only:
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `schema_dir` | string | `schema` | Directory of collection files, relative to the Vault root. Must stay inside the Vault. |
+
+### Collection files
+
+Each `*.yaml`, `*.yml`, or `*.json` in `schema_dir` (not recursive) is one
+collection (SCH-2). Other files (for example Markdown) are ignored and are not
+extractors (SCH-3). The file stem is not the collection name.
+
+| Key | Required | Meaning |
+|---|---|---|
+| `name` | yes | Collection name. Unique in the Vault. Non-empty. |
+| `kind` | yes | `document` \| `journal` \| `singleton` |
+| `schema_version` | yes | Integer ≥ `1` |
+| `layout` | yes | One template string, or a list of them (MOD-8). Non-empty. Each `document` template contains `{id}`. |
+| `id` | no | Mapping: `field` (default `id`), `pattern` (regex; omitted means any non-empty `id`). |
+| `fields` | yes | List of field declarations (may be empty). |
+| `segment_max_bytes` | `journal` only | Integer bytes. Default **8 MiB**. Greater than **32 MiB** is rejected (SCH-14). |
+| `segment_max_lines` | `journal` only | Optional integer line cap. |
+| `segment_rotate` | `journal` only | Optional `daily` (UTC). |
+| `singleton_id` | `singleton` only | The one Record `id` (MOD-7). |
+
+Journal-only keys on `document` / `singleton`, and `singleton_id` on another
+kind, are rejected. Two files with the same `name` are rejected. Two `kind`
+values on one collection are rejected (one `kind` string).
+
+### Field declarations
+
+Each item of `fields`:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `name` | yes | Field name. Non-empty. |
+| `type` | yes | `string` \| `integer` \| `number` \| `boolean` \| `string_list` \| `object` \| `object_list` |
+| `required` | no | Boolean. Default `false` (optional). |
+| `nullable` | no | Boolean. Default `false` (SCH-5). |
+| `filter` | no | Boolean. Default `false`. `true` marks a `find` key (SCH-8). |
+| `default` | no | Applied only when present (MOD-12). |
+| `fields` | `object` / `object_list` | Nested field list. Omitted on `object` / `object_list` means an open map of `string` values (SCH-4). |
+
+`fields` on a scalar type is rejected. Nested items use this same table.
+Index marks (SCH-9–11) and `isolated` (SCH-15) are not **core** keys; they are
+rejected until those phases.
+
+---
+
+## 9. What this document does not decide
+
+Pretty-print (quotes, key order, YAML vs JSON). Bindings must round-trip the
+information in SCH-2–SCH-14 using the keys in §8. SCH-15 is **later**.
 
 FTS engine, vector store, and `reindex` — `06`.
 

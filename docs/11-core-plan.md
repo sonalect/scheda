@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.3, 23 August 2026.
+Document 11 of the Scheda package. Version 0.4, 23 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2). It does not add product
 rules. Codes and *Check:* lines in `03`–`09` stay normative. This file only
@@ -40,7 +40,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 |---|---|---|
 | [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
 | [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, Index path, ISO-1 local |
-| [C2](#c2-schema) | not started | Load and reject Schema |
+| [C2](#c2-schema) | done | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | not started | Whole-file writes and `find_one` |
 | [C4](#c4-journal-segments) | not started | Append, rotate, scan `find_one` |
 | [C5](#c5-find-check-reindex) | not started | Filters, `check`, disposable Index |
@@ -118,29 +118,28 @@ GIT-5, GIT-6, GIT-7, GIT-8 (local writes once they exist), GIT-9 (`init` /
 
 ## C2. Schema
 
-**Status:** not started
+**Status:** done
 
 **Codes:** SCH-1–6, SCH-8 (declaration only), SCH-12–14 (load / reject),
 SCH-3, MOD-1, MOD-2, MOD-6.
 
-YAML/JSON keys used in fixtures must already appear in `05`. If a key is
-missing, amend `05` (`10` §7). Do not hard-code a consumer's collection names
-(SCH-1, MOD-1).
+YAML/JSON keys used in fixtures must already appear in `05` §8. Do not
+hard-code a consumer's collection names (SCH-1, MOD-1).
 
-- [ ] Schema lives under git; `open` / `check` reads it (SCH-1).
-- [ ] Missing kind or `schema_version` → rejected (SCH-2).
-- [ ] Executable blob in Schema → rejected; unmarked Markdown is not an
+- [x] Schema lives under git; `open` / `check` reads it (SCH-1).
+- [x] Missing kind or `schema_version` → rejected (SCH-2).
+- [x] Executable blob in Schema → rejected; unmarked Markdown is not an
       extractor (SCH-3).
-- [ ] Core field types round-trip: `string`, `integer`, `number`, `boolean`,
+- [x] Core field types round-trip: `string`, `integer`, `number`, `boolean`,
       `string_list`, `object`, `object_list` (SCH-4).
-- [ ] Required / optional / `nullable` matrix (SCH-5) — write checks may wait
+- [x] Required / optional / `nullable` matrix (SCH-5) — write checks may wait
       for C3 if `open` already rejects illegal declarations.
-- [ ] Identity field name default `id`, overridable (SCH-6).
-- [ ] Filter-key marks parse; unmarked fields cannot be declared as filter
+- [x] Identity field name default `id`, overridable (SCH-6).
+- [x] Filter-key marks parse; unmarked fields cannot be declared as filter
       keys in a way that C5 would honour (SCH-8).
-- [ ] Default `segment_max_bytes` is 8 MiB; a cap `> 32 MiB` is rejected
+- [x] Default `segment_max_bytes` is 8 MiB; a cap `> 32 MiB` is rejected
       (SCH-14, GIT-6).
-- [ ] Two Vaults with different collection names work on the same build;
+- [x] Two Vaults with different collection names work on the same build;
       grep of `rust/scheda/src` does not contain those names (MOD-1, SCH-1).
 
 ---
@@ -305,8 +304,7 @@ Calendar dates or crate version numbers (`10` §8).
 
 Which git or YAML crate the Rust binding pins.
 
-Exact Schema YAML key names still open in `10` §7 — they belong in `05` or an
-appendix, not as a silent choice here.
+Exact Schema YAML key names — `05` §8.
 
 Whether `open` refuses a dirty Index or only warns via `check` (`10` §7).
 

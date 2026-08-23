@@ -1,0 +1,10 @@
+name: c
+kind: document
+schema_version: 1
+layout: c/{id}.md
+fields:
+  - name: tagged
+    type: string
+    filter: true
+  - name: prose
+    type: string

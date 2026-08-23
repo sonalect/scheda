@@ -5,8 +5,10 @@
 
 mod error;
 mod git;
+mod schema;
 mod vault;
 
 pub use error::Code;
 pub use scheda_generated::api::v1::{Error, OpenOptions, Record};
+pub use schema::Kind;
 pub use vault::{Collection, Filter, InsertOne, ReplaceOne, SearchHits, Vault};

@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.5, 23 August 2026.
+Document 10 of the Scheda package. Version 0.6, 23 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. Terms are in `02`. Codes: `OPS`.
 
@@ -137,7 +137,7 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 
 **When a human edits a file.** Default is `reindex` / `check`. A watcher is **later**. Not decided: whether `open` should refuse a dirty Index (mtime/hash mismatch) or only warn via `check`.
 
-**Exact Schema YAML key names.** Round-trip of SCH-2–SCH-14 is **core**; SCH-15 with them is **later**. Pretty-print names may be an appendix.
+**Exact Schema YAML key names.** Closed in `05` §8. Pretty-print is still free.
 
 **Marker path for `encrypt` (**later**).** ISO-11 allows a binding path (example `.scheda/encrypted`). A shared path across languages would ease mixed-binding Vaults; not fixed yet.
 

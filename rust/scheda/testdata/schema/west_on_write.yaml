@@ -1,0 +1,6 @@
+name: west_docs
+kind: document
+schema_version: 1
+layout: west/{id}.md
+fields: []
+on_write: echo hi

@@ -1,0 +1,6 @@
+name: east_log
+kind: journal
+schema_version: 1
+layout: log/
+segment_max_bytes: 50331648
+fields: []

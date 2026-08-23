@@ -1,0 +1,4 @@
+name: west_docs
+schema_version: 1
+layout: west/{id}.md
+fields: []

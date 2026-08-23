@@ -1,0 +1,4 @@
+name: c
+schema_version: 1
+layout: c/{id}.md
+fields: []

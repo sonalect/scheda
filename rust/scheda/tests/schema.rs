@@ -1,0 +1,224 @@
+//! C2: Schema load and reject (`05`, `11`). Collection names here and in
+//! `testdata/schema/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
+
+use std::fs;
+use std::path::PathBuf;
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use scheda::{Code, Kind, OpenOptions, Vault};
+
+static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
+
+struct Scratch {
+    root: PathBuf,
+}
+
+impl Scratch {
+    fn new() -> Self {
+        let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("scheda-c2-{}-{n}", process::id()));
+        fs::create_dir_all(&root).unwrap();
+        Self { root }
+    }
+
+    fn vault(&self) -> PathBuf {
+        self.root.join("vault")
+    }
+
+    fn index(&self) -> PathBuf {
+        self.root.join("index")
+    }
+
+    fn options(&self) -> OpenOptions {
+        OpenOptions::new(self.index())
+    }
+
+    fn init(&self) -> Vault {
+        Vault::init(self.vault(), self.options()).unwrap()
+    }
+
+    fn reopen(&self) -> Result<Vault, scheda::Error> {
+        Vault::open(self.vault(), self.options())
+    }
+
+    fn write_schema(&self, file: &str, body: &str) {
+        let dir = self.vault().join("schema");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join(file), body).unwrap();
+    }
+}
+
+const WEST: &str = include_str!("../testdata/schema/west.yaml");
+const EAST: &str = include_str!("../testdata/schema/east.yaml");
+const WEST_JSON: &str = include_str!("../testdata/schema/west.json");
+const WEST_MISSING_KIND: &str = include_str!("../testdata/schema/west_missing_kind.yaml");
+const WEST_MISSING_SCHEMA_VERSION: &str =
+    include_str!("../testdata/schema/west_missing_schema_version.yaml");
+const WEST_ON_WRITE: &str = include_str!("../testdata/schema/west_on_write.yaml");
+const WIKI: &str = include_str!("../testdata/schema/wiki.md");
+const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");
+const EAST_LOG_OVERSIZE: &str = include_str!("../testdata/schema/east_log_oversize.yaml");
+const ROOT_SCHEMA: &str = include_str!("../testdata/schema/root_schema.yaml");
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn schema_under_git_is_read_on_open_and_check() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    let vault = scratch.reopen().unwrap();
+    assert!(scratch.vault().join(".git").is_dir());
+    let collection = vault.collection("west_docs").unwrap();
+    assert_eq!(collection.kind(), Kind::Document);
+    assert_eq!(collection.schema_version(), 1);
+    assert_eq!(collection.field_type("title"), Some("string"));
+    assert_eq!(collection.field_is_required("title"), Some(true));
+    assert_eq!(collection.field_is_nullable("title"), Some(false));
+    assert_eq!(collection.layout(), &["west/{id}.md".to_owned()]);
+    vault.check().unwrap();
+}
+
+#[test]
+fn missing_kind_is_rejected_on_open() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_MISSING_KIND);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::Invalid));
+}
+
+#[test]
+fn missing_schema_version_is_rejected_on_open() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::Invalid));
+}
+
+#[test]
+fn executable_blob_key_is_rejected() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_ON_WRITE);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::Invalid));
+}
+
+#[test]
+fn unmarked_markdown_is_not_an_extractor() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    fs::write(scratch.vault().join("schema").join("README.md"), WIKI).unwrap();
+    let vault = scratch.reopen().unwrap();
+    vault.collection("west_docs").unwrap();
+    vault.check().unwrap();
+}
+
+#[test]
+fn identity_field_defaults_to_id() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("east.yaml", EAST);
+    let vault = scratch.reopen().unwrap();
+    let collection = vault.collection("east_docs").unwrap();
+    assert_eq!(collection.id_field(), "id");
+}
+
+#[test]
+fn filter_key_marks_are_honoured() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    let vault = scratch.reopen().unwrap();
+    let collection = vault.collection("west_docs").unwrap();
+    assert!(collection.is_filter_key("tag"));
+    assert!(!collection.is_filter_key("title"));
+}
+
+#[test]
+fn journal_default_segment_cap_is_8_mib() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("log.yaml", EAST_LOG);
+    let vault = scratch.reopen().unwrap();
+    let collection = vault.collection("east_log").unwrap();
+    assert_eq!(collection.segment_max_bytes(), Some(8 * 1024 * 1024));
+}
+
+#[test]
+fn journal_cap_above_32_mib_is_rejected() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("log.yaml", EAST_LOG_OVERSIZE);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::Invalid));
+}
+
+#[test]
+fn two_vaults_with_different_collection_names() {
+    let west = Scratch::new();
+    let east = Scratch::new();
+    drop(west.init());
+    drop(east.init());
+    west.write_schema("west.yaml", WEST);
+    east.write_schema("east.yaml", EAST);
+    let west_vault = west.reopen().unwrap();
+    let east_vault = east.reopen().unwrap();
+    west_vault.collection("west_docs").unwrap();
+    east_vault.collection("east_docs").unwrap();
+    assert!(west_vault.collection("east_docs").is_err());
+    assert!(east_vault.collection("west_docs").is_err());
+    assert_eq!(west_vault.schema_versions(), &[1]);
+    assert_eq!(east_vault.schema_versions(), &[2]);
+}
+
+#[test]
+fn missing_collection_is_not_found() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    let vault = scratch.reopen().unwrap();
+    let err = vault.collection("east_docs").unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::NotFound));
+}
+
+#[test]
+fn json_collection_file_loads() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.json", WEST_JSON);
+    let vault = scratch.reopen().unwrap();
+    assert_eq!(
+        vault.collection("west_docs").unwrap().kind(),
+        Kind::Document
+    );
+}
+
+#[test]
+fn root_schema_yaml_relocates_schema_dir() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    fs::write(scratch.vault().join("schema.yaml"), ROOT_SCHEMA).unwrap();
+    let dir = scratch.vault().join("decls");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join("west.yaml"), WEST).unwrap();
+    let vault = scratch.reopen().unwrap();
+    vault.collection("west_docs").unwrap();
+}
+
+#[test]
+fn check_rereads_schema_from_disk() {
+    let scratch = Scratch::new();
+    let vault = scratch.init();
+    scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
+    let err = vault.check().unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::Invalid));
+}

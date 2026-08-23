@@ -1,0 +1,4 @@
+name: west_docs
+kind: document
+layout: west/{id}.md
+fields: []

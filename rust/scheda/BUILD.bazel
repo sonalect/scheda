@@ -10,10 +10,24 @@ rust_library(
     deps = [
         "//rust/generated:generated_v1",
         "@cargo//:git2",
+        "@cargo//:regex",
+        "@cargo//:serde",
+        "@cargo//:serde_json",
+        "@cargo//:yaml_serde",
     ],
 )
 
 rust_test(
     name = "scheda_test",
+    compile_data = glob(["testdata/**"]),
     crate = ":scheda",
+)
+
+rust_test(
+    name = "schema_test",
+    srcs = ["tests/schema.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/schema.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [":scheda"],
 )

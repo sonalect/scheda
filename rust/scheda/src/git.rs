@@ -1,9 +1,9 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
-use git2::{Repository, RepositoryInitOptions, RepositoryOpenFlags};
 #[cfg(test)]
 use git2::{Config, ErrorCode, StatusOptions};
+use git2::{Repository, RepositoryInitOptions, RepositoryOpenFlags};
 
 use crate::Error;
 
@@ -49,8 +49,8 @@ pub(crate) fn remotes(dir: &Path) -> Result<Vec<String>, Error> {
     let names = repo.remotes().map_err(map_err)?;
     let mut out = Vec::new();
     for bytes in names.iter_bytes() {
-        let name = std::str::from_utf8(bytes)
-            .map_err(|_| Error::git("remote name was not UTF-8"))?;
+        let name =
+            std::str::from_utf8(bytes).map_err(|_| Error::git("remote name was not UTF-8"))?;
         out.push(name.to_owned());
     }
     Ok(out)

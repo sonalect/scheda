@@ -10,7 +10,11 @@ readme = "../../README.md"
 
 [dependencies]
 git2 = { workspace = true }
+regex = { workspace = true }
 scheda-generated = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+yaml_serde = { workspace = true }
 
 [lints]
 workspace = true

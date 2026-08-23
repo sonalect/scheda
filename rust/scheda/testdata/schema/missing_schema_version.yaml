@@ -1,0 +1,4 @@
+name: c
+kind: document
+layout: c/{id}.md
+fields: []
