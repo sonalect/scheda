@@ -39,7 +39,7 @@ Suggested crate order is `10` §2: working tree + lock → Schema + `document` /
 | Stage | Status | What closes |
 |---|---|---|
 | [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
-| [C1](#c1-working-tree-and-lock) | not started | `init` / `open`, lock, Index path, ISO-1 local |
+| [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, Index path, ISO-1 local |
 | [C2](#c2-schema) | not started | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | not started | Whole-file writes and `find_one` |
 | [C4](#c4-journal-segments) | not started | Append, rotate, scan `find_one` |
@@ -89,24 +89,24 @@ ranking).
 
 ## C1. Working tree and lock
 
-**Status:** not started
+**Status:** done
 
 **Codes:** LIB-1, LIB-4, LIB-6, LIB-13 (`init` / `open` only), STO-4, GIT-1,
 GIT-5, GIT-6, GIT-7, GIT-8 (local writes once they exist), GIT-9 (`init` /
 `open`; `clone` is C7), GIT-13, ISO-1 (no network on `open` / `init`).
 
-- [ ] `init(path)` creates a git working tree with no Remote (GIT-9).
-- [ ] `open(path)` on that tree succeeds; Index directory is **outside** the
+- [x] `init(path)` creates a git working tree with no Remote (GIT-9).
+- [x] `open(path)` on that tree succeeds; Index directory is **outside** the
       tree and not committed (GIT-1, GIT-13). Tests pass an explicit Index
       path (`10` §7).
-- [ ] Two `open`s on different roots in one process (GIT-5, LIB-4).
-- [ ] Write lock: second write `open` → `locked`; a reader `find_one` is not
+- [x] Two `open`s on different roots in one process (GIT-5, LIB-4).
+- [x] Write lock: second write `open` → `locked`; a reader `find_one` is not
       blocked once C3 exists (STO-4). Until C3, lock vs second writer is
       enough.
-- [ ] `open` with network disabled still reports configured `origin` (GIT-7).
-- [ ] Core tests run without an async executor (LIB-6).
-- [ ] The library never configures `filter.lfs` (GIT-6).
-- [ ] `init` / `open` with `auto_sync` off open no outbound connections
+- [x] `open` with network disabled still reports configured `origin` (GIT-7).
+- [x] Core tests run without an async executor (LIB-6).
+- [x] The library never configures `filter.lfs` (GIT-6).
+- [x] `init` / `open` with `auto_sync` off open no outbound connections
       (ISO-1, GIT-8).
 
 ---

@@ -14,6 +14,8 @@ API or on-disk format changes bump the minor.
 - LIB-5 error codes on the Rust crate; LIB-2 names including `init` /
   `clone` / `scan` / remote / `check` / `reindex`; `search` returns
   `unsupported`.
+- `Vault::init` / `Vault::open` with explicit Index path, exclusive write
+  lock (`locked`), and local Remote detection without fetch.
 
 ### Changed
 

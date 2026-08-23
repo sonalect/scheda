@@ -4,7 +4,10 @@
 //! index is derived and lives outside git. Scheda does not know a consumer's types.
 
 mod error;
+mod git;
 mod vault;
 
 pub use error::{Code, Error};
-pub use vault::{Collection, Document, Filter, InsertOne, ReplaceOne, SearchHits, Vault};
+pub use vault::{
+    Collection, Document, Filter, InsertOne, OpenOptions, ReplaceOne, SearchHits, Vault,
+};
