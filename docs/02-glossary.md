@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.11, 23 August 2026.
+Document 2 of the Scheda package. Version 0.12, 24 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -120,13 +120,13 @@ Built from Vault files. Stored under `{vault}/.scheda/` (gitignored), not commit
 
 Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win.
 
-**Lexical search** — full-text search over fields and body that Schema marked for words.
+**Lexical search** — ranked full-text (BM25 or equivalent) over fields and body that Schema marked `fts`. Not grep, SQL `LIKE`, or a file scan at query time.
 
-**Vector search** — nearest-neighbour search over embeddings of fields and body that Schema marked for vectors. Embedding weights are not stored in the Vault.
+**Vector search** — in-process ANN nearest neighbours (HNSW or equivalent) over embeddings of fields and body that Schema marked for vectors. Embedding weights are not stored in the Vault. An external vector database is not the Index.
 
 **Embedder** — a caller-supplied function (or equivalent) that turns marked text into a vector. Optional. Without it, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network.
 
-**Hybrid search** — one `search` call that may combine lexical hits, vector hits, and (when declared) edges, then merge ranks. Weights are a request or Vault parameter, not constants in library source. The result is ordered ids and scores, not a model-written answer.
+**Hybrid search** — one `search` call that runs the lexical and vector legs when both are available, then fuses ranks with Reciprocal Rank Fusion (default) or caller merge weights. Declared edges may add candidates. The result is ordered ids and raw per-leg scores, not a model-written answer.
 
 **Cross-encoder / pair reranker** — out of Scheda. The library returns candidates and raw leg scores. The consumer may rerank.
 

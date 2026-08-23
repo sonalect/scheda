@@ -10,7 +10,7 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
-- Core development plan in `docs/11-core-plan.md` (stages C0–C9).
+- Core development plan in `docs/11-core-plan.md` (stages C0–C10).
 - LIB-5 error codes on the Rust crate; LIB-2 names including `init` /
   `clone` / `scan` / remote / `check` / `reindex`; `search` returns
   `unsupported`.
@@ -45,6 +45,9 @@ API or on-disk format changes bump the minor.
 - Journal `id` map under `{vault}/.scheda/index/journal/` so `find_one` does
   not scan unrelated segments; writer updates it on `insert_one`, `reindex`
   rebuilds it (C8, IDX-5, OPS-1, OPS-3).
+- Hybrid `search` quality bar: BM25 lexical, in-process ANN, RRF fusion,
+  Schema-marked fields only, injected embedder, no LLM in the crate (`06`,
+  `10` §3). Rust stage C9 in `11` implements it before core acceptance (C10).
 
 ### Changed
 

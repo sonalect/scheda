@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.12, 23 August 2026.
+Document 1 of the Scheda package. Version 0.13, 24 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -104,7 +104,7 @@ Ready-made experiments that keep Markdown under git and hang a search index on t
 
 A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, explicit `commit`, `find_one` by id, `find` / `scan` (journal in append order). Isolated roots and `encrypt` are **later** (`09`, `10`).
 
-Hybrid search (words plus vectors plus declared edges) is the next phase. It must not be required to insert a journal line or replace a document.
+Hybrid `search` is the next phase (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
 
 The agent catalog and tool shell are a later phase. They do not block core. They must not grow a method per collection type.
 
@@ -126,6 +126,7 @@ What is deliberately later: isolated collections and optional age encryption of 
 | `08` | Agent surface |
 | `09` | Isolation and perimeter |
 | `10` | Phases, acceptance, open questions, deferrals |
+| `11` | Rust stage checklist (core, then hybrid `search`) |
 
 Checkable requirements live in `03`–`09` and are gathered with phases in `10`. This document does not list them.
 
@@ -133,6 +134,6 @@ Checkable requirements live in `03`–`09` and are gathered with phases in `10`.
 
 ## 7. Status
 
-The repository currently holds this design package and a compiling Rust skeleton: public types and method names, bodies not implemented. That crate is the first implementation, not the definition of the product. Implementation follows the phases in `10`, core first.
+The repository currently holds this design package and the first Rust binding. Core stages C0–C8 in `11` are done. `search` is still `unsupported` until C9. That crate is the first implementation, not the definition of the product. Implementation follows `11` and the phases in `10`.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.

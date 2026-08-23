@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.8, 23 August 2026.
+Document 5 of the Scheda package. Version 0.9, 24 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index behaviour is in `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -55,7 +55,7 @@ A default is applied only if Schema states one; otherwise MOD-12 (missing is mis
 
 ## 3. Index marks and embeddings
 
-**SCH-9. Search is opt-in per field (and body).** For each field and for the body: lexical (`fts`), vector, both, or neither. Unmarked text does not enter the Index. *Check (**search**):* two fields, one marked; word and meaning queries hit only the marked field.
+**SCH-9. Search is opt-in per field (and body).** For each field and for the body: lexical (`fts`), vector, both, or neither. Unmarked text does not enter the Index. Substring match over every field is not `search`. *Check (**search**):* two fields, one marked; word and meaning queries hit only the marked field.
 
 **SCH-10. Logical embedding slot.** If vector is on, Schema names a `field_id` (logical slot). Model identity (`model_id`, dimension, prompt variant, quantization) lives in the Index, not in the Record. Mismatch with the caller's embedder → rebuild vectors or error, not search against the wrong matrix. Lexical search still works. *Check (**search**):* change of `model_id` in the Index header invalidates the vector table; `find` / FTS still succeed.
 

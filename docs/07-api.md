@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.15, 24 August 2026.
+Document 7 of the Scheda package. Version 0.16, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -44,7 +44,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-10. `find(collection, filter)` / `scan(collection)`.** SCH-8 filters as `api/v1` `Filter`: `equal` (JSON `null` is stored `null`, not absent), `set`, `exists`, and `path_prefix` (vault-relative POSIX prefix of Record `path`; `document` / `singleton` only). Clauses AND. Unmarked field → `invalid`. Empty `clauses` or `scan` = every Record. Journal order is append order (QRY-7). `scan` is `find` with an empty filter; a binding may expose only one name if the other is a documented alias. *Check:* QRY-2, QRY-7.
 
-**LIB-11. `search(query)`.** Hybrid retrieval (QRY-3–6). Input: text, optional collection scope, optional `find` filter, `k`, optional merge weights. Output: ordered hits with `(collection, id)`, path, per-leg scores. **Search.** *Check:* fixture ids all appear at the given `k`.
+**LIB-11. `search(query)`.** Hybrid retrieval (QRY-3–6): BM25 lexical and ANN vector legs when both are on, fused with RRF by default. Input: text, optional collection scope, optional `find` filter, `k`, optional merge weights. Output: ordered hits with `(collection, id)`, path, per-leg scores. **Search.** *Check:* QRY-3 fixture ids all appear at the given `k`; a hit from both legs carries both scores.
 
 ---
 

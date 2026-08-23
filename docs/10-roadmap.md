@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.7, 23 August 2026.
+Document 10 of the Scheda package. Version 0.8, 24 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. Terms are in `02`. Codes: `OPS`.
 
@@ -15,7 +15,7 @@ Four labels appear on requirements:
 | Phase | Meaning |
 |---|---|
 | **core** | Files are truth, writes are safe, one writer, explicit `commit`, `find_one` / `find`. No network unless opted in. A consumer can store and retrieve Records with no embedder, no agent transport, and no isolated root. |
-| **search** | Hybrid `search`, lexical and vector Index, one-step and inverse edge walks. Must not be required to `insert_one` a journal line or `replace_one` a document. |
+| **search** | Hybrid `search` that an agent can recall from: ranked BM25, in-process ANN, RRF fusion, Schema-marked fields only, one-step and inverse edge walks. Must not be required to `insert_one` a journal line or `replace_one` a document. Grep is not this phase. |
 | **agent** | Catalog and a thin encoding of the same API (`08`). Does not block **core**. |
 | **later** | Isolated collections and their encryption, scale, extra writers, extra walks, conveniences. Must not leak into **core** as hidden dependencies. |
 
@@ -23,7 +23,7 @@ A binding may ship **search** before **agent**. Isolated collections are **later
 
 The first implementation is the Rust crate `scheda`. Other languages (Python, Java, Go, TypeScript, and others) are separate bindings of the same Vault layout and the same operations (`07`). They are accepted on their own after **core** (at least) is true of that binding. They are not a prerequisite for accepting Rust **core**.
 
-Until the journal `id` map exists, **core** `find_one` on `journal` may scan segments (`03` §6). IDX-5's cost check applies once that map is in.
+The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journal` must not scan unrelated segments (`03` §6).
 
 ---
 
@@ -50,7 +50,7 @@ Until the journal `id` map exists, **core** `find_one` on `journal` may scan seg
 4. Implementation source does not name a consumer's collections (SCH-1, MOD-1).
 5. `auto_sync` off: writes and `commit` succeed with the network disabled (GIT-8, ISO-1).
 
-Suggested order inside the crate (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map. Remote operations are **core** but may land after local `commit`. Isolated roots and `encrypt` wait for **later**. The stage checklist for the Rust binding is `11`; it does not add requirements.
+Suggested order inside the crate (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance. Remote operations are **core** but may land after local `commit`. Isolated roots and `encrypt` wait for **later**. The stage checklist for the Rust binding is `11`; it does not add requirements. **search** codes stay out of this section; `11` still runs the search stage (C9) before the core-acceptance checklist (C10).
 
 ---
 
@@ -58,12 +58,16 @@ Suggested order inside the crate (not a second spec): working tree + lock → Sc
 
 **In:** SCH-9–11, IDX-3, IDX-6–9, QRY-3–6, REL-1–3, LIB-11, OPS-2, OPS-4.
 
+Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (HNSW or equivalent) at OPS-1, RRF hybrid when both legs are on, injected embedder, no LLM or pair reranker in the library. Substring search and brute-force vector scan at OPS-1 do not accept this phase.
+
 **Search is accepted** when those codes pass and:
 
 1. `insert_one` / `replace_one` / `find_one` still work with no embedder (IDX-8).
 2. Unmarked fields are absent from `search` (SCH-9).
 3. Corrupt Index fails closed (QRY-4).
 4. One-step and inverse walks match fixtures (REL-2, REL-3). Multi-step (REL-4) is not required.
+5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
+6. Hybrid `search` on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
 ---
 
@@ -151,7 +155,7 @@ Already closed in this package (not open): SQL as caller API (no); merge on `ope
 
 Calendar dates or crate version numbers for each phase.
 
-Which FTS or vector crate the Rust binding pins — `06`, as long as the Index stays disposable and SQL is not the caller API.
+Which FTS or vector crate the Rust binding pins — `06` requires BM25-class lexical and HNSW-class ANN in-process; the crate names are a binding choice. SQL is not the caller API.
 
 Which age library a binding vendors — ISO-8.
 

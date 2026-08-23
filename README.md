@@ -10,8 +10,9 @@ collection API is CRUD-shaped (`insert_one`, `find_one`, `replace_one`, `find`,
 `scan`, `search`, `commit`). It is not a compatibility layer for MongoDB, CouchDB, or
 SQL.
 
-**Status: skeleton.** The Rust crate compiles and exposes the intended surface.
-The methods are not implemented.
+**Status: core C0–C8 in the Rust crate.** Files, git, Schema, `find` /
+`find_one`, journal `id` map. Hybrid `search` (BM25 + in-process ANN + RRF)
+is C9 and is still `unsupported`.
 
 ## Documents
 
@@ -24,12 +25,12 @@ The design is a numbered package in `docs/`, in English.
 | [03-model.md](docs/03-model.md) | Collection kinds, Record `id` and paths, fields and body, journal segments |
 | [04-files-and-git.md](docs/04-files-and-git.md) | Files as truth, write lock, commit, `auto_sync`, `sync_remote`, clone, no LFS |
 | [05-schema.md](docs/05-schema.md) | Schema as Vault data: fields, versions, index marks, edges, journal size cap |
-| [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, find vs search, embedder, hybrid ranks, edge walks |
+| [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, BM25 + ANN hybrid `search`, RRF, injected embedder, edge walks |
 | [07-api.md](docs/07-api.md) | Language-neutral library operations; message fields in `api/v1` |
 | [08-agent.md](docs/08-agent.md) | Same operations for an AI agent, Schema catalog, thin transport |
 | [09-isolation.md](docs/09-isolation.md) | No network by default (**core**); isolated git root and age encryption (**later**) |
 | [10-roadmap.md](docs/10-roadmap.md) | Phases (core / search / agent / later), acceptance, size targets, open questions, deferrals |
-| [11-core-plan.md](docs/11-core-plan.md) | Rust **core** work order: stages C0–C9, checkboxes, out-of-core stubs |
+| [11-core-plan.md](docs/11-core-plan.md) | Rust work order: C0–C8 core (done), C9 hybrid search, C10 core acceptance |
 
 ## Layout
 

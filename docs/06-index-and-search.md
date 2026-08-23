@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.8, 24 August 2026.
+Document 6 of the Scheda package. Version 0.9, 24 August 2026.
 
 Normative rules for the derived Index, `find_one` / `find` / `search`, embedders, and edge walks. Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`, `REL`. Phase **core** or **search** as marked.
 
@@ -38,9 +38,11 @@ Writes (`insert_one` / `replace_one`) update this map in the same process when t
 
 ## 3. Lexical and vector (**search**)
 
-**IDX-6. Lexical index.** Full-text over fields and body marked `fts` (SCH-9). An embedded engine in-process is enough; a separate search server is not required for **search**. The first implementation (Rust) may pin an FTS library in its workspace; the contract is not SQL. *Check:* an exact token in a marked field is found; the same token only in an unmarked field is not.
+The Index is a **retrieval** engine an agent can recall from, not a substring demo. Grep, SQL `LIKE`, and scanning Vault files at query time are not `search`.
 
-**IDX-7. Vector index.** Nearest neighbours over slots marked vector (SCH-9, SCH-10). Same Index directory as lexical. No required external vector database. *Check:* a query that shares no tokens with the Record but is a synonym (fixture) still ranks that Record inside the requested `k` when an embedder is present.
+**IDX-6. Lexical index.** Ranked full-text (BM25 or equivalent) over fields and body marked `fts` (SCH-9). In-process; a separate search server is not required. Identifiers, rare tokens, and exact phrases must surface. The first implementation (Rust) pins a BM25 library (for example Tantivy); the contract is the ranking class, not a crate name, and is not SQL. *Check:* an exact token in a marked field ranks that Record inside the requested `k` among distractors that lack the token; the same token only in an unmarked field is not a hit.
+
+**IDX-7. Vector index.** In-process ANN nearest neighbours (HNSW or equivalent) over slots marked vector (SCH-9, SCH-10). Same Index directory as lexical. No external vector database. At OPS-1, brute-force over every stored vector is not the implementation. The first implementation may pin an ANN library (for example USearch). *Check:* a query that shares no tokens with the Record but is a synonym (fixture) still ranks that Record inside the requested `k` when an embedder is present.
 
 **IDX-8. Embedder is injected.** The caller passes an embedder (a function or interface; in Rust, typically a trait). The library does not require the network to embed. No embedder → vector leg off; lexical, `find`, and writes still work. An embedder that calls the network is the caller's; core git with `auto_sync` off still GIT-8. *Check:* build and query with no embedder; a stub that returns a fixed vector fills the vector table; those runs make no unexpected connections.
 
@@ -50,11 +52,11 @@ Writes (`insert_one` / `replace_one`) update this map in the same process when t
 
 ## 4. Hybrid `search`
 
-**QRY-3. One call, several legs.** `search` may combine lexical hits, vector hits, and (REL) edge expansions, then merge ranks. Merge weights are a request parameter or Versioned data in the Vault, not constants in implementation source. The result is ordered `(collection, id)` plus raw per-leg scores — not a generated answer. *Check:* a fixture query set; at given `k`, all expected ids appear in the result (order of a consumer's extra reranker is out of scope).
+**QRY-3. One call, several legs.** When both lexical and vector legs are available, `search` **must** run both and fuse ranks. Default fusion is Reciprocal Rank Fusion (RRF). The caller may pass `k` and merge weights; those weights are a request parameter or Versioned data in the Vault, not constants in implementation source. A binding may expose another fusion as an option; RRF must work without a consumer-specific constant in library source. Declared edges (REL) may add candidates. The result is ordered `(collection, id)` plus raw per-leg scores — not a generated answer. *Check:* (1) token query: expected id in `k` from the lexical leg even if the embedder is a stub; (2) synonym query with no shared tokens: expected id in `k` from the vector leg; (3) hybrid fixture: all expected ids appear at the given `k`, and a hit retrieved by both legs carries both scores. Order of a consumer's extra reranker is out of scope.
 
 **QRY-4. Fail closed.** If the Index is missing, corrupt, or being rebuilt, `search` returns no hits or a failure, not stale ids. *Check:* overwrite Index with junk; `search` does not return foreign ids.
 
-**QRY-5. No pair reranker in Scheda.** Cross-encoder, listwise models, and consumer scoring stay outside. The public API does not load them. *Check:* `search` does not pull an ONNX/cross-encoder plugin by itself; no consumer ranking types in Scheda source.
+**QRY-5. No pair reranker in Scheda.** Cross-encoder, listwise models, LLM calls, and consumer scoring stay outside. The public API does not load them. Scheda returns candidates; the consumer may rerank. *Check:* `search` does not pull an ONNX/cross-encoder plugin by itself; no consumer ranking types in Scheda source.
 
 **QRY-6. Filters on `search`.** The same SCH-8 filters as `find` apply before ranking (IDX / QRY-2). *Check:* a filtered-out Record is not in the hybrid candidate set.
 
