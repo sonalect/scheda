@@ -19,3 +19,5 @@ buildifier_format(
 markdownlint_test(
     name = "markdown",
 )
+
+exports_files(["rustdoc_pages_index.html"])

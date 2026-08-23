@@ -58,6 +58,16 @@ bazel build //rust/scheda:scheda
 bazel test //...
 ```
 
+Rust API HTML (rustdoc) is built with rules_rust `rust_doc` and published to
+[GitHub Pages](https://amsokol.github.io/scheda/) on push to `main` (no
+crates.io). Enable **Settings → Pages → Source: GitHub Actions** once.
+
+```bash
+bazel build //rust/scheda:scheda_doc   # rustdoc HTML
+bazel build //rust/scheda:pages        # same HTML plus redirect and .nojekyll
+bazel test //rust/scheda:scheda_doc_test
+```
+
 Generate Rust stubs from `api/v1` (writes `rust/generated/api/v1/`; CI checks they match):
 
 ```bash

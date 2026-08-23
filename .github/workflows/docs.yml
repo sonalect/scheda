@@ -1,0 +1,119 @@
+# Publish rustdoc HTML to GitHub Pages (no crates.io).
+# Repo Settings → Pages → Source: GitHub Actions.
+
+name: Docs
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    container:
+      image: debian:13
+    timeout-minutes: 90
+    env:
+      BAZELISK_VERSION: 1.29.0
+      BAZELISK_SHA256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
+      BAZEL_DISK_CACHE: /github/home/.cache/bazel-disk
+      BAZEL_REPO_CACHE: /github/home/.cache/bazel-repo
+    steps:
+      - name: Install dependencies
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          set -euo pipefail
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            binutils \
+            ca-certificates \
+            cmake \
+            curl \
+            g++ \
+            gcc \
+            git \
+            libc6-dev \
+            make \
+            patch \
+            pkg-config \
+            zlib1g-dev
+
+      - name: Install Bazelisk
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/bazelisk \
+            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-linux-amd64"
+          echo "${BAZELISK_SHA256}  /tmp/bazelisk" | sha256sum -c
+          install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
+
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Cache Bazel
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ${{ env.BAZEL_DISK_CACHE }}
+            ${{ env.BAZEL_REPO_CACHE }}
+          key: bazel-debian13-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
+          restore-keys: |
+            bazel-debian13-cas-
+
+      - name: Configure Bazel caches
+        run: |
+          set -euo pipefail
+          mkdir -p "${BAZEL_DISK_CACHE}" "${BAZEL_REPO_CACHE}"
+          {
+            echo "common --disk_cache=${BAZEL_DISK_CACHE}"
+            echo "common --repository_cache=${BAZEL_REPO_CACHE}"
+          } >> "${HOME}/.bazelrc"
+
+      - name: Build Pages site
+        run: |
+          set -euo pipefail
+          bazel build //rust/scheda:pages
+          site="${RUNNER_TEMP}/pages"
+          mkdir -p "${site}"
+          cp -R -L "$(bazel info bazel-bin)/rust/scheda/pages/." "${site}/"
+
+      - name: Stop Bazel
+        if: always()
+        continue-on-error: true
+        run: |
+          set +e
+          bazel shutdown
+          for pidfile in "${HOME}"/.cache/bazel/_bazel_*/server/server.pid; do
+            if [ -f "${pidfile}" ]; then
+              kill -9 "$(cat "${pidfile}")" 2>/dev/null || true
+            fi
+          done
+          exit 0
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: ${{ runner.temp }}/pages
+          include-hidden-files: true
+
+  deploy:
+    name: GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v5.0.0

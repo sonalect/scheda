@@ -1,4 +1,5 @@
-load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_doc", "rust_doc_test", "rust_library", "rust_test")
+load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
@@ -30,4 +31,20 @@ rust_test(
     crate_root = "tests/schema.rs",
     visibility = ["//rust:__pkg__"],
     deps = [":scheda"],
+)
+
+rust_doc(
+    name = "scheda_doc",
+    crate = ":scheda",
+)
+
+rust_doc_test(
+    name = "scheda_doc_test",
+    size = "small",
+    crate = ":scheda",
+)
+
+rustdoc_pages(
+    name = "pages",
+    doc = ":scheda_doc",
 )

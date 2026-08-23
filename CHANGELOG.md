@@ -23,6 +23,7 @@ API or on-disk format changes bump the minor.
   (`invalid`).
 - `open` / `check` load Schema from `schema/` (`05` §8 keys); illegal
   declarations are `invalid`.
+- Rust crate rustdoc on GitHub Pages (`bazel build //rust/scheda:scheda_doc`).
 
 ### Changed
 

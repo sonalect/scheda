@@ -546,7 +546,7 @@
           "FILE:@@//Cargo.lock 33467364bdd21dba8b807d95a20a7cb6950ab6f99632d4d3fca90286cb5cf851",
           "FILE:@@//Cargo.toml cb11cc5823bb2d899f67c0698b10c46cb69aa362df3508e0fbf11e40621339d4",
           "FILE:@@//rust/generated/Cargo.toml b51c67c1a3f45254072ff69c5e5dad5b106b54e34331ceae7d1310da27238600",
-          "FILE:@@//rust/scheda/Cargo.toml c9d3719579ededf3e7a2018ffe856ff024c350f020a4621f40b48d4ed8396bf6",
+          "FILE:@@//rust/scheda/Cargo.toml fa0810451185134fedde7090737ce6f042e51955972441986820635c6ad550c1",
           "FILE:@@//third_party/buf/plugins/protoc-gen-buffa-packaging/Cargo.lock 094860b137ae02ff2336501075b6e0140a829fdf05ca90bfe309174b588bd545",
           "FILE:@@//third_party/buf/plugins/protoc-gen-buffa-packaging/Cargo.toml 63ae86c8ae1f69096b0dfb2b91c256a34af65a6f94712347b5ac35825fc92413",
           "FILE:@@//third_party/buf/plugins/protoc-gen-protovalidate-buffa/Cargo.lock f0f7c956a43fb8ea08c787c99342489b65e39fc4c8adbf9f0999926ba3860f22",
