@@ -83,8 +83,9 @@ API or on-disk format changes bump the minor.
   `remove_dir` (Windows `remove_file` cannot unlink them). Windows CI uses
   `--output_user_root=C:/b` and a short crate_universe hub `pvb` so
   `CARGO_MANIFEST_DIR` stays under MAX_PATH.
-- Pinned `bazel_utils_*` modules at `v0.2.2` (Windows ARM64 `cargo-audit`
-  prebuilt; Scheda CI still runs Windows amd64 only).
+- Pinned `bazel_utils_*` modules at `v0.2.3` (`buf_generate` installs local
+  plugins as `name.exe` so Windows `buf.exe` LookPath can find them; Scheda
+  CI still runs Windows amd64 only).
 - Git operations go through `git2` (libgit2), not the `git` CLI.
 - Generated Rust stubs live in `rust/generated` (crate `scheda-generated`):
   one buffa file per `.proto`, packaging `mod.rs`, and protovalidate
