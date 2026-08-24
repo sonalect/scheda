@@ -109,6 +109,8 @@ API or on-disk format changes bump the minor.
   the validated `Filter` oneof; it does not re-check clause shape.
 - Rust **core** is accepted (C10): the five gates in `10` §2 pass in
   `scheda` tests, including deleting `.scheda/` without losing Records.
+- `docs/10-roadmap.md` records that the first binding accepted **core**
+  and **search**; **agent** and **later** are still out.
 
 ### Removed
 

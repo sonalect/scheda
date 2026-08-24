@@ -1,8 +1,8 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.8, 24 August 2026.
+Document 10 of the Scheda package. Version 0.9, 24 August 2026.
 
-This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. Terms are in `02`. Codes: `OPS`.
+This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed. Terms are in `02`. Codes: `OPS`.
 
 An assertion without a check is not a requirement.
 
@@ -23,7 +23,9 @@ A binding may ship **search** before **agent**. Isolated collections are **later
 
 The first implementation is the Rust crate `scheda`. Other languages (Python, Java, Go, TypeScript, and others) are separate bindings of the same Vault layout and the same operations (`07`). They are accepted on their own after **core** (at least) is true of that binding. They are not a prerequisite for accepting Rust **core**.
 
-The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journal` must not scan unrelated segments (`03` §6).
+**First binding (`scheda`).** **core** is accepted (`11` C10). **search** is accepted (`11` C9). **agent** and **later** are not started. No other language binding exists yet. Stage ticks and *Check:* tests live in `11` and `rust/scheda/tests/`.
+
+The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
 
 ---
 
@@ -40,7 +42,7 @@ The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journa
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-**Out of core (must still compile as stubs or `unsupported` without breaking writes):** LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11.
+**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** codes in that list are implemented (C9), not stubs. SCH-15, AGT-1–5, and ISO-2–11 stay out.
 
 **Core is accepted** when:
 
@@ -50,7 +52,9 @@ The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journa
 4. Implementation source does not name a consumer's collections (SCH-1, MOD-1).
 5. `auto_sync` off: writes and `commit` succeed with the network disabled (GIT-8, ISO-1).
 
-Suggested order inside the crate (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance. Remote operations are **core** but may land after local `commit`. Isolated roots and `encrypt` wait for **later**. The stage checklist for the Rust binding is `11`; it does not add requirements. **search** codes stay out of this section; `11` still runs the search stage (C9) before the core-acceptance checklist (C10).
+**Rust `scheda`:** those five gates pass (`11` C10; tests in `rust/scheda/tests/core.rs` and the C0–C8 suites). **core** is accepted for this binding.
+
+Order used in `scheda` (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance. Remote operations are **core** but landed after local `commit`. Isolated roots and `encrypt` wait for **later**. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
 
 ---
 
@@ -69,6 +73,8 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
 6. Hybrid `search` on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
+**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is Tantivy BM25; ANN is in-process USearch HNSW; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt lexical Index → `index_unusable`; `find_one` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
+
 ---
 
 ## 4. Agent
@@ -79,7 +85,7 @@ ISO-3 applies when isolated collections exist (**later**); it does not block thi
 
 **Agent is accepted** when catalog JSON matches Schema files, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
 
-Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**.
+Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. `scheda` ships none yet.
 
 ---
 
@@ -99,7 +105,7 @@ ISO-1 stays **core**. The main Vault is never encrypted.
 4. Main Index contains no fixture sealed string (ISO-4, IDX-4).
 5. If **agent** is on: tools on the main Vault never return that sealed value (ISO-3).
 
-Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid in this phase; encryption is optional on top.
+Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid in this phase; encryption is optional on top. `scheda` has no isolated root yet.
 
 ### Everything else later
 
@@ -131,6 +137,8 @@ These are orders of magnitude for an interactive caller on one machine, not SLAs
 
 **OPS-4. Offline embed.** After embedder weights are already on disk, **search** does not need the network. Download of weights is the consumer's install, not the library hot path. *Check (**search**):* a full cycle with the network disabled.
 
+`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9).
+
 Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A future Index backend (`§5`) is how huge Vaults stay on the same API.
 
 ---
@@ -155,7 +163,7 @@ Already closed in this package (not open): SQL as caller API (no); merge on `ope
 
 Calendar dates or crate version numbers for each phase.
 
-Which FTS or vector crate the Rust binding pins — `06` requires BM25-class lexical and HNSW-class ANN in-process; the crate names are a binding choice. SQL is not the caller API.
+Which FTS or vector crate a binding pins — `06` requires BM25-class lexical and HNSW-class ANN in-process; the crate names are a binding choice. `scheda` pins Tantivy and USearch. SQL is not the caller API.
 
 Which age library a binding vendors — ISO-8.
 

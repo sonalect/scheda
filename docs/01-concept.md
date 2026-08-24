@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.14, 24 August 2026.
+Document 1 of the Scheda package. Version 0.15, 24 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -134,6 +134,6 @@ Checkable requirements live in `03`–`09` and are gathered with phases in `10`.
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. Core stages C0–C8 in `11` are done. Hybrid `search` (C9) is wired in the Rust crate. That crate is the first implementation, not the definition of the product. Implementation follows `11` and the phases in `10`.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10) and **search** (C9) are accepted (`10`, `11`). **agent** and **later** are not started. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.
