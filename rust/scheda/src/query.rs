@@ -49,49 +49,34 @@ fn clause_matches(
     kind: Option<&Kind>,
 ) -> Result<bool, Error> {
     match kind {
-        Some(Kind::Equal(equal)) => Ok(equal_matches(decl, fields, equal)?),
-        Some(Kind::Set(set)) => Ok(set_matches(decl, fields, set)?),
-        Some(Kind::Exists(exists)) => Ok(exists_matches(decl, fields, exists)?),
+        Some(Kind::Equal(equal)) => Ok(equal_matches(fields, equal)?),
+        Some(Kind::Set(set)) => Ok(set_matches(fields, set)?),
+        Some(Kind::Exists(exists)) => Ok(exists_matches(fields, exists)?),
         Some(Kind::PathPrefix(prefix)) => path_prefix_matches(decl, record, prefix),
         None => unreachable!("FilterClause kind is required"),
     }
 }
 
-fn equal_matches(
-    decl: &CollectionDecl,
-    fields: &Map<String, Value>,
-    equal: &Equal,
-) -> Result<bool, Error> {
+fn equal_matches(fields: &Map<String, Value>, equal: &Equal) -> Result<bool, Error> {
     let field = required_field(&equal.field);
-    require_filter_key(decl, field)?;
     let want = json_of(&equal.value)?;
     Ok(match fields.get(field) {
         None => false,
-        Some(got) => json_eq(got, &want),
+        Some(got) => got == &want,
     })
 }
 
-fn set_matches(
-    decl: &CollectionDecl,
-    fields: &Map<String, Value>,
-    set: &Set,
-) -> Result<bool, Error> {
+fn set_matches(fields: &Map<String, Value>, set: &Set) -> Result<bool, Error> {
     let field = required_field(&set.field);
-    require_filter_key(decl, field)?;
     let members = json_list(&set.values)?;
     Ok(match fields.get(field) {
         None => false,
-        Some(got) => members.iter().any(|member| json_eq(got, member)),
+        Some(got) => members.iter().any(|member| got == member),
     })
 }
 
-fn exists_matches(
-    decl: &CollectionDecl,
-    fields: &Map<String, Value>,
-    exists: &Exists,
-) -> Result<bool, Error> {
+fn exists_matches(fields: &Map<String, Value>, exists: &Exists) -> Result<bool, Error> {
     let field = required_field(&exists.field);
-    require_filter_key(decl, field)?;
     Ok(fields.contains_key(field))
 }
 
@@ -157,9 +142,11 @@ fn json_list(value: &impl serde::Serialize) -> Result<Vec<Value>, Error> {
         Value::Array(items) => Ok(items),
         Value::Object(obj) => match obj.get("values") {
             Some(Value::Array(items)) => Ok(items.clone()),
-            _ => Ok(Vec::new()),
+            None => Ok(Vec::new()),
+            Some(_) => Err(Error::invalid("set values must be a list")),
         },
-        _ => Ok(Vec::new()),
+        Value::Null => Ok(Vec::new()),
+        _ => Err(Error::invalid("set values must be a list")),
     }
 }
 
@@ -186,8 +173,4 @@ fn unwrap_wkt(value: Value) -> Value {
         return v.clone();
     }
     value
-}
-
-fn json_eq(left: &Value, right: &Value) -> bool {
-    left == right
 }

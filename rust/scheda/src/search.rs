@@ -244,6 +244,11 @@ impl SearchEngine {
         let pool = k.saturating_mul(8).max(64);
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         inner.commit(&self.index_dir, self.can_write)?;
+        if inner.lexical.is_none() {
+            // Open swallowed a corrupt tree so `open`/`find_one` still work.
+            // `search` must fail closed (QRY-4) if the files are present.
+            inner.lexical = open_lexical(&self.index_dir, self.can_write)?;
+        }
         let lexical_hits = if lexical_weight > 0.0 {
             lexical_search(&mut inner, collection, text, pool, allowed)?
         } else {
@@ -929,10 +934,10 @@ pub(crate) fn check_strict_edges(
     lookup: impl Fn(&str, &str) -> Result<Record, Error>,
 ) -> Result<(), Error> {
     let fields = store::fields_map(record)?;
-    walk_strict(&decl.fields, &fields, schema, &lookup)
+    check_strict_fields(&decl.fields, &fields, schema, &lookup)
 }
 
-fn walk_strict(
+fn check_strict_fields(
     decls: &[FieldDecl],
     values: &serde_json::Map<String, Value>,
     schema: &Schema,
@@ -962,11 +967,11 @@ fn walk_strict(
             }
         }
         match values.get(&field.name) {
-            Some(Value::Object(map)) => walk_strict(&field.fields, map, schema, lookup)?,
+            Some(Value::Object(map)) => check_strict_fields(&field.fields, map, schema, lookup)?,
             Some(Value::Array(items)) => {
                 for item in items {
                     if let Some(map) = item.as_object() {
-                        walk_strict(&field.fields, map, schema, lookup)?;
+                        check_strict_fields(&field.fields, map, schema, lookup)?;
                     }
                 }
             }

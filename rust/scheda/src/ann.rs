@@ -1,4 +1,4 @@
-//! In-process USearch HNSW (IDX-7). Not wired to `search` yet.
+//! In-process USearch HNSW (IDX-7).
 
 use std::path::Path;
 
@@ -8,8 +8,8 @@ use crate::Error;
 
 /// Approximate nearest-neighbour index over `f32` cosine vectors.
 ///
-/// Keys are `u64`. C9 will map `(collection, id)` onto them. This type is
-/// `#[doc(hidden)]` until `search` uses it; it is not a LIB-2 name.
+/// Keys are `u64` hashes of `(collection, id)`. Hidden from rustdoc; not a
+/// LIB-2 name.
 #[doc(hidden)]
 pub struct AnnIndex {
     inner: Index,

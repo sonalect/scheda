@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.14, 24 August 2026.
+Document 11 of the Scheda package. Version 0.15, 24 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -49,7 +49,7 @@ hybrid `search` → core acceptance.
 | [C7](#c7-remote) | done | `clone`, `auto_sync`, push/pull/sync |
 | [C8](#c8-journal-id-map-and-size) | done | IDX-5, OPS-1, OPS-3 |
 | [C9](#c9-hybrid-search) | done | BM25 + ANN + RRF (`10` §3) |
-| [C10](#c10-core-acceptance) | not started | `10` §2 acceptance |
+| [C10](#c10-core-acceptance) | done | `10` §2 acceptance |
 
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
 IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–18; ISO-1; OPS-1, OPS-3.
@@ -320,18 +320,18 @@ this stage.
 
 ## C10. Core acceptance
 
-**Status:** not started
+**Status:** done
 
 Close only after C0–C8. C9 is **search** (`10` §3) and is not a core gate.
 Re-run the five gates in `10` §2:
 
-- [ ] Every **core** code in §2 of this file has a passing check in `scheda`.
-- [ ] Fixture Vault readable without the library (STO-2) and through
+- [x] Every **core** code in §2 of this file has a passing check in `scheda`.
+- [x] Fixture Vault readable without the library (STO-2) and through
       `find_one` (QRY-1).
-- [ ] Deleting the Index does not lose Records (STO-1, IDX-1).
-- [ ] Implementation source does not name a consumer's collections (SCH-1,
+- [x] Deleting the Index does not lose Records (STO-1, IDX-1).
+- [x] Implementation source does not name a consumer's collections (SCH-1,
       MOD-1).
-- [ ] `auto_sync` off: writes and `commit` succeed with the network disabled
+- [x] `auto_sync` off: writes and `commit` succeed with the network disabled
       (GIT-8, ISO-1).
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is

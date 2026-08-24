@@ -107,6 +107,8 @@ API or on-disk format changes bump the minor.
 - `Record.id` / `SearchHit.id` reject `/` and `\\` in protovalidate
   (layout path component). `HistoryEntry.time` is required. `find` walks
   the validated `Filter` oneof; it does not re-check clause shape.
+- Rust **core** is accepted (C10): the five gates in `10` §2 pass in
+  `scheda` tests, including deleting `.scheda/` without losing Records.
 
 ### Removed
 
@@ -120,6 +122,8 @@ API or on-disk format changes bump the minor.
   rustdoc on MSVC is not a 60s timeout. bazel_utils `.bash` lint/audit
   tests are skipped on Windows (`CreateProcess` error 193); Linux and
   macOS still run them.
+- `search` returns `index_unusable` when a lexical Index is on disk but
+  unreadable, instead of an empty hit list. `find_one` still reads files.
 
 ## [0.0.1] - 2026-08-23
 

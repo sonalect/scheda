@@ -339,6 +339,28 @@ fn missing_format_fails_closed() {
 }
 
 #[test]
+fn corrupt_lexical_index_fails_closed() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .insert_one(rec("token_notes", "a", json!({"title": "kryptonite"})))
+        .unwrap();
+    drop(vault);
+    fs::write(
+        scratch.vault().join(".scheda/index/lexical/meta.json"),
+        "not-tantivy",
+    )
+    .unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    let collection = vault.collection("token_notes").unwrap();
+    let got = collection.find_one("a").unwrap();
+    assert_eq!(got.valid, Some(true));
+    let err = collection.search(&q("kryptonite", 5)).unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::IndexUnusable));
+}
+
+#[test]
 fn walk_one_step_matches_hand_list() {
     let scratch = Scratch::new();
     drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());

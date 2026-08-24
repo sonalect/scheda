@@ -10,9 +10,9 @@ collection API is CRUD-shaped (`insert_one`, `find_one`, `replace_one`, `find`,
 `scan`, `search`, `commit`). It is not a compatibility layer for MongoDB, CouchDB, or
 SQL.
 
-**Status: core C0–C8 and search C9 in the Rust crate.** Files, git, Schema,
-`find` / `find_one`, journal `id` map, and hybrid `search` (BM25 + in-process
-ANN + RRF). Core acceptance is C10.
+**Status: core C0–C10 and search C9 in the Rust crate.** Files, git, Schema,
+`find` / `find_one`, journal `id` map, hybrid `search` (BM25 + in-process
+ANN + RRF), and core acceptance.
 
 ## Documents
 
@@ -30,7 +30,7 @@ The design is a numbered package in `docs/`, in English.
 | [08-agent.md](docs/08-agent.md) | Same operations for an AI agent, Schema catalog, thin transport |
 | [09-isolation.md](docs/09-isolation.md) | No network by default (**core**); isolated git root and age encryption (**later**) |
 | [10-roadmap.md](docs/10-roadmap.md) | Phases (core / search / agent / later), acceptance, size targets, open questions, deferrals |
-| [11-core-plan.md](docs/11-core-plan.md) | Rust work order: C0–C8 core (done), C9 hybrid search (done), C10 core acceptance |
+| [11-core-plan.md](docs/11-core-plan.md) | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done) |
 
 ## Layout
 

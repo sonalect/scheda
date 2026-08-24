@@ -28,6 +28,18 @@ rust_library(
 )
 
 rust_test(
+    name = "core_test",
+    srcs = ["tests/core.rs"],
+    compile_data = glob(["src/**/*.rs", "testdata/**"]),
+    crate_root = "tests/core.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "document_test",
     srcs = ["tests/document.rs"],
     compile_data = glob(["testdata/**"]),
