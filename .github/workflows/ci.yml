@@ -106,8 +106,10 @@ jobs:
     runs-on: macos-latest
     timeout-minutes: 90
     env:
-      BAZEL_DISK_CACHE: ${{ github.workspace }}/.cache/bazel-disk
-      BAZEL_REPO_CACHE: ${{ github.workspace }}/.cache/bazel-repo
+      # Must live outside the checkout: Bazel 9 refuses --repository_cache
+      # (and its repo contents cache) inside the main repo.
+      BAZEL_DISK_CACHE: ${{ runner.temp }}/bazel-disk
+      BAZEL_REPO_CACHE: ${{ runner.temp }}/bazel-repo
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
