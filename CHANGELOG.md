@@ -25,7 +25,8 @@ API or on-disk format changes bump the minor.
 - `open` / `check` load Schema from `schema/` (`05` §8 keys); illegal
   declarations are `invalid`.
 - Rust crate rustdoc on GitHub Pages (`bazel build //rust/scheda:scheda_doc`);
-  crate docs list Cargo features (`remote-git`, `numkong`, `openmp`).
+  crate docs list Cargo features (`remote-git`, `numkong`, `openmp`) and how
+  to call the sync API from Tokio (`spawn_blocking`).
 - `document` / `singleton` `insert_one` / `replace_one` / `find_one` (C3):
   YAML+Markdown or YAML-only files, atomic sibling-temp writes, Schema
   validation on write, `valid: false` on old files that fail the current

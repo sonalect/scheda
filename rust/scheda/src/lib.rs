@@ -21,6 +21,30 @@
 //!   until C9 wires it.
 //! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
 //!   libomp (Linux `libomp-dev`). Not enabled in the Bazel default build.
+//!
+//! # Tokio and other async runtimes
+//!
+//! Core operations are synchronous and do not start an async executor
+//! ([LIB-6](https://github.com/amsokol/scheda/blob/main/docs/07-api.md)).
+//! There is no `tokio` crate feature: disk I/O and libgit2 block the calling
+//! thread. From a Tokio task, run them on the blocking pool so worker threads
+//! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is
+//! `Send + Sync` but not `Clone`, because it may hold the write-lock file.
+//! Remote git (`clone`, `pull_remote`, `push_remote`, `sync_remote`) and
+//! `reindex` / `scan` are the calls that must not sit on a worker thread.
+//! The Vault write lock is unchanged: one writer, `locked` if a second
+//! `open(..., write)` races it.
+//!
+//! ```rust,ignore (tokio is not a crate dependency)
+//! use std::sync::Arc;
+//! use scheda::{Record, Vault};
+//!
+//! async fn find_one(vault: Arc<Vault>, id: String) -> Result<Record, scheda::Error> {
+//!     tokio::task::spawn_blocking(move || vault.collection("notes")?.find_one(&id))
+//!         .await
+//!         .map_err(|err| scheda::Error::io(err.to_string()))?
+//! }
+//! ```
 
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
