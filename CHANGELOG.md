@@ -48,8 +48,7 @@ API or on-disk format changes bump the minor.
 - Hybrid `search` quality bar: BM25 lexical, in-process ANN, RRF fusion,
   Schema-marked fields only, injected embedder, no LLM in the crate (`06`,
   `10` §3). Rust stage C9 in `11` implements it before core acceptance (C10).
-- CI runs `bazel test //...` on Debian 13, macOS, and Windows (amd64 and
-  arm64).
+- CI runs `bazel test //...` on Debian 13, macOS, and Windows amd64.
 - USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`); default
   SIMD feature `numkong` is off so Bazel can compile the C++ bridge.
   `search` is still `unsupported` until C9 wires it. The C++ bridge
@@ -74,7 +73,10 @@ API or on-disk format changes bump the minor.
 - crate_universe annotations keep only USearch/cxx patches and a Linux
   `CXX=/usr/bin/c++` pin. macOS must not override `CXX` (Apple sysroot
   placeholders). libgit2/OpenSSL crates already see host PATH and vendored
-  sources from rules_rust defaults.
+  sources from rules_rust defaults. On Windows the cxx-build patch writes
+  `rust/cxx.h` as a regular file so MSVC can compile USearch.
+- Pinned `bazel_utils_*` modules at `v0.2.2` (Windows ARM64 `cargo-audit`
+  prebuilt; Scheda CI still runs Windows amd64 only).
 - Git operations go through `git2` (libgit2), not the `git` CLI.
 - Generated Rust stubs live in `rust/generated` (crate `scheda-generated`):
   one buffa file per `.proto`, packaging `mod.rs`, and protovalidate
