@@ -182,6 +182,11 @@ jobs:
     name: Bazel (Windows)
     runs-on: windows-latest
     timeout-minutes: 120
+    env:
+      # Git for Windows bash. Native sh_test / run_shell look this up;
+      # bazel_utils `.bash` test rules still cannot CreateProcess those
+      # scripts (they are target_compatible_with Windows-incompatible).
+      BAZEL_SH: C:/Program Files/Git/bin/bash.exe
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1

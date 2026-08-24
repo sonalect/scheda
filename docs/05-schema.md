@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.9, 24 August 2026.
+Document 5 of the Scheda package. Version 0.10, 24 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index behaviour is in `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -128,10 +128,21 @@ extractors (SCH-3). The file stem is not the collection name.
 | `segment_max_lines` | `journal` only | Optional integer line cap. |
 | `segment_rotate` | `journal` only | Optional `daily` (UTC). |
 | `singleton_id` | `singleton` only | The one Record `id` (MOD-7). |
+| `body` | `document` only | Mapping (SCH-7). Omitted: body allowed, not indexed. |
 
-Journal-only keys on `document` / `singleton`, and `singleton_id` on another
-kind, are rejected. Two files with the same `name` are rejected. Two `kind`
-values on one collection are rejected (one `kind` string).
+Journal-only keys on `document` / `singleton`, `singleton_id` on another
+kind, and `body` on `journal` / `singleton`, are rejected. Two files with
+the same `name` are rejected. Two `kind` values on one collection are
+rejected (one `kind` string).
+
+`body` mapping:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `allowed` | no | Boolean. Default `true`. `false` rejects a non-empty body on write. |
+| `fts` | no | Boolean. Default `false`. Index the body for lexical search (SCH-9). |
+| `vector` | no | Boolean. Default `false`. Index the body for vector search (SCH-9). |
+| `field_id` | if `vector` | Logical embedding slot (SCH-10). Default `body`. |
 
 ### Field declarations
 
@@ -144,12 +155,23 @@ Each item of `fields`:
 | `required` | no | Boolean. Default `false` (optional). |
 | `nullable` | no | Boolean. Default `false` (SCH-5). |
 | `filter` | no | Boolean. Default `false`. `true` marks a `find` key (SCH-8). |
+| `fts` | no | Boolean. Default `false`. `true` marks lexical search (SCH-9). Only `string` and `string_list`. |
+| `vector` | no | Boolean. Default `false`. `true` marks vector search (SCH-9). Only `string` and `string_list`. |
+| `field_id` | if `vector` | Logical embedding slot (SCH-10). Default: the field `name`. |
+| `edge` | no | Mapping (SCH-11). Values are Record `id`s. |
 | `default` | no | Applied only when present (MOD-12). |
 | `fields` | `object` / `object_list` | Nested field list. Omitted on `object` / `object_list` means an open map of `string` values (SCH-4). |
 
 `fields` on a scalar type is rejected. Nested items use this same table.
-Index marks (SCH-9–11) and `isolated` (SCH-15) are not **core** keys; they are
-rejected until those phases.
+`isolated` (SCH-15) is still **later** and is rejected.
+
+`edge` mapping:
+
+| Key | Required | Meaning |
+|---|---|---|
+| `collection` | yes | Target collection `name`. Must exist in Schema. |
+| `multiplicity` | no | `one` (default; field type `string`) or `many` (`string_list`). |
+| `dangling` | no | `lax` (default) or `strict`. `strict` rejects a write whose target `id` is missing. |
 
 ---
 

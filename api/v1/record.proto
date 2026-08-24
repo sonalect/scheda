@@ -14,7 +14,10 @@ import "google/protobuf/struct.proto";
 message Record {
   string id = 1 [(buf.validate.field) = {
     required: true
-    string: {min_len: 1}
+    string: {
+      min_len: 1
+      pattern: "^[^/\\\\]+$"
+    }
   }];
   string collection = 2 [(buf.validate.field) = {
     required: true

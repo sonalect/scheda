@@ -65,3 +65,100 @@ message ReindexCounts {
   uint64 skipped_invalid = 2;
   uint64 segments_seen = 3;
 }
+
+// LIB-11. Hybrid `search` (QRY-3–6). Unset or zero `k` → 10. Unset weights → 1.
+// Zero weight turns that leg off for fusion. Weights, when set, are finite
+// and >= 0. `filter` is SCH-8, same as `find`.
+message SearchQuery {
+  string text = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  uint32 k = 2;
+  Filter filter = 3;
+  double lexical_weight = 4 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    // codegen 0.6.0 parses `finite` but does not emit it; field CEL does.
+    cel: [
+      {
+        id: "search.lexical_weight.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+  double vector_weight = 5 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    cel: [
+      {
+        id: "search.vector_weight.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+}
+
+message SearchHit {
+  string collection = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  string id = 2 [(buf.validate.field) = {
+    required: true
+    string: {
+      min_len: 1
+      pattern: "^[^/\\\\]+$"
+    }
+  }];
+  string path = 3;
+  double lexical_score = 4 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    cel: [
+      {
+        id: "search.lexical_score.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+  double vector_score = 5 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    cel: [
+      {
+        id: "search.vector_score.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+  double rrf_score = 6 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    cel: [
+      {
+        id: "search.rrf_score.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+}
+
+message SearchHits {
+  repeated SearchHit hits = 1;
+}

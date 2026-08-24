@@ -217,7 +217,47 @@ fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> R
     Ok(())
 }
 
-fn write_format(index_dir: &Path) -> Result<(), Error> {
+pub(crate) fn format_version(index_dir: &Path) -> Result<Option<u32>, Error> {
+    let path = index_dir.join(FORMAT_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    match trimmed.parse::<u32>() {
+        Ok(version) => Ok(Some(version)),
+        Err(_) => Err(Error::index_unusable(format!(
+            "index format is not a decimal integer: {}",
+            path.display()
+        ))),
+    }
+}
+
+pub(crate) fn require_current_format(index_dir: &Path) -> Result<(), Error> {
+    match format_version(index_dir)? {
+        Some(FORMAT_VERSION) => Ok(()),
+        Some(version) => Err(Error::index_unusable(format!(
+            "index format {version} is not {FORMAT_VERSION}"
+        ))),
+        None => Err(Error::index_unusable("index format file is missing")),
+    }
+}
+
+pub(crate) fn ensure_format(index_dir: &Path) -> Result<(), Error> {
+    match format_version(index_dir)? {
+        Some(FORMAT_VERSION) => Ok(()),
+        Some(version) => Err(Error::index_unusable(format!(
+            "index format {version} is not {FORMAT_VERSION}"
+        ))),
+        None => write_format(index_dir),
+    }
+}
+
+pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
     fs::create_dir_all(index_dir).map_err(|err| {
         Error::io(format!(
             "create index directory {}: {err}",

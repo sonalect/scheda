@@ -47,14 +47,16 @@ API or on-disk format changes bump the minor.
 - Journal `id` map under `{vault}/.scheda/index/journal/` so `find_one` does
   not scan unrelated segments; writer updates it on `insert_one`, `reindex`
   rebuilds it (C8, IDX-5, OPS-1, OPS-3).
-- Hybrid `search` quality bar: BM25 lexical, in-process ANN, RRF fusion,
-  Schema-marked fields only, injected embedder, no LLM in the crate (`06`,
-  `10` §3). Rust stage C9 in `11` implements it before core acceptance (C10).
+- Hybrid `search` (C9): Tantivy BM25 over Schema `fts` fields and body,
+  in-process USearch ANN over vector-marked slots, RRF fusion, SCH-8
+  `filter` before ranking, one-step `walk` / `walk_inverse`. Inject an
+  `Embedder` with `Vault::with_embedder`; without one the vector leg is off
+  and writes still work. `api/v1` `SearchQuery` / `SearchHits`.
 - CI runs `bazel test //...` on Debian 13, macOS, and Windows amd64.
 - USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`). Crate
   feature `numkong` (default) enables SIMD kernels (`numkong` 7.8.0);
-  `openmp` is opt-in and needs libomp. `search` is still `unsupported`
-  until C9 wires it. The C++ bridge uses `/usr/bin/c++` on Linux. macOS
+  `openmp` is opt-in and needs libomp. Tantivy 0.26.1 is the BM25
+  lexical engine for `search`. The C++ bridge uses `/usr/bin/c++` on Linux. macOS
   keeps Bazel's Apple clang wrapper so `__BAZEL_XCODE_SDKROOT__` expands;
   Windows uses MSVC. NumKong headers are copied into `OUT_DIR` so Bazel
   sandboxes can compile the bridge.
@@ -98,10 +100,26 @@ API or on-disk format changes bump the minor.
   cannot overwrite an existing file.
 - `Collection::find_one` returns `Result<Record, Error>`; a missing `id` is
   `not_found` (LIB-8).
+- `SearchQuery` weights and `SearchHit` scores, when set, must be finite
+  and `>= 0` (`api/v1` protovalidate, including `+Inf` / `-Inf` via field
+  CEL until codegen emits `double.finite`). `search` rejects a failing
+  message as `invalid` before retrieval; it does not re-check those numbers.
+- `Record.id` / `SearchHit.id` reject `/` and `\\` in protovalidate
+  (layout path component). `HistoryEntry.time` is required. `find` walks
+  the validated `Filter` oneof; it does not re-check clause shape.
 
 ### Removed
 
 - Unused workspace pins `thiserror` and `tempfile`.
+
+### Fixed
+
+- Windows CI: GIT-6 inspects only the Vault's local git config, so a
+  Git-for-Windows global `filter.lfs` does not fail `init`. Fixture
+  checkout stays LF (`.gitattributes`). `scheda_doc_test` is `large` so
+  rustdoc on MSVC is not a 60s timeout. bazel_utils `.bash` lint/audit
+  tests are skipped on Windows (`CreateProcess` error 193); Linux and
+  macOS still run them.
 
 ## [0.0.1] - 2026-08-23
 

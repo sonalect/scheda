@@ -68,6 +68,20 @@ pub(crate) enum SegmentRotate {
     Daily,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Multiplicity {
+    One,
+    Many,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Dangling {
+    Lax,
+    Strict,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawRoot {
@@ -93,9 +107,32 @@ struct RawField {
     nullable: bool,
     #[serde(default)]
     filter: bool,
+    #[serde(default)]
+    fts: bool,
+    #[serde(default)]
+    vector: bool,
+    field_id: Option<String>,
+    edge: Option<RawEdge>,
     default: Option<serde_json::Value>,
     #[serde(default)]
     fields: Vec<RawField>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEdge {
+    collection: String,
+    multiplicity: Option<Multiplicity>,
+    dangling: Option<Dangling>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBody {
+    allowed: Option<bool>,
+    fts: Option<bool>,
+    vector: Option<bool>,
+    field_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +149,7 @@ struct RawCollection {
     segment_max_lines: Option<u64>,
     segment_rotate: Option<SegmentRotate>,
     singleton_id: Option<String>,
+    body: Option<RawBody>,
 }
 
 fn deserialize_layout<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -131,12 +169,31 @@ where
 }
 
 #[derive(Clone, Debug)]
+pub(crate) struct EdgeDecl {
+    pub collection: String,
+    pub multiplicity: Multiplicity,
+    pub dangling: Dangling,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct BodyDecl {
+    pub allowed: bool,
+    pub fts: bool,
+    pub vector: bool,
+    pub field_id: String,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct FieldDecl {
     pub name: String,
     pub type_: FieldType,
     pub required: bool,
     pub nullable: bool,
     pub filter: bool,
+    pub fts: bool,
+    pub vector: bool,
+    pub field_id: Option<String>,
+    pub edge: Option<EdgeDecl>,
     pub default: Option<serde_json::Value>,
     pub fields: Vec<FieldDecl>,
 }
@@ -154,6 +211,7 @@ pub(crate) struct CollectionDecl {
     pub segment_max_lines: Option<u64>,
     pub segment_rotate: Option<SegmentRotate>,
     pub singleton_id: Option<String>,
+    pub body: Option<BodyDecl>,
     pub fields: Vec<FieldDecl>,
 }
 
@@ -232,6 +290,7 @@ pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
         by_hash.insert(hash_dir, decl.name.clone());
         collections.insert(decl.name.clone(), decl);
     }
+    validate_edge_targets(&collections)?;
     Ok(Schema { collections })
 }
 
@@ -299,6 +358,11 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
                     "schema {loc}: singleton_id is not valid on journal"
                 )));
             }
+            if raw.body.is_some() {
+                return Err(Error::invalid(format!(
+                    "schema {loc}: body is not valid on journal"
+                )));
+            }
         }
         Kind::Document => {
             if raw.segment_max_bytes.is_some()
@@ -331,6 +395,11 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
                         "schema {loc}: singleton_id is required"
                     )));
                 }
+            }
+            if raw.body.is_some() {
+                return Err(Error::invalid(format!(
+                    "schema {loc}: body is not valid on singleton"
+                )));
             }
         }
     }
@@ -366,6 +435,21 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     let fields = finish_fields(raw.fields, path)?;
     let mut filter_keys = BTreeSet::new();
     collect_filter_keys(&fields, &mut filter_keys);
+    let body = match (raw.kind, raw.body) {
+        (Kind::Document, None) => Some(BodyDecl {
+            allowed: true,
+            fts: false,
+            vector: false,
+            field_id: String::from("body"),
+        }),
+        (Kind::Document, Some(body)) => Some(finish_body(body, path)?),
+        (_, None) => None,
+        (_, Some(_)) => {
+            return Err(Error::invalid(format!(
+                "schema {loc}: body is only valid on document"
+            )));
+        }
+    };
     Ok(CollectionDecl {
         name: raw.name,
         kind: raw.kind,
@@ -378,7 +462,33 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         segment_max_lines,
         segment_rotate,
         singleton_id: raw.singleton_id,
+        body,
         fields,
+    })
+}
+
+fn finish_body(raw: RawBody, path: &Path) -> Result<BodyDecl, Error> {
+    let loc = path.display();
+    let vector = raw.vector.unwrap_or(false);
+    if raw.field_id.is_some() && !vector {
+        return Err(Error::invalid(format!(
+            "schema {loc}: body.field_id requires vector"
+        )));
+    }
+    let field_id = match raw.field_id.as_deref() {
+        Some("") => {
+            return Err(Error::invalid(format!(
+                "schema {loc}: body.field_id is empty"
+            )));
+        }
+        Some(id) => id.to_owned(),
+        None => String::from("body"),
+    };
+    Ok(BodyDecl {
+        allowed: raw.allowed.unwrap_or(true),
+        fts: raw.fts.unwrap_or(false),
+        vector,
+        field_id,
     })
 }
 
@@ -396,17 +506,121 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
             )));
         }
         let nested = finish_fields(field.fields, path)?;
+        let searchable = matches!(field.type_, FieldType::String | FieldType::StringList);
+        if field.fts && !searchable {
+            return Err(Error::invalid(format!(
+                "schema {loc}: fts is only valid on string and string_list"
+            )));
+        }
+        if field.vector && !searchable {
+            return Err(Error::invalid(format!(
+                "schema {loc}: vector is only valid on string and string_list"
+            )));
+        }
+        if field.field_id.is_some() && !field.vector {
+            return Err(Error::invalid(format!(
+                "schema {loc}: field_id requires vector"
+            )));
+        }
+        let field_id = match field.field_id.as_deref() {
+            Some("") => {
+                return Err(Error::invalid(format!("schema {loc}: field_id is empty")));
+            }
+            Some(id) => Some(id.to_owned()),
+            None if field.vector => Some(field.name.clone()),
+            None => None,
+        };
+        let edge = match field.edge {
+            Some(edge) => Some(finish_edge(&field.name, field.type_, edge, path)?),
+            None => None,
+        };
         out.push(FieldDecl {
             name: field.name,
             type_: field.type_,
             required: field.required,
             nullable: field.nullable,
             filter: field.filter,
+            fts: field.fts,
+            vector: field.vector,
+            field_id,
+            edge,
             default: field.default,
             fields: nested,
         });
     }
     Ok(out)
+}
+
+fn finish_edge(name: &str, type_: FieldType, raw: RawEdge, path: &Path) -> Result<EdgeDecl, Error> {
+    let loc = path.display();
+    if raw.collection.is_empty() {
+        return Err(Error::invalid(format!(
+            "schema {loc}: edge.collection is required"
+        )));
+    }
+    let multiplicity = raw.multiplicity.unwrap_or(Multiplicity::One);
+    match (multiplicity, type_) {
+        (Multiplicity::One, FieldType::String) | (Multiplicity::Many, FieldType::StringList) => {}
+        (Multiplicity::One, _) => {
+            return Err(Error::invalid(format!(
+                "schema {loc}: edge {name} multiplicity one requires type string"
+            )));
+        }
+        (Multiplicity::Many, _) => {
+            return Err(Error::invalid(format!(
+                "schema {loc}: edge {name} multiplicity many requires type string_list"
+            )));
+        }
+    }
+    Ok(EdgeDecl {
+        collection: raw.collection,
+        multiplicity,
+        dangling: raw.dangling.unwrap_or(Dangling::Lax),
+    })
+}
+
+fn validate_edge_targets(collections: &BTreeMap<String, CollectionDecl>) -> Result<(), Error> {
+    for decl in collections.values() {
+        check_edge_targets(&decl.fields, collections, &decl.name)?;
+    }
+    Ok(())
+}
+
+fn check_edge_targets(
+    fields: &[FieldDecl],
+    collections: &BTreeMap<String, CollectionDecl>,
+    owner: &str,
+) -> Result<(), Error> {
+    for field in fields {
+        if let Some(edge) = &field.edge
+            && !collections.contains_key(&edge.collection)
+        {
+            return Err(Error::invalid(format!(
+                "schema: edge {}.{} targets unknown collection {}",
+                owner, field.name, edge.collection
+            )));
+        }
+        check_edge_targets(&field.fields, collections, owner)?;
+    }
+    Ok(())
+}
+
+impl CollectionDecl {
+    pub(crate) fn edge(&self, name: &str) -> Option<&EdgeDecl> {
+        find_edge(&self.fields, name)
+    }
+}
+
+fn find_edge<'a>(fields: &'a [FieldDecl], name: &str) -> Option<&'a EdgeDecl> {
+    for field in fields {
+        if field.name == name {
+            return field.edge.as_ref();
+        }
+        if let Some(edge) = find_edge(&field.fields, name) {
+            return Some(edge);
+        }
+    }
+    None
 }
 
 fn collect_filter_keys(fields: &[FieldDecl], out: &mut BTreeSet<String>) {
@@ -575,5 +789,50 @@ mod tests {
         assert!(!decl.fields[0].nullable);
         assert!(!decl.fields[1].required);
         assert!(decl.fields[1].nullable);
+    }
+
+    #[test]
+    fn search_marks_and_body_parse() {
+        let decl = parse(
+            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nbody:\n  fts: true\n  vector: true\nfields:\n  - name: title\n    type: string\n    fts: true\n    vector: true\n  - name: secret\n    type: string\n",
+        )
+        .unwrap();
+        let body = decl.body.as_ref().unwrap();
+        assert!(body.allowed);
+        assert!(body.fts);
+        assert!(body.vector);
+        assert_eq!(body.field_id, "body");
+        assert!(decl.fields[0].fts);
+        assert!(decl.fields[0].vector);
+        assert_eq!(decl.fields[0].field_id.as_deref(), Some("title"));
+        assert!(!decl.fields[1].fts);
+        assert!(!decl.fields[1].vector);
+    }
+
+    #[test]
+    fn fts_on_integer_is_invalid() {
+        let err = parse(
+            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nfields:\n  - name: n\n    type: integer\n    fts: true\n",
+        )
+        .unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn body_on_journal_is_invalid() {
+        let err = parse(
+            "name: c\nkind: journal\nschema_version: 1\nlayout: log/\nbody:\n  fts: true\nfields: []\n",
+        )
+        .unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn edge_one_on_string_list_is_invalid() {
+        let err = parse(
+            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nfields:\n  - name: refs\n    type: string_list\n    edge:\n      collection: c\n      multiplicity: one\n",
+        )
+        .unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Invalid));
     }
 }

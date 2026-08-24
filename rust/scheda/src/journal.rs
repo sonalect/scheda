@@ -162,16 +162,12 @@ struct ParsedLine {
 }
 
 fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8>), Error> {
-    let id = record
-        .id
-        .as_deref()
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| Error::invalid("id is empty"))?
-        .to_owned();
-    let collection = record
-        .collection
-        .as_deref()
-        .ok_or_else(|| Error::invalid("collection is empty"))?;
+    let Some(id) = record.id.clone() else {
+        unreachable!("Record id is required");
+    };
+    let Some(collection) = record.collection.as_deref() else {
+        unreachable!("Record collection is required");
+    };
     if collection != decl.name {
         return Err(Error::invalid(format!(
             "record collection {collection} does not match {}",
@@ -191,9 +187,6 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
             "id {id} does not match collection {} pattern",
             decl.name
         )));
-    }
-    if id.contains('/') || id.contains('\\') {
-        return Err(Error::invalid("id must not contain a path separator"));
     }
     let mut fields = store::fields_map(&record)?;
     store::apply_defaults(&mut fields, &decl.fields);

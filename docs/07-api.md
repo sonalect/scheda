@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.16, 24 August 2026.
+Document 7 of the Scheda package. Version 0.20, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -20,7 +20,7 @@ An assertion without a check is not a requirement.
 
 **LIB-1. In-process library.** The caller loads Scheda in its own process. A Scheda daemon or HTTP server is not required to read or write. *Check (**core**):* a test writes and reads a local Vault (`auto_sync` off) with no second process and no network.
 
-**LIB-2. Same operations in every language.** Required names: `open`, `init`, `clone`, `collection`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `commit`, `push_remote`, `pull_remote`, `sync_remote`, `check`, `reindex`. Optional later: `history`, one-step `walk` / `walk_inverse` (**search**). *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
+**LIB-2. Same operations in every language.** Required names: `open`, `init`, `clone`, `collection`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `commit`, `push_remote`, `pull_remote`, `sync_remote`, `check`, `reindex`. **Search** also requires `walk` and `walk_inverse` (REL-1–3). Optional: `history` (core in this binding). Multi-step walk is **later**. *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
 
 **LIB-3. Whole-record writes.** Mutation is `insert_one` or `replace_one` of the whole Record. There is no partial field patch. SQL against the Index is not a caller API. *Check:* `replace_one` on `journal` is a failure (`unsupported`).
 
@@ -36,7 +36,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 ## 2. Record I/O
 
-**LIB-7. `insert_one(collection, record)`.** Creates a `document` file, appends a journal line, or creates a `singleton` if absent (MOD-15–17). Returns the `id`. The Record envelope must satisfy `api/v1` (`id` and `collection` present and non-empty) before Schema (SCH-12). Does not `commit`, `push_remote`, or `pull_remote`. *Check:* `insert_one` with empty `id` → `invalid`. *Check:* round-trip with `find_one`.
+**LIB-7. `insert_one(collection, record)`.** Creates a `document` file, appends a journal line, or creates a `singleton` if absent (MOD-15–17). Returns the `id`. The Record envelope must satisfy `api/v1` (`id` and `collection` present and non-empty; `id` must not contain `/` or `\`) before Schema (SCH-12). Does not `commit`, `push_remote`, or `pull_remote`. *Check:* `insert_one` with empty `id` → `invalid`. *Check:* round-trip with `find_one`.
 
 **LIB-8. `find_one(collection, id)`.** Returns fields, body, path, raw bytes, and `valid` (false if the file exists but fails current Schema). Missing Record → code `not_found`, not an empty Record. **Later:** on an encrypted isolated root, fields/body/raw bytes are the **decrypted** Record (STO-2 plaintext), not the age armor on disk. *Check:* missing id → `not_found`; invalid old file → `valid: false` and bytes still present (SCH-12). *Check (**later**):* encrypted fixture → `find_one` bytes match `age -d` of the path.
 
@@ -44,7 +44,9 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-10. `find(collection, filter)` / `scan(collection)`.** SCH-8 filters as `api/v1` `Filter`: `equal` (JSON `null` is stored `null`, not absent), `set`, `exists`, and `path_prefix` (vault-relative POSIX prefix of Record `path`; `document` / `singleton` only). Clauses AND. Unmarked field → `invalid`. Empty `clauses` or `scan` = every Record. Journal order is append order (QRY-7). `scan` is `find` with an empty filter; a binding may expose only one name if the other is a documented alias. *Check:* QRY-2, QRY-7.
 
-**LIB-11. `search(query)`.** Hybrid retrieval (QRY-3–6): BM25 lexical and ANN vector legs when both are on, fused with RRF by default. Input: text, optional collection scope, optional `find` filter, `k`, optional merge weights. Output: ordered hits with `(collection, id)`, path, per-leg scores. **Search.** *Check:* QRY-3 fixture ids all appear at the given `k`; a hit from both legs carries both scores.
+**LIB-11. `search(query)`.** Hybrid retrieval (QRY-3–6): BM25 lexical and ANN vector legs when both are on, fused with RRF by default. Argument is `api/v1` `SearchQuery`: `text` (required), optional `k` (unset or `0` → 10), optional SCH-8 `filter`, optional `lexical_weight` / `vector_weight` (unset → `1`; **zero turns that leg off** for fusion; when set, finite and `>= 0`). A message that fails those `api/v1` rules is `invalid` before retrieval. Scoped to the collection handle in this binding. Output is `api/v1` `SearchHits`: ordered `SearchHit` values with `collection`, `id`, `path`, and per-leg scores (`lexical_score` / `vector_score` set only when that leg produced the hit; scores, when set, are finite and `>= 0`). **Search.** *Check:* QRY-3 fixture ids all appear at the given `k`; a hit from both legs carries both scores. *Check:* negative or non-finite weight → `invalid`.
+
+**LIB-19. `walk(field, filter)` / `walk_inverse(source_collection, field, id)`.** REL-1–3. `field` is an SCH-11 edge on the source collection. `walk` runs `find(filter)` on this collection (A) and returns Records in the target collection (B) referenced by `field`. A dangling `id` is omitted, not a hit. `walk_inverse` on B lists A Records that point at `id` without scanning unrelated files. **Search.** *Check:* REL-2 three-document fixture; REL-3 inverse is not a full collection scan.
 
 ---
 

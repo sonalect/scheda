@@ -71,6 +71,14 @@ impl AnnIndex {
         self.inner.add(key, vector).map_err(ann_err)
     }
 
+    pub fn contains(&self, key: u64) -> bool {
+        self.inner.contains(key)
+    }
+
+    pub fn remove(&self, key: u64) -> Result<(), Error> {
+        self.inner.remove(key).map(|_| ()).map_err(ann_err)
+    }
+
     /// k nearest keys and cosine distances (lower is closer).
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(u64, f32)>, Error> {
         if query.len() != self.inner.dimensions() {

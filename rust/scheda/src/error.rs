@@ -18,8 +18,7 @@ pub enum Code {
     Git,
     /// Index is missing, corrupt, or the wrong format.
     IndexUnusable,
-    /// Operation is not offered for this kind or phase (`replace_one` on
-    /// `journal`; `search` until the search phase).
+    /// Operation is not offered for this kind (`replace_one` on `journal`).
     Unsupported,
 }
 

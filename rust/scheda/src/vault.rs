@@ -7,33 +7,39 @@ use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::journal;
 use crate::query;
-use crate::schema::{self, CollectionDecl, Kind, Schema};
+use crate::schema::{self, CollectionDecl, Kind, Multiplicity, Schema};
+use crate::search::{self, Embedder, SearchEngine};
 use crate::store;
-use crate::{Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts};
+use crate::{
+    Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHits, SearchQuery,
+};
 
 /// A git working tree that holds collections of records.
-#[derive(Debug)]
 pub struct Vault {
     path: PathBuf,
     index_dir: PathBuf,
     remotes: Vec<String>,
     auto_sync: bool,
     write_lock: Option<File>,
-    schema: Schema,
+    schema: Arc<Schema>,
     schema_versions: Vec<u32>,
     written: Arc<Mutex<BTreeSet<String>>>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
+    search: Arc<SearchEngine>,
+    embedder: Option<Arc<dyn Embedder>>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
-#[derive(Debug)]
 pub struct Collection {
     vault: PathBuf,
     index_dir: PathBuf,
     can_write: bool,
     decl: CollectionDecl,
+    schema: Arc<Schema>,
     written: Arc<Mutex<BTreeSet<String>>>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
+    search: Arc<SearchEngine>,
+    embedder: Option<Arc<dyn Embedder>>,
 }
 
 /// Result of inserting a record.
@@ -47,10 +53,6 @@ pub struct InsertOne {
 pub struct ReplaceOne {
     pub id: String,
 }
-
-/// Hybrid search hits. Ranking is not modelled yet.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct SearchHits;
 
 impl Vault {
     /// Create a Vault at `path` (`git init`, no Remote). LIB-2 / GIT-9.
@@ -130,10 +132,11 @@ impl Vault {
         if auto_sync && !remotes.is_empty() {
             git::pull(&path)?;
         }
-        let schema = schema::load(&path)?;
+        let schema = Arc::new(schema::load(&path)?);
         let schema_versions = schema.versions();
         let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&index_dir, &schema)?));
         let written = Arc::new(Mutex::new(BTreeSet::new()));
+        let search = Arc::new(SearchEngine::open(&index_dir, write)?);
         let vault = Self {
             path,
             index_dir,
@@ -144,6 +147,8 @@ impl Vault {
             schema_versions,
             written,
             journal_ids,
+            search,
+            embedder: None,
         };
         if wrote_gitignore {
             vault.note_write(String::from(".gitignore"));
@@ -187,6 +192,14 @@ impl Vault {
         &self.schema_versions
     }
 
+    /// Inject an embedder for the vector leg (IDX-8). No embedder → vector
+    /// search is off; lexical search and writes still work.
+    #[must_use]
+    pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
+        self.embedder = Some(embedder);
+        self
+    }
+
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
         let Some(decl) = self.schema.get(name) else {
             return Err(Error::not_found(format!(
@@ -198,8 +211,11 @@ impl Vault {
             index_dir: self.index_dir.clone(),
             can_write: self.write_lock.is_some(),
             decl: decl.clone(),
+            schema: Arc::clone(&self.schema),
             written: Arc::clone(&self.written),
             journal_ids: Arc::clone(&self.journal_ids),
+            search: Arc::clone(&self.search),
+            embedder: self.embedder.clone(),
         })
     }
 
@@ -269,13 +285,33 @@ impl Vault {
         if self.write_lock.is_none() {
             return Err(Error::locked("reindex needs a write lock"));
         }
+        self.search.close_for_rebuild();
         let schema = schema::load(&self.path)?;
         let (counts, maps) = index::rebuild(&self.path, &schema, &self.index_dir)?;
         *self
             .journal_ids
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = maps;
+        self.search
+            .rebuild(&self.path, &schema, self.embedder.as_deref())?;
         Ok(counts)
+    }
+}
+
+impl std::fmt::Debug for Vault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Vault")
+            .field("path", &self.path)
+            .field("index_dir", &self.index_dir)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for Collection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Collection")
+            .field("name", &self.decl.name)
+            .finish_non_exhaustive()
     }
 }
 
@@ -298,10 +334,14 @@ impl Collection {
                 segment_max_lines: None,
                 segment_rotate: None,
                 singleton_id: None,
+                body: None,
                 fields: Vec::new(),
             },
+            schema: Arc::new(Schema::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),
             journal_ids: Arc::new(Mutex::new(JournalIdMaps::default())),
+            search: Arc::new(SearchEngine::empty()),
+            embedder: None,
         }
     }
 
@@ -402,6 +442,9 @@ impl Collection {
     pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
         record.require_valid()?;
         self.require_write()?;
+        search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+            self.lookup(collection, id)
+        })?;
         match self.decl.kind {
             Kind::Journal => {
                 let mut maps = self
@@ -417,11 +460,13 @@ impl Collection {
                 )?;
                 drop(maps);
                 self.note_write(rel);
+                self.index_id(&id)?;
                 Ok(InsertOne { id })
             }
             Kind::Document | Kind::Singleton => {
                 let (id, rel) = store::insert_document(&self.vault, &self.decl, record)?;
                 self.note_write(rel);
+                self.index_id(&id)?;
                 Ok(InsertOne { id })
             }
         }
@@ -448,8 +493,12 @@ impl Collection {
             return Err(Error::unsupported("replace_one is not offered for journal"));
         }
         self.require_write()?;
+        search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+            self.lookup(collection, id)
+        })?;
         let (id, rel) = store::replace_document(&self.vault, &self.decl, id, record)?;
         self.note_write(rel);
+        self.index_id(&id)?;
         Ok(ReplaceOne { id })
     }
 
@@ -475,13 +524,123 @@ impl Collection {
         self.find(&Filter::default())
     }
 
-    /// Hybrid retrieval. Not in **core** (LIB-11).
-    pub fn search(&self, query: &str) -> Result<SearchHits, Error> {
-        let _query = query;
-        Err(Error::unsupported(
-            "search is not implemented until the search phase",
-        ))
+    /// Hybrid retrieval (LIB-11, QRY-3–6).
+    pub fn search(&self, query: &SearchQuery) -> Result<SearchHits, Error> {
+        query.require_valid()?;
+        let filter = search_filter(query);
+        query::validate(&self.decl, &filter)?;
+        let allowed = if query::is_unconstrained(&filter) {
+            None
+        } else {
+            Some(
+                self.find(&filter)?
+                    .into_iter()
+                    .filter_map(|record| record.id)
+                    .collect(),
+            )
+        };
+        self.search.search(
+            &self.decl.name,
+            query,
+            self.embedder.as_deref(),
+            allowed.as_ref(),
+        )
     }
+
+    /// One-step walk along an SCH-11 edge (REL-2).
+    pub fn walk(&self, field: &str, filter: &Filter) -> Result<Vec<Record>, Error> {
+        let edge = search::require_edge(&self.decl, field)?;
+        let sources = self.find(filter)?;
+        let Some(target) = self.schema.get(&edge.collection) else {
+            return Err(Error::invalid(format!(
+                "edge {field} targets unknown collection {}",
+                edge.collection
+            )));
+        };
+        let mut seen = BTreeSet::new();
+        let mut out = Vec::new();
+        for source in sources {
+            let fields = store::fields_map(&source)?;
+            let mut ids = search::edge_target_ids(fields.get(field));
+            if edge.multiplicity == Multiplicity::One {
+                ids.truncate(1);
+            }
+            for id in ids {
+                if !seen.insert(id.clone()) {
+                    continue;
+                }
+                match self.lookup_decl(target, &id) {
+                    Ok(record) => out.push(record),
+                    Err(err) if err.code.as_deref() == Some(crate::Code::NotFound.as_str()) => {}
+                    Err(err) => return Err(err),
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// Inverse walk: source records that point at `id` (REL-3).
+    pub fn walk_inverse(
+        &self,
+        source_collection: &str,
+        field: &str,
+        id: &str,
+    ) -> Result<Vec<Record>, Error> {
+        let Some(source) = self.schema.get(source_collection) else {
+            return Err(Error::not_found(format!(
+                "collection {source_collection} is not in Schema"
+            )));
+        };
+        let edge = search::require_edge(source, field)?;
+        if edge.collection != self.decl.name {
+            return Err(Error::invalid(format!(
+                "edge {source_collection}.{field} does not target {}",
+                self.decl.name
+            )));
+        }
+        let source_ids = self.search.inverse(source_collection, field, id)?;
+        let mut out = Vec::new();
+        for source_id in source_ids {
+            match self.lookup_decl(source, &source_id) {
+                Ok(record) => out.push(record),
+                Err(err) if err.code.as_deref() == Some(crate::Code::NotFound.as_str()) => {}
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(out)
+    }
+
+    fn index_id(&self, id: &str) -> Result<(), Error> {
+        let record = self.find_one(id)?;
+        self.search
+            .upsert(&self.decl, &record, self.embedder.as_deref())
+    }
+
+    fn lookup(&self, collection: &str, id: &str) -> Result<Record, Error> {
+        let Some(decl) = self.schema.get(collection) else {
+            return Err(Error::not_found(format!(
+                "collection {collection} is not in Schema"
+            )));
+        };
+        self.lookup_decl(decl, id)
+    }
+
+    fn lookup_decl(&self, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
+        match decl.kind {
+            Kind::Journal => {
+                let maps = self
+                    .journal_ids
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner);
+                journal::find_journal(&self.vault, decl, id, &maps)
+            }
+            Kind::Document | Kind::Singleton => store::find_document(&self.vault, decl, id),
+        }
+    }
+}
+
+fn search_filter(query: &SearchQuery) -> Filter {
+    (*query.filter).clone()
 }
 
 fn remote_repo_url(options: &OpenOptions) -> Option<&str> {
@@ -653,16 +812,6 @@ mod tests {
             .replace_one("alpha", Record::default())
             .expect_err("empty Record must fail envelope rules");
         assert_eq!(Code::of(&err), Some(Code::Invalid));
-    }
-
-    #[test]
-    fn search_is_unsupported_and_does_not_write() {
-        let collection = Collection::stub();
-        let err = collection
-            .search("anything")
-            .expect_err("search must fail in core");
-        assert_eq!(Code::of(&err), Some(Code::Unsupported));
-        assert_eq!(err.code.as_deref(), Some("unsupported"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 load("@bazel_utils_rust//:rust.bzl", "cargo_audit_test")
 load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("//bazel:compat.bzl", "NOT_WINDOWS")
 
 rust_clippy_test(
     name = "lint",
@@ -15,10 +16,12 @@ rust_clippy_test(
         "//rust/scheda:ops_test",
         "//rust/scheda:ann_test",
         "//rust/scheda:schema_test",
+        "//rust/scheda:search_test",
     ],
 )
 
 cargo_audit_test(
     name = "vuln",
     size = "small",
+    target_compatible_with = NOT_WINDOWS,
 )

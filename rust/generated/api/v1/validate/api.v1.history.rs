@@ -75,6 +75,33 @@ impl ::protovalidate_buffa::Validate for HistoryEntry {
                 }
             }
         }
+        if !self.time.is_set() {
+            violations
+                .push(::protovalidate_buffa::Violation {
+                    field: ::protovalidate_buffa::FieldPath {
+                        elements: ::std::vec![
+                            ::protovalidate_buffa::FieldPathElement { field_number :
+                            Some(2i32), field_name :
+                            Some(::std::borrow::Cow::Borrowed("time")), field_type :
+                            Some(::protovalidate_buffa::FieldType::Message), key_type :
+                            None, value_type : None, subscript : None, },
+                        ],
+                    },
+                    rule: ::protovalidate_buffa::FieldPath {
+                        elements: ::std::vec![
+                            ::protovalidate_buffa::FieldPathElement { field_number :
+                            Some(25i32), field_name :
+                            Some(::std::borrow::Cow::Borrowed("required")), field_type :
+                            Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                            None, value_type : None, subscript : None, },
+                        ],
+                    },
+                    rule_id: ::std::borrow::Cow::Borrowed("required"),
+                    message: ::std::borrow::Cow::Borrowed("value is required"),
+                    for_key: false,
+                });
+        }
+        if self.time.is_set() {}
         let (
             rt_violation,
             violations,

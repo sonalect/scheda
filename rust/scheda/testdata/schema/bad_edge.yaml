@@ -1,0 +1,12 @@
+name: west_docs
+kind: document
+schema_version: 1
+layout: west/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true
+  - name: link
+    type: string
+    edge:
+      collection: missing_target

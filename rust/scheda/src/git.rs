@@ -3,6 +3,8 @@ use std::path::Path;
 
 #[cfg(any(test, feature = "remote-git"))]
 use git2::Config;
+#[cfg(test)]
+use git2::ConfigLevel;
 use git2::build::RepoBuilder;
 use git2::{
     AnnotatedCommit, Commit as GitCommit, Cred, CredentialType, DiffOptions, ErrorCode,
@@ -377,7 +379,7 @@ pub(crate) fn local_config_mentions_lfs(dir: &Path) -> Result<bool, Error> {
         "filter.lfs.clean",
         "filter.lfs.smudge",
     ] {
-        if config_has(&config, key)? {
+        if config_has_local(&config, key)? {
             return Ok(true);
         }
     }
@@ -385,9 +387,9 @@ pub(crate) fn local_config_mentions_lfs(dir: &Path) -> Result<bool, Error> {
 }
 
 #[cfg(test)]
-fn config_has(config: &Config, key: &str) -> Result<bool, Error> {
+fn config_has_local(config: &Config, key: &str) -> Result<bool, Error> {
     match config.get_entry(key) {
-        Ok(_) => Ok(true),
+        Ok(entry) => Ok(entry.level() == ConfigLevel::Local),
         Err(err) if err.code() == ErrorCode::NotFound => Ok(false),
         Err(err) => Err(map_err(err)),
     }

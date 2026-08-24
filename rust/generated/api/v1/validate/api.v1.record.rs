@@ -73,6 +73,47 @@ impl ::protovalidate_buffa::Validate for Record {
                             for_key: false,
                         });
                 }
+                {
+                    static RE_ONEOF_ID: ::std::sync::OnceLock<
+                        ::protovalidate_buffa::regex::Regex,
+                    > = ::std::sync::OnceLock::new();
+                    let re = RE_ONEOF_ID
+                        .get_or_init(|| {
+                            ::protovalidate_buffa::regex::Regex::new("^[^/\\\\]+$")
+                                .expect("pattern regex compiled at code-gen time")
+                        });
+                    if !re.is_match(v.as_str()) {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(1i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("id")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::String), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(14i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(6i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("pattern")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::String), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
+                                message: ::std::borrow::Cow::Borrowed(""),
+                                for_key: false,
+                            });
+                    }
+                }
             }
         }
         if self.collection.is_none() {

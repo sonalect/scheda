@@ -1,0 +1,8 @@
+name: walk_dst
+kind: document
+schema_version: 1
+layout: dst/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true

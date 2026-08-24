@@ -21,6 +21,7 @@ rust_library(
         "@cargo//:regex",
         "@cargo//:serde",
         "@cargo//:serde_json",
+        "@cargo//:tantivy",
         "@cargo//:usearch",
         "@cargo//:yaml_serde",
     ],
@@ -73,6 +74,7 @@ rust_test(
 
 rust_test(
     name = "ops_test",
+    size = "large",
     srcs = ["tests/ops.rs"],
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/ops.rs",
@@ -116,6 +118,18 @@ rust_test(
 )
 
 rust_test(
+    name = "search_test",
+    srcs = ["tests/search.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/search.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "schema_test",
     srcs = ["tests/schema.rs"],
     compile_data = glob(["testdata/**"]),
@@ -132,7 +146,7 @@ rust_doc(
 
 rust_doc_test(
     name = "scheda_doc_test",
-    size = "small",
+    size = "large",
     crate = ":scheda",
     crate_features = _SCHEDA_FEATURES,
 )

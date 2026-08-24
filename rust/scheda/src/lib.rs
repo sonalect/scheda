@@ -17,8 +17,7 @@
 //!   `git2/ssh`). TLS is platform OpenSSL / Secure Transport / WinHTTP.
 //!   Without it, `https://` and `git@` remotes are `unsupported`.
 //! - **`numkong`** *(default)* — USearch SIMD kernels via the `numkong`
-//!   crate. Needed for fast in-process ANN; `search` is still `unsupported`
-//!   until C9 wires it.
+//!   crate. Needed for fast in-process ANN used by hybrid `search`.
 //! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
 //!   libomp (Linux `libomp-dev`). Not enabled in the Bazel default build.
 //!
@@ -31,8 +30,8 @@
 //! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is
 //! `Send + Sync` but not `Clone`, because it may hold the write-lock file.
 //! Remote git (`clone`, `pull_remote`, `push_remote`, `sync_remote`) and
-//! `reindex` / `scan` are the calls that must not sit on a worker thread.
-//! The Vault write lock is unchanged: one writer, `locked` if a second
+//! `reindex` / `scan` / `search` are the calls that must not sit on a worker
+//! thread. The Vault write lock is unchanged: one writer, `locked` if a second
 //! `open(..., write)` races it.
 //!
 //! ```rust,ignore (tokio is not a crate dependency)
@@ -56,6 +55,7 @@ mod index;
 mod journal;
 mod query;
 mod schema;
+mod search;
 mod store;
 mod vault;
 
@@ -64,7 +64,9 @@ pub use ann::AnnIndex;
 pub use error::Code;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts,
+    Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHit, SearchHits,
+    SearchQuery,
 };
 pub use schema::{Kind, collection_dir};
-pub use vault::{Collection, InsertOne, ReplaceOne, SearchHits, Vault};
+pub use search::Embedder;
+pub use vault::{Collection, InsertOne, ReplaceOne, Vault};

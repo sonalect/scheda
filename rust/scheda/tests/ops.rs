@@ -8,7 +8,7 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use scheda::{Code, OpenOptions, Record, Vault, collection_dir};
+use scheda::{Code, Embedder, OpenOptions, Record, SearchQuery, Vault, collection_dir};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -43,7 +43,6 @@ impl Drop for Scratch {
 }
 
 const LOG: &str = include_str!("../testdata/journal/log.yaml");
-const NOTES: &str = include_str!("../testdata/document/notes.yaml");
 
 const OPS_JOURNAL: u64 = 10_000;
 const OPS_DOCS: u64 = 1_000;
@@ -57,7 +56,47 @@ layout: ops/log/
 fields:
   - name: msg
     type: string
+    fts: true
+    vector: true
 ";
+
+const OPS_NOTES: &str = "\
+name: north_notes
+kind: document
+schema_version: 1
+layout: north/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true
+    fts: true
+    vector: true
+  - name: tag
+    type: string
+    nullable: true
+  - name: count
+    type: integer
+";
+
+struct OpsEmbedder;
+
+impl Embedder for OpsEmbedder {
+    fn model_id(&self) -> &str {
+        "ops-stub"
+    }
+
+    fn dimensions(&self) -> usize {
+        8
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
+        let mut vector = vec![0.0; 8];
+        for (i, byte) in text.bytes().enumerate() {
+            vector[i % 8] += f32::from(byte) / 255.0;
+        }
+        Ok(vector)
+    }
+}
 
 fn rec_log(collection: &str, id: &str, msg: &str) -> Record {
     serde_json::from_value(json!({
@@ -166,8 +205,10 @@ fn ops_fixture_find_and_insert_and_reindex() {
     let scratch = Scratch::new();
     drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
     scratch.write_schema("log.yaml", OPS_LOG);
-    scratch.write_schema("notes.yaml", NOTES);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    scratch.write_schema("notes.yaml", OPS_NOTES);
+    let vault = Vault::open(scratch.vault(), OpenOptions::new())
+        .unwrap()
+        .with_embedder(std::sync::Arc::new(OpsEmbedder));
     let log = vault.collection("ops_log").unwrap();
     for i in 0..OPS_JOURNAL {
         log.insert_one(rec_log("ops_log", &format!("j{i:05}"), "x"))
@@ -208,4 +249,19 @@ fn ops_fixture_find_and_insert_and_reindex() {
     assert_eq!(counts.segments_seen, Some(1));
     let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
     assert_eq!(format.trim(), "1");
+    let started = Instant::now();
+    let hits = notes
+        .search(&SearchQuery::default().with_text("t500").with_k(10))
+        .unwrap();
+    assert!(
+        started.elapsed() < OP_BUDGET,
+        "search took {:?}",
+        started.elapsed()
+    );
+    assert!(
+        hits.hits
+            .iter()
+            .any(|hit| hit.id.as_deref() == Some("d0500")),
+        "OPS-2 expected d0500 in k"
+    );
 }

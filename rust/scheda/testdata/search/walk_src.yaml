@@ -1,0 +1,15 @@
+name: walk_src
+kind: document
+schema_version: 1
+layout: src/{id}.md
+fields:
+  - name: title
+    type: string
+    required: true
+    filter: true
+  - name: target
+    type: string
+    edge:
+      collection: walk_dst
+      multiplicity: one
+      dangling: lax

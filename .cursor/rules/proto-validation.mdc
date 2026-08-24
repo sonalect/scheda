@@ -1,0 +1,24 @@
+---
+description: Envelope constraints live in api/v1 protovalidate, not hand-rolled Rust
+globs: api/v1/**/*.proto,rust/scheda/src/**/*.rs
+alwaysApply: true
+---
+
+# Proto validation first
+
+Constraints on `api/v1` envelopes belong in `buf.validate` on the `.proto`, not in `rust/scheda/src`. Call `require_valid()` / `validate()` on caller-supplied messages before use. After proto edits: `bazel run //api/v1:generate`. Confirm the generated `Validate` impl actually contains the rule.
+
+Stay in Rust: Schema YAML, Vault files, git, primitive `&str` args (`find_one(id)`, `clone(url)`), Schema-dependent checks (unmarked filter field).
+
+Do not re-check a proto rule in `src/` (range, `is_finite`, empty id, path separators). If generate omits a standard rule that is in the proto, add field CEL and keep the standard rule; do not patch `src/`.
+
+```protobuf
+// BAD — only in Rust after require_valid
+if w < 0.0 || !w.is_finite() { return Err(...) }
+
+// GOOD
+double lexical_weight = 4 [(buf.validate.field) = {
+  double: {gte: 0 finite: true}
+  cel: [{id: "double.finite" message: "must be finite" expression: "!this.isNan() && !this.isInf()"}]
+}];
+```

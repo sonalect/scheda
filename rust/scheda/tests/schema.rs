@@ -52,6 +52,7 @@ const WEST_MISSING_KIND: &str = include_str!("../testdata/schema/west_missing_ki
 const WEST_MISSING_SCHEMA_VERSION: &str =
     include_str!("../testdata/schema/west_missing_schema_version.yaml");
 const WEST_ON_WRITE: &str = include_str!("../testdata/schema/west_on_write.yaml");
+const WEST_BAD_EDGE: &str = include_str!("../testdata/schema/bad_edge.yaml");
 const WIKI: &str = include_str!("../testdata/schema/wiki.md");
 const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");
 const EAST_LOG_OVERSIZE: &str = include_str!("../testdata/schema/east_log_oversize.yaml");
@@ -103,6 +104,15 @@ fn executable_blob_key_is_rejected() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_ON_WRITE);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::Invalid));
+}
+
+#[test]
+fn unknown_edge_target_is_rejected() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_BAD_EDGE);
     let err = scratch.reopen().unwrap_err();
     assert_eq!(Code::of(&err), Some(Code::Invalid));
 }

@@ -50,6 +50,9 @@ pub mod __buffa {
         reg.register_json_any(super::__EXISTS_JSON_ANY);
         reg.register_json_any(super::__PATH_PREFIX_JSON_ANY);
         reg.register_json_any(super::__REINDEX_COUNTS_JSON_ANY);
+        reg.register_json_any(super::__SEARCH_QUERY_JSON_ANY);
+        reg.register_json_any(super::__SEARCH_HIT_JSON_ANY);
+        reg.register_json_any(super::__SEARCH_HITS_JSON_ANY);
         reg.register_json_any(super::__RECORD_JSON_ANY);
     }
 }
@@ -93,6 +96,18 @@ pub use self::__buffa::view::PathPrefixOwnedView;
 pub use self::__buffa::view::ReindexCountsView;
 #[doc(inline)]
 pub use self::__buffa::view::ReindexCountsOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SearchQueryView;
+#[doc(inline)]
+pub use self::__buffa::view::SearchQueryOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SearchHitView;
+#[doc(inline)]
+pub use self::__buffa::view::SearchHitOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SearchHitsView;
+#[doc(inline)]
+pub use self::__buffa::view::SearchHitsOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::RecordView;
 #[doc(inline)]

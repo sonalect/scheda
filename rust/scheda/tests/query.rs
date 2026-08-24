@@ -273,8 +273,11 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(format.trim(), "1");
     fs::write(vault.index_dir().join("format"), "999\n").unwrap();
     fs::write(vault.index_dir().join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
-    let err = collection.search("foreign").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Unsupported));
+    let err = collection
+        .search(&scheda::SearchQuery::default().with_text("foreign"))
+        .unwrap_err();
+    assert_eq!(Code::of(&err), Some(Code::IndexUnusable));
+    assert_ne!(err.to_string(), "foreign");
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
     let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();

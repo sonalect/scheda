@@ -9,7 +9,7 @@ pub fn hex(bytes: &[u8]) -> String {
     format!("{:016x}", digest(bytes))
 }
 
-fn digest(bytes: &[u8]) -> u64 {
+pub(crate) fn digest(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325;
     for &byte in bytes {
         hash ^= u64::from(byte);

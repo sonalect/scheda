@@ -145,16 +145,12 @@ struct ParsedFile {
 }
 
 fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<Prepared, Error> {
-    let id = record
-        .id
-        .as_deref()
-        .filter(|id| !id.is_empty())
-        .ok_or_else(|| Error::invalid("id is empty"))?
-        .to_owned();
-    let collection = record
-        .collection
-        .as_deref()
-        .ok_or_else(|| Error::invalid("collection is empty"))?;
+    let Some(id) = record.id.clone() else {
+        unreachable!("Record id is required");
+    };
+    let Some(collection) = record.collection.as_deref() else {
+        unreachable!("Record collection is required");
+    };
     if collection != decl.name {
         return Err(Error::invalid(format!(
             "record collection {collection} does not match {}",
@@ -194,8 +190,13 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
             )));
         }
     }
-    if id.contains('/') || id.contains('\\') {
-        return Err(Error::invalid("id must not contain a path separator"));
+    if record.body.as_deref().is_some_and(|body| !body.is_empty())
+        && decl.body.as_ref().is_none_or(|body| !body.allowed)
+    {
+        return Err(Error::invalid(format!(
+            "collection {} does not allow a Markdown body",
+            decl.name
+        )));
     }
     let mut fields = fields_map(&record)?;
     apply_defaults(&mut fields, &decl.fields);

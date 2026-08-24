@@ -1,19 +1,28 @@
-//! SCH-8 / QRY-2: apply `api/v1` `Filter` to a Record.
+//! SCH-8 / QRY-2: apply a protovalidate-checked `Filter` using Schema keys.
 
 use serde_json::{Map, Value};
 
-use crate::schema::{CollectionDecl, Kind, collection_dir};
+use scheda_generated::api::v1::filter_clause::Kind;
+use scheda_generated::api::v1::{Equal, Exists, PathPrefix, Set};
+
+use crate::schema::{CollectionDecl, Kind as CollectionKind, collection_dir};
 use crate::{Error, Filter, Record};
 
+pub(crate) fn is_unconstrained(filter: &Filter) -> bool {
+    filter.clauses.is_empty()
+}
+
 pub(crate) fn validate(decl: &CollectionDecl, filter: &Filter) -> Result<(), Error> {
-    let json = serde_json::to_value(filter)
-        .map_err(|err| Error::invalid(format!("encode filter: {err}")))?;
-    let clauses = json
-        .get("clauses")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    check_clauses(decl, clauses)
+    for clause in &filter.clauses {
+        match clause.kind.as_ref() {
+            Some(Kind::Equal(equal)) => require_filter_key(decl, required_field(&equal.field))?,
+            Some(Kind::Set(set)) => require_filter_key(decl, required_field(&set.field))?,
+            Some(Kind::Exists(exists)) => require_filter_key(decl, required_field(&exists.field))?,
+            Some(Kind::PathPrefix(_)) => require_document_path_prefix(decl)?,
+            None => unreachable!("FilterClause kind is required"),
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn matches(
@@ -21,100 +30,102 @@ pub(crate) fn matches(
     record: &Record,
     filter: &Filter,
 ) -> Result<bool, Error> {
-    let json = serde_json::to_value(filter)
-        .map_err(|err| Error::invalid(format!("encode filter: {err}")))?;
-    let clauses = json
-        .get("clauses")
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or(&[]);
-    if clauses.is_empty() {
+    if filter.clauses.is_empty() {
         return Ok(true);
     }
     let fields = crate::store::fields_map(record)?;
-    for clause in clauses {
-        if !clause_matches(decl, record, &fields, clause)? {
+    for clause in &filter.clauses {
+        if !clause_matches(decl, record, &fields, clause.kind.as_ref())? {
             return Ok(false);
         }
     }
     Ok(true)
 }
 
-fn check_clauses(decl: &CollectionDecl, clauses: &[Value]) -> Result<(), Error> {
-    for clause in clauses {
-        let Some(obj) = clause.as_object() else {
-            return Err(Error::invalid("filter clause must be an object"));
-        };
-        if let Some(equal) = obj.get("equal") {
-            require_filter_key(decl, clause_field(equal)?)?;
-            continue;
-        }
-        if let Some(set) = obj.get("set") {
-            require_filter_key(decl, clause_field(set)?)?;
-            continue;
-        }
-        if let Some(exists) = obj.get("exists") {
-            require_filter_key(decl, clause_field(exists)?)?;
-            continue;
-        }
-        if obj.contains_key("pathPrefix") || obj.contains_key("path_prefix") {
-            if decl.kind == Kind::Journal {
-                return Err(Error::invalid(
-                    "path_prefix is only valid on document and singleton",
-                ));
-            }
-            continue;
-        }
-        return Err(Error::invalid("filter clause is missing kind"));
-    }
-    Ok(())
-}
-
 fn clause_matches(
     decl: &CollectionDecl,
     record: &Record,
     fields: &Map<String, Value>,
-    clause: &Value,
+    kind: Option<&Kind>,
 ) -> Result<bool, Error> {
-    let Some(obj) = clause.as_object() else {
-        return Err(Error::invalid("filter clause must be an object"));
+    match kind {
+        Some(Kind::Equal(equal)) => Ok(equal_matches(decl, fields, equal)?),
+        Some(Kind::Set(set)) => Ok(set_matches(decl, fields, set)?),
+        Some(Kind::Exists(exists)) => Ok(exists_matches(decl, fields, exists)?),
+        Some(Kind::PathPrefix(prefix)) => path_prefix_matches(decl, record, prefix),
+        None => unreachable!("FilterClause kind is required"),
+    }
+}
+
+fn equal_matches(
+    decl: &CollectionDecl,
+    fields: &Map<String, Value>,
+    equal: &Equal,
+) -> Result<bool, Error> {
+    let field = required_field(&equal.field);
+    require_filter_key(decl, field)?;
+    let want = json_of(&equal.value)?;
+    Ok(match fields.get(field) {
+        None => false,
+        Some(got) => json_eq(got, &want),
+    })
+}
+
+fn set_matches(
+    decl: &CollectionDecl,
+    fields: &Map<String, Value>,
+    set: &Set,
+) -> Result<bool, Error> {
+    let field = required_field(&set.field);
+    require_filter_key(decl, field)?;
+    let members = json_list(&set.values)?;
+    Ok(match fields.get(field) {
+        None => false,
+        Some(got) => members.iter().any(|member| json_eq(got, member)),
+    })
+}
+
+fn exists_matches(
+    decl: &CollectionDecl,
+    fields: &Map<String, Value>,
+    exists: &Exists,
+) -> Result<bool, Error> {
+    let field = required_field(&exists.field);
+    require_filter_key(decl, field)?;
+    Ok(fields.contains_key(field))
+}
+
+fn path_prefix_matches(
+    decl: &CollectionDecl,
+    record: &Record,
+    prefix: &PathPrefix,
+) -> Result<bool, Error> {
+    require_document_path_prefix(decl)?;
+    let prefix = match prefix.prefix.as_deref() {
+        Some(value) if !value.is_empty() => value,
+        _ => unreachable!("PathPrefix.prefix is required"),
     };
-    if let Some(equal) = obj.get("equal") {
-        let field = clause_field(equal)?;
-        require_filter_key(decl, field)?;
-        let want = proto_json_value(equal.get("value").unwrap_or(&Value::Null));
-        return Ok(match fields.get(field) {
-            None => false,
-            Some(got) => json_eq(got, want),
-        });
+    let Some(path) = record.path.as_deref() else {
+        return Ok(false);
+    };
+    if path.starts_with(prefix) {
+        return Ok(true);
     }
-    if let Some(set) = obj.get("set") {
-        let field = clause_field(set)?;
-        require_filter_key(decl, field)?;
-        let members = proto_json_list(set.get("values"));
-        return Ok(match fields.get(field) {
-            None => false,
-            Some(got) => members.iter().any(|member| json_eq(got, member)),
-        });
+    let root = collection_dir(&decl.name);
+    Ok(path
+        .strip_prefix(&root)
+        .map(|rest| rest.trim_start_matches('/'))
+        .is_some_and(|rel| rel.starts_with(prefix)))
+}
+
+fn require_document_path_prefix(decl: &CollectionDecl) -> Result<(), Error> {
+    if decl.kind == CollectionKind::Journal {
+        Err(Error::invalid(
+            "path_prefix is only valid on document and singleton",
+        ))
+    } else {
+        Ok(())
     }
-    if let Some(exists) = obj.get("exists") {
-        let field = clause_field(exists)?;
-        require_filter_key(decl, field)?;
-        return Ok(fields.contains_key(field));
-    }
-    if let Some(prefix) = obj.get("pathPrefix").or_else(|| obj.get("path_prefix")) {
-        if decl.kind == Kind::Journal {
-            return Err(Error::invalid(
-                "path_prefix is only valid on document and singleton",
-            ));
-        }
-        let prefix = prefix
-            .get("prefix")
-            .and_then(Value::as_str)
-            .ok_or_else(|| Error::invalid("path_prefix.prefix is required"))?;
-        return Ok(path_prefix_matches(decl, record, prefix));
-    }
-    Err(Error::invalid("filter clause is missing kind"))
 }
 
 fn require_filter_key(decl: &CollectionDecl, field: &str) -> Result<(), Error> {
@@ -128,68 +139,53 @@ fn require_filter_key(decl: &CollectionDecl, field: &str) -> Result<(), Error> {
     }
 }
 
-fn clause_field(node: &Value) -> Result<&str, Error> {
-    node.get("field")
-        .and_then(Value::as_str)
-        .filter(|field| !field.is_empty())
-        .ok_or_else(|| Error::invalid("filter clause field is required"))
-}
-
-fn path_prefix_matches(decl: &CollectionDecl, record: &Record, prefix: &str) -> bool {
-    let Some(path) = record.path.as_deref() else {
-        return false;
-    };
-    if path.starts_with(prefix) {
-        return true;
+fn required_field(field: &Option<String>) -> &str {
+    match field.as_deref() {
+        Some(name) if !name.is_empty() => name,
+        _ => unreachable!("filter clause field is required"),
     }
-    let root = collection_dir(&decl.name);
-    path.strip_prefix(&root)
-        .map(|rest| rest.trim_start_matches('/'))
-        .is_some_and(|rel| rel.starts_with(prefix))
 }
 
-fn proto_json_value(value: &Value) -> &Value {
+fn json_of(value: &impl serde::Serialize) -> Result<Value, Error> {
+    let json = serde_json::to_value(value)
+        .map_err(|err| Error::invalid(format!("encode filter: {err}")))?;
+    Ok(unwrap_wkt(json))
+}
+
+fn json_list(value: &impl serde::Serialize) -> Result<Vec<Value>, Error> {
+    match json_of(value)? {
+        Value::Array(items) => Ok(items),
+        Value::Object(obj) => match obj.get("values") {
+            Some(Value::Array(items)) => Ok(items.clone()),
+            _ => Ok(Vec::new()),
+        },
+        _ => Ok(Vec::new()),
+    }
+}
+
+fn unwrap_wkt(value: Value) -> Value {
     let Some(obj) = value.as_object() else {
         return value;
     };
     if obj.contains_key("nullValue") || obj.contains_key("null_value") {
-        return &Value::Null;
+        return Value::Null;
     }
     if let Some(v) = obj.get("stringValue").or_else(|| obj.get("string_value")) {
-        return v;
+        return v.clone();
     }
     if let Some(v) = obj.get("numberValue").or_else(|| obj.get("number_value")) {
-        return v;
+        return v.clone();
     }
     if let Some(v) = obj.get("boolValue").or_else(|| obj.get("bool_value")) {
-        return v;
+        return v.clone();
     }
     if let Some(v) = obj.get("listValue").or_else(|| obj.get("list_value")) {
-        return proto_json_value(v);
+        return unwrap_wkt(v.clone());
     }
     if let Some(v) = obj.get("structValue").or_else(|| obj.get("struct_value")) {
-        return v;
+        return v.clone();
     }
     value
-}
-
-fn proto_json_list(values: Option<&Value>) -> Vec<Value> {
-    let Some(values) = values else {
-        return Vec::new();
-    };
-    if let Some(arr) = values.as_array() {
-        return arr
-            .iter()
-            .map(|item| proto_json_value(item).clone())
-            .collect();
-    }
-    if let Some(inner) = values.get("values").and_then(Value::as_array) {
-        return inner
-            .iter()
-            .map(|item| proto_json_value(item).clone())
-            .collect();
-    }
-    Vec::new()
 }
 
 fn json_eq(left: &Value, right: &Value) -> bool {

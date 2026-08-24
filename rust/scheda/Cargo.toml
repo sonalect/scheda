@@ -25,6 +25,7 @@ regex = { workspace = true }
 scheda-generated = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tantivy = { workspace = true }
 usearch = { workspace = true }
 yaml_serde = { workspace = true }
 

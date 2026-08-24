@@ -142,6 +142,13 @@ impl api::v1::Record {
     }
 }
 
+impl api::v1::SearchQuery {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
 impl api::v1::HistoryEntry {
     /// UTC commit instant. Git `Time.seconds` is already seconds since epoch.
     #[must_use]
@@ -155,7 +162,7 @@ impl api::v1::HistoryEntry {
 mod tests {
     use protovalidate_buffa::Validate;
 
-    use super::api::v1::{Error, Filter, HistoryEntry, OpenOptions, Record};
+    use super::api::v1::{Error, Filter, HistoryEntry, OpenOptions, Record, SearchHit, SearchQuery};
 
     #[test]
     fn error_json_uses_lib5_code_string() {
@@ -226,11 +233,106 @@ mod tests {
             .require_valid()
             .expect_err("missing id and collection");
         assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert!(
+            Record::default()
+                .with_id("alpha")
+                .with_collection("a/b")
+                .require_valid()
+                .is_ok()
+        );
+        let err = Record::default()
+            .with_id("a/b")
+            .with_collection("notes")
+            .require_valid()
+            .expect_err("id slash");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = Record::default()
+            .with_id("a\\b")
+            .with_collection("notes")
+            .require_valid()
+            .expect_err("id backslash");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+    }
+
+    #[test]
+    fn history_entry_time_is_required() {
+        assert!(HistoryEntry::default().with_hash("abc").validate().is_err());
+        assert!(
+            HistoryEntry::default()
+                .with_hash("abc")
+                .with_time(0)
+                .validate()
+                .is_ok()
+        );
     }
 
     #[test]
     fn history_entry_time_json_is_rfc3339() {
         let json = serde_json::to_value(HistoryEntry::default().with_time(0)).expect("json");
         assert_eq!(json["time"], "1970-01-01T00:00:00Z");
+    }
+
+    #[test]
+    fn search_query_text_is_required() {
+        assert!(SearchQuery::default().validate().is_err());
+        assert!(
+            SearchQuery::default()
+                .with_text("token")
+                .require_valid()
+                .is_ok()
+        );
+        let err = SearchQuery::default()
+            .require_valid()
+            .expect_err("missing text");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+    }
+
+    #[test]
+    fn search_query_weights_are_finite_and_non_negative() {
+        let ok = SearchQuery::default().with_text("token");
+        assert!(ok.require_valid().is_ok());
+        assert!(
+            ok.clone()
+                .with_lexical_weight(0.0)
+                .with_vector_weight(0.0)
+                .require_valid()
+                .is_ok()
+        );
+        let err = ok
+            .clone()
+            .with_lexical_weight(-1.0)
+            .require_valid()
+            .expect_err("negative lexical_weight");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = ok
+            .clone()
+            .with_vector_weight(f64::NAN)
+            .require_valid()
+            .expect_err("NaN vector_weight");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = ok
+            .clone()
+            .with_lexical_weight(f64::INFINITY)
+            .require_valid()
+            .expect_err("+Inf lexical_weight");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = ok
+            .with_vector_weight(f64::NEG_INFINITY)
+            .require_valid()
+            .expect_err("-Inf vector_weight");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+    }
+
+    #[test]
+    fn search_hit_scores_are_finite_and_non_negative() {
+        let ok = SearchHit::default()
+            .with_collection("notes")
+            .with_id("alpha");
+        assert!(ok.validate().is_ok());
+        assert!(ok.clone().with_rrf_score(0.0).validate().is_ok());
+        assert!(ok.clone().with_rrf_score(-0.1).validate().is_err());
+        assert!(ok.clone().with_lexical_score(f64::NAN).validate().is_err());
+        assert!(ok.clone().with_rrf_score(f64::INFINITY).validate().is_err());
+        assert!(ok.with_vector_score(f64::NEG_INFINITY).validate().is_err());
     }
 }

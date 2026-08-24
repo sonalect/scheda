@@ -18,7 +18,7 @@ message HistoryEntry {
   }];
   // Commit instant (UTC). Proto3 JSON is RFC 3339. Git `Time.seconds` is
   // already seconds since epoch; the display timezone is not stored.
-  google.protobuf.Timestamp time = 2;
+  google.protobuf.Timestamp time = 2 [(buf.validate.field) = {required: true}];
   // Git author as `Name <email>`.
   string author = 3;
   string message = 4;

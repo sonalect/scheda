@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.12, 24 August 2026.
+Document 11 of the Scheda package. Version 0.14, 24 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -48,7 +48,7 @@ hybrid `search` → core acceptance.
 | [C6](#c6-local-commit-and-history) | done | `commit`, `history` of a path |
 | [C7](#c7-remote) | done | `clone`, `auto_sync`, push/pull/sync |
 | [C8](#c8-journal-id-map-and-size) | done | IDX-5, OPS-1, OPS-3 |
-| [C9](#c9-hybrid-search) | not started | BM25 + ANN + RRF (`10` §3) |
+| [C9](#c9-hybrid-search) | done | BM25 + ANN + RRF (`10` §3) |
 | [C10](#c10-core-acceptance) | not started | `10` §2 acceptance |
 
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
@@ -60,15 +60,8 @@ IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–18; ISO-1; OPS-1, OPS-3.
 
 These must **compile**. They must not be required to pass C0–C8 or C10.
 Writes must not depend on them (`10` §2). **C9** implements **search**
-(`10` §3); until C9 those surfaces stay stubs.
-
-Return `unsupported` (or a documented stub that does not write) until C9
-for: `search` (LIB-11), walks (REL-1–3), vector/lexical Index (IDX-3,
-IDX-6–9), hybrid query (QRY-3–6), SCH-9–11 as **search** marks (store still
-ignores them for ranking until C9).
-
-Until **later**: isolated/`encrypt` clauses (ISO-2–11, SCH-15), agent
-catalog (AGT-1–5).
+(`10` §3). Isolated/`encrypt` clauses (ISO-2–11, SCH-15) and the agent
+catalog (AGT-1–5) stay **later**.
 
 `delete_one`, line-level journal blame, file watcher: not in this plan (`10`
 §5).
@@ -284,7 +277,7 @@ SCH-12.
 
 ## C9. Hybrid search
 
-**Status:** not started
+**Status:** done
 
 **Codes:** SCH-9–11, IDX-3, IDX-6–9, QRY-3–6, REL-1–3, LIB-11, OPS-2, OPS-4.
 
@@ -296,31 +289,31 @@ fields only, injected embedder, no LLM or pair reranker in this crate
 (QRY-5). Grep, SQL `LIKE`, and brute-force vector scan at OPS-1 are not
 this stage.
 
-- [ ] `search` is no longer `unsupported` (LIB-11).
-- [ ] Lexical Index: BM25 (or equivalent ranked FTS) over SCH-9 `fts` fields
+- [x] `search` is no longer `unsupported` (LIB-11).
+- [x] Lexical Index: BM25 (or equivalent ranked FTS) over SCH-9 `fts` fields
       and body; unmarked text is absent (IDX-6, SCH-9). Token fixture:
       expected id in `k` among distractors.
-- [ ] Vector Index: in-process ANN (HNSW or equivalent) over SCH-9/10 slots;
+- [x] Vector Index: in-process ANN (HNSW or equivalent) over SCH-9/10 slots;
       no external vector database (IDX-7). No embedder → vector leg off;
       writes and lexical still work (IDX-8). Synonym fixture with no shared
       tokens: expected id in `k`.
-- [ ] At OPS-1, vector queries use the ANN structure, not a scan of every
+- [x] At OPS-1, vector queries use the ANN structure, not a scan of every
       stored vector (IDX-7, OPS-2).
-- [ ] After `insert_one` / `replace_one`, lexical (and vector if an embedder
+- [x] After `insert_one` / `replace_one`, lexical (and vector if an embedder
       is present) update without a full `reindex` (IDX-9).
-- [ ] Invalid Records stay out of `search`; `find_one` still returns them
+- [x] Invalid Records stay out of `search`; `find_one` still returns them
       (IDX-3, SCH-12).
-- [ ] Hybrid `search`: both legs when available; default fusion is RRF;
+- [x] Hybrid `search`: both legs when available; default fusion is RRF;
       per-leg scores on the hit; caller may pass `k` and merge weights
       (QRY-3, LIB-11).
-- [ ] Missing or corrupt Index: `search` fails closed (QRY-4).
-- [ ] No pair reranker or LLM in `scheda` (QRY-5).
-- [ ] SCH-8 filters apply before ranking (QRY-6).
-- [ ] One-step and inverse walks match fixtures (REL-1–3). Multi-step is
+- [x] Missing or corrupt Index: `search` fails closed (QRY-4).
+- [x] No pair reranker or LLM in `scheda` (QRY-5).
+- [x] SCH-8 filters apply before ranking (QRY-6).
+- [x] One-step and inverse walks match fixtures (REL-1–3). Multi-step is
       **later**.
-- [ ] OPS-2: hybrid `search` on the OPS-1 fixture finishes in tens of
+- [x] OPS-2: hybrid `search` on the OPS-1 fixture finishes in tens of
       milliseconds.
-- [ ] OPS-4: with embedder weights already on disk, `search` needs no
+- [x] OPS-4: with embedder weights already on disk, `search` needs no
       network.
 
 ---
