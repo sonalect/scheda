@@ -48,7 +48,8 @@ API or on-disk format changes bump the minor.
 - Hybrid `search` quality bar: BM25 lexical, in-process ANN, RRF fusion,
   Schema-marked fields only, injected embedder, no LLM in the crate (`06`,
   `10` §3). Rust stage C9 in `11` implements it before core acceptance (C10).
-- CI runs `bazel test //...` on Debian 13 and macOS.
+- CI runs `bazel test //...` on Debian 13, macOS, and Windows (amd64 and
+  arm64).
 - USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`); default
   SIMD feature `numkong` is off so Bazel can compile the C++ bridge.
   `search` is still `unsupported` until C9 wires it. The C++ bridge
@@ -82,6 +83,8 @@ API or on-disk format changes bump the minor.
   `OpenOptions`, `Record`) instead of parallel hand-written structs.
 - Schema tests load YAML/JSON fixtures from `rust/scheda/testdata/schema/`
   instead of inlined strings.
+- `atomic_write` replaces the destination on Windows; native `rename`
+  cannot overwrite an existing file.
 - `Collection::find_one` returns `Result<Record, Error>`; a missing `id` is
   `not_found` (LIB-8).
 

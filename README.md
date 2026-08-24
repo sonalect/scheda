@@ -59,8 +59,8 @@ vendored libssh2, which still needs OpenSSL headers on Unix (Homebrew
 `PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"`). Build without
 OpenSSL via `scheda` `default-features = false` (file remotes still work).
 USearch needs a C++17 compiler: **g++** (Linux), **clang++** / Xcode CLT
-(macOS), **MSVC** Build Tools (Windows). CI runs Bazel on Debian 13 and
-macOS.
+(macOS), **MSVC** Build Tools (Windows). CI runs Bazel on Debian 13, macOS,
+and Windows (amd64 and arm64).
 
 ```bash
 bazel build //rust/scheda:scheda

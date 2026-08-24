@@ -177,3 +177,76 @@ jobs:
           set +e
           bazel shutdown
           exit 0
+
+  windows:
+    name: Bazel (Windows ${{ matrix.arch }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: windows-latest
+            bazelisk_artifact: bazelisk-windows-amd64.exe
+            bazelisk_sha256: 092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b
+          - arch: arm64
+            os: windows-11-arm
+            bazelisk_artifact: bazelisk-windows-arm64.exe
+            bazelisk_sha256: 8bc42bd5d7857f18a21440b906469bb6c7cf91a7c72364d4b1e5ec56a76fe94f
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7.0.1
+
+      # HTTPS uses WinHTTP; SSH uses vendored libssh2 + WinCNG. CMake is on the
+      # image for vendored libgit2. Git usr/bin supplies patch.exe.
+      - name: Install Bazelisk
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL -o "${RUNNER_TEMP}/bazelisk.exe" \
+            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/${{ matrix.bazelisk_artifact }}"
+          echo "${{ matrix.bazelisk_sha256 }}  ${RUNNER_TEMP}/bazelisk.exe" | sha256sum -c
+          mkdir -p "${RUNNER_TEMP}/bin"
+          cp "${RUNNER_TEMP}/bazelisk.exe" "${RUNNER_TEMP}/bin/bazel.exe"
+          echo "$(cygpath -w "${RUNNER_TEMP}/bin")" >> "${GITHUB_PATH}"
+          echo "$(cygpath -w "/c/Program Files/Git/usr/bin")" >> "${GITHUB_PATH}"
+
+      - name: Cache Bazel
+        uses: actions/cache@v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/bazel-disk
+            ${{ runner.temp }}/bazel-repo
+          key: bazel-windows-${{ matrix.arch }}-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
+          restore-keys: |
+            bazel-windows-${{ matrix.arch }}-cas-
+
+      - name: Configure Bazel caches
+        shell: bash
+        run: |
+          set -euo pipefail
+          disk="$(cygpath -m "${RUNNER_TEMP}/bazel-disk")"
+          repo="$(cygpath -m "${RUNNER_TEMP}/bazel-repo")"
+          out="$(cygpath -m "${RUNNER_TEMP}/bzl")"
+          mkdir -p "${RUNNER_TEMP}/bazel-disk" "${RUNNER_TEMP}/bazel-repo" "${RUNNER_TEMP}/bzl"
+          {
+            echo "startup --output_user_root=${out}"
+            echo "startup --windows_enable_symlinks"
+            echo "build --symlink_prefix=/"
+            echo "common --disk_cache=${disk}"
+            echo "common --repository_cache=${repo}"
+          } >> "${HOME}/.bazelrc"
+
+      - name: Build
+        run: bazel build //... --keep_going
+
+      - name: Test
+        run: bazel test //... --keep_going --test_output=all
+
+      - name: Stop Bazel
+        if: always()
+        continue-on-error: true
+        run: |
+          bazel shutdown
+          exit 0

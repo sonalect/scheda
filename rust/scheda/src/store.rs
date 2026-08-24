@@ -875,13 +875,24 @@ fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Er
     file.sync_all()
         .map_err(|err| Error::io(format!("fsync {}: {err}", tmp.display())))?;
     drop(file);
-    fs::rename(tmp, path).map_err(|err| {
-        Error::io(format!(
-            "rename {} -> {}: {err}",
-            tmp.display(),
-            path.display()
-        ))
-    })
+    rename_replace(tmp, path)
+}
+
+/// `fs::rename` cannot replace an existing file on Windows.
+fn rename_replace(tmp: &Path, path: &Path) -> Result<(), Error> {
+    #[cfg(windows)]
+    if path.exists() {
+        fs::remove_file(path).map_err(|err| rename_err(tmp, path, err))?;
+    }
+    fs::rename(tmp, path).map_err(|err| rename_err(tmp, path, err))
+}
+
+fn rename_err(tmp: &Path, path: &Path, err: std::io::Error) -> Error {
+    Error::io(format!(
+        "rename {} -> {}: {err}",
+        tmp.display(),
+        path.display()
+    ))
 }
 
 pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {

@@ -3,3 +3,5 @@
 common --experimental_platform_in_output_dir
 # Use a symlink prefix to avoid clobbering the workspace root.
 build --symlink_prefix=.bazel/
+# rules_rust tests need runfiles; Windows defaults this off.
+common --enable_runfiles
