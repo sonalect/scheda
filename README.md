@@ -12,7 +12,8 @@ SQL.
 
 **Status: core C0–C10 and search C9 in the Rust crate.** Files, git, Schema,
 `find` / `find_one`, journal `id` map, hybrid `search` (BM25 + in-process
-ANN + RRF), and core acceptance.
+ANN + RRF), and core acceptance. Next: unencrypted isolated git root
+(`10` §1). **agent** catalog and CLI follow.
 
 ## Documents
 
@@ -29,8 +30,9 @@ The design is a numbered package in `docs/`, in English.
 | [07-api.md](docs/07-api.md) | Language-neutral library operations; message fields in `api/v1` |
 | [08-agent.md](docs/08-agent.md) | Same operations for an AI agent, Schema catalog, thin transport |
 | [09-isolation.md](docs/09-isolation.md) | No network by default (**core**); isolated git root and age encryption (**later**) |
-| [10-roadmap.md](docs/10-roadmap.md) | Phases (core / search / agent / later), acceptance, size targets, open questions, deferrals |
+| [10-roadmap.md](docs/10-roadmap.md) | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md) | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done) |
+| [12-agent-plan.md](docs/12-agent-plan.md) | Rust work order: A0–A4 **agent** (not started; after unencrypted isolated) |
 
 ## Layout
 

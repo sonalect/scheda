@@ -8,9 +8,12 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-08-24
+
 ### Added
 
 - Core development plan in `docs/11-core-plan.md` (stages C0–C10).
+- Agent development plan in `docs/12-agent-plan.md` (stages A0–A4).
 - LIB-5 error codes on the Rust crate; LIB-2 names including `init` /
   `clone` / `scan` / remote / `check` / `reindex`; `search` returns
   `unsupported`.
@@ -109,8 +112,10 @@ API or on-disk format changes bump the minor.
   the validated `Filter` oneof; it does not re-check clause shape.
 - Rust **core** is accepted (C10): the five gates in `10` §2 pass in
   `scheda` tests, including deleting `.scheda/` without losing Records.
-- `docs/10-roadmap.md` records that the first binding accepted **core**
-  and **search**; **agent** and **later** are still out.
+- `docs/10-roadmap.md` (v0.12): next `scheda` work is the unencrypted
+  isolated slice; **agent** (catalog, CLI, ISO-3) follows (`12`); age
+  encryption of that root stays deferred. `01`, `11`, and the README
+  status match.
 
 ### Removed
 
@@ -141,7 +146,9 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.0.1...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/amsokol/scheda/releases/tag/v0.1.0
 [0.0.1]: https://github.com/amsokol/scheda/releases/tag/v0.0.1

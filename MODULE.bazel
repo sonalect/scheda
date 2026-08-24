@@ -2,7 +2,7 @@
 
 module(
     name = "scheda",
-    version = "0.0.1",
+    version = "0.1.0",
 )
 
 bazel_dep(name = "bazel_lib", version = "3.7.1")

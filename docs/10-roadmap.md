@@ -1,8 +1,8 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.9, 24 August 2026.
+Document 10 of the Scheda package. Version 0.12, 24 August 2026.
 
-This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed. Terms are in `02`. Codes: `OPS`.
+This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
 An assertion without a check is not a requirement.
 
@@ -19,13 +19,21 @@ Four labels appear on requirements:
 | **agent** | Catalog and a thin encoding of the same API (`08`). Does not block **core**. |
 | **later** | Isolated collections and their encryption, scale, extra writers, extra walks, conveniences. Must not leak into **core** as hidden dependencies. |
 
-A binding may ship **search** before **agent**. Isolated collections are **later**: they must not be required to pass **core**, **search**, or **agent**.
+A binding may ship **search** before **agent**. Isolated collections are **later**: they must not be required to pass **core**, **search**, or **agent**. `scheda` implements the unencrypted isolated slice before **agent** (`§1`); that does not make isolated a gate of **agent** for other bindings.
 
 The first implementation is the Rust crate `scheda`. Other languages (Python, Java, Go, TypeScript, and others) are separate bindings of the same Vault layout and the same operations (`07`). They are accepted on their own after **core** (at least) is true of that binding. They are not a prerequisite for accepting Rust **core**.
 
-**First binding (`scheda`).** **core** is accepted (`11` C10). **search** is accepted (`11` C9). **agent** and **later** are not started. No other language binding exists yet. Stage ticks and *Check:* tests live in `11` and `rust/scheda/tests/`.
+**First binding (`scheda`).** **core** is accepted (`11` C10). **search** is accepted (`11` C9). No other language binding exists yet. Stage ticks and *Check:* tests live in `11`, `12`, and `rust/scheda/tests/`.
 
 The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
+
+**Next in `scheda`.** Unencrypted isolated slice of **later**: SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. A crate consumer needs a second git root for collections that must not live in the main Vault tree or Index. Do not start **agent**, age encryption of that root, other language bindings, or the rest of §5 until this slice is in the crate.
+
+Order inside that slice (not a second spec): parse `isolated` in Schema (today Schema rejects the key) → second git root, owner-only files, no Remote → main `find` / `search` return no isolated Records and do not require that root → main Index has no fixture sealed string.
+
+**After that slice.** **agent** (AGT-1–5) and ISO-3: library `catalog` → thin CLI of `07` + `catalog` (MCP remains optional) → agent tools on the main Vault never return sealed values. Stage ticks live in `12`.
+
+**Still deferred after those two slices:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
 
 ---
 
@@ -42,7 +50,7 @@ The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journa
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** codes in that list are implemented (C9), not stubs. SCH-15, AGT-1–5, and ISO-2–11 stay out.
+**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** codes in that list are implemented (C9), not stubs. SCH-15, ISO-2, ISO-4, ISO-6, and IDX-4 are the next slice (`§1`). AGT-1–5 and ISO-3 follow. ISO-5, ISO-7–11 stay deferred.
 
 **Core is accepted** when:
 
@@ -54,7 +62,7 @@ The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journa
 
 **Rust `scheda`:** those five gates pass (`11` C10; tests in `rust/scheda/tests/core.rs` and the C0–C8 suites). **core** is accepted for this binding.
 
-Order used in `scheda` (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance. Remote operations are **core** but landed after local `commit`. Isolated roots and `encrypt` wait for **later**. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
+Order used in `scheda` (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance. Remote operations are **core** but landed after local `commit`. Isolated roots were not in this order. After C10, `scheda` codes the unencrypted isolated slice (`§1`); **agent** and age encryption wait. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
 
 ---
 
@@ -81,11 +89,13 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 
 **In:** AGT-1–5.
 
-ISO-3 applies when isolated collections exist (**later**); it does not block this phase.
+ISO-3 applies when isolated collections exist and **agent** is on. In `scheda` it is the slice after unencrypted isolated (`§1`), not a reason to delay **agent** once that isolated slice is in.
 
 **Agent is accepted** when catalog JSON matches Schema files, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
 
-Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. `scheda` ships none yet.
+Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding: after the isolated slice, `scheda` ships a CLI of `07` + `catalog`. MCP stays an example, not a requirement (`08`).
+
+**Rust `scheda`:** **agent** is not started. It follows the unencrypted isolated slice (`§1`). The stage checklist is `12`.
 
 ---
 
@@ -97,6 +107,14 @@ Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipp
 
 ISO-1 stays **core**. The main Vault is never encrypted.
 
+Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption is optional on top.
+
+**Next in `scheda` (unencrypted only):** SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. Parse `isolated` (today Schema rejects the key). Second git root; owner-only files; no Remote; main `find` / `search` return no isolated Records and do not require that root; main Index has no fixture sealed string.
+
+**After that — agent and ISO-3:** AGT-1–5. `catalog` on the main Vault lists isolated collections as isolated and does not return their field values. Tools on the main Vault never return a fixture sealed value.
+
+**Still later — encryption:** ISO-5, ISO-7–11. `init(..., encrypt=true)` and `secret` wait until the unencrypted root is in. The **agent** slice does not wait on encryption.
+
 **Isolated is accepted** when:
 
 1. A fixture with two roots: queries on the main Vault return no isolated Records and do not require that root (ISO-2, SCH-15).
@@ -105,7 +123,7 @@ ISO-1 stays **core**. The main Vault is never encrypted.
 4. Main Index contains no fixture sealed string (ISO-4, IDX-4).
 5. If **agent** is on: tools on the main Vault never return that sealed value (ISO-3).
 
-Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid in this phase; encryption is optional on top. `scheda` has no isolated root yet.
+Gate 3 is encryption; it does not block the unencrypted slice. `scheda` has no isolated root yet.
 
 ### Everything else later
 

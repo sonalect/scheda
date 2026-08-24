@@ -1,11 +1,12 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.15, 24 August 2026.
+Document 11 of the Scheda package. Version 0.18, 24 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
 *Check:* lines in `03`–`09` stay normative. This file only assigns them to
-stages and records whether the first crate has passed them.
+stages and records whether the first crate has passed them. What `scheda`
+codes after C10 is `10` §1, not extra stages here.
 
 The first implementation is the crate `scheda`. Other language bindings are
 out of this plan (`10` §1).
@@ -54,14 +55,18 @@ hybrid `search` → core acceptance.
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
 IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–18; ISO-1; OPS-1, OPS-3.
 
+Next crate work after this checklist is `10` §1 (unencrypted isolated).
+**agent** follows that slice (`12`). This file does not add those stages.
+
 ---
 
 ## 3. Out of core (stubs)
 
 These must **compile**. They must not be required to pass C0–C8 or C10.
 Writes must not depend on them (`10` §2). **C9** implements **search**
-(`10` §3). Isolated/`encrypt` clauses (ISO-2–11, SCH-15) and the agent
-catalog (AGT-1–5) stay **later**.
+(`10` §3). After C10, `scheda` codes unencrypted isolated (SCH-15, ISO-2,
+ISO-4, ISO-6, IDX-4) as in `10` §1. **agent** (AGT-1–5) and ISO-3 follow
+(`12`). Age encryption (ISO-5, ISO-7–11) stays deferred.
 
 `delete_one`, line-level journal blame, file watcher: not in this plan (`10`
 §5).
@@ -335,7 +340,8 @@ Re-run the five gates in `10` §2:
       (GIT-8, ISO-1).
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
-C9. **agent** and **later** stay out.
+C9. This checklist stops there. Next crate work is `10` §1. **agent** is
+`12`.
 
 ---
 
@@ -350,4 +356,4 @@ Exact Schema YAML key names — `05` §8.
 
 Whether `open` refuses a dirty Index or only warns via `check` (`10` §7).
 
-**agent**, isolated roots, and `encrypt`.
+**agent** — `12`. Isolated roots and `encrypt` — order and slice are `10` §1 / §5.

@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.15, 24 August 2026.
+Document 1 of the Scheda package. Version 0.18, 24 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -102,13 +102,13 @@ Ready-made experiments that keep Markdown under git and hang a search index on t
 
 ## 5. What works on day one
 
-A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, explicit `commit`, `find_one` by id, `find` / `scan` (journal in append order). Isolated roots and `encrypt` are **later** (`09`, `10`).
+A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, explicit `commit`, `find_one` by id, `find` / `scan` (journal in append order). Isolated roots and `encrypt` stay a **later** phase (`09`, `10`); they are not required to accept **core**, **search**, or **agent**.
 
-Hybrid `search` is the next phase (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
+Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
 
-The agent catalog and tool shell are a later phase. They do not block core. They must not grow a method per collection type.
+Next in `scheda` is the unencrypted isolated slice: a second git root, owner-only files, no Remote (`10` §1). The **agent** catalog and a thin encoding of the same operations follow that slice. They do not block **core**. They must not grow a method per collection type. Age encryption of that isolated root stays deferred.
 
-What is deliberately later: isolated collections and optional age encryption of that root (`09`); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
+What is deliberately later after those slices: optional age encryption of an isolated root (`09`); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
 
 ---
 
@@ -125,8 +125,9 @@ What is deliberately later: isolated collections and optional age encryption of 
 | `07` | Library API (language-neutral contract; first binding is Rust) |
 | `08` | Agent surface |
 | `09` | Isolation and perimeter |
-| `10` | Phases, acceptance, open questions, deferrals |
-| `11` | Rust stage checklist (core, then hybrid `search`) |
+| `10` | Phases, acceptance, what `scheda` codes next, open questions, deferrals |
+| `11` | Rust stage checklist (core, then hybrid `search`; both done) |
+| `12` | Rust stage checklist (**agent**; not started; after unencrypted isolated) |
 
 Checkable requirements live in `03`–`09` and are gathered with phases in `10`. This document does not list them.
 
@@ -134,6 +135,6 @@ Checkable requirements live in `03`–`09` and are gathered with phases in `10`.
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10) and **search** (C9) are accepted (`10`, `11`). **agent** and **later** are not started. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10) and **search** (C9) are accepted (`10`, `11`). Next work is the unencrypted isolated slice of **later** (`10` §1). **agent** (including ISO-3) follows that slice (`12`). Age encryption of an isolated root, extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.
