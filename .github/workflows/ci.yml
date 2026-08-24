@@ -105,11 +105,6 @@ jobs:
     name: Bazel (macOS)
     runs-on: macos-latest
     timeout-minutes: 90
-    env:
-      # Must live outside the checkout: Bazel 9 refuses --repository_cache
-      # (and its repo contents cache) inside the main repo.
-      BAZEL_DISK_CACHE: ${{ runner.temp }}/bazel-disk
-      BAZEL_REPO_CACHE: ${{ runner.temp }}/bazel-repo
     steps:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
@@ -139,12 +134,15 @@ jobs:
           echo "${sha256}  /tmp/bazelisk" | shasum -a 256 -c
           sudo install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
 
+      # runner.temp is invalid in jobs.<id>.env (evaluated before a runner is
+      # assigned). It is valid in steps.with / $RUNNER_TEMP. Paths must stay
+      # outside the checkout: Bazel 9 refuses --repository_cache inside the repo.
       - name: Cache Bazel
         uses: actions/cache@v6.1.0
         with:
           path: |
-            ${{ env.BAZEL_DISK_CACHE }}
-            ${{ env.BAZEL_REPO_CACHE }}
+            ${{ runner.temp }}/bazel-disk
+            ${{ runner.temp }}/bazel-repo
           key: bazel-macos-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
           restore-keys: |
             bazel-macos-cas-
@@ -152,10 +150,12 @@ jobs:
       - name: Configure Bazel caches
         run: |
           set -euo pipefail
-          mkdir -p "${BAZEL_DISK_CACHE}" "${BAZEL_REPO_CACHE}"
+          disk="${RUNNER_TEMP}/bazel-disk"
+          repo="${RUNNER_TEMP}/bazel-repo"
+          mkdir -p "${disk}" "${repo}"
           {
-            echo "common --disk_cache=${BAZEL_DISK_CACHE}"
-            echo "common --repository_cache=${BAZEL_REPO_CACHE}"
+            echo "common --disk_cache=${disk}"
+            echo "common --repository_cache=${repo}"
           } >> "${HOME}/.bazelrc"
 
       - name: Build
