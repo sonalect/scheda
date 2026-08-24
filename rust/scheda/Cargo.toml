@@ -10,10 +10,14 @@ readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
 [features]
-default = ["remote-git"]
+default = ["remote-git", "numkong"]
 # libgit2 HTTPS and SSH. File remotes and local git work without this;
 # skip it to avoid OpenSSL (`default-features = false`).
 remote-git = ["git2/https", "git2/ssh"]
+# USearch SIMD kernels (numkong). Off with `default-features = false`.
+numkong = ["usearch/numkong"]
+# USearch OpenMP executor. Needs libomp (Linux `libomp-dev`; not used by Bazel CI).
+openmp = ["usearch/openmp"]
 
 [dependencies]
 git2 = { workspace = true }

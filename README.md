@@ -56,8 +56,10 @@ libgit2 needs **cmake**, **pkg-config**, and zlib headers. Feature
 (`libssl-dev`), Secure Transport on macOS, WinHTTP on Windows. SSH uses
 vendored libssh2, which still needs OpenSSL headers on Unix (Homebrew
 `openssl` on macOS; keg-only, so set
-`PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"`). Build without
-OpenSSL via `scheda` `default-features = false` (file remotes still work).
+`PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"`). Feature
+`numkong` (default) is USearch SIMD. `openmp` is opt-in (Linux
+`libomp-dev`). `default-features = false` drops both git TLS and SIMD
+(file remotes still work); add `features = ["numkong"]` to keep SIMD.
 USearch needs a C++17 compiler: **g++** (Linux), **clang++** / Xcode CLT
 (macOS), **MSVC** Build Tools (Windows). CI runs Bazel on Debian 13, macOS,
 and Windows amd64.

@@ -24,7 +24,8 @@ API or on-disk format changes bump the minor.
   (`invalid`).
 - `open` / `check` load Schema from `schema/` (`05` §8 keys); illegal
   declarations are `invalid`.
-- Rust crate rustdoc on GitHub Pages (`bazel build //rust/scheda:scheda_doc`).
+- Rust crate rustdoc on GitHub Pages (`bazel build //rust/scheda:scheda_doc`);
+  crate docs list Cargo features (`remote-git`, `numkong`, `openmp`).
 - `document` / `singleton` `insert_one` / `replace_one` / `find_one` (C3):
   YAML+Markdown or YAML-only files, atomic sibling-temp writes, Schema
   validation on write, `valid: false` on old files that fail the current
@@ -49,11 +50,13 @@ API or on-disk format changes bump the minor.
   Schema-marked fields only, injected embedder, no LLM in the crate (`06`,
   `10` §3). Rust stage C9 in `11` implements it before core acceptance (C10).
 - CI runs `bazel test //...` on Debian 13, macOS, and Windows amd64.
-- USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`); default
-  SIMD feature `numkong` is off so Bazel can compile the C++ bridge.
-  `search` is still `unsupported` until C9 wires it. The C++ bridge
-  uses `/usr/bin/c++` on Linux. macOS keeps Bazel's Apple clang wrapper
-  so `__BAZEL_XCODE_SDKROOT__` expands; Windows uses MSVC.
+- USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`). Crate
+  feature `numkong` (default) enables SIMD kernels (`numkong` 7.8.0);
+  `openmp` is opt-in and needs libomp. `search` is still `unsupported`
+  until C9 wires it. The C++ bridge uses `/usr/bin/c++` on Linux. macOS
+  keeps Bazel's Apple clang wrapper so `__BAZEL_XCODE_SDKROOT__` expands;
+  Windows uses MSVC. NumKong headers are copied into `OUT_DIR` so Bazel
+  sandboxes can compile the bridge.
 - Crate feature `remote-git` (default) enables `git2` `https` and `ssh` so
   `clone` / `pull_remote` / `push_remote` can talk to `https://` and `git@`
   remotes (libgit2 credential helper / ssh-agent). Without the feature those
@@ -74,7 +77,11 @@ API or on-disk format changes bump the minor.
   `CXX=/usr/bin/c++` pin. macOS must not override `CXX` (Apple sysroot
   placeholders). libgit2/OpenSSL crates already see host PATH and vendored
   sources from rules_rust defaults. On Windows the cxx-build patch writes
-  `rust/cxx.h` as a regular file so MSVC can compile USearch.
+  `rust/cxx.h` as a regular file so MSVC can compile USearch. Directory
+  symlinks cxx-build leaves in USearch `OUT_DIR` are removed with
+  `remove_dir` (Windows `remove_file` cannot unlink them). Windows CI uses
+  `--output_user_root=C:/b` and a short crate_universe hub `pvb` so
+  `CARGO_MANIFEST_DIR` stays under MAX_PATH.
 - Pinned `bazel_utils_*` modules at `v0.2.2` (Windows ARM64 `cargo-audit`
   prebuilt; Scheda CI still runs Windows amd64 only).
 - Git operations go through `git2` (libgit2), not the `git` CLI.

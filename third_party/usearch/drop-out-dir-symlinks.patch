@@ -14,7 +14,7 @@ tree-artifact children. The C++ compile already finished; drop the links.
      println!("cargo:rerun-if-changed=rust/lib.rs");
      println!("cargo:rerun-if-changed=rust/lib.cpp");
      println!("cargo:rerun-if-changed=rust/lib.hpp");
-@@ -91,3 +95,22 @@
+@@ -91,3 +95,27 @@
      println!("cargo:rerun-if-changed=include/usearch/index_dense.hpp");
      Ok(())
  }
@@ -31,7 +31,12 @@ tree-artifact children. The C++ compile already finished; drop the links.
 +            continue;
 +        };
 +        if meta.file_type().is_symlink() {
-+            let _ = std::fs::remove_file(&path);
++            // Unix unlink works for file and dir links. Windows directory
++            // junctions/symlinks need remove_dir; remove_file fails and
++            // Bazel then rejects dangling cxxbridge/crate/usearch.
++            if std::fs::remove_file(&path).is_err() {
++                let _ = std::fs::remove_dir(&path);
++            }
 +        } else if meta.is_dir() {
 +            drop_out_dir_symlinks(&path);
 +        }

@@ -31,7 +31,7 @@ buf_plugin(
 
 buf_plugin(
     name = "protoc-gen-protovalidate-buffa",
-    actual = "@protoc_gen_protovalidate_buffa//:protoc-gen-protovalidate-buffa__protoc-gen-protovalidate-buffa",
+    actual = "@pvb//:protoc-gen-protovalidate-buffa__protoc-gen-protovalidate-buffa",
 )
 
 buf_generate(

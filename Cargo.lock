@@ -730,6 +730,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "numkong"
+version = "7.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "81601dc994296baed2968db046b01589be7898837c31f2b073704c6e65ff8f04"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1167,6 +1176,7 @@ checksum = "1cd7f672d20412962c457b11c858c6c5aecb949808a5345a95e1d671112bcf72"
 dependencies = [
  "cxx",
  "cxx-build",
+ "numkong",
 ]
 
 [[package]]

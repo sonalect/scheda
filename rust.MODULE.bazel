@@ -29,6 +29,8 @@ cargo = use_extension(
 # compile; write rust/cxx.h when DEP_CXXBRIDGE1_HEADER is outside the sandbox
 # (and always write a regular file on Windows — MSVC cannot follow the symlink);
 # cxx must run build.rs (not cc_library cxx_cc) so libstdc++ TLS still links.
+# numkong SIMD: copy headers into OUT_DIR so DEP_NUMKONG_INCLUDE is visible to
+# usearch's sandboxed C++ compile.
 cargo.annotation(
     crate = "usearch",
     patch_args = ["-p1"],
@@ -68,6 +70,12 @@ cargo.annotation(
     crate = "cxx-build",
     patch_args = ["-p1"],
     patches = ["//third_party/cxx:cxx-build-header-fallback.patch"],
+    repositories = ["cargo"],
+)
+cargo.annotation(
+    crate = "numkong",
+    patch_args = ["-p1"],
+    patches = ["//third_party/numkong:include-to-outdir.patch"],
     repositories = ["cargo"],
 )
 cargo.from_cargo(

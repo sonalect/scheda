@@ -3,10 +3,16 @@ load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
+# Matches Cargo.toml [features] default. `openmp` is Cargo-only (needs libomp).
+_SCHEDA_FEATURES = [
+    "remote-git",
+    "numkong",
+]
+
 rust_library(
     name = "scheda",
     srcs = glob(["src/**/*.rs"]),
-    crate_features = ["remote-git"],
+    crate_features = _SCHEDA_FEATURES,
     crate_name = "scheda",
     visibility = ["//visibility:public"],
     deps = [
@@ -94,7 +100,7 @@ rust_test(
     name = "scheda_test",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
-    crate_features = ["remote-git"],
+    crate_features = _SCHEDA_FEATURES,
 )
 
 rust_test(
@@ -121,14 +127,14 @@ rust_test(
 rust_doc(
     name = "scheda_doc",
     crate = ":scheda",
-    crate_features = ["remote-git"],
+    crate_features = _SCHEDA_FEATURES,
 )
 
 rust_doc_test(
     name = "scheda_doc_test",
     size = "small",
     crate = ":scheda",
-    crate_features = ["remote-git"],
+    crate_features = _SCHEDA_FEATURES,
 )
 
 rustdoc_pages(

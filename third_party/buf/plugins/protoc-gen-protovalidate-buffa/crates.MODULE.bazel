@@ -1,8 +1,11 @@
 """crate_universe hub for protoc-gen-protovalidate-buffa."""
 
 crate = use_extension("@rules_rust//crate_universe:extensions.bzl", "crate")
+
+# Short hub name: the repo id is in CARGO_MANIFEST_DIR twice, and the long
+# `protoc_gen_protovalidate_buffa` form hit Windows MAX_PATH (CreateProcess 267).
 crate.from_cargo(
-    name = "protoc_gen_protovalidate_buffa",
+    name = "pvb",
     cargo_lockfile = "//third_party/buf/plugins/protoc-gen-protovalidate-buffa:Cargo.lock",
     generate_binaries = True,
     manifests = [
@@ -20,6 +23,6 @@ crate.annotation(
     crate = "protovalidate-buffa-protos",
     data_glob = ["proto/**"],
     label_injections = {"@scheda": "@scheda"},
-    repositories = ["protoc_gen_protovalidate_buffa"],
+    repositories = ["pvb"],
 )
-use_repo(crate, "protoc_gen_protovalidate_buffa")
+use_repo(crate, "pvb")

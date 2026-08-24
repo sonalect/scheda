@@ -216,10 +216,11 @@ jobs:
           set -euo pipefail
           disk="$(cygpath -m "${RUNNER_TEMP}/bazel-disk")"
           repo="$(cygpath -m "${RUNNER_TEMP}/bazel-repo")"
-          out="$(cygpath -m "${RUNNER_TEMP}/bzl")"
-          mkdir -p "${RUNNER_TEMP}/bazel-disk" "${RUNNER_TEMP}/bazel-repo" "${RUNNER_TEMP}/bzl"
+          mkdir -p "${RUNNER_TEMP}/bazel-disk" "${RUNNER_TEMP}/bazel-repo" /c/b
           {
-            echo "startup --output_user_root=${out}"
+            # Short root: CARGO_MANIFEST_DIR repeats the bzlmod repo name and
+            # hits MAX_PATH (CreateProcess 267) under D:\a\_temp\bzl\...
+            echo "startup --output_user_root=C:/b"
             echo "startup --windows_enable_symlinks"
             echo "build --symlink_prefix=/"
             echo "common --disk_cache=${disk}"

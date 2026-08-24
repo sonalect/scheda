@@ -8,9 +8,19 @@
 //! package](https://github.com/amsokol/scheda/tree/main/docs). HTML rustdoc is
 //! published on [GitHub Pages](https://amsokol.github.io/scheda/scheda/).
 //!
-//! Feature `remote-git` (on by default) enables libgit2 HTTPS and SSH.
-//! Disable it to build without OpenSSL: `default-features = false`. File
-//! remotes and local commits still work.
+//! # Crate features
+//!
+//! Default features are `remote-git` and `numkong`.
+//! `default-features = false` turns both off (file remotes still work).
+//!
+//! - **`remote-git`** *(default)* — libgit2 HTTPS and SSH (`git2/https`,
+//!   `git2/ssh`). TLS is platform OpenSSL / Secure Transport / WinHTTP.
+//!   Without it, `https://` and `git@` remotes are `unsupported`.
+//! - **`numkong`** *(default)* — USearch SIMD kernels via the `numkong`
+//!   crate. Needed for fast in-process ANN; `search` is still `unsupported`
+//!   until C9 wires it.
+//! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
+//!   libomp (Linux `libomp-dev`). Not enabled in the Bazel default build.
 
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
