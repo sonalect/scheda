@@ -18,3 +18,5 @@ ignores:
   - "**/node_modules/**"
   - ".bazel/**"
   - "**/testdata/**"
+  - "target/**"
+  - "**/target/**"

@@ -45,6 +45,7 @@ cargo.annotation(
     crate = "libz-sys",
     repositories = ["cargo"],
 )
+
 # USearch compiles C++ via cxx-build. Bazel injects CXX=gcc on Unix unless we
 # pin c++ (g++ on Linux, clang++ on macOS). Windows uses MSVC from the C++
 # toolchain (no CXX override). Patches: drop dangling OUT_DIR symlinks after
@@ -59,6 +60,9 @@ cargo.annotation(
     repositories = ["cargo"],
 )
 cargo.annotation_select(
+    build_script_env = {
+        "CXX": "/usr/bin/c++",
+    },
     crate = "usearch",
     repositories = ["cargo"],
     triples = [
@@ -67,9 +71,6 @@ cargo.annotation_select(
         "x86_64-apple-darwin",
         "x86_64-unknown-linux-gnu",
     ],
-    build_script_env = {
-        "CXX": "/usr/bin/c++",
-    },
 )
 cargo.annotation(
     build_script_use_default_shell_env = "on",
@@ -80,6 +81,9 @@ cargo.annotation(
     repositories = ["cargo"],
 )
 cargo.annotation_select(
+    build_script_env = {
+        "CXX": "/usr/bin/c++",
+    },
     crate = "cxx",
     repositories = ["cargo"],
     triples = [
@@ -88,9 +92,6 @@ cargo.annotation_select(
         "x86_64-apple-darwin",
         "x86_64-unknown-linux-gnu",
     ],
-    build_script_env = {
-        "CXX": "/usr/bin/c++",
-    },
 )
 cargo.annotation(
     build_script_use_default_shell_env = "on",
