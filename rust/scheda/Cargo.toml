@@ -9,6 +9,12 @@ description = "Git-backed document store: text files as truth, derived index, li
 readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
+[features]
+default = ["remote-git"]
+# libgit2 HTTPS and SSH. File remotes and local git work without this;
+# skip it to avoid OpenSSL (`default-features = false`).
+remote-git = ["git2/https", "git2/ssh"]
+
 [dependencies]
 git2 = { workspace = true }
 regex = { workspace = true }

@@ -7,6 +7,10 @@
 //! This crate is the Rust binding of the [design
 //! package](https://github.com/amsokol/scheda/tree/main/docs). HTML rustdoc is
 //! published on [GitHub Pages](https://amsokol.github.io/scheda/scheda/).
+//!
+//! Feature `remote-git` (on by default) enables libgit2 HTTPS and SSH.
+//! Disable it to build without OpenSSL: `default-features = false`. File
+//! remotes and local commits still work.
 
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 

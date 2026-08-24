@@ -6,6 +6,7 @@ exports_files(["Cargo.toml"])
 rust_library(
     name = "scheda",
     srcs = glob(["src/**/*.rs"]),
+    crate_features = ["remote-git"],
     crate_name = "scheda",
     visibility = ["//visibility:public"],
     deps = [
@@ -93,6 +94,7 @@ rust_test(
     name = "scheda_test",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
+    crate_features = ["remote-git"],
 )
 
 rust_test(
@@ -119,12 +121,14 @@ rust_test(
 rust_doc(
     name = "scheda_doc",
     crate = ":scheda",
+    crate_features = ["remote-git"],
 )
 
 rust_doc_test(
     name = "scheda_doc_test",
     size = "small",
     crate = ":scheda",
+    crate_features = ["remote-git"],
 )
 
 rustdoc_pages(

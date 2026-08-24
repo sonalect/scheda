@@ -1,11 +1,13 @@
 use std::ffi::OsStr;
 use std::path::Path;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "remote-git"))]
 use git2::Config;
+use git2::build::RepoBuilder;
 use git2::{
-    AnnotatedCommit, Commit as GitCommit, DiffOptions, ErrorCode, Repository,
-    RepositoryInitOptions, RepositoryOpenFlags, Signature, Sort,
+    AnnotatedCommit, Commit as GitCommit, Cred, CredentialType, DiffOptions, ErrorCode,
+    FetchOptions, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
+    RepositoryOpenFlags, Signature, Sort,
 };
 
 use crate::{Error, HistoryEntry};
@@ -78,9 +80,69 @@ pub(crate) fn remotes(dir: &Path) -> Result<Vec<String>, Error> {
     Ok(out)
 }
 
-pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
-    let _repo = Repository::clone(url, path).map_err(map_err)?;
+fn url_needs_remote_git(url: &str) -> bool {
+    let url = url.trim();
+    let prefix = url.get(..8).unwrap_or(url);
+    let lower = prefix.to_ascii_lowercase();
+    lower.starts_with("http://")
+        || lower.starts_with("https://")
+        || lower.starts_with("ssh://")
+        || url.starts_with("git@")
+}
+
+fn require_remote_git_url(url: &str) -> Result<(), Error> {
+    if url_needs_remote_git(url) && !cfg!(feature = "remote-git") {
+        return Err(Error::unsupported(
+            "https://, http://, ssh://, and git@ remotes need the scheda crate feature remote-git",
+        ));
+    }
     Ok(())
+}
+
+pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
+    require_remote_git_url(url)?;
+    let mut fetch = FetchOptions::new();
+    fetch.remote_callbacks(auth_callbacks());
+    RepoBuilder::new()
+        .fetch_options(fetch)
+        .clone(url, path)
+        .map_err(map_err)?;
+    Ok(())
+}
+
+fn auth_callbacks() -> RemoteCallbacks<'static> {
+    let mut callbacks = RemoteCallbacks::new();
+    callbacks.credentials(git_credentials);
+    callbacks
+}
+
+fn git_credentials(
+    url: &str,
+    username_from_url: Option<&str>,
+    allowed: CredentialType,
+) -> Result<Cred, git2::Error> {
+    if allowed.is_username() {
+        return Cred::username(username_from_url.unwrap_or("git"));
+    }
+    if allowed.is_ssh_key() {
+        let username = username_from_url.unwrap_or("git");
+        if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+            return Ok(cred);
+        }
+    }
+    if allowed.is_user_pass_plaintext() {
+        #[cfg(feature = "remote-git")]
+        {
+            let cfg = Config::open_default()?;
+            return Cred::credential_helper(&cfg, url, username_from_url);
+        }
+    }
+    if allowed.is_default() {
+        return Cred::default();
+    }
+    Err(git2::Error::from_str(&format!(
+        "no git credentials available for this remote ({url})"
+    )))
 }
 
 fn default_remote_name(dir: &Path) -> Result<String, Error> {
@@ -138,7 +200,12 @@ pub(crate) fn pull(dir: &Path) -> Result<(), Error> {
     let repo = open_work_tree(dir)?;
     {
         let mut remote = repo.find_remote(&name).map_err(map_err)?;
-        remote.fetch(&[] as &[&str], None, None).map_err(map_err)?;
+        require_remote_git_url(remote.url().map_err(map_err)?)?;
+        let mut fetch = FetchOptions::new();
+        fetch.remote_callbacks(auth_callbacks());
+        remote
+            .fetch(&[] as &[&str], Some(&mut fetch), None)
+            .map_err(map_err)?;
     }
     let fetch_head = repo.find_reference("FETCH_HEAD").map_err(map_err)?;
     let fetch_commit = repo
@@ -162,7 +229,12 @@ pub(crate) fn push(dir: &Path) -> Result<(), Error> {
     let refname = branch_refname(&repo)?;
     let spec = format!("{refname}:{refname}");
     let mut remote = repo.find_remote(&name).map_err(map_err)?;
-    remote.push(&[spec.as_str()], None).map_err(map_err)?;
+    require_remote_git_url(remote.url().map_err(map_err)?)?;
+    let mut push = PushOptions::new();
+    push.remote_callbacks(auth_callbacks());
+    remote
+        .push(&[spec.as_str()], Some(&mut push))
+        .map_err(map_err)?;
     Ok(())
 }
 
@@ -318,5 +390,43 @@ fn config_has(config: &Config, key: &str) -> Result<bool, Error> {
         Ok(_) => Ok(true),
         Err(err) if err.code() == ErrorCode::NotFound => Ok(false),
         Err(err) => Err(map_err(err)),
+    }
+}
+
+#[cfg(test)]
+mod transport_tests {
+    use super::url_needs_remote_git;
+
+    #[test]
+    fn file_and_path_urls_do_not_need_remote_git() {
+        assert!(!url_needs_remote_git("file:///tmp/repo"));
+        assert!(!url_needs_remote_git("/tmp/repo"));
+        assert!(!url_needs_remote_git(""));
+    }
+
+    #[test]
+    fn https_ssh_and_git_at_urls_need_remote_git() {
+        assert!(url_needs_remote_git("https://github.com/a/b.git"));
+        assert!(url_needs_remote_git("http://example.test/a.git"));
+        assert!(url_needs_remote_git("ssh://git@host/repo.git"));
+        assert!(url_needs_remote_git("git@host:repo.git"));
+    }
+
+    #[test]
+    #[cfg(not(feature = "remote-git"))]
+    fn https_clone_is_unsupported_without_the_feature() {
+        use super::require_remote_git_url;
+        use crate::Code;
+        let err = require_remote_git_url("https://example.invalid/x.git").unwrap_err();
+        assert_eq!(Code::of(&err), Some(Code::Unsupported));
+        assert_ne!(err.to_string(), "unsupported");
+    }
+
+    #[test]
+    #[cfg(feature = "remote-git")]
+    fn libgit2_https_and_ssh_are_linked() {
+        let v = git2::Version::get();
+        assert!(v.https(), "libgit2 HTTPS missing: {v:?}");
+        assert!(v.ssh(), "libgit2 SSH missing: {v:?}");
     }
 }

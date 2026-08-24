@@ -52,8 +52,14 @@ API or on-disk format changes bump the minor.
 - USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`); default
   SIMD feature `numkong` is off so Bazel can compile the C++ bridge.
   `search` is still `unsupported` until C9 wires it. The C++ bridge
-  uses `/usr/bin/c++` on Linux and macOS; Windows uses MSVC from Bazel's
-  C++ toolchain. `+crt-static` is Linux-only.
+  uses `/usr/bin/c++` on Linux. macOS keeps Bazel's Apple clang wrapper
+  so `__BAZEL_XCODE_SDKROOT__` expands; Windows uses MSVC.
+- Crate feature `remote-git` (default) enables `git2` `https` and `ssh` so
+  `clone` / `pull_remote` / `push_remote` can talk to `https://` and `git@`
+  remotes (libgit2 credential helper / ssh-agent). Without the feature those
+  URL schemes are `unsupported`; file remotes still work. TLS is platform
+  OpenSSL / Secure Transport / WinHTTP; Linux `+crt-static` is dropped so
+  the native crates link.
 
 ### Changed
 
@@ -62,10 +68,12 @@ API or on-disk format changes bump the minor.
   to that directory.
 - Index is stored inside the Vault at `.scheda/` and listed in `.gitignore`.
   `OpenOptions` has no Index path field.
-- Target crates on Linux link with `+crt-static` (Bazel
-  `extra_rustc_flags_triples` and `.cargo/config.toml`); macOS and Windows
-  use the platform CRT. Proc-macros and build scripts stay dynamically
-  linked.
+- Target crates use the platform CRT on Linux, macOS, and Windows (no
+  `+crt-static`). Proc-macros and build scripts stay dynamically linked.
+- crate_universe annotations keep only USearch/cxx patches and a Linux
+  `CXX=/usr/bin/c++` pin. macOS must not override `CXX` (Apple sysroot
+  placeholders). libgit2/OpenSSL crates already see host PATH and vendored
+  sources from rules_rust defaults.
 - Git operations go through `git2` (libgit2), not the `git` CLI.
 - Generated Rust stubs live in `rust/generated` (crate `scheda-generated`):
   one buffa file per `.proto`, packaging `mod.rs`, and protovalidate

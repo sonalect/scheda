@@ -1,12 +1,3 @@
-# Static PIE against glibc on Linux targets only. Do not set [build].target:
-# that would force a Linux triple on macOS and Windows. On Linux, pass
-# --target <host-triple> (or CARGO_BUILD_TARGET) so proc-macros and build
-# scripts stay dynamically linked.
-#
-#   CARGO_BUILD_TARGET=$(rustc -vV | awk '/^host:/{print $2}') cargo test
-
-[target.aarch64-unknown-linux-gnu]
-rustflags = ["-C", "target-feature=+crt-static"]
-
-[target.x86_64-unknown-linux-gnu]
-rustflags = ["-C", "target-feature=+crt-static"]
+# Linux uses the platform glibc CRT (dynamic). Do not set +crt-static:
+# OpenSSL / libssh2 for git2 https:// and ssh remotes need a dynamic CRT,
+# and +crt-static also broke USearch/cxx TLS on Linux.

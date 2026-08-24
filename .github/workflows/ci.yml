@@ -44,6 +44,7 @@ jobs:
             gcc \
             git \
             libc6-dev \
+            libssl-dev \
             make \
             patch \
             pkg-config \
@@ -110,7 +111,12 @@ jobs:
         uses: actions/checkout@v7.0.1
 
       - name: Install dependencies
-        run: brew install cmake pkg-config
+        run: |
+          set -euo pipefail
+          brew install cmake openssl pkg-config
+          prefix="$(brew --prefix openssl)"
+          echo "PKG_CONFIG_PATH=${prefix}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" >> "${GITHUB_ENV}"
+          echo "OPENSSL_DIR=${prefix}" >> "${GITHUB_ENV}"
 
       - name: Install Bazelisk
         run: |

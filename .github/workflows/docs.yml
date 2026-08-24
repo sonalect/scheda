@@ -44,6 +44,7 @@ jobs:
             gcc \
             git \
             libc6-dev \
+            libssl-dev \
             make \
             patch \
             pkg-config \

@@ -1,7 +1,7 @@
-Scheda links +crt-static (static PIE). cxx's crate_universe metadata
-disables build.rs and attaches cc_library cxx_cc, which pulls shared
-libstdc++ and breaks TLS (`__tls_get_addr`). Use the Cargo path: compile
-cxx.cc from build.rs and let link-cplusplus supply the C++ stdlib.
+Scheda's crate_universe metadata used to disable cxx build.rs and attach
+cc_library cxx_cc, which pulls shared libstdc++ and breaks TLS
+(`__tls_get_addr`). Compile cxx.cc from build.rs and let link-cplusplus
+supply the C++ stdlib.
 
 --- a/Cargo.toml
 +++ b/Cargo.toml
