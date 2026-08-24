@@ -1,6 +1,6 @@
 # 08. Agent surface
 
-Document 8 of the Scheda package. Version 0.5, 23 August 2026.
+Document 8 of the Scheda package. Version 0.6, 24 August 2026.
 
 How an AI agent uses Scheda: the same operations as `07`, plus a Schema catalog, over a thin transport. The agent is not a second store and does not get a looser write path. Codes: `AGT`. Phase **agent** unless marked otherwise. Terms are in `02`.
 
@@ -20,7 +20,7 @@ Include when a Remote exists: `push_remote`, `pull_remote`, `sync_remote`, and `
 
 **AGT-3. Writes go through Schema.** Tool writes run SCH-12. There is no tool “write these bytes at this path”. A human may still edit files in git; that path is not offered to the agent. *Check:* `insert_one` / `replace_one` with an extra field or a path outside the layout → `invalid`; the file is not created at a rogue path.
 
-**AGT-4. Transport is a shell.** CLI, MCP, HTTP, or another agent protocol is a thin encoding of `07` + `catalog`. It must not add product rules, scoring, or collection-specific behaviour. JSON of Records and errors is the proto3 JSON mapping of `api/v1` messages. *Check:* the same Vault, same operation, library call vs CLI/MCP: JSON of the Record (and error `code`) match.
+**AGT-4. Transport is a shell.** CLI, MCP, HTTP, or another agent protocol is a thin encoding of `07` + `catalog`. It must not add product rules, scoring, or collection-specific behaviour. JSON of Records and errors is the Protobuf JSON mapping of `api/v1` messages. *Check:* the same Vault, same operation, library call vs CLI/MCP: JSON of the Record (and error `code`) match.
 
 Which transports a binding ships is that binding's choice. MCP is an example, not a requirement of Scheda.
 

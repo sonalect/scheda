@@ -175,7 +175,7 @@ mod tests {
     }
 
     #[test]
-    fn open_options_json_uses_proto3_names() {
+    fn open_options_json_uses_protobuf_json_names() {
         let opts = OpenOptions::default()
             .with_write(true)
             .with_auto_sync(false);

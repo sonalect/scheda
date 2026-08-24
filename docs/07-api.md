@@ -1,14 +1,14 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.20, 24 August 2026.
+Document 7 of the Scheda package. Version 0.21, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
 protovalidate rules). Bindings (Rust first; later Python, Java, Go,
 TypeScript, and others) use these names or a documented 1:1 mapping. A
 caller-supplied message that fails those rules is `invalid`, before Schema,
-git, or the write lock. Agent transport (`08`) is proto3 JSON of those
-messages. Codes: `LIB`. Phase **core** unless marked **search** or **agent**.
+git, or the write lock. Agent transport (`08`) is the Protobuf JSON mapping
+of those messages. Codes: `LIB`. Phase **core** unless marked **search** or **agent**.
 
 Idioms of one language appear only in a sentence that names that language (`02`).
 

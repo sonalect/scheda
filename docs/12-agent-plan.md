@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.1, 24 August 2026.
+Document 12 of the Scheda package. Version 0.2, 24 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -73,20 +73,20 @@ These must not block A0–A4. Writes must not depend on them (`10` §4–5).
 **Status:** not started
 
 **Codes:** AGT-1 (name exists), `07` (catalog is **agent**, not LIB-2
-**core**), `api/v1` proto3 JSON (`08` AGT-4).
+**core**), `api/v1` Protobuf JSON mapping (`08` AGT-4).
 
-`catalog` is not a **core** LIB-2 name. Agent transport still uses proto3
-JSON of `api/v1`, not a Rust-only struct (`07` intro, `08` AGT-4). If
-`07` and `api/v1` lack a catalog message that can carry AGT-1, amend those
-files in this stage. Catalog content is Schema serialized (`05` SCH-1, §8
-keys): collections, kinds, fields, index marks, edges, layout templates.
-Do not infer names from directories. Do not invent JSON keys that are not
-in `api/v1`.
+`catalog` is not a **core** LIB-2 name. Agent transport still uses the
+Protobuf JSON mapping of `api/v1`, not a Rust-only struct (`07` intro,
+`08` AGT-4). If `07` and `api/v1` lack a catalog message that can carry
+AGT-1, amend those files in this stage. Catalog content is Schema
+serialized (`05` SCH-1, §8 keys): collections, kinds, fields, index marks,
+edges, layout templates. Do not infer names from directories. Do not
+invent JSON keys that are not in `api/v1`.
 
 - [ ] `07` names `catalog` as an **agent** operation (same mapping rules as
       LIB-2).
-- [ ] `api/v1` has a catalog message (or messages) whose proto3 JSON can
-      hold AGT-1. Generate stubs (`bazel run //api/v1:generate`).
+- [ ] `api/v1` has a catalog message (or messages) whose Protobuf JSON
+      mapping can hold AGT-1. Generate stubs (`bazel run //api/v1:generate`).
 - [ ] Library surface has `catalog` (body may be `todo!` until A1).
 - [ ] Caller-supplied catalog request messages, if any, fail protovalidate
       as `invalid` before Schema (`07` intro).
@@ -127,7 +127,8 @@ files for collections that are not isolated.
 
 Close only after A1. The CLI is a thin encoding of `07` + `catalog`. Exact
 argv and binary path are this binding's choice (`08` §3) as long as the
-boxes below pass. JSON of Records and errors is proto3 JSON of `api/v1`.
+boxes below pass. JSON of Records and errors is the Protobuf JSON mapping
+of `api/v1`.
 There is no tool that writes raw bytes at a path.
 
 Include when a Remote exists: `push_remote`, `pull_remote`, `sync_remote`,

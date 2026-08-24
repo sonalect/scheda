@@ -116,6 +116,8 @@ API or on-disk format changes bump the minor.
   isolated slice; **agent** (catalog, CLI, ISO-3) follows (`12`); age
   encryption of that root stays deferred. `01`, `11`, and the README
   status match.
+- Call the JSON encoding of `api/v1` the Protobuf JSON mapping (edition
+  2024), not "proto3 JSON". The `.proto` files were already edition 2024.
 
 ### Removed
 
