@@ -1,0 +1,6 @@
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "enable-build-script.patch",
+    "cxx-build-header-fallback.patch",
+])

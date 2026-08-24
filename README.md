@@ -50,9 +50,12 @@ crates refer to them with `workspace = true`.
 The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.2.0**).
 Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
-Target crates link with `+crt-static` (glibc PIE); proc-macros and build
-scripts stay dynamic. Vendored libgit2 (`git2`) needs **cmake**, **pkg-config**,
-and zlib headers on the host; CI installs them.
+On Linux, target crates link with `+crt-static` (glibc PIE); proc-macros and
+build scripts stay dynamic. macOS and Windows use the platform C++ toolchain
+(no `+crt-static`). Vendored libgit2 (`git2`) needs **cmake** and zlib
+headers; Linux also needs **pkg-config**. USearch needs a C++17 compiler:
+**g++** (Linux), **clang++** / Xcode CLT (macOS), **MSVC** Build Tools
+(Windows). CI runs Bazel on Debian 13 and macOS.
 
 ```bash
 bazel build //rust/scheda:scheda

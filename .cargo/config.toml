@@ -1,8 +1,12 @@
-# Static PIE against glibc. Host crates (proc-macros, build scripts) stay
-# dynamic because [build].target forces Cargo's host/target split even when
-# the triple matches the machine.
-[build]
-target = "x86_64-unknown-linux-gnu"
+# Static PIE against glibc on Linux targets only. Do not set [build].target:
+# that would force a Linux triple on macOS and Windows. On Linux, pass
+# --target <host-triple> (or CARGO_BUILD_TARGET) so proc-macros and build
+# scripts stay dynamically linked.
+#
+#   CARGO_BUILD_TARGET=$(rustc -vV | awk '/^host:/{print $2}') cargo test
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "target-feature=+crt-static"]

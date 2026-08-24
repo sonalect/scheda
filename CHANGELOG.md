@@ -48,6 +48,12 @@ API or on-disk format changes bump the minor.
 - Hybrid `search` quality bar: BM25 lexical, in-process ANN, RRF fusion,
   Schema-marked fields only, injected embedder, no LLM in the crate (`06`,
   `10` §3). Rust stage C9 in `11` implements it before core acceptance (C10).
+- CI runs `bazel test //...` on Debian 13 and macOS.
+- USearch 2.26.0 as the in-process HNSW engine (`AnnIndex`); default
+  SIMD feature `numkong` is off so Bazel can compile the C++ bridge.
+  `search` is still `unsupported` until C9 wires it. The C++ bridge
+  uses `/usr/bin/c++` on Linux and macOS; Windows uses MSVC from Bazel's
+  C++ toolchain. `+crt-static` is Linux-only.
 
 ### Changed
 
@@ -56,8 +62,9 @@ API or on-disk format changes bump the minor.
   to that directory.
 - Index is stored inside the Vault at `.scheda/` and listed in `.gitignore`.
   `OpenOptions` has no Index path field.
-- Target crates link with `+crt-static` (Bazel `extra_rustc_flags` and
-  `.cargo/config.toml`); proc-macros and build scripts stay dynamically
+- Target crates on Linux link with `+crt-static` (Bazel
+  `extra_rustc_flags_triples` and `.cargo/config.toml`); macOS and Windows
+  use the platform CRT. Proc-macros and build scripts stay dynamically
   linked.
 - Git operations go through `git2` (libgit2), not the `git` CLI.
 - Generated Rust stubs live in `rust/generated` (crate `scheda-generated`):

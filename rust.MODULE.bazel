@@ -6,15 +6,22 @@ RUST_VERSION = "1.98.0"
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 
-# Static PIE against glibc. Exec crates (proc-macros, build scripts) stay
-# dynamically linked: extra_exec_rustc_flags is intentionally empty.
+# Static PIE against glibc (Linux). Exec crates stay dynamically linked:
+# extra_exec_rustc_flags is empty. macOS and Windows keep the platform CRT;
+# +crt-static there breaks C++ (USearch/cxx) and proc-macros.
 rust.toolchain(
     edition = RUST_EDITION,
     extra_exec_rustc_flags = [],
-    extra_rustc_flags = [
-        "-C",
-        "target-feature=+crt-static",
-    ],
+    extra_rustc_flags_triples = {
+        "aarch64-unknown-linux-gnu": [
+            "-C",
+            "target-feature=+crt-static",
+        ],
+        "x86_64-unknown-linux-gnu": [
+            "-C",
+            "target-feature=+crt-static",
+        ],
+    },
     versions = [RUST_VERSION],
 )
 use_repo(rust, "rust_toolchains")
@@ -36,6 +43,60 @@ cargo.annotation(
 cargo.annotation(
     build_script_use_default_shell_env = "on",
     crate = "libz-sys",
+    repositories = ["cargo"],
+)
+# USearch compiles C++ via cxx-build. Bazel injects CXX=gcc on Unix unless we
+# pin c++ (g++ on Linux, clang++ on macOS). Windows uses MSVC from the C++
+# toolchain (no CXX override). Patches: drop dangling OUT_DIR symlinks after
+# the C++ compile; write rust/cxx.h when DEP_CXXBRIDGE1_HEADER is outside the
+# sandbox; cxx must run build.rs (not cc_library cxx_cc) so static PIE still
+# links on Linux.
+cargo.annotation(
+    build_script_use_default_shell_env = "on",
+    crate = "usearch",
+    patch_args = ["-p1"],
+    patches = ["//third_party/usearch:drop-out-dir-symlinks.patch"],
+    repositories = ["cargo"],
+)
+cargo.annotation_select(
+    crate = "usearch",
+    repositories = ["cargo"],
+    triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
+    build_script_env = {
+        "CXX": "/usr/bin/c++",
+    },
+)
+cargo.annotation(
+    build_script_use_default_shell_env = "on",
+    crate = "cxx",
+    gen_build_script = "on",
+    patch_args = ["-p1"],
+    patches = ["//third_party/cxx:enable-build-script.patch"],
+    repositories = ["cargo"],
+)
+cargo.annotation_select(
+    crate = "cxx",
+    repositories = ["cargo"],
+    triples = [
+        "aarch64-apple-darwin",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+    ],
+    build_script_env = {
+        "CXX": "/usr/bin/c++",
+    },
+)
+cargo.annotation(
+    build_script_use_default_shell_env = "on",
+    crate = "cxx-build",
+    patch_args = ["-p1"],
+    patches = ["//third_party/cxx:cxx-build-header-fallback.patch"],
     repositories = ["cargo"],
 )
 cargo.from_cargo(

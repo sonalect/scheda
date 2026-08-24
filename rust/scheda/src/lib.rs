@@ -10,6 +10,7 @@
 
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
+mod ann;
 mod error;
 mod fnv;
 mod git;
@@ -20,6 +21,8 @@ mod schema;
 mod store;
 mod vault;
 
+#[doc(hidden)]
+pub use ann::AnnIndex;
 pub use error::Code;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{

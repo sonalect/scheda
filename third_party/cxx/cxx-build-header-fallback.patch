@@ -1,0 +1,18 @@
+Bazel sandboxes hide the cxx crate's HEADER path from usearch's build
+script. Treat a missing DEP_CXXBRIDGE1_HEADER target like the env var
+being unset so cxx-build writes rust/cxx.h into OUT_DIR.
+
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -384,7 +384,10 @@
+     let include_dir = prj.out_dir.join("cxxbridge").join("include");
+     let cxx_h = include_dir.join("rust").join("cxx.h");
+     let ref shared_cxx_h = prj.shared_dir.join("rust").join("cxx.h");
+-    if let Some(ref original) = env::var_os("DEP_CXXBRIDGE1_HEADER") {
++    // Bazel sandboxes hide the cxx crate's HEADER path, so treat a missing
++    // DEP_CXXBRIDGE1_HEADER target like the env var being unset.
++    let header_from_dep = env::var_os("DEP_CXXBRIDGE1_HEADER").filter(|p| Path::new(p).is_file());
++    if let Some(ref original) = header_from_dep {
+         out::absolute_symlink_file(original, cxx_h)?;
+         out::absolute_symlink_file(original, shared_cxx_h)?;
+     } else {
