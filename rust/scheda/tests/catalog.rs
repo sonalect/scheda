@@ -212,7 +212,7 @@ fn catalog_lists_isolated_without_fields() {
     let dump = isolated.to_string();
     assert!(!dump.contains("west_pass"));
     let err = vault.collection("west_isolated").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Unsupported));
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
     vault.collection("west_docs").unwrap();
 }
 

@@ -175,7 +175,7 @@ fn clone_sets_origin_to_the_url() {
     assert_eq!(origin_url(vault.path()), remote);
     drop(vault);
     let err = Vault::open(&dest, OpenOptions::new().remote_repo(&remote)).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -192,7 +192,7 @@ fn init_with_remote_repo_clones() {
 fn clone_rejects_empty_url() {
     let scratch = Scratch::new();
     let err = Vault::clone("", scratch.dir("empty"), OpenOptions::new()).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -244,7 +244,7 @@ fn auto_sync_on_diverged_is_not_fast_forward() {
     insert_and_commit(&second, "from-b", "from b", "from b");
     drop(second);
     let err = Vault::open(&b, OpenOptions::new().auto_sync(true)).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFastForward));
+    assert_eq!(err.known_code(), Some(Code::NotFastForward));
     assert!(!has_conflict_markers(&b));
 }
 
@@ -285,7 +285,7 @@ fn diverged_sync_fails_before_push() {
     insert_and_commit(&second, "from-b", "from b", "from b");
     let local = head_id(second.path());
     let err = second.sync_remote().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFastForward));
+    assert_eq!(err.known_code(), Some(Code::NotFastForward));
     assert_eq!(head_id(&bare), published);
     assert_ne!(head_id(&bare), local);
 }
@@ -307,7 +307,7 @@ fn unreachable_push_does_not_roll_back_commit() {
     vault.commit("offline").unwrap();
     let committed = head_id(vault.path());
     let err = vault.push_remote().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Git));
+    assert_eq!(err.known_code(), Some(Code::GitGeneric));
     assert_eq!(head_id(vault.path()), committed);
     set_origin(vault.path(), &remote);
     vault.push_remote().unwrap();
@@ -354,5 +354,5 @@ fn push_without_remote_is_invalid() {
     let scratch = Scratch::new();
     let vault = Vault::init(scratch.dir("vault"), OpenOptions::new()).unwrap();
     let err = vault.push_remote().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }

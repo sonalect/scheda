@@ -166,8 +166,8 @@ fn missing_id_is_not_found() {
         .unwrap()
         .find_one("missing")
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
-    assert_eq!(err.code.as_deref(), Some("not_found"));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
 #[test]
@@ -263,9 +263,9 @@ fn rename_fails_check_and_find_one_does_not_follow() {
     )
     .unwrap();
     let err = collection.find_one("alpha").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -307,7 +307,7 @@ fn id_pattern_comes_from_schema() {
             serde_json::json!({"title": "Bad"}),
         ))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     collection
         .insert_one(rec(
             "north_slugs",
@@ -341,7 +341,7 @@ fn singleton_second_insert_then_replace() {
             serde_json::json!({"title": "Again"}),
         ))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Conflict));
+    assert_eq!(err.known_code(), Some(Code::DuplicateId));
     collection
         .replace_one(
             "inbox",
@@ -374,8 +374,8 @@ fn journal_replace_one_is_unsupported() {
             rec("north_log", "x", serde_json::json!({"title": "no"})),
         )
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Unsupported));
-    assert_eq!(err.code.as_deref(), Some("unsupported"));
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
 }
 
 #[test]
@@ -397,7 +397,7 @@ fn failed_write_does_not_become_the_file() {
             rec("north_notes", "alpha", serde_json::json!({"count": 1})),
         )
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(
         fs::read(scratch.coll_file("north_notes", "north/alpha.md")).unwrap(),
         before
@@ -433,7 +433,7 @@ fn invalid_record_rejected_old_file_stays_readable() {
             serde_json::json!({"title": "Hello", "unknown": "x"}),
         ))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     drop(vault);
     scratch.write_schema("notes.yaml", NOTES_REQUIRED);
     let vault = scratch.reopen();
@@ -449,7 +449,7 @@ fn invalid_record_rejected_old_file_stays_readable() {
             serde_json::json!({"title": "New"}),
         ))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -542,7 +542,7 @@ fn header_id_must_match_record_id() {
             serde_json::json!({"id": "beta", "title": "Hello"}),
         ))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     collection
         .insert_one(rec(
             "north_notes",
@@ -554,7 +554,7 @@ fn header_id_must_match_record_id() {
     text = text.replace("id: alpha", "id: beta");
     fs::write(scratch.coll_file("north_notes", "north/alpha.md"), text).unwrap();
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -569,7 +569,7 @@ fn duplicate_insert_is_conflict() {
     );
     collection.insert_one(record.clone()).unwrap();
     let err = collection.insert_one(record).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Conflict));
+    assert_eq!(err.known_code(), Some(Code::DuplicateId));
 }
 
 #[test]

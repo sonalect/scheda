@@ -147,7 +147,7 @@ fn find_one_does_not_read_unrelated_segments() {
     assert!(started.elapsed() < OP_BUDGET);
     assert_eq!(got.id.as_deref(), Some("early"));
     let err = collection.find_one("missing").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
 #[test]
@@ -174,7 +174,7 @@ fn writer_updates_map_human_edit_needs_reindex() {
     text.push('\n');
     fs::write(&log, text).unwrap();
     let err = collection.find_one("human").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
     vault.reindex().unwrap();
     let got = collection.find_one("human").unwrap();
     assert_eq!(got.id.as_deref(), Some("human"));

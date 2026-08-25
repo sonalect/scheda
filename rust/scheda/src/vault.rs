@@ -3,6 +3,7 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
+use crate::error::{ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::journal;
@@ -75,7 +76,7 @@ impl Vault {
         options.require_valid()?;
         let url = url.trim();
         if url.is_empty() {
-            return Err(Error::invalid("clone URL is empty"));
+            bail!(Error::invalid("clone URL is empty"));
         }
         let path = path.as_ref();
         prepare_new_work_tree(path)?;
@@ -89,7 +90,7 @@ impl Vault {
         let path = path.as_ref();
         if let Some(url) = remote_repo_url(&options) {
             if git::is_work_tree(path) {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "remote_repo cannot be set on an existing repository: {}",
                     path.display()
                 )));
@@ -98,32 +99,24 @@ impl Vault {
             return Self::clone(&url, path, without_remote_repo(options));
         }
         if !git::is_work_tree(path) {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "path is not a git working tree: {}",
                 path.display()
             )));
         }
         let write = options.write.unwrap_or(true);
         let auto_sync = options.auto_sync.unwrap_or(false);
-        let path = fs::canonicalize(path)
-            .map_err(|err| Error::io(format!("canonicalize vault {}: {err}", path.display())))?;
+        let path = fs::canonicalize(path).context("[Vault::open] canonicalize vault")?;
         let mut wrote_gitignore = false;
         if write {
             wrote_gitignore = ensure_gitignore(&path)?;
         }
         let index_dir = path.join(".scheda").join("index");
-        fs::create_dir_all(&index_dir).map_err(|err| {
-            Error::io(format!(
-                "create index directory {}: {err}",
-                index_dir.display()
-            ))
-        })?;
-        let index_dir = fs::canonicalize(&index_dir).map_err(|err| {
-            Error::io(format!("canonicalize index {}: {err}", index_dir.display()))
-        })?;
+        fs::create_dir_all(&index_dir).context("[Vault::open] create index dir")?;
+        let index_dir = fs::canonicalize(&index_dir).context("[Vault::open] canonicalize index")?;
         let remotes = git::remotes(&path)?;
         if auto_sync && !remotes.is_empty() && !write {
-            return Err(Error::locked("auto_sync pull needs a write lock"));
+            bail!(Error::locked("auto_sync pull needs a write lock"));
         }
         let write_lock = if write {
             Some(acquire_write_lock(&index_dir)?)
@@ -203,12 +196,12 @@ impl Vault {
 
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
         let Some(decl) = self.schema.get(name) else {
-            return Err(Error::not_found(format!(
+            bail!(Error::not_found(format!(
                 "collection {name} is not in Schema"
             )));
         };
         if decl.isolated {
-            return Err(Error::unsupported(format!(
+            bail!(Error::unsupported(format!(
                 "isolated collection {name} is not on this Vault handle"
             )));
         }
@@ -228,7 +221,7 @@ impl Vault {
     /// Create one git commit for paths this handle wrote (GIT-2, LIB-12).
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         if self.write_lock.is_none() {
-            return Err(Error::locked("commit needs a write lock"));
+            bail!(Error::locked("commit needs a write lock"));
         }
         let paths: Vec<String> = {
             let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
@@ -297,7 +290,7 @@ impl Vault {
 
     pub fn reindex(&self) -> Result<ReindexCounts, Error> {
         if self.write_lock.is_none() {
-            return Err(Error::locked("reindex needs a write lock"));
+            bail!(Error::locked("reindex needs a write lock"));
         }
         self.search.close_for_rebuild();
         let schema = schema::load(&self.path)?;
@@ -506,7 +499,7 @@ impl Collection {
     pub fn replace_one(&self, id: &str, record: Record) -> Result<ReplaceOne, Error> {
         record.require_valid()?;
         if self.decl.kind == Kind::Journal {
-            return Err(Error::unsupported("replace_one is not offered for journal"));
+            bail!(Error::unsupported("replace_one is not offered for journal"));
         }
         self.require_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
@@ -568,7 +561,7 @@ impl Collection {
         let edge = search::require_edge(&self.decl, field)?;
         let sources = self.find(filter)?;
         let Some(target) = self.schema.get(&edge.collection) else {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "edge {field} targets unknown collection {}",
                 edge.collection
             )));
@@ -587,8 +580,8 @@ impl Collection {
                 }
                 match self.lookup_decl(target, &id) {
                     Ok(record) => out.push(record),
-                    Err(err) if err.code.as_deref() == Some(crate::Code::NotFound.as_str()) => {}
-                    Err(err) => return Err(err),
+                    Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
+                    Err(err) => bail!(err),
                 }
             }
         }
@@ -603,13 +596,13 @@ impl Collection {
         id: &str,
     ) -> Result<Vec<Record>, Error> {
         let Some(source) = self.schema.get(source_collection) else {
-            return Err(Error::not_found(format!(
+            bail!(Error::not_found(format!(
                 "collection {source_collection} is not in Schema"
             )));
         };
         let edge = search::require_edge(source, field)?;
         if edge.collection != self.decl.name {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "edge {source_collection}.{field} does not target {}",
                 self.decl.name
             )));
@@ -619,8 +612,8 @@ impl Collection {
         for source_id in source_ids {
             match self.lookup_decl(source, &source_id) {
                 Ok(record) => out.push(record),
-                Err(err) if err.code.as_deref() == Some(crate::Code::NotFound.as_str()) => {}
-                Err(err) => return Err(err),
+                Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
+                Err(err) => bail!(err),
             }
         }
         Ok(out)
@@ -634,7 +627,7 @@ impl Collection {
 
     fn lookup(&self, collection: &str, id: &str) -> Result<Record, Error> {
         let Some(decl) = self.schema.get(collection) else {
-            return Err(Error::not_found(format!(
+            bail!(Error::not_found(format!(
                 "collection {collection} is not in Schema"
             )));
         };
@@ -674,34 +667,32 @@ fn without_remote_repo(mut options: OpenOptions) -> OpenOptions {
 
 fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
     if git::is_work_tree(path) {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "path is already a git working tree: {}",
             path.display()
         )));
     }
     if path.exists() {
         if !path.is_dir() {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "init path is not a directory: {}",
                 path.display()
             )));
         }
-        let mut entries = fs::read_dir(path)
-            .map_err(|err| Error::io(format!("read init directory {}: {err}", path.display())))?;
+        let mut entries = fs::read_dir(path).context("[Vault::init] read directory")?;
         if entries
             .next()
             .transpose()
-            .map_err(|err| Error::io(format!("read init directory {}: {err}", path.display())))?
+            .context("[Vault::init] read directory entry")?
             .is_some()
         {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "init path is not empty: {}",
                 path.display()
             )));
         }
     } else {
-        fs::create_dir_all(path)
-            .map_err(|err| Error::io(format!("create vault {}: {err}", path.display())))?;
+        fs::create_dir_all(path).context("[Vault::init] create vault")?;
     }
     Ok(())
 }
@@ -709,8 +700,7 @@ fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
 fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
     let path = vault.join(".gitignore");
     let mut text = if path.exists() {
-        fs::read_to_string(&path)
-            .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?
+        fs::read_to_string(&path).context("[Vault::open] read gitignore")?
     } else {
         String::new()
     };
@@ -725,7 +715,7 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
         text.push('\n');
     }
     text.push_str(".scheda/\n");
-    fs::write(&path, text).map_err(|err| Error::io(format!("write {}: {err}", path.display())))?;
+    fs::write(&path, text).context("[Vault::open] write gitignore")?;
     Ok(true)
 }
 
@@ -737,17 +727,16 @@ fn acquire_write_lock(index_dir: &Path) -> Result<File, Error> {
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .map_err(|err| Error::io(format!("open write lock {}: {err}", lock_path.display())))?;
+        .context("[Vault::open] open write lock")?;
     match file.try_lock() {
         Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(Error::locked(format!(
-            "vault write lock is held: {}",
-            lock_path.display()
-        ))),
-        Err(TryLockError::Error(err)) => Err(Error::io(format!(
-            "lock write lock {}: {err}",
-            lock_path.display()
-        ))),
+        Err(TryLockError::WouldBlock) => {
+            Err(Error::locked("vault write lock is held")
+                .context("[Vault::open] acquire write lock"))
+        }
+        Err(TryLockError::Error(err)) => {
+            Err(Error::new(io_code(&err), err.to_string()).context("[Vault::open] lock write lock"))
+        }
     }
 }
 
@@ -818,7 +807,7 @@ mod tests {
         let err = collection
             .insert_one(Record::default())
             .expect_err("empty Record must fail envelope rules");
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
@@ -827,13 +816,13 @@ mod tests {
         let err = collection
             .replace_one("alpha", Record::default())
             .expect_err("empty Record must fail envelope rules");
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
     fn unsupported_code_is_not_only_the_message() {
         let err = Error::unsupported("replace_one on journal");
-        assert_eq!(Code::of(&err), Some(Code::Unsupported));
+        assert_eq!(err.known_code(), Some(Code::Unsupported));
         assert_ne!(err.to_string(), "unsupported");
     }
 
@@ -875,8 +864,8 @@ mod tests {
         let scratch = Scratch::new();
         let _writer = Vault::init(scratch.vault(), scratch.options()).unwrap();
         let err = Vault::open(scratch.vault(), scratch.options()).unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Locked));
-        assert_eq!(err.code.as_deref(), Some("locked"));
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert_eq!(err.known_code(), Some(Code::Locked));
     }
 
     #[test]
@@ -919,8 +908,8 @@ mod tests {
             scratch.options().write(false).auto_sync(true),
         )
         .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Locked));
-        assert_eq!(err.code.as_deref(), Some("locked"));
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert_eq!(err.known_code(), Some(Code::Locked));
     }
 
     #[test]

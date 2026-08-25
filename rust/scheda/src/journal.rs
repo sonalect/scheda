@@ -8,6 +8,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value};
 
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
 use crate::schema::{self, CollectionDecl, Kind, Schema, SegmentRotate};
 use crate::store;
@@ -23,7 +24,7 @@ pub(crate) fn insert_journal(
     let (id, line) = prepare_line(decl, record)?;
     match maps.contains(&decl.name, &id) {
         Some(true) => {
-            return Err(Error::conflict(format!(
+            bail!(Error::duplicate_id(format!(
                 "record {id} already exists in {}",
                 decl.name
             )));
@@ -31,7 +32,7 @@ pub(crate) fn insert_journal(
         Some(false) => {}
         None => {
             if id_exists(vault, decl, &id)? {
-                return Err(Error::conflict(format!(
+                bail!(Error::duplicate_id(format!(
                     "record {id} already exists in {}",
                     decl.name
                 )));
@@ -39,8 +40,7 @@ pub(crate) fn insert_journal(
         }
     }
     let dir = journal_dir(vault, decl)?;
-    fs::create_dir_all(&dir)
-        .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;
+    fs::create_dir_all(&dir).context("[Journal::insert] create dir")?;
     let path = open_segment_path(&dir, decl, line.len() as u64)?;
     append_line(&path, &line)?;
     let rel = store::rel_posix(vault, &path)?;
@@ -60,7 +60,7 @@ pub(crate) fn find_journal(
     maps: &JournalIdMaps,
 ) -> Result<Record, Error> {
     if id.is_empty() {
-        return Err(Error::invalid("id is empty"));
+        bail!(Error::invalid("id is empty"));
     }
     match maps.lookup(&decl.name, id) {
         index::MapLookup::UnknownId => Err(Error::not_found(format!(
@@ -119,15 +119,19 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
         for path in list_segments(&journal_dir(vault, decl)?)? {
             let rel = store::rel_posix(vault, &path)?;
             let raw = fs::read(&path)
-                .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
-            let text =
-                str::from_utf8(&raw).map_err(|_| Error::invalid(format!("{rel} is not UTF-8")))?;
+                .context("[Journal::check] read segment")
+                .map_err(|err| err.with_path(&rel))?;
+            let text = str::from_utf8(&raw)
+                .context(Code::NotUtf8, "[Journal::check] decode UTF-8")
+                .map_err(|err| err.with_path(&rel))?;
             if store::has_conflict_markers(text) {
-                return Err(Error::conflict(format!("{rel} has git conflict markers")));
+                bail!(Error::conflict_markers(format!(
+                    "{rel} has git conflict markers"
+                )));
             }
             let (complete, tail) = split_complete(text);
             if tail.is_some() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "{rel} has a truncated line without a trailing newline"
                 )));
             }
@@ -136,7 +140,7 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
                     Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
                 })?;
                 if !seen.insert(parsed.id.clone()) {
-                    return Err(Error::conflict(format!(
+                    bail!(Error::duplicate_id(format!(
                         "duplicate id {} in {}",
                         parsed.id, decl.name
                     )));
@@ -147,7 +151,7 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
                     Some(decl.id_field.as_str()),
                     false,
                 ) {
-                    return Err(Error::invalid(format!("{rel}: {err}")));
+                    bail!(Error::invalid(format!("{rel}: {err}")));
                 }
             }
         }
@@ -169,13 +173,13 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
         unreachable!("Record collection is required");
     };
     if collection != decl.name {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "record collection {collection} does not match {}",
             decl.name
         )));
     }
     if record.body.as_deref().is_some_and(|body| !body.is_empty()) {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "journal {} does not allow a Markdown body",
             decl.name
         )));
@@ -183,7 +187,7 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
     if let Some(pattern) = &decl.id_pattern
         && !pattern.is_match(&id)
     {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "id {id} does not match collection {} pattern",
             decl.name
         )));
@@ -196,7 +200,7 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
             fields.insert(decl.id_field.clone(), Value::String(id.clone()));
         }
         Some(_) => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "object {} must equal record id {id}",
                 decl.id_field
             )));
@@ -221,8 +225,10 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
         Value::Bool(false) => out.push_str("false"),
         Value::Number(n) => out.push_str(&n.to_string()),
         Value::String(s) => {
-            let encoded = serde_json::to_string(s)
-                .map_err(|err| Error::invalid(format!("encode JSON string: {err}")))?;
+            let encoded = serde_json::to_string(s).context(
+                Code::Invalid,
+                "[Journal::write_canonical] encode JSON string",
+            )?;
             out.push_str(&encoded);
         }
         Value::Array(items) => {
@@ -244,7 +250,7 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
                     out.push(',');
                 }
                 let encoded = serde_json::to_string(key)
-                    .map_err(|err| Error::invalid(format!("encode JSON key: {err}")))?;
+                    .context(Code::Invalid, "[Journal::write_canonical] encode JSON key")?;
                 out.push_str(&encoded);
                 out.push(':');
                 write_canonical(&map[key], out)?;
@@ -263,7 +269,7 @@ fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
         .ok_or_else(|| Error::invalid(format!("collection {} is missing layout", decl.name)))?;
     let rel = rel.trim_end_matches('/');
     if rel.is_empty() {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "collection {} layout is empty",
             decl.name
         )));
@@ -276,16 +282,15 @@ fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
         return Ok(Vec::new());
     }
     if !dir.is_dir() {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "journal layout is not a directory: {}",
             dir.display()
         )));
     }
     let mut out = Vec::new();
-    let entries =
-        fs::read_dir(dir).map_err(|err| Error::io(format!("read {}: {err}", dir.display())))?;
+    let entries = fs::read_dir(dir).context("[Journal::list_segments] read dir")?;
     for entry in entries {
-        let entry = entry.map_err(|err| Error::io(format!("read {}: {err}", dir.display())))?;
+        let entry = entry.context("[Journal::list_segments] read entry")?;
         let path = entry.path();
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
@@ -313,8 +318,7 @@ fn segment_is_full(path: &Path, decl: &CollectionDecl, line_len: u64) -> Result<
     if !path.exists() {
         return Ok(false);
     }
-    let meta =
-        fs::metadata(path).map_err(|err| Error::io(format!("stat {}: {err}", path.display())))?;
+    let meta = fs::metadata(path).context("[Journal::segment_is_full] stat segment")?;
     let size = meta.len();
     if size == 0 {
         return Ok(false);
@@ -331,8 +335,7 @@ fn segment_is_full(path: &Path, decl: &CollectionDecl, line_len: u64) -> Result<
         return Ok(true);
     }
     if let Some(max_lines) = decl.segment_max_lines {
-        let text = fs::read_to_string(path)
-            .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
+        let text = fs::read_to_string(path).context("[Journal::segment_is_full] count lines")?;
         let lines = text.bytes().filter(|b| *b == b'\n').count() as u64;
         if lines >= max_lines {
             return Ok(true);
@@ -401,7 +404,7 @@ fn segment_date(path: &Path) -> Option<&str> {
 fn utc_ymd(now: SystemTime) -> Result<String, Error> {
     let secs = now
         .duration_since(UNIX_EPOCH)
-        .map_err(|err| Error::io(format!("clock: {err}")))?
+        .context(Code::IoOther, "[Journal::utc_ymd] clock")?
         .as_secs();
     let (year, month, day) = civil_from_unix_days((secs / 86_400) as i32);
     Ok(format!("{year:04}-{month:02}-{day:02}"))
@@ -427,11 +430,11 @@ fn append_line(path: &Path, line: &[u8]) -> Result<(), Error> {
         .create(true)
         .append(true)
         .open(path)
-        .map_err(|err| Error::io(format!("open {}: {err}", path.display())))?;
+        .context("[Journal::append_line] open segment")?;
     file.write_all(line)
-        .map_err(|err| Error::io(format!("write {}: {err}", path.display())))?;
+        .context("[Journal::append_line] write line")?;
     file.sync_all()
-        .map_err(|err| Error::io(format!("fsync {}: {err}", path.display())))?;
+        .context("[Journal::append_line] fsync segment")?;
     Ok(())
 }
 
@@ -447,12 +450,7 @@ fn id_exists(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<bool, Erro
 fn scan_parsed(vault: &Path, decl: &CollectionDecl) -> Result<Vec<(PathBuf, ParsedLine)>, Error> {
     let mut out = Vec::new();
     for path in list_segments(&journal_dir(vault, decl)?)? {
-        let raw = match fs::read(&path) {
-            Ok(raw) => raw,
-            Err(err) => {
-                return Err(Error::io(format!("read {}: {err}", path.display())));
-            }
-        };
+        let raw = fs::read(&path).context("[Journal::scan_parsed] read segment")?;
         let Ok(text) = str::from_utf8(&raw) else {
             continue;
         };
@@ -501,12 +499,7 @@ fn map_from_files(vault: &Path, decl: &CollectionDecl) -> Result<BTreeMap<String
 }
 
 fn parse_segment(decl: &CollectionDecl, path: &Path) -> Result<Vec<ParsedLine>, Error> {
-    let raw = match fs::read(path) {
-        Ok(raw) => raw,
-        Err(err) => {
-            return Err(Error::io(format!("read {}: {err}", path.display())));
-        }
-    };
+    let raw = fs::read(path).context("[Journal::parse_segment] read segment")?;
     let Ok(text) = str::from_utf8(&raw) else {
         return Ok(Vec::new());
     };
@@ -551,17 +544,17 @@ fn split_complete(text: &str) -> (Vec<&str>, Option<&str>) {
 
 fn parse_line(decl: &CollectionDecl, line: &str) -> Result<ParsedLine, Error> {
     if line.is_empty() {
-        return Err(Error::invalid("empty journal line"));
+        bail!(Error::invalid("empty journal line"));
     }
-    let value: Value = serde_json::from_str(line)
-        .map_err(|err| Error::invalid(format!("journal line is not JSON: {err}")))?;
+    let value: Value =
+        serde_json::from_str(line).context(Code::Invalid, "[Journal::parse_line] decode JSON")?;
     let Value::Object(fields) = value else {
-        return Err(Error::invalid("journal line must be a JSON object"));
+        bail!(Error::invalid("journal line must be a JSON object"));
     };
     let id = match fields.get(&decl.id_field) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
         _ => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "journal object {} is missing",
                 decl.id_field
             )));

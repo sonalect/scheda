@@ -8,6 +8,19 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- `api.v1.Error` is a nested `Code` enum. Protobuf JSON names are
+  `CODE_NOT_FOUND`, `CODE_IO_NOT_FOUND`, and so on (not the 0.1.0 strings
+  `not_found` / `io` / `git` / `index_unusable` / `conflict`). The message
+  also carries optional vault-relative `path`, `repeat`, and causal `stack`
+  (outermost first). Callers branch on `code`. Coarse `io` / `git` /
+  `index_unusable` / `conflict` split into one code per stable
+  `std::io::ErrorKind`, one per `git2::ErrorCode`, plus
+  `CODE_CONFLICT_MARKERS` / `CODE_DUPLICATE_ID` and Index codes. Rust
+  `scheda::Error` is that generated message (no anyhow).
+- USearch 2.26.1 (in-process HNSW) and NumKong 7.8.1 (SIMD kernels).
+
 ### Added
 
 - `api/v1` `Catalog` (and nested collection/field/edge/body messages) for

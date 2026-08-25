@@ -213,7 +213,7 @@ fn negative_weight_is_invalid() {
     let err = collection
         .search(&q("kryptonite", 5).with_lexical_weight(-1.0))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -335,7 +335,7 @@ fn missing_format_fails_closed() {
         .unwrap();
     fs::remove_file(vault.index_dir().join("format")).unwrap();
     let err = collection.search(&q("kryptonite", 5)).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::IndexUnusable));
+    assert_eq!(err.known_code(), Some(Code::IndexMissing));
 }
 
 #[test]
@@ -357,7 +357,7 @@ fn corrupt_lexical_index_fails_closed() {
     let got = collection.find_one("a").unwrap();
     assert_eq!(got.valid, Some(true));
     let err = collection.search(&q("kryptonite", 5)).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::IndexUnusable));
+    assert_eq!(err.known_code(), Some(Code::IndexLexical));
 }
 
 #[test]
@@ -422,7 +422,7 @@ fn strict_edge_rejects_missing_target() {
     let err = src
         .insert_one(rec("walk_strict", "bad", json!({"target": "nope"})))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     vault
         .collection("walk_dst")
         .unwrap()

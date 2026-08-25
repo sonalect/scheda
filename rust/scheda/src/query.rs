@@ -5,6 +5,7 @@ use serde_json::{Map, Value};
 use scheda_generated::api::v1::filter_clause::Kind;
 use scheda_generated::api::v1::{Equal, Exists, PathPrefix, Set};
 
+use crate::error::{Code, ContextAs};
 use crate::schema::{CollectionDecl, Kind as CollectionKind, collection_dir};
 use crate::{Error, Filter, Record};
 
@@ -132,8 +133,8 @@ fn required_field(field: &Option<String>) -> &str {
 }
 
 fn json_of(value: &impl serde::Serialize) -> Result<Value, Error> {
-    let json = serde_json::to_value(value)
-        .map_err(|err| Error::invalid(format!("encode filter: {err}")))?;
+    let json =
+        serde_json::to_value(value).context(Code::Invalid, "[Filter::json_of] encode clause")?;
     Ok(unwrap_wkt(json))
 }
 

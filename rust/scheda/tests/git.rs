@@ -305,7 +305,7 @@ fn commit_on_reader_is_locked() {
     let _writer = open_notes(&scratch);
     let reader = Vault::open(scratch.vault(), scratch.options().write(false)).unwrap();
     let err = reader.commit("no").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Locked));
+    assert_eq!(err.known_code(), Some(Code::Locked));
 }
 
 #[test]
@@ -322,7 +322,7 @@ fn empty_commit_message_is_invalid() {
         ))
         .unwrap();
     let err = vault.commit("  ").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -330,11 +330,11 @@ fn history_rejects_empty_and_dotdot_path() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     assert_eq!(
-        Code::of(&vault.history("").unwrap_err()),
+        vault.history("").unwrap_err().known_code(),
         Some(Code::Invalid)
     );
     assert_eq!(
-        Code::of(&vault.history("../outside").unwrap_err()),
+        vault.history("../outside").unwrap_err().known_code(),
         Some(Code::Invalid)
     );
     assert!(vault.history("missing/file.md").unwrap().is_empty());

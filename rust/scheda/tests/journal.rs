@@ -114,8 +114,8 @@ fn replace_one_is_unsupported() {
         .unwrap()
         .replace_one("a", rec("a", "x"))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Unsupported));
-    assert_eq!(err.code.as_deref(), Some("unsupported"));
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
 }
 
 #[test]
@@ -128,7 +128,7 @@ fn duplicate_id_across_segments_is_conflict() {
     collection.insert_one(rec("c", "three")).unwrap();
     assert!(jsonl_names(&scratch.log_dir()).len() >= 2);
     let err = collection.insert_one(rec("a", "again")).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Conflict));
+    assert_eq!(err.known_code(), Some(Code::DuplicateId));
 }
 
 #[test]
@@ -171,7 +171,7 @@ fn find_one_uses_collection_and_id_not_segment_name() {
     );
     assert!(!got.path.as_deref().unwrap().contains("c.jsonl"));
     let err = collection.find_one("missing").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
 #[test]
@@ -211,12 +211,12 @@ fn mid_segment_corruption_fails_check_and_is_not_rewritten() {
     let damaged = format!("{first}\nthis is not a json object\n");
     fs::write(&path, &damaged).unwrap();
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(fs::read_to_string(&path).unwrap(), damaged);
     let a = collection.find_one("a").unwrap();
     assert_eq!(a.id.as_deref(), Some("a"));
     let err = collection.find_one("b").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
 #[test]
@@ -230,10 +230,10 @@ fn tail_without_newline_is_not_a_record() {
     text.push_str(r#"{"id":"b","msg":"x"}"#);
     fs::write(&path, &text).unwrap();
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(collection.find_one("a").unwrap().id.as_deref(), Some("a"));
     let err = collection.find_one("b").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
     assert!(
         fs::read_to_string(&path)
             .unwrap()
@@ -271,5 +271,5 @@ fn journal_rejects_markdown_body() {
         .unwrap()
         .insert_one(record)
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }

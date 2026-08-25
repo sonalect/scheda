@@ -33,57 +33,232 @@ fn invalid_from_validation(err: protovalidate_buffa::ValidationError) -> api::v1
     }
 }
 
+macro_rules! error_ctors {
+    ($($name:ident => $variant:ident),+ $(,)?) => {
+        $(
+            #[must_use]
+            pub fn $name(message: impl Into<String>) -> Self {
+                Self::new(api::v1::error::Code::$variant, message)
+            }
+        )+
+    };
+}
+
 impl api::v1::Error {
+    /// Default [`api::v1::error::Repeat`] for a [`api::v1::error::Code`].
+    /// Override with [`Self::with_repeat`].
     #[must_use]
-    pub fn new(code: impl AsRef<str>, message: impl Into<String>) -> Self {
+    pub const fn default_repeat(code: api::v1::error::Code) -> api::v1::error::Repeat {
+        use api::v1::error::{Code, Repeat};
+        match code {
+            Code::Locked
+            | Code::IoNotFound
+            | Code::IoPermission
+            | Code::IoConnectionRefused
+            | Code::IoConnectionReset
+            | Code::IoHostUnreachable
+            | Code::IoNetworkUnreachable
+            | Code::IoConnectionAborted
+            | Code::IoNotConnected
+            | Code::IoAddrInUse
+            | Code::IoAddrNotAvailable
+            | Code::IoNetworkDown
+            | Code::IoBrokenPipe
+            | Code::IoWouldBlock
+            | Code::IoReadOnlyFilesystem
+            | Code::IoStaleNetworkFileHandle
+            | Code::IoTimedOut
+            | Code::IoWriteZero
+            | Code::IoStorageFull
+            | Code::IoQuotaExceeded
+            | Code::IoFileTooLarge
+            | Code::IoResourceBusy
+            | Code::IoExecutableFileBusy
+            | Code::IoDeadlock
+            | Code::IoInterrupted
+            | Code::IoUnexpectedEof
+            | Code::IoOutOfMemory
+            | Code::IoOther
+            | Code::GitGeneric
+            | Code::GitNotFound
+            | Code::GitBufSize
+            | Code::GitLocked
+            | Code::GitAuth
+            | Code::GitCertificate
+            | Code::GitEof
+            | Code::GitTimeout
+            | Code::IndexMissing
+            | Code::IndexVersion
+            | Code::IndexLexical
+            | Code::IndexVector
+            | Code::IndexCorrupt => Repeat::Allowed,
+            Code::Unspecified
+            | Code::NotFound
+            | Code::DuplicateId
+            | Code::ConflictMarkers
+            | Code::Invalid
+            | Code::NotUtf8
+            | Code::Unsupported
+            | Code::UnsupportedRemote
+            | Code::IoAlreadyExists
+            | Code::IoNotADirectory
+            | Code::IoIsADirectory
+            | Code::IoDirectoryNotEmpty
+            | Code::IoInvalidInput
+            | Code::IoInvalidData
+            | Code::IoNotSeekable
+            | Code::IoCrossesDevices
+            | Code::IoTooManyLinks
+            | Code::IoInvalidFilename
+            | Code::IoArgumentListTooLong
+            | Code::IoUnsupported
+            | Code::NotFastForward
+            | Code::GitExists
+            | Code::GitAmbiguous
+            | Code::GitUser
+            | Code::GitBareRepo
+            | Code::GitUnbornBranch
+            | Code::GitUnmerged
+            | Code::GitInvalidSpec
+            | Code::GitConflict
+            | Code::GitModified
+            | Code::GitApplied
+            | Code::GitPeel
+            | Code::GitInvalid
+            | Code::GitUncommitted
+            | Code::GitDirectory
+            | Code::GitMergeConflict
+            | Code::GitHashsumMismatch
+            | Code::GitIndexDirty
+            | Code::GitApplyFail
+            | Code::GitOwner
+            | Code::GitHead => Repeat::Forbidden,
+        }
+    }
+
+    #[must_use]
+    pub fn new(code: api::v1::error::Code, message: impl Into<String>) -> Self {
         Self::default()
-            .with_code(code.as_ref())
+            .with_code(code)
             .with_message(message.into())
+            .with_repeat(Self::default_repeat(code))
+    }
+
+    error_ctors! {
+        not_found => NotFound,
+        duplicate_id => DuplicateId,
+        conflict_markers => ConflictMarkers,
+        invalid => Invalid,
+        not_utf8 => NotUtf8,
+        unsupported => Unsupported,
+        unsupported_remote => UnsupportedRemote,
+        locked => Locked,
+        io_not_found => IoNotFound,
+        io_permission => IoPermission,
+        io_connection_refused => IoConnectionRefused,
+        io_connection_reset => IoConnectionReset,
+        io_host_unreachable => IoHostUnreachable,
+        io_network_unreachable => IoNetworkUnreachable,
+        io_connection_aborted => IoConnectionAborted,
+        io_not_connected => IoNotConnected,
+        io_addr_in_use => IoAddrInUse,
+        io_addr_not_available => IoAddrNotAvailable,
+        io_network_down => IoNetworkDown,
+        io_broken_pipe => IoBrokenPipe,
+        io_already_exists => IoAlreadyExists,
+        io_would_block => IoWouldBlock,
+        io_not_a_directory => IoNotADirectory,
+        io_is_a_directory => IoIsADirectory,
+        io_directory_not_empty => IoDirectoryNotEmpty,
+        io_read_only_filesystem => IoReadOnlyFilesystem,
+        io_stale_network_file_handle => IoStaleNetworkFileHandle,
+        io_invalid_input => IoInvalidInput,
+        io_invalid_data => IoInvalidData,
+        io_timed_out => IoTimedOut,
+        io_write_zero => IoWriteZero,
+        io_storage_full => IoStorageFull,
+        io_not_seekable => IoNotSeekable,
+        io_quota_exceeded => IoQuotaExceeded,
+        io_file_too_large => IoFileTooLarge,
+        io_resource_busy => IoResourceBusy,
+        io_executable_file_busy => IoExecutableFileBusy,
+        io_deadlock => IoDeadlock,
+        io_crosses_devices => IoCrossesDevices,
+        io_too_many_links => IoTooManyLinks,
+        io_invalid_filename => IoInvalidFilename,
+        io_argument_list_too_long => IoArgumentListTooLong,
+        io_interrupted => IoInterrupted,
+        io_unsupported => IoUnsupported,
+        io_unexpected_eof => IoUnexpectedEof,
+        io_out_of_memory => IoOutOfMemory,
+        io_other => IoOther,
+        not_fast_forward => NotFastForward,
+        git_generic => GitGeneric,
+        git_not_found => GitNotFound,
+        git_exists => GitExists,
+        git_ambiguous => GitAmbiguous,
+        git_buf_size => GitBufSize,
+        git_user => GitUser,
+        git_bare_repo => GitBareRepo,
+        git_unborn_branch => GitUnbornBranch,
+        git_unmerged => GitUnmerged,
+        git_invalid_spec => GitInvalidSpec,
+        git_conflict => GitConflict,
+        git_locked => GitLocked,
+        git_modified => GitModified,
+        git_auth => GitAuth,
+        git_certificate => GitCertificate,
+        git_applied => GitApplied,
+        git_peel => GitPeel,
+        git_eof => GitEof,
+        git_invalid => GitInvalid,
+        git_uncommitted => GitUncommitted,
+        git_directory => GitDirectory,
+        git_merge_conflict => GitMergeConflict,
+        git_hashsum_mismatch => GitHashsumMismatch,
+        git_index_dirty => GitIndexDirty,
+        git_apply_fail => GitApplyFail,
+        git_owner => GitOwner,
+        git_timeout => GitTimeout,
+        git_head => GitHead,
+        index_missing => IndexMissing,
+        index_version => IndexVersion,
+        index_lexical => IndexLexical,
+        index_vector => IndexVector,
+        index_corrupt => IndexCorrupt,
     }
 
     #[must_use]
-    pub fn not_found(message: impl Into<String>) -> Self {
-        Self::new("not_found", message)
+    pub fn known_code(&self) -> Option<api::v1::error::Code> {
+        self.code.as_ref().and_then(|v| v.as_known())
     }
 
     #[must_use]
-    pub fn invalid(message: impl Into<String>) -> Self {
-        Self::new("invalid", message)
+    pub fn known_repeat(&self) -> Option<api::v1::error::Repeat> {
+        self.repeat.as_ref().and_then(|v| v.as_known())
     }
 
+    /// Insert `frame` at the front of `stack` (outermost first).
     #[must_use]
-    pub fn conflict(message: impl Into<String>) -> Self {
-        Self::new("conflict", message)
+    pub fn context(mut self, frame: impl fmt::Display) -> Self {
+        let frame = frame.to_string();
+        if !frame.is_empty() {
+            self.stack.insert(0, frame);
+        }
+        self
     }
 
+    /// Like [`Self::context`], but build the frame only if this error is used.
+    ///
+    /// On [`Error`] the closure runs immediately — this error already exists.
+    /// Use `Result::with_context` to delay work until `Err`.
     #[must_use]
-    pub fn not_fast_forward(message: impl Into<String>) -> Self {
-        Self::new("not_fast_forward", message)
-    }
-
-    #[must_use]
-    pub fn locked(message: impl Into<String>) -> Self {
-        Self::new("locked", message)
-    }
-
-    #[must_use]
-    pub fn io(message: impl Into<String>) -> Self {
-        Self::new("io", message)
-    }
-
-    #[must_use]
-    pub fn git(message: impl Into<String>) -> Self {
-        Self::new("git", message)
-    }
-
-    #[must_use]
-    pub fn index_unusable(message: impl Into<String>) -> Self {
-        Self::new("index_unusable", message)
-    }
-
-    #[must_use]
-    pub fn unsupported(message: impl Into<String>) -> Self {
-        Self::new("unsupported", message)
+    pub fn with_context<F, C>(self, f: F) -> Self
+    where
+        F: FnOnce() -> C,
+        C: fmt::Display,
+    {
+        self.context(f())
     }
 }
 
@@ -91,7 +266,13 @@ impl fmt::Display for api::v1::Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.message.as_deref() {
             Some(message) if !message.is_empty() => f.write_str(message),
-            _ => f.write_str(self.code.as_deref().unwrap_or("invalid")),
+            _ => match self.known_code() {
+                Some(code) => {
+                    use buffa::Enumeration as _;
+                    f.write_str(code.proto_name())
+                }
+                None => f.write_str("CODE_UNSPECIFIED"),
+            },
         }
     }
 }
@@ -191,10 +372,11 @@ mod tests {
     #[test]
     fn error_json_uses_lib5_code_string() {
         let err = Error::default()
-            .with_code("not_found")
-            .with_message("missing id");
+            .with_code(super::api::v1::error::Code::NotFound)
+            .with_message("missing id")
+            .with_repeat(super::api::v1::error::Repeat::Forbidden);
         let json = serde_json::to_value(&err).expect("json");
-        assert_eq!(json["code"], "not_found");
+        assert_eq!(json["code"], "CODE_NOT_FOUND");
         assert_eq!(json["message"], "missing id");
     }
 
@@ -228,7 +410,7 @@ mod tests {
     #[test]
     fn error_code_is_required() {
         assert!(Error::default().validate().is_err());
-        assert!(Error::default().with_code("not_found").validate().is_ok());
+        assert!(Error::not_found("missing").validate().is_ok());
     }
 
     #[test]
@@ -256,7 +438,7 @@ mod tests {
         let err = Record::default()
             .require_valid()
             .expect_err("missing id and collection");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         assert!(
             Record::default()
                 .with_id("alpha")
@@ -269,13 +451,13 @@ mod tests {
             .with_collection("notes")
             .require_valid()
             .expect_err("id slash");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = Record::default()
             .with_id("a\\b")
             .with_collection("notes")
             .require_valid()
             .expect_err("id backslash");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
     }
 
     #[test]
@@ -308,7 +490,7 @@ mod tests {
         let err = SearchQuery::default()
             .require_valid()
             .expect_err("missing text");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
     }
 
     #[test]
@@ -327,24 +509,24 @@ mod tests {
             .with_lexical_weight(-1.0)
             .require_valid()
             .expect_err("negative lexical_weight");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = ok
             .clone()
             .with_vector_weight(f64::NAN)
             .require_valid()
             .expect_err("NaN vector_weight");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = ok
             .clone()
             .with_lexical_weight(f64::INFINITY)
             .require_valid()
             .expect_err("+Inf lexical_weight");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = ok
             .with_vector_weight(f64::NEG_INFINITY)
             .require_valid()
             .expect_err("-Inf vector_weight");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
     }
 
     #[test]
@@ -371,20 +553,20 @@ mod tests {
         let err = CatalogCollection::default()
             .require_valid()
             .expect_err("missing name and kind");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = CatalogCollection::default()
             .with_name("notes")
             .with_kind("blob")
             .require_valid()
             .expect_err("unknown kind");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = CatalogCollection::default()
             .with_name("notes")
             .with_kind("document")
             .with_schema_version(0)
             .require_valid()
             .expect_err("schema_version 0");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let ok = CatalogCollection::default()
             .with_name("notes")
             .with_kind("document")
@@ -404,13 +586,13 @@ mod tests {
         let err = CatalogField::default()
             .require_valid()
             .expect_err("missing name and type");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let err = CatalogField::default()
             .with_name("title")
             .with_type("blob")
             .require_valid()
             .expect_err("unknown type");
-        assert_eq!(err.code.as_deref(), Some("invalid"));
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let ok = CatalogField::default()
             .with_name("title")
             .with_type("string");

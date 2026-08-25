@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::error::{Code, ContextAs, ContextIo};
 use crate::journal;
 use crate::schema::{self, Kind, Schema};
 use crate::store;
@@ -154,7 +155,7 @@ fn ids_path(index_dir: &Path, collection: &str) -> PathBuf {
 }
 
 fn read_ids_file(path: &Path) -> Result<Option<BTreeMap<String, String>>, Error> {
-    let raw = fs::read(path).map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
+    let raw = fs::read(path).context("[Index::read_ids_file] read ids")?;
     let Ok(text) = str::from_utf8(&raw) else {
         return Ok(None);
     };
@@ -187,7 +188,7 @@ fn write_ids_file(
             path: rel.clone(),
         };
         let mut encoded = serde_json::to_vec(&line)
-            .map_err(|err| Error::io(format!("encode journal id map: {err}")))?;
+            .context(Code::Invalid, "[Index::write_ids_file] encode line")?;
         encoded.push(b'\n');
         bytes.extend_from_slice(&encoded);
     }
@@ -197,23 +198,22 @@ fn write_ids_file(
 fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> Result<(), Error> {
     let path = ids_path(index_dir, collection);
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)
-            .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;
+        fs::create_dir_all(dir).context("[Index::append_ids_line] create dir")?;
     }
     let line = IdMapLine {
         id: id.to_owned(),
         path: rel.to_owned(),
     };
-    let mut encoded = serde_json::to_vec(&line)
-        .map_err(|err| Error::io(format!("encode journal id map: {err}")))?;
+    let mut encoded =
+        serde_json::to_vec(&line).context(Code::Invalid, "[Index::append_ids_line] encode line")?;
     encoded.push(b'\n');
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .map_err(|err| Error::io(format!("open {}: {err}", path.display())))?;
+        .context("[Index::append_ids_line] open ids")?;
     file.write_all(&encoded)
-        .map_err(|err| Error::io(format!("write {}: {err}", path.display())))?;
+        .context("[Index::append_ids_line] write ids")?;
     Ok(())
 }
 
@@ -222,65 +222,55 @@ pub(crate) fn format_version(index_dir: &Path) -> Result<Option<u32>, Error> {
     if !path.is_file() {
         return Ok(None);
     }
-    let text = fs::read_to_string(&path)
-        .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
+    let text = fs::read_to_string(&path).context("[Index::format_version] read format")?;
     let trimmed = text.trim();
     if trimmed.is_empty() {
         return Ok(None);
     }
     match trimmed.parse::<u32>() {
         Ok(version) => Ok(Some(version)),
-        Err(_) => Err(Error::index_unusable(format!(
+        Err(_) => Err(Error::index_corrupt(format!(
             "index format is not a decimal integer: {}",
             path.display()
-        ))),
+        ))
+        .context("[Index::format_version] parse format")),
     }
 }
 
 pub(crate) fn require_current_format(index_dir: &Path) -> Result<(), Error> {
     match format_version(index_dir)? {
         Some(FORMAT_VERSION) => Ok(()),
-        Some(version) => Err(Error::index_unusable(format!(
+        Some(version) => Err(Error::index_version(format!(
             "index format {version} is not {FORMAT_VERSION}"
-        ))),
-        None => Err(Error::index_unusable("index format file is missing")),
+        ))
+        .context("[Index::require_current_format] check version")),
+        None => Err(Error::index_missing("index format file is missing")
+            .context("[Index::require_current_format] missing format")),
     }
 }
 
 pub(crate) fn ensure_format(index_dir: &Path) -> Result<(), Error> {
     match format_version(index_dir)? {
         Some(FORMAT_VERSION) => Ok(()),
-        Some(version) => Err(Error::index_unusable(format!(
+        Some(version) => Err(Error::index_version(format!(
             "index format {version} is not {FORMAT_VERSION}"
-        ))),
+        ))
+        .context("[Index::ensure_format] check version")),
         None => write_format(index_dir),
     }
 }
 
 pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
-    fs::create_dir_all(index_dir).map_err(|err| {
-        Error::io(format!(
-            "create index directory {}: {err}",
-            index_dir.display()
-        ))
-    })?;
+    fs::create_dir_all(index_dir).context("[Index::write_format] create dir")?;
     let path = index_dir.join(FORMAT_FILE);
-    fs::write(&path, format!("{FORMAT_VERSION}\n"))
-        .map_err(|err| Error::io(format!("write {}: {err}", path.display())))
+    fs::write(&path, format!("{FORMAT_VERSION}\n")).context("[Index::write_format] write format")
 }
 
 fn clear_except_lock(index_dir: &Path) -> Result<(), Error> {
-    fs::create_dir_all(index_dir).map_err(|err| {
-        Error::io(format!(
-            "create index directory {}: {err}",
-            index_dir.display()
-        ))
-    })?;
-    let entries = fs::read_dir(index_dir)
-        .map_err(|err| Error::io(format!("read {}: {err}", index_dir.display())))?;
+    fs::create_dir_all(index_dir).context("[Index::clear] create dir")?;
+    let entries = fs::read_dir(index_dir).context("[Index::clear] read dir")?;
     for entry in entries {
-        let entry =
-            entry.map_err(|err| Error::io(format!("read {}: {err}", index_dir.display())))?;
+        let entry = entry.context("[Index::clear] read entry")?;
         let name = entry.file_name();
         if name == WRITE_LOCK {
             continue;
@@ -291,7 +281,7 @@ fn clear_except_lock(index_dir: &Path) -> Result<(), Error> {
         } else {
             fs::remove_file(&path)
         };
-        result.map_err(|err| Error::io(format!("remove {}: {err}", path.display())))?;
+        result.context("[Index::clear] remove entry")?;
     }
     Ok(())
 }

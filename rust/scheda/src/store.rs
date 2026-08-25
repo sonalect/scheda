@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value};
 
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::schema::{self, CollectionDecl, FieldDecl, FieldType, Kind, Schema};
 use crate::{Error, Record};
 
@@ -19,7 +20,7 @@ pub(crate) fn insert_document(
 ) -> Result<(String, String), Error> {
     let prepared = prepare_write(vault, decl, record)?;
     if prepared.path.exists() {
-        return Err(Error::conflict(format!(
+        bail!(Error::duplicate_id(format!(
             "record {} already exists in {}",
             prepared.id, decl.name
         )));
@@ -36,20 +37,20 @@ pub(crate) fn replace_document(
     record: Record,
 ) -> Result<(String, String), Error> {
     let Some(existing) = locate_file(vault, decl, id)? else {
-        return Err(Error::not_found(format!(
+        bail!(Error::not_found(format!(
             "record {id} is not in {}",
             decl.name
         )));
     };
     let prepared = prepare_write(vault, decl, record)?;
     if prepared.id != id {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "replace_one id {id} does not match record id {}",
             prepared.id
         )));
     }
     if prepared.path != existing {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "replace_one would move {id} off its path in {}",
             decl.name
         )));
@@ -65,24 +66,24 @@ pub(crate) fn find_document(
     id: &str,
 ) -> Result<Record, Error> {
     if id.is_empty() {
-        return Err(Error::invalid("id is empty"));
+        bail!(Error::invalid("id is empty"));
     }
     if decl.kind == Kind::Singleton {
         let Some(fixed) = decl.singleton_id.as_deref() else {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "collection {} is missing singleton_id",
                 decl.name
             )));
         };
         if id != fixed {
-            return Err(Error::not_found(format!(
+            bail!(Error::not_found(format!(
                 "record {id} is not in {}",
                 decl.name
             )));
         }
     }
     let Some(path) = locate_file(vault, decl, id)? else {
-        return Err(Error::not_found(format!(
+        bail!(Error::not_found(format!(
             "record {id} is not in {}",
             decl.name
         )));
@@ -99,15 +100,19 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
         for path in list_files(vault, decl)? {
             let rel = rel_posix(vault, &path)?;
             let raw = fs::read(&path)
-                .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
-            let text =
-                str::from_utf8(&raw).map_err(|_| Error::invalid(format!("{rel} is not UTF-8")))?;
+                .context("[store::check_documents] read record")
+                .map_err(|err| err.with_path(&rel))?;
+            let text = str::from_utf8(&raw)
+                .context(Code::NotUtf8, "[store::check_documents] decode UTF-8")
+                .map_err(|err| err.with_path(&rel))?;
             if has_conflict_markers(text) {
-                return Err(Error::conflict(format!("{rel} has git conflict markers")));
+                bail!(Error::conflict_markers(format!(
+                    "{rel} has git conflict markers"
+                )));
             }
             let parsed = parse_file(decl, text)?;
             if !seen.insert(parsed.id.clone()) {
-                return Err(Error::conflict(format!(
+                bail!(Error::duplicate_id(format!(
                     "duplicate id {} in {}",
                     parsed.id, decl.name
                 )));
@@ -118,11 +123,11 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
                 Some(decl.id_field.as_str()),
                 false,
             ) {
-                return Err(Error::invalid(format!("{rel}: {err}")));
+                bail!(Error::invalid(format!("{rel}: {err}")));
             }
             let expected = vault_rel(decl, &instantiate_path(decl, &parsed.id, &parsed.fields)?);
             if expected != rel {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "{rel} path does not match id {}",
                     parsed.id
                 )));
@@ -152,39 +157,39 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
         unreachable!("Record collection is required");
     };
     if collection != decl.name {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "record collection {collection} does not match {}",
             decl.name
         )));
     }
     if decl.kind == Kind::Journal {
-        return Err(Error::invalid(
+        bail!(Error::invalid(
             "document write used on a journal collection",
         ));
     }
     if let Some(pattern) = &decl.id_pattern
         && !pattern.is_match(&id)
     {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "id {id} does not match collection {} pattern",
             decl.name
         )));
     }
     if decl.kind == Kind::Singleton {
         let Some(fixed) = decl.singleton_id.as_deref() else {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "collection {} is missing singleton_id",
                 decl.name
             )));
         };
         if id != fixed {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "singleton {} id must be {fixed}",
                 decl.name
             )));
         }
         if record.body.as_deref().is_some_and(|body| !body.is_empty()) {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "singleton {} does not allow a Markdown body",
                 decl.name
             )));
@@ -193,7 +198,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
     if record.body.as_deref().is_some_and(|body| !body.is_empty())
         && decl.body.as_ref().is_none_or(|body| !body.allowed)
     {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "collection {} does not allow a Markdown body",
             decl.name
         )));
@@ -206,7 +211,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
             fields.insert(decl.id_field.clone(), Value::String(id.clone()));
         }
         Some(_) => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "header {} must equal record id {id}",
                 decl.id_field
             )));
@@ -235,7 +240,7 @@ fn instantiate_path(
             None => found = Some((n, rel)),
             Some((m, _)) if n > *m => found = Some((n, rel)),
             Some((m, existing)) if n == *m && existing != &rel => {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "id {id} matches more than one layout in {}",
                     decl.name
                 )));
@@ -277,7 +282,7 @@ fn fill_template(
     let mut rest = template;
     while let Some(start) = rest.find('{') {
         let Some(end) = rest[start..].find('}') else {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "layout template {template} has an unclosed '{{'"
             )));
         };
@@ -285,7 +290,7 @@ fn fill_template(
         out.push_str(&rest[..start]);
         let name = &rest[start + 1..end];
         if name.is_empty() {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "layout template {template} has an empty placeholder"
             )));
         }
@@ -296,12 +301,12 @@ fn fill_template(
                 Some(Value::String(s)) if !s.is_empty() => s.as_str(),
                 Some(Value::String(_)) | Some(Value::Null) | None => return Ok(None),
                 Some(_) => {
-                    return Err(Error::invalid(format!("path slot {name} must be a string")));
+                    bail!(Error::invalid(format!("path slot {name} must be a string")));
                 }
             }
         };
         if value.contains('/') || value.contains('\\') {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "path slot {name} must not contain a path separator"
             )));
         }
@@ -310,7 +315,7 @@ fn fill_template(
     }
     out.push_str(rest);
     if out.is_empty() {
-        return Err(Error::invalid("layout template produced an empty path"));
+        bail!(Error::invalid("layout template produced an empty path"));
     }
     Ok(Some(out))
 }
@@ -320,7 +325,7 @@ fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<P
     for template in &decl.layout {
         for path in match_template(vault, decl, template, Some(id))? {
             if found.is_some() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "id {id} matches more than one file in {}",
                     decl.name
                 )));
@@ -399,10 +404,9 @@ fn walk_match(
         }
         return Ok(());
     }
-    let entries =
-        fs::read_dir(dir).map_err(|err| Error::io(format!("read {}: {err}", dir.display())))?;
+    let entries = fs::read_dir(dir).context("[store::walk_match] read collection dir")?;
     for entry in entries {
-        let entry = entry.map_err(|err| Error::io(format!("read {}: {err}", dir.display())))?;
+        let entry = entry.context("[store::walk_match] read collection entry")?;
         let name = entry.file_name();
         let Some(name) = name.to_str() else {
             continue;
@@ -485,7 +489,9 @@ fn consume_slot(after: &str, name: &str, id: Option<&str>) -> bool {
 
 pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Result<Record, Error> {
     let rel = rel_posix(vault, path)?;
-    let raw = fs::read(path).map_err(|err| Error::io(format!("read {rel}: {err}")))?;
+    let raw = fs::read(path)
+        .context("[store::read_file] read record")
+        .map_err(|err| err.with_path(&rel))?;
     let mut record = Record::default()
         .with_collection(decl.name.clone())
         .with_path(rel.clone())
@@ -560,14 +566,14 @@ fn id_matches_header(decl: &CollectionDecl, parsed: &ParsedFile) -> bool {
 fn parse_file(decl: &CollectionDecl, text: &str) -> Result<ParsedFile, Error> {
     let (yaml, body) = split_frontmatter(text);
     let value: Value =
-        yaml_serde::from_str(yaml).map_err(|err| Error::invalid(format!("YAML header: {err}")))?;
+        yaml_serde::from_str(yaml).context(Code::Invalid, "[store::parse_file] decode YAML")?;
     let Value::Object(fields) = value else {
-        return Err(Error::invalid("YAML header must be a mapping"));
+        bail!(Error::invalid("YAML header must be a mapping"));
     };
     let id = match fields.get(&decl.id_field) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
         _ => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "header {} is missing",
                 decl.id_field
             )));
@@ -614,11 +620,11 @@ fn encode_file(
     let json = Value::Object(fields.clone());
     if decl.kind == Kind::Singleton && decl.layout.iter().any(|t| t.ends_with(".json")) {
         let bytes = serde_json::to_vec_pretty(&json)
-            .map_err(|err| Error::invalid(format!("encode JSON: {err}")))?;
+            .context(Code::Invalid, "[store::encode_file] encode JSON")?;
         return Ok(bytes);
     }
-    let yaml = yaml_serde::to_string(&json)
-        .map_err(|err| Error::invalid(format!("encode YAML: {err}")))?;
+    let yaml =
+        yaml_serde::to_string(&json).context(Code::Invalid, "[store::encode_file] encode YAML")?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
     if decl.kind == Kind::Document
         && let Some(body) = body
@@ -654,7 +660,7 @@ pub(crate) fn validate_fields(
     if open {
         for (key, value) in fields {
             if !value.is_string() && !value.is_null() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "open object key {key} must be a string"
                 )));
             }
@@ -666,14 +672,14 @@ pub(crate) fn validate_fields(
             continue;
         }
         if !decls.iter().any(|decl| decl.name == *key) {
-            return Err(Error::invalid(format!("unknown field {key}")));
+            bail!(Error::invalid(format!("unknown field {key}")));
         }
     }
     for decl in decls {
         match fields.get(&decl.name) {
             None => {
                 if decl.required {
-                    return Err(Error::invalid(format!(
+                    bail!(Error::invalid(format!(
                         "required field {} is missing",
                         decl.name
                     )));
@@ -681,7 +687,7 @@ pub(crate) fn validate_fields(
             }
             Some(Value::Null) => {
                 if !decl.nullable {
-                    return Err(Error::invalid(format!(
+                    bail!(Error::invalid(format!(
                         "field {} is not nullable",
                         decl.name
                     )));
@@ -697,7 +703,7 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
     match decl.type_ {
         FieldType::String => {
             if !value.is_string() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be a string",
                     decl.name
                 )));
@@ -705,7 +711,7 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
         }
         FieldType::Boolean => {
             if !value.is_boolean() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be a boolean",
                     decl.name
                 )));
@@ -713,7 +719,7 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
         }
         FieldType::Integer => {
             if !is_integer(value) {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be an integer",
                     decl.name
                 )));
@@ -721,7 +727,7 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
         }
         FieldType::Number => {
             if !is_finite_number(value) {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be a finite number",
                     decl.name
                 )));
@@ -729,13 +735,13 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
         }
         FieldType::StringList => {
             let Some(items) = value.as_array() else {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be a string_list",
                     decl.name
                 )));
             };
             if items.iter().any(|item| !item.is_string()) {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be a string_list",
                     decl.name
                 )));
@@ -743,7 +749,7 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
         }
         FieldType::Object => {
             let Some(map) = value.as_object() else {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be an object",
                     decl.name
                 )));
@@ -752,14 +758,14 @@ fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
         }
         FieldType::ObjectList => {
             let Some(items) = value.as_array() else {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "field {} must be an object_list",
                     decl.name
                 )));
             };
             for item in items {
                 let Some(map) = item.as_object() else {
-                    return Err(Error::invalid(format!(
+                    bail!(Error::invalid(format!(
                         "field {} must be an object_list",
                         decl.name
                     )));
@@ -775,7 +781,7 @@ fn validate_object(map: &Map<String, Value>, decl: &FieldDecl) -> Result<(), Err
     if decl.fields.is_empty() {
         for (key, value) in map {
             if !value.is_string() && !value.is_null() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "open object {} key {key} must be a string",
                     decl.name
                 )));
@@ -785,7 +791,7 @@ fn validate_object(map: &Map<String, Value>, decl: &FieldDecl) -> Result<(), Err
     }
     for key in map.keys() {
         if !decl.fields.iter().any(|f| &f.name == key) {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "unknown field {key} on {}",
                 decl.name
             )));
@@ -814,8 +820,8 @@ fn is_finite_number(value: &Value) -> bool {
 }
 
 pub(crate) fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
-    let value = serde_json::to_value(record)
-        .map_err(|err| Error::invalid(format!("encode fields: {err}")))?;
+    let value =
+        serde_json::to_value(record).context(Code::Invalid, "[store::fields_map] encode fields")?;
     match value.get("fields") {
         None | Some(Value::Null) => Ok(Map::new()),
         Some(Value::Object(map)) => Ok(map.clone()),
@@ -836,7 +842,7 @@ pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result
     }
     envelope.insert(String::from("fields"), Value::Object(map));
     let mut next: Record = serde_json::from_value(Value::Object(envelope))
-        .map_err(|err| Error::invalid(format!("decode fields: {err}")))?;
+        .context(Code::Invalid, "[store::put_fields] decode fields")?;
     next.path = record.path.clone();
     next.valid = record.valid;
     next.body = record.body.clone();
@@ -847,8 +853,7 @@ pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result
 
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)
-            .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;
+        fs::create_dir_all(dir).context("[store::atomic_write] create dir")?;
     }
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
@@ -870,11 +875,11 @@ fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Er
         .write(true)
         .create_new(true)
         .open(tmp)
-        .map_err(|err| Error::io(format!("create {}: {err}", tmp.display())))?;
+        .context("[store::atomic_write] create temp file")?;
     file.write_all(bytes)
-        .map_err(|err| Error::io(format!("write {}: {err}", tmp.display())))?;
+        .context("[store::atomic_write] write temp file")?;
     file.sync_all()
-        .map_err(|err| Error::io(format!("fsync {}: {err}", tmp.display())))?;
+        .context("[store::atomic_write] fsync temp file")?;
     drop(file);
     rename_replace(tmp, path)
 }
@@ -883,17 +888,9 @@ fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Er
 fn rename_replace(tmp: &Path, path: &Path) -> Result<(), Error> {
     #[cfg(windows)]
     if path.exists() {
-        fs::remove_file(path).map_err(|err| rename_err(tmp, path, err))?;
+        fs::remove_file(path).context("[store::atomic_write] remove existing")?;
     }
-    fs::rename(tmp, path).map_err(|err| rename_err(tmp, path, err))
-}
-
-fn rename_err(tmp: &Path, path: &Path, err: std::io::Error) -> Error {
-    Error::io(format!(
-        "rename {} -> {}: {err}",
-        tmp.display(),
-        path.display()
-    ))
+    fs::rename(tmp, path).context("[store::atomic_write] rename temp file")
 }
 
 pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
@@ -911,7 +908,7 @@ pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
             }
             Component::CurDir => {}
             _ => {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "path {} is outside the Vault",
                     path.display()
                 )));

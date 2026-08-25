@@ -248,10 +248,10 @@ fn field_types_reject_unknown_and_round_trip() {
     let err = collection
         .insert_one(rec("c", "extra", json!({"s": "x", "nope": 1})))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 
     let err = collection
         .insert_one(rec("c", "frac", json!({"i": 1.5})))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }

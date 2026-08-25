@@ -7,6 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use regex::Regex;
 use serde::Deserialize;
 
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::{Catalog, CatalogBody, CatalogCollection, CatalogEdge, CatalogField, CatalogId, Error};
 
 const MIB: u64 = 1024 * 1024;
@@ -280,18 +281,16 @@ pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
         return Ok(Schema::default());
     }
     if !dir.is_dir() {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "schema_dir is not a directory: {}",
             dir.display()
         )));
     }
     let mut collections = BTreeMap::new();
     let mut by_hash = BTreeMap::new();
-    let entries = fs::read_dir(&dir)
-        .map_err(|err| Error::io(format!("read schema directory {}: {err}", dir.display())))?;
+    let entries = fs::read_dir(&dir).context("[Schema::load] read schema dir")?;
     for entry in entries {
-        let entry = entry
-            .map_err(|err| Error::io(format!("read schema directory {}: {err}", dir.display())))?;
+        let entry = entry.context("[Schema::load] read schema entry")?;
         let path = entry.path();
         if path.is_dir() {
             continue;
@@ -305,14 +304,14 @@ pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
         }
         let decl = load_collection_file(&path)?;
         if collections.contains_key(&decl.name) {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "duplicate collection name {}",
                 decl.name
             )));
         }
         let hash_dir = collection_dir(&decl.name);
         if let Some(other) = by_hash.get(&hash_dir) {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "collections {} and {other} hash to the same directory {hash_dir}",
                 decl.name
             )));
@@ -333,8 +332,8 @@ fn load_schema_dir(vault: &Path) -> Result<String, Error> {
     if text.trim().is_empty() {
         return Ok(DEFAULT_SCHEMA_DIR.to_owned());
     }
-    let root: RawRoot = yaml_serde::from_str(&text)
-        .map_err(|err| Error::invalid(format!("schema {}: {err}", path.display())))?;
+    let root: RawRoot =
+        yaml_serde::from_str(&text).context(Code::Invalid, "[Schema::load] parse schema.yaml")?;
     match root.schema_dir {
         Some(dir) if dir.is_empty() => Err(Error::invalid(format!(
             "schema {}: schema_dir must be non-empty",
@@ -353,10 +352,10 @@ fn load_collection_file(path: &Path) -> Result<CollectionDecl, Error> {
         .is_some_and(|ext| ext != "json");
     let raw: RawCollection = if yaml {
         yaml_serde::from_str(&text)
-            .map_err(|err| Error::invalid(format!("schema {}: {err}", path.display())))?
+            .context(Code::Invalid, "[Schema::load] parse collection YAML")?
     } else {
         serde_json::from_str(&text)
-            .map_err(|err| Error::invalid(format!("schema {}: {err}", path.display())))?
+            .context(Code::Invalid, "[Schema::load] parse collection JSON")?
     };
     finish_collection(raw, path)
 }
@@ -364,32 +363,32 @@ fn load_collection_file(path: &Path) -> Result<CollectionDecl, Error> {
 fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, Error> {
     let loc = path.display();
     if raw.name.is_empty() {
-        return Err(Error::invalid(format!("schema {loc}: name is required")));
+        bail!(Error::invalid(format!("schema {loc}: name is required")));
     }
     if raw.schema_version < 1 {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "schema {loc}: schema_version must be >= 1"
         )));
     }
     if raw.layout.is_empty() || raw.layout.iter().any(|t| t.is_empty()) {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "schema {loc}: layout must be a non-empty template"
         )));
     }
     if raw.kind == Kind::Document && raw.layout.iter().any(|t| !t.contains("{id}")) {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "schema {loc}: document layout must contain {{id}}"
         )));
     }
     match raw.kind {
         Kind::Journal => {
             if raw.singleton_id.is_some() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "schema {loc}: singleton_id is not valid on journal"
                 )));
             }
             if raw.body.is_some() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "schema {loc}: body is not valid on journal"
                 )));
             }
@@ -399,12 +398,12 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
                 || raw.segment_max_lines.is_some()
                 || raw.segment_rotate.is_some()
             {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "schema {loc}: journal segment keys are not valid on document"
                 )));
             }
             if raw.singleton_id.is_some() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "schema {loc}: singleton_id is not valid on document"
                 )));
             }
@@ -414,20 +413,20 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
                 || raw.segment_max_lines.is_some()
                 || raw.segment_rotate.is_some()
             {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "schema {loc}: journal segment keys are not valid on singleton"
                 )));
             }
             match raw.singleton_id.as_deref() {
                 Some(id) if !id.is_empty() => {}
                 _ => {
-                    return Err(Error::invalid(format!(
+                    bail!(Error::invalid(format!(
                         "schema {loc}: singleton_id is required"
                     )));
                 }
             }
             if raw.body.is_some() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "schema {loc}: body is not valid on singleton"
                 )));
             }
@@ -436,12 +435,12 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     let (segment_max_bytes, segment_max_lines, segment_rotate) = if raw.kind == Kind::Journal {
         let cap = raw.segment_max_bytes.unwrap_or(DEFAULT_SEGMENT_MAX_BYTES);
         if cap > MAX_SEGMENT_MAX_BYTES {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: segment_max_bytes {cap} exceeds 32 MiB"
             )));
         }
         if raw.segment_max_lines == Some(0) {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: segment_max_lines must be >= 1"
             )));
         }
@@ -451,7 +450,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     };
     let id_field = match raw.id.as_ref().and_then(|id| id.field.as_deref()) {
         Some("") => {
-            return Err(Error::invalid(format!("schema {loc}: id.field is empty")));
+            bail!(Error::invalid(format!("schema {loc}: id.field is empty")));
         }
         Some(field) => field.to_owned(),
         None => DEFAULT_ID_FIELD.to_owned(),
@@ -480,7 +479,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         (Kind::Document, Some(body)) => Some(finish_body(body, path)?),
         (_, None) => None,
         (_, Some(_)) => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: body is only valid on document"
             )));
         }
@@ -508,13 +507,13 @@ fn finish_body(raw: RawBody, path: &Path) -> Result<BodyDecl, Error> {
     let loc = path.display();
     let vector = raw.vector.unwrap_or(false);
     if raw.field_id.is_some() && !vector {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "schema {loc}: body.field_id requires vector"
         )));
     }
     let field_id = match raw.field_id.as_deref() {
         Some("") => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: body.field_id is empty"
             )));
         }
@@ -534,34 +533,34 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
     let mut out = Vec::with_capacity(raw.len());
     for field in raw {
         if field.name.is_empty() {
-            return Err(Error::invalid(format!("schema {loc}: field name is empty")));
+            bail!(Error::invalid(format!("schema {loc}: field name is empty")));
         }
         let nested_ok = matches!(field.type_, FieldType::Object | FieldType::ObjectList);
         if !field.fields.is_empty() && !nested_ok {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: nested fields are only valid on object types"
             )));
         }
         let nested = finish_fields(field.fields, path)?;
         let searchable = matches!(field.type_, FieldType::String | FieldType::StringList);
         if field.fts && !searchable {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: fts is only valid on string and string_list"
             )));
         }
         if field.vector && !searchable {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: vector is only valid on string and string_list"
             )));
         }
         if field.field_id.is_some() && !field.vector {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: field_id requires vector"
             )));
         }
         let field_id = match field.field_id.as_deref() {
             Some("") => {
-                return Err(Error::invalid(format!("schema {loc}: field_id is empty")));
+                bail!(Error::invalid(format!("schema {loc}: field_id is empty")));
             }
             Some(id) => Some(id.to_owned()),
             None if field.vector => Some(field.name.clone()),
@@ -591,7 +590,7 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
 fn finish_edge(name: &str, type_: FieldType, raw: RawEdge, path: &Path) -> Result<EdgeDecl, Error> {
     let loc = path.display();
     if raw.collection.is_empty() {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "schema {loc}: edge.collection is required"
         )));
     }
@@ -599,12 +598,12 @@ fn finish_edge(name: &str, type_: FieldType, raw: RawEdge, path: &Path) -> Resul
     match (multiplicity, type_) {
         (Multiplicity::One, FieldType::String) | (Multiplicity::Many, FieldType::StringList) => {}
         (Multiplicity::One, _) => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: edge {name} multiplicity one requires type string"
             )));
         }
         (Multiplicity::Many, _) => {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema {loc}: edge {name} multiplicity many requires type string_list"
             )));
         }
@@ -632,7 +631,7 @@ fn check_edge_targets(
         if let Some(edge) = &field.edge
             && !collections.contains_key(&edge.collection)
         {
-            return Err(Error::invalid(format!(
+            bail!(Error::invalid(format!(
                 "schema: edge {}.{} targets unknown collection {}",
                 owner, field.name, edge.collection
             )));
@@ -748,7 +747,10 @@ fn catalog_field_default(value: &serde_json::Value) -> Result<CatalogField, Erro
         "type": "string",
         "default": value,
     }))
-    .map_err(|err| Error::invalid(format!("catalog field default: {err}")))
+    .context(
+        Code::Invalid,
+        "[Schema::catalog_field_default] encode default",
+    )
 }
 
 fn find_edge<'a>(fields: &'a [FieldDecl], name: &str) -> Option<&'a EdgeDecl> {
@@ -773,10 +775,8 @@ fn collect_filter_keys(fields: &[FieldDecl], out: &mut BTreeSet<String>) {
 }
 
 fn read_utf8(path: &Path) -> Result<String, Error> {
-    let bytes = fs::read(path)
-        .map_err(|err| Error::io(format!("read schema {}: {err}", path.display())))?;
-    String::from_utf8(bytes)
-        .map_err(|_| Error::invalid(format!("schema {} is not UTF-8", path.display())))
+    let bytes = fs::read(path).context("[Schema::read_utf8] read file")?;
+    String::from_utf8(bytes).context(Code::NotUtf8, "[Schema::read_utf8] decode UTF-8")
 }
 
 /// On-disk directory for a collection: 16 lowercase hex digits of FNV-1a-64
@@ -798,7 +798,7 @@ pub(crate) fn join_in_collection(vault: &Path, name: &str, rel: &str) -> Result<
 pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
-        return Err(Error::invalid(
+        bail!(Error::invalid(
             "schema_dir must be a path relative to the Vault",
         ));
     }
@@ -809,18 +809,18 @@ pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
             Component::Normal(part) => out.push(part),
             Component::ParentDir => {
                 if !out.pop() || out.as_path() == Path::new("") || !out.starts_with(vault) {
-                    return Err(Error::invalid("schema_dir must stay inside the Vault"));
+                    bail!(Error::invalid("schema_dir must stay inside the Vault"));
                 }
             }
             Component::Prefix(_) | Component::RootDir => {
-                return Err(Error::invalid(
+                bail!(Error::invalid(
                     "schema_dir must be a path relative to the Vault",
                 ));
             }
         }
     }
     if !out.starts_with(vault) {
-        return Err(Error::invalid("schema_dir must stay inside the Vault"));
+        bail!(Error::invalid("schema_dir must stay inside the Vault"));
     }
     Ok(out)
 }
@@ -919,7 +919,7 @@ mod tests {
     #[test]
     fn journal_cap_above_32_mib_is_invalid() {
         let err = parse(include_str!("../testdata/schema/journal_oversize.yaml")).unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
@@ -955,7 +955,7 @@ mod tests {
             "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nfields:\n  - name: n\n    type: integer\n    fts: true\n",
         )
         .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
@@ -964,7 +964,7 @@ mod tests {
             "name: c\nkind: journal\nschema_version: 1\nlayout: log/\nbody:\n  fts: true\nfields: []\n",
         )
         .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
@@ -973,7 +973,7 @@ mod tests {
             "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nfields:\n  - name: refs\n    type: string_list\n    edge:\n      collection: c\n      multiplicity: one\n",
         )
         .unwrap_err();
-        assert_eq!(Code::of(&err), Some(Code::Invalid));
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]

@@ -87,7 +87,7 @@ fn missing_kind_is_rejected_on_open() {
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_MISSING_KIND);
     let err = scratch.reopen().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn missing_schema_version_is_rejected_on_open() {
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
     let err = scratch.reopen().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -105,7 +105,7 @@ fn executable_blob_key_is_rejected() {
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_ON_WRITE);
     let err = scratch.reopen().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -114,7 +114,7 @@ fn unknown_edge_target_is_rejected() {
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_BAD_EDGE);
     let err = scratch.reopen().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn journal_cap_above_32_mib_is_rejected() {
     drop(scratch.init());
     scratch.write_schema("log.yaml", EAST_LOG_OVERSIZE);
     let err = scratch.reopen().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -193,7 +193,7 @@ fn missing_collection_is_not_found() {
     scratch.write_schema("west.yaml", WEST);
     let vault = scratch.reopen().unwrap();
     let err = vault.collection("east_docs").unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::NotFound));
+    assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
 #[test]
@@ -226,5 +226,5 @@ fn check_rereads_schema_from_disk() {
     let vault = scratch.init();
     scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }

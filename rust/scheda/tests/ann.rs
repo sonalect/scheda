@@ -54,12 +54,12 @@ fn cosine_neighbors_round_trip_through_dump() {
 #[test]
 fn zero_dimensions_is_invalid() {
     let err = AnnIndex::new(0).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
 fn wrong_vector_length_is_invalid() {
     let idx = AnnIndex::new(3).unwrap();
     let err = idx.add(1, &[1.0, 0.0]).unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }

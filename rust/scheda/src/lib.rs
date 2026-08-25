@@ -41,7 +41,10 @@
 //! async fn find_one(vault: Arc<Vault>, id: String) -> Result<Record, scheda::Error> {
 //!     tokio::task::spawn_blocking(move || vault.collection("notes")?.find_one(&id))
 //!         .await
-//!         .map_err(|err| scheda::Error::io(err.to_string()))?
+//!         .map_err(|err| {
+//!             scheda::Error::io_other(err.to_string())
+//!                 .context("[Collection::find_one] join blocking task")
+//!         })?
 //! }
 //! ```
 
@@ -61,7 +64,7 @@ mod vault;
 
 #[doc(hidden)]
 pub use ann::AnnIndex;
-pub use error::Code;
+pub use error::{Code, Repeat};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
     Catalog, CatalogBody, CatalogCollection, CatalogEdge, CatalogField, CatalogId, Error, Filter,

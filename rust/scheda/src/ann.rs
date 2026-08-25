@@ -5,6 +5,7 @@ use std::path::Path;
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 
 use crate::Error;
+use crate::error::{Code, Context, ContextAs, ensure};
 
 /// Approximate nearest-neighbour index over `f32` cosine vectors.
 ///
@@ -25,25 +26,38 @@ impl std::fmt::Debug for AnnIndex {
 }
 
 impl AnnIndex {
+    const INITIAL_CAPACITY: usize = 16;
+
     /// Empty cosine `f32` index with the given vector size.
     pub fn new(dimensions: usize) -> Result<Self, Error> {
-        if dimensions == 0 {
-            return Err(Error::invalid("vector dimensions must be > 0"));
-        }
+        ensure!(
+            dimensions > 0,
+            Error::invalid("vector dimensions must be > 0").context("[AnnIndex::new] dimensions")
+        );
         let options = IndexOptions {
             dimensions,
             metric: MetricKind::Cos,
             quantization: ScalarKind::F32,
             ..IndexOptions::default()
         };
-        let inner = Index::new(&options).map_err(ann_err)?;
-        inner.reserve(16).map_err(ann_err)?;
+        let inner =
+            Index::new(&options).context(Code::IndexVector, "[AnnIndex::new] create new index")?;
+        inner
+            .reserve(Self::INITIAL_CAPACITY)
+            .with_context(Code::IndexVector, || {
+                format!(
+                    "[AnnIndex::new] reserve capacity {} vectors",
+                    Self::INITIAL_CAPACITY
+                )
+            })?;
         Ok(Self { inner })
     }
 
     /// Open a dump written by [`save`](Self::save).
     pub fn restore(path: &Path) -> Result<Self, Error> {
-        let inner = Index::restore(path_str(path)?).map_err(ann_err)?;
+        let inner =
+            Index::restore(path_str(path).context("[AnnIndex::restore] path must be UTF-8")?)
+                .context(Code::IndexVector, "[AnnIndex::restore] open dump")?;
         Ok(Self { inner })
     }
 
@@ -60,15 +74,19 @@ impl AnnIndex {
     }
 
     pub fn add(&self, key: u64, vector: &[f32]) -> Result<(), Error> {
-        if vector.len() != self.inner.dimensions() {
-            return Err(Error::invalid(format!(
+        ensure!(
+            vector.len() == self.inner.dimensions(),
+            Error::invalid(format!(
                 "vector length {} does not match dimensions {}",
                 vector.len(),
                 self.inner.dimensions()
-            )));
-        }
+            ))
+            .context("[AnnIndex::add] vector length")
+        );
         self.ensure_capacity()?;
-        self.inner.add(key, vector).map_err(ann_err)
+        self.inner
+            .add(key, vector)
+            .context(Code::IndexVector, "[AnnIndex::add] insert vector")
     }
 
     pub fn contains(&self, key: u64) -> bool {
@@ -76,27 +94,41 @@ impl AnnIndex {
     }
 
     pub fn remove(&self, key: u64) -> Result<(), Error> {
-        self.inner.remove(key).map(|_| ()).map_err(ann_err)
+        self.inner
+            .remove(key)
+            .map(|_| ())
+            .with_context(Code::IndexVector, || {
+                format!("[AnnIndex::remove] delete key {key}")
+            })
     }
 
     /// k nearest keys and cosine distances (lower is closer).
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(u64, f32)>, Error> {
-        if query.len() != self.inner.dimensions() {
-            return Err(Error::invalid(format!(
+        ensure!(
+            query.len() == self.inner.dimensions(),
+            Error::invalid(format!(
                 "query length {} does not match dimensions {}",
                 query.len(),
                 self.inner.dimensions()
-            )));
-        }
+            ))
+            .context("[AnnIndex::search] query length")
+        );
         if k == 0 {
             return Ok(Vec::new());
         }
-        let hits = self.inner.search(query, k).map_err(ann_err)?;
+        let hits = self
+            .inner
+            .search(query, k)
+            .with_context(Code::IndexVector, || {
+                format!("[AnnIndex::search] query k={k}")
+            })?;
         Ok(hits.keys.into_iter().zip(hits.distances).collect())
     }
 
     pub fn save(&self, path: &Path) -> Result<(), Error> {
-        self.inner.save(path_str(path)?).map_err(ann_err)
+        self.inner
+            .save(path_str(path).context("[AnnIndex::save] path must be UTF-8")?)
+            .context(Code::IndexVector, "[AnnIndex::save] write dump")
     }
 
     fn ensure_capacity(&self) -> Result<(), Error> {
@@ -105,20 +137,22 @@ impl AnnIndex {
         if size < cap {
             return Ok(());
         }
-        let next = cap.saturating_mul(2).max(size.saturating_add(16));
-        self.inner.reserve(next).map_err(ann_err)
+        let next = cap
+            .saturating_mul(2)
+            .max(size.saturating_add(Self::INITIAL_CAPACITY));
+        self.inner
+            .reserve(next)
+            .with_context(Code::IndexVector, || {
+                format!("[AnnIndex::add] reserve capacity {next}")
+            })
     }
 }
 
 fn path_str(path: &Path) -> Result<&str, Error> {
     path.to_str().ok_or_else(|| {
-        Error::io(format!(
+        Error::not_utf8(format!(
             "vector index path is not UTF-8: {}",
             path.display()
         ))
     })
-}
-
-fn ann_err(err: impl std::fmt::Display) -> Error {
-    Error::index_unusable(err.to_string())
 }

@@ -15,6 +15,7 @@ use tantivy::schema::{
 use tantivy::{Index, IndexReader, IndexWriter, ReloadPolicy, TantivyDocument, Term};
 
 use crate::ann::AnnIndex;
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index;
 use crate::schema::{CollectionDecl, Dangling, EdgeDecl, FieldDecl, Schema};
 use crate::store;
@@ -287,11 +288,11 @@ impl Inner {
         {
             writer
                 .commit()
-                .map_err(|err| Error::index_unusable(format!("lexical commit: {err}")))?;
+                .context(Code::IndexLexical, "[SearchEngine::commit] lexical commit")?;
             lexical
                 .reader
                 .reload()
-                .map_err(|err| Error::index_unusable(format!("lexical reload: {err}")))?;
+                .context(Code::IndexLexical, "[SearchEngine::commit] reload reader")?;
         }
         if let Some(vector) = &self.vector {
             save_vector(index_dir, vector)?;
@@ -357,9 +358,10 @@ fn index_lexical(
     doc.add_text(lexical.f_id, id);
     doc.add_text(lexical.f_path, path);
     doc.add_text(lexical.f_text, text);
-    writer
-        .add_document(doc)
-        .map_err(|err| Error::index_unusable(format!("lexical add: {err}")))?;
+    writer.add_document(doc).context(
+        Code::IndexLexical,
+        "[SearchEngine::index_lexical] add document",
+    )?;
     Ok(())
 }
 
@@ -396,7 +398,7 @@ fn upsert_vector(
     store.field_ids.extend(slots);
     let vector = embedder.embed(text)?;
     if vector.len() != dimensions {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "embedder returned {} dimensions, expected {dimensions}",
             vector.len()
         )));
@@ -449,10 +451,10 @@ fn lexical_search(
     let Some(lexical) = inner.lexical.as_mut() else {
         return Ok(Vec::new());
     };
-    lexical
-        .reader
-        .reload()
-        .map_err(|err| Error::index_unusable(format!("lexical reload: {err}")))?;
+    lexical.reader.reload().context(
+        Code::IndexLexical,
+        "[SearchEngine::lexical_search] reload reader",
+    )?;
     let searcher = lexical.reader.searcher();
     let parser = QueryParser::for_index(&lexical.index, vec![lexical.f_text]);
     let parsed = match parse_text_query(&parser, text) {
@@ -469,12 +471,13 @@ fn lexical_search(
     }
     let top = searcher
         .search(&query, &TopDocs::with_limit(pool).order_by_score())
-        .map_err(|err| Error::index_unusable(format!("lexical search: {err}")))?;
+        .context(Code::IndexLexical, "[SearchEngine::lexical_search] search")?;
     let mut hits = Vec::new();
     for (score, addr) in top {
-        let doc: TantivyDocument = searcher
-            .doc(addr)
-            .map_err(|err| Error::index_unusable(format!("lexical fetch: {err}")))?;
+        let doc: TantivyDocument = searcher.doc(addr).context(
+            Code::IndexLexical,
+            "[SearchEngine::lexical_search] fetch document",
+        )?;
         let Some(id) = stored_str(&doc, lexical.f_id) else {
             continue;
         };
@@ -512,7 +515,7 @@ fn vector_search(
     }
     let query = embedder.embed(text)?;
     if query.len() != store.dimensions {
-        return Err(Error::invalid(format!(
+        bail!(Error::invalid(format!(
             "embedder returned {} dimensions, expected {}",
             query.len(),
             store.dimensions
@@ -643,22 +646,27 @@ fn open_lexical(index_dir: &Path, can_write: bool) -> Result<Option<Lexical>, Er
     if !path.join("meta.json").is_file() {
         return Ok(None);
     }
-    let index = Index::open_in_dir(&path)
-        .map_err(|err| Error::index_unusable(format!("open lexical index: {err}")))?;
+    let index = Index::open_in_dir(&path).context(
+        Code::IndexLexical,
+        "[SearchEngine::open_lexical] open index",
+    )?;
     Ok(Some(bind_lexical(index, can_write)?))
 }
 
 fn create_lexical(index_dir: &Path, can_write: bool) -> Result<Lexical, Error> {
     let path = index_dir.join(LEXICAL_DIR);
-    fs::create_dir_all(&path)
-        .map_err(|err| Error::io(format!("create {}: {err}", path.display())))?;
+    fs::create_dir_all(&path).context("[SearchEngine::create_lexical] create dir")?;
     let (schema, _, _, _, _, _) = lexical_schema();
     let index = if path.join("meta.json").is_file() {
-        Index::open_in_dir(&path)
-            .map_err(|err| Error::index_unusable(format!("open lexical index: {err}")))?
+        Index::open_in_dir(&path).context(
+            Code::IndexLexical,
+            "[SearchEngine::create_lexical] open index",
+        )?
     } else {
-        Index::create_in_dir(&path, schema)
-            .map_err(|err| Error::io(format!("create lexical index: {err}")))?
+        Index::create_in_dir(&path, schema).context(
+            Code::IndexLexical,
+            "[SearchEngine::create_lexical] create index",
+        )?
     };
     bind_lexical(index, can_write)
 }
@@ -667,25 +675,27 @@ fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
     let schema = index.schema();
     let f_key = schema
         .get_field("key")
-        .map_err(|err| Error::index_unusable(format!("lexical field key: {err}")))?;
-    let f_collection = schema
-        .get_field("collection")
-        .map_err(|err| Error::index_unusable(format!("lexical field collection: {err}")))?;
+        .context(Code::IndexLexical, "[SearchEngine::bind_lexical] field key")?;
+    let f_collection = schema.get_field("collection").context(
+        Code::IndexLexical,
+        "[SearchEngine::bind_lexical] field collection",
+    )?;
     let f_id = schema
         .get_field("id")
-        .map_err(|err| Error::index_unusable(format!("lexical field id: {err}")))?;
-    let f_path = schema
-        .get_field("path")
-        .map_err(|err| Error::index_unusable(format!("lexical field path: {err}")))?;
-    let f_text = schema
-        .get_field("text")
-        .map_err(|err| Error::index_unusable(format!("lexical field text: {err}")))?;
+        .context(Code::IndexLexical, "[SearchEngine::bind_lexical] field id")?;
+    let f_path = schema.get_field("path").context(
+        Code::IndexLexical,
+        "[SearchEngine::bind_lexical] field path",
+    )?;
+    let f_text = schema.get_field("text").context(
+        Code::IndexLexical,
+        "[SearchEngine::bind_lexical] field text",
+    )?;
     let writer = if can_write {
-        Some(
-            index
-                .writer_with_num_threads(1, WRITER_HEAP)
-                .map_err(|err| Error::index_unusable(format!("lexical writer: {err}")))?,
-        )
+        Some(index.writer_with_num_threads(1, WRITER_HEAP).context(
+            Code::IndexLexical,
+            "[SearchEngine::bind_lexical] open writer",
+        )?)
     } else {
         None
     };
@@ -693,7 +703,10 @@ fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
         .reader_builder()
         .reload_policy(ReloadPolicy::Manual)
         .try_into()
-        .map_err(|err| Error::index_unusable(format!("lexical reader: {err}")))?;
+        .context(
+            Code::IndexLexical,
+            "[SearchEngine::bind_lexical] open reader",
+        )?;
     Ok(Lexical {
         index,
         writer,
@@ -713,20 +726,23 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
     if !meta_path.is_file() || !dump.is_file() {
         return Ok(None);
     }
-    let raw = fs::read_to_string(&meta_path)
-        .map_err(|err| Error::io(format!("read {}: {err}", meta_path.display())))?;
-    let meta: VectorMeta = serde_json::from_str(&raw)
-        .map_err(|err| Error::index_unusable(format!("vector meta: {err}")))?;
+    let raw = fs::read_to_string(&meta_path).context("[SearchEngine::load_vector] read meta")?;
+    let meta: VectorMeta = serde_json::from_str(&raw).context(
+        Code::IndexCorrupt,
+        "[SearchEngine::load_vector] decode meta",
+    )?;
     let ann = AnnIndex::restore(&dump)?;
     if ann.dimensions() != meta.dimensions {
         return Ok(None);
     }
     let keys_path = dir.join(VECTOR_KEYS);
     let keys = if keys_path.is_file() {
-        let text = fs::read_to_string(&keys_path)
-            .map_err(|err| Error::io(format!("read {}: {err}", keys_path.display())))?;
-        serde_json::from_str(&text)
-            .map_err(|err| Error::index_unusable(format!("vector keys: {err}")))?
+        let text =
+            fs::read_to_string(&keys_path).context("[SearchEngine::load_vector] read keys")?;
+        serde_json::from_str(&text).context(
+            Code::IndexCorrupt,
+            "[SearchEngine::load_vector] decode keys",
+        )?
     } else {
         BTreeMap::new()
     };
@@ -741,8 +757,7 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
 
 fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
     let dir = index_dir.join(VECTOR_DIR);
-    fs::create_dir_all(&dir)
-        .map_err(|err| Error::io(format!("create {}: {err}", dir.display())))?;
+    fs::create_dir_all(&dir).context("[SearchEngine::save_vector] create dir")?;
     store.ann.save(&dir.join(VECTOR_INDEX))?;
     let meta = VectorMeta {
         model_id: store.model_id.clone(),
@@ -750,10 +765,10 @@ fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
         field_ids: store.field_ids.iter().cloned().collect(),
     };
     let meta_bytes = serde_json::to_vec_pretty(&meta)
-        .map_err(|err| Error::io(format!("encode vector meta: {err}")))?;
+        .context(Code::Invalid, "[SearchEngine::save_vector] encode meta")?;
     store::atomic_write(&dir.join(VECTOR_META), &meta_bytes)?;
     let keys_bytes = serde_json::to_vec(&store.keys)
-        .map_err(|err| Error::io(format!("encode vector keys: {err}")))?;
+        .context(Code::Invalid, "[SearchEngine::save_vector] encode keys")?;
     store::atomic_write(&dir.join(VECTOR_KEYS), &keys_bytes)
 }
 
@@ -762,15 +777,14 @@ fn load_edges(index_dir: &Path) -> Result<EdgeIndex, Error> {
     if !path.is_file() {
         return Ok(EdgeIndex::default());
     }
-    let text = fs::read_to_string(&path)
-        .map_err(|err| Error::io(format!("read {}: {err}", path.display())))?;
+    let text = fs::read_to_string(&path).context("[SearchEngine::load_edges] read index")?;
     let mut edges = EdgeIndex::default();
     for line in text.lines() {
         if line.is_empty() {
             continue;
         }
         let parsed: EdgeLine = serde_json::from_str(line)
-            .map_err(|err| Error::index_unusable(format!("edge index: {err}")))?;
+            .context(Code::IndexCorrupt, "[SearchEngine::load_edges] decode line")?;
         edges
             .by_target
             .entry((parsed.src, parsed.field, parsed.dst))
@@ -791,7 +805,7 @@ fn save_edges(index_dir: &Path, edges: &EdgeIndex) -> Result<(), Error> {
                 dst: dst.clone(),
             };
             let mut encoded = serde_json::to_vec(&line)
-                .map_err(|err| Error::io(format!("encode edge index: {err}")))?;
+                .context(Code::Invalid, "[SearchEngine::save_edges] encode line")?;
             encoded.push(b'\n');
             bytes.extend_from_slice(&encoded);
         }
@@ -948,7 +962,7 @@ fn check_strict_fields(
             && edge.dangling == Dangling::Strict
         {
             if schema.get(&edge.collection).is_none() {
-                return Err(Error::invalid(format!(
+                bail!(Error::invalid(format!(
                     "edge {} targets unknown collection {}",
                     field.name, edge.collection
                 )));
@@ -956,13 +970,13 @@ fn check_strict_fields(
             for id in edge_target_ids(values.get(&field.name)) {
                 match lookup(&edge.collection, &id) {
                     Ok(_) => {}
-                    Err(err) if err.code.as_deref() == Some(crate::Code::NotFound.as_str()) => {
-                        return Err(Error::invalid(format!(
+                    Err(err) if err.known_code() == Some(crate::Code::NotFound) => {
+                        bail!(Error::invalid(format!(
                             "strict edge {} target {id} is missing",
                             field.name
                         )));
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => bail!(err),
                 }
             }
         }

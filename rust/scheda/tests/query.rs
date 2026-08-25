@@ -173,7 +173,7 @@ fn unmarked_field_is_invalid() {
             json!({"clauses":[{"equal":{"field":"secret","value":"x"}}]}),
         ))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -251,7 +251,7 @@ fn check_reports_schema_failure_with_path() {
         .unwrap();
     assert_eq!(got.valid, Some(false));
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::Invalid));
     assert!(err.to_string().contains("a.md"));
 }
 
@@ -276,7 +276,7 @@ fn reindex_rebuilds_format_and_counts() {
     let err = collection
         .search(&scheda::SearchQuery::default().with_text("foreign"))
         .unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::IndexUnusable));
+    assert_eq!(err.known_code(), Some(Code::IndexVersion));
     assert_ne!(err.to_string(), "foreign");
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
@@ -300,6 +300,6 @@ fn conflict_markers_fail_check() {
     let got = collection.find_one("a").unwrap();
     assert_eq!(got.valid, Some(false));
     let err = vault.check().unwrap_err();
-    assert_eq!(Code::of(&err), Some(Code::Conflict));
+    assert_eq!(err.known_code(), Some(Code::ConflictMarkers));
     assert!(err.to_string().contains(&rel));
 }
