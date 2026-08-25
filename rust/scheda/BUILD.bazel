@@ -153,6 +153,21 @@ rust_test(
     deps = [":scheda"],
 )
 
+rust_test(
+    name = "catalog_test",
+    srcs = ["tests/catalog.rs"],
+    compile_data = glob([
+        "src/**/*.rs",
+        "testdata/**",
+    ]),
+    crate_root = "tests/catalog.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
 rust_doc(
     name = "scheda_doc",
     crate = ":scheda",

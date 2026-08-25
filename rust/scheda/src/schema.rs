@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::Error;
+use crate::{Catalog, CatalogBody, CatalogCollection, CatalogEdge, CatalogField, CatalogId, Error};
 
 const MIB: u64 = 1024 * 1024;
 pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = 8 * MIB;
@@ -68,6 +68,14 @@ pub(crate) enum SegmentRotate {
     Daily,
 }
 
+impl SegmentRotate {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Daily => "daily",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Multiplicity {
@@ -75,11 +83,29 @@ pub(crate) enum Multiplicity {
     Many,
 }
 
+impl Multiplicity {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::One => "one",
+            Self::Many => "many",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Dangling {
     Lax,
     Strict,
+}
+
+impl Dangling {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Lax => "lax",
+            Self::Strict => "strict",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -150,6 +176,8 @@ struct RawCollection {
     segment_rotate: Option<SegmentRotate>,
     singleton_id: Option<String>,
     body: Option<RawBody>,
+    #[serde(default)]
+    isolated: bool,
 }
 
 fn deserialize_layout<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
@@ -206,6 +234,7 @@ pub(crate) struct CollectionDecl {
     pub layout: Vec<String>,
     pub id_field: String,
     pub id_pattern: Option<Regex>,
+    pub id_pattern_src: Option<String>,
     pub filter_keys: BTreeSet<String>,
     pub segment_max_bytes: Option<u64>,
     pub segment_max_lines: Option<u64>,
@@ -213,6 +242,7 @@ pub(crate) struct CollectionDecl {
     pub singleton_id: Option<String>,
     pub body: Option<BodyDecl>,
     pub fields: Vec<FieldDecl>,
+    pub isolated: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -426,7 +456,12 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         Some(field) => field.to_owned(),
         None => DEFAULT_ID_FIELD.to_owned(),
     };
-    let id_pattern = match raw.id.as_ref().and_then(|id| id.pattern.as_deref()) {
+    let id_pattern_src = raw
+        .id
+        .as_ref()
+        .and_then(|id| id.pattern.clone())
+        .filter(|pattern| !pattern.is_empty());
+    let id_pattern = match id_pattern_src.as_deref() {
         Some(pattern) => Some(Regex::new(pattern).map_err(|err| {
             Error::invalid(format!("schema {loc}: id.pattern is not a regex: {err}"))
         })?),
@@ -457,6 +492,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         layout: raw.layout,
         id_field,
         id_pattern,
+        id_pattern_src,
         filter_keys,
         segment_max_bytes,
         segment_max_lines,
@@ -464,6 +500,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         singleton_id: raw.singleton_id,
         body,
         fields,
+        isolated: raw.isolated,
     })
 }
 
@@ -609,6 +646,109 @@ impl CollectionDecl {
     pub(crate) fn edge(&self, name: &str) -> Option<&EdgeDecl> {
         find_edge(&self.fields, name)
     }
+}
+
+pub(crate) fn to_catalog(schema: &Schema) -> Result<Catalog, Error> {
+    let mut catalog = Catalog::default();
+    for decl in schema.collections() {
+        catalog.collections.push(collection_catalog(decl)?);
+    }
+    Ok(catalog)
+}
+
+fn collection_catalog(decl: &CollectionDecl) -> Result<CatalogCollection, Error> {
+    let mut col = CatalogCollection::default()
+        .with_name(decl.name.as_str())
+        .with_kind(decl.kind.as_str())
+        .with_schema_version(decl.schema_version);
+    col.layout.clone_from(&decl.layout);
+    let mut id = CatalogId::default().with_field(decl.id_field.as_str());
+    if let Some(pattern) = &decl.id_pattern_src {
+        id = id.with_pattern(pattern.as_str());
+    }
+    col.id = id.into();
+    if let Some(bytes) = decl.segment_max_bytes {
+        col = col.with_segment_max_bytes(bytes);
+    }
+    if let Some(lines) = decl.segment_max_lines {
+        col = col.with_segment_max_lines(lines);
+    }
+    if let Some(rotate) = decl.segment_rotate {
+        col = col.with_segment_rotate(rotate.as_str());
+    }
+    if let Some(singleton_id) = &decl.singleton_id {
+        col = col.with_singleton_id(singleton_id.as_str());
+    }
+    if decl.isolated {
+        return Ok(col.with_isolated(true));
+    }
+    col.fields = catalog_fields(&decl.fields)?;
+    if let Some(body) = &decl.body {
+        col.body = catalog_body(body).into();
+    }
+    Ok(col)
+}
+
+fn catalog_body(body: &BodyDecl) -> CatalogBody {
+    let mut msg = CatalogBody::default().with_allowed(body.allowed);
+    if body.fts {
+        msg = msg.with_fts(true);
+    }
+    if body.vector {
+        msg = msg.with_vector(true).with_field_id(body.field_id.as_str());
+    }
+    msg
+}
+
+fn catalog_fields(fields: &[FieldDecl]) -> Result<Vec<CatalogField>, Error> {
+    let mut out = Vec::with_capacity(fields.len());
+    for field in fields {
+        let mut msg = CatalogField::default()
+            .with_name(field.name.as_str())
+            .with_type(field.type_.as_str());
+        if field.required {
+            msg = msg.with_required(true);
+        }
+        if field.nullable {
+            msg = msg.with_nullable(true);
+        }
+        if field.filter {
+            msg = msg.with_filter(true);
+        }
+        if field.fts {
+            msg = msg.with_fts(true);
+        }
+        if field.vector {
+            msg = msg.with_vector(true);
+        }
+        if let Some(field_id) = &field.field_id {
+            msg = msg.with_field_id(field_id.as_str());
+        }
+        if let Some(edge) = &field.edge {
+            msg.edge = CatalogEdge::default()
+                .with_collection(edge.collection.as_str())
+                .with_multiplicity(edge.multiplicity.as_str())
+                .with_dangling(edge.dangling.as_str())
+                .into();
+        }
+        if let Some(default) = &field.default {
+            msg.default = catalog_field_default(default)?.default;
+        }
+        if !field.fields.is_empty() {
+            msg.fields = catalog_fields(&field.fields)?;
+        }
+        out.push(msg);
+    }
+    Ok(out)
+}
+
+fn catalog_field_default(value: &serde_json::Value) -> Result<CatalogField, Error> {
+    serde_json::from_value(serde_json::json!({
+        "name": "_",
+        "type": "string",
+        "default": value,
+    }))
+    .map_err(|err| Error::invalid(format!("catalog field default: {err}")))
 }
 
 fn find_edge<'a>(fields: &'a [FieldDecl], name: &str) -> Option<&'a EdgeDecl> {
@@ -834,5 +974,15 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(Code::of(&err), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn isolated_mark_parses() {
+        let decl = parse(
+            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nisolated: true\nfields:\n  - name: secret\n    type: string\n",
+        )
+        .unwrap();
+        assert!(decl.isolated);
+        assert_eq!(decl.fields[0].name, "secret");
     }
 }

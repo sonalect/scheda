@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.10, 24 August 2026.
+Document 5 of the Scheda package. Version 0.11, 25 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index behaviour is in `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -129,6 +129,7 @@ extractors (SCH-3). The file stem is not the collection name.
 | `segment_rotate` | `journal` only | Optional `daily` (UTC). |
 | `singleton_id` | `singleton` only | The one Record `id` (MOD-7). |
 | `body` | `document` only | Mapping (SCH-7). Omitted: body allowed, not indexed. |
+| `isolated` | no | Boolean. Default `false`. `true` marks SCH-15. `catalog` on the main Vault lists the collection as isolated and omits `fields` (ISO-3). The isolated git root is `09`. |
 
 Journal-only keys on `document` / `singleton`, `singleton_id` on another
 kind, and `body` on `journal` / `singleton`, are rejected. Two files with
@@ -163,7 +164,6 @@ Each item of `fields`:
 | `fields` | `object` / `object_list` | Nested field list. Omitted on `object` / `object_list` means an open map of `string` values (SCH-4). |
 
 `fields` on a scalar type is rejected. Nested items use this same table.
-`isolated` (SCH-15) is still **later** and is rejected.
 
 `edge` mapping:
 
@@ -178,7 +178,8 @@ Each item of `fields`:
 ## 9. What this document does not decide
 
 Pretty-print (quotes, key order, YAML vs JSON). Bindings must round-trip the
-information in SCH-2–SCH-14 using the keys in §8. SCH-15 is **later**.
+information in SCH-2–SCH-14 using the keys in §8. SCH-15's isolated git root,
+owner-only files, and Index rules stay `09`.
 
 FTS engine, vector store, and `reindex` — `06`.
 

@@ -190,6 +190,8 @@ fn src_does_not_name_consumer_collections() {
         "walk_src",
         "walk_dst",
         "walk_strict",
+        "west_indexed",
+        "west_isolated",
     ] {
         assert!(
             !contains_collection_name(&haystack, name),

@@ -207,6 +207,11 @@ impl Vault {
                 "collection {name} is not in Schema"
             )));
         };
+        if decl.isolated {
+            return Err(Error::unsupported(format!(
+                "isolated collection {name} is not on this Vault handle"
+            )));
+        }
         Ok(Collection {
             vault: self.path.clone(),
             index_dir: self.index_dir.clone(),
@@ -282,12 +287,12 @@ impl Vault {
         journal::check_journals(&self.path, &schema)
     }
 
-    /// Schema as `api/v1` `Catalog` (LIB-20, AGT-1). Fill is A1.
+    /// Schema as `api/v1` `Catalog` (LIB-20, AGT-1). Isolated collections are
+    /// listed without `fields` (ISO-3).
     pub fn catalog(&self) -> Result<Catalog, Error> {
-        todo!(
-            "catalog from Schema is A1 ({})",
-            self.path.display()
-        )
+        let catalog = schema::to_catalog(&self.schema)?;
+        catalog.require_valid()?;
+        Ok(catalog)
     }
 
     pub fn reindex(&self) -> Result<ReindexCounts, Error> {
@@ -338,6 +343,7 @@ impl Collection {
                 layout: vec![String::from("c/{id}.md")],
                 id_field: String::from("id"),
                 id_pattern: None,
+                id_pattern_src: None,
                 filter_keys: std::collections::BTreeSet::new(),
                 segment_max_bytes: None,
                 segment_max_lines: None,
@@ -345,6 +351,7 @@ impl Collection {
                 singleton_id: None,
                 body: None,
                 fields: Vec::new(),
+                isolated: false,
             },
             schema: Arc::new(Schema::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),

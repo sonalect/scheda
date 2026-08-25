@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.3, 24 August 2026.
+Document 12 of the Scheda package. Version 0.4, 25 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -11,9 +11,9 @@ The first implementation is the crate `scheda`. Other language bindings are
 out of this plan (`10` §1). MCP is an example transport, not a stage here
 (`08` AGT-4).
 
-A0 (messages and the `catalog` name) may land before isolated. Do not start
-A1 until the unencrypted isolated slice in `10` §1 is in the crate
-(SCH-15, ISO-2, ISO-4, ISO-6, IDX-4). That slice is not this checklist.
+A0 (messages and the `catalog` name) may land before isolated. A1 serializes
+Schema, including `isolated` for ISO-3 listing. The unencrypted isolated
+root in `10` §1 (SCH-15, ISO-2, ISO-4, ISO-6, IDX-4) is not this checklist.
 Age encryption (ISO-5, ISO-7–11) stays out.
 
 ---
@@ -46,7 +46,7 @@ library `catalog` → thin CLI of `07` + `catalog` → ISO-3 on the main Vault
 | Stage | Status | What closes |
 |---|---|---|
 | [A0](#a0-catalog-messages) | done | `catalog` in `api/v1` and on the library surface |
-| [A1](#a1-catalog-from-schema) | not started | AGT-1; isolated listed without sealed fields |
+| [A1](#a1-catalog-from-schema) | done | AGT-1; isolated listed without sealed fields |
 | [A2](#a2-thin-cli) | not started | AGT-2, AGT-3, AGT-4, AGT-5 |
 | [A3](#a3-isolation-at-the-agent-surface) | not started | ISO-3 on CLI + library tools |
 | [A4](#a4-agent-acceptance) | not started | `10` §4 acceptance |
@@ -100,23 +100,24 @@ invent JSON keys that are not in `api/v1`.
 
 ## A1. Catalog from Schema
 
-**Status:** not started
+**Status:** done
 
 **Codes:** AGT-1, SCH-1, ISO-3 (catalog half).
 
-Close only after A0. Isolated collections already exist in Schema (`10`
-§1). `catalog` on the main Vault lists them as isolated and does not
-include their field values (ISO-3). Field lists and marks come from Schema
-files for collections that are not isolated.
+Close only after A0. Schema may mark a collection `isolated: true` (`05`
+§8). `catalog` on the main Vault lists those collections as isolated and
+does not include their field values (ISO-3). Field lists and marks come
+from Schema files for collections that are not isolated. The isolated git
+root (ISO-2) is `10` §1 / `09`, not this stage.
 
-- [ ] Fixture Schema exported as JSON; collection names, kinds, layout
+- [x] Fixture Schema exported as JSON; collection names, kinds, layout
       templates, fields, `fts` / `vector` / `filter` marks, and edges match
       the Schema files (AGT-1, SCH-1).
-- [ ] Catalog is not built by walking Record directories (SCH-1, AGT-1).
-- [ ] Two Vaults with different collection names: each `catalog` matches
+- [x] Catalog is not built by walking Record directories (SCH-1, AGT-1).
+- [x] Two Vaults with different collection names: each `catalog` matches
       that Vault; grep of `rust/scheda/src` does not contain those names
       (MOD-1, SCH-1).
-- [ ] Isolated collection: `catalog` on the main Vault marks it isolated
+- [x] Isolated collection: `catalog` on the main Vault marks it isolated
       and omits its field values (ISO-3). Opening the isolated handle is
       how a caller reads those Records (`09` ISO-2).
 

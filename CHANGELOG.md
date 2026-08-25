@@ -11,7 +11,8 @@ API or on-disk format changes bump the minor.
 ### Added
 
 - `api/v1` `Catalog` (and nested collection/field/edge/body messages) for
-  AGT-1; `Vault::catalog` exists (`todo!` until A1). `07` LIB-20.
+  AGT-1. `Vault::catalog` serializes Schema files as that message (A1);
+  isolated collections are listed without `fields` (ISO-3). `07` LIB-20.
 
 ## [0.1.0] - 2026-08-24
 
