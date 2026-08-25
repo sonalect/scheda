@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.21, 24 August 2026.
+Document 7 of the Scheda package. Version 0.22, 24 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -20,7 +20,7 @@ An assertion without a check is not a requirement.
 
 **LIB-1. In-process library.** The caller loads Scheda in its own process. A Scheda daemon or HTTP server is not required to read or write. *Check (**core**):* a test writes and reads a local Vault (`auto_sync` off) with no second process and no network.
 
-**LIB-2. Same operations in every language.** Required names: `open`, `init`, `clone`, `collection`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `commit`, `push_remote`, `pull_remote`, `sync_remote`, `check`, `reindex`. **Search** also requires `walk` and `walk_inverse` (REL-1–3). Optional: `history` (core in this binding). Multi-step walk is **later**. *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
+**LIB-2. Same operations in every language.** Required names: `open`, `init`, `clone`, `collection`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `commit`, `push_remote`, `pull_remote`, `sync_remote`, `check`, `reindex`. **Search** also requires `walk` and `walk_inverse` (REL-1–3). **Agent** also requires `catalog` (AGT-1). Optional: `history` (core in this binding). Multi-step walk is **later**. *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
 
 **LIB-3. Whole-record writes.** Mutation is `insert_one` or `replace_one` of the whole Record. There is no partial field patch. SQL against the Index is not a caller API. *Check:* `replace_one` on `journal` is a failure (`unsupported`).
 
@@ -47,6 +47,8 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 **LIB-11. `search(query)`.** Hybrid retrieval (QRY-3–6): BM25 lexical and ANN vector legs when both are on, fused with RRF by default. Argument is `api/v1` `SearchQuery`: `text` (required), optional `k` (unset or `0` → 10), optional SCH-8 `filter`, optional `lexical_weight` / `vector_weight` (unset → `1`; **zero turns that leg off** for fusion; when set, finite and `>= 0`). A message that fails those `api/v1` rules is `invalid` before retrieval. Scoped to the collection handle in this binding. Output is `api/v1` `SearchHits`: ordered `SearchHit` values with `collection`, `id`, `path`, and per-leg scores (`lexical_score` / `vector_score` set only when that leg produced the hit; scores, when set, are finite and `>= 0`). **Search.** *Check:* QRY-3 fixture ids all appear at the given `k`; a hit from both legs carries both scores. *Check:* negative or non-finite weight → `invalid`.
 
 **LIB-19. `walk(field, filter)` / `walk_inverse(source_collection, field, id)`.** REL-1–3. `field` is an SCH-11 edge on the source collection. `walk` runs `find(filter)` on this collection (A) and returns Records in the target collection (B) referenced by `field`. A dangling `id` is omitted, not a hit. `walk_inverse` on B lists A Records that point at `id` without scanning unrelated files. **Search.** *Check:* REL-2 three-document fixture; REL-3 inverse is not a full collection scan.
+
+**LIB-20. `catalog()`.** Schema as `api/v1` `Catalog` (AGT-1, `05` §8): collections, kinds, fields, index marks, edges, layout templates. Not inferred from directories. No request envelope. **Agent.** *Check:* AGT-1.
 
 ---
 

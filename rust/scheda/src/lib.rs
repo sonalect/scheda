@@ -64,8 +64,8 @@ pub use ann::AnnIndex;
 pub use error::Code;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHit, SearchHits,
-    SearchQuery,
+    Catalog, CatalogBody, CatalogCollection, CatalogEdge, CatalogField, CatalogId, Error, Filter,
+    HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHit, SearchHits, SearchQuery,
 };
 pub use schema::{Kind, collection_dir};
 pub use search::Embedder;

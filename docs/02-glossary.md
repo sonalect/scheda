@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.12, 24 August 2026.
+Document 2 of the Scheda package. Version 0.13, 24 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `commit`, `open`, `init`, `clone`, `auto_sync`, `push_remote`, `pull_remote`, `sync_remote`, `encrypt`, `secret`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `catalog`, `commit`, `open`, `init`, `clone`, `auto_sync`, `push_remote`, `pull_remote`, `sync_remote`, `encrypt`, `secret`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
@@ -149,6 +149,8 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 **`find`** — select records by field filters (equality, set, existence, path prefix), not by meaning.
 
 **`search`** — hybrid retrieval. Not the same as `find`.
+
+**`catalog`** — Schema serialized as `api/v1` `Catalog`. Not inferred from the directory tree.
 
 **`init`** — create a new git repository at a path, no Remote.
 

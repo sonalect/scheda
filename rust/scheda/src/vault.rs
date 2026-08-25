@@ -11,7 +11,8 @@ use crate::schema::{self, CollectionDecl, Kind, Multiplicity, Schema};
 use crate::search::{self, Embedder, SearchEngine};
 use crate::store;
 use crate::{
-    Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHits, SearchQuery,
+    Catalog, Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHits,
+    SearchQuery,
 };
 
 /// A git working tree that holds collections of records.
@@ -279,6 +280,14 @@ impl Vault {
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema)?;
         journal::check_journals(&self.path, &schema)
+    }
+
+    /// Schema as `api/v1` `Catalog` (LIB-20, AGT-1). Fill is A1.
+    pub fn catalog(&self) -> Result<Catalog, Error> {
+        todo!(
+            "catalog from Schema is A1 ({})",
+            self.path.display()
+        )
     }
 
     pub fn reindex(&self) -> Result<ReindexCounts, Error> {
@@ -744,7 +753,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Code, Error, Record};
+    use crate::{Catalog, Code, Error, Record};
 
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -912,5 +921,10 @@ mod tests {
         let scratch = Scratch::new();
         let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
         assert!(git::is_work_tree(vault.path()));
+    }
+
+    #[test]
+    fn catalog_is_on_the_vault_surface() {
+        let _: fn(&Vault) -> Result<Catalog, Error> = Vault::catalog;
     }
 }

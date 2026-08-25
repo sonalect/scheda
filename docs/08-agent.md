@@ -1,6 +1,6 @@
 # 08. Agent surface
 
-Document 8 of the Scheda package. Version 0.6, 24 August 2026.
+Document 8 of the Scheda package. Version 0.7, 24 August 2026.
 
 How an AI agent uses Scheda: the same operations as `07`, plus a Schema catalog, over a thin transport. The agent is not a second store and does not get a looser write path. Codes: `AGT`. Phase **agent** unless marked otherwise. Terms are in `02`.
 
@@ -12,7 +12,7 @@ An assertion without a check is not a requirement. This phase does not block **c
 
 A person may read Vault files without Scheda (STO-2). That is not a substitute for tools: lexical/vector `search`, Schema filters, and edge walks are not available by grepping the tree.
 
-**AGT-1. Catalog from Schema.** The agent (or the caller wrapping it) can list collections, kinds, fields, index marks, edges, and layout templates — serialized from Schema, not inferred from directory names. *Check:* a fixture Schema exported as JSON; names match the Schema files.
+**AGT-1. Catalog from Schema.** The agent (or the caller wrapping it) can list collections, kinds, fields, index marks, edges, and layout templates — serialized from Schema as `api/v1` `Catalog`, not inferred from directory names. *Check:* a fixture Schema exported as JSON; names match the Schema files.
 
 **AGT-2. Few tools, not one per collection.** The tool set is the `07` operations that mutate or query Records and git, plus `catalog`, `check`, `reindex`. There is no family of methods named after consumer types. *Check:* a scripted run “`scan` / `search` → `find_one` → `insert_one` on a `journal` → `commit`” uses only those tools.
 

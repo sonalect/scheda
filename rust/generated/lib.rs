@@ -149,6 +149,27 @@ impl api::v1::SearchQuery {
     }
 }
 
+impl api::v1::Catalog {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::CatalogCollection {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::CatalogField {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
 impl api::v1::HistoryEntry {
     /// UTC commit instant. Git `Time.seconds` is already seconds since epoch.
     #[must_use]
@@ -162,7 +183,10 @@ impl api::v1::HistoryEntry {
 mod tests {
     use protovalidate_buffa::Validate;
 
-    use super::api::v1::{Error, Filter, HistoryEntry, OpenOptions, Record, SearchHit, SearchQuery};
+    use super::api::v1::{
+        Catalog, CatalogCollection, CatalogField, Error, Filter, HistoryEntry, OpenOptions, Record,
+        SearchHit, SearchQuery,
+    };
 
     #[test]
     fn error_json_uses_lib5_code_string() {
@@ -334,5 +358,65 @@ mod tests {
         assert!(ok.clone().with_lexical_score(f64::NAN).validate().is_err());
         assert!(ok.clone().with_rrf_score(f64::INFINITY).validate().is_err());
         assert!(ok.with_vector_score(f64::NEG_INFINITY).validate().is_err());
+    }
+
+    #[test]
+    fn empty_catalog_is_valid() {
+        assert!(Catalog::default().validate().is_ok());
+        assert!(Catalog::default().require_valid().is_ok());
+    }
+
+    #[test]
+    fn catalog_collection_name_kind_and_version() {
+        let err = CatalogCollection::default()
+            .require_valid()
+            .expect_err("missing name and kind");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = CatalogCollection::default()
+            .with_name("notes")
+            .with_kind("blob")
+            .require_valid()
+            .expect_err("unknown kind");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = CatalogCollection::default()
+            .with_name("notes")
+            .with_kind("document")
+            .with_schema_version(0)
+            .require_valid()
+            .expect_err("schema_version 0");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let ok = CatalogCollection::default()
+            .with_name("notes")
+            .with_kind("document")
+            .with_schema_version(1)
+            .with_isolated(true);
+        assert!(ok.require_valid().is_ok());
+        assert!(ok.fields.is_empty());
+        let json = serde_json::to_value(&ok).expect("json");
+        assert_eq!(json["name"], "notes");
+        assert_eq!(json["kind"], "document");
+        assert_eq!(json["schemaVersion"], 1);
+        assert_eq!(json["isolated"], true);
+    }
+
+    #[test]
+    fn catalog_field_name_and_type() {
+        let err = CatalogField::default()
+            .require_valid()
+            .expect_err("missing name and type");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let err = CatalogField::default()
+            .with_name("title")
+            .with_type("blob")
+            .require_valid()
+            .expect_err("unknown type");
+        assert_eq!(err.code.as_deref(), Some("invalid"));
+        let ok = CatalogField::default()
+            .with_name("title")
+            .with_type("string");
+        assert!(ok.require_valid().is_ok());
+        let json = serde_json::to_value(&ok).expect("json");
+        assert_eq!(json["name"], "title");
+        assert_eq!(json["type"], "string");
     }
 }

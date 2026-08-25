@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.2, 24 August 2026.
+Document 12 of the Scheda package. Version 0.3, 24 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -11,9 +11,10 @@ The first implementation is the crate `scheda`. Other language bindings are
 out of this plan (`10` §1). MCP is an example transport, not a stage here
 (`08` AGT-4).
 
-Do not start A0 until the unencrypted isolated slice in `10` §1 is in the
-crate (SCH-15, ISO-2, ISO-4, ISO-6, IDX-4). That slice is not this
-checklist. Age encryption (ISO-5, ISO-7–11) stays out.
+A0 (messages and the `catalog` name) may land before isolated. Do not start
+A1 until the unencrypted isolated slice in `10` §1 is in the crate
+(SCH-15, ISO-2, ISO-4, ISO-6, IDX-4). That slice is not this checklist.
+Age encryption (ISO-5, ISO-7–11) stays out.
 
 ---
 
@@ -44,7 +45,7 @@ library `catalog` → thin CLI of `07` + `catalog` → ISO-3 on the main Vault
 
 | Stage | Status | What closes |
 |---|---|---|
-| [A0](#a0-catalog-messages) | not started | `catalog` in `api/v1` and on the library surface |
+| [A0](#a0-catalog-messages) | done | `catalog` in `api/v1` and on the library surface |
 | [A1](#a1-catalog-from-schema) | not started | AGT-1; isolated listed without sealed fields |
 | [A2](#a2-thin-cli) | not started | AGT-2, AGT-3, AGT-4, AGT-5 |
 | [A3](#a3-isolation-at-the-agent-surface) | not started | ISO-3 on CLI + library tools |
@@ -70,7 +71,7 @@ These must not block A0–A4. Writes must not depend on them (`10` §4–5).
 
 ## A0. Catalog messages
 
-**Status:** not started
+**Status:** done
 
 **Codes:** AGT-1 (name exists), `07` (catalog is **agent**, not LIB-2
 **core**), `api/v1` Protobuf JSON mapping (`08` AGT-4).
@@ -83,14 +84,16 @@ serialized (`05` SCH-1, §8 keys): collections, kinds, fields, index marks,
 edges, layout templates. Do not infer names from directories. Do not
 invent JSON keys that are not in `api/v1`.
 
-- [ ] `07` names `catalog` as an **agent** operation (same mapping rules as
+- [x] `07` names `catalog` as an **agent** operation (same mapping rules as
       LIB-2).
-- [ ] `api/v1` has a catalog message (or messages) whose Protobuf JSON
+- [x] `api/v1` has a catalog message (or messages) whose Protobuf JSON
       mapping can hold AGT-1. Generate stubs (`bazel run //api/v1:generate`).
-- [ ] Library surface has `catalog` (body may be `todo!` until A1).
-- [ ] Caller-supplied catalog request messages, if any, fail protovalidate
-      as `invalid` before Schema (`07` intro).
-- [ ] Library path still has no `panic!` / `unwrap` / `expect` / `assert!`
+- [x] Library surface has `catalog` (body may be `todo!` until A1).
+- [x] Caller-supplied catalog request messages, if any, fail protovalidate
+      as `invalid` before Schema (`07` intro). There is no request envelope
+      (LIB-20); constructed `Catalog` / `CatalogCollection` / `CatalogField`
+      still fail `require_valid` as `invalid`.
+- [x] Library path still has no `panic!` / `unwrap` / `expect` / `assert!`
       (`07` §5).
 
 ---
@@ -201,7 +204,7 @@ process is the writer (`08` §3). Lock rules stay STO-4.
 
 Exact MCP tool names — out of this plan.
 
-Catalog proto field names — `api/v1` after A0 amends it. Pretty-print of
+Catalog proto field names — `api/v1` `catalog.proto` (`05` §8 keys). Pretty-print of
 Schema YAML stays `05` §9.
 
 Whether `open` refuses a dirty Index or only warns via `check` (`10` §7).

@@ -8,6 +8,11 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `api/v1` `Catalog` (and nested collection/field/edge/body messages) for
+  AGT-1; `Vault::catalog` exists (`todo!` until A1). `07` LIB-20.
+
 ## [0.1.0] - 2026-08-24
 
 ### Added
