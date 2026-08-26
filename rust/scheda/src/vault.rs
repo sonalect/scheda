@@ -889,15 +889,18 @@ impl QueryCtx<'_> {
         let decls =
             apply_filter_schema(resolve_collections(self.schema, names)?, filter, explicit)?;
         if decls.is_empty() {
-            return Ok(FindResult::default());
+            return Ok(FindResult {
+                total: Some(0),
+                ..FindResult::default()
+            });
         }
         let journal_ord = decls.len() == 1 && decls[0].kind == Kind::Journal;
         let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
-        let hits = self
+        let page = self
             .engine
             .find(&collections, journal_ord, &decls[0], filter, offset, count)?;
         let mut records = Vec::new();
-        for (collection, id) in hits {
+        for (collection, id) in page.ids {
             match read_record(self.vault, self.schema, self.journal_ids, &collection, &id) {
                 Ok(record) => records.push(record),
                 Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
@@ -906,6 +909,7 @@ impl QueryCtx<'_> {
         }
         Ok(FindResult {
             records,
+            total: Some(page.total),
             ..FindResult::default()
         })
     }

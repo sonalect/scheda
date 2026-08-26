@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.14, 26 August 2026.
+Document 13 of the Scheda package. Version 0.15, 27 August 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -14,7 +14,7 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 |---|---|---|
 | Call | Vault `find(collections, filter, offset, count)`. Collection `find(filter, offset, count)` calls that with its name. | Vault `search(collections, query, reranker?)`. Collection `search(query, reranker?)` calls that with its name. |
 | In | `api.v1.Filter` plus a set of collection names (empty = this Vault, non-isolated) | `api.v1.SearchQuery` (`text` required) plus the same name set |
-| Out | `api.v1.FindResult` (page of `Record`, including `collection`) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker) |
+| Out | `api.v1.FindResult` (`records` plus `total`; `Record.collection` on each hit) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker) |
 | Engine | Tantivy Query only | BM25 (Tantivy) **and** ANN (USearch), RRF, then optional rerank |
 | Vectors | no | yes, if an embedder is set |
 
@@ -40,9 +40,9 @@ First write or `reindex` creates the engines if missing. `add` / `replace` updat
 
 1. Validate `Filter` (`kind` required). `count == 0` → `invalid`. Resolve `collections` (empty → non-isolated on this handle). Explicit name whose Schema rejects the `Filter` → `invalid`. Empty set: omit collections that reject it.
 2. Run that Query on the vault Tantivy index with `MUST` collection in the resolved names.
-3. Page: `TopDocs::with_limit(count).and_offset(offset)`.
+3. Collector: `(Count, TopDocs::with_limit(count).and_offset(offset))` in one `search()`. `Count` is indexed hits (`FindResult.total`).
 4. Order: exactly one resolved collection and it is `journal` → append order (`order_by_fast_field` on segment+line ordinal). Otherwise `order_by_score()`. Rotation does not reorder old lines.
-5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`.
+5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`; `total` is still the match count. A missing file is omitted from `records` and does not decrease `total`.
 
 `Filter` is a Tantivy 0.26 Query tree (`all`, `empty`, `term`, `term_set`, `phrase`, `phrase_prefix`, `fuzzy`, `regex`, `regex_phrase`, `range`, `exists`, `boolean` with `must` / `should` / `must_not`, `boost`, `const_score`, `disjunction_max`, `more_like_this`). No QueryParser string. AND = `OCCUR_MUST`, OR = `OCCUR_SHOULD`. Field `id` is Record identity (`term`, `term_set`, `range` only). Field `body` is Markdown prose on `document` (unless `no_body` or `exclude_fts`). `exclude_find` fields cannot appear. `id` cannot be excluded.
 

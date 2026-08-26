@@ -239,6 +239,7 @@ fn scripted_find_search_get_journal_add_commit() {
     let page = stdout_json(&found);
     assert_eq!(page["records"][0]["id"], "alpha");
     assert_eq!(page["records"][0]["collection"], "agent_notes");
+    assert_eq!(page["total"], 1);
 
     let search = run(&["--vault", &path, "search", "--query", &query]);
     let hits = stdout_json(&search);
@@ -611,6 +612,7 @@ fn vault_find_scopes_collections() {
     let page = stdout_json(&scoped);
     assert_eq!(page["records"].as_array().unwrap().len(), 1);
     assert_eq!(page["records"][0]["collection"], "agent_notes");
+    assert_eq!(page["total"], 1);
 
     let missing = run(&[
         "--vault",

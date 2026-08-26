@@ -105,6 +105,7 @@ fn empty_filter_and_scan_return_every_record() {
     collection.add("c", rec(json!({"title": "C"}))).unwrap();
     let found = collection.find(&Filter::all(), 0, 100).unwrap();
     assert_eq!(found.records.len(), 3);
+    assert_eq!(found.total, Some(3));
     assert_eq!(
         collection
             .find(&Filter::all(), 0, 1000)
@@ -113,6 +114,9 @@ fn empty_filter_and_scan_return_every_record() {
             .len(),
         3
     );
+    let page = collection.find(&Filter::all(), 0, 1).unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.total, Some(3));
 }
 
 #[test]

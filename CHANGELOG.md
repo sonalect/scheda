@@ -10,6 +10,10 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
+- `FindResult.total`: indexed hits matching the Filter (Tantivy `Count`
+  in the same `find` pass as the page). Not `records` length: a missing
+  file is omitted from the page and does not decrease `total`. Always
+  filled; there is no `include_total` flag.
 - README: step-by-step `python/cli` (vLLM sidecars, `import` /
   `reindex`, `find` and `search` examples).
 - `find` compiles every `api.v1.Filter` kind (`phrase`, `phrase_prefix`,

@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tantivy::collector::{DocSetCollector, TopDocs};
+use tantivy::collector::{Count, DocSetCollector, TopDocs};
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery, TermSetQuery};
 use tantivy::schema::{
     FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema as TantivySchema, TEXT,
@@ -326,10 +326,10 @@ impl SearchEngine {
         filter: &Filter,
         offset: u32,
         count: u32,
-    ) -> Result<Vec<(String, String)>, Error> {
+    ) -> Result<FindPage, Error> {
         let limit = count as usize;
         if limit == 0 {
-            return Ok(Vec::new());
+            return Ok(FindPage::default());
         }
         self.with_find(
             collections,
@@ -338,31 +338,40 @@ impl SearchEngine {
             "[SearchEngine::find] reload reader",
             |searcher, query, lexical| {
                 let off = offset as usize;
-                let addrs: Vec<tantivy::DocAddress> = if journal_ord {
-                    let top = searcher
+                let (n, addrs): (usize, Vec<tantivy::DocAddress>) = if journal_ord {
+                    let (n, top) = searcher
                         .search(
                             query,
-                            &TopDocs::with_limit(limit)
-                                .and_offset(off)
-                                .order_by_fast_field::<u64>("ord", Order::Asc),
+                            &(
+                                Count,
+                                TopDocs::with_limit(limit)
+                                    .and_offset(off)
+                                    .order_by_fast_field::<u64>("ord", Order::Asc),
+                            ),
                         )
                         .context(Code::IndexLexical, "[SearchEngine::find] search")?;
-                    top.into_iter().map(|(_, addr)| addr).collect()
+                    (n, top.into_iter().map(|(_, addr)| addr).collect())
                 } else {
-                    let top = searcher
+                    let (n, top) = searcher
                         .search(
                             query,
-                            &TopDocs::with_limit(limit).and_offset(off).order_by_score(),
+                            &(
+                                Count,
+                                TopDocs::with_limit(limit).and_offset(off).order_by_score(),
+                            ),
                         )
                         .context(Code::IndexLexical, "[SearchEngine::find] search")?;
-                    top.into_iter().map(|(_, addr)| addr).collect()
+                    (n, top.into_iter().map(|(_, addr)| addr).collect())
                 };
-                ids_from_addrs(
-                    searcher,
-                    lexical,
-                    addrs,
-                    "[SearchEngine::find] fetch document",
-                )
+                Ok(FindPage {
+                    ids: ids_from_addrs(
+                        searcher,
+                        lexical,
+                        addrs,
+                        "[SearchEngine::find] fetch document",
+                    )?,
+                    total: u32::try_from(n).unwrap_or(u32::MAX),
+                })
             },
         )
         .map(Option::unwrap_or_default)
@@ -1011,6 +1020,12 @@ fn parse_text_query(parser: &QueryParser, text: &str) -> Option<Box<dyn Query>> 
         return None;
     }
     parser.parse_query(trimmed).ok()
+}
+
+#[derive(Default)]
+pub(crate) struct FindPage {
+    pub(crate) ids: Vec<(String, String)>,
+    pub(crate) total: u32,
 }
 
 fn ids_from_addrs(

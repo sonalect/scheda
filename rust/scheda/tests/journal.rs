@@ -195,9 +195,9 @@ fn empty_find_and_scan_keep_append_order_across_rotate() {
     collection.add("a", rec("x")).unwrap();
     collection.add("b", rec("x")).unwrap();
     collection.add("c", rec("x")).unwrap();
-    let scan_ids: Vec<_> = collection
-        .find(&Filter::all(), 0, 1000)
-        .unwrap()
+    let found = collection.find(&Filter::all(), 0, 1000).unwrap();
+    assert_eq!(found.total, Some(3));
+    let scan_ids: Vec<_> = found
         .records
         .into_iter()
         .map(|record| record.id.unwrap())

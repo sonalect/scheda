@@ -5785,13 +5785,27 @@ pub struct FindResult {
         deserialize_with = "::buffa::json_helpers::null_as_default"
     )]
     pub records: ::buffa::alloc::vec::Vec<Record>,
+    /// Indexed hits matching the Filter (Tantivy `Count`). Not
+    /// `records` length: a missing file is omitted from the page and does
+    /// not decrease `total`. `0` when nothing matched.
+    ///
+    /// Field 2: `total`
+    #[serde(
+        rename = "total",
+        with = "::buffa::json_helpers::opt_uint32",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub total: ::core::option::Option<u32>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
 }
 impl ::core::fmt::Debug for FindResult {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("FindResult").field("records", &self.records).finish()
+        f.debug_struct("FindResult")
+            .field("records", &self.records)
+            .field("total", &self.total)
+            .finish()
     }
 }
 impl FindResult {
@@ -5800,6 +5814,15 @@ impl FindResult {
     ///
     /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
     pub const TYPE_URL: &'static str = "type.googleapis.com/api.v1.FindResult";
+}
+impl FindResult {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::total`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_total(mut self, value: u32) -> Self {
+        self.total = Some(value);
+        self
+    }
 }
 ::buffa::impl_default_instance!(FindResult);
 impl ::buffa::MessageName for FindResult {
@@ -5829,6 +5852,9 @@ impl ::buffa::Message for FindResult {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(v) = self.total {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -5846,6 +5872,9 @@ impl ::buffa::Message for FindResult {
                 buf,
             );
             v.write_to(__cache, buf);
+        }
+        if let Some(v) = self.total {
+            ::buffa::types::put_uint32_field(2u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -5872,6 +5901,15 @@ impl ::buffa::Message for FindResult {
                 ::buffa::Message::merge_length_delimited(&mut elem, buf, ctx)?;
                 self.records.push(elem);
             }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.total = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint32(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -5881,6 +5919,7 @@ impl ::buffa::Message for FindResult {
     }
     fn clear(&mut self) {
         self.records.clear();
+        self.total = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

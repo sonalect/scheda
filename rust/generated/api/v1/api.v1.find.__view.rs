@@ -8017,6 +8017,12 @@ pub struct FindResultView<'a> {
     ///
     /// Field 1: `records`
     pub records: ::buffa::RepeatedView<'a, super::super::__buffa::view::RecordView<'a>>,
+    /// Indexed hits matching the Filter (Tantivy `Count`). Not
+    /// `records` length: a missing file is omitted from the page and does
+    /// not decrease `total`. `0` when nothing matched.
+    ///
+    /// Field 2: `total`
+    pub total: ::core::option::Option<u32>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for FindResultView<'a> {
@@ -8047,6 +8053,13 @@ impl<'a> ::buffa::MessageView<'a> for FindResultView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.total = Some(::buffa::types::decode_uint32(&mut cur)?);
+            }
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
@@ -8092,6 +8105,7 @@ impl<'a> ::buffa::MessageView<'a> for FindResultView<'a> {
                 .iter()
                 .map(|v| v.to_owned_from_source(__buffa_src))
                 .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
+            total: self.total,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -8111,6 +8125,9 @@ impl<'a> ::buffa::ViewEncode<'a> for FindResultView<'a> {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(v) = self.total {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -8129,6 +8146,9 @@ impl<'a> ::buffa::ViewEncode<'a> for FindResultView<'a> {
                 buf,
             );
             v.write_to(__cache, buf);
+        }
+        if let Some(v) = self.total {
+            ::buffa::types::put_uint32_field(2u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -8153,6 +8173,9 @@ impl<'__a> ::serde::Serialize for FindResultView<'__a> {
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
         if !self.records.is_empty() {
             __map.serialize_entry("records", &*self.records)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.total {
+            __map.serialize_entry("total", &::buffa::json_helpers::ProtoJson(&__v))?;
         }
         __map.end()
     }
@@ -8254,6 +8277,15 @@ impl FindResultOwnedView {
         &self,
     ) -> &::buffa::RepeatedView<'_, super::super::__buffa::view::RecordView<'_>> {
         &self.0.reborrow().records
+    }
+    /// Indexed hits matching the Filter (Tantivy `Count`). Not
+    /// `records` length: a missing file is omitted from the page and does
+    /// not decrease `total`. `0` when nothing matched.
+    ///
+    /// Field 2: `total`
+    #[must_use]
+    pub fn total(&self) -> ::core::option::Option<u32> {
+        self.0.reborrow().total
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<FindResultView<'static>>>

@@ -11,12 +11,13 @@
 // it is not here.
 //
 // Paging is the Tantivy collector, not part of `Filter`:
-// `TopDocs::with_limit(count).and_offset(offset)`, then `order_by_score()`
-// unless the selection is exactly one `journal` (append-order fast field,
-// QRY-7). `Vault.find` takes collection names, `Filter`, `offset`, and
-// `count`. `Collection.find` passes that collection's name. `FindResult` is
-// one page. Output, not a write envelope: no field validators (same as
-// `History`).
+// `(Count, TopDocs::with_limit(count).and_offset(offset))`, then
+// `order_by_score()` unless the selection is exactly one `journal`
+// (append-order fast field, QRY-7). `Count` is indexed hits
+// (`FindResult.total`). `Vault.find` takes collection names, `Filter`,
+// `offset`, and `count`. `Collection.find` passes that collection's name.
+// `FindResult` is one page. Output, not a write envelope: no field
+// validators (same as `History`).
 
 edition = "2024";
 
@@ -381,4 +382,8 @@ message FindResult {
   // Matching Records. Empty if `offset` is past the last match. Length
   // is at most `count`.
   repeated Record records = 1;
+  // Indexed hits matching the Filter (Tantivy `Count`). Not
+  // `records` length: a missing file is omitted from the page and does
+  // not decrease `total`. `0` when nothing matched.
+  uint32 total = 2;
 }
