@@ -276,7 +276,7 @@ pub mod error {
     #[allow(unused_imports)]
     use super::*;
     /// One code per distinct failure class a caller can branch on.
-    /// Schema/envelope rule text stays in `message` under `CODE_INVALID`.
+    /// Collection/envelope rule text stays in `message` under `CODE_INVALID`.
     /// Zero is unset.
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[repr(i32)]
@@ -286,7 +286,7 @@ pub mod error {
         CODE_NOT_FOUND = 101i32,
         CODE_DUPLICATE_ID = 102i32,
         CODE_CONFLICT_MARKERS = 103i32,
-        /// Caller or Schema input. Detail is `message` (and `path` when a file).
+        /// Caller or collection declaration. Detail is `message` (and `path` when a file).
         CODE_INVALID = 201i32,
         CODE_NOT_UTF8 = 202i32,
         /// Writes / remotes this handle cannot do.

@@ -7,6 +7,7 @@ buildifier_test(
     size = "small",
     exclude_patterns = [
         "./.bazel/*",
+        "./.venv/*",
     ],
     target_compatible_with = NOT_WINDOWS,
 )
@@ -15,6 +16,7 @@ buildifier_format(
     name = "format",
     exclude_patterns = [
         "./.bazel/*",
+        "./.venv/*",
     ],
 )
 

@@ -1,4 +1,4 @@
-//! USearch ANN smoke tests (IDX-7). Not Collection::search.
+//! USearch ANN smoke tests (IDX-7). Not CollectionHandle::search.
 
 use std::fs;
 use std::path::PathBuf;

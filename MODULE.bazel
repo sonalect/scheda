@@ -5,18 +5,22 @@ module(
     version = "0.1.0",
 )
 
+bazel_dep(name = "aspect_rules_py", version = "1.11.7")
 bazel_dep(name = "bazel_lib", version = "3.7.1")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "bazel_utils_bazel", version = "0.2.3")
 bazel_dep(name = "bazel_utils_buf", version = "0.2.3")
 bazel_dep(name = "bazel_utils_core", version = "0.2.3")
 bazel_dep(name = "bazel_utils_md", version = "0.2.3")
+bazel_dep(name = "bazel_utils_python", version = "0.2.3")
 bazel_dep(name = "bazel_utils_rust", version = "0.2.3")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "protobuf", version = "35.1")
+bazel_dep(name = "rules_python", version = "2.3.1")
 bazel_dep(name = "rules_rust", version = "0.73.0")
 
 include("//:buf.MODULE.bazel")
+include("//:python.MODULE.bazel")
 include("//:rust.MODULE.bazel")
 include("//third_party/buf/plugins/protoc-gen-buffa-packaging:crates.MODULE.bazel")
 include("//third_party/buf/plugins/protoc-gen-protovalidate-buffa:crates.MODULE.bazel")
@@ -46,6 +50,13 @@ git_override(
     module_name = "bazel_utils_md",
     remote = "https://github.com/amsokol/bazel_utils.git",
     strip_prefix = "markdown",
+    tag = "v0.2.3",
+)
+
+git_override(
+    module_name = "bazel_utils_python",
+    remote = "https://github.com/amsokol/bazel_utils.git",
+    strip_prefix = "python",
     tag = "v0.2.3",
 )
 

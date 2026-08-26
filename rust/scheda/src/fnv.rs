@@ -1,13 +1,7 @@
-//! FNV-1a 64-bit for collection directory names.
+//! FNV-1a 64-bit for ANN document keys (`search`), not collection paths.
 //!
 //! Offset basis `0xcbf29ce484222325`, prime `0x100000001b3` (Fowler–Noll–Vo
-//! FNV-1a). Output is sixteen lowercase hex digits of the digest of UTF-8
-//! name bytes. Not a cryptographic hash; enough to keep a Vault's collection
-//! directories distinct.
-
-pub fn hex(bytes: &[u8]) -> String {
-    format!("{:016x}", digest(bytes))
-}
+//! FNV-1a). Not a cryptographic hash.
 
 pub(crate) fn digest(bytes: &[u8]) -> u64 {
     let mut hash = 0xcbf2_9ce4_8422_2325;
@@ -22,8 +16,9 @@ pub(crate) fn digest(bytes: &[u8]) -> u64 {
 mod tests {
     #[test]
     fn matches_published_fnv1a_64_vectors() {
-        assert_eq!(super::hex(b""), "cbf29ce484222325");
-        assert_eq!(super::hex(b"a"), "af63dc4c8601ec8c");
-        assert_eq!(super::hex(b"foobar"), "85944171f73967e8");
+        let hex = |bytes: &[u8]| format!("{:016x}", super::digest(bytes));
+        assert_eq!(hex(b""), "cbf29ce484222325");
+        assert_eq!(hex(b"a"), "af63dc4c8601ec8c");
+        assert_eq!(hex(b"foobar"), "85944171f73967e8");
     }
 }

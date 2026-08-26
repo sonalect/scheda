@@ -1,26 +1,36 @@
-// Path history (`07` LIB-17; GIT-3). Bindings and agent transport (`08`) use
-// the Protobuf JSON mapping of these messages, not binary protobuf. Newest
-// first. Line-level journal blame is later.
+// Record history page (`07` LIB-17; GIT-3). Bindings and agent transport
+// (`08`) use the Protobuf JSON mapping of these messages, not binary
+// protobuf. Newest first. Line-level journal blame is later. This is
+// output, not a write envelope: no field validators. `Collection.history`
+// is paged (`offset`, `count`); this message is one page. The caller
+// passes Record `id`, not a file path.
 
 edition = "2024";
 
 package api.v1;
 
-import "buf/validate/validate.proto";
 import "google/protobuf/timestamp.proto";
 
-// One git commit that changed a Vault-relative path (`document`, `singleton`,
-// or journal segment). `raw` is the file bytes at that commit (`git show`).
-message HistoryEntry {
-  string hash = 1 [(buf.validate.field) = {
-    required: true
-    string: {min_len: 1}
-  }];
-  // Commit instant (UTC). Proto3 JSON is RFC 3339. Git `Time.seconds` is
-  // already seconds since epoch; the display timezone is not stored.
-  google.protobuf.Timestamp time = 2 [(buf.validate.field) = {required: true}];
-  // Git author as `Name <email>`.
-  string author = 3;
-  string message = 4;
-  bytes raw = 5;
+message History {
+  // One page of commits, newest first. Empty if `offset` is past the last
+  // commit. Length is at most `count`.
+  repeated Entry entries = 1;
+
+  // One git commit that changed the file this Record is stored in
+  // (`document` / `singleton` file, or the `journal` segment that contains
+  // the line).
+  message Entry {
+    // Git commit object id (hex).
+    string hash = 1;
+    // Commit instant (UTC). Proto3 JSON is RFC 3339. Git `Time.seconds` is
+    // already seconds since epoch; the display timezone is not stored.
+    google.protobuf.Timestamp time = 2;
+    // Git author as `Name <email>`.
+    string author = 3;
+    // Git commit message.
+    string message = 4;
+    // Bytes of that file at this commit (`git show`). Not a Record envelope.
+    // For `journal`, the whole segment, not one line.
+    bytes raw = 5;
+  }
 }

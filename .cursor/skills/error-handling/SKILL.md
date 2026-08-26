@@ -34,7 +34,7 @@ the rule.
 
 | Field | Role |
 |---|---|
-| `code` | Root/deep class. Same `find_one` may be `NOT_FOUND` or `IO_NOT_FOUND`. |
+| `code` | Root/deep class. Same `get` may be `NOT_FOUND` or `IO_NOT_FOUND`. |
 | `message` | Detail. Must not replace `code`. |
 | `path` | Vault-relative POSIX, same as `Record.path`. Unset if there is no Record file. |
 | `repeat` | Same call, same args, may succeed later? |
@@ -48,15 +48,16 @@ JSON (agent / `08`):
   "message": "No such file or directory",
   "path": "notes/a.md",
   "repeat": "REPEAT_ALLOWED",
-  "stack": ["[Collection::find_one] read record", "[store::read_file] read record"]
+  "stack": ["[Collection::get] read record", "[store::read_file] read record"]
 }
 ```
 
 ### path
 
 Set with `.with_path("notes/a.md")` when the failure is about a Record file.
-Leave unset for `sync_remote` / network, lock, and Index dumps
-(`.scheda/index/…`). Do not put OS absolute paths, URLs, or `.git` here.
+Leave unset for `sync` / network, lock (`{vault}/.scheda/write.lock`), and
+Index dumps (`.scheda/index/…`). Do not put OS absolute paths, URLs, or `.git`
+here.
 Do not copy `path` into `stack`.
 
 ### repeat
@@ -76,7 +77,7 @@ English, one frame per step that failed. Format:
 
 - Type is the Rust type in this crate (`AnnIndex`, `Collection`). No module
   or crate prefix (`ann.AnnIndex` is wrong).
-- Public LIB-2 can use that type (`[Collection::find_one] …`).
+- Public LIB-2 can use that type (`[Collection::get] …`).
 - Distinguishing two steps in one method is the point:
   `[AnnIndex::new] create new index` vs
   `[AnnIndex::new] reserve capacity 16 vectors`.

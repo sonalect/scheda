@@ -1,7 +1,7 @@
 //! Git-backed document store.
 //!
 //! Records live as text files in a **Vault** (a git working tree). The search
-//! index is derived and lives under `{vault}/.scheda/`, which `init` gitignores.
+//! index is derived and lives under `{vault}/.scheda/`, which `open` gitignores.
 //! Scheda does not know a consumer's types.
 //!
 //! This crate is the Rust binding of the [design
@@ -28,22 +28,21 @@
 //! There is no `tokio` crate feature: disk I/O and libgit2 block the calling
 //! thread. From a Tokio task, run them on the blocking pool so worker threads
 //! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is
-//! `Send + Sync` but not `Clone`, because it may hold the write-lock file.
-//! Remote git (`clone`, `pull_remote`, `push_remote`, `sync_remote`) and
-//! `reindex` / `scan` / `search` are the calls that must not sit on a worker
-//! thread. The Vault write lock is unchanged: one writer, `locked` if a second
-//! `open(..., write)` races it.
+//! `Send + Sync`. Remote git (`push` / `pull` / `sync`) and `reindex` /
+//! `search` are the calls that must not sit on a worker thread. The Vault
+//! write lock is taken by mutating calls only: one writer, `locked` if a
+//! second writer races it.
 //!
 //! ```rust,ignore (tokio is not a crate dependency)
 //! use std::sync::Arc;
 //! use scheda::{Record, Vault};
 //!
-//! async fn find_one(vault: Arc<Vault>, id: String) -> Result<Record, scheda::Error> {
-//!     tokio::task::spawn_blocking(move || vault.collection("notes")?.find_one(&id))
+//! async fn get_one(vault: Arc<Vault>, id: String) -> Result<Record, scheda::Error> {
+//!     tokio::task::spawn_blocking(move || vault.collection("notes")?.get(&id))
 //!         .await
 //!         .map_err(|err| {
 //!             scheda::Error::io_other(err.to_string())
-//!                 .context("[Collection::find_one] join blocking task")
+//!                 .context("join blocking task")
 //!         })?
 //! }
 //! ```
@@ -51,9 +50,11 @@
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
 mod ann;
+mod embed;
 mod error;
 mod fnv;
 mod git;
+mod id;
 mod index;
 mod journal;
 mod query;
@@ -64,12 +65,13 @@ mod vault;
 
 #[doc(hidden)]
 pub use ann::AnnIndex;
+pub use embed::{Embedder, Reranker};
 pub use error::{Code, Repeat};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Catalog, CatalogBody, CatalogCollection, CatalogEdge, CatalogField, CatalogId, Error, Filter,
-    HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHit, SearchHits, SearchQuery,
+    Body, CollectionInfo, Edge, Error, Field, Filter, FindResult, History, Journal, Object,
+    OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema, SearchHits, SearchQuery,
+    Singleton, Text, Unit, VaultInfo, filter, history, search_hits,
 };
-pub use schema::{Kind, collection_dir};
-pub use search::Embedder;
-pub use vault::{Collection, InsertOne, ReplaceOne, Vault};
+pub use schema::Kind;
+pub use vault::{Collection, Vault};

@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.12, 24 August 2026.
+Document 10 of the Scheda package. Version 0.19, 25 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -14,8 +14,8 @@ Four labels appear on requirements:
 
 | Phase | Meaning |
 |---|---|
-| **core** | Files are truth, writes are safe, one writer, explicit `commit`, `find_one` / `find`. No network unless opted in. A consumer can store and retrieve Records with no embedder, no agent transport, and no isolated root. |
-| **search** | Hybrid `search` that an agent can recall from: ranked BM25, in-process ANN, RRF fusion, Schema-marked fields only, one-step and inverse edge walks. Must not be required to `insert_one` a journal line or `replace_one` a document. Grep is not this phase. |
+| **core** | Files are truth, writes are safe, one writer, autocommit or `begin`/`commit`/`discard`, `get` / `find`. No network unless opted in. A consumer can store and retrieve Records with no embedder, no agent transport, and no isolated collections. |
+| **search** | Hybrid `search` that an agent can recall from: ranked BM25, in-process ANN, RRF fusion, Schema-marked fields only, one-step and inverse edge walks. Must not be required to `add` a journal line or `replace` a document. Grep is not this phase. |
 | **agent** | Catalog and a thin encoding of the same API (`08`). Does not block **core**. |
 | **later** | Isolated collections and their encryption, scale, extra writers, extra walks, conveniences. Must not leak into **core** as hidden dependencies. |
 
@@ -25,11 +25,11 @@ The first implementation is the Rust crate `scheda`. Other languages (Python, Ja
 
 **First binding (`scheda`).** **core** is accepted (`11` C10). **search** is accepted (`11` C9). No other language binding exists yet. Stage ticks and *Check:* tests live in `11`, `12`, and `rust/scheda/tests/`.
 
-The journal `id` map is **core** (IDX-5). After it exists, `find_one` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
+The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
 
-**Next in `scheda`.** Unencrypted isolated slice of **later**: SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. A crate consumer needs a second git root for collections that must not live in the main Vault tree or Index. Do not start **agent**, age encryption of that root, other language bindings, or the rest of §5 until this slice is in the crate.
+**Next in `scheda`.** Unencrypted isolated slice of **later**: SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. A crate consumer needs `{vault}/.isolated/` (gitignored nested git) for collections that must not live in the main git tree or Index. Do not start **agent**, age encryption of that tree, other language bindings, or the rest of §5 until this slice is in the crate.
 
-Order inside that slice (not a second spec): parse `isolated` in Schema (today Schema rejects the key) → second git root, owner-only files, no Remote → main `find` / `search` return no isolated Records and do not require that root → main Index has no fixture sealed string.
+Order inside that slice (not a second spec): parse `isolated` in Schema (today Schema rejects the key) → `{vault}/.isolated/` nested git, owner-only files, no Remote → `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/` → main Index has no fixture sealed string.
 
 **After that slice.** **agent** (AGT-1–5) and ISO-3: library `catalog` → thin CLI of `07` + `catalog` (MCP remains optional) → agent tools on the main Vault never return sealed values. Stage ticks live in `12`.
 
@@ -55,7 +55,7 @@ Order inside that slice (not a second spec): parse `isolated` in Schema (today S
 **Core is accepted** when:
 
 1. Every **core** code above has a passing check in the first binding.
-2. A fixture Vault is readable without the library (STO-2) and through `find_one` (QRY-1).
+2. A fixture Vault is readable without the library (STO-2) and through `get` (QRY-1).
 3. Deleting the Index does not lose Records (STO-1, IDX-1).
 4. Implementation source does not name a consumer's collections (SCH-1, MOD-1).
 5. `auto_sync` off: writes and `commit` succeed with the network disabled (GIT-8, ISO-1).
@@ -70,18 +70,18 @@ Order used in `scheda` (not a second spec): working tree + lock → Schema + `do
 
 **In:** SCH-9–11, IDX-3, IDX-6–9, QRY-3–6, REL-1–3, LIB-11, OPS-2, OPS-4.
 
-Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (HNSW or equivalent) at OPS-1, RRF hybrid when both legs are on, injected embedder, no LLM or pair reranker in the library. Substring search and brute-force vector scan at OPS-1 do not accept this phase.
+Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (HNSW or equivalent) at OPS-1, RRF hybrid when both legs are on, injected embedder, no LLM or ranking model in the library (optional caller reranker on `search` is `13`). Substring search and brute-force vector scan at OPS-1 do not accept this phase.
 
 **Search is accepted** when those codes pass and:
 
-1. `insert_one` / `replace_one` / `find_one` still work with no embedder (IDX-8).
-2. Unmarked fields are absent from `search` (SCH-9).
+1. `add` / `replace` / `get` still work with no embedder (IDX-8).
+2. `exclude_fts` / `exclude_vector` fields are absent from the corresponding `search` leg (SCH-9).
 3. Corrupt Index fails closed (QRY-4).
 4. One-step and inverse walks match fixtures (REL-2, REL-3). Multi-step (REL-4) is not required.
 5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
 6. Hybrid `search` on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
-**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is Tantivy BM25; ANN is in-process USearch HNSW; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt lexical Index → `index_unusable`; `find_one` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
+**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is Tantivy BM25; ANN is in-process USearch HNSW; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt lexical Index → `index_unusable`; `get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
 
 ---
 
@@ -91,11 +91,13 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 
 ISO-3 applies when isolated collections exist and **agent** is on. In `scheda` it is the slice after unencrypted isolated (`§1`), not a reason to delay **agent** once that isolated slice is in.
 
-**Agent is accepted** when catalog JSON matches Schema files, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
+**Agent is accepted** when catalog JSON matches Schema files, `create_collection` writes declarations without a raw path tool, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
 
-Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding: after the isolated slice, `scheda` ships a CLI of `07` + `catalog`. MCP stays an example, not a requirement (`08`).
+Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding: after the isolated slice, `scheda` ships a CLI of `07` + `catalog` + `create_collection`. MCP stays an example, not a requirement (`08`).
 
-**Rust `scheda`:** **agent** is not started. It follows the unencrypted isolated slice (`§1`). The stage checklist is `12`.
+**Rust `scheda`:** **agent** A0–A2 are in (catalog + `create_collection` + thin CLI). A3–A4 remain.
+Unencrypted isolated (`§1`) is still the next **later** slice; A3 is ISO-3
+on that surface once the slice exists.
 
 ---
 
@@ -103,34 +105,34 @@ Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipp
 
 ### Isolated collections
 
-**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of that root). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Combined `search` across the main Vault and an isolated handle (GIT-5).
+**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`.
 
 ISO-1 stays **core**. The main Vault is never encrypted.
 
 Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption is optional on top.
 
-**Next in `scheda` (unencrypted only):** SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. Parse `isolated` (today Schema rejects the key). Second git root; owner-only files; no Remote; main `find` / `search` return no isolated Records and do not require that root; main Index has no fixture sealed string.
+**Next in `scheda` (unencrypted only):** SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. Parse `isolated` (today Schema rejects the key). `{vault}/.isolated/` nested git; owner-only files; no Remote; `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; main Index has no fixture sealed string.
 
-**After that — agent and ISO-3:** AGT-1–5. `catalog` on the main Vault lists isolated collections as isolated and does not return their field values. Tools on the main Vault never return a fixture sealed value.
+**After that — agent and ISO-3:** AGT-1–5. `info` / catalog lists isolated collections as isolated and does not return their field values. Tools that are not `collection(name)` for that collection never return a fixture sealed value.
 
-**Still later — encryption:** ISO-5, ISO-7–11. `init(..., encrypt=true)` and `secret` wait until the unencrypted root is in. The **agent** slice does not wait on encryption.
+**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.encrypt` and `secret` wait until the unencrypted nested tree is in. The **agent** slice does not wait on encryption.
 
 **Isolated is accepted** when:
 
-1. A fixture with two roots: queries on the main Vault return no isolated Records and do not require that root (ISO-2, SCH-15).
-2. Isolated handle: local `commit` / `history`; `push_remote` / `clone(url)` / `auto_sync` fail; `check` fails if a Remote exists (ISO-6).
-3. `init(..., encrypt=true)` round-trips with `secret`; `open` without `secret` is `crypto`; files decrypt with `age -d` (ISO-5–9, ISO-11).
+1. A fixture with gitignored `{vault}/.isolated/`: queries on non-isolated collections return no isolated Records and do not require `.isolated/` (ISO-2, SCH-15).
+2. Nested git: local `commit` / `history` of isolated paths; `push` does not upload `.isolated/`; `check` fails if the nested repo has a Remote or the parent tracks `.isolated/` (ISO-6).
+3. `encrypt=true` on first creation of `.isolated/` round-trips with `secret`; isolated I/O without `secret` is `crypto`; main `open` still succeeds; files decrypt with `age -d` (ISO-5–9, ISO-11).
 4. Main Index contains no fixture sealed string (ISO-4, IDX-4).
-5. If **agent** is on: tools on the main Vault never return that sealed value (ISO-3).
+5. If **agent** is on: default tools never return that sealed value (ISO-3).
 
-Gate 3 is encryption; it does not block the unencrypted slice. `scheda` has no isolated root yet.
+Gate 3 is encryption; it does not block the unencrypted slice. `scheda` has no `{vault}/.isolated/` yet.
 
 ### Everything else later
 
 Not required of **core**, **search**, or **agent**:
 
 - File watcher for human edits (default remains `reindex`, IDX-5).
-- Line-level journal blame (`history` of a JSONL line). Segment-file `history` stays **core** (GIT-3, LIB-17).
+- Line-level journal blame (`history` of a JSONL line). `history(id)` of the segment that holds that `id` stays **core** (GIT-3, LIB-17).
 - `delete_one` for `document` (not for `journal` lines).
 - REL-4 multi-step walk.
 - Two vector generations at once on embedder change (SCH-10: rebuild is enough).
@@ -147,7 +149,7 @@ Not required of **core**, **search**, or **agent**:
 
 These are orders of magnitude for an interactive caller on one machine, not SLAs. Codes `OPS`.
 
-**OPS-1. Core volume.** At least 10⁴ `journal` Records and 10³ `document` Records in one Vault. `find_one` and `insert_one` stay in milliseconds, not hundreds of milliseconds, on that fixture. *Check (**core**):* load the fixture; sample `find_one` / journal `insert_one` stay in that band.
+**OPS-1. Core volume.** At least 10⁴ `journal` Records and 10³ `document` Records in one Vault. `get` and `add` stay in milliseconds, not hundreds of milliseconds, on that fixture. *Check (**core**):* load the fixture; sample `get` / journal `add` stay in that band.
 
 **OPS-2. Search budget.** Hybrid `search` without a pair reranker on the OPS-1 fixture finishes in tens of milliseconds. *Check (**search**):* timed fixture queries.
 

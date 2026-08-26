@@ -5,20 +5,27 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 
 use regex::Regex;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-use crate::error::{Code, ContextAs, ContextIo, bail};
-use crate::{Catalog, CatalogBody, CatalogCollection, CatalogEdge, CatalogField, CatalogId, Error};
+use crate::error::{Code, Context, ContextAs, ContextIo, bail};
+use crate::id::require_slug;
+use crate::{
+    Body, CollectionInfo, Edge, Error, Field, Journal, Object, Schema as ApiSchema, Singleton,
+    Text, Unit, VaultInfo,
+};
 
 const MIB: u64 = 1024 * 1024;
 pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = 8 * MIB;
 pub(crate) const MAX_SEGMENT_MAX_BYTES: u64 = 32 * MIB;
 
-const DEFAULT_SCHEMA_DIR: &str = "schema";
 const DEFAULT_ID_FIELD: &str = "id";
+const SCHEMA_YAML: &str = ".schema.yaml";
+const SCHEMA_YML: &str = ".schema.yml";
+const SCHEMA_JSON: &str = ".schema.json";
+const SCHEMA_FILENAMES: [&str; 3] = [SCHEMA_YAML, SCHEMA_YML, SCHEMA_JSON];
 
 /// Collection write mode (`03` MOD-2).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Document,
@@ -37,7 +44,7 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum FieldType {
     String,
@@ -63,103 +70,152 @@ impl FieldType {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SegmentRotate {
     Daily,
 }
 
-impl SegmentRotate {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Daily => "daily",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Multiplicity {
     One,
     Many,
 }
 
-impl Multiplicity {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::One => "one",
-            Self::Many => "many",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum Dangling {
     Lax,
     Strict,
 }
 
-impl Dangling {
-    pub(crate) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Lax => "lax",
-            Self::Strict => "strict",
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawText {
+    #[serde(default)]
+    exclude_fts: bool,
+    #[serde(default)]
+    exclude_vector: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawUnit {}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawObject {
+    #[serde(default)]
+    fields: Vec<RawField>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawEdge {
+    collection: String,
+    one: Option<RawUnit>,
+    many: Option<RawUnit>,
+    dangling: Option<Dangling>,
+    #[serde(default)]
+    exclude_fts: bool,
+    #[serde(default)]
+    exclude_vector: bool,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawField {
+    name: String,
+    #[serde(default)]
+    required: bool,
+    #[serde(default)]
+    nullable: bool,
+    #[serde(default)]
+    exclude_find: bool,
+    default: Option<serde_json::Value>,
+    string: Option<RawText>,
+    integer: Option<RawUnit>,
+    number: Option<RawUnit>,
+    boolean: Option<RawUnit>,
+    string_list: Option<RawText>,
+    object: Option<RawObject>,
+    object_list: Option<RawObject>,
+    edge: Option<RawEdge>,
+}
+
+#[derive(Debug)]
+enum RawSpec {
+    String(RawText),
+    Integer,
+    Number,
+    Boolean,
+    StringList(RawText),
+    Object(RawObject),
+    ObjectList(RawObject),
+    Edge(RawEdge),
+}
+
+impl RawField {
+    fn spec(&self) -> Result<RawSpec, Error> {
+        let mut n = 0u8;
+        let mut spec = None;
+        if let Some(text) = &self.string {
+            n += 1;
+            spec = Some(RawSpec::String(text.clone()));
+        }
+        if self.integer.is_some() {
+            n += 1;
+            spec = Some(RawSpec::Integer);
+        }
+        if self.number.is_some() {
+            n += 1;
+            spec = Some(RawSpec::Number);
+        }
+        if self.boolean.is_some() {
+            n += 1;
+            spec = Some(RawSpec::Boolean);
+        }
+        if let Some(text) = &self.string_list {
+            n += 1;
+            spec = Some(RawSpec::StringList(text.clone()));
+        }
+        if let Some(object) = &self.object {
+            n += 1;
+            spec = Some(RawSpec::Object(object.clone()));
+        }
+        if let Some(object) = &self.object_list {
+            n += 1;
+            spec = Some(RawSpec::ObjectList(object.clone()));
+        }
+        if let Some(edge) = &self.edge {
+            n += 1;
+            spec = Some(RawSpec::Edge(edge.clone()));
+        }
+        match (n, spec) {
+            (1, Some(spec)) => Ok(spec),
+            _ => Err(Error::invalid(format!(
+                "field {} must have exactly one type spec",
+                self.name
+            ))),
         }
     }
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct RawRoot {
-    schema_dir: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawId {
-    field: Option<String>,
-    pattern: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawField {
-    name: String,
-    #[serde(rename = "type")]
-    type_: FieldType,
-    #[serde(default)]
-    required: bool,
-    #[serde(default)]
-    nullable: bool,
-    #[serde(default)]
-    filter: bool,
-    #[serde(default)]
-    fts: bool,
-    #[serde(default)]
-    vector: bool,
-    field_id: Option<String>,
-    edge: Option<RawEdge>,
-    default: Option<serde_json::Value>,
-    #[serde(default)]
-    fields: Vec<RawField>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawEdge {
-    collection: String,
-    multiplicity: Option<Multiplicity>,
-    dangling: Option<Dangling>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
 struct RawBody {
     allowed: Option<bool>,
-    fts: Option<bool>,
-    vector: Option<bool>,
-    field_id: Option<String>,
+    #[serde(default)]
+    exclude_fts: bool,
+    #[serde(default)]
+    exclude_vector: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSingleton {
+    id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,33 +224,15 @@ struct RawCollection {
     name: String,
     kind: Kind,
     schema_version: u32,
-    #[serde(deserialize_with = "deserialize_layout")]
-    layout: Vec<String>,
-    id: Option<RawId>,
     fields: Vec<RawField>,
     segment_max_bytes: Option<u64>,
     segment_max_lines: Option<u64>,
-    segment_rotate: Option<SegmentRotate>,
-    singleton_id: Option<String>,
+    daily: Option<RawUnit>,
+    #[serde(alias = "document")]
     body: Option<RawBody>,
+    singleton: Option<RawSingleton>,
     #[serde(default)]
     isolated: bool,
-}
-
-fn deserialize_layout<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum OneOrMany {
-        One(String),
-        Many(Vec<String>),
-    }
-    match OneOrMany::deserialize(deserializer)? {
-        OneOrMany::One(one) => Ok(vec![one]),
-        OneOrMany::Many(many) => Ok(many),
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -202,6 +240,8 @@ pub(crate) struct EdgeDecl {
     pub collection: String,
     pub multiplicity: Multiplicity,
     pub dangling: Dangling,
+    pub fts: bool,
+    pub vector: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -235,7 +275,6 @@ pub(crate) struct CollectionDecl {
     pub layout: Vec<String>,
     pub id_field: String,
     pub id_pattern: Option<Regex>,
-    pub id_pattern_src: Option<String>,
     pub filter_keys: BTreeSet<String>,
     pub segment_max_bytes: Option<u64>,
     pub segment_max_lines: Option<u64>,
@@ -275,73 +314,71 @@ impl Schema {
 }
 
 pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
-    let rel = load_schema_dir(vault)?;
-    let dir = join_inside(vault, &rel)?;
-    if !dir.exists() {
-        return Ok(Schema::default());
-    }
-    if !dir.is_dir() {
-        bail!(Error::invalid(format!(
-            "schema_dir is not a directory: {}",
-            dir.display()
-        )));
-    }
     let mut collections = BTreeMap::new();
-    let mut by_hash = BTreeMap::new();
-    let entries = fs::read_dir(&dir).context("[Schema::load] read schema dir")?;
+    let entries = match fs::read_dir(vault) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Schema::default());
+        }
+        Err(err) => {
+            return Err(err).context("[Schema::load] read vault");
+        }
+    };
     for entry in entries {
-        let entry = entry.context("[Schema::load] read schema entry")?;
+        let entry = entry.context("[Schema::load] read vault entry")?;
         let path = entry.path();
-        if path.is_dir() {
+        if !path.is_dir() {
             continue;
         }
-        let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        let Some(dir_name) = entry.file_name().to_str().map(str::to_owned) else {
             continue;
         };
-        match ext {
-            "yaml" | "yml" | "json" => {}
-            _ => continue,
+        if !is_collection_dir_name(&dir_name) {
+            continue;
         }
-        let decl = load_collection_file(&path)?;
+        let Some(schema_path) = find_schema_file(&path)? else {
+            continue;
+        };
+        let decl = load_collection_file(&schema_path)?;
+        if decl.name != dir_name {
+            bail!(Error::invalid(format!(
+                "schema {}: directory {dir_name} is not the collection name {}",
+                schema_path.display(),
+                decl.name
+            )));
+        }
         if collections.contains_key(&decl.name) {
             bail!(Error::invalid(format!(
                 "duplicate collection name {}",
                 decl.name
             )));
         }
-        let hash_dir = collection_dir(&decl.name);
-        if let Some(other) = by_hash.get(&hash_dir) {
-            bail!(Error::invalid(format!(
-                "collections {} and {other} hash to the same directory {hash_dir}",
-                decl.name
-            )));
-        }
-        by_hash.insert(hash_dir, decl.name.clone());
         collections.insert(decl.name.clone(), decl);
     }
     validate_edge_targets(&collections)?;
     Ok(Schema { collections })
 }
 
-fn load_schema_dir(vault: &Path) -> Result<String, Error> {
-    let path = vault.join("schema.yaml");
-    if !path.exists() {
-        return Ok(DEFAULT_SCHEMA_DIR.to_owned());
+fn is_collection_dir_name(name: &str) -> bool {
+    !name.starts_with('.')
+}
+
+fn find_schema_file(dir: &Path) -> Result<Option<PathBuf>, Error> {
+    let mut found = None;
+    for name in SCHEMA_FILENAMES {
+        let path = dir.join(name);
+        if !path.is_file() {
+            continue;
+        }
+        if found.is_some() {
+            bail!(Error::invalid(format!(
+                "collection directory {} has more than one schema file",
+                dir.display()
+            )));
+        }
+        found = Some(path);
     }
-    let text = read_utf8(&path)?;
-    if text.trim().is_empty() {
-        return Ok(DEFAULT_SCHEMA_DIR.to_owned());
-    }
-    let root: RawRoot =
-        yaml_serde::from_str(&text).context(Code::Invalid, "[Schema::load] parse schema.yaml")?;
-    match root.schema_dir {
-        Some(dir) if dir.is_empty() => Err(Error::invalid(format!(
-            "schema {}: schema_dir must be non-empty",
-            path.display()
-        ))),
-        Some(dir) => Ok(dir),
-        None => Ok(DEFAULT_SCHEMA_DIR.to_owned()),
-    }
+    Ok(found)
 }
 
 fn load_collection_file(path: &Path) -> Result<CollectionDecl, Error> {
@@ -365,26 +402,17 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     if raw.name.is_empty() {
         bail!(Error::invalid(format!("schema {loc}: name is required")));
     }
+    require_slug("collection name", &raw.name).with_context(|| format!("schema {loc}: name"))?;
     if raw.schema_version < 1 {
         bail!(Error::invalid(format!(
             "schema {loc}: schema_version must be >= 1"
         )));
     }
-    if raw.layout.is_empty() || raw.layout.iter().any(|t| t.is_empty()) {
-        bail!(Error::invalid(format!(
-            "schema {loc}: layout must be a non-empty template"
-        )));
-    }
-    if raw.kind == Kind::Document && raw.layout.iter().any(|t| !t.contains("{id}")) {
-        bail!(Error::invalid(format!(
-            "schema {loc}: document layout must contain {{id}}"
-        )));
-    }
     match raw.kind {
         Kind::Journal => {
-            if raw.singleton_id.is_some() {
+            if raw.singleton.is_some() {
                 bail!(Error::invalid(format!(
-                    "schema {loc}: singleton_id is not valid on journal"
+                    "schema {loc}: singleton is not valid on journal"
                 )));
             }
             if raw.body.is_some() {
@@ -396,32 +424,35 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         Kind::Document => {
             if raw.segment_max_bytes.is_some()
                 || raw.segment_max_lines.is_some()
-                || raw.segment_rotate.is_some()
+                || raw.daily.is_some()
             {
                 bail!(Error::invalid(format!(
                     "schema {loc}: journal segment keys are not valid on document"
                 )));
             }
-            if raw.singleton_id.is_some() {
+            if raw.singleton.is_some() {
                 bail!(Error::invalid(format!(
-                    "schema {loc}: singleton_id is not valid on document"
+                    "schema {loc}: singleton is not valid on document"
                 )));
             }
         }
         Kind::Singleton => {
             if raw.segment_max_bytes.is_some()
                 || raw.segment_max_lines.is_some()
-                || raw.segment_rotate.is_some()
+                || raw.daily.is_some()
             {
                 bail!(Error::invalid(format!(
                     "schema {loc}: journal segment keys are not valid on singleton"
                 )));
             }
-            match raw.singleton_id.as_deref() {
-                Some(id) if !id.is_empty() => {}
+            match raw.singleton.as_ref() {
+                Some(singleton) if !singleton.id.is_empty() => {
+                    require_slug("singleton id", &singleton.id)
+                        .with_context(|| format!("schema {loc}: singleton.id"))?;
+                }
                 _ => {
                     bail!(Error::invalid(format!(
-                        "schema {loc}: singleton_id is required"
+                        "schema {loc}: singleton.id is required"
                     )));
                 }
             }
@@ -434,6 +465,11 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     }
     let (segment_max_bytes, segment_max_lines, segment_rotate) = if raw.kind == Kind::Journal {
         let cap = raw.segment_max_bytes.unwrap_or(DEFAULT_SEGMENT_MAX_BYTES);
+        if cap == 0 {
+            bail!(Error::invalid(format!(
+                "schema {loc}: segment_max_bytes must be >= 1"
+            )));
+        }
         if cap > MAX_SEGMENT_MAX_BYTES {
             bail!(Error::invalid(format!(
                 "schema {loc}: segment_max_bytes {cap} exceeds 32 MiB"
@@ -444,27 +480,10 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
                 "schema {loc}: segment_max_lines must be >= 1"
             )));
         }
-        (Some(cap), raw.segment_max_lines, raw.segment_rotate)
+        let rotate = raw.daily.map(|_| SegmentRotate::Daily);
+        (Some(cap), raw.segment_max_lines, rotate)
     } else {
         (None, None, None)
-    };
-    let id_field = match raw.id.as_ref().and_then(|id| id.field.as_deref()) {
-        Some("") => {
-            bail!(Error::invalid(format!("schema {loc}: id.field is empty")));
-        }
-        Some(field) => field.to_owned(),
-        None => DEFAULT_ID_FIELD.to_owned(),
-    };
-    let id_pattern_src = raw
-        .id
-        .as_ref()
-        .and_then(|id| id.pattern.clone())
-        .filter(|pattern| !pattern.is_empty());
-    let id_pattern = match id_pattern_src.as_deref() {
-        Some(pattern) => Some(Regex::new(pattern).map_err(|err| {
-            Error::invalid(format!("schema {loc}: id.pattern is not a regex: {err}"))
-        })?),
-        None => None,
     };
     let fields = finish_fields(raw.fields, path)?;
     let mut filter_keys = BTreeSet::new();
@@ -472,11 +491,11 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     let body = match (raw.kind, raw.body) {
         (Kind::Document, None) => Some(BodyDecl {
             allowed: true,
-            fts: false,
-            vector: false,
+            fts: true,
+            vector: true,
             field_id: String::from("body"),
         }),
-        (Kind::Document, Some(body)) => Some(finish_body(body, path)?),
+        (Kind::Document, Some(body)) => Some(finish_body(body)),
         (_, None) => None,
         (_, Some(_)) => {
             bail!(Error::invalid(format!(
@@ -484,48 +503,33 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
             )));
         }
     };
+    add_body_find_key(body.as_ref(), &mut filter_keys);
+    let singleton_id = raw.singleton.map(|s| s.id);
     Ok(CollectionDecl {
         name: raw.name,
         kind: raw.kind,
         schema_version: raw.schema_version,
-        layout: raw.layout,
-        id_field,
-        id_pattern,
-        id_pattern_src,
+        layout: Vec::new(),
+        id_field: DEFAULT_ID_FIELD.to_owned(),
+        id_pattern: None,
         filter_keys,
         segment_max_bytes,
         segment_max_lines,
         segment_rotate,
-        singleton_id: raw.singleton_id,
+        singleton_id,
         body,
         fields,
         isolated: raw.isolated,
     })
 }
 
-fn finish_body(raw: RawBody, path: &Path) -> Result<BodyDecl, Error> {
-    let loc = path.display();
-    let vector = raw.vector.unwrap_or(false);
-    if raw.field_id.is_some() && !vector {
-        bail!(Error::invalid(format!(
-            "schema {loc}: body.field_id requires vector"
-        )));
-    }
-    let field_id = match raw.field_id.as_deref() {
-        Some("") => {
-            bail!(Error::invalid(format!(
-                "schema {loc}: body.field_id is empty"
-            )));
-        }
-        Some(id) => id.to_owned(),
-        None => String::from("body"),
-    };
-    Ok(BodyDecl {
+fn finish_body(raw: RawBody) -> BodyDecl {
+    BodyDecl {
         allowed: raw.allowed.unwrap_or(true),
-        fts: raw.fts.unwrap_or(false),
-        vector,
-        field_id,
-    })
+        fts: !raw.exclude_fts,
+        vector: !raw.exclude_vector,
+        field_id: String::from("body"),
+    }
 }
 
 fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Error> {
@@ -535,49 +539,65 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
         if field.name.is_empty() {
             bail!(Error::invalid(format!("schema {loc}: field name is empty")));
         }
-        let nested_ok = matches!(field.type_, FieldType::Object | FieldType::ObjectList);
-        if !field.fields.is_empty() && !nested_ok {
+        if field.name == "id" || field.name == "body" {
             bail!(Error::invalid(format!(
-                "schema {loc}: nested fields are only valid on object types"
+                "schema {loc}: field name {} is reserved",
+                field.name
             )));
         }
-        let nested = finish_fields(field.fields, path)?;
-        let searchable = matches!(field.type_, FieldType::String | FieldType::StringList);
-        if field.fts && !searchable {
-            bail!(Error::invalid(format!(
-                "schema {loc}: fts is only valid on string and string_list"
-            )));
-        }
-        if field.vector && !searchable {
-            bail!(Error::invalid(format!(
-                "schema {loc}: vector is only valid on string and string_list"
-            )));
-        }
-        if field.field_id.is_some() && !field.vector {
-            bail!(Error::invalid(format!(
-                "schema {loc}: field_id requires vector"
-            )));
-        }
-        let field_id = match field.field_id.as_deref() {
-            Some("") => {
-                bail!(Error::invalid(format!("schema {loc}: field_id is empty")));
+        let spec = field.spec()?;
+        let (type_, nested, edge, fts, vector) = match spec {
+            RawSpec::String(text) => (
+                FieldType::String,
+                Vec::new(),
+                None,
+                !text.exclude_fts,
+                !text.exclude_vector,
+            ),
+            RawSpec::Integer => (FieldType::Integer, Vec::new(), None, false, false),
+            RawSpec::Number => (FieldType::Number, Vec::new(), None, false, false),
+            RawSpec::Boolean => (FieldType::Boolean, Vec::new(), None, false, false),
+            RawSpec::StringList(text) => (
+                FieldType::StringList,
+                Vec::new(),
+                None,
+                !text.exclude_fts,
+                !text.exclude_vector,
+            ),
+            RawSpec::Object(object) => (
+                FieldType::Object,
+                finish_fields(object.fields, path)?,
+                None,
+                false,
+                false,
+            ),
+            RawSpec::ObjectList(object) => (
+                FieldType::ObjectList,
+                finish_fields(object.fields, path)?,
+                None,
+                false,
+                false,
+            ),
+            RawSpec::Edge(raw_edge) => {
+                let edge = finish_edge(&field.name, raw_edge, path)?;
+                let type_ = match edge.multiplicity {
+                    Multiplicity::One => FieldType::String,
+                    Multiplicity::Many => FieldType::StringList,
+                };
+                let fts = edge.fts;
+                let vector = edge.vector;
+                (type_, Vec::new(), Some(edge), fts, vector)
             }
-            Some(id) => Some(id.to_owned()),
-            None if field.vector => Some(field.name.clone()),
-            None => None,
         };
-        let edge = match field.edge {
-            Some(edge) => Some(finish_edge(&field.name, field.type_, edge, path)?),
-            None => None,
-        };
+        let field_id = vector.then(|| field.name.clone());
         out.push(FieldDecl {
             name: field.name,
-            type_: field.type_,
+            type_,
             required: field.required,
             nullable: field.nullable,
-            filter: field.filter,
-            fts: field.fts,
-            vector: field.vector,
+            filter: !field.exclude_find,
+            fts,
+            vector,
             field_id,
             edge,
             default: field.default,
@@ -587,31 +607,30 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
     Ok(out)
 }
 
-fn finish_edge(name: &str, type_: FieldType, raw: RawEdge, path: &Path) -> Result<EdgeDecl, Error> {
+fn finish_edge(name: &str, raw: RawEdge, path: &Path) -> Result<EdgeDecl, Error> {
     let loc = path.display();
     if raw.collection.is_empty() {
         bail!(Error::invalid(format!(
             "schema {loc}: edge.collection is required"
         )));
     }
-    let multiplicity = raw.multiplicity.unwrap_or(Multiplicity::One);
-    match (multiplicity, type_) {
-        (Multiplicity::One, FieldType::String) | (Multiplicity::Many, FieldType::StringList) => {}
-        (Multiplicity::One, _) => {
+    require_slug("edge collection", &raw.collection)
+        .with_context(|| format!("schema {loc}: edge.collection"))?;
+    let multiplicity = match (raw.one.is_some(), raw.many.is_some()) {
+        (true, false) => Multiplicity::One,
+        (false, true) => Multiplicity::Many,
+        _ => {
             bail!(Error::invalid(format!(
-                "schema {loc}: edge {name} multiplicity one requires type string"
+                "schema {loc}: edge {name} must set exactly one of one or many"
             )));
         }
-        (Multiplicity::Many, _) => {
-            bail!(Error::invalid(format!(
-                "schema {loc}: edge {name} multiplicity many requires type string_list"
-            )));
-        }
-    }
+    };
     Ok(EdgeDecl {
         collection: raw.collection,
         multiplicity,
         dangling: raw.dangling.unwrap_or(Dangling::Lax),
+        fts: !raw.exclude_fts,
+        vector: !raw.exclude_vector,
     })
 }
 
@@ -641,128 +660,607 @@ fn check_edge_targets(
     Ok(())
 }
 
-impl CollectionDecl {
-    pub(crate) fn edge(&self, name: &str) -> Option<&EdgeDecl> {
-        find_edge(&self.fields, name)
-    }
-}
-
-pub(crate) fn to_catalog(schema: &Schema) -> Result<Catalog, Error> {
-    let mut catalog = Catalog::default();
-    for decl in schema.collections() {
-        catalog.collections.push(collection_catalog(decl)?);
-    }
-    Ok(catalog)
-}
-
-fn collection_catalog(decl: &CollectionDecl) -> Result<CatalogCollection, Error> {
-    let mut col = CatalogCollection::default()
-        .with_name(decl.name.as_str())
-        .with_kind(decl.kind.as_str())
-        .with_schema_version(decl.schema_version);
-    col.layout.clone_from(&decl.layout);
-    let mut id = CatalogId::default().with_field(decl.id_field.as_str());
-    if let Some(pattern) = &decl.id_pattern_src {
-        id = id.with_pattern(pattern.as_str());
-    }
-    col.id = id.into();
-    if let Some(bytes) = decl.segment_max_bytes {
-        col = col.with_segment_max_bytes(bytes);
-    }
-    if let Some(lines) = decl.segment_max_lines {
-        col = col.with_segment_max_lines(lines);
-    }
-    if let Some(rotate) = decl.segment_rotate {
-        col = col.with_segment_rotate(rotate.as_str());
-    }
-    if let Some(singleton_id) = &decl.singleton_id {
-        col = col.with_singleton_id(singleton_id.as_str());
-    }
+pub(crate) fn to_proto_schema(
+    decl: &CollectionDecl,
+    omit_fields: bool,
+) -> Result<ApiSchema, Error> {
+    let mut out = ApiSchema::default().with_version(decl.schema_version);
     if decl.isolated {
-        return Ok(col.with_isolated(true));
+        out = out.with_isolated(true);
     }
-    col.fields = catalog_fields(&decl.fields)?;
-    if let Some(body) = &decl.body {
-        col.body = catalog_body(body).into();
+    out.kind = match decl.kind {
+        Kind::Document => body_to_proto(decl.body.as_ref()).into(),
+        Kind::Journal => journal_to_proto(decl).into(),
+        Kind::Singleton => {
+            let id = decl.singleton_id.as_deref().unwrap_or("");
+            Singleton::default().with_id(id).into()
+        }
+    };
+    if !omit_fields {
+        out.fields = fields_to_proto(&decl.fields)?;
     }
-    Ok(col)
+    Ok(out)
 }
 
-fn catalog_body(body: &BodyDecl) -> CatalogBody {
-    let mut msg = CatalogBody::default().with_allowed(body.allowed);
-    if body.fts {
-        msg = msg.with_fts(true);
+pub(crate) fn to_vault_info(
+    path: &Path,
+    index_path: &Path,
+    remote: &str,
+    auto_sync: bool,
+    schema: &Schema,
+) -> Result<VaultInfo, Error> {
+    let mut info = VaultInfo::default()
+        .with_path(path.to_string_lossy().into_owned())
+        .with_index_path(index_path.to_string_lossy().into_owned())
+        .with_auto_sync(auto_sync);
+    if !remote.is_empty() {
+        info = info.with_remote(remote.to_owned());
     }
-    if body.vector {
-        msg = msg.with_vector(true).with_field_id(body.field_id.as_str());
+    for decl in schema.collections() {
+        let mut item = CollectionInfo::default().with_name(decl.name.as_str());
+        item.schema = to_proto_schema(decl, decl.isolated)?.into();
+        info.collections.push(item);
+    }
+    Ok(info)
+}
+
+fn body_to_proto(body: Option<&BodyDecl>) -> Body {
+    let Some(body) = body else {
+        return Body::default();
+    };
+    let mut msg = Body::default();
+    if !body.allowed {
+        msg = msg.with_no_body(true);
+    }
+    let mut text = Text::default();
+    if !body.fts {
+        text = text.with_exclude_fts(true);
+    }
+    if !body.vector {
+        text = text.with_exclude_vector(true);
+    }
+    if text.exclude_fts.is_some() || text.exclude_vector.is_some() {
+        msg.text = text.into();
     }
     msg
 }
 
-fn catalog_fields(fields: &[FieldDecl]) -> Result<Vec<CatalogField>, Error> {
+fn journal_to_proto(decl: &CollectionDecl) -> Journal {
+    let mut msg = Journal::default();
+    if let Some(bytes) = decl
+        .segment_max_bytes
+        .filter(|n| *n != DEFAULT_SEGMENT_MAX_BYTES)
+    {
+        msg = msg.with_segment_max_bytes(bytes);
+    }
+    if let Some(lines) = decl.segment_max_lines {
+        msg = msg.with_segment_max_lines(lines);
+    }
+    if decl.segment_rotate == Some(SegmentRotate::Daily) {
+        msg.daily = Unit::default().into();
+    }
+    msg
+}
+
+fn fields_to_proto(fields: &[FieldDecl]) -> Result<Vec<Field>, Error> {
     let mut out = Vec::with_capacity(fields.len());
     for field in fields {
-        let mut msg = CatalogField::default()
-            .with_name(field.name.as_str())
-            .with_type(field.type_.as_str());
+        let mut msg = Field::default().with_name(field.name.as_str());
         if field.required {
             msg = msg.with_required(true);
         }
         if field.nullable {
             msg = msg.with_nullable(true);
         }
-        if field.filter {
-            msg = msg.with_filter(true);
-        }
-        if field.fts {
-            msg = msg.with_fts(true);
-        }
-        if field.vector {
-            msg = msg.with_vector(true);
-        }
-        if let Some(field_id) = &field.field_id {
-            msg = msg.with_field_id(field_id.as_str());
-        }
-        if let Some(edge) = &field.edge {
-            msg.edge = CatalogEdge::default()
-                .with_collection(edge.collection.as_str())
-                .with_multiplicity(edge.multiplicity.as_str())
-                .with_dangling(edge.dangling.as_str())
-                .into();
+        if !field.filter {
+            msg = msg.with_exclude_find(true);
         }
         if let Some(default) = &field.default {
-            msg.default = catalog_field_default(default)?.default;
+            msg.default = serde_json::from_value(default.clone())
+                .context(Code::Invalid, "[Schema] encode field default")?;
         }
-        if !field.fields.is_empty() {
-            msg.fields = catalog_fields(&field.fields)?;
-        }
+        msg.spec = Some(field_spec_to_proto(field)?);
         out.push(msg);
     }
     Ok(out)
 }
 
-fn catalog_field_default(value: &serde_json::Value) -> Result<CatalogField, Error> {
-    serde_json::from_value(serde_json::json!({
-        "name": "_",
-        "type": "string",
-        "default": value,
-    }))
-    .context(
-        Code::Invalid,
-        "[Schema::catalog_field_default] encode default",
-    )
+fn field_spec_to_proto(
+    field: &FieldDecl,
+) -> Result<scheda_generated::api::v1::__buffa::oneof::field::Spec, Error> {
+    use scheda_generated::api::v1::__buffa::oneof::field::Spec;
+    if let Some(edge) = &field.edge {
+        return Ok(Spec::Edge(Box::new(edge_to_proto(edge))));
+    }
+    let text = || {
+        let mut t = Text::default();
+        if !field.fts {
+            t = t.with_exclude_fts(true);
+        }
+        if !field.vector {
+            t = t.with_exclude_vector(true);
+        }
+        t
+    };
+    Ok(match field.type_ {
+        FieldType::String => Spec::String(Box::new(text())),
+        FieldType::Integer => Spec::Integer(Box::default()),
+        FieldType::Number => Spec::Number(Box::default()),
+        FieldType::Boolean => Spec::Boolean(Box::default()),
+        FieldType::StringList => Spec::StringList(Box::new(text())),
+        FieldType::Object => Spec::Object(Box::new(Object {
+            fields: fields_to_proto(&field.fields)?,
+            ..Object::default()
+        })),
+        FieldType::ObjectList => Spec::ObjectList(Box::new(Object {
+            fields: fields_to_proto(&field.fields)?,
+            ..Object::default()
+        })),
+    })
 }
 
-fn find_edge<'a>(fields: &'a [FieldDecl], name: &str) -> Option<&'a EdgeDecl> {
-    for field in fields {
-        if field.name == name {
-            return field.edge.as_ref();
-        }
-        if let Some(edge) = find_edge(&field.fields, name) {
-            return Some(edge);
+fn edge_to_proto(edge: &EdgeDecl) -> Edge {
+    use scheda_generated::api::v1::__buffa::oneof::edge::Arity;
+    let mut msg = Edge::default().with_collection(edge.collection.as_str());
+    if edge.dangling == Dangling::Strict {
+        msg = msg.with_strict(true);
+    }
+    msg.arity = Some(match edge.multiplicity {
+        Multiplicity::One => Arity::One(Box::default()),
+        Multiplicity::Many => Arity::Many(Box::default()),
+    });
+    let mut text = Text::default();
+    if !edge.fts {
+        text = text.with_exclude_fts(true);
+    }
+    if !edge.vector {
+        text = text.with_exclude_vector(true);
+    }
+    if text.exclude_fts.is_some() || text.exclude_vector.is_some() {
+        msg.text = text.into();
+    }
+    msg
+}
+
+/// Write one collection declaration (LIB-21). Returns the vault-relative POSIX path.
+pub(crate) fn put_collection(
+    vault: &Path,
+    name: &str,
+    incoming: &ApiSchema,
+) -> Result<String, Error> {
+    incoming.require_valid()?;
+    require_slug("collection name", name)?;
+    let decl = decl_from_proto(name, incoming)?;
+    let dir = join_inside(vault, collection_dir(name))?;
+    let rel = match find_schema_file(&dir)? {
+        Some(path) => posix_rel(vault, &path)?,
+        None => format!("{}/{SCHEMA_YAML}", collection_dir(name)),
+    };
+    let path = join_inside(vault, &rel)?;
+    let mut schema = load(vault)?;
+    schema.collections.insert(decl.name.clone(), decl.clone());
+    validate_edge_targets(&schema.collections)?;
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).context("[Schema::put_collection] create collection dir")?;
+    }
+    if path.is_file() {
+        let existing = load_collection_file(&path)?;
+        if existing.name != decl.name {
+            bail!(Error::invalid(format!(
+                "schema file {rel} already declares collection {}",
+                existing.name
+            )));
         }
     }
-    None
+    let body = if rel.ends_with(".json") {
+        json_from_decl(&decl)?
+    } else {
+        yaml_from_decl(&decl)?
+    };
+    fs::write(&path, body).context("[Schema::put_collection] write collection")?;
+    Ok(rel)
+}
+
+fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Error> {
+    use scheda_generated::api::v1::__buffa::oneof::schema::Kind as SchemaKind;
+    let schema_version = schema
+        .version
+        .ok_or_else(|| Error::invalid("schema: version is required"))?;
+    let (kind, body, singleton_id, segment_max_bytes, segment_max_lines, segment_rotate) =
+        match schema.kind.as_ref() {
+            Some(SchemaKind::Document(body)) => (
+                Kind::Document,
+                Some(body_from_proto(body)),
+                None,
+                None,
+                None,
+                None,
+            ),
+            Some(SchemaKind::Journal(journal)) => {
+                let cap = journal
+                    .segment_max_bytes
+                    .unwrap_or(DEFAULT_SEGMENT_MAX_BYTES);
+                if cap == 0 || cap > MAX_SEGMENT_MAX_BYTES {
+                    bail!(Error::invalid("schema: segment_max_bytes out of range"));
+                }
+                (
+                    Kind::Journal,
+                    None,
+                    None,
+                    Some(cap),
+                    journal.segment_max_lines,
+                    journal.daily.as_option().map(|_| SegmentRotate::Daily),
+                )
+            }
+            Some(SchemaKind::Singleton(singleton)) => {
+                let id = singleton
+                    .id
+                    .as_deref()
+                    .filter(|id| !id.is_empty())
+                    .ok_or_else(|| Error::invalid("schema: singleton.id is required"))?;
+                require_slug("singleton id", id)?;
+                (Kind::Singleton, None, Some(id.to_owned()), None, None, None)
+            }
+            None => bail!(Error::invalid("schema: kind is required")),
+        };
+    let fields = fields_from_proto(&schema.fields)?;
+    let mut filter_keys = BTreeSet::new();
+    collect_filter_keys(&fields, &mut filter_keys);
+    add_body_find_key(body.as_ref(), &mut filter_keys);
+    Ok(CollectionDecl {
+        name: name.to_owned(),
+        kind,
+        schema_version,
+        layout: Vec::new(),
+        id_field: DEFAULT_ID_FIELD.to_owned(),
+        id_pattern: None,
+        filter_keys,
+        segment_max_bytes,
+        segment_max_lines,
+        segment_rotate,
+        singleton_id,
+        body,
+        fields,
+        isolated: schema.isolated.unwrap_or(false),
+    })
+}
+
+fn body_from_proto(body: &Body) -> BodyDecl {
+    let (exclude_fts, exclude_vector) = match body.text.as_option() {
+        Some(text) => (
+            text.exclude_fts.unwrap_or(false),
+            text.exclude_vector.unwrap_or(false),
+        ),
+        None => (false, false),
+    };
+    BodyDecl {
+        allowed: !body.no_body.unwrap_or(false),
+        fts: !exclude_fts,
+        vector: !exclude_vector,
+        field_id: String::from("body"),
+    }
+}
+
+fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
+    use scheda_generated::api::v1::__buffa::oneof::edge::Arity;
+    use scheda_generated::api::v1::__buffa::oneof::field::Spec;
+    let mut out = Vec::with_capacity(fields.len());
+    for field in fields {
+        let name = field
+            .name
+            .as_deref()
+            .filter(|name| !name.is_empty())
+            .ok_or_else(|| Error::invalid("schema: field name is required"))?;
+        if name == "id" || name == "body" {
+            bail!(Error::invalid(format!(
+                "schema: field name {name} is reserved"
+            )));
+        }
+        let default = match field.default.as_option() {
+            Some(value) => Some(
+                serde_json::to_value(value)
+                    .context(Code::Invalid, "[Schema] decode field default")?,
+            ),
+            None => None,
+        };
+        let (type_, nested, edge, fts, vector) = match field.spec.as_ref() {
+            Some(Spec::String(text)) => (
+                FieldType::String,
+                Vec::new(),
+                None,
+                !text.exclude_fts.unwrap_or(false),
+                !text.exclude_vector.unwrap_or(false),
+            ),
+            Some(Spec::Integer(_)) => (FieldType::Integer, Vec::new(), None, false, false),
+            Some(Spec::Number(_)) => (FieldType::Number, Vec::new(), None, false, false),
+            Some(Spec::Boolean(_)) => (FieldType::Boolean, Vec::new(), None, false, false),
+            Some(Spec::StringList(text)) => (
+                FieldType::StringList,
+                Vec::new(),
+                None,
+                !text.exclude_fts.unwrap_or(false),
+                !text.exclude_vector.unwrap_or(false),
+            ),
+            Some(Spec::Object(object)) => (
+                FieldType::Object,
+                fields_from_proto(&object.fields)?,
+                None,
+                false,
+                false,
+            ),
+            Some(Spec::ObjectList(object)) => (
+                FieldType::ObjectList,
+                fields_from_proto(&object.fields)?,
+                None,
+                false,
+                false,
+            ),
+            Some(Spec::Edge(raw)) => {
+                let collection = raw
+                    .collection
+                    .as_deref()
+                    .filter(|name| !name.is_empty())
+                    .ok_or_else(|| Error::invalid("schema: edge.collection is required"))?;
+                require_slug("edge collection", collection)?;
+                let multiplicity = match raw.arity.as_ref() {
+                    Some(Arity::One(_)) => Multiplicity::One,
+                    Some(Arity::Many(_)) => Multiplicity::Many,
+                    None => bail!(Error::invalid("schema: edge arity is required")),
+                };
+                let (exclude_fts, exclude_vector) = match raw.text.as_option() {
+                    Some(text) => (
+                        text.exclude_fts.unwrap_or(false),
+                        text.exclude_vector.unwrap_or(false),
+                    ),
+                    None => (false, false),
+                };
+                let edge = EdgeDecl {
+                    collection: collection.to_owned(),
+                    multiplicity,
+                    dangling: if raw.strict.unwrap_or(false) {
+                        Dangling::Strict
+                    } else {
+                        Dangling::Lax
+                    },
+                    fts: !exclude_fts,
+                    vector: !exclude_vector,
+                };
+                let type_ = match multiplicity {
+                    Multiplicity::One => FieldType::String,
+                    Multiplicity::Many => FieldType::StringList,
+                };
+                let fts = edge.fts;
+                let vector = edge.vector;
+                (type_, Vec::new(), Some(edge), fts, vector)
+            }
+            None => bail!(Error::invalid(format!("schema: field {name} has no spec"))),
+        };
+        let field_id = vector.then(|| name.to_owned());
+        out.push(FieldDecl {
+            name: name.to_owned(),
+            type_,
+            required: field.required.unwrap_or(false),
+            nullable: field.nullable.unwrap_or(false),
+            filter: !field.exclude_find.unwrap_or(false),
+            fts,
+            vector,
+            field_id,
+            edge,
+            default,
+            fields: nested,
+        });
+    }
+    Ok(out)
+}
+
+fn yaml_from_decl(decl: &CollectionDecl) -> Result<String, Error> {
+    yaml_serde::to_string(&DiskCollection::from(decl))
+        .context(Code::Invalid, "[Schema::put_collection] encode YAML")
+}
+
+fn json_from_decl(decl: &CollectionDecl) -> Result<String, Error> {
+    serde_json::to_string_pretty(&DiskCollection::from(decl))
+        .context(Code::Invalid, "[Schema::put_collection] encode JSON")
+}
+
+#[derive(Serialize)]
+struct DiskCollection {
+    name: String,
+    kind: &'static str,
+    schema_version: u32,
+    fields: Vec<DiskField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    segment_max_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    segment_max_lines: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    daily: Option<DiskUnit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    singleton: Option<DiskSingleton>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    body: Option<DiskBody>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    isolated: bool,
+}
+
+#[derive(Serialize)]
+struct DiskUnit {}
+
+#[derive(Serialize)]
+struct DiskSingleton {
+    id: String,
+}
+
+#[derive(Serialize)]
+struct DiskBody {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    allowed: Option<bool>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_fts: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_vector: bool,
+}
+
+#[derive(Serialize)]
+struct DiskText {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_fts: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_vector: bool,
+}
+
+#[derive(Serialize)]
+struct DiskObject {
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fields: Vec<DiskField>,
+}
+
+#[derive(Serialize)]
+struct DiskEdge {
+    collection: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    one: Option<DiskUnit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    many: Option<DiskUnit>,
+    #[serde(skip_serializing_if = "is_default_lax")]
+    dangling: Dangling,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_fts: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_vector: bool,
+}
+
+#[derive(Serialize)]
+struct DiskField {
+    name: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    required: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    nullable: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_find: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    default: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    string: Option<DiskText>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    integer: Option<DiskUnit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    number: Option<DiskUnit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    boolean: Option<DiskUnit>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    string_list: Option<DiskText>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    object: Option<DiskObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    object_list: Option<DiskObject>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    edge: Option<DiskEdge>,
+}
+
+fn is_default_lax(value: &Dangling) -> bool {
+    *value == Dangling::Lax
+}
+
+impl From<&CollectionDecl> for DiskCollection {
+    fn from(decl: &CollectionDecl) -> Self {
+        let body = decl.body.as_ref().and_then(|body| {
+            if body.allowed && body.fts && body.vector {
+                return None;
+            }
+            Some(DiskBody {
+                allowed: (!body.allowed).then_some(false),
+                exclude_fts: !body.fts,
+                exclude_vector: !body.vector,
+            })
+        });
+        let segment_max_bytes = decl
+            .segment_max_bytes
+            .filter(|cap| decl.kind == Kind::Journal && *cap != DEFAULT_SEGMENT_MAX_BYTES);
+        Self {
+            name: decl.name.clone(),
+            kind: decl.kind.as_str(),
+            schema_version: decl.schema_version,
+            fields: decl.fields.iter().map(DiskField::from).collect(),
+            segment_max_bytes,
+            segment_max_lines: decl.segment_max_lines,
+            daily: (decl.segment_rotate == Some(SegmentRotate::Daily)).then_some(DiskUnit {}),
+            singleton: decl.singleton_id.clone().map(|id| DiskSingleton { id }),
+            body,
+            isolated: decl.isolated,
+        }
+    }
+}
+
+impl From<&FieldDecl> for DiskField {
+    fn from(field: &FieldDecl) -> Self {
+        let text = || DiskText {
+            exclude_fts: !field.fts,
+            exclude_vector: !field.vector,
+        };
+        let mut disk = DiskField {
+            name: field.name.clone(),
+            required: field.required,
+            nullable: field.nullable,
+            exclude_find: !field.filter,
+            default: field.default.clone(),
+            string: None,
+            integer: None,
+            number: None,
+            boolean: None,
+            string_list: None,
+            object: None,
+            object_list: None,
+            edge: None,
+        };
+        if let Some(edge) = &field.edge {
+            disk.edge = Some(DiskEdge {
+                collection: edge.collection.clone(),
+                one: (edge.multiplicity == Multiplicity::One).then_some(DiskUnit {}),
+                many: (edge.multiplicity == Multiplicity::Many).then_some(DiskUnit {}),
+                dangling: edge.dangling,
+                exclude_fts: !edge.fts,
+                exclude_vector: !edge.vector,
+            });
+            return disk;
+        }
+        match field.type_ {
+            FieldType::String => disk.string = Some(text()),
+            FieldType::Integer => disk.integer = Some(DiskUnit {}),
+            FieldType::Number => disk.number = Some(DiskUnit {}),
+            FieldType::Boolean => disk.boolean = Some(DiskUnit {}),
+            FieldType::StringList => disk.string_list = Some(text()),
+            FieldType::Object => {
+                disk.object = Some(DiskObject {
+                    fields: field.fields.iter().map(DiskField::from).collect(),
+                });
+            }
+            FieldType::ObjectList => {
+                disk.object_list = Some(DiskObject {
+                    fields: field.fields.iter().map(DiskField::from).collect(),
+                });
+            }
+        }
+        disk
+    }
+}
+
+fn posix_rel(vault: &Path, path: &Path) -> Result<String, Error> {
+    let rel = path
+        .strip_prefix(vault)
+        .map_err(|_| Error::invalid("schema path is outside the Vault"))?;
+    let mut out = String::new();
+    for component in rel.iter() {
+        let part = component
+            .to_str()
+            .ok_or_else(|| Error::invalid("schema path is not UTF-8"))?;
+        if !out.is_empty() {
+            out.push('/');
+        }
+        out.push_str(part);
+    }
+    Ok(out)
 }
 
 fn collect_filter_keys(fields: &[FieldDecl], out: &mut BTreeSet<String>) {
@@ -774,22 +1272,27 @@ fn collect_filter_keys(fields: &[FieldDecl], out: &mut BTreeSet<String>) {
     }
 }
 
+fn add_body_find_key(body: Option<&BodyDecl>, keys: &mut BTreeSet<String>) {
+    if body.is_some_and(|body| body.allowed && body.fts) {
+        keys.insert(String::from("body"));
+    }
+}
+
 fn read_utf8(path: &Path) -> Result<String, Error> {
     let bytes = fs::read(path).context("[Schema::read_utf8] read file")?;
     String::from_utf8(bytes).context(Code::NotUtf8, "[Schema::read_utf8] decode UTF-8")
 }
 
-/// On-disk directory for a collection: 16 lowercase hex digits of FNV-1a-64
-/// of the UTF-8 name (MOD-8).
+/// On-disk directory for a collection: the collection name (MOD-8).
 #[must_use]
-pub fn collection_dir(name: &str) -> String {
-    crate::fnv::hex(name.as_bytes())
+pub(crate) fn collection_dir(name: &str) -> &str {
+    name
 }
 
 pub(crate) fn join_in_collection(vault: &Path, name: &str, rel: &str) -> Result<PathBuf, Error> {
     let dir = collection_dir(name);
     if rel.is_empty() {
-        join_inside(vault, &dir)
+        join_inside(vault, dir)
     } else {
         join_inside(vault, &format!("{dir}/{rel}"))
     }
@@ -798,9 +1301,7 @@ pub(crate) fn join_in_collection(vault: &Path, name: &str, rel: &str) -> Result<
 pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
     let rel_path = Path::new(rel);
     if rel_path.is_absolute() {
-        bail!(Error::invalid(
-            "schema_dir must be a path relative to the Vault",
-        ));
+        bail!(Error::invalid("path must be relative to the Vault"));
     }
     let mut out = vault.to_path_buf();
     for component in rel_path.components() {
@@ -809,18 +1310,16 @@ pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
             Component::Normal(part) => out.push(part),
             Component::ParentDir => {
                 if !out.pop() || out.as_path() == Path::new("") || !out.starts_with(vault) {
-                    bail!(Error::invalid("schema_dir must stay inside the Vault"));
+                    bail!(Error::invalid("path must stay inside the Vault"));
                 }
             }
             Component::Prefix(_) | Component::RootDir => {
-                bail!(Error::invalid(
-                    "schema_dir must be a path relative to the Vault",
-                ));
+                bail!(Error::invalid("path must be relative to the Vault"));
             }
         }
     }
     if !out.starts_with(vault) {
-        bail!(Error::invalid("schema_dir must stay inside the Vault"));
+        bail!(Error::invalid("path must stay inside the Vault"));
     }
     Ok(out)
 }
@@ -834,17 +1333,27 @@ mod tests {
     fn parse(yaml: &str) -> Result<super::CollectionDecl, crate::Error> {
         let raw: super::RawCollection =
             yaml_serde::from_str(yaml).map_err(|err| crate::Error::invalid(err.to_string()))?;
-        finish_collection(raw, Path::new("schema/c.yaml"))
+        finish_collection(raw, Path::new(".schema.yaml"))
     }
 
     #[test]
-    fn collection_name_may_contain_a_slash() {
-        let decl = parse(
-            "name: team/notes\nkind: document\nschema_version: 1\nlayout: n/{id}.md\nfields: []\n",
+    fn collection_name_must_be_a_path_component() {
+        let err =
+            parse("name: team/notes\nkind: document\nschema_version: 1\nfields: []\n").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        let decl =
+            parse("name: team-notes\nkind: document\nschema_version: 1\nfields: []\n").unwrap();
+        assert_eq!(decl.name, "team-notes");
+        assert_eq!(super::collection_dir("team-notes"), "team-notes");
+    }
+
+    #[test]
+    fn singleton_id_must_be_a_valid_record_id() {
+        let err = parse(
+            "name: box\nkind: singleton\nschema_version: 1\nsingleton:\n  id: .hidden\nfields: []\n",
         )
-        .unwrap();
-        assert_eq!(decl.name, "team/notes");
-        assert_eq!(super::collection_dir("team/notes").len(), 16);
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
@@ -895,15 +1404,35 @@ mod tests {
     }
 
     #[test]
-    fn identity_field_override() {
-        let decl = parse(include_str!("../testdata/schema/slug.yaml")).unwrap();
-        assert_eq!(decl.id_field, "slug");
+    fn field_named_id_is_invalid() {
+        let err = parse(include_str!("../testdata/schema/slug.yaml")).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn field_named_body_is_invalid() {
+        let err = parse(
+            "name: c\nkind: document\nschema_version: 1\nfields:\n  - name: body\n    string: {}\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+    }
+
+    #[test]
+    fn exclude_fts_body_is_not_a_find_key() {
+        let decl = parse(
+            "name: c\nkind: document\nschema_version: 1\nbody:\n  exclude_fts: true\nfields:\n  - name: title\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(!decl.filter_keys.contains("body"));
+        assert!(decl.body.as_ref().is_some_and(|body| !body.fts));
     }
 
     #[test]
     fn filter_marks_parse() {
         let decl = parse(include_str!("../testdata/schema/filter.yaml")).unwrap();
         assert!(decl.filter_keys.contains("tagged"));
+        assert!(decl.filter_keys.contains("body"));
         assert!(!decl.filter_keys.contains("prose"));
     }
 
@@ -934,7 +1463,7 @@ mod tests {
     #[test]
     fn search_marks_and_body_parse() {
         let decl = parse(
-            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nbody:\n  fts: true\n  vector: true\nfields:\n  - name: title\n    type: string\n    fts: true\n    vector: true\n  - name: secret\n    type: string\n",
+            "name: c\nkind: document\nschema_version: 1\nbody: {}\nfields:\n  - name: title\n    string: {}\n  - name: secret\n    string:\n      exclude_fts: true\n      exclude_vector: true\n",
         )
         .unwrap();
         let body = decl.body.as_ref().unwrap();
@@ -942,6 +1471,7 @@ mod tests {
         assert!(body.fts);
         assert!(body.vector);
         assert_eq!(body.field_id, "body");
+        assert!(decl.filter_keys.contains("body"));
         assert!(decl.fields[0].fts);
         assert!(decl.fields[0].vector);
         assert_eq!(decl.fields[0].field_id.as_deref(), Some("title"));
@@ -952,7 +1482,7 @@ mod tests {
     #[test]
     fn fts_on_integer_is_invalid() {
         let err = parse(
-            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nfields:\n  - name: n\n    type: integer\n    fts: true\n",
+            "name: c\nkind: document\nschema_version: 1\nfields:\n  - name: n\n    integer: {}\n    fts: true\n",
         )
         .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -960,17 +1490,15 @@ mod tests {
 
     #[test]
     fn body_on_journal_is_invalid() {
-        let err = parse(
-            "name: c\nkind: journal\nschema_version: 1\nlayout: log/\nbody:\n  fts: true\nfields: []\n",
-        )
-        .unwrap_err();
+        let err =
+            parse("name: c\nkind: journal\nschema_version: 1\nbody: {}\nfields: []\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
-    fn edge_one_on_string_list_is_invalid() {
+    fn edge_arity_is_required() {
         let err = parse(
-            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nfields:\n  - name: refs\n    type: string_list\n    edge:\n      collection: c\n      multiplicity: one\n",
+            "name: c\nkind: document\nschema_version: 1\nfields:\n  - name: refs\n    edge:\n      collection: c\n",
         )
         .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -979,7 +1507,7 @@ mod tests {
     #[test]
     fn isolated_mark_parses() {
         let decl = parse(
-            "name: c\nkind: document\nschema_version: 1\nlayout: c/{id}.md\nisolated: true\nfields:\n  - name: secret\n    type: string\n",
+            "name: c\nkind: document\nschema_version: 1\nisolated: true\nfields:\n  - name: secret\n    string: {}\n",
         )
         .unwrap();
         assert!(decl.isolated);

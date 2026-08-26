@@ -1,0 +1,384 @@
+// `Vault.find` / `Collection.find` (`07` LIB-10). Bindings and agent
+// transport (`08`) use the Protobuf JSON mapping, not binary protobuf.
+// Vault files stay YAML / JSONL (`04`).
+//
+// `Filter` is a Tantivy 0.26 `Query` tree. The library maps each `kind` to
+// `tantivy::query::*`, runs it on the Index, then opens Record files for
+// the matching `(collection, id)`s (IDX-10). Collection names are a
+// method argument on `Vault.find`, not a field here. No Record path.
+// Unset `kind` is not a query (`invalid`). `all` matches every indexed
+// Record in the selected collections. `QueryParser` is not a `Query`;
+// it is not here.
+//
+// Paging is the Tantivy collector, not part of `Filter`:
+// `TopDocs::with_limit(count).and_offset(offset)`, then `order_by_score()`
+// unless the selection is exactly one `journal` (append-order fast field,
+// QRY-7). `Vault.find` takes collection names, `Filter`, `offset`, and
+// `count`. `Collection.find` passes that collection's name. `FindResult` is
+// one page. Output, not a write envelope: no field validators (same as
+// `History`).
+
+edition = "2024";
+
+package api.v1;
+
+import "api/v1/record.proto";
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+
+// One Tantivy 0.26 `Query`. Exactly one `kind`. Nested under `boolean` /
+// `boost` / … as a subtree. Also the optional pre-cut on `SearchQuery`.
+message Filter {
+  // `AllQuery`. Every indexed Record in this collection. Score 1.0.
+  message All {}
+
+  // `EmptyQuery`. Matches nothing.
+  message Empty {}
+
+  // `TermQuery`. Documents that contain this term.
+  message Term {
+    // Schema field name, Record identity `id`, or Markdown `body`. Not a
+    // path. `exclude_find` → `invalid`. `id` is always allowed. `body` is
+    // allowed on `document` unless `no_body` or `exclude_fts`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Term value. Type must match the Index (library). JSON `null` is a
+    // stored null (MOD-18), not “missing”.
+    google.protobuf.Value value = 2 [(buf.validate.field) = {required: true}];
+  }
+
+  // `TermSetQuery`. Documents that contain any of these terms (OR on one
+  // field).
+  message TermSet {
+    // Schema field name, Record identity `id`, or Markdown `body`. Not a
+    // path.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Terms; at least one. Same type rule as `Term.value`.
+    google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
+  }
+
+  // `PhraseQuery`. Ordered sequence of tokens. Field must have positions.
+  message Phrase {
+    // Schema field name or Markdown `body`. Not Record `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Tokens in order. At least two.
+    repeated string terms = 2 [(buf.validate.field) = {repeated: {min_items: 2}}];
+    // Extra positions allowed between tokens. Unset or `0` → adjacent.
+    uint32 slop = 3;
+  }
+
+  // `PhrasePrefixQuery`. Phrase whose last token is a prefix (`"part t"`
+  // matches “part time”). Field must have positions.
+  message PhrasePrefix {
+    // Schema field name or Markdown `body`. Not Record `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Complete tokens before the prefix. Last Tantivy term is `prefix`.
+    // Together with `prefix` there must be at least two terms.
+    repeated string terms = 2 [(buf.validate.field) = {repeated: {min_items: 1}}];
+    // Prefix of the last token (not a full term).
+    string prefix = 3 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Cap on prefix expansion. Unset → Tantivy default (50).
+    uint32 max_expansions = 4;
+  }
+
+  // `FuzzyTermQuery`. Term within Levenshtein distance.
+  message FuzzyTerm {
+    // Schema field name or Markdown `body`. Not Record `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The term to match fuzzily.
+    string term = 2 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Max edits. Tantivy `u8`. Unset or `0` → exact.
+    uint32 distance = 3 [(buf.validate.field) = {uint32: {lte: 255}}];
+    // `true` → `FuzzyTermQuery::new_prefix` (prefix of `term`).
+    bool prefix = 4;
+    // `true` → a transposition costs 1, not 2.
+    bool transposition_cost_one = 5;
+  }
+
+  // `RegexQuery`. A term that matches this pattern.
+  message Regex {
+    // Schema field name or Markdown `body`. Not Record `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Regex over the term dictionary (not a QueryParser string).
+    string pattern = 2 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+  }
+
+  // `RegexPhraseQuery`. Ordered sequence of regexes. Field must have
+  // positions.
+  message RegexPhrase {
+    // Schema field name or Markdown `body`. Not Record `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Regex per token, in order. At least two.
+    repeated string patterns = 2 [(buf.validate.field) = {
+      repeated: {min_items: 2}
+    }];
+    // Extra positions allowed between tokens. Unset or `0` → adjacent.
+    uint32 slop = 3;
+    // Cap on regex expansion across all tokens. Unset → Tantivy default
+    // (16384).
+    uint32 max_expansions = 4;
+  }
+
+  // One end of a `Range`. Inclusive or exclusive; not both.
+  message Bound {
+    // Exactly one.
+    oneof kind {
+      option (buf.validate.oneof).required = true;
+      // Inclusive (`Bound::Included`).
+      google.protobuf.Value included = 1;
+      // Exclusive (`Bound::Excluded`).
+      google.protobuf.Value excluded = 2;
+    }
+  }
+
+  // `RangeQuery`. At least one term in `[lower, upper]`. Unset bound is
+  // unbounded. Score 1.0.
+  message Range {
+    // Schema field name, Record identity `id`, or Markdown `body`. Not a
+    // path.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // Lower bound. Unset = unbounded below.
+    Bound lower = 2;
+    // Upper bound. Unset = unbounded above.
+    Bound upper = 3;
+  }
+
+  // `ExistsQuery`. A non-null indexed value (SCH-8). Not “equals JSON
+  // null” — that is `term` with value `null`.
+  message Exists {
+    // Schema field name or Markdown `body`. Not Record `id` (`id` always
+    // exists on an indexed Record).
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // JSON fields: also match any non-null subpath. Default false.
+    bool json_subpaths = 2;
+  }
+
+  // `tantivy::query::Occur` on a boolean clause. There is no JSON `and` /
+  // `or` key: AND is `OCCUR_MUST`, OR is `OCCUR_SHOULD`.
+  enum Occur {
+    // Unset. Not a valid clause (`invalid`).
+    OCCUR_UNSPECIFIED = 0;
+    // Must match (intersection / AND).
+    OCCUR_MUST = 1;
+    // Should match (union / OR); see `Boolean.minimum_should_match`.
+    OCCUR_SHOULD = 2;
+    // Must not match (exclusion).
+    OCCUR_MUST_NOT = 3;
+  }
+
+  // One arm of a `BooleanQuery`.
+  message Clause {
+    // How this subquery combines. Not `OCCUR_UNSPECIFIED`.
+    Occur occur = 1 [(buf.validate.field) = {
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    }];
+    // Nested query.
+    Filter query = 2 [(buf.validate.field) = {required: true}];
+  }
+
+  // `BooleanQuery`. Mix `must` / `should` / `must_not` by nesting.
+  message Boolean {
+    // At least one clause.
+    repeated Clause clauses = 1 [(buf.validate.field) = {
+      repeated: {min_items: 1}
+    }];
+    // Tantivy `minimum_number_should_match`. Unset → Tantivy default (1
+    // if the clauses are only `SHOULD`, else 0).
+    uint32 minimum_should_match = 2;
+  }
+
+  // `BoostQuery`. Same hits as `query`; score × `factor`.
+  message Boost {
+    // Inner query.
+    Filter query = 1 [(buf.validate.field) = {required: true}];
+    // Multiplier. Must be finite.
+    float factor = 2 [(buf.validate.field) = {
+      float: {finite: true}
+      cel: [
+        {
+          id: "filter.boost.finite"
+          message: "must be finite"
+          expression: "!this.isNan() && !this.isInf()"
+        }
+      ]
+    }];
+  }
+
+  // `ConstScoreQuery`. Same hits as `query`; every hit scores `score`.
+  message ConstScore {
+    // Inner query.
+    Filter query = 1 [(buf.validate.field) = {required: true}];
+    // Constant score. Must be finite.
+    float score = 2 [(buf.validate.field) = {
+      float: {finite: true}
+      cel: [
+        {
+          id: "filter.const_score.finite"
+          message: "must be finite"
+          expression: "!this.isNan() && !this.isInf()"
+        }
+      ]
+    }];
+  }
+
+  // `DisjunctionMaxQuery`. Union of subqueries; score is the max, plus
+  // `tie_breaker` × the other matches.
+  message DisjunctionMax {
+    // At least one subquery.
+    repeated Filter queries = 1 [(buf.validate.field) = {
+      repeated: {min_items: 1}
+    }];
+    // Extra weight for non-max clauses. Unset or `0` → max only. Finite
+    // and ≥ 0.
+    float tie_breaker = 2 [(buf.validate.field) = {
+      float: {finite: true gte: 0}
+      cel: [
+        {
+          id: "filter.disjunction_max.tie_breaker.finite"
+          message: "must be finite"
+          expression: "!this.isNan() && !this.isInf()"
+        }
+      ]
+    }];
+  }
+
+  // `MoreLikeThisQuery`. Similar Records from a source `id` or field
+  // values. Unset numeric caps → Tantivy defaults.
+  message MoreLikeThis {
+    // Field values when the source is not a Record `id`.
+    message Fields {
+      // One Index field and the values taken from it.
+      message Field {
+        // Schema field name or Markdown `body`. Not Record `id`.
+        string field = 1 [(buf.validate.field) = {
+          required: true
+          string: {min_len: 1}
+        }];
+        // Values on that field (possibly several).
+        google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
+      }
+      // At least one field.
+      repeated Field fields = 1 [(buf.validate.field) = {
+        repeated: {min_items: 1}
+      }];
+    }
+
+    // Exactly one source.
+    oneof source {
+      option (buf.validate.oneof).required = true;
+      // Record identity in this collection. Library maps it to the
+      // indexed document (not a Tantivy `DocAddress`).
+      string id = 1 [(buf.validate.field) = {string: {min_len: 1}}];
+      // Caller-supplied field values instead of a stored Record.
+      Fields fields = 2;
+    }
+    // Ignore terms that appear in fewer than this many Records.
+    uint64 min_doc_frequency = 3;
+    // Ignore terms that appear in more than this many Records.
+    uint64 max_doc_frequency = 4;
+    // Ignore terms rarer than this in the source.
+    uint64 min_term_frequency = 5;
+    // Cap on clauses in the generated query.
+    uint64 max_query_terms = 6;
+    // Ignore tokens shorter than this.
+    uint64 min_word_length = 7;
+    // Ignore tokens longer than this.
+    uint64 max_word_length = 8;
+    // Per-term boost in the generated query. Unset → 1. Must be finite
+    // when set.
+    float boost_factor = 9 [(buf.validate.field) = {
+      float: {finite: true}
+      cel: [
+        {
+          id: "filter.more_like_this.boost_factor.finite"
+          message: "must be finite"
+          expression: "!this.isNan() && !this.isInf()"
+        }
+      ]
+    }];
+    // Tokens to drop from the source.
+    repeated string stop_words = 10;
+  }
+
+  // Query kind. Required.
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    // Every indexed Record.
+    All all = 1;
+    // No Records.
+    Empty empty = 2;
+    // Exact term.
+    Term term = 3;
+    // Any of these terms on one field.
+    TermSet term_set = 4;
+    // Token phrase.
+    Phrase phrase = 5;
+    // Phrase with a prefix last token.
+    PhrasePrefix phrase_prefix = 6;
+    // Fuzzy term.
+    FuzzyTerm fuzzy = 7;
+    // Regex over terms.
+    Regex regex = 8;
+    // Regex phrase.
+    RegexPhrase regex_phrase = 9;
+    // Inclusive/exclusive range.
+    Range range = 10;
+    // Non-null indexed value.
+    Exists exists = 11;
+    // Boolean combination.
+    Boolean boolean = 12;
+    // Score multiplier.
+    Boost boost = 13;
+    // Constant score.
+    ConstScore const_score = 14;
+    // Disjunction max.
+    DisjunctionMax disjunction_max = 15;
+    // More-like-this.
+    MoreLikeThis more_like_this = 16;
+  }
+}
+
+// One `find` page. Output; no field validators.
+message FindResult {
+  // Matching Records. Empty if `offset` is past the last match. Length
+  // is at most `count`.
+  repeated Record records = 1;
+}

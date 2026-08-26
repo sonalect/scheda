@@ -1,8 +1,6 @@
 name: c
 kind: document
 schema_version: 1
-layout: c/{id}.md
-id:
-  field: slug
-  pattern: '^[a-z0-9-]+$'
-fields: []
+fields:
+  - name: id
+    string: {}

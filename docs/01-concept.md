@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.18, 24 August 2026.
+Document 1 of the Scheda package. Version 0.28, 25 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -54,7 +54,7 @@ Scheda does not invent a merge engine or a multi-master story to paper over that
 
 ### Challenge 5. A small surface is enough
 
-Callers should not learn a new dialect of “put a blob somewhere”. `insert_one`, `find_one`, `replace_one`, `find` / `scan`, `search`, and `commit` are enough. The Index may use an embedded database internally; that is not the caller API.
+Callers should not learn a new dialect of “write these bytes at this path”. `add`, `get`, `replace`, `find`, `search`, and `commit` are enough. The Index may use an embedded database internally; that is not the caller API.
 
 ---
 
@@ -68,7 +68,7 @@ A **Vault** is a git working tree. Inside it, the consumer declares **collection
 | `journal` | directory of JSONL segments; one object per line | append to the open segment; rotate when Schema says |
 | `singleton` | one JSON or YAML file | replace the file |
 
-A **Record** has a stable `id` in its collection and a path derived from the collection's layout. The `id` is not “whatever the file is currently named”.
+A **Record** has a stable `id` in its collection. The library places the file (MOD-8). The caller never supplies a Record path; the only filesystem path they pass is the Vault root (`open`). The `id` is not “whatever the file is currently named”.
 
 **Schema** sits in the Vault next to the records: which collections exist, which fields are required, which fields and which body participate in word search or vectors, which fields are edges to another collection. There is no executable code in the schema.
 
@@ -76,9 +76,9 @@ A **Record** has a stable `id` in its collection and a path derived from the col
 
 **Scheda** is a library in the caller's process. The first implementation is the Rust crate `scheda`; others (Python, Java, Go, TypeScript, and more) may follow. Every implementation must speak the same Vault layout and the same operations. Shared message fields live in `api/v1` (Protobuf edition 2024); Vault files stay text. A Scheda daemon or HTTP server is not required to read and write. Opening a Vault, writing, and lexical search do not call the network unless `auto_sync` or an explicit remote operation is on. An embedder, if any, is supplied by the caller; without it, vector search is off and the rest still works.
 
-A collection may be **isolated** (**later**, `09`): another git working tree, never a Remote. `init` may set `encrypt` (default off). Encrypted Record files are [age](https://age-encryption.org/) ASCII armor; `open` takes one `secret` (passphrase or age identity). The main Vault is not encrypted.
+A collection may be **isolated** (**later**, `09`): Record files under `{vault}/.isolated/` (gitignored nested git, never a Remote). Schema stays in the main tree. `OpenOptions.encrypt` (default off) applies when that nested tree is first created. Encrypted isolated files are [age](https://age-encryption.org/) ASCII armor; isolated I/O takes one `secret` (passphrase or age identity). The main Vault is not encrypted.
 
-An **AI agent** does not get a second, looser API. It gets the same operations, plus a catalog taken from schema so it does not guess paths. A person may still edit files in an editor; that path is not offered to the agent as “write any Markdown anywhere”.
+An **AI agent** does not get a second, looser API. It gets the same operations, plus a catalog taken from schema so it does not guess paths, and `create_collection` so it does not write Schema YAML by hand. A person may still edit files in an editor; that path is not offered to the agent as “write any Markdown anywhere”.
 
 The library does not score records, does not decide what to show a human, does not call a language model, and does not know a profession. Those belong to the consumer.
 
@@ -86,7 +86,7 @@ The library does not score records, does not decide what to show a human, does n
 
 ## 4. What this is not
 
-**Not a general-purpose database you adopt instead of git.** History, remotes, and conflict markers stay git's. Scheda writes the working tree and, when asked, commits. `open` sees whether a Remote exists (local git config). With `auto_sync`, open fast-forward-pulls and `commit` also `push_remote`. Explicit `sync_remote` / `push_remote` / `pull_remote` always exist. Inserts do not commit or talk to a Remote. Clone uses a URL instead of `git init`.
+**Not a general-purpose database you adopt instead of git.** History, remotes, and conflict markers stay git's. Scheda writes the working tree and, unless a transaction is open, commits each mutating call (message `scheda`). `open` reports the Remote from local git config (`VaultInfo.remote` is `origin` or empty). With `auto_sync`, open fast-forward-pulls and a local commit also `push`. Explicit `sync` / `push` / `pull` always exist. Clone uses a URL instead of `git init`.
 
 **Not a second brain, wiki, or knowledge product.** No users, roles, or web UI in the library. No “tools for thought” model of pages.
 
@@ -102,13 +102,13 @@ Ready-made experiments that keep Markdown under git and hang a search index on t
 
 ## 5. What works on day one
 
-A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, explicit `commit`, `find_one` by id, `find` / `scan` (journal in append order). Isolated roots and `encrypt` stay a **later** phase (`09`, `10`); they are not required to accept **core**, **search**, or **agent**.
+A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, autocommit or `begin`/`commit`/`discard`, `get` by id, `find` (`journal` in append order; other kinds by Tantivy score). Isolated collections under `{vault}/.isolated/` and `encrypt` stay a **later** phase (`09`, `10`); they are not required to accept **core**, **search**, or **agent**.
 
 Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
 
-Next in `scheda` is the unencrypted isolated slice: a second git root, owner-only files, no Remote (`10` §1). The **agent** catalog and a thin encoding of the same operations follow that slice. They do not block **core**. They must not grow a method per collection type. Age encryption of that isolated root stays deferred.
+Next in `scheda` is the unencrypted isolated slice: `{vault}/.isolated/` nested git, owner-only files, no Remote (`10` §1). The **agent** catalog and a thin encoding of the same operations follow that slice. They do not block **core**. They must not grow a method per collection type. Age encryption of `.isolated/` stays deferred.
 
-What is deliberately later after those slices: optional age encryption of an isolated root (`09`); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
+What is deliberately later after those slices: optional age encryption of `{vault}/.isolated/` (`09`); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
 
 ---
 
@@ -121,20 +121,21 @@ What is deliberately later after those slices: optional age encryption of an iso
 | `03` | Records, ids, paths, collection kinds |
 | `04` | Files, git, locks, commit |
 | `05` | Schema as data |
-| `06` | Index and search |
+| `06` | Disposable Index, `get` |
 | `07` | Library API (language-neutral contract; first binding is Rust) |
 | `08` | Agent surface |
 | `09` | Isolation and perimeter |
 | `10` | Phases, acceptance, what `scheda` codes next, open questions, deferrals |
 | `11` | Rust stage checklist (core, then hybrid `search`; both done) |
 | `12` | Rust stage checklist (**agent**; not started; after unencrypted isolated) |
+| `13` | `find` and `search` (target: Tantivy Query, hybrid BM25 + USearch, per-field vectors) |
 
-Checkable requirements live in `03`–`09` and are gathered with phases in `10`. This document does not list them.
+Checkable requirements live in `03`–`09` and `13`, and are gathered with phases in `10`. This document does not list them.
 
 ---
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10) and **search** (C9) are accepted (`10`, `11`). Next work is the unencrypted isolated slice of **later** (`10` §1). **agent** (including ISO-3) follows that slice (`12`). Age encryption of an isolated root, extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10) and **search** (C9) are accepted (`10`, `11`). Next work is the unencrypted isolated slice of **later** (`10` §1). **agent** (including ISO-3) follows that slice (`12`). Age encryption of `{vault}/.isolated/`, extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.

@@ -1,19 +1,18 @@
 name: c
 kind: document
 schema_version: 1
-layout: c/{id}.md
 fields:
   - name: s
-    type: string
+    string: {}
   - name: i
-    type: integer
+    integer: {}
   - name: n
-    type: number
+    number: {}
   - name: b
-    type: boolean
+    boolean: {}
   - name: sl
-    type: string_list
+    string_list: {}
   - name: o
-    type: object
+    object: {}
   - name: ol
-    type: object_list
+    object_list: {}

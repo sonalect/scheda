@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.13, 24 August 2026.
+Document 2 of the Scheda package. Version 0.35, 26 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `insert_one`, `find_one`, `replace_one`, `find`, `scan`, `search`, `catalog`, `commit`, `open`, `init`, `clone`, `auto_sync`, `push_remote`, `pull_remote`, `sync_remote`, `encrypt`, `secret`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `history`, `find`, `search`, `catalog`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `init`, `clone`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
@@ -46,15 +46,15 @@ Do not confuse with a database file, with the Index, or with “a Scheda file”
 
 **Collection** — a named set of records with one Schema and one write mode.
 
-The consumer declares collections. Scheda does not ship a built-in collection for a domain. Search and links do not cross Vaults unless the caller asks.
+The consumer declares collections. Scheda does not ship a built-in collection for a domain. Search and links do not cross Vaults unless the caller asks. The directory at the Vault root is the collection name (same rules as Record `id`).
 
 **Record** — one member of a collection.
 
-A document file, a journal line, or a singleton file. It has a stable `id` in its collection and a path derived from Schema, not “whatever the file is currently named”.
+A document file, a journal line, or a singleton file. It has a stable `id` in its collection. The library derives the file path from kind and `id` (MOD-8). Not “whatever the file is currently named”.
 
 **Schema** — data in the Vault that describes collections.
 
-Which collections exist, their kind, path templates, fields, what is required, what is indexed for words or vectors, what is an edge. Schema contains no executable code. Changing Schema is a git commit like any other file.
+Which collections exist, their kind, fields, what is required, what is indexed for words or vectors, what is an edge. Record file paths are fixed by kind (MOD-8), not chosen in Schema. Schema contains no executable code. Changing Schema is a git commit like any other file.
 
 Do not confuse with types in the library source. Consumer collection names must not appear in Scheda code.
 
@@ -68,7 +68,7 @@ Do not confuse with types in the library source. Consumer collection names must 
 
 **`document`** — one file per Record.
 
-YAML header plus optional Markdown body, or YAML throughout. The body may be empty. Replace updates the file as a whole. History of the path is git history, not a Scheda revision type.
+YAML header plus optional Markdown body, or YAML throughout. The body may be empty. Replace updates the file as a whole. History of the Record is git history of its file (`Collection.history(id)`), not a Scheda revision type.
 
 **`journal`** — append-only JSONL records in a collection directory.
 
@@ -92,19 +92,17 @@ Replace replaces that file after Schema checks. There is not a set of ids in the
 
 **`id`** — stable identifier of a Record inside its collection.
 
-Schema may require a pattern (ULID, `kebab-case`, or another). Scheda checks the pattern. It does not mint domain identifiers for the consumer. Renaming a file so that it no longer matches the derived path is rejected: `id` is not the current basename “until someone renames it”.
+The library checks `id` as a slug: starts with a Unicode letter or digit, then letters, digits, combining marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@` (max 255 bytes; not a Windows device name; no leading/trailing whitespace; no trailing `.`). Schema may require a tighter pattern (ULID, `kebab-case`, or another). Scheda checks the pattern. It does not mint domain identifiers for the consumer. Renaming a file so that it no longer matches the derived path is rejected: `id` is not the current basename “until someone renames it”.
 
 **Path** — location of the Record in the Vault.
 
-For `document`, derived from the FNV-1a-64 collection directory plus the layout template plus `id`. For `journal`, the segment file that contains the line (the Record is still addressed by `(collection, id)`, not by segment name). For `singleton`, the single file named by Schema, under the same collection directory.
+For `document`, `{collection}/{id}.md`. For `journal`, the segment file that contains the line (the Record is still addressed by `(collection, id)`, not by segment name). For `singleton`, `{collection}/record.yaml`. The caller never chooses these paths.
 
 **Fields** — structured values.
 
 In a `document` or `singleton`, fields live in the YAML (or JSON) header or file. In a `journal`, fields are the JSON object on the line. Types include `string`, `integer`, `number`, `boolean`, `string_list`, `object`, `object_list` (`05`). Missing is missing: Scheda does not insert `false`, `0`, `""`, `[]`, or `null` unless Schema states a default. A stored JSON `null` is a value, not omission (`03`).
 
-**`scan`** — `find` with an empty filter: every Record in the collection. On `journal`, order is append order (closed segments in sequence, then the open file, lines top to bottom).
-
-**Body** — free text after the header, typically Markdown. Allowed to be empty. Indexed only if Schema marks the body for search.
+**Body** — free text after the header, typically Markdown. Allowed to be empty. In the lexical Index (`find` field `body` and BM25) unless Schema sets `exclude_fts`; in vectors unless `exclude_vector`.
 
 **Header** — the YAML (or JSON) envelope of a `document` that carries fields. Not used on `journal` lines.
 
@@ -116,19 +114,19 @@ In a `document` or `singleton`, fields live in the YAML (or JSON) header or file
 
 **Index** — the disposable search layer.
 
-Built from Vault files. Stored under `{vault}/.scheda/` (gitignored), not committed with the Vault, safe to delete. Rebuild (`reindex`) reads files. A corrupt Index must not serve stale ids: search returns empty or an error.
+Built from Vault files. Stored under `{vault}/.scheda/` (gitignored), not committed with the Vault, safe to delete. Rebuild (`reindex`) reads files. A corrupt Index must not serve stale ids: `find` / `search` return empty or an error. `get` and `history` still read files (IDX-10).
 
-Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win.
+Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win for `get` and `history`. Other methods trust the Index for which `id`s exist, then read those files.
 
-**Lexical search** — ranked full-text (BM25 or equivalent) over fields and body that Schema marked `fts`. Not grep, SQL `LIKE`, or a file scan at query time.
+**Lexical search** — ranked full-text (BM25 or equivalent) over `string` / `string_list` fields and body that Schema does not mark `exclude_fts`. Not grep, SQL `LIKE`, or a file scan at query time.
 
 **Vector search** — in-process ANN nearest neighbours (HNSW or equivalent) over embeddings of fields and body that Schema marked for vectors. Embedding weights are not stored in the Vault. An external vector database is not the Index.
 
 **Embedder** — a caller-supplied function (or equivalent) that turns marked text into a vector. Optional. Without it, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network.
 
-**Hybrid search** — one `search` call that runs the lexical and vector legs when both are available, then fuses ranks with Reciprocal Rank Fusion (default) or caller merge weights. Declared edges may add candidates. The result is ordered ids and raw per-leg scores, not a model-written answer.
+**Hybrid search** — one `search` call that runs the lexical and vector legs when both are available, then fuses ranks with Reciprocal Rank Fusion (default) or caller merge weights. Optional reranker callback then reorders. The result is ordered ids and scores, not a model-written answer.
 
-**Cross-encoder / pair reranker** — out of Scheda. The library returns candidates and raw leg scores. The consumer may rerank.
+**Reranker** — optional caller function on `search`: `score(query text, Record) →` number. The library sorts by it and returns `k` hits. No model in Scheda. Without it, order is RRF.
 
 ---
 
@@ -136,43 +134,51 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Library API** — the operations every implementation must provide, named in `07`. Message fields are `api/v1` (Protobuf edition 2024). Language-neutral as a contract. The first binding is Rust.
 
-**`open`** — attach to an existing Vault working tree. Reads remotes locally (no fetch). Takes the write lock if opened for write. More than one Vault may be open in one process. Roots do not leak into each other's search.
+**`open`** — attach to an existing Vault working tree. Reads the Remote locally (no fetch). `open` does not take the write lock. More than one Vault may be open in one process. Roots do not leak into each other's search.
+
+**`info`** — snapshot of the open Vault as `api.v1.VaultInfo` (path, Index path, `remote`, `auto_sync`, collections). Not a live handle.
 
 **Write lock** — the right of exactly one process to mutate a given Vault. Readers may proceed without it and may see a state slightly older than the writer.
 
-**`insert_one`** — add a Record: a new `document` file, a new journal line, or the first write of a `singleton` as Schema allows.
+**`add`** — add a Record: a new `document` file, a new journal line, or the first write of a `singleton` as Schema allows.
 
-**`find_one`** — read one Record by `(collection, id)`. Absence is an error or empty according to `07`, not a blank document pretending to exist.
+**`get`** — read one Record by `(collection, id)`. Validate the slug, then open that file. Does not ask the Index which ids exist (`06` IDX-10). Absence is an error or empty according to `07`, not a blank document pretending to exist.
 
-**`replace_one`** — replace a whole `document` or `singleton`. Error on `journal`.
+**`replace`** — replace a whole `document` or `singleton`. Resolve `id` in the Index first, then write that file. Error on `journal`.
 
-**`find`** — select records by field filters (equality, set, existence, path prefix), not by meaning.
+**`history`** — git history of one Record by `id`, newest first. Same identity path as `get` (validate slug, then that file). Not an Index lookup. Not journal `find` append order.
 
-**`search`** — hybrid retrieval. Not the same as `find`.
+**`find`** — select records with a Tantivy query tree (`api.v1.Filter`: boolean must / should / must_not, term, phrase, range, `all`, …), including identity `id`. On Vault: a set of collection names (empty = this Vault, non-isolated). On Collection: that collection only. Query the Index, then open the files for the `(collection, id)`s it returns. Paged (`offset`, `count`); one page is `api.v1.FindResult`. One `journal` collection: append order; otherwise score order. Every indexed Record in the selected collections is `all`. Not by meaning.
 
-**`catalog`** — Schema serialized as `api/v1` `Catalog`. Not inferred from the directory tree.
+**`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. Not the same as `find`.
+
+**`catalog`** — Schema serialized as `api/v1` `Schema`. Not inferred from the directory tree.
+
+**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open.
+
+**`begin`** — start a transaction. Later writes do not create a git commit until `commit` or `discard`.
 
 **`init`** — create a new git repository at a path, no Remote.
 
 **`clone`** — `git clone` from a URL into a path (network). Not `git init`.
 
-**`commit`** — create one git commit for changes already in the working tree. Message comes from the caller. Inserts do not commit by themselves.
+**`commit`** — end a transaction and create one git commit for paths Scheda recorded. Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`.
 
-**Remote** — a git remote on the Vault repository (`origin` or another). Optional. Detected on `open` from git config. GitHub is one host, not a Scheda type.
+**`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any, reload Schema, rebuild the Index.
 
-**`auto_sync`** — option on `open` / `clone`, default off. When on and a Remote exists: fast-forward `pull_remote` on open, and `push_remote` after `commit`. Not a merge. Details in `04`.
+**Remote** — the one optional git remote Scheda uses on the Vault repository, named `origin`. Empty `VaultInfo.remote` means none. Extra remotes in git config are ignored. Detected on `open` from git config (no fetch). GitHub is one host, not a Scheda type.
 
-**`pull_remote`** — fetch and fast-forward only. Uses the network.
+**`auto_sync`** — option on `open` / `clone`, default off. When on and a Remote exists: fast-forward `pull` on open, and `push` after a local commit (including autocommit). Not a merge. Details in `04`.
 
-**`push_remote`** — send local commits to a Remote. Uses the network. `insert_one` / `replace_one` never push.
+**`pull`** — fetch and fast-forward only. Uses the network.
 
-**`sync_remote`** — `pull_remote` then `push_remote`. Independent of `auto_sync`.
+**`push`** — send local commits to a Remote. Uses the network. Mutating calls inside a transaction never push.
+
+**`sync`** — `pull` then `push`. Independent of `auto_sync`.
 
 **`reindex`** — rebuild the Index from files.
 
 **`check`** — validate the Vault against Schema without necessarily writing.
-
-**Catalog** — Schema exported so an agent (or the caller) lists collections, fields, index marks, and edges without guessing from the directory tree.
 
 **Agent surface** — the same operations as the library API, plus catalog, over a thin transport (CLI, MCP, or other). The transport contains no product rules.
 
@@ -180,13 +186,13 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 ## 7. Isolation (**later**)
 
-**Isolated collection** — a collection whose files live in another **git** root, not in the main Vault working tree, with tighter file permissions. Search over the main Vault does not read it and must not require it to exist. That root has no Remote; `push_remote` is forbidden. Optional `encrypt` (`09`).
+**Isolated collection** — a collection whose Record files live under `{vault}/.isolated/{name}/`: a gitignored nested git working tree, never the main Remote. Schema stays `{vault}/{name}/.schema.yaml` in the main tree. Search over non-isolated collections does not read it and must not require `.isolated/` to exist. `push` does not publish it. Optional `encrypt` (`09`).
 
-**Isolated root** — that other git working tree. Local `commit` and `history` only. Optional `encrypt`: Record files are age armor. The main Index must not copy its sealed field values.
+**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only. Optional `encrypt`: Record files are age armor. The main Index must not copy its sealed field values.
 
-**`encrypt`** — `init` flag on an isolated root. Default false. When true, `open` needs `secret` (`09`).
+**`encrypt`** — `OpenOptions` flag used when Scheda first creates `{vault}/.isolated/`. Default false. When true, isolated Record I/O needs `secret` (`09`). Main `open` does not.
 
-**`secret`** — passphrase or age identity for an encrypted isolated root. Never stored in that git tree.
+**`secret`** — passphrase or age identity for encrypted `.isolated/`. Never stored in that nested git or the main tree.
 
 **Sealed field** — a field that must not appear in the main Index. Isolated encryption (`encrypt`, age armor) is `09`; the name here only marks the Index rule.
 

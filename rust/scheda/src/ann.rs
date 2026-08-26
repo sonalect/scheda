@@ -125,6 +125,33 @@ impl AnnIndex {
         Ok(hits.keys.into_iter().zip(hits.distances).collect())
     }
 
+    pub fn filtered_search(
+        &self,
+        query: &[f32],
+        k: usize,
+        predicate: impl Fn(u64) -> bool,
+    ) -> Result<Vec<(u64, f32)>, Error> {
+        ensure!(
+            query.len() == self.inner.dimensions(),
+            Error::invalid(format!(
+                "query length {} does not match dimensions {}",
+                query.len(),
+                self.inner.dimensions()
+            ))
+            .context("[AnnIndex::filtered_search] query length")
+        );
+        if k == 0 {
+            return Ok(Vec::new());
+        }
+        let hits = self
+            .inner
+            .filtered_search(query, k, predicate)
+            .with_context(Code::IndexVector, || {
+                format!("[AnnIndex::filtered_search] query k={k}")
+            })?;
+        Ok(hits.keys.into_iter().zip(hits.distances).collect())
+    }
+
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         self.inner
             .save(path_str(path).context("[AnnIndex::save] path must be UTF-8")?)

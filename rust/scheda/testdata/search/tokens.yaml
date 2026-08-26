@@ -1,17 +1,13 @@
 name: token_notes
 kind: document
 schema_version: 1
-layout: notes/{id}.md
-body:
-  fts: true
 fields:
   - name: title
-    type: string
     required: true
-    fts: true
-    vector: true
+    string: {}
   - name: aside
-    type: string
+    string:
+      exclude_fts: true
+      exclude_vector: true
   - name: tag
-    type: string
-    filter: true
+    string: {}

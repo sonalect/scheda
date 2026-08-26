@@ -1,0 +1,130 @@
+# 13. Find and search
+
+Document 13 of the Scheda package. Version 0.14, 26 August 2026.
+
+How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
+
+Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignored). Wipe it, `reindex`, same Records.
+
+---
+
+## 1. Two methods
+
+| | `find` | `search` |
+|---|---|---|
+| Call | Vault `find(collections, filter, offset, count)`. Collection `find(filter, offset, count)` calls that with its name. | Vault `search(collections, query, reranker?)`. Collection `search(query, reranker?)` calls that with its name. |
+| In | `api.v1.Filter` plus a set of collection names (empty = this Vault, non-isolated) | `api.v1.SearchQuery` (`text` required) plus the same name set |
+| Out | `api.v1.FindResult` (page of `Record`, including `collection`) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker) |
+| Engine | Tantivy Query only | BM25 (Tantivy) **and** ANN (USearch), RRF, then optional rerank |
+| Vectors | no | yes, if an embedder is set |
+
+Names are a method argument, not a field on `Filter` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → `unsupported`.
+
+`get` / `add` / `history` do not wait on the Index. `find` / `search` / `replace` take `id`s from the Index, then open files. Orphan file: `get` works; `find` / `search` skip it until indexed.
+
+---
+
+## 2. Who writes the Index
+
+The **library** calls the engine APIs. The caller never writes Tantivy or USearch files.
+
+- **Tantivy** creates and owns `{vault}/.scheda/index/lexical/` (`Index::create_in_dir` / open). Scheda only names fields and adds documents. On-disk layout is Tantivy’s (crate pin), not a Scheda spec.
+- **USearch** creates and owns the vector dump under `{vault}/.scheda/`. Scheda only passes dimensions, keys, and `f32` arrays. On-disk layout is USearch’s.
+- Scheda writes `{vault}/.scheda/index/format` (decimal version). Wrong version → `index_unusable` / empty `find`/`search`, not foreign ids.
+
+First write or `reindex` creates the engines if missing. `add` / `replace` update them. No LLM is used to create either index.
+
+---
+
+## 3. `find`
+
+1. Validate `Filter` (`kind` required). `count == 0` → `invalid`. Resolve `collections` (empty → non-isolated on this handle). Explicit name whose Schema rejects the `Filter` → `invalid`. Empty set: omit collections that reject it.
+2. Run that Query on the vault Tantivy index with `MUST` collection in the resolved names.
+3. Page: `TopDocs::with_limit(count).and_offset(offset)`.
+4. Order: exactly one resolved collection and it is `journal` → append order (`order_by_fast_field` on segment+line ordinal). Otherwise `order_by_score()`. Rotation does not reorder old lines.
+5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`.
+
+`Filter` is a Tantivy 0.26 Query tree (`all`, `empty`, `term`, `term_set`, `phrase`, `phrase_prefix`, `fuzzy`, `regex`, `regex_phrase`, `range`, `exists`, `boolean` with `must` / `should` / `must_not`, `boost`, `const_score`, `disjunction_max`, `more_like_this`). No QueryParser string. AND = `OCCUR_MUST`, OR = `OCCUR_SHOULD`. Field `id` is Record identity (`term`, `term_set`, `range` only). Field `body` is Markdown prose on `document` (unless `no_body` or `exclude_fts`). `exclude_find` fields cannot appear. `id` cannot be excluded.
+
+`find` does not call the embedder and does not use USearch.
+
+---
+
+## 4. Embedder
+
+Not a model inside the library. Not a proto field.
+
+The **program that links the library** passes a function at `open`:
+
+```text
+embed(text) → []float32
+```
+
+plus `model_id` and `dimensions`. No function → vector leg off; `find`, BM25, and writes still work. Network inside that function is the program’s problem.
+
+CLI hook (`14`): `--embedder-openai-url` plus `--embedder-model` and
+`--embedder-dimensions` (OpenAI `POST` `{URL}embeddings`), or
+`--onnx-embedder DIR`. All three HTTP flags or none. Unset → lexical
+only. The CLI is that program; Scheda still does not ship weights.
+
+Scheda does not ship weights, ONNX, or a chat LLM.
+
+---
+
+## 5. Building vectors (`add` / `replace` / `reindex`)
+
+For each Record, for **each** field (and body) that is vector-eligible (`string` / `string_list` / body / edge text; not `exclude_vector`):
+
+1. Take that field’s text (`string_list`: join values for that field).
+2. Call `embed` **once per field**.
+3. Store one vector in USearch. Key: Record `id` + field name (body → `body`).
+
+Do not glue title+body+other fields into one blob. One field, one vector.
+
+If `embed` is missing, skip all vector writes. Tantivy still indexes lexical fields (`exclude_fts` stays out of BM25).
+
+Index remembers `model_id` and `dimensions`. Mismatch with the current function → rebuild vectors or error on the vector leg; lexical still works.
+
+---
+
+## 6. `search`
+
+`SearchQuery.text` is the query. Not a vector **instead of** text. The library embeds that text when the vector leg is on.
+
+`k` unset or `0` → 10. `lexical_weight` / `vector_weight` unset → 1; **0 turns that leg off**.
+
+Steps:
+
+1. Resolve `collections` as in `find`. If `filter` is set: Tantivy runs `Filter` → allow-set of `(collection, id)`s. Both legs search **only** that set. Unset `filter` → the selected collections, not other collections in the same Index.
+2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on `text` (`Must(filter)` if filtered). Top pool by score.
+3. Vector (weight > 0 and embedder set): `embed(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
+4. Fuse ranks with RRF. Candidate pool is **larger than `k`**: at least `max(k, 50)` from the fused list (or all fused hits if fewer).
+5. If a **reranker** is passed to `search`: `get` each pooled Record; call `score(query.text, record)` once per candidate; sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
+
+Invalid / missing Index → no hits or `index_unusable`, never another Vault’s ids.
+
+### Reranker
+
+Not a model inside Scheda. Not a proto field. Same idea as the embedder: the **program that links the library** passes a function on `search`:
+
+```text
+score(query_text, record) → float
+```
+
+`None` → order is RRF. Network inside that function is the program’s problem. The library does not load ONNX/cross-encoder plugins by itself.
+
+CLI hook on `search` (`14`): `--reranker-cohere-url` plus
+`--reranker-model` (Cohere/Jina `POST` `{URL}rerank`), or
+`--reranker-onnx DIR`. Both HTTP flags or none. Unset → RRF. Missing
+ONNX files → `invalid`.
+
+---
+
+## 7. What this is not
+
+- SeekStorm query string (`+ - ""`) as `Filter`.
+- One vector per Record from concatenated fields.
+- `search` input = raw query vector only (optional extra vector later; text stays).
+- Embedder invoked only at “create index” and never again (it runs on every vector write and every vector `search`).
+- Shipping a cross-encoder or LLM inside the crate (the reranker callback is the caller’s).
+- `walk` / `walk_inverse` methods.

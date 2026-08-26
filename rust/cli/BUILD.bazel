@@ -1,0 +1,33 @@
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+
+exports_files(["Cargo.toml"])
+
+rust_binary(
+    name = "scheda",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "scheda_cli",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//rust/scheda",
+        "@cargo//:clap",
+        "@cargo//:serde",
+        "@cargo//:serde_json",
+        "@cargo//:ureq",
+    ],
+)
+
+rust_test(
+    name = "cli_test",
+    srcs = ["tests/cli.rs"],
+    compile_data = glob(["src/**/*.rs"]),
+    crate_root = "tests/cli.rs",
+    data = [":scheda"],
+    env = {
+        "CARGO_BIN_EXE_scheda": "$(rootpath :scheda)",
+    },
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        "//rust/scheda",
+        "@cargo//:serde_json",
+    ],
+)

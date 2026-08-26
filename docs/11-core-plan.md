@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.18, 24 August 2026.
+Document 11 of the Scheda package. Version 0.23, 25 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -43,8 +43,8 @@ hybrid `search` → core acceptance.
 | [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
 | [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, gitignored Index, ISO-1 local |
 | [C2](#c2-schema) | done | Load and reject Schema |
-| [C3](#c3-document-and-singleton) | done | Whole-file writes and `find_one` |
-| [C4](#c4-journal-segments) | done | Append, rotate, scan `find_one` |
+| [C3](#c3-document-and-singleton) | done | Whole-file writes and `get` |
+| [C4](#c4-journal-segments) | done | Append, rotate, scan `get` |
 | [C5](#c5-find-check-reindex) | done | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | done | `commit`, `history` of a path |
 | [C7](#c7-remote) | done | `clone`, `auto_sync`, push/pull/sync |
@@ -65,7 +65,7 @@ Next crate work after this checklist is `10` §1 (unencrypted isolated).
 These must **compile**. They must not be required to pass C0–C8 or C10.
 Writes must not depend on them (`10` §2). **C9** implements **search**
 (`10` §3). After C10, `scheda` codes unencrypted isolated (SCH-15, ISO-2,
-ISO-4, ISO-6, IDX-4) as in `10` §1. **agent** (AGT-1–5) and ISO-3 follow
+ISO-4, ISO-6, IDX-4) as in `10` §1 (`{vault}/.isolated/`). **agent** (AGT-1–5) and ISO-3 follow
 (`12`). Age encryption (ISO-5, ISO-7–11) stays deferred.
 
 `delete_one`, line-level journal blame, file watcher: not in this plan (`10`
@@ -90,7 +90,7 @@ envelope rules), LIB-5 (typed codes exist), `07` §5.
 - [x] `search` (LIB-11) is `unsupported` or an empty stub that does not write.
 - [x] `init` / `open` / `clone` reject `OpenOptions` that fail `api/v1` field
       rules (`invalid`) before creating a tree or taking the lock (`07` LIB-4).
-- [x] `insert_one` / `replace_one` reject a `Record` that fails `api/v1`
+- [x] `add` / `replace` reject a `Record` that fails `api/v1`
       envelope rules (`invalid`) before Schema writes (`07` LIB-7, LIB-9).
 
 ---
@@ -107,10 +107,11 @@ GIT-5, GIT-6, GIT-7, GIT-8 (local writes once they exist), GIT-9 (`init` /
 - [x] `open(path)` on that tree succeeds; Index is `{vault}/.scheda/index`,
       gitignored, not committed (GIT-1, GIT-13). `init` writes `.gitignore`.
 - [x] Two `open`s on different roots in one process (GIT-5, LIB-4).
-- [x] Write lock: second write `open` → `locked`; a reader `find_one` is not
+- [x] Write lock: second write `open` → `locked`; a reader `get` is not
       blocked once C3 exists (STO-4). Until C3, lock vs second writer is
       enough.
-- [x] `open` with network disabled still reports configured `origin` (GIT-7).
+- [x] `open` with network disabled still reports configured `origin` on
+      `info.remote` (GIT-7).
 - [x] Core tests run without an async executor (LIB-6).
 - [x] The library never configures `filter.lfs` (GIT-6).
 - [x] `init` / `open` with `auto_sync` off open no outbound connections
@@ -137,8 +138,8 @@ hard-code a consumer's collection names (SCH-1, MOD-1).
 - [x] Required / optional / `nullable` matrix (SCH-5) — write checks may wait
       for C3 if `open` already rejects illegal declarations.
 - [x] Identity field name default `id`, overridable (SCH-6).
-- [x] Filter-key marks parse; unmarked fields cannot be declared as filter
-      keys in a way that C5 would honour (SCH-8).
+- [x] Filter-key marks parse; `exclude_find` fields cannot be declared as
+      filter keys in a way that C5 would honour (SCH-8).
 - [x] Default `segment_max_bytes` is 8 MiB; a cap `> 32 MiB` is rejected
       (SCH-14, GIT-6).
 - [x] Two Vaults with different collection names work on the same build;
@@ -154,24 +155,24 @@ hard-code a consumer's collection names (SCH-1, MOD-1).
 SCH-6, SCH-7 (store body; do not index), SCH-12, SCH-13, LIB-3, LIB-7–9,
 QRY-1.
 
-- [x] `insert_one` / `replace_one` / `find_one` round-trip fields (QRY-1,
+- [x] `add` / `replace` / `get` round-trip fields (QRY-1,
       LIB-7, LIB-8). Missing `id` → `not_found`, not an empty Record.
 - [x] `document` Markdown+YAML and YAML-only; empty body allowed (MOD-11,
       MOD-14, STO-2). Body is stored; no search Index yet (SCH-7).
 - [x] Header `id` matches path-derived `id` (MOD-13, SCH-6).
 - [x] Path template with extra slots; `find` path-prefix is C5, but
-      `insert_one` must write the derived path (MOD-8).
-- [x] Rename of a `document` file so path ≠ `id` → `check` fails; `find_one`
+      `add` must write the derived path (MOD-8).
+- [x] Rename of a `document` file so path ≠ `id` → `check` fails; `get`
       does not follow the rename (MOD-5). May land with C5 `check`.
 - [x] Missing optional field is absent on read-back (MOD-12). Stored `null`
       stays `null` (MOD-18, SCH-5).
 - [x] `id` pattern from Schema; library does not invent a consumer scheme
       (MOD-6).
-- [x] `singleton`: Schema-fixed `id`; second `insert_one` rejected; then
-      `replace_one` only (MOD-7, MOD-17).
-- [x] `replace_one` is whole-file; no field patch (MOD-15, LIB-3).
+- [x] `singleton`: Schema-fixed `id`; second `add` rejected; then
+      `replace` only (MOD-7, MOD-17).
+- [x] `replace` is whole-file; no field patch (MOD-15, LIB-3).
 - [x] Failed / interrupted write does not become the new file (STO-5).
-- [x] Invalid Record vs current Schema: write rejected; old file `find_one`
+- [x] Invalid Record vs current Schema: write rejected; old file `get`
       with `valid: false` (SCH-12, LIB-8).
 - [x] Schema N+1 that only adds an optional field still reads N files
       (SCH-13).
@@ -184,18 +185,18 @@ QRY-1.
 **Status:** done
 
 **Codes:** MOD-2–4, MOD-9–11, MOD-16, STO-3, STO-5, SCH-14, LIB-3, LIB-7,
-LIB-9, LIB-18, QRY-7 (empty `find` / `scan`).
+LIB-9, LIB-18, QRY-7 (`find` with `all`).
 
-`find_one` **may scan segments** until C8 (IDX-5, `03` §6).
+`get` **may scan segments** until C8 (IDX-5, `03` §6).
 
-- [x] `insert_one` appends one RFC 8785 canonical JSON object plus `\n`
+- [x] `add` appends one RFC 8785 canonical JSON object plus `\n`
       (MOD-16, LIB-18).
-- [x] `replace_one` → `unsupported` (MOD-2, MOD-16, LIB-3, LIB-9).
+- [x] `replace` → `unsupported` (MOD-2, MOD-16, LIB-3, LIB-9).
 - [x] Duplicate `id` across segments is rejected (MOD-4).
-- [x] After the size cap, the next `insert_one` does not grow the closed
+- [x] After the size cap, the next `add` does not grow the closed
       file; previous bytes unchanged (MOD-10, SCH-14).
-- [x] `find_one` uses `(collection, id)`, not a segment name (MOD-3, MOD-9).
-- [x] Empty `find` / `scan` after insert A, B, rotate, insert C → A, B, C
+- [x] `get` uses `(collection, id)`, not a segment name (MOD-3, MOD-9).
+- [x] `find` with `all` after insert A, B, rotate, insert C → A, B, C
       (QRY-7, LIB-10).
 - [x] Mid-segment corruption → `check` fails; Scheda does not rewrite the
       file to “fix” it (STO-3, MOD-16).
@@ -211,9 +212,9 @@ LIB-9, LIB-18, QRY-7 (empty `find` / `scan`).
 SCH-12.
 
 - [x] SCH-8 filters: equality (including `null`), set, existence, `document`
-      path-prefix. Unmarked field → error. Empty filter returns every Record
-      (QRY-2, LIB-10).
-- [x] `scan` is empty `find` or a documented alias (LIB-10).
+      path-prefix. `exclude_find` field → error. Empty filter returns every
+      Record (QRY-2, LIB-10).
+- [x] `find` with `Filter` `all` returns every indexed Record (LIB-10).
 - [x] `check` reports Schema, encoding, journal lines, `id` uniqueness,
       conflict markers — with a code and path; it does not write Records
       (LIB-15, GIT-4, STO-2, STO-3).
@@ -222,8 +223,8 @@ SCH-12.
       invalid, segments seen (IDX-1, LIB-16).
 - [x] Delete the Index, `reindex`; Records match the files (STO-1, IDX-1).
 - [x] Index format version: unknown/corrupt → `reindex` or `index_unusable`;
-      never another Vault's ids (IDX-2). `find_one` still reads files.
-- [x] Invalid old files stay `find_one`-able with `valid: false` (SCH-12).
+      never another Vault's ids (IDX-2). `get` still reads files.
+- [x] Invalid old files stay readable via `get` with `valid: false` (SCH-12).
 
 ---
 
@@ -233,11 +234,13 @@ SCH-12.
 
 **Codes:** GIT-2, GIT-3, LIB-12, LIB-17.
 
-- [x] Several `insert_one` without `commit` → `git log` unchanged (GIT-2).
+- [x] Several `add` after `begin` without `commit` → `git log` unchanged (GIT-2).
+- [x] `add` without `begin` → one new commit with message `scheda` (GIT-2).
 - [x] One `commit(message)` → one commit whose paths are those writes, not
       `git add` of junk at the Vault root (GIT-2, LIB-12).
-- [x] `history` of a `document` / `singleton` / segment path matches
-      `git show` (GIT-3, LIB-17). Not line-level journal blame.
+- [x] `history(id)` of a `document` / `singleton` (and `journal` via its
+      segment file) matches `git show` (GIT-3, LIB-17). Not line-level
+      journal blame.
 
 ---
 
@@ -254,10 +257,10 @@ SCH-12.
 - [x] `auto_sync` on + fast-forward → `HEAD` matches Remote after `open`;
       diverged → `not_fast_forward`, no conflict markers from Scheda
       (GIT-10).
-- [x] `pull_remote` / `push_remote` / `sync_remote` with `auto_sync` off
-      (GIT-11, LIB-14). Diverged `sync_remote` fails before push.
+- [x] `pull` / `push` / `sync` with `auto_sync` off
+      (GIT-11, LIB-14). Diverged `sync` fails before push.
 - [x] Unreachable Remote after `commit`: `HEAD` is the new commit; later
-      `push_remote` publishes it (GIT-12).
+      `push` publishes it (GIT-12).
 - [x] Writes and local `commit` with `auto_sync` off succeed with the
       network disabled (GIT-8, ISO-1, `10` §2 item 5).
 
@@ -269,11 +272,11 @@ SCH-12.
 
 **Codes:** IDX-5, OPS-1, OPS-3.
 
-- [x] `find_one` on `journal` does not scan every unrelated segment (IDX-5).
+- [x] `get` on `journal` does not scan every unrelated segment (IDX-5).
       Writer updates the map under the lock; human editor edits still need
       `reindex`.
 - [x] Fixture ≥ 10⁴ journal Records and ≥ 10³ `document` Records: sampled
-      `find_one` / journal `insert_one` stay in milliseconds, not hundreds
+      `get` / journal `add` stay in milliseconds, not hundreds
       (OPS-1).
 - [x] Full `reindex` on that fixture completes; counts match a hand tally
       (OPS-3, LIB-16).
@@ -295,18 +298,18 @@ fields only, injected embedder, no LLM or pair reranker in this crate
 this stage.
 
 - [x] `search` is no longer `unsupported` (LIB-11).
-- [x] Lexical Index: BM25 (or equivalent ranked FTS) over SCH-9 `fts` fields
-      and body; unmarked text is absent (IDX-6, SCH-9). Token fixture:
-      expected id in `k` among distractors.
+- [x] Lexical Index: BM25 (or equivalent ranked FTS) over SCH-9 fields and
+      body that are not `exclude_fts`; excluded text is absent (IDX-6,
+      SCH-9). Token fixture: expected id in `k` among distractors.
 - [x] Vector Index: in-process ANN (HNSW or equivalent) over SCH-9/10 slots;
       no external vector database (IDX-7). No embedder → vector leg off;
       writes and lexical still work (IDX-8). Synonym fixture with no shared
       tokens: expected id in `k`.
 - [x] At OPS-1, vector queries use the ANN structure, not a scan of every
       stored vector (IDX-7, OPS-2).
-- [x] After `insert_one` / `replace_one`, lexical (and vector if an embedder
+- [x] After `add` / `replace`, lexical (and vector if an embedder
       is present) update without a full `reindex` (IDX-9).
-- [x] Invalid Records stay out of `search`; `find_one` still returns them
+- [x] Invalid Records stay out of `search`; `get` still returns them
       (IDX-3, SCH-12).
 - [x] Hybrid `search`: both legs when available; default fusion is RRF;
       per-leg scores on the hit; caller may pass `k` and merge weights
@@ -332,7 +335,7 @@ Re-run the five gates in `10` §2:
 
 - [x] Every **core** code in §2 of this file has a passing check in `scheda`.
 - [x] Fixture Vault readable without the library (STO-2) and through
-      `find_one` (QRY-1).
+      `get` (QRY-1).
 - [x] Deleting the Index does not lose Records (STO-1, IDX-1).
 - [x] Implementation source does not name a consumer's collections (SCH-1,
       MOD-1).

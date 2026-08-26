@@ -1,0 +1,21 @@
+// Collection list item inside `api.v1.VaultInfo` (`Vault.info`). Bindings and
+// agent transport (`08`) use the Protobuf JSON mapping of these messages,
+// not binary protobuf. This is not a live Collection handle. No field
+// validators on this message: this is info, not a write envelope. Isolated
+// collections may omit `schema.fields` (ISO-3).
+
+edition = "2024";
+
+package api.v1;
+
+import "api/v1/schema.proto";
+
+message CollectionInfo {
+  // Collection directory (MOD-8). Slug checked in the library (same as
+  // Record `id`).
+  // Not a field on `Schema`: `create_collection` takes it as an argument.
+  string name = 1;
+  // Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
+  // main tree). Isolated Record files live under `.isolated/{name}/` (ISO-2).
+  Schema schema = 2;
+}

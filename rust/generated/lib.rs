@@ -9,8 +9,45 @@ use protovalidate_buffa::Validate;
 
 #[path = "api/v1/mod.rs"]
 mod generated;
-#[path = "api/v1/validate/mod.rs"]
-mod validate;
+// protovalidate-buffa emits `__buffa::oneof::more_like_this` for nested
+// `Filter.MoreLikeThis.source`. Buffa places that oneof at
+// `__buffa::oneof::filter::more_like_this`. Alias here so generate output
+// is not edited (generate wipes `api/v1/`).
+mod validate {
+    pub mod api {
+        pub mod v1 {
+            #![allow(
+                non_camel_case_types,
+                dead_code,
+                unused_imports,
+                clippy::derivable_impls,
+                clippy::match_single_binding,
+                clippy::uninlined_format_args,
+                clippy::doc_lazy_continuation,
+                clippy::module_inception,
+                reason = "module exists to include protovalidate output"
+            )]
+            use crate::generated::api::v1::{
+                Body, CollectionInfo, Edge, Error, Field, Filter, FindResult, History, Journal,
+                Object, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema,
+                SearchHits, SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history,
+                search_hits,
+            };
+
+            pub mod __buffa {
+                #[allow(unused_imports, reason = "generated validators may not touch view")]
+                pub use crate::generated::api::v1::__buffa::view;
+                pub mod oneof {
+                    #[allow(clippy::wildcard_imports, reason = "re-export generated oneof modules")]
+                    pub use crate::generated::api::v1::__buffa::oneof::*;
+                    pub use crate::generated::api::v1::__buffa::oneof::filter::more_like_this;
+                }
+            }
+
+            include!("api/v1/validate/api.v1.mod.rs");
+        }
+    }
+}
 
 pub use generated::api;
 
@@ -280,16 +317,11 @@ impl fmt::Display for api::v1::Error {
 impl std::error::Error for api::v1::Error {}
 
 impl api::v1::OpenOptions {
-    /// Unset `write` means write; unset `auto_sync` means off (`07` LIB-4).
-    /// Index is always `{vault}/.scheda/index` (GIT-13).
+    /// Unset `auto_sync` means off (`07` LIB-4). Index is always
+    /// `{vault}/.scheda/index` (GIT-13).
     #[must_use]
     pub fn new() -> Self {
         Self::default()
-    }
-
-    #[must_use]
-    pub fn write(self, write: bool) -> Self {
-        self.with_write(write)
     }
 
     #[must_use]
@@ -297,7 +329,7 @@ impl api::v1::OpenOptions {
         self.with_auto_sync(auto_sync)
     }
 
-    /// GIT-9. Empty string is unset (`init` stays local; `open` does not clone).
+    /// GIT-9. Empty string is unset (`open` of an existing Vault ignores it).
     #[must_use]
     pub fn remote_repo(self, remote_repo: impl Into<String>) -> Self {
         self.with_remote_repo(remote_repo)
@@ -310,6 +342,15 @@ impl api::v1::OpenOptions {
 }
 
 impl api::v1::Filter {
+    /// `AllQuery`: every indexed Record in the collection.
+    #[must_use]
+    pub fn all() -> Self {
+        Self {
+            kind: api::v1::filter::All::default().into(),
+            ..Self::default()
+        }
+    }
+
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
@@ -323,6 +364,20 @@ impl api::v1::Record {
     }
 }
 
+impl api::v1::RecordAdd {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::RecordReplace {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
 impl api::v1::SearchQuery {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
@@ -330,28 +385,21 @@ impl api::v1::SearchQuery {
     }
 }
 
-impl api::v1::Catalog {
+impl api::v1::Schema {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
     }
 }
 
-impl api::v1::CatalogCollection {
+impl api::v1::Field {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
     }
 }
 
-impl api::v1::CatalogField {
-    /// Fail if this message does not satisfy `api/v1` field rules.
-    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
-        require_valid(self)
-    }
-}
-
-impl api::v1::HistoryEntry {
+impl api::v1::history::Entry {
     /// UTC commit instant. Git `Time.seconds` is already seconds since epoch.
     #[must_use]
     pub fn with_time(mut self, unix_seconds: i64) -> Self {
@@ -365,8 +413,7 @@ mod tests {
     use protovalidate_buffa::Validate;
 
     use super::api::v1::{
-        Catalog, CatalogCollection, CatalogField, Error, Filter, HistoryEntry, OpenOptions, Record,
-        SearchHit, SearchQuery,
+        Body, Error, Field, Filter, OpenOptions, Record, Schema, SearchQuery, history,
     };
 
     #[test]
@@ -382,12 +429,10 @@ mod tests {
 
     #[test]
     fn open_options_json_uses_protobuf_json_names() {
-        let opts = OpenOptions::default()
-            .with_write(true)
-            .with_auto_sync(false);
+        let opts = OpenOptions::default().with_auto_sync(false);
         let json = serde_json::to_value(&opts).expect("json");
-        assert_eq!(json["write"], true);
         assert_eq!(json["autoSync"], false);
+        assert!(json.get("write").is_none());
         assert!(json.get("indexDir").is_none());
         assert!(json.get("remoteRepo").is_none());
         let cloned = OpenOptions::new().remote_repo("file:///tmp/scheda.git");
@@ -397,13 +442,10 @@ mod tests {
 
     #[test]
     fn record_fields_are_a_json_object() {
-        let record = Record::default()
-            .with_id("alpha")
-            .with_collection("notes")
-            .with_valid(true);
+        let record = Record::default().with_id("alpha").with_valid(true);
         let json = serde_json::to_value(&record).expect("json");
         assert_eq!(json["id"], "alpha");
-        assert_eq!(json["collection"], "notes");
+        assert!(json.get("collection").is_none());
         assert_eq!(json["valid"], true);
     }
 
@@ -420,61 +462,23 @@ mod tests {
     }
 
     #[test]
-    fn empty_filter_is_valid() {
-        assert!(Filter::default().validate().is_ok());
-        assert!(Filter::default().require_valid().is_ok());
+    fn empty_filter_is_invalid_all_is_valid() {
+        assert!(Filter::default().validate().is_err());
+        assert!(Filter::all().validate().is_ok());
+        assert!(Filter::all().require_valid().is_ok());
     }
 
     #[test]
-    fn record_id_and_collection_are_required() {
-        assert!(Record::default().validate().is_err());
-        assert!(
-            Record::default()
-                .with_id("alpha")
-                .with_collection("notes")
-                .validate()
-                .is_ok()
-        );
-        let err = Record::default()
-            .require_valid()
-            .expect_err("missing id and collection");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        assert!(
-            Record::default()
-                .with_id("alpha")
-                .with_collection("a/b")
-                .require_valid()
-                .is_ok()
-        );
-        let err = Record::default()
-            .with_id("a/b")
-            .with_collection("notes")
-            .require_valid()
-            .expect_err("id slash");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let err = Record::default()
-            .with_id("a\\b")
-            .with_collection("notes")
-            .require_valid()
-            .expect_err("id backslash");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-    }
-
-    #[test]
-    fn history_entry_time_is_required() {
-        assert!(HistoryEntry::default().with_hash("abc").validate().is_err());
-        assert!(
-            HistoryEntry::default()
-                .with_hash("abc")
-                .with_time(0)
-                .validate()
-                .is_ok()
-        );
+    fn record_default_is_valid() {
+        assert!(Record::default().validate().is_ok());
+        assert!(Record::default().require_valid().is_ok());
+        assert!(Record::default().with_id("alpha").require_valid().is_ok());
     }
 
     #[test]
     fn history_entry_time_json_is_rfc3339() {
-        let json = serde_json::to_value(HistoryEntry::default().with_time(0)).expect("json");
+        let json =
+            serde_json::to_value(history::Entry::default().with_time(0)).expect("json");
         assert_eq!(json["time"], "1970-01-01T00:00:00Z");
     }
 
@@ -530,75 +534,47 @@ mod tests {
     }
 
     #[test]
-    fn search_hit_scores_are_finite_and_non_negative() {
-        let ok = SearchHit::default()
-            .with_collection("notes")
-            .with_id("alpha");
-        assert!(ok.validate().is_ok());
-        assert!(ok.clone().with_rrf_score(0.0).validate().is_ok());
-        assert!(ok.clone().with_rrf_score(-0.1).validate().is_err());
-        assert!(ok.clone().with_lexical_score(f64::NAN).validate().is_err());
-        assert!(ok.clone().with_rrf_score(f64::INFINITY).validate().is_err());
-        assert!(ok.with_vector_score(f64::NEG_INFINITY).validate().is_err());
+    fn search_hit_has_no_field_validators() {
+        let hit = super::api::v1::search_hits::Hit::default().with_id("alpha");
+        assert!(hit.validate().is_ok());
+        assert!(hit.clone().with_rrf_score(-0.1).validate().is_ok());
+        assert!(hit.with_lexical_score(f64::NAN).validate().is_ok());
     }
 
     #[test]
-    fn empty_catalog_is_valid() {
-        assert!(Catalog::default().validate().is_ok());
-        assert!(Catalog::default().require_valid().is_ok());
-    }
-
-    #[test]
-    fn catalog_collection_name_kind_and_version() {
-        let err = CatalogCollection::default()
+    fn schema_version_and_kind_are_required() {
+        assert!(Schema::default().validate().is_err());
+        let err = Schema::default()
             .require_valid()
-            .expect_err("missing name and kind");
+            .expect_err("missing version and kind");
         assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let err = CatalogCollection::default()
-            .with_name("notes")
-            .with_kind("blob")
-            .require_valid()
-            .expect_err("unknown kind");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let err = CatalogCollection::default()
-            .with_name("notes")
-            .with_kind("document")
-            .with_schema_version(0)
-            .require_valid()
-            .expect_err("schema_version 0");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let ok = CatalogCollection::default()
-            .with_name("notes")
-            .with_kind("document")
-            .with_schema_version(1)
-            .with_isolated(true);
+        let mut ok = Schema::default().with_version(1);
+        ok.kind = Body::default().into();
         assert!(ok.require_valid().is_ok());
-        assert!(ok.fields.is_empty());
         let json = serde_json::to_value(&ok).expect("json");
-        assert_eq!(json["name"], "notes");
-        assert_eq!(json["kind"], "document");
-        assert_eq!(json["schemaVersion"], 1);
-        assert_eq!(json["isolated"], true);
+        assert_eq!(json["version"], 1);
+        assert!(json.get("document").is_some());
+        let err = Schema::default()
+            .with_version(0)
+            .require_valid()
+            .expect_err("version 0");
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
     }
 
     #[test]
-    fn catalog_field_name_and_type() {
-        let err = CatalogField::default()
+    fn field_name_and_spec_are_required() {
+        let err = Field::default()
             .require_valid()
-            .expect_err("missing name and type");
+            .expect_err("missing name and spec");
         assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let err = CatalogField::default()
-            .with_name("title")
-            .with_type("blob")
-            .require_valid()
-            .expect_err("unknown type");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let ok = CatalogField::default()
-            .with_name("title")
-            .with_type("string");
+        let ok: Field = serde_json::from_value(serde_json::json!({
+            "name": "title",
+            "string": {}
+        }))
+        .expect("field json");
         assert!(ok.require_valid().is_ok());
         let json = serde_json::to_value(&ok).expect("json");
         assert_eq!(json["name"], "title");
-        assert_eq!(json["type"], "string");
+        assert!(json.get("string").is_some());
     }
 }

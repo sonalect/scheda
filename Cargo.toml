@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/generated", "rust/scheda"]
+members = ["rust/cli", "rust/generated", "rust/scheda"]
 exclude = [
     "third_party/buf/plugins/protoc-gen-buffa-packaging",
     "third_party/buf/plugins/protoc-gen-protovalidate-buffa",
@@ -14,27 +14,36 @@ repository = "https://github.com/amsokol/scheda"
 version = "0.1.0"
 
 [workspace.dependencies]
-scheda = { path = "rust/scheda" }
-scheda-generated = { path = "rust/generated" }
 buffa = { version = "=0.9.1", features = ["json"] }
 buffa-types = { version = "=0.9.1", default-features = false, features = [
-    "std",
     "json",
+    "std",
 ] }
+clap = { version = "=4.6.6", features = ["derive"] }
+cxx = "=1.0.199"
 git2 = { version = "=0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
 protovalidate-buffa = { version = "=0.6.0", default-features = false }
 regex = "=1.13.1"
+scheda = { path = "rust/scheda" }
+scheda-generated = { path = "rust/generated" }
 serde = { version = "=1.0.229", features = ["derive"] }
-usearch = { version = "=2.26.1", default-features = false }
 serde_json = "=1.0.151"
+ureq = { version = "=3.4.0", features = ["json"] }
 tantivy = "=0.26.1"
+usearch = { version = "=2.26.1", default-features = false }
 yaml_serde = "=0.10.7"
-cxx = "=1.0.199"
 
 [workspace.lints.rust]
 warnings = "deny"
 
 [workspace.lints.clippy]
 all = "deny"
+
+# Cargo `--release` only. Bazel rustc flags are unchanged.
+[profile.release]
+codegen-units = 1
+lto = "thin"
+opt-level = 3
+strip = "symbols"

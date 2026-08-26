@@ -5,6 +5,8 @@ exports_files([
     "buf.yaml",
     "buf.gen.rust.yaml",
     ".markdownlint-cli2.yaml",
+    "pyproject.toml",
+    "uv.lock",
 ])
 
 # Configuration setting for fastbuild mode.

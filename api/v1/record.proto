@@ -1,32 +1,56 @@
-// Record envelope (`07` LIB-7–10). Bindings and agent transport (`08`) use
-// the Protobuf JSON mapping of these messages, not binary protobuf. Vault
-// files stay YAML / JSONL (`04`). Collection field names are Schema data,
-// not this file.
+// Record I/O (`07` LIB-7–10). Bindings and agent transport (`08`) use the
+// Protobuf JSON mapping of these messages, not binary protobuf. Vault
+// files stay YAML / JSONL (`04`). Collection field names are declared on
+// `Schema`, not this file.
+//
+// The collection name on `Record` / `Hit` is output only (`get` / `find` /
+// `search`). `add` / `replace` still take the collection as the handle;
+// the caller never supplies a Record file path. `Record.path` is output
+// only.
 
 edition = "2024";
 
 package api.v1;
 
-import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 
-// One collection record as the library returns it. `fields` is a JSON object
-// so missing keys stay missing (MOD-12) and JSON `null` stays null (MOD-18).
+// `get` / `walk` result; also one item inside `FindResult`. Output, not a
+// write envelope:
+// no field validators (same as `History`).
 message Record {
-  string id = 1 [(buf.validate.field) = {
-    required: true
-    string: {
-      min_len: 1
-      pattern: "^[^/\\\\]+$"
-    }
-  }];
-  string collection = 2 [(buf.validate.field) = {
-    required: true
-    string: {min_len: 1}
-  }];
-  string path = 3;
-  bool valid = 4;
-  google.protobuf.Struct fields = 5;
-  string body = 6;
+  // Collection name (directory, MOD-8). Output only. Set on `get` / `find`.
+  // Not an input: `add` / `replace` use the collection handle.
+  string collection = 1;
+  string id = 2;
+  // JSON object: missing keys stay missing (MOD-12), JSON `null` stays
+  // null (MOD-18).
+  google.protobuf.Struct fields = 3;
+  // Markdown body when Schema allows (SCH-7). Empty = none. `journal`:
+  // always empty.
+  string body = 4;
+  // Vault-relative POSIX path of the file (`journal`: the segment).
+  // Library-derived (MOD-8). Output only; the caller never sets this.
+  string path = 5;
+  // `true` if the file matches current Schema. `false` if it exists but
+  // fails it (SCH-12).
+  bool valid = 6;
+  // Bytes of that Record as stored (`document` / `singleton`: the file;
+  // `journal`: the JSONL line). Encrypted isolated: decrypted plaintext
+  // (**later**, LIB-8).
   bytes raw = 7;
+}
+
+// `add` input. `id` is the method argument, not a field here.
+message RecordAdd {
+  // Empty is allowed; Schema required keys are not a proto rule.
+  google.protobuf.Struct fields = 1;
+  // Empty = none. `journal` rejects a non-empty body (SCH-7).
+  string body = 2;
+}
+
+// `replace` input. `id` is the method argument, not a field here.
+// Whole `document` / `singleton` only (`journal` → `unsupported`).
+message RecordReplace {
+  google.protobuf.Struct fields = 1;
+  string body = 2;
 }

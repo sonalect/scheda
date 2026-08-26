@@ -5,8 +5,8 @@ exports_files(["Cargo.toml"])
 
 # Matches Cargo.toml [features] default. `openmp` is Cargo-only (needs libomp).
 _SCHEDA_FEATURES = [
-    "remote-git",
     "numkong",
+    "remote-git",
 ]
 
 rust_library(
@@ -17,6 +17,7 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "//rust/generated:generated_v1",
+        "@cargo//:buffa-types",
         "@cargo//:cxx",
         "@cargo//:git2",
         "@cargo//:regex",
@@ -151,7 +152,10 @@ rust_test(
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/schema.rs",
     visibility = ["//rust:__pkg__"],
-    deps = [":scheda"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
 )
 
 rust_test(

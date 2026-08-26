@@ -31,17 +31,25 @@ impl Scratch {
     }
 
     fn init(&self) -> Vault {
-        Vault::init(self.vault(), self.options()).unwrap()
+        let vault = Vault::open(self.vault(), self.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
     }
 
     fn reopen(&self) -> Result<Vault, scheda::Error> {
-        Vault::open(self.vault(), self.options())
+        Vault::open(self.vault(), self.options(), None)
     }
 
     fn write_schema(&self, file: &str, body: &str) {
-        let dir = self.vault().join("schema");
+        let name = peek_schema_name(body);
+        let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(file), body).unwrap();
+        let dest = if file.ends_with(".json") {
+            ".schema.json"
+        } else {
+            ".schema.yaml"
+        };
+        fs::write(dir.join(dest), body).unwrap();
     }
 }
 
@@ -56,7 +64,6 @@ const WEST_BAD_EDGE: &str = include_str!("../testdata/schema/bad_edge.yaml");
 const WIKI: &str = include_str!("../testdata/schema/wiki.md");
 const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");
 const EAST_LOG_OVERSIZE: &str = include_str!("../testdata/schema/east_log_oversize.yaml");
-const ROOT_SCHEMA: &str = include_str!("../testdata/schema/root_schema.yaml");
 
 impl Drop for Scratch {
     fn drop(&mut self) {
@@ -77,7 +84,7 @@ fn schema_under_git_is_read_on_open_and_check() {
     assert_eq!(collection.field_type("title"), Some("string"));
     assert_eq!(collection.field_is_required("title"), Some(true));
     assert_eq!(collection.field_is_nullable("title"), Some(false));
-    assert_eq!(collection.layout(), &["west/{id}.md".to_owned()]);
+    assert_eq!(collection.layout(), &[] as &[String]);
     vault.check().unwrap();
 }
 
@@ -122,7 +129,7 @@ fn unmarked_markdown_is_not_an_extractor() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST);
-    fs::write(scratch.vault().join("schema").join("README.md"), WIKI).unwrap();
+    fs::write(scratch.vault().join("README.md"), WIKI).unwrap();
     let vault = scratch.reopen().unwrap();
     vault.collection("west_docs").unwrap();
     vault.check().unwrap();
@@ -146,7 +153,8 @@ fn filter_key_marks_are_honoured() {
     let vault = scratch.reopen().unwrap();
     let collection = vault.collection("west_docs").unwrap();
     assert!(collection.is_filter_key("tag"));
-    assert!(!collection.is_filter_key("title"));
+    assert!(collection.is_filter_key("title"));
+    assert!(collection.is_filter_key("body"));
 }
 
 #[test]
@@ -157,6 +165,7 @@ fn journal_default_segment_cap_is_8_mib() {
     let vault = scratch.reopen().unwrap();
     let collection = vault.collection("east_log").unwrap();
     assert_eq!(collection.segment_max_bytes(), Some(8 * 1024 * 1024));
+    assert!(!collection.is_filter_key("body"));
 }
 
 #[test]
@@ -209,15 +218,14 @@ fn json_collection_file_loads() {
 }
 
 #[test]
-fn root_schema_yaml_relocates_schema_dir() {
+fn collection_dir_must_match_name() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    fs::write(scratch.vault().join("schema.yaml"), ROOT_SCHEMA).unwrap();
-    let dir = scratch.vault().join("decls");
+    let dir = scratch.vault().join("aaaaaaaaaaaaaaaa");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("west.yaml"), WEST).unwrap();
-    let vault = scratch.reopen().unwrap();
-    vault.collection("west_docs").unwrap();
+    fs::write(dir.join(".schema.yaml"), WEST).unwrap();
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -227,4 +235,17 @@ fn check_rereads_schema_from_disk() {
     scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn peek_schema_name(body: &str) -> String {
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name:") {
+            return rest.trim().trim_matches('"').to_string();
+        }
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .expect("schema fixture name")
 }

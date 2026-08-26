@@ -1,8 +1,6 @@
 name: east_docs
 kind: document
 schema_version: 2
-layout:
-  - east/{id}.md
 fields:
   - name: title
-    type: string
+    string: {}

@@ -1,24 +1,17 @@
 name: west_indexed
 kind: document
 schema_version: 1
-layout: west/{id}.md
-body:
-  fts: true
-  vector: true
+body: {}
 fields:
   - name: title
-    type: string
-    fts: true
-    vector: true
+    string: {}
   - name: tag
-    type: string
-    filter: true
+    string: {}
   - name: rank
-    type: integer
+    integer: {}
     default: 0
   - name: see
-    type: string
     edge:
       collection: west_docs
-      multiplicity: one
+      one: {}
       dangling: strict

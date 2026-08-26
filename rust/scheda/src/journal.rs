@@ -169,15 +169,7 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
     let Some(id) = record.id.clone() else {
         unreachable!("Record id is required");
     };
-    let Some(collection) = record.collection.as_deref() else {
-        unreachable!("Record collection is required");
-    };
-    if collection != decl.name {
-        bail!(Error::invalid(format!(
-            "record collection {collection} does not match {}",
-            decl.name
-        )));
-    }
+    crate::id::require_slug("id", &id)?;
     if record.body.as_deref().is_some_and(|body| !body.is_empty()) {
         bail!(Error::invalid(format!(
             "journal {} does not allow a Markdown body",
@@ -262,19 +254,7 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
 }
 
 fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
-    let rel = decl
-        .layout
-        .first()
-        .map(String::as_str)
-        .ok_or_else(|| Error::invalid(format!("collection {} is missing layout", decl.name)))?;
-    let rel = rel.trim_end_matches('/');
-    if rel.is_empty() {
-        bail!(Error::invalid(format!(
-            "collection {} layout is empty",
-            decl.name
-        )));
-    }
-    schema::join_in_collection(vault, &decl.name, rel)
+    schema::join_in_collection(vault, &decl.name, "")
 }
 
 fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
@@ -585,7 +565,7 @@ fn record_from_parsed(
             .is_none_or(|pattern| pattern.is_match(&parsed.id));
     let mut record = Record::default()
         .with_id(parsed.id)
-        .with_collection(decl.name.clone())
+        .with_collection(decl.name.as_str())
         .with_path(rel)
         .with_valid(valid)
         .with_raw(parsed.raw);

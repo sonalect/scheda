@@ -8,8 +8,159 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- README: step-by-step `python/cli` (vLLM sidecars, `import` /
+  `reindex`, `find` and `search` examples).
+- `find` compiles every `api.v1.Filter` kind (`phrase`, `phrase_prefix`,
+  `fuzzy`, `regex`, `regex_phrase`, `range`, `more_like_this`). Token
+  queries run on per-field positions in the lexical Index. Markdown
+  `body` is a find key on `document` unless `exclude_fts`. Format
+  version is `3`.
+- Optional reranker callback on `search` (`score(query, record)`). Hits
+  come back already ordered; `SearchHits.Hit.rerank_score` when set.
+  No ranking model inside the crate. Pool is at least `max(k, 50)`.
+- `Record.collection` and `SearchHits.Hit.collection` (output only) so
+  Vault-wide `find` / `search` can name the collection without parsing
+  `path`. First field on those messages (`collection = 1`).
+- `docs/14-cli.md`: target CLI argv (LIB-2 names; drop `scan` / `walk`;
+  `--onnx-embedder` for the vector leg; `--reranker-onnx` on `search`).
+- Locked vLLM sidecars: `bazel run //python/vllm:embedder` (OpenAI
+  `/v1/embeddings` on `:8080`) and `//python/vllm:reranker` (Cohere
+  `/v1/rerank` on `:8081`). `vllm==0.27.1` in `uv.lock`; Linux, host
+  NVIDIA driver; `tags = ["manual"]` so `bazel build //...` does not
+  fetch torch.
+- `python/cli`: `bazel run //python/cli:cli -- import|reindex|find|search`
+  (or `python -m python.cli …`). `import` creates
+  `<workspace>/.vault-test` if needed and `get` / `add`s missing
+  `python/cli/testdata/animals` documents. `reindex` / `find` / `search`
+  wrap the scheda binary (`14`). Bare `search` runs fixture `topics.yaml`
+  and checks QRY-3 `expect_ids`. HTTP embedder/reranker default to the
+  local Qwen sidecars (`:8080` / `:8081`); `--lexical-only` turns them
+  off. Existing ids on `import` trigger `reindex` so vectors are filled.
+- `docs/12-agent-plan.md`: A3 wire `07` / `13`; A4 CLI `14` is done; A2 is
+  legacy and must not be extended. A5 is HTTP embedder/reranker
+  (`--embedder-openai-url` / `--reranker-cohere-url`). Isolation is A6;
+  acceptance is A7.
+- Thin CLI `scheda` (`rust/cli`, clap 4.6.6): LIB-2 + `catalog` as
+  subcommands, Protobuf JSON on stdout, `api.v1.Error` JSON on stderr
+  (AGT-2–5). Uncommitted write paths persist at `{index}/written` and the
+  in-txn flag at `{index}/txn` so a later process can `commit` them (GIT-2).
+- Cargo-only static glibc Linux CLI (`+crt-static`, `static-pie`):
+  `--features vendored-openssl` and `.cargo/static-glibc.toml`. Bazel
+  stays on the dynamic CRT.
+- `api/v1` `Schema` (and nested collection/field/edge/body messages) for
+  AGT-1. `Vault::catalog` serializes Schema files as that message (A1);
+  isolated collections are listed without `fields` (ISO-3). `07` LIB-20.
+  `Vault::create_collection` / CLI `create-collection` write one
+  `Collection` (LIB-21) so agents do not hand-write Schema YAML.
+
+### Removed
+
+- Legacy CLI names: `find-one`, `insert-one`, `replace-one`, `scan`,
+  `catalog`, `init` / `clone` as commands, `push-remote` / `pull-remote` /
+  `sync-remote`, `walk`, `--text` on `search`. The binary is `14`.
+- `walk` / `walk_inverse` from the library API (`07` LIB-2, `13`). Edge
+  fields stay in Schema; the caller follows ids with `get`.
+
 ### Changed
 
+- Write lock is `{vault}/.scheda/write.lock` (STO-4), not under `index/`.
+  A leftover `{vault}/.scheda/index/write.lock` is drained on acquire.
+- CLI argv is `14`: `--vault`, `open` / `info` / `create-collection`,
+  `collection NAME <subcommand>`, Vault `find` / `search` with
+  `--collections`. JSON is the Protobuf JSON mapping of `api/v1`.
+  `--onnx-embedder` / `--reranker-onnx` require exactly `model.onnx` and
+  `tokenizer.json` (missing or extra non-hidden names → `invalid`; hidden
+  names such as `.metadata.yaml` are ignored; unset → no vector leg / RRF).
+  `--embedder-openai-url` / `--embedder-model` / `--embedder-dimensions`
+  (all three or none) and `--reranker-cohere-url` / `--reranker-model`
+  (both or none) call OpenAI embeddings and Cohere/Jina rerank over HTTP
+  (`14`). `--embedder-api-key-env-var` / `--reranker-api-key-env-var`
+  send `Authorization: Bearer` from that env var; unset → no auth.
+  Local Qwen sidecars: `bazel run //python/vllm:embedder` and
+  `//python/vllm:reranker` (`vllm==0.27.1` in `uv.lock`; not Echo-style
+  sandbox hermeticity).
+- `rust/scheda/src/api.rs` is `embed.rs` (`Embedder`, `Reranker`). Public
+  trait names unchanged. Docs that called the crate surface `api.rs`
+  now point at `07`.
+- Schema has no `layout`. Record file paths are fixed by kind (MOD-8):
+  `{name}/{id}.md`, `{name}/*.jsonl`, `{name}/record.yaml`. Isolated
+  Records use `.isolated/{name}/` with the same filenames. The only
+  filesystem path the caller supplies is the Vault root (`open`).
+  `find` has no `path_prefix`.
+- `get` and `history` validate `id` then open or git that file. `add`
+  validates, writes, and updates the Index. `find`, `search`,
+  and `replace` take `id`s from the Index, then open those files
+  (IDX-10). `find` may filter on identity `id`. Schema must not declare a
+  field named `id`.
+- `api/v1/query.proto` is gone. `find` takes `api.v1.Filter` (`find.proto`):
+  a Tantivy 0.26 `Query` tree (`boolean` must / should / must_not, `term`,
+  `phrase`, `range`, …), not a Scheda-only AND list. Paging is
+  `offset` / `count` on the method (Tantivy collector, not `Filter`):
+  `order_by_score()` for `document` / `singleton`; append order for
+  `journal` (QRY-7). Returns `api.v1.FindResult` (same file). Every
+  indexed Record is `Filter` `all`. There is no `scan` method.
+- `search` takes `api.v1.SearchQuery` (`search.proto`): `text`, `k`,
+  optional `Filter` (Tantivy first; both legs on that `id` set),
+  `lexical_weight` / `vector_weight`, plus an optional library
+  `Reranker` (not proto). Returns `api.v1.SearchHits`.
+  `Hit.collection` is output only, same as `Record.collection`.
+
+- Schema `find` / search marks are opt-out: `exclude_find`, `exclude_fts`,
+  `exclude_vector` (default include). Body is indexed unless excluded.
+  Schema has no `field_id`; the vector column is the field `name` (body is
+  `body`). Model identity stays in the Index (SCH-10). `Field` spec is a
+  `oneof` per type (`string`, `integer`, …) or `edge`. Nested `fields` live
+  only on `object` / `object_list`. Edge arity is `one` xor `many`.
+- Scheda uses at most one git Remote, named `origin`. `api.v1.VaultInfo`
+  has `string remote` (`origin` or empty); `has_remote` and repeated
+  remote names are gone (GIT-7). `push` / `pull` / `sync` take no
+  remote-name argument (LIB-14). `Vault.info`
+  returns `VaultInfo` with `repeated CollectionInfo collections`. Each
+  item is `name` plus nested `api.v1.Schema`.
+- Isolated collections live under `{vault}/.isolated/` (gitignored nested
+  git, ISO-2). Schema stays `{name}/.schema.yaml` in the main tree.
+  `Vault.collection` and `reindex` use the same Vault handle. `push`
+  does not publish `.isolated/`.
+- `add` replaces `insert_one` / `put` (create a Record; same `id` → `conflict`; success is `()`).
+- `get` replaces `find_one`.
+- `replace` replaces `replace_one` (whole Record; no field patch).
+- `api.v1.Record` has no `collection` (the Collection handle is the
+  collection). Write is `RecordAdd` (`add`) / `RecordReplace`
+  (`replace`); `Record` is the `get` / `find` / `search`
+  result (`path` / `valid` / `raw` only there).
+- `push` / `pull` / `sync` replace `push_remote` / `pull_remote` /
+  `sync_remote`.
+- `ReindexResult` lives in `api/v1/index.proto` (`api.v1.ReindexResult`;
+  was `ReindexCounts`).
+- `Collection.history(id, offset, count)` returns `api.v1.History` with
+  `repeated Entry` (paged; `count` 0 is `invalid`). The caller does not
+  pass a file path. `HistoryEntry` and `Vault.history` are gone.
+- `api/v1` Schema messages match product nouns: `Catalog` is `Schema`,
+  `CatalogCollection` is `Collection`, `CatalogField` / `CatalogEdge` /
+  `CatalogBody` / `CatalogId` are `Field` / `Edge` / `Body` / `Id`. The
+  file is `schema.proto`. The `catalog` operation is unchanged. The Rust
+  collection handle is `CollectionHandle` so it does not clash with
+  `api/v1` `Collection`.
+- On-disk Schema: collection declarations live at
+  `{name}/.schema.yaml` (also `.schema.yml` / `.schema.json`). The
+  collection directory **is** the collection name (same slug as Record
+  `id`; no FNV hash). The central `schema/` directory and root
+  `schema.yaml` / `schema_dir` relocation are gone (SCH-1).
+  `Vault::create_collection` / CLI `create-collection` replace `put_schema`
+  / `put-schema` (LIB-21).
+- Record `id` and collection name slugs are checked in the library, not
+  protovalidate (`id.proto` is gone). Unicode letter or digit, then
+  letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`;
+  max 255 bytes; no trailing `.` or whitespace; not a Windows device
+  name (`CON`, …). `add(id, record)`: `RecordAdd` is `fields` / `body`.
+  Atomic writes use a short `.scheda.{n}.tmp` sibling so a 255-byte
+  filename still fits `NAME_MAX`.
+- GIT-2: outside a transaction each mutating call autocommits with
+  message `scheda`. `begin` / `commit` / `discard` batch writes. `commit`
+  without `begin` is `invalid`. Uncommitted write paths and the in-txn
+  flag persist under `{index}/written` and `{index}/txn`.
 - `api.v1.Error` is a nested `Code` enum. Protobuf JSON names are
   `CODE_NOT_FOUND`, `CODE_IO_NOT_FOUND`, and so on (not the 0.1.0 strings
   `not_found` / `io` / `git` / `index_unusable` / `conflict`). The message
@@ -19,13 +170,8 @@ API or on-disk format changes bump the minor.
   `std::io::ErrorKind`, one per `git2::ErrorCode`, plus
   `CODE_CONFLICT_MARKERS` / `CODE_DUPLICATE_ID` and Index codes. Rust
   `scheda::Error` is that generated message (no anyhow).
-- USearch 2.26.1 (in-process HNSW) and NumKong 7.8.1 (SIMD kernels).
-
-### Added
-
-- `api/v1` `Catalog` (and nested collection/field/edge/body messages) for
-  AGT-1. `Vault::catalog` serializes Schema files as that message (A1);
-  isolated collections are listed without `fields` (ISO-3). `07` LIB-20.
+- Cargo `--release` uses `opt-level = 3`, thin LTO, one codegen unit,
+  and symbol strip. Bazel rustc flags are unchanged.
 
 ## [0.1.0] - 2026-08-24
 

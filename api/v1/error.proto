@@ -12,7 +12,7 @@ import "buf/validate/validate.proto";
 // it.
 message Error {
   // One code per distinct failure class a caller can branch on.
-  // Schema/envelope rule text stays in `message` under `CODE_INVALID`.
+  // Collection/envelope rule text stays in `message` under `CODE_INVALID`.
   // Zero is unset.
   enum Code {
     CODE_UNSPECIFIED = 0;
@@ -22,7 +22,7 @@ message Error {
     CODE_DUPLICATE_ID = 102;
     CODE_CONFLICT_MARKERS = 103;
 
-    // Caller or Schema input. Detail is `message` (and `path` when a file).
+    // Caller or collection declaration. Detail is `message` (and `path` when a file).
     CODE_INVALID = 201;
     CODE_NOT_UTF8 = 202;
 

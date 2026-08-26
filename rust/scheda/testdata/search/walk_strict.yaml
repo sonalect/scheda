@@ -1,11 +1,9 @@
 name: walk_strict
 kind: document
 schema_version: 1
-layout: strict/{id}.md
 fields:
   - name: target
-    type: string
     edge:
       collection: walk_dst
-      multiplicity: one
+      one: {}
       dangling: strict

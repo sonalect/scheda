@@ -1,15 +1,14 @@
 name: north_notes
 kind: document
 schema_version: 2
-layout: north/{id}.md
 fields:
   - name: title
-    type: string
     required: true
+    string: {}
   - name: tag
-    type: string
     nullable: true
+    string: {}
   - name: count
-    type: integer
+    integer: {}
   - name: subtitle
-    type: string
+    string: {}

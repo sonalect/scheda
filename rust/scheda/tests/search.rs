@@ -9,7 +9,9 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use scheda::{Code, Embedder, Filter, OpenOptions, Record, SearchQuery, Vault};
+use scheda::{
+    Code, Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, SearchQuery, Vault,
+};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -31,9 +33,15 @@ impl Scratch {
     }
 
     fn write_schema(&self, file: &str, body: &str) {
-        let dir = self.vault().join("schema");
+        let name = peek_schema_name(body);
+        let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(file), body).unwrap();
+        let dest = if file.ends_with(".json") {
+            ".schema.json"
+        } else {
+            ".schema.yaml"
+        };
+        fs::write(dir.join(dest), body).unwrap();
     }
 }
 
@@ -44,6 +52,15 @@ impl Drop for Scratch {
 }
 
 const TOKENS: &str = include_str!("../testdata/search/tokens.yaml");
+const TOKEN_EXTRA: &str = "\
+name: token_extra
+kind: document
+schema_version: 1
+fields:
+  - name: title
+    required: true
+    string: {}
+";
 const WALK_SRC: &str = include_str!("../testdata/search/walk_src.yaml");
 const WALK_DST: &str = include_str!("../testdata/search/walk_dst.yaml");
 const WALK_STRICT: &str = include_str!("../testdata/search/walk_strict.yaml");
@@ -71,23 +88,12 @@ impl Embedder for MapEmbedder {
     }
 }
 
-fn rec(collection: &str, id: &str, fields: Value) -> Record {
-    serde_json::from_value(json!({
-        "id": id,
-        "collection": collection,
-        "fields": fields,
-    }))
-    .unwrap()
+fn rec(fields: Value) -> RecordAdd {
+    serde_json::from_value(json!({ "fields": fields })).unwrap()
 }
 
-fn rec_body(collection: &str, id: &str, fields: Value, body: &str) -> Record {
-    serde_json::from_value(json!({
-        "id": id,
-        "collection": collection,
-        "fields": fields,
-        "body": body,
-    }))
-    .unwrap()
+fn rec_body(fields: Value, body: &str) -> RecordAdd {
+    serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
 }
 
 fn filter(value: Value) -> Filter {
@@ -106,13 +112,9 @@ fn hit_ids(hits: &scheda::SearchHits) -> Vec<&str> {
 }
 
 fn open_tokens(scratch: &Scratch, embedder: Option<Arc<dyn Embedder>>) -> Vault {
-    drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("tokens.yaml", TOKENS);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
-    match embedder {
-        Some(embedder) => vault.with_embedder(embedder),
-        None => vault,
-    }
+    Vault::open(scratch.vault(), OpenOptions::new(), embedder).unwrap()
 }
 
 #[test]
@@ -121,29 +123,26 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec(
-            "token_notes",
+        .add(
             "hit",
-            json!({"title": "kryptonite mineral", "aside": "plain", "tag": "red"}),
-        ))
+            rec(json!({"title": "kryptonite mineral", "aside": "plain", "tag": "red"})),
+        )
         .unwrap();
     collection
-        .insert_one(rec(
-            "token_notes",
+        .add(
             "aside_only",
-            json!({"title": "ordinary rock", "aside": "kryptonite mention", "tag": "blue"}),
-        ))
+            rec(json!({"title": "ordinary rock", "aside": "kryptonite mention", "tag": "blue"})),
+        )
         .unwrap();
     for i in 0..8 {
         collection
-            .insert_one(rec(
-                "token_notes",
+            .add(
                 &format!("d{i}"),
-                json!({"title": format!("distractor {i}"), "tag": "blue"}),
-            ))
+                rec(json!({"title": format!("distractor {i}"), "tag": "blue"})),
+            )
             .unwrap();
     }
-    let hits = collection.search(&q("kryptonite", 5)).unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"hit"), "marked field must rank: {ids:?}");
     assert!(
@@ -155,22 +154,66 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
 }
 
 #[test]
+fn vault_search_scopes_collections() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema("tokens.yaml", TOKENS);
+    scratch.write_schema("extra.yaml", TOKEN_EXTRA);
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add(
+            "keep",
+            rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+        )
+        .unwrap();
+    vault
+        .collection("token_extra")
+        .unwrap()
+        .add("other", rec(json!({"title": "kryptonite extra"})))
+        .unwrap();
+    let all = vault.search(&[], &q("kryptonite", 10), None).unwrap();
+    let mut all_ids = hit_ids(&all);
+    all_ids.sort_unstable();
+    assert_eq!(all_ids, ["keep", "other"]);
+    let mut names: Vec<_> = all
+        .hits
+        .iter()
+        .map(|hit| {
+            (
+                hit.id.as_deref().unwrap(),
+                hit.collection.as_deref().unwrap(),
+            )
+        })
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, [("keep", "token_notes"), ("other", "token_extra")]);
+    assert_eq!(
+        hit_ids(
+            &vault
+                .search(&["token_notes"], &q("kryptonite", 10), None)
+                .unwrap()
+        ),
+        ["keep"]
+    );
+}
+
+#[test]
 fn body_fts_is_indexed_when_marked() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec_body(
-            "token_notes",
+        .add(
             "bodyhit",
-            json!({"title": "quiet"}),
-            "kryptonite in the body",
-        ))
+            rec_body(json!({"title": "quiet"}), "kryptonite in the body"),
+        )
         .unwrap();
     collection
-        .insert_one(rec("token_notes", "other", json!({"title": "quiet too"})))
+        .add("other", rec(json!({"title": "quiet too"})))
         .unwrap();
-    let hits = collection.search(&q("kryptonite", 5)).unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"bodyhit"), "{ids:?}");
 }
@@ -187,13 +230,13 @@ fn synonym_with_no_shared_tokens_hits_vector_leg() {
     let vault = open_tokens(&scratch, Some(embedder));
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec("token_notes", "vehicle", json!({"title": "car"})))
+        .add("vehicle", rec(json!({"title": "car"})))
         .unwrap();
     collection
-        .insert_one(rec("token_notes", "other", json!({"title": "banana"})))
+        .add("other", rec(json!({"title": "banana"})))
         .unwrap();
     let hits = collection
-        .search(&q("automobile", 5).with_lexical_weight(0.0))
+        .search(&q("automobile", 5).with_lexical_weight(0.0), None)
         .unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"vehicle"), "{ids:?}");
@@ -211,7 +254,7 @@ fn negative_weight_is_invalid() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     let err = collection
-        .search(&q("kryptonite", 5).with_lexical_weight(-1.0))
+        .search(&q("kryptonite", 5).with_lexical_weight(-1.0), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -229,23 +272,15 @@ fn hybrid_hit_carries_both_scores() {
     let vault = open_tokens(&scratch, Some(embedder));
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec(
-            "token_notes",
-            "both",
-            json!({"title": "kryptonite mineral"}),
-        ))
+        .add("both", rec(json!({"title": "kryptonite mineral"})))
         .unwrap();
     collection
-        .insert_one(rec("token_notes", "vector_only", json!({"title": "car"})))
+        .add("vector_only", rec(json!({"title": "car"})))
         .unwrap();
     collection
-        .insert_one(rec(
-            "token_notes",
-            "noise",
-            json!({"title": "unrelated prose"}),
-        ))
+        .add("noise", rec(json!({"title": "unrelated prose"})))
         .unwrap();
-    let hits = collection.search(&q("kryptonite", 5)).unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"both"), "{ids:?}");
     let both = hits
@@ -256,6 +291,40 @@ fn hybrid_hit_carries_both_scores() {
     assert!(both.lexical_score.is_some());
     assert!(both.vector_score.is_some());
     assert!(both.rrf_score.is_some());
+    assert!(both.rerank_score.is_none());
+}
+
+struct PreferIdReranker(String);
+
+impl Reranker for PreferIdReranker {
+    fn score(&self, _query: &str, record: &Record) -> Result<f64, scheda::Error> {
+        Ok(if record.id.as_deref() == Some(self.0.as_str()) {
+            10.0
+        } else {
+            0.0
+        })
+    }
+}
+
+#[test]
+fn reranker_reorders_and_sets_score() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add("first", rec(json!({"title": "kryptonite mineral"})))
+        .unwrap();
+    collection
+        .add("second", rec(json!({"title": "kryptonite extra mention"})))
+        .unwrap();
+    let fused = collection.search(&q("kryptonite", 2), None).unwrap();
+    assert!(fused.hits.iter().all(|hit| hit.rerank_score.is_none()));
+    let last = fused.hits.last().and_then(|hit| hit.id.clone()).unwrap();
+    let reranked = collection
+        .search(&q("kryptonite", 2), Some(&PreferIdReranker(last.clone())))
+        .unwrap();
+    assert_eq!(hit_ids(&reranked)[0], last.as_str());
+    assert!(reranked.hits.iter().all(|hit| hit.rerank_score.is_some()));
 }
 
 #[test]
@@ -264,26 +333,24 @@ fn filter_applies_before_ranking() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec(
-            "token_notes",
+        .add(
             "keep",
-            json!({"title": "kryptonite mineral", "tag": "red"}),
-        ))
+            rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+        )
         .unwrap();
     collection
-        .insert_one(rec(
-            "token_notes",
+        .add(
             "drop",
-            json!({"title": "kryptonite mineral extra", "tag": "blue"}),
-        ))
+            rec(json!({"title": "kryptonite mineral extra", "tag": "blue"})),
+        )
         .unwrap();
     let query: SearchQuery = serde_json::from_value(json!({
         "text": "kryptonite",
         "k": 5,
-        "filter": {"clauses":[{"equal":{"field":"tag","value":"red"}}]}
+        "filter": {"term":{"field":"tag","value":"red"}}
     }))
     .unwrap();
-    let hits = collection.search(&query).unwrap();
+    let hits = collection.search(&query, None).unwrap();
     let ids = hit_ids(&hits);
     assert_eq!(ids, ["keep"]);
 }
@@ -295,19 +362,19 @@ fn invalid_record_is_omitted_from_search() {
     vault
         .collection("token_notes")
         .unwrap()
-        .insert_one(rec("token_notes", "old", json!({"title": "kryptonite"})))
+        .add("old", rec(json!({"title": "kryptonite"})))
         .unwrap();
     drop(vault);
     scratch.write_schema(
         "tokens.yaml",
-        "name: token_notes\nkind: document\nschema_version: 1\nlayout: notes/{id}.md\nfields:\n  - name: title\n    type: string\n    required: true\n    fts: true\n  - name: extra\n    type: string\n    required: true\n",
+        "name: token_notes\nkind: document\nschema_version: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
     );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("token_notes").unwrap();
-    let got = collection.find_one("old").unwrap();
+    let got = collection.get("old").unwrap();
     assert_eq!(got.valid, Some(false));
     vault.reindex().unwrap();
-    let hits = collection.search(&q("kryptonite", 5)).unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(!ids.contains(&"old"), "{ids:?}");
 }
@@ -318,9 +385,9 @@ fn insert_is_searchable_without_reindex() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec("token_notes", "fresh", json!({"title": "kryptonite"})))
+        .add("fresh", rec(json!({"title": "kryptonite"})))
         .unwrap();
-    let hits = collection.search(&q("kryptonite", 5)).unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"fresh"), "{ids:?}");
 }
@@ -331,10 +398,10 @@ fn missing_format_fails_closed() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec("token_notes", "a", json!({"title": "kryptonite"})))
+        .add("a", rec(json!({"title": "kryptonite"})))
         .unwrap();
     fs::remove_file(vault.index_dir().join("format")).unwrap();
-    let err = collection.search(&q("kryptonite", 5)).unwrap_err();
+    let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexMissing));
 }
 
@@ -344,7 +411,7 @@ fn corrupt_lexical_index_fails_closed() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .insert_one(rec("token_notes", "a", json!({"title": "kryptonite"})))
+        .add("a", rec(json!({"title": "kryptonite"})))
         .unwrap();
     drop(vault);
     fs::write(
@@ -352,61 +419,53 @@ fn corrupt_lexical_index_fails_closed() {
         "not-tantivy",
     )
     .unwrap();
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("token_notes").unwrap();
-    let got = collection.find_one("a").unwrap();
+    let got = collection.get("a").unwrap();
     assert_eq!(got.valid, Some(true));
-    let err = collection.search(&q("kryptonite", 5)).unwrap_err();
+    let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexLexical));
 }
 
 #[test]
-fn walk_one_step_matches_hand_list() {
+fn edge_field_read_matches_hand_list() {
     let scratch = Scratch::new();
-    drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("src.yaml", WALK_SRC);
     scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_src").unwrap();
     let dst = vault.collection("walk_dst").unwrap();
-    dst.insert_one(rec("walk_dst", "alpha", json!({"title": "A"})))
+    dst.add("alpha", rec(json!({"title": "A"}))).unwrap();
+    dst.add("beta", rec(json!({"title": "B"}))).unwrap();
+    src.add("one", rec(json!({"title": "keep", "target": "alpha"})))
         .unwrap();
-    dst.insert_one(rec("walk_dst", "beta", json!({"title": "B"})))
+    src.add("two", rec(json!({"title": "keep", "target": "beta"})))
         .unwrap();
-    src.insert_one(rec(
-        "walk_src",
-        "one",
-        json!({"title": "keep", "target": "alpha"}),
-    ))
-    .unwrap();
-    src.insert_one(rec(
-        "walk_src",
-        "two",
-        json!({"title": "keep", "target": "beta"}),
-    ))
-    .unwrap();
-    src.insert_one(rec(
-        "walk_src",
-        "skip",
-        json!({"title": "other", "target": "alpha"}),
-    ))
-    .unwrap();
-    src.insert_one(rec(
-        "walk_src",
+    src.add("skip", rec(json!({"title": "other", "target": "alpha"})))
+        .unwrap();
+    src.add(
         "dangling",
-        json!({"title": "keep", "target": "missing"}),
-    ))
+        rec(json!({"title": "keep", "target": "missing"})),
+    )
     .unwrap();
-    let walked = src
-        .walk(
-            "target",
-            &filter(json!({"clauses":[{"equal":{"field":"title","value":"keep"}}]})),
+    let found = src
+        .find(
+            &filter(json!({"term":{"field":"title","value":"keep"}})),
+            0,
+            100,
         )
         .unwrap();
-    let mut ids: Vec<_> = walked
-        .iter()
-        .filter_map(|record| record.id.as_deref())
-        .collect();
+    let mut ids: Vec<String> = Vec::new();
+    for record in &found.records {
+        let value = serde_json::to_value(record).unwrap();
+        let Some(target) = value["fields"]["target"].as_str() else {
+            continue;
+        };
+        if dst.get(target).is_ok() {
+            ids.push(target.to_owned());
+        }
+    }
     ids.sort_unstable();
     assert_eq!(ids, ["alpha", "beta"]);
 }
@@ -414,56 +473,66 @@ fn walk_one_step_matches_hand_list() {
 #[test]
 fn strict_edge_rejects_missing_target() {
     let scratch = Scratch::new();
-    drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("src.yaml", WALK_STRICT);
     scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_strict").unwrap();
-    let err = src
-        .insert_one(rec("walk_strict", "bad", json!({"target": "nope"})))
-        .unwrap_err();
+    let err = src.add("bad", rec(json!({"target": "nope"}))).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     vault
         .collection("walk_dst")
         .unwrap()
-        .insert_one(rec("walk_dst", "ok", json!({"title": "t"})))
+        .add("ok", rec(json!({"title": "t"})))
         .unwrap();
-    src.insert_one(rec("walk_strict", "good", json!({"target": "ok"})))
-        .unwrap();
+    src.add("good", rec(json!({"target": "ok"}))).unwrap();
 }
 
 #[test]
-fn inverse_walk_does_not_scan_unrelated() {
+fn find_by_edge_target_does_not_scan_unrelated() {
     let scratch = Scratch::new();
-    drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("src.yaml", WALK_SRC);
     scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_src").unwrap();
     let dst = vault.collection("walk_dst").unwrap();
-    dst.insert_one(rec("walk_dst", "t", json!({"title": "T"})))
+    dst.add("t", rec(json!({"title": "T"}))).unwrap();
+    src.add("link", rec(json!({"title": "keep", "target": "t"})))
         .unwrap();
-    src.insert_one(rec(
-        "walk_src",
-        "link",
-        json!({"title": "keep", "target": "t"}),
-    ))
-    .unwrap();
     for i in 0..400 {
-        src.insert_one(rec(
-            "walk_src",
+        src.add(
             &format!("u{i}"),
-            json!({"title": "other", "target": "nowhere"}),
-        ))
+            rec(json!({"title": "other", "target": "nowhere"})),
+        )
         .unwrap();
     }
     let started = Instant::now();
-    let walked = dst.walk_inverse("walk_src", "target", "t").unwrap();
+    let found = src
+        .find(
+            &filter(json!({"term":{"field":"target","value":"t"}})),
+            0,
+            10,
+        )
+        .unwrap();
     assert!(
         started.elapsed() < Duration::from_millis(50),
-        "inverse took {:?}",
+        "find by edge took {:?}",
         started.elapsed()
     );
-    assert_eq!(walked.len(), 1);
-    assert_eq!(walked[0].id.as_deref(), Some("link"));
+    assert_eq!(found.records.len(), 1);
+    assert_eq!(found.records[0].id.as_deref(), Some("link"));
+}
+
+fn peek_schema_name(body: &str) -> String {
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name:") {
+            return rest.trim().trim_matches('"').to_string();
+        }
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .expect("schema fixture name")
 }

@@ -1,6 +1,5 @@
 name: c
 kind: document
 schema_version: 1
-layout: c/{id}.md
 fields: []
 on_write: echo hi

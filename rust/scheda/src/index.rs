@@ -11,11 +11,10 @@ use crate::error::{Code, ContextAs, ContextIo};
 use crate::journal;
 use crate::schema::{self, Kind, Schema};
 use crate::store;
-use crate::{Error, ReindexCounts};
+use crate::{Error, ReindexResult};
 
-pub(crate) const FORMAT_VERSION: u32 = 1;
+pub(crate) const FORMAT_VERSION: u32 = 3;
 const FORMAT_FILE: &str = "format";
-const WRITE_LOCK: &str = "write.lock";
 const JOURNAL_DIR: &str = "journal";
 const IDS_FILE: &str = "ids";
 
@@ -91,8 +90,8 @@ pub(crate) fn rebuild(
     vault: &Path,
     schema: &Schema,
     index_dir: &Path,
-) -> Result<(ReindexCounts, JournalIdMaps), Error> {
-    clear_except_lock(index_dir)?;
+) -> Result<(ReindexResult, JournalIdMaps), Error> {
+    clear_index_dir(index_dir)?;
     let mut records_read = 0u64;
     let mut skipped_invalid = 0u64;
     let mut segments_seen = 0u64;
@@ -116,7 +115,7 @@ pub(crate) fn rebuild(
     }
     write_format(index_dir)?;
     Ok((
-        ReindexCounts::default()
+        ReindexResult::default()
             .with_records_read(records_read)
             .with_skipped_invalid(skipped_invalid)
             .with_segments_seen(segments_seen),
@@ -266,15 +265,11 @@ pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
     fs::write(&path, format!("{FORMAT_VERSION}\n")).context("[Index::write_format] write format")
 }
 
-fn clear_except_lock(index_dir: &Path) -> Result<(), Error> {
+fn clear_index_dir(index_dir: &Path) -> Result<(), Error> {
     fs::create_dir_all(index_dir).context("[Index::clear] create dir")?;
     let entries = fs::read_dir(index_dir).context("[Index::clear] read dir")?;
     for entry in entries {
         let entry = entry.context("[Index::clear] read entry")?;
-        let name = entry.file_name();
-        if name == WRITE_LOCK {
-            continue;
-        }
         let path = entry.path();
         let result = if path.is_dir() {
             fs::remove_dir_all(&path)

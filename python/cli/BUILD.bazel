@@ -1,0 +1,25 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
+
+_IMPORTS = ["../.."]
+
+py_library(
+    name = "cli_pkg",
+    srcs = [
+        "__init__.py",
+        "__main__.py",
+        "main.py",
+    ],
+    imports = _IMPORTS,
+    visibility = ["//visibility:private"],
+    deps = ["//python:python_pkg"],
+)
+
+py_binary(
+    name = "cli",
+    srcs = ["main.py"],
+    data = ["//rust/cli:scheda"],
+    imports = _IMPORTS,
+    main = "main.py",
+    visibility = ["//visibility:public"],
+    deps = [":cli_pkg"],
+)

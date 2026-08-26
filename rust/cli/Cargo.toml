@@ -1,0 +1,27 @@
+[package]
+name = "scheda-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Thin CLI encoding of the Scheda library API (`07`)"
+publish = false
+
+[[bin]]
+name = "scheda"
+path = "src/main.rs"
+
+[features]
+# Cargo-only static glibc CLI (`+crt-static`). Not used by Bazel.
+vendored-openssl = ["scheda/vendored-openssl"]
+
+[dependencies]
+clap = { workspace = true }
+scheda = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ureq = { workspace = true }
+
+[lints]
+workspace = true

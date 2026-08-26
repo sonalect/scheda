@@ -1,11 +1,10 @@
 name: c
 kind: document
 schema_version: 1
-layout: c/{id}.md
 fields:
   - name: title
-    type: string
     required: true
+    string: {}
   - name: note
-    type: string
     nullable: true
+    string: {}

@@ -3,5 +3,7 @@
 common --experimental_platform_in_output_dir
 # Use a symlink prefix to avoid clobbering the workspace root.
 build --symlink_prefix=.bazel/
+# @pypi packages from [project] dependencies (implicit venv = project name).
+common --@pypi//venv=scheda
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles

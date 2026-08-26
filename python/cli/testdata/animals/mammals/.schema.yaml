@@ -1,0 +1,6 @@
+version: 1
+document: {}
+fields:
+  - name: title
+    required: true
+    string: {}

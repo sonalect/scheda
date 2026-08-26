@@ -1,0 +1,41 @@
+# QRY-3 vector-leg fixture for the CLI (`14`).
+#
+# Three document collections (animal groups). Topic sentences live in
+# Record bodies, not titles. Queries are paraphrases: they must not share
+# the distinctive tokens of those sentences, so a hit comes from the
+# vector leg, not BM25.
+#
+# Topic 1 (biosonar): some `mammals` only.
+# Topic 2 (inclination compass): some `birds` only.
+# Topic 3 (seasonal shuttle): some `mammals` and some `birds`.
+# `reptiles` is a distractor group: none of the three topics.
+
+collections:
+  - mammals
+  - birds
+  - reptiles
+
+topics:
+  - id: biosonar
+    text: finding prey in total darkness by timing bounced chirps
+    k: 10
+    expect_collections: [mammals]
+    expect_ids:
+      - greater-horseshoe-bat
+      - bottlenose-dolphin
+  - id: inclination-compass
+    text: how some flyers tell direction from the planet's hidden north-south pull
+    k: 10
+    expect_collections: [birds]
+    expect_ids:
+      - homing-pigeon
+      - european-robin
+  - id: seasonal-shuttle
+    text: species that commute thousands of kilometres between a warm-season home and a cold-season home
+    k: 10
+    expect_collections: [mammals, birds]
+    expect_ids:
+      - caribou
+      - humpback-whale
+      - arctic-tern
+      - bar-tailed-godwit

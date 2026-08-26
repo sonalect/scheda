@@ -1,0 +1,142 @@
+// Declaration for `Vault.create_collection`. The collection name is a
+// method argument, not a field here. Bindings and agent transport (`08`)
+// use the Protobuf JSON mapping of these messages, not binary protobuf.
+// Field names follow `05` §8. Vault files stay YAML / JSONL (`04`).
+//
+// The caller never supplies a Record file path. Only `Vault.open` takes a
+// filesystem path (the Vault root). Record paths are fixed by kind (MOD-8).
+
+edition = "2024";
+
+package api.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+
+message Schema {
+  // Integer ≥ 1 (SCH-2). On disk this is `schema_version`. Writes must use
+  // the current version (SCH-13).
+  uint32 version = 1 [(buf.validate.field) = {
+    required: true
+    uint32: {gte: 1}
+  }];
+  // Field declarations (SCH-4). May be empty.
+  repeated Field fields = 2;
+  // MOD-2: exactly one kind. The set arm is the kind (`document` |
+  // `journal` | `singleton`).
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    // `document` (SCH-7). Empty Body: allowed and indexed. File:
+    // `{name}/{id}.md`.
+    Body document = 3;
+    Journal journal = 4;
+    Singleton singleton = 5;
+  }
+  // SCH-15 (**later**). Default false. `true`: Record files live under
+  // `{vault}/.isolated/{name}/` (gitignored nested git, ISO-2). Schema file
+  // stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
+  // collections does not read it.
+  bool isolated = 6;
+}
+
+// `journal` segment cap (SCH-14). Size-first: a cap hit closes the segment
+// even mid-day. Segment files live in the collection directory; the
+// library names them.
+message Journal {
+  // Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB (SCH-14).
+  uint64 segment_max_bytes = 1 [(buf.validate.field) = {
+    uint64: {gte: 1 lte: 33554432}
+  }];
+  // Optional line cap in addition to the byte cap. Omitted → no line cap.
+  // If present, must be >= 1.
+  uint64 segment_max_lines = 2 [(buf.validate.field) = {
+    uint64: {gte: 1}
+  }];
+  // Set → rotate daily (UTC), still size-first (SCH-14). Omitted → no
+  // calendar rotation.
+  Unit daily = 3;
+}
+
+// `singleton`: the one Record `id` (MOD-7). Slug checked in the library.
+// File is always `{name}/record.yaml` (or `.isolated/{name}/record.yaml`).
+message Singleton {
+  string id = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+message Field {
+  // Field name. Non-empty (SCH-4). Not `id` (SCH-6) or `body` (SCH-7).
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Must be present on write (SCH-5). Default false (optional). Nested
+  // fields of `object` / `object_list` use the same flag.
+  bool required = 2;
+  // JSON/YAML `null` is allowed (SCH-5, MOD-18). Default false. Independent
+  // of `required`.
+  bool nullable = 3;
+  // Exclude from `find` (SCH-8). Default false: the field is a filter key.
+  bool exclude_find = 4;
+  // Applied only when this key is present (MOD-12). Otherwise missing stays
+  // missing. Type must match `spec` (checked in the library).
+  google.protobuf.Value default = 5;
+  // Exactly one SCH-4 type or an SCH-11 edge.
+  oneof spec {
+    option (buf.validate.oneof).required = true;
+    Text string = 6;
+    Unit integer = 7;
+    Unit number = 8;
+    Unit boolean = 9;
+    Text string_list = 10;
+    Object object = 11;
+    Object object_list = 12;
+    Edge edge = 13;
+  }
+}
+
+// `string` / `string_list`: lexical and vector search (SCH-9). Default on.
+message Text {
+  bool exclude_fts = 1;
+  bool exclude_vector = 2;
+}
+
+// `integer` / `number` / `boolean`, and Edge `one` / `many`.
+message Unit {}
+
+// `object` / `object_list`. Empty `fields`: open map of `string` values
+// (SCH-4).
+message Object {
+  repeated Field fields = 1;
+}
+
+message Edge {
+  // Target collection name (SCH-11). Must exist in Schema. Slug checked
+  // in the library.
+  string collection = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // `one` → one Record `id` (`string`). `many` → `string_list` of ids.
+  oneof arity {
+    option (buf.validate.oneof).required = true;
+    Unit one = 2;
+    Unit many = 3;
+  }
+  // Default false (`lax`). `true` rejects a write whose target `id` is
+  // missing (SCH-11).
+  bool strict = 4;
+  // Omit → indexed. Same flags as `string`.
+  Text text = 5;
+}
+
+message Body {
+  // Default false: Markdown body is allowed. `true` rejects a non-empty
+  // body on write (SCH-7). (A proto `bool` cannot default to true.)
+  bool no_body = 1;
+  // Omit → in the lexical Index: `find` field `body` and BM25. `exclude_fts`
+  // drops both. `exclude_vector` is SCH-9 only.
+  Text text = 2;
+}

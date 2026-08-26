@@ -1,18 +1,23 @@
-// Options for `init` / `open` (`07` LIB-4, LIB-13). Bindings and agent
-// transport (`08`) use the Protobuf JSON mapping of these messages, not
-// binary protobuf. Vault files stay YAML / JSONL (`04`).
+// Options for `open`. Bindings and agent transport (`08`) use the Protobuf
+// JSON mapping of these messages, not binary protobuf. Vault files stay YAML
+// / JSONL (`04`). Index lives at `{vault}/.scheda/index` (GIT-13); callers
+// do not pass an Index directory.
 
 edition = "2024";
 
 package api.v1;
 
-// Lock and remote policy. Unset `write` means the binding default (write).
-// Unset `auto_sync` means off. Index lives at `{vault}/.scheda/index` (GIT-13);
-// callers do not pass an Index directory.
 message OpenOptions {
-  bool write = 1;
-  bool auto_sync = 2;
-  // GIT-9. Empty means unset. `open` of an existing repository with this set
-  // is `invalid`. `init` with this set is `clone`.
-  string remote_repo = 3;
+  // Unset means off.
+  bool auto_sync = 1;
+  // Empty means unset. Used only when `path` does not exist: then `open`
+  // clones this URL. Ignored when `path` is already a Vault.
+  string remote_repo = 2;
+  // Later (ISO-5). When Scheda first creates `{vault}/.isolated/`, encrypt
+  // that nested tree. Ignored if `.isolated/` already exists. Default false.
+  bool encrypt = 3;
+  // Later (ISO-7). Isolated Record I/O when `.isolated/` is encrypted.
+  // Empty means unset. `open` of the Vault and main collections do not
+  // require it.
+  string secret = 4;
 }

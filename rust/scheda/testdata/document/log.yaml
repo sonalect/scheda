@@ -1,5 +1,4 @@
 name: north_log
 kind: journal
 schema_version: 1
-layout: north/log/
 fields: []

@@ -8,7 +8,7 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use scheda::{Code, Embedder, OpenOptions, Record, SearchQuery, Vault, collection_dir};
+use scheda::{Code, Embedder, OpenOptions, RecordAdd, SearchQuery, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -30,9 +30,15 @@ impl Scratch {
     }
 
     fn write_schema(&self, file: &str, body: &str) {
-        let dir = self.vault().join("schema");
+        let name = peek_schema_name(body);
+        let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(file), body).unwrap();
+        let dest = if file.ends_with(".json") {
+            ".schema.json"
+        } else {
+            ".schema.yaml"
+        };
+        fs::write(dir.join(dest), body).unwrap();
     }
 }
 
@@ -52,30 +58,24 @@ const OPS_LOG: &str = "\
 name: ops_log
 kind: journal
 schema_version: 1
-layout: ops/log/
 fields:
   - name: msg
-    type: string
-    fts: true
-    vector: true
+    string: {}
 ";
 
 const OPS_NOTES: &str = "\
 name: north_notes
 kind: document
 schema_version: 1
-layout: north/{id}.md
 fields:
   - name: title
-    type: string
     required: true
-    fts: true
-    vector: true
+    string: {}
   - name: tag
-    type: string
     nullable: true
+    string: {}
   - name: count
-    type: integer
+    integer: {}
 ";
 
 struct OpsEmbedder;
@@ -98,28 +98,24 @@ impl Embedder for OpsEmbedder {
     }
 }
 
-fn rec_log(collection: &str, id: &str, msg: &str) -> Record {
+fn rec_log(msg: &str) -> RecordAdd {
     serde_json::from_value(json!({
-        "id": id,
-        "collection": collection,
         "fields": {"msg": msg},
     }))
     .unwrap()
 }
 
-fn rec_note(id: &str, title: &str) -> Record {
+fn rec_note(title: &str) -> RecordAdd {
     serde_json::from_value(json!({
-        "id": id,
-        "collection": "north_notes",
         "fields": {"title": title},
     }))
     .unwrap()
 }
 
 fn open_log(scratch: &Scratch) -> Vault {
-    drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("log.yaml", LOG);
-    Vault::open(scratch.vault(), OpenOptions::new()).unwrap()
+    Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap()
 }
 
 #[test]
@@ -127,26 +123,17 @@ fn find_one_does_not_read_unrelated_segments() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection
-        .insert_one(rec_log("south_log", "early", "x"))
-        .unwrap();
-    collection
-        .insert_one(rec_log("south_log", "mid", "x"))
-        .unwrap();
-    collection
-        .insert_one(rec_log("south_log", "late", "x"))
-        .unwrap();
-    let log_dir = scratch
-        .vault()
-        .join(collection_dir("south_log"))
-        .join("south/log");
+    collection.add("early", rec_log("x")).unwrap();
+    collection.add("mid", rec_log("x")).unwrap();
+    collection.add("late", rec_log("x")).unwrap();
+    let log_dir = scratch.vault().join("south_log");
     assert!(log_dir.join("00000001.jsonl").is_file());
     fs::write(log_dir.join("ffffffff.jsonl"), vec![0u8; 2 * 1024 * 1024]).unwrap();
     let started = Instant::now();
-    let got = collection.find_one("early").unwrap();
+    let got = collection.get("early").unwrap();
     assert!(started.elapsed() < OP_BUDGET);
     assert_eq!(got.id.as_deref(), Some("early"));
-    let err = collection.find_one("missing").unwrap_err();
+    let err = collection.get("missing").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
@@ -155,28 +142,22 @@ fn writer_updates_map_human_edit_needs_reindex() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection
-        .insert_one(rec_log("south_log", "a", "x"))
-        .unwrap();
+    collection.add("a", rec_log("x")).unwrap();
     let ids = vault
         .index_dir()
         .join("journal")
-        .join(collection_dir("south_log"))
+        .join("south_log")
         .join("ids");
     assert!(ids.is_file());
-    let log = scratch
-        .vault()
-        .join(collection_dir("south_log"))
-        .join("south/log")
-        .join("00000001.jsonl");
+    let log = scratch.vault().join("south_log").join("00000001.jsonl");
     let mut text = fs::read_to_string(&log).unwrap();
     text.push_str(r#"{"id":"human","msg":"edit"}"#);
     text.push('\n');
     fs::write(&log, text).unwrap();
-    let err = collection.find_one("human").unwrap_err();
+    let err = collection.get("human").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     vault.reindex().unwrap();
-    let got = collection.find_one("human").unwrap();
+    let got = collection.get("human").unwrap();
     assert_eq!(got.id.as_deref(), Some("human"));
 }
 
@@ -185,44 +166,40 @@ fn missing_map_falls_back_to_scan() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection
-        .insert_one(rec_log("south_log", "kept", "x"))
-        .unwrap();
+    collection.add("kept", rec_log("x")).unwrap();
     let journal_index = vault.index_dir().join("journal");
     fs::remove_dir_all(&journal_index).unwrap();
     drop(vault);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new()).unwrap();
-    let got = vault
-        .collection("south_log")
-        .unwrap()
-        .find_one("kept")
-        .unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let got = vault.collection("south_log").unwrap().get("kept").unwrap();
     assert_eq!(got.id.as_deref(), Some("kept"));
 }
 
 #[test]
 fn ops_fixture_find_and_insert_and_reindex() {
     let scratch = Scratch::new();
-    drop(Vault::init(scratch.vault(), OpenOptions::new()).unwrap());
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("log.yaml", OPS_LOG);
     scratch.write_schema("notes.yaml", OPS_NOTES);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new())
-        .unwrap()
-        .with_embedder(std::sync::Arc::new(OpsEmbedder));
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(std::sync::Arc::new(OpsEmbedder)),
+    )
+    .unwrap();
     let log = vault.collection("ops_log").unwrap();
     for i in 0..OPS_JOURNAL {
-        log.insert_one(rec_log("ops_log", &format!("j{i:05}"), "x"))
-            .unwrap();
+        log.add(&format!("j{i:05}"), rec_log("x")).unwrap();
     }
     let notes = vault.collection("north_notes").unwrap();
     for i in 0..OPS_DOCS {
         notes
-            .insert_one(rec_note(&format!("d{i:04}"), &format!("t{i}")))
+            .add(&format!("d{i:04}"), rec_note(&format!("t{i}")))
             .unwrap();
     }
     for id in ["j00000", "j05000", "j09999"] {
         let started = Instant::now();
-        let got = log.find_one(id).unwrap();
+        let got = log.get(id).unwrap();
         assert!(
             started.elapsed() < OP_BUDGET,
             "find_one({id}) took {:?}",
@@ -231,13 +208,13 @@ fn ops_fixture_find_and_insert_and_reindex() {
         assert_eq!(got.id.as_deref(), Some(id));
     }
     let started = Instant::now();
-    notes.find_one("d0000").unwrap();
+    notes.get("d0000").unwrap();
     assert!(started.elapsed() < OP_BUDGET);
     let started = Instant::now();
-    notes.find_one("d0999").unwrap();
+    notes.get("d0999").unwrap();
     assert!(started.elapsed() < OP_BUDGET);
     let started = Instant::now();
-    log.insert_one(rec_log("ops_log", "j10000", "x")).unwrap();
+    log.add("j10000", rec_log("x")).unwrap();
     assert!(
         started.elapsed() < OP_BUDGET,
         "insert_one took {:?}",
@@ -248,10 +225,10 @@ fn ops_fixture_find_and_insert_and_reindex() {
     assert_eq!(counts.skipped_invalid, Some(0));
     assert_eq!(counts.segments_seen, Some(1));
     let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
-    assert_eq!(format.trim(), "1");
+    assert_eq!(format.trim(), "3");
     let started = Instant::now();
     let hits = notes
-        .search(&SearchQuery::default().with_text("t500").with_k(10))
+        .search(&SearchQuery::default().with_text("t500").with_k(10), None)
         .unwrap();
     assert!(
         started.elapsed() < OP_BUDGET,
@@ -264,4 +241,17 @@ fn ops_fixture_find_and_insert_and_reindex() {
             .any(|hit| hit.id.as_deref() == Some("d0500")),
         "OPS-2 expected d0500 in k"
     );
+}
+
+fn peek_schema_name(body: &str) -> String {
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name:") {
+            return rest.trim().trim_matches('"').to_string();
+        }
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .expect("schema fixture name")
 }

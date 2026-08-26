@@ -3,18 +3,20 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::error::{ContextIo, bail, io_code};
+use crate::error::{Code, ContextAs, ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::journal;
 use crate::query;
-use crate::schema::{self, CollectionDecl, Kind, Multiplicity, Schema};
-use crate::search::{self, Embedder, SearchEngine};
+use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
+use crate::search::{self, SearchEngine};
 use crate::store;
 use crate::{
-    Catalog, Error, Filter, HistoryEntry, OpenOptions, Record, ReindexCounts, SearchHits,
-    SearchQuery,
+    Embedder, Error, Filter, FindResult, History, OpenOptions, Record, RecordAdd, RecordReplace,
+    ReindexResult, Reranker, Schema, SearchHits, SearchQuery, VaultInfo,
 };
+
+const AUTO_COMMIT_MESSAGE: &str = "scheda";
 
 /// A git working tree that holds collections of records.
 pub struct Vault {
@@ -22,10 +24,10 @@ pub struct Vault {
     index_dir: PathBuf,
     remotes: Vec<String>,
     auto_sync: bool,
-    write_lock: Option<File>,
-    schema: Arc<Schema>,
-    schema_versions: Vec<u32>,
+    write_lock: Arc<Mutex<Option<File>>>,
+    schema: Mutex<Arc<LoadedSchema>>,
     written: Arc<Mutex<BTreeSet<String>>>,
+    in_txn: Arc<Mutex<bool>>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
@@ -35,117 +37,108 @@ pub struct Vault {
 pub struct Collection {
     vault: PathBuf,
     index_dir: PathBuf,
-    can_write: bool,
+    write_lock: Arc<Mutex<Option<File>>>,
+    auto_sync: bool,
+    remotes: Vec<String>,
     decl: CollectionDecl,
-    schema: Arc<Schema>,
+    schema: Arc<LoadedSchema>,
     written: Arc<Mutex<BTreeSet<String>>>,
+    in_txn: Arc<Mutex<bool>>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
 }
 
-/// Result of inserting a record.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InsertOne {
-    pub id: String,
-}
-
-/// Result of replacing a document.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReplaceOne {
-    pub id: String,
-}
-
 impl Vault {
-    /// Create a Vault at `path` (`git init`, no Remote). LIB-2 / GIT-9.
-    /// `remote_repo` set → [`clone`](Self::clone) (LIB-13).
-    pub fn init(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
+    /// Open, create, or clone a Vault (`12` A3).
+    ///
+    /// Path exists → open (`remote_repo` ignored). Path missing + `remote_repo`
+    /// → clone. Path missing → `git init`. Path exists but is not a Vault →
+    /// `invalid`.
+    pub fn open(
+        path: impl AsRef<Path>,
+        options: OpenOptions,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Self, Error> {
         options.require_valid()?;
-        if let Some(url) = remote_repo_url(&options) {
-            let url = url.to_owned();
-            return Self::clone(&url, path, without_remote_repo(options));
-        }
         let path = path.as_ref();
-        prepare_new_work_tree(path)?;
-        git::init(path)?;
-        Self::open(path, options)
+        if path.exists() {
+            if !git::is_work_tree(path) {
+                bail!(Error::invalid(format!(
+                    "path exists but is not a Vault: {}",
+                    path.display()
+                )));
+            }
+            return Self::open_existing(path, options, embedder);
+        }
+        let remote = remote_repo_url(&options).map(str::to_owned);
+        if let Some(url) = remote {
+            return Self::clone_into(&url, path, options, embedder);
+        }
+        Self::init_at(path, options, embedder)
     }
 
-    /// Clone `url` into `path`. LIB-2 name `clone` (GIT-9).
-    pub fn clone(url: &str, path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
-        options.require_valid()?;
+    fn init_at(
+        path: &Path,
+        options: OpenOptions,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Self, Error> {
+        prepare_new_work_tree(path)?;
+        git::init(path)?;
+        Self::open_existing(path, options, embedder)
+    }
+
+    fn clone_into(
+        url: &str,
+        path: &Path,
+        options: OpenOptions,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Self, Error> {
         let url = url.trim();
         if url.is_empty() {
             bail!(Error::invalid("clone URL is empty"));
         }
-        let path = path.as_ref();
         prepare_new_work_tree(path)?;
         git::clone(url, path)?;
-        Self::open(path, without_remote_repo(options))
+        Self::open_existing(path, without_remote_repo(options), embedder)
     }
 
-    /// Open an existing Vault at `path`.
-    pub fn open(path: impl AsRef<Path>, options: OpenOptions) -> Result<Self, Error> {
-        options.require_valid()?;
-        let path = path.as_ref();
-        if let Some(url) = remote_repo_url(&options) {
-            if git::is_work_tree(path) {
-                bail!(Error::invalid(format!(
-                    "remote_repo cannot be set on an existing repository: {}",
-                    path.display()
-                )));
-            }
-            let url = url.to_owned();
-            return Self::clone(&url, path, without_remote_repo(options));
-        }
-        if !git::is_work_tree(path) {
-            bail!(Error::invalid(format!(
-                "path is not a git working tree: {}",
-                path.display()
-            )));
-        }
-        let write = options.write.unwrap_or(true);
+    fn open_existing(
+        path: &Path,
+        options: OpenOptions,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Self, Error> {
         let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path).context("[Vault::open] canonicalize vault")?;
-        let mut wrote_gitignore = false;
-        if write {
-            wrote_gitignore = ensure_gitignore(&path)?;
-        }
+        let wrote_gitignore = ensure_gitignore(&path)?;
         let index_dir = path.join(".scheda").join("index");
         fs::create_dir_all(&index_dir).context("[Vault::open] create index dir")?;
         let index_dir = fs::canonicalize(&index_dir).context("[Vault::open] canonicalize index")?;
         let remotes = git::remotes(&path)?;
-        if auto_sync && !remotes.is_empty() && !write {
-            bail!(Error::locked("auto_sync pull needs a write lock"));
-        }
-        let write_lock = if write {
-            Some(acquire_write_lock(&index_dir)?)
-        } else {
-            None
-        };
         if auto_sync && !remotes.is_empty() {
             git::pull(&path)?;
         }
         let schema = Arc::new(schema::load(&path)?);
-        let schema_versions = schema.versions();
         let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&index_dir, &schema)?));
-        let written = Arc::new(Mutex::new(BTreeSet::new()));
-        let search = Arc::new(SearchEngine::open(&index_dir, write)?);
+        let written = Arc::new(Mutex::new(load_written(&index_dir)?));
+        let in_txn = Arc::new(Mutex::new(load_txn(&index_dir)?));
+        let search = Arc::new(SearchEngine::open(&index_dir, false)?);
         let vault = Self {
             path,
             index_dir,
             remotes,
             auto_sync,
-            write_lock,
-            schema,
-            schema_versions,
+            write_lock: Arc::new(Mutex::new(None)),
+            schema: Mutex::new(schema),
             written,
+            in_txn,
             journal_ids,
             search,
-            embedder: None,
+            embedder,
         };
         if wrote_gitignore {
-            vault.note_write(String::from(".gitignore"));
+            vault.note_write(String::from(".gitignore"))?;
+            vault.finish_mutation()?;
         }
         Ok(vault)
     }
@@ -162,7 +155,10 @@ impl Vault {
 
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
-        self.write_lock.is_some()
+        self.write_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .is_some()
     }
 
     #[must_use]
@@ -182,20 +178,17 @@ impl Vault {
 
     /// Schema `schema_version` values present in this Vault.
     #[must_use]
-    pub fn schema_versions(&self) -> &[u32] {
-        &self.schema_versions
+    pub fn schema_versions(&self) -> Vec<u32> {
+        self.schema_arc().versions()
     }
 
-    /// Inject an embedder for the vector leg (IDX-8). No embedder → vector
-    /// search is off; lexical search and writes still work.
-    #[must_use]
-    pub fn with_embedder(mut self, embedder: Arc<dyn Embedder>) -> Self {
-        self.embedder = Some(embedder);
-        self
+    fn schema_arc(&self) -> Arc<LoadedSchema> {
+        Arc::clone(&self.schema.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
-        let Some(decl) = self.schema.get(name) else {
+        let schema = self.schema_arc();
+        let Some(decl) = schema.get(name) else {
             bail!(Error::not_found(format!(
                 "collection {name} is not in Schema"
             )));
@@ -208,70 +201,180 @@ impl Vault {
         Ok(Collection {
             vault: self.path.clone(),
             index_dir: self.index_dir.clone(),
-            can_write: self.write_lock.is_some(),
+            write_lock: Arc::clone(&self.write_lock),
+            auto_sync: self.auto_sync,
+            remotes: self.remotes.clone(),
             decl: decl.clone(),
-            schema: Arc::clone(&self.schema),
+            schema,
             written: Arc::clone(&self.written),
+            in_txn: Arc::clone(&self.in_txn),
             journal_ids: Arc::clone(&self.journal_ids),
             search: Arc::clone(&self.search),
             embedder: self.embedder.clone(),
         })
     }
 
-    /// Create one git commit for paths this handle wrote (GIT-2, LIB-12).
-    pub fn commit(&self, message: &str) -> Result<(), Error> {
-        if self.write_lock.is_none() {
-            bail!(Error::locked("commit needs a write lock"));
+    /// Tantivy Query, then files (`13` §3). Empty `collections` is every
+    /// non-isolated collection on this handle.
+    pub fn find(
+        &self,
+        collections: &[&str],
+        filter: &Filter,
+        offset: u32,
+        count: u32,
+    ) -> Result<FindResult, Error> {
+        let schema = self.schema_arc();
+        QueryCtx {
+            engine: &self.search,
+            schema: &schema,
+            vault: &self.path,
+            journal_ids: &self.journal_ids,
         }
+        .find(collections, filter, offset, count)
+    }
+
+    /// Hybrid retrieval (`13` §6). Empty `collections` is every non-isolated
+    /// collection on this handle.
+    pub fn search(
+        &self,
+        collections: &[&str],
+        query: &SearchQuery,
+        reranker: Option<&dyn Reranker>,
+    ) -> Result<SearchHits, Error> {
+        let schema = self.schema_arc();
+        QueryCtx {
+            engine: &self.search,
+            schema: &schema,
+            vault: &self.path,
+            journal_ids: &self.journal_ids,
+        }
+        .search(self.embedder.as_deref(), collections, query, reranker)
+    }
+
+    /// Create one git commit for paths this handle wrote (GIT-2, LIB-12).
+    /// Ends the transaction. `invalid` if none is open.
+    pub fn commit(&self, message: &str) -> Result<(), Error> {
+        self.require_write_lock("commit")?;
+        if !flag(&self.in_txn) {
+            bail!(Error::invalid("commit requires an open transaction"));
+        }
+        self.commit_recorded(message)?;
+        set_flag(&self.index_dir, &self.in_txn, false)?;
+        self.push_if_auto_sync()
+    }
+
+    /// Start a transaction (GIT-2, LIB-22). Discards leftover Scheda writes first.
+    /// `invalid` if a transaction is already open.
+    pub fn begin(&self) -> Result<(), Error> {
+        self.require_write_lock("begin")?;
+        if flag(&self.in_txn) {
+            bail!(Error::invalid("already in a transaction"));
+        }
+        self.restore_recorded()?;
+        set_flag(&self.index_dir, &self.in_txn, true)
+    }
+
+    /// Restore Scheda-recorded paths to HEAD, end the transaction if any,
+    /// reload Schema, and rebuild the Index (GIT-2, LIB-23).
+    pub fn discard(&self) -> Result<(), Error> {
+        self.require_write_lock("discard")?;
+        self.restore_recorded()?;
+        set_flag(&self.index_dir, &self.in_txn, false)
+    }
+
+    fn commit_recorded(&self, message: &str) -> Result<(), Error> {
         let paths: Vec<String> = {
             let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
             set.iter().cloned().collect()
         };
         git::commit(&self.path, message, &paths)?;
-        self.written
+        let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        set.clear();
+        persist_written(&self.index_dir, &set)
+    }
+
+    fn restore_recorded(&self) -> Result<(), Error> {
+        let paths: Vec<String> = {
+            let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            let paths: Vec<String> = set.iter().cloned().collect();
+            set.clear();
+            persist_written(&self.index_dir, &set)?;
+            paths
+        };
+        if paths.is_empty() {
+            return Ok(());
+        }
+        git::discard_paths(&self.path, &paths)?;
+        self.reload_after_restore()
+    }
+
+    fn reload_after_restore(&self) -> Result<(), Error> {
+        let loaded = schema::load(&self.path)?;
+        *self
+            .journal_ids
             .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clear();
+            .unwrap_or_else(PoisonError::into_inner) =
+            index::load_journal_ids(&self.index_dir, &loaded)?;
+        self.search.close_for_rebuild();
+        self.search
+            .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
+        *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
+        Ok(())
+    }
+
+    fn finish_mutation(&self) -> Result<(), Error> {
+        if flag(&self.in_txn) {
+            return Ok(());
+        }
+        match self.commit_recorded(AUTO_COMMIT_MESSAGE) {
+            Ok(()) => self.push_if_auto_sync(),
+            Err(err) => {
+                let _ = self.restore_recorded();
+                Err(err)
+            }
+        }
+    }
+
+    fn push_if_auto_sync(&self) -> Result<(), Error> {
         if self.auto_sync && !self.remotes.is_empty() {
-            self.push_remote()?;
+            git::push(&self.path)?;
         }
         Ok(())
     }
 
-    /// Git commits that changed `path` (GIT-3, LIB-17). Newest first.
-    pub fn history(&self, path: &str) -> Result<Vec<HistoryEntry>, Error> {
-        git::history(&self.path, path)
+    fn note_write(&self, rel: String) -> Result<(), Error> {
+        let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        set.insert(rel);
+        persist_written(&self.index_dir, &set)
     }
 
-    fn note_write(&self, rel: String) {
-        self.written
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(rel);
-    }
-
-    pub fn push_remote(&self) -> Result<(), Error> {
-        self.require_write_lock("push_remote")?;
+    pub fn push(&self) -> Result<(), Error> {
+        self.require_write_lock("push")?;
         git::push(&self.path)
     }
 
-    pub fn pull_remote(&self) -> Result<(), Error> {
-        self.require_write_lock("pull_remote")?;
+    pub fn pull(&self) -> Result<(), Error> {
+        self.require_write_lock("pull")?;
         git::pull(&self.path)
     }
 
-    pub fn sync_remote(&self) -> Result<(), Error> {
-        self.require_write_lock("sync_remote")?;
+    pub fn sync(&self) -> Result<(), Error> {
+        self.require_write_lock("sync")?;
         git::pull(&self.path)?;
         git::push(&self.path)
     }
 
     fn require_write_lock(&self, op: &str) -> Result<(), Error> {
-        if self.write_lock.is_some() {
-            Ok(())
-        } else {
-            Err(Error::locked(format!("{op} needs a write lock")))
+        let mut slot = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(acquire_write_lock(&self.path)?);
+            self.search.enable_write()?;
         }
+        let _ = op;
+        Ok(())
     }
 
     pub fn check(&self) -> Result<(), Error> {
@@ -280,18 +383,38 @@ impl Vault {
         journal::check_journals(&self.path, &schema)
     }
 
-    /// Schema as `api/v1` `Catalog` (LIB-20, AGT-1). Isolated collections are
-    /// listed without `fields` (ISO-3).
-    pub fn catalog(&self) -> Result<Catalog, Error> {
-        let catalog = schema::to_catalog(&self.schema)?;
-        catalog.require_valid()?;
-        Ok(catalog)
+    /// Proto snapshot (`api.v1.VaultInfo`): vault attrs plus the collection list.
+    pub fn info(&self) -> Result<VaultInfo, Error> {
+        let remote = self.remotes.first().cloned().unwrap_or_default();
+        let info = schema::to_vault_info(
+            &self.path,
+            &self.index_dir,
+            &remote,
+            self.auto_sync,
+            &self.schema_arc(),
+        )?;
+        Ok(info)
     }
 
-    pub fn reindex(&self) -> Result<ReindexCounts, Error> {
-        if self.write_lock.is_none() {
-            bail!(Error::locked("reindex needs a write lock"));
-        }
+    /// Write one collection declaration (LIB-21). Reloads Schema on this handle.
+    pub fn create_collection(&self, name: &str, schema: Schema) -> Result<Collection, Error> {
+        self.require_write_lock("create_collection")?;
+        schema.require_valid()?;
+        let rel = schema::put_collection(&self.path, name, &schema)?;
+        self.note_write(rel)?;
+        let loaded = schema::load(&self.path)?;
+        *self
+            .journal_ids
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) =
+            index::load_journal_ids(&self.index_dir, &loaded)?;
+        *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
+        self.finish_mutation()?;
+        self.collection(name)
+    }
+
+    pub fn reindex(&self) -> Result<ReindexResult, Error> {
+        self.require_write_lock("reindex")?;
         self.search.close_for_rebuild();
         let schema = schema::load(&self.path)?;
         let (counts, maps) = index::rebuild(&self.path, &schema, &self.index_dir)?;
@@ -328,7 +451,9 @@ impl Collection {
         Self {
             vault: PathBuf::new(),
             index_dir: PathBuf::new(),
-            can_write: true,
+            write_lock: Arc::new(Mutex::new(None)),
+            auto_sync: false,
+            remotes: Vec::new(),
             decl: CollectionDecl {
                 name: String::from("c"),
                 kind: Kind::Document,
@@ -336,7 +461,6 @@ impl Collection {
                 layout: vec![String::from("c/{id}.md")],
                 id_field: String::from("id"),
                 id_pattern: None,
-                id_pattern_src: None,
                 filter_keys: std::collections::BTreeSet::new(),
                 segment_max_bytes: None,
                 segment_max_lines: None,
@@ -346,8 +470,9 @@ impl Collection {
                 fields: Vec::new(),
                 isolated: false,
             },
-            schema: Arc::new(Schema::default()),
+            schema: Arc::new(LoadedSchema::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),
+            in_txn: Arc::new(Mutex::new(false)),
             journal_ids: Arc::new(Mutex::new(JournalIdMaps::default())),
             search: Arc::new(SearchEngine::empty()),
             embedder: None,
@@ -357,6 +482,10 @@ impl Collection {
     #[must_use]
     pub fn name(&self) -> &str {
         &self.decl.name
+    }
+
+    pub fn schema(&self) -> Result<Schema, Error> {
+        schema::to_proto_schema(&self.decl, false)
     }
 
     #[must_use]
@@ -433,23 +562,69 @@ impl Collection {
     }
 
     fn require_write(&self) -> Result<(), Error> {
-        if self.can_write {
-            Ok(())
-        } else {
-            Err(Error::invalid("vault is open read-only"))
+        let mut slot = self
+            .write_lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if slot.is_none() {
+            *slot = Some(acquire_write_lock(&self.vault)?);
+            self.search.enable_write()?;
+        }
+        Ok(())
+    }
+
+    fn note_write(&self, rel: String) -> Result<(), Error> {
+        let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        set.insert(rel);
+        persist_written(&self.index_dir, &set)
+    }
+
+    fn finish_mutation(&self) -> Result<(), Error> {
+        if flag(&self.in_txn) {
+            return Ok(());
+        }
+        let paths: Vec<String> = {
+            let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            set.iter().cloned().collect()
+        };
+        match git::commit(&self.vault, AUTO_COMMIT_MESSAGE, &paths) {
+            Ok(()) => {
+                let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+                set.clear();
+                persist_written(&self.index_dir, &set)?;
+                if self.auto_sync && !self.remotes.is_empty() {
+                    git::push(&self.vault)?;
+                }
+                Ok(())
+            }
+            Err(err) => {
+                let paths: Vec<String> = {
+                    let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+                    let paths: Vec<String> = set.iter().cloned().collect();
+                    set.clear();
+                    persist_written(&self.index_dir, &set)?;
+                    paths
+                };
+                let _ = git::discard_paths(&self.vault, &paths);
+                if !paths.is_empty() {
+                    let _ = repair_index_after_discard(
+                        &self.vault,
+                        &self.index_dir,
+                        &self.journal_ids,
+                        &self.search,
+                        self.embedder.as_deref(),
+                    );
+                }
+                Err(err)
+            }
         }
     }
 
-    fn note_write(&self, rel: String) {
-        self.written
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(rel);
-    }
-
-    /// Create a `document` file, append a `journal` line, or the first write of a `singleton`.
-    pub fn insert_one(&self, record: Record) -> Result<InsertOne, Error> {
+    /// Create a Record. Same `id` already present → `duplicate_id`.
+    pub fn add(&self, id: &str, record: RecordAdd) -> Result<(), Error> {
+        crate::id::require_slug("id", id)?;
         record.require_valid()?;
+        let record = record_from_add(id, &self.decl.name, record);
         self.require_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
@@ -468,21 +643,24 @@ impl Collection {
                     &mut maps,
                 )?;
                 drop(maps);
-                self.note_write(rel);
+                self.note_write(rel)?;
                 self.index_id(&id)?;
-                Ok(InsertOne { id })
+                self.finish_mutation()?;
+                Ok(())
             }
             Kind::Document | Kind::Singleton => {
                 let (id, rel) = store::insert_document(&self.vault, &self.decl, record)?;
-                self.note_write(rel);
+                self.note_write(rel)?;
                 self.index_id(&id)?;
-                Ok(InsertOne { id })
+                self.finish_mutation()?;
+                Ok(())
             }
         }
     }
 
     /// Read one Record by `id`. Missing → `not_found`.
-    pub fn find_one(&self, id: &str) -> Result<Record, Error> {
+    pub fn get(&self, id: &str) -> Result<Record, Error> {
+        crate::id::require_slug("id", id)?;
         match self.decl.kind {
             Kind::Journal => {
                 let maps = self
@@ -495,132 +673,80 @@ impl Collection {
         }
     }
 
-    /// Replace a whole `document` or `singleton`. Errors on `journal`.
-    pub fn replace_one(&self, id: &str, record: Record) -> Result<ReplaceOne, Error> {
+    /// Replace a whole `document` or `singleton`. `journal` → `unsupported`.
+    pub fn replace(&self, id: &str, record: RecordReplace) -> Result<(), Error> {
+        crate::id::require_slug("id", id)?;
         record.require_valid()?;
         if self.decl.kind == Kind::Journal {
-            bail!(Error::unsupported("replace_one is not offered for journal"));
+            bail!(Error::unsupported("replace is not offered for journal"));
         }
+        if !self.search.has_id(&self.decl.name, id)? {
+            bail!(Error::not_found(format!(
+                "record {id} is not in the Index of {}",
+                self.decl.name
+            )));
+        }
+        let record = record_from_replace(id, &self.decl.name, record);
         self.require_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
         let (id, rel) = store::replace_document(&self.vault, &self.decl, id, record)?;
-        self.note_write(rel);
+        self.note_write(rel)?;
         self.index_id(&id)?;
-        Ok(ReplaceOne { id })
+        self.finish_mutation()?;
+        Ok(())
     }
 
-    /// SCH-8 filters. An empty filter (or [`scan`](Self::scan)) returns every Record.
-    pub fn find(&self, filter: &Filter) -> Result<Vec<Record>, Error> {
-        filter.require_valid()?;
-        query::validate(&self.decl, filter)?;
-        let records = match self.decl.kind {
-            Kind::Journal => journal::scan_journal(&self.vault, &self.decl)?,
-            Kind::Document | Kind::Singleton => store::scan_documents(&self.vault, &self.decl)?,
-        };
-        let mut out = Vec::new();
-        for record in records {
-            if query::matches(&self.decl, &record, filter)? {
-                out.push(record);
-            }
+    /// Tantivy Query on the Index, then files (`13` §3).
+    pub fn find(&self, filter: &Filter, offset: u32, count: u32) -> Result<FindResult, Error> {
+        let name = self.decl.name.as_str();
+        QueryCtx {
+            engine: &self.search,
+            schema: &self.schema,
+            vault: &self.vault,
+            journal_ids: &self.journal_ids,
         }
-        Ok(out)
+        .find(&[name], filter, offset, count)
     }
 
-    /// `find` with an empty filter (LIB-10).
-    pub fn scan(&self) -> Result<Vec<Record>, Error> {
-        self.find(&Filter::default())
-    }
-
-    /// Hybrid retrieval (LIB-11, QRY-3–6).
-    pub fn search(&self, query: &SearchQuery) -> Result<SearchHits, Error> {
-        query.require_valid()?;
-        let filter = search_filter(query);
-        query::validate(&self.decl, &filter)?;
-        let allowed = if query::is_unconstrained(&filter) {
-            None
-        } else {
-            Some(
-                self.find(&filter)?
-                    .into_iter()
-                    .filter_map(|record| record.id)
-                    .collect(),
-            )
-        };
-        self.search.search(
-            &self.decl.name,
-            query,
-            self.embedder.as_deref(),
-            allowed.as_ref(),
-        )
-    }
-
-    /// One-step walk along an SCH-11 edge (REL-2).
-    pub fn walk(&self, field: &str, filter: &Filter) -> Result<Vec<Record>, Error> {
-        let edge = search::require_edge(&self.decl, field)?;
-        let sources = self.find(filter)?;
-        let Some(target) = self.schema.get(&edge.collection) else {
-            bail!(Error::invalid(format!(
-                "edge {field} targets unknown collection {}",
-                edge.collection
-            )));
-        };
-        let mut seen = BTreeSet::new();
-        let mut out = Vec::new();
-        for source in sources {
-            let fields = store::fields_map(&source)?;
-            let mut ids = search::edge_target_ids(fields.get(field));
-            if edge.multiplicity == Multiplicity::One {
-                ids.truncate(1);
-            }
-            for id in ids {
-                if !seen.insert(id.clone()) {
-                    continue;
-                }
-                match self.lookup_decl(target, &id) {
-                    Ok(record) => out.push(record),
-                    Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
-                    Err(err) => bail!(err),
-                }
-            }
-        }
-        Ok(out)
-    }
-
-    /// Inverse walk: source records that point at `id` (REL-3).
-    pub fn walk_inverse(
+    /// Hybrid retrieval (LIB-11, `13` §6).
+    pub fn search(
         &self,
-        source_collection: &str,
-        field: &str,
-        id: &str,
-    ) -> Result<Vec<Record>, Error> {
-        let Some(source) = self.schema.get(source_collection) else {
-            bail!(Error::not_found(format!(
-                "collection {source_collection} is not in Schema"
-            )));
-        };
-        let edge = search::require_edge(source, field)?;
-        if edge.collection != self.decl.name {
-            bail!(Error::invalid(format!(
-                "edge {source_collection}.{field} does not target {}",
-                self.decl.name
-            )));
+        query: &SearchQuery,
+        reranker: Option<&dyn Reranker>,
+    ) -> Result<SearchHits, Error> {
+        let name = self.decl.name.as_str();
+        QueryCtx {
+            engine: &self.search,
+            schema: &self.schema,
+            vault: &self.vault,
+            journal_ids: &self.journal_ids,
         }
-        let source_ids = self.search.inverse(source_collection, field, id)?;
-        let mut out = Vec::new();
-        for source_id in source_ids {
-            match self.lookup_decl(source, &source_id) {
-                Ok(record) => out.push(record),
-                Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
-                Err(err) => bail!(err),
-            }
+        .search(self.embedder.as_deref(), &[name], query, reranker)
+    }
+
+    pub fn history(&self, id: &str, offset: u32, count: u32) -> Result<History, Error> {
+        crate::id::require_slug("id", id)?;
+        if count == 0 {
+            bail!(Error::invalid("history count must be > 0"));
         }
-        Ok(out)
+        let record = self.get(id)?;
+        let path = record.path.as_deref().unwrap_or("");
+        let entries = git::history(&self.vault, path)?;
+        let page = entries
+            .into_iter()
+            .skip(offset as usize)
+            .take(count as usize)
+            .collect();
+        Ok(History {
+            entries: page,
+            ..History::default()
+        })
     }
 
     fn index_id(&self, id: &str) -> Result<(), Error> {
-        let record = self.find_one(id)?;
+        let record = self.get(id)?;
         self.search
             .upsert(&self.decl, &record, self.embedder.as_deref())
     }
@@ -648,8 +774,208 @@ impl Collection {
     }
 }
 
+fn record_from_add(id: &str, collection: &str, add: RecordAdd) -> Record {
+    let mut record = Record::default().with_id(id).with_collection(collection);
+    record.fields = add.fields;
+    record.body = add.body;
+    record
+}
+
+fn record_from_replace(id: &str, collection: &str, replace: RecordReplace) -> Record {
+    let mut record = Record::default().with_id(id).with_collection(collection);
+    record.fields = replace.fields;
+    record.body = replace.body;
+    record
+}
+
 fn search_filter(query: &SearchQuery) -> Filter {
     (*query.filter).clone()
+}
+
+fn collection_from_record_path(path: &str) -> &str {
+    path.split('/').next().unwrap_or("")
+}
+
+fn resolve_collections(
+    schema: &LoadedSchema,
+    names: &[&str],
+) -> Result<Vec<schema::CollectionDecl>, Error> {
+    if names.is_empty() {
+        return Ok(schema
+            .collections()
+            .filter(|decl| !decl.isolated)
+            .cloned()
+            .collect());
+    }
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for name in names {
+        if !seen.insert(*name) {
+            continue;
+        }
+        let Some(decl) = schema.get(name) else {
+            bail!(Error::not_found(format!(
+                "collection {name} is not in Schema"
+            )));
+        };
+        if decl.isolated {
+            bail!(Error::unsupported(format!(
+                "isolated collection {name} is not on this Vault handle"
+            )));
+        }
+        out.push(decl.clone());
+    }
+    Ok(out)
+}
+
+fn apply_filter_schema(
+    decls: Vec<schema::CollectionDecl>,
+    filter: &Filter,
+    explicit: bool,
+) -> Result<Vec<schema::CollectionDecl>, Error> {
+    if explicit {
+        for decl in &decls {
+            query::validate(decl, filter)?;
+        }
+        return Ok(decls);
+    }
+    Ok(decls
+        .into_iter()
+        .filter(|decl| query::validate(decl, filter).is_ok())
+        .collect())
+}
+
+fn read_record(
+    vault: &Path,
+    schema: &LoadedSchema,
+    journal_ids: &Mutex<JournalIdMaps>,
+    collection: &str,
+    id: &str,
+) -> Result<Record, Error> {
+    let Some(decl) = schema.get(collection) else {
+        bail!(Error::not_found(format!(
+            "collection {collection} is not in Schema"
+        )));
+    };
+    match decl.kind {
+        Kind::Journal => {
+            let maps = journal_ids.lock().unwrap_or_else(PoisonError::into_inner);
+            journal::find_journal(vault, decl, id, &maps)
+        }
+        Kind::Document | Kind::Singleton => store::find_document(vault, decl, id),
+    }
+}
+
+struct QueryCtx<'a> {
+    engine: &'a SearchEngine,
+    schema: &'a LoadedSchema,
+    vault: &'a Path,
+    journal_ids: &'a Mutex<JournalIdMaps>,
+}
+
+impl QueryCtx<'_> {
+    fn find(
+        &self,
+        names: &[&str],
+        filter: &Filter,
+        offset: u32,
+        count: u32,
+    ) -> Result<FindResult, Error> {
+        if count == 0 {
+            bail!(Error::invalid("find count must be > 0"));
+        }
+        filter.require_valid()?;
+        let explicit = !names.is_empty();
+        let decls =
+            apply_filter_schema(resolve_collections(self.schema, names)?, filter, explicit)?;
+        if decls.is_empty() {
+            return Ok(FindResult::default());
+        }
+        let journal_ord = decls.len() == 1 && decls[0].kind == Kind::Journal;
+        let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
+        let hits = self
+            .engine
+            .find(&collections, journal_ord, &decls[0], filter, offset, count)?;
+        let mut records = Vec::new();
+        for (collection, id) in hits {
+            match read_record(self.vault, self.schema, self.journal_ids, &collection, &id) {
+                Ok(record) => records.push(record),
+                Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
+                Err(err) => bail!(err),
+            }
+        }
+        Ok(FindResult {
+            records,
+            ..FindResult::default()
+        })
+    }
+
+    fn search(
+        &self,
+        embedder: Option<&dyn Embedder>,
+        names: &[&str],
+        query: &SearchQuery,
+        reranker: Option<&dyn Reranker>,
+    ) -> Result<SearchHits, Error> {
+        query.require_valid()?;
+        let explicit = !names.is_empty();
+        let filter = search_filter(query);
+        let mut decls = resolve_collections(self.schema, names)?;
+        if filter.kind.is_some() {
+            decls = apply_filter_schema(decls, &filter, explicit)?;
+        }
+        if decls.is_empty() {
+            return Ok(SearchHits::default());
+        }
+        let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
+        let allowed = if filter.kind.is_none() || query::is_unconstrained(&filter) {
+            None
+        } else {
+            Some(self.engine.find_ids(&collections, &decls[0], &filter)?)
+        };
+        let mut hits = self
+            .engine
+            .search(&collections, query, embedder, allowed.as_ref())?;
+        let k = match query.k {
+            None | Some(0) => 10,
+            Some(n) => n as usize,
+        };
+        let Some(reranker) = reranker else {
+            hits.hits.truncate(k);
+            return Ok(hits);
+        };
+        let text = query.text.as_deref().unwrap_or("");
+        let pool = hits.hits.len();
+        let mut scored = Vec::with_capacity(pool);
+        for hit in hits.hits {
+            let collection = hit
+                .collection
+                .as_deref()
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| collection_from_record_path(hit.path.as_deref().unwrap_or("")));
+            let record = read_record(
+                self.vault,
+                self.schema,
+                self.journal_ids,
+                collection,
+                hit.id.as_deref().unwrap_or(""),
+            )?;
+            let score = reranker.score(text, &record)?;
+            scored.push((score, hit));
+        }
+        scored.sort_by(|a, b| {
+            b.0.partial_cmp(&a.0)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.1.id.cmp(&b.1.id))
+                .then_with(|| a.1.path.cmp(&b.1.path))
+        });
+        let mut out = SearchHits::default();
+        for (score, mut hit) in scored.into_iter().take(k) {
+            hit.rerank_score = Some(score);
+            out.hits.push(hit);
+        }
+        Ok(out)
+    }
 }
 
 fn remote_repo_url(options: &OpenOptions) -> Option<&str> {
@@ -704,38 +1030,158 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
     } else {
         String::new()
     };
-    let already = text.lines().any(|line| {
+    let already_scheda = text.lines().any(|line| {
         let line = line.trim();
         line == ".scheda/" || line == ".scheda"
     });
-    if already {
+    let already_isolated = text.lines().any(|line| {
+        let line = line.trim();
+        line == ".isolated/" || line == ".isolated"
+    });
+    if already_scheda && already_isolated {
         return Ok(false);
     }
     if !text.is_empty() && !text.ends_with('\n') {
         text.push('\n');
     }
-    text.push_str(".scheda/\n");
+    if !already_scheda {
+        text.push_str(".scheda/\n");
+    }
+    if !already_isolated {
+        text.push_str(".isolated/\n");
+    }
     fs::write(&path, text).context("[Vault::open] write gitignore")?;
     Ok(true)
 }
 
-fn acquire_write_lock(index_dir: &Path) -> Result<File, Error> {
-    let lock_path = index_dir.join("write.lock");
+/// Uncommitted write paths for the next `commit`. Lives under `.scheda/index`
+/// (gitignored) so a process-per-command CLI can `insert_one` then `commit`.
+fn written_log(index_dir: &Path) -> PathBuf {
+    index_dir.join("written")
+}
+
+fn txn_log(index_dir: &Path) -> PathBuf {
+    index_dir.join("txn")
+}
+
+fn flag(slot: &Mutex<bool>) -> bool {
+    *slot.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn set_flag(index_dir: &Path, slot: &Mutex<bool>, on: bool) -> Result<(), Error> {
+    *slot.lock().unwrap_or_else(PoisonError::into_inner) = on;
+    persist_txn(index_dir, on)
+}
+
+fn load_txn(index_dir: &Path) -> Result<bool, Error> {
+    match fs::read(txn_log(index_dir)) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err(err).context("[Vault::open] read txn flag"),
+        Ok(_) => Ok(true),
+    }
+}
+
+fn persist_txn(index_dir: &Path, on: bool) -> Result<(), Error> {
+    let path = txn_log(index_dir);
+    if on {
+        fs::write(&path, b"1\n").context("[Vault] write txn flag")
+    } else {
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).context("[Vault] remove txn flag"),
+        }
+    }
+}
+
+fn repair_index_after_discard(
+    vault: &Path,
+    index_dir: &Path,
+    journal_ids: &Mutex<JournalIdMaps>,
+    search: &SearchEngine,
+    embedder: Option<&dyn Embedder>,
+) -> Result<(), Error> {
+    let loaded = schema::load(vault)?;
+    *journal_ids.lock().unwrap_or_else(PoisonError::into_inner) =
+        index::load_journal_ids(index_dir, &loaded)?;
+    search.close_for_rebuild();
+    search.rebuild(vault, &loaded, embedder)
+}
+
+fn load_written(index_dir: &Path) -> Result<BTreeSet<String>, Error> {
+    match fs::read(written_log(index_dir)) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
+        Err(err) => Err(err).context("[Vault::open] read written paths"),
+        Ok(bytes) if bytes.is_empty() => Ok(BTreeSet::new()),
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .context(Code::Invalid, "[Vault::open] decode written paths"),
+    }
+}
+
+fn persist_written(index_dir: &Path, set: &BTreeSet<String>) -> Result<(), Error> {
+    let path = written_log(index_dir);
+    if set.is_empty() {
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).context("[Vault] remove written paths"),
+        }
+    } else {
+        let bytes =
+            serde_json::to_vec(set).context(Code::Invalid, "[Vault] encode written paths")?;
+        fs::write(&path, bytes).context("[Vault] write written paths")
+    }
+}
+
+fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
+    let scheda = vault.join(".scheda");
+    fs::create_dir_all(&scheda).context("[Vault] create .scheda for write lock")?;
+    drain_legacy_index_lock(&scheda)?;
+    let lock_path = scheda.join("write.lock");
     let file = File::options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .open(&lock_path)
-        .context("[Vault::open] open write lock")?;
+        .context("[Vault] open write lock")?;
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => {
-            Err(Error::locked("vault write lock is held")
-                .context("[Vault::open] acquire write lock"))
+            Err(Error::locked("vault write lock is held").context("[Vault] acquire write lock"))
         }
         Err(TryLockError::Error(err)) => {
-            Err(Error::new(io_code(&err), err.to_string()).context("[Vault::open] lock write lock"))
+            Err(Error::new(io_code(&err), err.to_string()).context("[Vault] lock write lock"))
+        }
+    }
+}
+
+fn drain_legacy_index_lock(scheda: &Path) -> Result<(), Error> {
+    let old_path = scheda.join("index").join("write.lock");
+    if !old_path.is_file() {
+        return Ok(());
+    }
+    let old = File::options()
+        .read(true)
+        .write(true)
+        .open(&old_path)
+        .context("[Vault] open legacy write lock")?;
+    match old.try_lock() {
+        Ok(()) => {
+            drop(old);
+            match fs::remove_file(&old_path) {
+                Ok(()) => Ok(()),
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(err) => Err(err).context("[Vault] remove legacy write lock"),
+            }
+        }
+        Err(TryLockError::WouldBlock) => {
+            Err(Error::locked("vault write lock is held")
+                .context("[Vault] acquire legacy write lock"))
+        }
+        Err(TryLockError::Error(err)) => {
+            Err(Error::new(io_code(&err), err.to_string())
+                .context("[Vault] lock legacy write lock"))
         }
     }
 }
@@ -749,7 +1195,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Catalog, Code, Error, Record};
+    use crate::{Code, Error, RecordAdd, RecordReplace, Schema, VaultInfo};
 
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -783,13 +1229,13 @@ mod tests {
     #[test]
     fn init_writes_gitignore_for_scheda_index() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), OpenOptions::new()).unwrap();
+        let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
         let gitignore = fs::read_to_string(scratch.vault().join(".gitignore")).unwrap();
         assert!(gitignore.lines().any(|line| line.trim() == ".scheda/"));
+        assert!(gitignore.lines().any(|line| line.trim() == ".isolated/"));
         assert!(git::is_ignored(vault.path(), Path::new(".scheda/index")).unwrap());
         assert!(vault.index_dir().starts_with(vault.path()));
         assert!(vault.index_dir().ends_with("index"));
-        assert!(vault.index_dir().join("write.lock").exists());
         fs::remove_dir_all(vault.index_dir()).unwrap();
         assert!(scratch.vault().join(".git").exists());
     }
@@ -797,7 +1243,7 @@ mod tests {
     #[test]
     fn empty_remote_repo_option_is_local_init() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), OpenOptions::new().remote_repo("")).unwrap();
+        let vault = Vault::open(scratch.vault(), OpenOptions::new().remote_repo(""), None).unwrap();
         assert!(!vault.has_remote());
     }
 
@@ -805,8 +1251,8 @@ mod tests {
     fn insert_one_rejects_empty_record_envelope() {
         let collection = Collection::stub();
         let err = collection
-            .insert_one(Record::default())
-            .expect_err("empty Record must fail envelope rules");
+            .add("", RecordAdd::default())
+            .expect_err("empty id must fail slug rules");
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
@@ -814,8 +1260,8 @@ mod tests {
     fn replace_one_rejects_empty_record_envelope() {
         let collection = Collection::stub();
         let err = collection
-            .replace_one("alpha", Record::default())
-            .expect_err("empty Record must fail envelope rules");
+            .replace("", RecordReplace::default())
+            .expect_err("empty id must fail slug rules");
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
@@ -829,51 +1275,66 @@ mod tests {
     #[test]
     fn init_creates_git_work_tree_without_remote() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options()).unwrap();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(scratch.vault().join(".git").is_dir());
         assert!(!vault.has_remote());
         assert!(vault.remote_names().is_empty());
-        assert!(vault.holds_write_lock());
+        assert!(!vault.holds_write_lock());
         assert_eq!(git::remotes(vault.path()).unwrap(), Vec::<String>::new());
     }
 
     #[test]
     fn open_keeps_index_inside_tree_and_gitignored() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options()).unwrap();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(vault.index_dir().starts_with(vault.path()));
         assert!(git::is_ignored(vault.path(), Path::new(".scheda")).unwrap());
-        assert!(vault.index_dir().join("write.lock").exists());
         fs::remove_dir_all(vault.index_dir()).unwrap();
         assert!(scratch.vault().join(".git").exists());
+    }
+
+    #[test]
+    fn write_lock_file_is_under_scheda_not_index() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let scheda = scratch.vault().join(".scheda");
+        let legacy = scheda.join("index").join("write.lock");
+        fs::write(&legacy, []).unwrap();
+        vault.begin().unwrap();
+        assert!(scheda.join("write.lock").is_file());
+        assert!(!legacy.is_file());
     }
 
     #[test]
     fn two_opens_on_distinct_roots() {
         let a = Scratch::new();
         let b = Scratch::new();
-        let vault_a = Vault::init(a.vault(), a.options()).unwrap();
-        let vault_b = Vault::init(b.vault(), b.options()).unwrap();
+        let vault_a = Vault::open(a.vault(), a.options(), None).unwrap();
+        let vault_b = Vault::open(b.vault(), b.options(), None).unwrap();
         assert_ne!(vault_a.path(), vault_b.path());
-        assert!(vault_a.holds_write_lock());
-        assert!(vault_b.holds_write_lock());
+        assert!(!vault_a.holds_write_lock());
+        assert!(!vault_b.holds_write_lock());
     }
 
     #[test]
-    fn second_write_open_is_locked() {
+    fn two_opens_do_not_take_the_write_lock() {
         let scratch = Scratch::new();
-        let _writer = Vault::init(scratch.vault(), scratch.options()).unwrap();
-        let err = Vault::open(scratch.vault(), scratch.options()).unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::Locked));
+        let a = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let b = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        assert!(!a.holds_write_lock());
+        assert!(!b.holds_write_lock());
+        a.begin().unwrap();
+        assert!(a.holds_write_lock());
+        let err = b.begin().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Locked));
     }
 
     #[test]
-    fn reader_open_does_not_take_write_lock() {
+    fn open_does_not_take_write_lock() {
         let scratch = Scratch::new();
-        let writer = Vault::init(scratch.vault(), scratch.options()).unwrap();
-        let reader = Vault::open(scratch.vault(), scratch.options().write(false)).unwrap();
-        assert!(writer.holds_write_lock());
+        let writer = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let reader = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        assert!(!writer.holds_write_lock());
         assert!(!reader.holds_write_lock());
         assert_eq!(reader.path(), writer.path());
     }
@@ -881,10 +1342,10 @@ mod tests {
     #[test]
     fn open_reports_origin_without_network() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         git::add_remote(vault.path(), "origin", "https://example.invalid/scheda.git").unwrap();
         drop(vault);
-        let opened = Vault::open(scratch.vault(), scratch.options().write(false)).unwrap();
+        let opened = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(opened.has_remote());
         assert_eq!(opened.remote_names(), &["origin".to_owned()]);
         assert!(!opened.auto_sync());
@@ -893,34 +1354,30 @@ mod tests {
     #[test]
     fn init_does_not_configure_lfs() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(!git::local_config_mentions_lfs(vault.path()).unwrap());
     }
 
     #[test]
-    fn reader_auto_sync_with_remote_is_locked() {
+    fn auto_sync_open_does_not_require_a_held_lock() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
-        git::add_remote(vault.path(), "origin", "https://example.invalid/x.git").unwrap();
-        drop(vault);
-        let err = Vault::open(
-            scratch.vault(),
-            scratch.options().write(false).auto_sync(true),
-        )
-        .unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::Locked));
-        assert_eq!(err.known_code(), Some(Code::Locked));
+        let opened = Vault::open(scratch.vault(), scratch.options().auto_sync(true), None).unwrap();
+        assert!(opened.auto_sync());
+        assert!(!opened.holds_write_lock());
     }
 
     #[test]
     fn git2_works_without_an_async_runtime() {
         let scratch = Scratch::new();
-        let vault = Vault::init(scratch.vault(), scratch.options().write(false)).unwrap();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(git::is_work_tree(vault.path()));
     }
 
     #[test]
-    fn catalog_is_on_the_vault_surface() {
-        let _: fn(&Vault) -> Result<Catalog, Error> = Vault::catalog;
+    fn info_is_on_the_vault_surface() {
+        let _: fn(&Vault) -> Result<VaultInfo, Error> = Vault::info;
+        let _: fn(&Vault, &str, Schema) -> Result<Collection, Error> = Vault::create_collection;
+        let _: fn(&Vault) -> Result<(), Error> = Vault::begin;
+        let _: fn(&Vault) -> Result<(), Error> = Vault::discard;
     }
 }

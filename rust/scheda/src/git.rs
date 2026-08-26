@@ -1,19 +1,20 @@
 use std::ffi::OsStr;
+use std::fs;
 use std::path::Path;
 
 #[cfg(any(test, feature = "remote-git"))]
 use git2::Config;
 #[cfg(test)]
 use git2::ConfigLevel;
-use git2::build::RepoBuilder;
+use git2::build::{CheckoutBuilder, RepoBuilder};
 use git2::{
     AnnotatedCommit, Commit as GitCommit, Cred, CredentialType, DiffOptions, ErrorCode,
     FetchOptions, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
     RepositoryOpenFlags, Signature, Sort,
 };
 
-use crate::error::{Code, ContextAs, ContextGit, bail, git_code};
-use crate::{Error, HistoryEntry};
+use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code};
+use crate::{Error, history};
 
 fn git_fail(err: git2::Error, frame: &str) -> Error {
     Error::new(git_code(&err), err.message()).context(frame)
@@ -300,7 +301,42 @@ pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), 
     Ok(())
 }
 
-pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<HistoryEntry>, Error> {
+/// Restore Scheda-recorded paths to HEAD. New files (not in HEAD) are deleted.
+/// Does not `git reset --hard` the whole tree.
+pub(crate) fn discard_paths(dir: &Path, paths: &[String]) -> Result<(), Error> {
+    let repo = open_work_tree(dir)?;
+    let head_tree = match repo.head() {
+        Ok(head) => Some(
+            head.peel_to_tree()
+                .context("[Git::discard] peel HEAD tree")?,
+        ),
+        Err(err) if is_unborn(&err) => None,
+        Err(err) => bail!(git_fail(err, "[Git::discard] read HEAD")),
+    };
+    for rel in paths {
+        let in_head = head_tree
+            .as_ref()
+            .is_some_and(|tree| tree.get_path(Path::new(rel)).is_ok());
+        if in_head {
+            let mut opts = CheckoutBuilder::new();
+            opts.force().path(rel.as_str());
+            repo.checkout_head(Some(&mut opts))
+                .with_context(|| format!("[Git::discard] restore {rel}"))?;
+        } else {
+            let abs = dir.join(rel);
+            match fs::remove_file(&abs) {
+                Ok(()) => {}
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+                Err(err) => {
+                    return Err(err).context(format!("[Git::discard] remove {rel}"));
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<history::Entry>, Error> {
     require_vault_rel(path)?;
     let repo = open_work_tree(dir)?;
     match repo.head() {
@@ -340,7 +376,7 @@ pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<HistoryEntry>, Error
             format!("{name} <{email}>")
         };
         out.push(
-            HistoryEntry::default()
+            history::Entry::default()
                 .with_hash(oid.to_string())
                 .with_time(commit.time().seconds())
                 .with_author(author)
@@ -348,7 +384,9 @@ pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<HistoryEntry>, Error
                 .with_raw(blob.content().to_vec()),
         );
     }
-    out.sort_by_key(|entry| std::cmp::Reverse(entry.time.seconds));
+    out.sort_by_key(|entry| {
+        std::cmp::Reverse(entry.time.as_option().map(|time| time.seconds).unwrap_or(0))
+    });
     Ok(out)
 }
 

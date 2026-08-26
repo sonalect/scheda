@@ -1,8 +1,8 @@
 # 09. Isolation and perimeter
 
-Document 9 of the Scheda package. Version 0.5, 23 August 2026.
+Document 9 of the Scheda package. Version 0.6, 25 August 2026.
 
-What must not leak: network by default (**core**); isolated collections outside the main git Vault, sealed fields, and optional encryption of the isolated root (**later**). Terms are in `02`. Schema marks are in SCH-15. Remote traffic is in `04`. Codes: `ISO`. Phase **later** unless marked **core** or **agent**.
+What must not leak: network by default (**core**); isolated collections under `{vault}/.isolated/` (gitignored nested git, never the main Remote), sealed fields, and optional encryption of that nested tree (**later**). Terms are in `02`. Schema marks are in SCH-15. Remote traffic is in `04`. Codes: `ISO`. Phase **later** unless marked **core** or **agent**.
 
 An assertion without a check is not a requirement.
 
@@ -10,7 +10,7 @@ An assertion without a check is not a requirement.
 
 ## 1. Network
 
-**ISO-1. No network unless opted in.** With `auto_sync` off and no `clone` / `pull_remote` / `push_remote` / `sync_remote`, Scheda does not open outbound connections for `open`, writes, `commit`, lexical `reindex`, or `search` without an embedder. A network embedder is supplied by the caller (IDX-8). Git credentials are not stored in the Vault (`04`). *Check (**core**):* those operations succeed with the network disabled; a stub embedder that does not call out leaves the audit empty.
+**ISO-1. No network unless opted in.** With `auto_sync` off and no `clone` / `pull` / `push` / `sync`, Scheda does not open outbound connections for `open`, writes, `commit`, lexical `reindex`, or `search` without an embedder. A network embedder is supplied by the caller (IDX-8). Git credentials are not stored in the Vault (`04`). *Check (**core**):* those operations succeed with the network disabled; a stub embedder that does not call out leaves the audit empty.
 
 `clone` and `auto_sync` are explicit exceptions (GIT-8, GIT-10). They still do not put host tokens in Record files.
 
@@ -18,33 +18,39 @@ An assertion without a check is not a requirement.
 
 ## 2. Isolated collection (**later**)
 
-**ISO-2. Another git root, not the main working tree.** Schema may declare a collection `isolated: true` with a directory outside the main Vault git tree (SCH-15). That directory **is** a git working tree: `init`, local `commit`, and `history` work so changes are tracked. File mode: owner-only (`0600` on Unix; equivalent ACL on other systems). It is not required to exist for the main Vault to `open`, `find`, or `search`. *Check (**later**):* fixture with two roots; queries on the main Vault return no isolated Records and do not fail if the isolated directory is missing; `git log` in the isolated root grows after `commit` on that handle.
+The Vault is **one directory**. Isolated Records are not a second `open` path elsewhere on disk.
 
-The caller opens the isolated root as its own handle (second `open` / `init`) if it needs those Records. Edges and `search` do not cross from the main Vault into that handle unless the caller combines two handles (**later**, same as GIT-5).
+**ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Layout templates are relative to that directory. The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `clone` of the main Vault still lists the collection (ISO-3). `init` / first `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
 
-**ISO-6. Isolated root never has a Remote.** Scheda must not `clone` an isolated root from a URL, must not `git remote add`, and must reject `push_remote`, `pull_remote`, `sync_remote`, and `auto_sync` on that handle (`unsupported` or `invalid`). `check` on an isolated root fails if git remotes are configured (a human added `origin` outside Scheda). *Check (**later**):* `push_remote` on the isolated handle fails and does not call the network; `clone(url)` into an isolated path is rejected; a fixture isolated repo with `origin` fails `check`.
+`{vault}/.isolated/` is a git working tree Scheda creates on the first isolated write (`create_collection` with `isolated`, or `add` on that collection). Local `commit` and `history` of isolated Record paths use that nested repository. File mode: owner-only (`0600` on Unix; equivalent ACL on other systems). It is not required to exist for the main Vault to `open`, or for `find` / `search` on non-isolated collections. Deleting `{vault}/.scheda/` does not delete `.isolated/` (Index is disposable; isolated Records are not).
 
-**ISO-3. Agent sees isolation.** The main `catalog` (AGT-1) lists isolated collections as isolated and does not include their field values. Tools bound to the main Vault cannot `find_one` / `search` sealed data. A consumer that wants the agent to see the isolated root must open that root on purpose (and pass the secret if the root is encrypted). *Check (**later**, with **agent**):* agent tools on the main Vault never return a fixture sealed value.
+`check` fails if the **parent** git index tracks any path under `.isolated/` (`git add -f` is not a perimeter). *Check (**later**):* fixture Vault with `.isolated/` gitignored; `find` / `search` on a non-isolated collection return no isolated Records; `open` succeeds if `.isolated/` is missing; `git log` in `.isolated/` grows after `add` on an isolated collection; a tracked `.isolated/` path fails `check`.
 
-**ISO-4. Main Index has no sealed bytes.** The derived Index of the main Vault does not copy sealed fields or isolated Records (IDX-4). *Check (**later**):* grep of main Index files does not contain a fixture sealed string.
+The caller uses the **same** `Vault` handle. `collection(name)` for an isolated name is the opt-in for those Records. Edges and `search` on a non-isolated collection do not read `.isolated/`. Isolated Index is `{vault}/.isolated/.scheda/` (gitignored in the nested repo), not the main `{vault}/.scheda/`. `Vault.reindex` rebuilds the main Index from main-tree Records; if `.isolated/` exists, it also rebuilds the nested Index. Isolated Record writes commit in the nested git (GIT-2); the Schema stub commit is the main repository.
+
+**ISO-6. Nested isolated git never has a Remote.** Scheda must not `clone` `.isolated/` from a URL, must not `git remote add` there, and must reject `push`, `pull`, `sync`, and `auto_sync` against that nested repository (`unsupported` or `invalid`). `Vault.push` publishes only the main tree. `check` fails if the nested git has remotes configured (a human added `origin` outside Scheda). *Check (**later**):* `push` after an isolated insert does not call the network for `.isolated/` and does not upload those files; a fixture nested repo with `origin` fails `check`.
+
+**ISO-3. Agent sees isolation.** `info` / catalog (AGT-1) lists isolated collections as isolated and omits `schema.fields`. Tools that scan the main Index or non-isolated collections cannot `get` / `search` sealed data. Reaching isolated Records is `collection(name)` on this handle (and `secret` if the nested tree is encrypted). *Check (**later**, with **agent**):* agent tools that are not bound to that collection never return a fixture sealed value.
+
+**ISO-4. Main Index has no sealed bytes.** The derived Index under `{vault}/.scheda/` does not copy sealed fields or isolated Records (IDX-4). *Check (**later**):* grep of `{vault}/.scheda/` does not contain a fixture sealed string.
 
 ---
 
-## 3. Encryption of the isolated root (**later**)
+## 3. Encryption of `{vault}/.isolated/` (**later**)
 
-Encryption is optional. Unencrypted isolated roots remain valid (`0600` + no Remote). The main Vault is never encrypted by Scheda.
+Encryption is optional. Unencrypted `.isolated/` remains valid (`0600` + no Remote). The main Vault tree is never encrypted by Scheda.
 
-**ISO-5. `encrypt` on `init`.** `init` of an isolated root takes `encrypt` (boolean, default false). If true, every Record file on disk is ciphertext. `open` of that root **requires** the same secret; without it the operation fails (`crypto`). There is no plaintext Record file in the working tree. *Check (**later**):* `init(..., encrypt=true)` then `open` without a secret fails; with the secret, `insert_one` / `find_one` round-trip; `git show` of the file is not YAML/JSONL plaintext.
+**ISO-5. `encrypt` when `.isolated/` is first created.** `OpenOptions.encrypt` (boolean, default false) applies only when Scheda creates `{vault}/.isolated/`. If true, every isolated Record file on disk is ciphertext. `open` of the **Vault** does not require `secret`; main collections work. Isolated Record I/O (`collection` of an isolated name, `add` / `get` / …) **requires** the same secret when the nested tree is encrypted; without it those calls fail (`crypto`). There is no plaintext isolated Record file in `.isolated/`. If `.isolated/` already exists, `encrypt` on `open` is ignored. *Check (**later**):* `encrypt=true` on first isolated write, then isolated `get` without `secret` fails; with `secret`, `add` / `get` round-trip; `git show` of the isolated file is not YAML/JSONL plaintext; main `get` still works without `secret`.
 
-**ISO-11. Marker so `open` knows.** After `init(..., encrypt=true)`, the isolated git tree contains a committed marker that is not a Record (path is the binding's, e.g. `.scheda/encrypted`). `open` reads it and demands `secret`. Unencrypted `init` must not write that marker. An empty encrypted root (no Records yet) still `open`-fails without `secret`. *Check (**later**):* encrypt `init`, no `insert_one`, `open` without `secret` → `crypto`; unencrypted isolated `open` without `secret` succeeds.
+**ISO-11. Marker so isolated I/O knows.** After encrypted creation of `.isolated/`, the nested git tree contains a committed marker that is not a Record (path `{vault}/.isolated/.encrypted`). Isolated I/O reads it and demands `secret`. Unencrypted creation must not write that marker. An empty encrypted `.isolated/` (no Records yet) still fails isolated I/O without `secret`. The marker is not under the gitignored Index directory. *Check (**later**):* encrypt create, no `add`, isolated `collection` / `get` without `secret` → `crypto`; unencrypted `.isolated/` without `secret` succeeds.
 
-**ISO-7. One secret, not a key pair in the API.** The caller passes either a **passphrase** or an **age identity** (private key file). Scheda does not take separate “encrypt key” and “decrypt key” arguments. The secret is never written into the isolated git tree. Scheda is not a KMS. *Check (**later**):* grep of the isolated working tree does not contain the passphrase or identity bytes used in the test.
+**ISO-7. One secret, not a key pair in the API.** The caller passes either a **passphrase** or an **age identity** (private key file) as `OpenOptions.secret`. Scheda does not take separate “encrypt key” and “decrypt key” arguments. The secret is never written into `.isolated/` or the main git tree. Scheda is not a KMS. *Check (**later**):* grep of the Vault working tree does not contain the passphrase or identity bytes used in the test.
 
-**ISO-8. Format is age v1, armored.** On-disk files follow [age v1](https://age-encryption.org/v1) ([C2SP](https://github.com/C2SP/C2SP/blob/main/age.md)): **ASCII armor** (PEM: `BEGIN AGE ENCRYPTED FILE`), UTF-8, `\n` only, no BOM. Not raw Base64 and not age's binary encoding. Payload AEAD is **ChaCha20-Poly1305**. Passphrase wrapping is age's **scrypt**; identity wrapping is **X25519**. No cipher agility: implementations do not offer AES-GCM as an alternative. The contract is the **format**, not one library: a binding may use `age`/`rage` (Rust), `filippo.io/age` (Go), typage (TypeScript), pyrage (Python), Jagged (Java), or another conformant implementation. A file written by any binding must decrypt with the `age` CLI (`age -d`) using the same secret, and must round-trip with every other binding. *Check (**later**):* `age -d` on a fixture file with the test identity/passphrase yields the Record bytes Scheda would `find_one`; a file from one binding decrypts in another; a homemade Base64 blob is rejected on `open`/`check`.
+**ISO-8. Format is age v1, armored.** On-disk files follow [age v1](https://age-encryption.org/v1) ([C2SP](https://github.com/C2SP/C2SP/blob/main/age.md)): **ASCII armor** (PEM: `BEGIN AGE ENCRYPTED FILE`), UTF-8, `\n` only, no BOM. Not raw Base64 and not age's binary encoding. Payload AEAD is **ChaCha20-Poly1305**. Passphrase wrapping is age's **scrypt**; identity wrapping is **X25519**. No cipher agility: implementations do not offer AES-GCM as an alternative. The contract is the **format**, not one library: a binding may use `age`/`rage` (Rust), `filippo.io/age` (Go), typage (TypeScript), pyrage (Python), Jagged (Java), or another conformant implementation. A file written by any binding must decrypt with the `age` CLI (`age -d`) using the same secret, and must round-trip with every other binding. *Check (**later**):* `age -d` on a fixture file with the test identity/passphrase yields the Record bytes Scheda would `get`; a file from one binding decrypts in another; a homemade Base64 blob is rejected on isolated I/O / `check`.
 
-**ISO-9. Whole file, write like STO-5.** Encrypt the entire `document`, journal **segment**, or `singleton` after canonical plaintext is built. Write a sibling temp file, `fsync`, rename. Do not encrypt selected YAML fields inside a plaintext file. *Check (**later**):* no header/body plaintext appears in the committed blob.
+**ISO-9. Whole file, write like STO-5.** Encrypt the entire `document`, journal **segment**, or `singleton` after canonical plaintext is built. Write a sibling temp file, `fsync`, rename. Do not encrypt selected YAML fields inside a plaintext file. *Check (**later**):* no header/body plaintext appears in the nested git blob.
 
-**ISO-10. Isolated Index.** The Index for an encrypted isolated root stays outside that git tree, mode owner-only, and must not land in the main Vault Index (ISO-4). *Check (**later**):* isolated git status does not list Index files.
+**ISO-10. Isolated Index.** The Index for `.isolated/` is `{vault}/.isolated/.scheda/`, mode owner-only, gitignored in the nested repo, and must not land in the main Vault Index (ISO-4). *Check (**later**):* `git status` in `.isolated/` does not list Index files.
 
 ---
 
@@ -54,7 +60,7 @@ Which collections a given consumer marks isolated — that consumer's Schema.
 
 How an OS other than Unix spells `0600` — the binding, with the same “owner only” intent.
 
-Backup of the isolated root — local git history of armored blobs on that machine; it is not published with the main Vault Remote.
+Backup of `.isolated/` — local git history of that nested tree on this machine; it is not published with the main Vault Remote.
 
 Argon2id instead of scrypt — out of scope while the format is age v1.
 

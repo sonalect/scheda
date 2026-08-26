@@ -8,9 +8,12 @@ alwaysApply: true
 
 Constraints on `api/v1` envelopes belong in `buf.validate` on the `.proto`, not in `rust/scheda/src`. Call `require_valid()` / `validate()` on caller-supplied messages before use. After proto edits: `bazel run //api/v1:generate`. Confirm the generated `Validate` impl actually contains the rule.
 
-Stay in Rust: Schema YAML, Vault files, git, primitive `&str` args (`find_one(id)`, `clone(url)`), Schema-dependent checks (unmarked filter field).
+Stay in Rust: Schema YAML, Vault files, git, primitive `&str` args
+(`add(id)`, `get(id)`, `create_collection(name)`, `clone(url)`),
+Schema-dependent checks (unmarked filter field). Record `id` and
+collection name slugs are library checks, not protovalidate.
 
-Do not re-check a proto rule in `src/` (range, `is_finite`, empty id, path separators). If generate omits a standard rule that is in the proto, add field CEL and keep the standard rule; do not patch `src/`.
+Do not re-check a proto rule in `src/` (range, `is_finite`). If generate omits a standard rule that is in the proto, add field CEL and keep the standard rule; do not patch `src/`.
 
 ```protobuf
 // BAD — only in Rust after require_valid

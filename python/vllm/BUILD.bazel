@@ -1,0 +1,69 @@
+load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
+
+# CUDA wheels are manylinux; host NVIDIA driver is still required at run.
+# `manual`: `bazel build //...` must not fetch torch/vLLM.
+_LINUX = ["@platforms//os:linux"]
+
+_IMPORTS = ["../.."]
+
+_TAGS = ["manual"]
+
+# torch/vLLM wheels both drop site-packages/build_backend.py; pip last-write-wins,
+# aspect_rules_py venv linking is stricter.
+_COLLISIONS = "warning"
+
+py_library(
+    name = "vllm_pkg",
+    srcs = ["__init__.py"],
+    imports = _IMPORTS,
+    tags = _TAGS,
+    target_compatible_with = _LINUX,
+    visibility = ["//visibility:private"],
+    deps = ["//python:python_pkg"],
+)
+
+py_library(
+    name = "serve_lib",
+    srcs = ["serve.py"],
+    imports = _IMPORTS,
+    tags = _TAGS,
+    target_compatible_with = _LINUX,
+    visibility = ["//visibility:private"],
+    deps = [
+        ":vllm_pkg",
+        "@pypi//vllm",
+    ],
+)
+
+py_binary(
+    name = "embedder",
+    srcs = ["embedder.py"],
+    imports = _IMPORTS,
+    main = "embedder.py",
+    package_collisions = _COLLISIONS,
+    tags = _TAGS,
+    target_compatible_with = _LINUX,
+    venv = "scheda",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":serve_lib",
+        "@pypi//vllm",
+    ],
+)
+
+py_binary(
+    name = "reranker",
+    srcs = ["reranker.py"],
+    data = ["qwen3_reranker.jinja"],
+    imports = _IMPORTS,
+    main = "reranker.py",
+    package_collisions = _COLLISIONS,
+    tags = _TAGS,
+    target_compatible_with = _LINUX,
+    venv = "scheda",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":serve_lib",
+        "@pypi//vllm",
+    ],
+)

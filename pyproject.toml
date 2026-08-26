@@ -1,0 +1,58 @@
+[project]
+name = "scheda"
+version = "0.1.0"
+description = "Locked vLLM sidecars for the Scheda CLI HTTP embedder/reranker"
+requires-python = ">=3.14,<3.15"
+license = "Apache-2.0"
+# Extra pins: uv's latest of these was <2 days old (2026-08-26). Do not use
+# [tool.uv] constraint-dependencies — that writes [manifest] constraints and
+# aspect_rules_py 1.11.7 fails to parse the lock.
+dependencies = [
+    "vllm==0.27.1",
+    "click==8.4.2",
+    "cryptography==50.0.0",
+    "googleapis-common-protos==1.75.1",
+    "mcp==2.0.0",
+    "mcp-types==2.0.0",
+    "transformers==5.15.1",
+    "websockets==17.0.1",
+]
+
+[tool.uv]
+package = false
+# vLLM publishes manylinux wheels only. The lock still loads on macOS CI
+# (ruff / pip-audit); `//python/vllm` binaries are Linux-only.
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'linux' and platform_machine == 'aarch64'",
+]
+
+[tool.ruff]
+target-version = "py314"
+src = ["python"]
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "COM812",
+    "ISC001",
+    "D203",
+    "D213",
+    "CPY001",
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["python"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"python/__init__.py" = ["D104"]
+"python/cli/__init__.py" = ["D104"]
+"python/cli/__main__.py" = ["D104"]
+"python/cli/main.py" = ["ANN401", "S404"]
+"python/vllm/__init__.py" = ["D104"]
+
+[tool.ruff.format]
+docstring-code-format = true

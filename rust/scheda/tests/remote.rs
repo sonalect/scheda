@@ -8,7 +8,7 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::{IndexAddOption, Oid, Repository, Signature};
-use scheda::{Code, OpenOptions, Record, Vault};
+use scheda::{Code, OpenOptions, RecordAdd, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -38,10 +38,8 @@ impl Drop for Scratch {
 
 const NOTES: &str = include_str!("../testdata/document/notes.yaml");
 
-fn rec(collection: &str, id: &str, title: &str) -> Record {
+fn rec(title: &str) -> RecordAdd {
     serde_json::from_value(json!({
-        "id": id,
-        "collection": collection,
         "fields": {"title": title},
     }))
     .unwrap()
@@ -98,14 +96,15 @@ fn commit_all(dir: &Path, message: &str) {
 }
 
 fn seed_source(path: &Path) {
-    drop(Vault::init(path, OpenOptions::new()).unwrap());
-    fs::create_dir_all(path.join("schema")).unwrap();
-    fs::write(path.join("schema").join("notes.yaml"), NOTES).unwrap();
-    let vault = Vault::open(path, OpenOptions::new()).unwrap();
+    drop(Vault::open(path, OpenOptions::new(), None).unwrap());
+    let dir = path.join("north_notes");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
+    let vault = Vault::open(path, OpenOptions::new(), None).unwrap();
     vault
         .collection("north_notes")
         .unwrap()
-        .insert_one(rec("north_notes", "seed", "seed"))
+        .add("seed", rec("seed"))
         .unwrap();
     drop(vault);
     commit_all(path, "seed");
@@ -127,10 +126,11 @@ fn pair_with_bare(scratch: &Scratch) -> (PathBuf, PathBuf) {
 }
 
 fn insert_and_commit(vault: &Vault, id: &str, title: &str, message: &str) {
+    vault.begin().unwrap();
     vault
         .collection("north_notes")
         .unwrap()
-        .insert_one(rec("north_notes", id, title))
+        .add(id, rec(title))
         .unwrap();
     vault.commit(message).unwrap();
 }
@@ -169,13 +169,13 @@ fn clone_sets_origin_to_the_url() {
     let (_source, bare) = pair_with_bare(&scratch);
     let remote = as_url(&bare);
     let dest = scratch.dir("clone");
-    let vault = Vault::clone(&remote, &dest, OpenOptions::new()).unwrap();
+    let vault = Vault::open(&dest, OpenOptions::new().remote_repo(&remote), None).unwrap();
     assert!(vault.has_remote());
     assert_eq!(vault.remote_names(), &["origin".to_owned()]);
     assert_eq!(origin_url(vault.path()), remote);
     drop(vault);
-    let err = Vault::open(&dest, OpenOptions::new().remote_repo(&remote)).unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let opened = Vault::open(&dest, OpenOptions::new().remote_repo(&remote), None).unwrap();
+    assert_eq!(origin_url(opened.path()), remote);
 }
 
 #[test]
@@ -184,15 +184,20 @@ fn init_with_remote_repo_clones() {
     let (_source, bare) = pair_with_bare(&scratch);
     let remote = as_url(&bare);
     let dest = scratch.dir("init-clone");
-    let vault = Vault::init(&dest, OpenOptions::new().remote_repo(&remote)).unwrap();
+    let vault = Vault::open(&dest, OpenOptions::new().remote_repo(&remote), None).unwrap();
     assert_eq!(origin_url(vault.path()), remote);
 }
 
 #[test]
-fn clone_rejects_empty_url() {
+fn empty_remote_repo_on_missing_path_inits() {
     let scratch = Scratch::new();
-    let err = Vault::clone("", scratch.dir("empty"), OpenOptions::new()).unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let vault = Vault::open(
+        scratch.dir("empty"),
+        OpenOptions::new().remote_repo(""),
+        None,
+    )
+    .unwrap();
+    assert!(!vault.has_remote());
 }
 
 #[test]
@@ -202,13 +207,13 @@ fn auto_sync_off_does_not_move_head() {
     let remote = as_url(&bare);
     let a = scratch.dir("a");
     let b = scratch.dir("b");
-    drop(Vault::clone(&remote, &a, OpenOptions::new()).unwrap());
+    drop(Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap());
     let before = head_id(&a);
-    let other = Vault::clone(&remote, &b, OpenOptions::new()).unwrap();
+    let other = Vault::open(&b, OpenOptions::new().remote_repo(&remote), None).unwrap();
     insert_and_commit(&other, "from-b", "from b", "from b");
-    other.push_remote().unwrap();
+    other.push().unwrap();
     drop(other);
-    let opened = Vault::open(&a, OpenOptions::new()).unwrap();
+    let opened = Vault::open(&a, OpenOptions::new(), None).unwrap();
     assert_eq!(head_id(opened.path()), before);
     assert_ne!(head_id(opened.path()), head_id(&bare));
 }
@@ -220,12 +225,12 @@ fn auto_sync_on_fast_forwards_head() {
     let remote = as_url(&bare);
     let a = scratch.dir("a");
     let b = scratch.dir("b");
-    drop(Vault::clone(&remote, &a, OpenOptions::new()).unwrap());
-    let other = Vault::clone(&remote, &b, OpenOptions::new()).unwrap();
+    drop(Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap());
+    let other = Vault::open(&b, OpenOptions::new().remote_repo(&remote), None).unwrap();
     insert_and_commit(&other, "from-b", "from b", "from b");
-    other.push_remote().unwrap();
+    other.push().unwrap();
     drop(other);
-    let opened = Vault::open(&a, OpenOptions::new().auto_sync(true)).unwrap();
+    let opened = Vault::open(&a, OpenOptions::new().auto_sync(true), None).unwrap();
     assert_eq!(head_id(opened.path()), head_id(&bare));
 }
 
@@ -236,14 +241,14 @@ fn auto_sync_on_diverged_is_not_fast_forward() {
     let remote = as_url(&bare);
     let a = scratch.dir("a");
     let b = scratch.dir("b");
-    let first = Vault::clone(&remote, &a, OpenOptions::new()).unwrap();
-    let second = Vault::clone(&remote, &b, OpenOptions::new()).unwrap();
+    let first = Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap();
+    let second = Vault::open(&b, OpenOptions::new().remote_repo(&remote), None).unwrap();
     insert_and_commit(&first, "from-a", "from a", "from a");
-    first.push_remote().unwrap();
+    first.push().unwrap();
     drop(first);
     insert_and_commit(&second, "from-b", "from b", "from b");
     drop(second);
-    let err = Vault::open(&b, OpenOptions::new().auto_sync(true)).unwrap_err();
+    let err = Vault::open(&b, OpenOptions::new().auto_sync(true), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFastForward));
     assert!(!has_conflict_markers(&b));
 }
@@ -255,17 +260,17 @@ fn pull_push_sync_with_auto_sync_off() {
     let remote = as_url(&bare);
     let a = scratch.dir("a");
     let b = scratch.dir("b");
-    let first = Vault::clone(&remote, &a, OpenOptions::new()).unwrap();
+    let first = Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap();
     insert_and_commit(&first, "from-a", "from a", "from a");
-    first.sync_remote().unwrap();
+    first.sync().unwrap();
     drop(first);
-    let second = Vault::clone(&remote, &b, OpenOptions::new()).unwrap();
+    let second = Vault::open(&b, OpenOptions::new().remote_repo(&remote), None).unwrap();
     assert_eq!(head_id(second.path()), head_id(&bare));
     insert_and_commit(&second, "from-b", "from b", "from b");
-    second.push_remote().unwrap();
+    second.push().unwrap();
     drop(second);
-    let first = Vault::open(&a, OpenOptions::new()).unwrap();
-    first.pull_remote().unwrap();
+    let first = Vault::open(&a, OpenOptions::new(), None).unwrap();
+    first.pull().unwrap();
     assert_eq!(head_id(first.path()), head_id(&bare));
 }
 
@@ -276,15 +281,15 @@ fn diverged_sync_fails_before_push() {
     let remote = as_url(&bare);
     let a = scratch.dir("a");
     let b = scratch.dir("b");
-    let first = Vault::clone(&remote, &a, OpenOptions::new()).unwrap();
-    let second = Vault::clone(&remote, &b, OpenOptions::new()).unwrap();
+    let first = Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap();
+    let second = Vault::open(&b, OpenOptions::new().remote_repo(&remote), None).unwrap();
     insert_and_commit(&first, "from-a", "from a", "from a");
-    first.push_remote().unwrap();
+    first.push().unwrap();
     let published = head_id(&bare);
     drop(first);
     insert_and_commit(&second, "from-b", "from b", "from b");
     let local = head_id(second.path());
-    let err = second.sync_remote().unwrap_err();
+    let err = second.sync().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFastForward));
     assert_eq!(head_id(&bare), published);
     assert_ne!(head_id(&bare), local);
@@ -297,20 +302,21 @@ fn unreachable_push_does_not_roll_back_commit() {
     let remote = as_url(&bare);
     let dest = scratch.dir("clone");
     let missing = scratch.dir("missing.git");
-    let vault = Vault::clone(&remote, &dest, OpenOptions::new()).unwrap();
+    let vault = Vault::open(&dest, OpenOptions::new().remote_repo(&remote), None).unwrap();
     set_origin(vault.path(), &as_url(&missing));
+    vault.begin().unwrap();
     vault
         .collection("north_notes")
         .unwrap()
-        .insert_one(rec("north_notes", "offline", "offline"))
+        .add("offline", rec("offline"))
         .unwrap();
     vault.commit("offline").unwrap();
     let committed = head_id(vault.path());
-    let err = vault.push_remote().unwrap_err();
+    let err = vault.push().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::GitGeneric));
     assert_eq!(head_id(vault.path()), committed);
     set_origin(vault.path(), &remote);
-    vault.push_remote().unwrap();
+    vault.push().unwrap();
     assert_eq!(head_id(&bare), committed);
 }
 
@@ -320,7 +326,12 @@ fn auto_sync_commit_pushes_when_remote_is_reachable() {
     let (_source, bare) = pair_with_bare(&scratch);
     let remote = as_url(&bare);
     let dest = scratch.dir("clone");
-    let vault = Vault::clone(&remote, &dest, OpenOptions::new().auto_sync(true)).unwrap();
+    let vault = Vault::open(
+        &dest,
+        OpenOptions::new().auto_sync(true).remote_repo(&remote),
+        None,
+    )
+    .unwrap();
     insert_and_commit(&vault, "auto", "auto", "auto push");
     assert_eq!(head_id(vault.path()), head_id(&bare));
 }
@@ -329,20 +340,22 @@ fn auto_sync_commit_pushes_when_remote_is_reachable() {
 fn writes_and_commit_do_not_need_the_network() {
     let scratch = Scratch::new();
     let vault_path = scratch.dir("vault");
-    drop(Vault::init(&vault_path, OpenOptions::new()).unwrap());
-    fs::create_dir_all(vault_path.join("schema")).unwrap();
-    fs::write(vault_path.join("schema").join("notes.yaml"), NOTES).unwrap();
-    let vault = Vault::open(&vault_path, OpenOptions::new()).unwrap();
+    drop(Vault::open(&vault_path, OpenOptions::new(), None).unwrap());
+    let dir = vault_path.join("north_notes");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
+    let vault = Vault::open(&vault_path, OpenOptions::new(), None).unwrap();
     git2::Repository::open(vault.path())
         .unwrap()
         .remote("origin", "https://example.invalid/scheda.git")
         .unwrap();
     drop(vault);
-    let vault = Vault::open(&vault_path, OpenOptions::new()).unwrap();
+    let vault = Vault::open(&vault_path, OpenOptions::new(), None).unwrap();
+    vault.begin().unwrap();
     vault
         .collection("north_notes")
         .unwrap()
-        .insert_one(rec("north_notes", "local", "local"))
+        .add("local", rec("local"))
         .unwrap();
     vault.commit("local only").unwrap();
     vault.reindex().unwrap();
@@ -352,7 +365,7 @@ fn writes_and_commit_do_not_need_the_network() {
 #[test]
 fn push_without_remote_is_invalid() {
     let scratch = Scratch::new();
-    let vault = Vault::init(scratch.dir("vault"), OpenOptions::new()).unwrap();
-    let err = vault.push_remote().unwrap_err();
+    let vault = Vault::open(scratch.dir("vault"), OpenOptions::new(), None).unwrap();
+    let err = vault.push().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

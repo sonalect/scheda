@@ -1,10 +1,9 @@
 name: c
 kind: document
 schema_version: 1
-layout: c/{id}.md
 fields:
   - name: tagged
-    type: string
-    filter: true
+    string: {}
   - name: prose
-    type: string
+    exclude_find: true
+    string: {}

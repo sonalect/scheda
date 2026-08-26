@@ -1,13 +1,9 @@
 name: west_docs
 kind: document
 schema_version: 1
-layout: west/{id}.md
-id:
-  field: id
 fields:
   - name: title
-    type: string
     required: true
+    string: {}
   - name: tag
-    type: string
-    filter: true
+    string: {}

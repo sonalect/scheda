@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, OpenOptions, Record, Vault, collection_dir};
+use scheda::{Code, OpenOptions, Record, RecordAdd, RecordReplace, Vault};
 use serde_json::{Map, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -33,21 +33,29 @@ impl Scratch {
     }
 
     fn init(&self) -> Vault {
-        Vault::init(self.vault(), self.options()).unwrap()
+        let vault = Vault::open(self.vault(), self.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
     }
 
     fn reopen(&self) -> Vault {
-        Vault::open(self.vault(), self.options()).unwrap()
+        Vault::open(self.vault(), self.options(), None).unwrap()
     }
 
     fn write_schema(&self, file: &str, body: &str) {
-        let dir = self.vault().join("schema");
+        let name = peek_schema_name(body);
+        let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(file), body).unwrap();
+        let dest = if file.ends_with(".json") {
+            ".schema.json"
+        } else {
+            ".schema.yaml"
+        };
+        fs::write(dir.join(dest), body).unwrap();
     }
 
     fn coll_file(&self, collection: &str, rel: &str) -> PathBuf {
-        self.vault().join(collection_dir(collection)).join(rel)
+        self.vault().join(collection).join(rel)
     }
 }
 
@@ -58,7 +66,7 @@ impl Drop for Scratch {
 }
 
 fn coll_rel(collection: &str, rel: &str) -> String {
-    format!("{}/{rel}", collection_dir(collection))
+    format!("{}/{rel}", collection)
 }
 
 const NOTES: &str = include_str!("../testdata/document/notes.yaml");
@@ -71,16 +79,24 @@ const LOG: &str = include_str!("../testdata/document/log.yaml");
 const ALPHA_MD: &str = include_str!("../testdata/document/alpha.md");
 const PLAIN_YAML: &str = include_str!("../testdata/document/plain.yaml");
 
-fn rec(collection: &str, id: &str, fields: Value) -> Record {
-    rec_body(collection, id, fields, None)
+fn rec(fields: Value) -> RecordAdd {
+    rec_body(fields, None)
 }
 
-fn rec_body(collection: &str, id: &str, fields: Value, body: Option<&str>) -> Record {
-    let mut value = serde_json::json!({
-        "id": id,
-        "collection": collection,
-        "fields": fields,
-    });
+fn rec_body(fields: Value, body: Option<&str>) -> RecordAdd {
+    let mut value = serde_json::json!({ "fields": fields });
+    if let Some(body) = body {
+        value["body"] = Value::String(body.to_owned());
+    }
+    serde_json::from_value(value).unwrap()
+}
+
+fn rec_rep(fields: Value) -> RecordReplace {
+    rec_rep_body(fields, None)
+}
+
+fn rec_rep_body(fields: Value, body: Option<&str>) -> RecordReplace {
+    let mut value = serde_json::json!({ "fields": fields });
     if let Some(body) = body {
         value["body"] = Value::String(body.to_owned());
     }
@@ -117,17 +133,19 @@ fn insert_replace_find_one_round_trip() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .insert_one(rec_body(
-            "north_notes",
+        .add(
             "alpha",
-            serde_json::json!({"title": "Hello", "count": 2}),
-            Some("Stored body.\n"),
-        ))
+            rec_body(
+                serde_json::json!({"title": "Hello", "count": 2}),
+                Some("Stored body.\n"),
+            ),
+        )
         .unwrap();
-    let got = collection.find_one("alpha").unwrap();
+    let got = collection.get("alpha").unwrap();
     assert_eq!(got.id.as_deref(), Some("alpha"));
+    assert_eq!(got.collection.as_deref(), Some("north_notes"));
     assert_eq!(got.valid, Some(true));
-    assert_eq!(got.path, Some(coll_rel("north_notes", "north/alpha.md")));
+    assert_eq!(got.path, Some(coll_rel("north_notes", "alpha.md")));
     assert_eq!(got.body.as_deref(), Some("Stored body.\n"));
     let fields = fields_of(&got);
     assert_eq!(fields["title"], "Hello");
@@ -139,20 +157,15 @@ fn insert_replace_find_one_round_trip() {
     assert!(!got.raw.as_ref().unwrap().is_empty());
 
     collection
-        .replace_one(
+        .replace(
             "alpha",
-            rec_body(
-                "north_notes",
-                "alpha",
-                serde_json::json!({"title": "Later"}),
-                Some("New body.\n"),
-            ),
+            rec_rep_body(serde_json::json!({"title": "Later"}), Some("New body.\n")),
         )
         .unwrap();
-    let got = collection.find_one("alpha").unwrap();
+    let got = collection.get("alpha").unwrap();
     assert_eq!(fields_of(&got)["title"], "Later");
     assert_eq!(got.body.as_deref(), Some("New body.\n"));
-    let text = fs::read_to_string(scratch.coll_file("north_notes", "north/alpha.md")).unwrap();
+    let text = fs::read_to_string(scratch.coll_file("north_notes", "alpha.md")).unwrap();
     assert!(!text.contains("Hello"));
     assert!(text.contains("Later"));
 }
@@ -164,7 +177,7 @@ fn missing_id_is_not_found() {
     let err = vault
         .collection("north_notes")
         .unwrap()
-        .find_one("missing")
+        .get("missing")
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     assert_eq!(err.known_code(), Some(Code::NotFound));
@@ -176,28 +189,22 @@ fn markdown_and_yaml_only_and_empty_body() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .insert_one(rec_body(
-            "north_notes",
+        .add(
             "with-body",
-            serde_json::json!({"title": "Md"}),
-            Some("Prose.\n"),
-        ))
+            rec_body(serde_json::json!({"title": "Md"}), Some("Prose.\n")),
+        )
         .unwrap();
     collection
-        .insert_one(rec(
-            "north_notes",
-            "empty",
-            serde_json::json!({"title": "None"}),
-        ))
+        .add("empty", rec(serde_json::json!({"title": "None"})))
         .unwrap();
-    let with_body = collection.find_one("with-body").unwrap();
+    let with_body = collection.get("with-body").unwrap();
     assert_eq!(with_body.body.as_deref(), Some("Prose.\n"));
-    let md = fs::read_to_string(scratch.coll_file("north_notes", "north/with-body.md")).unwrap();
+    let md = fs::read_to_string(scratch.coll_file("north_notes", "with-body.md")).unwrap();
     assert!(md.starts_with("---\n"));
     assert!(md.contains("Prose."));
-    let empty = collection.find_one("empty").unwrap();
+    let empty = collection.get("empty").unwrap();
     assert!(empty.body.as_deref().is_none_or(str::is_empty));
-    let yaml = fs::read_to_string(scratch.coll_file("north_notes", "north/empty.md")).unwrap();
+    let yaml = fs::read_to_string(scratch.coll_file("north_notes", "empty.md")).unwrap();
     assert!(!yaml.starts_with("---"));
     assert!(yaml.contains("title:"));
 }
@@ -210,39 +217,48 @@ fn extra_layout_slots_write_derived_path() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_pages").unwrap();
     collection
-        .insert_one(rec(
-            "north_pages",
-            "alpha",
-            serde_json::json!({"title": "Personal"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Personal"})))
         .unwrap();
     collection
-        .insert_one(rec(
-            "north_pages",
+        .add(
             "beta",
-            serde_json::json!({"title": "Work", "project": "one"}),
-        ))
+            rec(serde_json::json!({"title": "Work", "project": "one"})),
+        )
         .unwrap();
-    let personal = collection.find_one("alpha").unwrap();
-    assert_eq!(
-        personal.path,
-        Some(coll_rel("north_pages", "personal/alpha.md"))
-    );
-    let nested = collection.find_one("beta").unwrap();
-    assert_eq!(
-        nested.path,
-        Some(coll_rel("north_pages", "projects/one/beta.md"))
-    );
-    assert!(
-        scratch
-            .coll_file("north_pages", "personal/alpha.md")
-            .is_file()
-    );
-    assert!(
-        scratch
-            .coll_file("north_pages", "projects/one/beta.md")
-            .is_file()
-    );
+    let personal = collection.get("alpha").unwrap();
+    assert_eq!(personal.path, Some(coll_rel("north_pages", "alpha.md")));
+    let nested = collection.get("beta").unwrap();
+    assert_eq!(nested.path, Some(coll_rel("north_pages", "beta.md")));
+    assert!(scratch.coll_file("north_pages", "alpha.md").is_file());
+    assert!(scratch.coll_file("north_pages", "beta.md").is_file());
+}
+
+#[test]
+fn record_id_rejects_dot_prefix_and_windows_device_names() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    for id in [".hidden", "CON", "con.txt", "foo.", "foo "] {
+        let err = collection
+            .add(id, rec(serde_json::json!({"title": "Nope"})))
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
+    }
+    assert!(!scratch.coll_file("north_notes", ".hidden.md").exists());
+}
+
+#[test]
+fn layout_filename_respects_255_byte_component() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add(&"a".repeat(252), rec(serde_json::json!({"title": "Max"})))
+        .unwrap();
+    let err = collection
+        .add(&"a".repeat(253), rec(serde_json::json!({"title": "Over"})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -251,18 +267,14 @@ fn rename_fails_check_and_find_one_does_not_follow() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .insert_one(rec(
-            "north_notes",
-            "alpha",
-            serde_json::json!({"title": "Hello"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
         .unwrap();
     fs::rename(
-        scratch.coll_file("north_notes", "north/alpha.md"),
-        scratch.coll_file("north_notes", "north/beta.md"),
+        scratch.coll_file("north_notes", "alpha.md"),
+        scratch.coll_file("north_notes", "beta.md"),
     )
     .unwrap();
-    let err = collection.find_one("alpha").unwrap_err();
+    let err = collection.get("alpha").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -274,22 +286,17 @@ fn optional_omit_versus_null() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .insert_one(rec(
-            "north_notes",
-            "omit",
-            serde_json::json!({"title": "No tag"}),
-        ))
+        .add("omit", rec(serde_json::json!({"title": "No tag"})))
         .unwrap();
     collection
-        .insert_one(rec(
-            "north_notes",
+        .add(
             "nil",
-            serde_json::json!({"title": "Nil tag", "tag": null}),
-        ))
+            rec(serde_json::json!({"title": "Nil tag", "tag": null})),
+        )
         .unwrap();
-    let omit = fields_of(&collection.find_one("omit").unwrap());
+    let omit = fields_of(&collection.get("omit").unwrap());
     assert_eq!(omit.get("tag"), None);
-    let nil = fields_of(&collection.find_one("nil").unwrap());
+    let nil = fields_of(&collection.get("nil").unwrap());
     assert_eq!(nil.get("tag"), Some(&Value::Null));
 }
 
@@ -301,23 +308,15 @@ fn id_pattern_comes_from_schema() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_slugs").unwrap();
     let err = collection
-        .insert_one(rec(
-            "north_slugs",
-            "Nope",
-            serde_json::json!({"title": "Bad"}),
-        ))
+        .add("a/b", rec(serde_json::json!({"title": "Bad"})))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     collection
-        .insert_one(rec(
-            "north_slugs",
-            "ok-id",
-            serde_json::json!({"title": "Good"}),
-        ))
+        .add("ok-id", rec(serde_json::json!({"title": "Good"})))
         .unwrap();
-    let got = collection.find_one("ok-id").unwrap();
-    assert_eq!(got.path, Some(coll_rel("north_slugs", "slugs/ok-id.md")));
-    assert_eq!(fields_of(&got)["slug"], "ok-id");
+    let got = collection.get("ok-id").unwrap();
+    assert_eq!(got.path, Some(coll_rel("north_slugs", "ok-id.md")));
+    assert_eq!(fields_of(&got)["title"], "Good");
 }
 
 #[test]
@@ -328,34 +327,19 @@ fn singleton_second_insert_then_replace() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     collection
-        .insert_one(rec(
-            "north_inbox",
-            "inbox",
-            serde_json::json!({"title": "First"}),
-        ))
+        .add("inbox", rec(serde_json::json!({"title": "First"})))
         .unwrap();
     let err = collection
-        .insert_one(rec(
-            "north_inbox",
-            "inbox",
-            serde_json::json!({"title": "Again"}),
-        ))
+        .add("inbox", rec(serde_json::json!({"title": "Again"})))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::DuplicateId));
     collection
-        .replace_one(
-            "inbox",
-            rec(
-                "north_inbox",
-                "inbox",
-                serde_json::json!({"title": "Second"}),
-            ),
-        )
+        .replace("inbox", rec_rep(serde_json::json!({"title": "Second"})))
         .unwrap();
-    let got = collection.find_one("inbox").unwrap();
+    let got = collection.get("inbox").unwrap();
     assert_eq!(fields_of(&got)["title"], "Second");
-    assert_eq!(got.path, Some(coll_rel("north_inbox", "north/inbox.yaml")));
-    let text = fs::read_to_string(scratch.coll_file("north_inbox", "north/inbox.yaml")).unwrap();
+    assert_eq!(got.path, Some(coll_rel("north_inbox", "record.yaml")));
+    let text = fs::read_to_string(scratch.coll_file("north_inbox", "record.yaml")).unwrap();
     assert!(text.contains("Second"));
     assert!(!text.contains("First"));
 }
@@ -369,10 +353,7 @@ fn journal_replace_one_is_unsupported() {
     let err = vault
         .collection("north_log")
         .unwrap()
-        .replace_one(
-            "x",
-            rec("north_log", "x", serde_json::json!({"title": "no"})),
-        )
+        .replace("x", rec_rep(serde_json::json!({"title": "no"})))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert_eq!(err.known_code(), Some(Code::Unsupported));
@@ -384,32 +365,25 @@ fn failed_write_does_not_become_the_file() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .insert_one(rec(
-            "north_notes",
-            "alpha",
-            serde_json::json!({"title": "Keep"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Keep"})))
         .unwrap();
-    let before = fs::read(scratch.coll_file("north_notes", "north/alpha.md")).unwrap();
+    let before = fs::read(scratch.coll_file("north_notes", "alpha.md")).unwrap();
     let err = collection
-        .replace_one(
-            "alpha",
-            rec("north_notes", "alpha", serde_json::json!({"count": 1})),
-        )
+        .replace("alpha", rec_rep(serde_json::json!({"count": 1})))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(
-        fs::read(scratch.coll_file("north_notes", "north/alpha.md")).unwrap(),
+        fs::read(scratch.coll_file("north_notes", "alpha.md")).unwrap(),
         before
     );
-    let north = scratch.coll_file("north_notes", "north");
+    let north = scratch.vault().join("north_notes");
     let tmps = tmp_names(&north);
     assert!(
         tmps.is_empty(),
         "successful write left temp files: {tmps:?}"
     );
     fs::write(north.join(".alpha.md.99.tmp"), "interrupted").unwrap();
-    let got = collection.find_one("alpha").unwrap();
+    let got = collection.get("alpha").unwrap();
     assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got)["title"], "Keep");
 }
@@ -420,34 +394,26 @@ fn invalid_record_rejected_old_file_stays_readable() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .insert_one(rec(
-            "north_notes",
-            "alpha",
-            serde_json::json!({"title": "Hello"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
         .unwrap();
     let err = collection
-        .insert_one(rec(
-            "north_notes",
+        .add(
             "beta",
-            serde_json::json!({"title": "Hello", "unknown": "x"}),
-        ))
+            rec(serde_json::json!({"title": "Hello", "unknown": "x"})),
+        )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+    drop(collection);
     drop(vault);
     scratch.write_schema("notes.yaml", NOTES_REQUIRED);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
-    let got = collection.find_one("alpha").unwrap();
+    let got = collection.get("alpha").unwrap();
     assert_eq!(got.valid, Some(false));
     assert!(got.raw.as_ref().is_some_and(|raw| !raw.is_empty()));
     assert_eq!(got.id.as_deref(), Some("alpha"));
     let err = collection
-        .insert_one(rec(
-            "north_notes",
-            "gamma",
-            serde_json::json!({"title": "New"}),
-        ))
+        .add("gamma", rec(serde_json::json!({"title": "New"})))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -459,11 +425,7 @@ fn schema_n_plus_one_optional_still_reads() {
     vault
         .collection("north_notes")
         .unwrap()
-        .insert_one(rec(
-            "north_notes",
-            "alpha",
-            serde_json::json!({"title": "Hello"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
         .unwrap();
     drop(vault);
     scratch.write_schema("notes.yaml", NOTES_PLUS);
@@ -471,7 +433,7 @@ fn schema_n_plus_one_optional_still_reads() {
     let got = vault
         .collection("north_notes")
         .unwrap()
-        .find_one("alpha")
+        .get("alpha")
         .unwrap();
     assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got).get("subtitle"), None);
@@ -487,18 +449,14 @@ fn fixture_files_are_utf8_text() {
     drop(scratch.init());
     scratch.write_schema("notes.yaml", NOTES);
     fs::create_dir_all(scratch.coll_file("north_notes", "north")).unwrap();
-    fs::write(scratch.coll_file("north_notes", "north/alpha.md"), ALPHA_MD).unwrap();
-    fs::write(
-        scratch.coll_file("north_notes", "north/plain.md"),
-        PLAIN_YAML,
-    )
-    .unwrap();
+    fs::write(scratch.coll_file("north_notes", "alpha.md"), ALPHA_MD).unwrap();
+    fs::write(scratch.coll_file("north_notes", "plain.md"), PLAIN_YAML).unwrap();
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
-    let md = collection.find_one("alpha").unwrap();
+    let md = collection.get("alpha").unwrap();
     assert_eq!(md.valid, Some(true));
     assert_eq!(md.body.as_deref(), Some("Stored body.\n"));
-    let yaml = collection.find_one("plain").unwrap();
+    let yaml = collection.get("plain").unwrap();
     assert_eq!(yaml.valid, Some(true));
     assert!(yaml.body.as_deref().is_none_or(str::is_empty));
     assert_eq!(fields_of(&yaml)["title"], "YAML only");
@@ -512,19 +470,15 @@ fn reader_find_one_while_writer_holds_lock() {
     writer
         .collection("north_notes")
         .unwrap()
-        .insert_one(rec(
-            "north_notes",
-            "alpha",
-            serde_json::json!({"title": "Hello"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
         .unwrap();
-    let reader = Vault::open(scratch.vault(), scratch.options().write(false)).unwrap();
+    let reader = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
     assert!(writer.holds_write_lock());
     assert!(!reader.holds_write_lock());
     let got = reader
         .collection("north_notes")
         .unwrap()
-        .find_one("alpha")
+        .get("alpha")
         .unwrap();
     assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got)["title"], "Hello");
@@ -536,23 +490,18 @@ fn header_id_must_match_record_id() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     let err = collection
-        .insert_one(rec(
-            "north_notes",
+        .add(
             "alpha",
-            serde_json::json!({"id": "beta", "title": "Hello"}),
-        ))
+            rec(serde_json::json!({"id": "beta", "title": "Hello"})),
+        )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     collection
-        .insert_one(rec(
-            "north_notes",
-            "alpha",
-            serde_json::json!({"title": "Hello"}),
-        ))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
         .unwrap();
-    let mut text = fs::read_to_string(scratch.coll_file("north_notes", "north/alpha.md")).unwrap();
+    let mut text = fs::read_to_string(scratch.coll_file("north_notes", "alpha.md")).unwrap();
     text = text.replace("id: alpha", "id: beta");
-    fs::write(scratch.coll_file("north_notes", "north/alpha.md"), text).unwrap();
+    fs::write(scratch.coll_file("north_notes", "alpha.md"), text).unwrap();
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -562,34 +511,36 @@ fn duplicate_insert_is_conflict() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    let record = rec(
-        "north_notes",
-        "alpha",
-        serde_json::json!({"title": "Hello"}),
-    );
-    collection.insert_one(record.clone()).unwrap();
-    let err = collection.insert_one(record).unwrap_err();
+    let record = rec(serde_json::json!({"title": "Hello"}));
+    collection.add("alpha", record.clone()).unwrap();
+    let err = collection.add("alpha", record).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::DuplicateId));
 }
 
 #[test]
-fn collection_name_with_slash_round_trips() {
+fn collection_name_with_slash_is_invalid() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
-        "slash.yaml",
-        "name: \"north/notes\"\nkind: document\nschema_version: 1\nlayout: notes/{id}.md\nfields:\n  - name: title\n    type: string\n    required: true\n",
-    );
-    let vault = scratch.reopen();
-    let collection = vault.collection("north/notes").unwrap();
-    collection
-        .insert_one(rec(
-            "north/notes",
-            "alpha",
-            serde_json::json!({"title": "Slash"}),
-        ))
-        .unwrap();
-    let got = collection.find_one("alpha").unwrap();
-    assert_eq!(got.path, Some(coll_rel("north/notes", "notes/alpha.md")));
-    assert!(scratch.coll_file("north/notes", "notes/alpha.md").is_file());
+    let dir = scratch.vault().join("notes");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(".schema.yaml"),
+        "name: \"a/b\"\nkind: document\nschema_version: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n",
+    )
+    .unwrap();
+    let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn peek_schema_name(body: &str) -> String {
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name:") {
+            return rest.trim().trim_matches('"').to_string();
+        }
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .expect("schema fixture name")
 }

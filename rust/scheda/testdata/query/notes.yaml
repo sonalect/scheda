@@ -1,14 +1,13 @@
 name: query_notes
 kind: document
 schema_version: 1
-layout: notes/{id}.md
 fields:
   - name: title
-    type: string
     required: true
+    string: {}
   - name: tag
-    type: string
     nullable: true
-    filter: true
+    string: {}
   - name: secret
-    type: string
+    exclude_find: true
+    string: {}

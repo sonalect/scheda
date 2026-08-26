@@ -13,6 +13,8 @@ use crate::{Error, Record};
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
 
+const FS_NAME_MAX: usize = 255;
+
 pub(crate) fn insert_document(
     vault: &Path,
     decl: &CollectionDecl,
@@ -45,13 +47,13 @@ pub(crate) fn replace_document(
     let prepared = prepare_write(vault, decl, record)?;
     if prepared.id != id {
         bail!(Error::invalid(format!(
-            "replace_one id {id} does not match record id {}",
+            "replace id {id} does not match record id {}",
             prepared.id
         )));
     }
     if prepared.path != existing {
         bail!(Error::invalid(format!(
-            "replace_one would move {id} off its path in {}",
+            "replace would move {id} off its path in {}",
             decl.name
         )));
     }
@@ -125,7 +127,7 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
             ) {
                 bail!(Error::invalid(format!("{rel}: {err}")));
             }
-            let expected = vault_rel(decl, &instantiate_path(decl, &parsed.id, &parsed.fields)?);
+            let expected = vault_rel(decl, &record_file(decl, &parsed.id)?);
             if expected != rel {
                 bail!(Error::invalid(format!(
                     "{rel} path does not match id {}",
@@ -153,15 +155,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
     let Some(id) = record.id.clone() else {
         unreachable!("Record id is required");
     };
-    let Some(collection) = record.collection.as_deref() else {
-        unreachable!("Record collection is required");
-    };
-    if collection != decl.name {
-        bail!(Error::invalid(format!(
-            "record collection {collection} does not match {}",
-            decl.name
-        )));
-    }
+    crate::id::require_slug("id", &id)?;
     if decl.kind == Kind::Journal {
         bail!(Error::invalid(
             "document write used on a journal collection",
@@ -218,132 +212,76 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
         }
     }
     validate_fields(&fields, &decl.fields, Some(decl.id_field.as_str()), false)?;
-    let rel = instantiate_path(decl, &id, &fields)?;
+    let rel = record_file(decl, &id)?;
     let path = schema::join_in_collection(vault, &decl.name, &rel)?;
     let body = record.body.filter(|body| !body.is_empty());
     let bytes = encode_file(decl, &fields, body.as_deref())?;
     Ok(Prepared { id, path, bytes })
 }
 
-fn instantiate_path(
-    decl: &CollectionDecl,
-    id: &str,
-    fields: &Map<String, Value>,
-) -> Result<String, Error> {
-    let mut found: Option<(usize, String)> = None;
-    for template in &decl.layout {
-        let Some(rel) = fill_template(template, id, fields)? else {
-            continue;
-        };
-        let n = placeholder_count(template);
-        match &found {
-            None => found = Some((n, rel)),
-            Some((m, _)) if n > *m => found = Some((n, rel)),
-            Some((m, existing)) if n == *m && existing != &rel => {
+fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
+    match decl.kind {
+        Kind::Document => {
+            let file = format!("{id}.md");
+            if file.len() > FS_NAME_MAX {
                 bail!(Error::invalid(format!(
-                    "id {id} matches more than one layout in {}",
-                    decl.name
+                    "record file name exceeds {FS_NAME_MAX} bytes"
                 )));
             }
-            _ => {}
+            Ok(file)
         }
+        Kind::Singleton => Ok(String::from("record.yaml")),
+        Kind::Journal => bail!(Error::invalid("document path used on a journal collection",)),
     }
-    found.map(|(_, rel)| rel).ok_or_else(|| {
-        Error::invalid(format!(
-            "id {id} does not fill a layout template in {}",
-            decl.name
-        ))
-    })
 }
 
-fn vault_rel(decl: &CollectionDecl, layout_rel: &str) -> String {
-    format!("{}/{layout_rel}", schema::collection_dir(&decl.name))
-}
-
-fn placeholder_count(template: &str) -> usize {
-    let mut n = 0;
-    let mut rest = template;
-    while let Some(start) = rest.find('{') {
-        let Some(end) = rest[start..].find('}') else {
-            break;
-        };
-        n += 1;
-        rest = &rest[start + end + 1..];
-    }
-    n
-}
-
-fn fill_template(
-    template: &str,
-    id: &str,
-    fields: &Map<String, Value>,
-) -> Result<Option<String>, Error> {
-    let mut out = String::new();
-    let mut rest = template;
-    while let Some(start) = rest.find('{') {
-        let Some(end) = rest[start..].find('}') else {
-            bail!(Error::invalid(format!(
-                "layout template {template} has an unclosed '{{'"
-            )));
-        };
-        let end = start + end;
-        out.push_str(&rest[..start]);
-        let name = &rest[start + 1..end];
-        if name.is_empty() {
-            bail!(Error::invalid(format!(
-                "layout template {template} has an empty placeholder"
-            )));
-        }
-        let value = if name == "id" {
-            id
-        } else {
-            match fields.get(name) {
-                Some(Value::String(s)) if !s.is_empty() => s.as_str(),
-                Some(Value::String(_)) | Some(Value::Null) | None => return Ok(None),
-                Some(_) => {
-                    bail!(Error::invalid(format!("path slot {name} must be a string")));
-                }
-            }
-        };
-        if value.contains('/') || value.contains('\\') {
-            bail!(Error::invalid(format!(
-                "path slot {name} must not contain a path separator"
-            )));
-        }
-        out.push_str(value);
-        rest = &rest[end + 1..];
-    }
-    out.push_str(rest);
-    if out.is_empty() {
-        bail!(Error::invalid("layout template produced an empty path"));
-    }
-    Ok(Some(out))
+fn vault_rel(decl: &CollectionDecl, file: &str) -> String {
+    format!("{}/{file}", schema::collection_dir(&decl.name))
 }
 
 fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<PathBuf>, Error> {
-    let mut found = None;
-    for template in &decl.layout {
-        for path in match_template(vault, decl, template, Some(id))? {
-            if found.is_some() {
-                bail!(Error::invalid(format!(
-                    "id {id} matches more than one file in {}",
-                    decl.name
-                )));
-            }
-            found = Some(path);
-        }
+    if decl.kind == Kind::Singleton
+        && decl
+            .singleton_id
+            .as_deref()
+            .is_some_and(|fixed| fixed != id)
+    {
+        return Ok(None);
     }
-    Ok(found)
+    let file = record_file(decl, id)?;
+    let path = schema::join_in_collection(vault, &decl.name, &file)?;
+    Ok(path.is_file().then_some(path))
 }
 
 pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
-    let mut out = Vec::new();
-    for template in &decl.layout {
-        out.extend(match_template(vault, decl, template, None)?);
+    let dir = schema::join_in_collection(vault, &decl.name, "")?;
+    if !dir.is_dir() {
+        return Ok(Vec::new());
     }
-    out.sort();
-    out.dedup();
-    Ok(out)
+    match decl.kind {
+        Kind::Singleton => {
+            let path = dir.join("record.yaml");
+            Ok(path.is_file().then_some(path).into_iter().collect())
+        }
+        Kind::Document => {
+            let mut out = Vec::new();
+            let entries = fs::read_dir(&dir).context("[store::list_files] read collection")?;
+            for entry in entries {
+                let entry = entry.context("[store::list_files] read entry")?;
+                let path = entry.path();
+                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if name.starts_with('.') || !name.ends_with(".md") || !path.is_file() {
+                    continue;
+                }
+                out.push(path);
+            }
+            out.sort();
+            Ok(out)
+        }
+        Kind::Journal => Ok(Vec::new()),
+    }
 }
 
 pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
@@ -367,133 +305,13 @@ pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64,
     Ok((records, invalid))
 }
 
-fn match_template(
-    vault: &Path,
-    decl: &CollectionDecl,
-    template: &str,
-    id: Option<&str>,
-) -> Result<Vec<PathBuf>, Error> {
-    let root = schema::join_in_collection(vault, &decl.name, "")?;
-    let segs: Vec<&str> = template.split('/').collect();
-    let mut out = Vec::new();
-    walk_match(&root, &segs, id, &mut out)?;
-    Ok(out)
-}
-
-fn walk_match(
-    dir: &Path,
-    segs: &[&str],
-    id: Option<&str>,
-    out: &mut Vec<PathBuf>,
-) -> Result<(), Error> {
-    let Some((head, tail)) = segs.split_first() else {
-        return Ok(());
-    };
-    if !dir.is_dir() {
-        return Ok(());
-    }
-    let last = tail.is_empty();
-    if let Some(exact) = exact_component(head, id) {
-        let next = dir.join(&exact);
-        if last {
-            if next.is_file() {
-                out.push(next);
-            }
-        } else {
-            walk_match(&next, tail, id, out)?;
-        }
-        return Ok(());
-    }
-    let entries = fs::read_dir(dir).context("[store::walk_match] read collection dir")?;
-    for entry in entries {
-        let entry = entry.context("[store::walk_match] read collection entry")?;
-        let name = entry.file_name();
-        let Some(name) = name.to_str() else {
-            continue;
-        };
-        if name.starts_with('.') {
-            continue;
-        }
-        if !component_matches(head, name, id) {
-            continue;
-        }
-        let next = entry.path();
-        if last {
-            if next.is_file() {
-                out.push(next);
-            }
-        } else if next.is_dir() {
-            walk_match(&next, tail, id, out)?;
-        }
-    }
-    Ok(())
-}
-
-fn exact_component(pattern: &str, id: Option<&str>) -> Option<String> {
-    let mut out = String::new();
-    let mut rest = pattern;
-    while let Some(start) = rest.find('{') {
-        let end = rest[start..].find('}')?;
-        let end = start + end;
-        out.push_str(&rest[..start]);
-        let name = &rest[start + 1..end];
-        if name == "id" {
-            out.push_str(id?);
-        } else {
-            return None;
-        }
-        rest = &rest[end + 1..];
-    }
-    out.push_str(rest);
-    Some(out)
-}
-
-fn component_matches(pattern: &str, name: &str, id: Option<&str>) -> bool {
-    match_component(pattern, name, id)
-}
-
-fn match_component(pat: &str, name: &str, id: Option<&str>) -> bool {
-    match pat.find('{') {
-        None => pat == name,
-        Some(start) => {
-            if !name.starts_with(&pat[..start]) {
-                return false;
-            }
-            let name = &name[start..];
-            let Some(end_rel) = pat[start..].find('}') else {
-                return false;
-            };
-            let end = start + end_rel;
-            let ph = &pat[start + 1..end];
-            let after = &pat[end + 1..];
-            if ph == "id" {
-                if let Some(want) = id {
-                    name.starts_with(want)
-                        && match_component(after, &name[want.len()..], Some(want))
-                } else {
-                    consume_slot(after, name, id)
-                }
-            } else {
-                consume_slot(after, name, id)
-            }
-        }
-    }
-}
-
-fn consume_slot(after: &str, name: &str, id: Option<&str>) -> bool {
-    if after.is_empty() {
-        return !name.is_empty();
-    }
-    (1..=name.len()).any(|i| match_component(after, &name[i..], id))
-}
-
 pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Result<Record, Error> {
     let rel = rel_posix(vault, path)?;
     let raw = fs::read(path)
         .context("[store::read_file] read record")
         .map_err(|err| err.with_path(&rel))?;
     let mut record = Record::default()
-        .with_collection(decl.name.clone())
+        .with_collection(decl.name.as_str())
         .with_path(rel.clone())
         .with_raw(raw.clone());
     let Ok(text) = str::from_utf8(&raw) else {
@@ -523,7 +341,7 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
             )
             .is_ok()
                 && id_matches_header(decl, &parsed)
-                && instantiate_path(decl, &parsed.id, &parsed.fields)
+                && record_file(decl, &parsed.id)
                     .is_ok_and(|expected| vault_rel(decl, &expected) == rel)
                 && decl
                     .id_pattern
@@ -618,11 +436,6 @@ fn encode_file(
     body: Option<&str>,
 ) -> Result<Vec<u8>, Error> {
     let json = Value::Object(fields.clone());
-    if decl.kind == Kind::Singleton && decl.layout.iter().any(|t| t.ends_with(".json")) {
-        let bytes = serde_json::to_vec_pretty(&json)
-            .context(Code::Invalid, "[store::encode_file] encode JSON")?;
-        return Ok(bytes);
-    }
     let yaml =
         yaml_serde::to_string(&json).context(Code::Invalid, "[store::encode_file] encode YAML")?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
@@ -834,15 +647,10 @@ pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result
     if let Some(id) = &record.id {
         envelope.insert(String::from("id"), Value::String(id.clone()));
     }
-    if let Some(collection) = &record.collection {
-        envelope.insert(
-            String::from("collection"),
-            Value::String(collection.clone()),
-        );
-    }
     envelope.insert(String::from("fields"), Value::Object(map));
     let mut next: Record = serde_json::from_value(Value::Object(envelope))
         .context(Code::Invalid, "[store::put_fields] decode fields")?;
+    next.collection = record.collection.clone();
     next.path = record.path.clone();
     next.valid = record.valid;
     next.body = record.body.clone();
@@ -857,12 +665,7 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     }
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(
-        ".{}.{n}.tmp",
-        path.file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("record")
-    ));
+    let tmp = dir.join(format!(".scheda.{n}.tmp"));
     let written = write_tmp_then_rename(&tmp, path, bytes);
     if written.is_err() {
         let _ = fs::remove_file(&tmp);
@@ -924,47 +727,37 @@ pub(crate) fn has_conflict_markers(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{component_matches, fill_template, placeholder_count};
-    use serde_json::{Map, Value};
+    use super::record_file;
+    use crate::schema::{CollectionDecl, Kind};
 
-    #[test]
-    fn extra_slot_component_matches() {
-        assert!(component_matches(
-            "{project}-{id}.md",
-            "foo-alpha.md",
-            Some("alpha")
-        ));
-        assert!(!component_matches(
-            "{project}-{id}.md",
-            "foo-beta.md",
-            Some("alpha")
-        ));
-        assert!(component_matches("{id}.md", "alpha.md", Some("alpha")));
-        assert!(!component_matches("{id}.md", "alphabet.md", Some("alpha")));
+    fn decl(kind: Kind) -> CollectionDecl {
+        CollectionDecl {
+            name: String::from("c"),
+            kind,
+            schema_version: 1,
+            layout: Vec::new(),
+            id_field: String::from("id"),
+            id_pattern: None,
+            filter_keys: Default::default(),
+            segment_max_bytes: None,
+            segment_max_lines: None,
+            segment_rotate: None,
+            singleton_id: Some(String::from("inbox")),
+            body: None,
+            fields: Vec::new(),
+            isolated: false,
+        }
     }
 
     #[test]
-    fn fill_skips_unfilled_extra_slot() {
-        let mut fields = Map::new();
-        fields.insert(String::from("project"), Value::String(String::from("p1")));
-        let id = "alpha";
+    fn document_file_is_id_md() {
         assert_eq!(
-            fill_template("personal/{id}.md", id, &fields)
-                .unwrap()
-                .as_deref(),
-            Some("personal/alpha.md")
+            record_file(&decl(Kind::Document), "alpha").unwrap(),
+            "alpha.md"
         );
         assert_eq!(
-            fill_template("projects/{project}/{id}.md", id, &fields)
-                .unwrap()
-                .as_deref(),
-            Some("projects/p1/alpha.md")
+            record_file(&decl(Kind::Singleton), "inbox").unwrap(),
+            "record.yaml"
         );
-        let empty = Map::new();
-        assert_eq!(
-            fill_template("projects/{project}/{id}.md", id, &empty).unwrap(),
-            None
-        );
-        assert_eq!(placeholder_count("projects/{project}/{id}.md"), 2);
     }
 }

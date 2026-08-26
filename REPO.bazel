@@ -1,3 +1,9 @@
-"""Ignore generated node_modules so Bazel does not index pnpm install trees."""
+"""Ignore generated trees so Bazel does not index them."""
 
-ignore_directories(["**/node_modules"])
+ignore_directories([
+    "**/node_modules",
+    "**/.venv",
+    "**/.scheda",
+    "**/.vault-test",
+    "**/__pycache__",
+])

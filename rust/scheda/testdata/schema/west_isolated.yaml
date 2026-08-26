@@ -1,9 +1,8 @@
 name: west_isolated
 kind: document
 schema_version: 1
-layout: sealed/{id}.md
 isolated: true
 fields:
   - name: west_pass
-    type: string
     required: true
+    string: {}

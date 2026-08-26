@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, Record, Vault, collection_dir};
+use scheda::{Code, Filter, OpenOptions, RecordAdd, RecordReplace, Vault};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -31,23 +31,29 @@ impl Scratch {
     }
 
     fn init(&self) -> Vault {
-        Vault::init(self.vault(), self.options()).unwrap()
+        let vault = Vault::open(self.vault(), self.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
     }
 
     fn reopen(&self) -> Vault {
-        Vault::open(self.vault(), self.options()).unwrap()
+        Vault::open(self.vault(), self.options(), None).unwrap()
     }
 
     fn write_schema(&self, file: &str, body: &str) {
-        let dir = self.vault().join("schema");
+        let name = peek_schema_name(body);
+        let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(file), body).unwrap();
+        let dest = if file.ends_with(".json") {
+            ".schema.json"
+        } else {
+            ".schema.yaml"
+        };
+        fs::write(dir.join(dest), body).unwrap();
     }
 
     fn log_dir(&self) -> PathBuf {
-        self.vault()
-            .join(collection_dir("south_log"))
-            .join("south/log")
+        self.vault().join("south_log")
     }
 }
 
@@ -60,10 +66,15 @@ impl Drop for Scratch {
 const LOG: &str = include_str!("../testdata/journal/log.yaml");
 const ALPHA_JSONL: &str = include_str!("../testdata/journal/alpha.jsonl");
 
-fn rec(id: &str, msg: &str) -> Record {
+fn rec(msg: &str) -> RecordAdd {
     serde_json::from_value(serde_json::json!({
-        "id": id,
-        "collection": "south_log",
+        "fields": { "msg": msg },
+    }))
+    .unwrap()
+}
+
+fn rec_rep(msg: &str) -> RecordReplace {
+    serde_json::from_value(serde_json::json!({
         "fields": { "msg": msg },
     }))
     .unwrap()
@@ -93,8 +104,8 @@ fn insert_appends_canonical_json_line() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("p", "m")).unwrap();
-    collection.insert_one(rec("q", "m")).unwrap();
+    collection.add("p", rec("m")).unwrap();
+    collection.add("q", rec("m")).unwrap();
     let text = fs::read_to_string(scratch.log_dir().join("00000001.jsonl")).unwrap();
     let mut lines = text.lines();
     let a = lines.next().unwrap();
@@ -112,7 +123,7 @@ fn replace_one_is_unsupported() {
     let err = vault
         .collection("south_log")
         .unwrap()
-        .replace_one("a", rec("a", "x"))
+        .replace("a", rec_rep("x"))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert_eq!(err.known_code(), Some(Code::Unsupported));
@@ -123,11 +134,11 @@ fn duplicate_id_across_segments_is_conflict() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("a", "one")).unwrap();
-    collection.insert_one(rec("b", "two")).unwrap();
-    collection.insert_one(rec("c", "three")).unwrap();
+    collection.add("a", rec("one")).unwrap();
+    collection.add("b", rec("two")).unwrap();
+    collection.add("c", rec("three")).unwrap();
     assert!(jsonl_names(&scratch.log_dir()).len() >= 2);
-    let err = collection.insert_one(rec("a", "again")).unwrap_err();
+    let err = collection.add("a", rec("again")).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::DuplicateId));
 }
 
@@ -136,17 +147,18 @@ fn size_cap_closes_segment_without_rewriting_it() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("a", "x")).unwrap();
-    collection.insert_one(rec("b", "x")).unwrap();
+    collection.add("a", rec("x")).unwrap();
+    collection.add("b", rec("x")).unwrap();
     let first = scratch.log_dir().join("00000001.jsonl");
     let before = fs::read(&first).unwrap();
-    collection.insert_one(rec("c", "x")).unwrap();
+    collection.add("c", rec("x")).unwrap();
     assert_eq!(fs::read(&first).unwrap(), before);
     assert!(before.len() as u64 <= 45);
     assert!(scratch.log_dir().join("00000002.jsonl").is_file());
     let ids: Vec<_> = collection
-        .scan()
+        .find(&Filter::all(), 0, 1000)
         .unwrap()
+        .records
         .into_iter()
         .map(|record| record.id.unwrap())
         .collect();
@@ -158,11 +170,12 @@ fn find_one_uses_collection_and_id_not_segment_name() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("a", "x")).unwrap();
-    collection.insert_one(rec("b", "x")).unwrap();
-    collection.insert_one(rec("c", "x")).unwrap();
-    let got = collection.find_one("c").unwrap();
+    collection.add("a", rec("x")).unwrap();
+    collection.add("b", rec("x")).unwrap();
+    collection.add("c", rec("x")).unwrap();
+    let got = collection.get("c").unwrap();
     assert_eq!(got.id.as_deref(), Some("c"));
+    assert_eq!(got.collection.as_deref(), Some("south_log"));
     assert_eq!(got.valid, Some(true));
     assert!(
         got.path
@@ -170,7 +183,7 @@ fn find_one_uses_collection_and_id_not_segment_name() {
             .is_some_and(|path| path.ends_with(".jsonl"))
     );
     assert!(!got.path.as_deref().unwrap().contains("c.jsonl"));
-    let err = collection.find_one("missing").unwrap_err();
+    let err = collection.get("missing").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
@@ -179,18 +192,20 @@ fn empty_find_and_scan_keep_append_order_across_rotate() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("a", "x")).unwrap();
-    collection.insert_one(rec("b", "x")).unwrap();
-    collection.insert_one(rec("c", "x")).unwrap();
+    collection.add("a", rec("x")).unwrap();
+    collection.add("b", rec("x")).unwrap();
+    collection.add("c", rec("x")).unwrap();
     let scan_ids: Vec<_> = collection
-        .scan()
+        .find(&Filter::all(), 0, 1000)
         .unwrap()
+        .records
         .into_iter()
         .map(|record| record.id.unwrap())
         .collect();
     let find_ids: Vec<_> = collection
-        .find(&Filter::default())
+        .find(&Filter::all(), 0, 100)
         .unwrap()
+        .records
         .into_iter()
         .map(|record| record.id.unwrap())
         .collect();
@@ -203,8 +218,8 @@ fn mid_segment_corruption_fails_check_and_is_not_rewritten() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("a", "x")).unwrap();
-    collection.insert_one(rec("b", "x")).unwrap();
+    collection.add("a", rec("x")).unwrap();
+    collection.add("b", rec("x")).unwrap();
     let path = scratch.log_dir().join("00000001.jsonl");
     let original = fs::read_to_string(&path).unwrap();
     let first = original.split_once('\n').unwrap().0;
@@ -213,9 +228,9 @@ fn mid_segment_corruption_fails_check_and_is_not_rewritten() {
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(fs::read_to_string(&path).unwrap(), damaged);
-    let a = collection.find_one("a").unwrap();
+    let a = collection.get("a").unwrap();
     assert_eq!(a.id.as_deref(), Some("a"));
-    let err = collection.find_one("b").unwrap_err();
+    let err = collection.get("b").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
@@ -224,15 +239,15 @@ fn tail_without_newline_is_not_a_record() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.insert_one(rec("a", "x")).unwrap();
+    collection.add("a", rec("x")).unwrap();
     let path = scratch.log_dir().join("00000001.jsonl");
     let mut text = fs::read_to_string(&path).unwrap();
     text.push_str(r#"{"id":"b","msg":"x"}"#);
     fs::write(&path, &text).unwrap();
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
-    assert_eq!(collection.find_one("a").unwrap().id.as_deref(), Some("a"));
-    let err = collection.find_one("b").unwrap_err();
+    assert_eq!(collection.get("a").unwrap().id.as_deref(), Some("a"));
+    let err = collection.get("b").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     assert!(
         fs::read_to_string(&path)
@@ -251,11 +266,7 @@ fn fixture_jsonl_is_utf8_text() {
     fs::create_dir_all(scratch.log_dir()).unwrap();
     fs::write(scratch.log_dir().join("00000001.jsonl"), ALPHA_JSONL).unwrap();
     let vault = scratch.reopen();
-    let got = vault
-        .collection("south_log")
-        .unwrap()
-        .find_one("alpha")
-        .unwrap();
+    let got = vault.collection("south_log").unwrap().get("alpha").unwrap();
     assert_eq!(got.valid, Some(true));
     vault.check().unwrap();
 }
@@ -264,12 +275,25 @@ fn fixture_jsonl_is_utf8_text() {
 fn journal_rejects_markdown_body() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
-    let mut record = rec("a", "x");
+    let mut record = rec("x");
     record.body = Some(String::from("nope"));
     let err = vault
         .collection("south_log")
         .unwrap()
-        .insert_one(record)
+        .add("a", record)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn peek_schema_name(body: &str) -> String {
+    for line in body.lines() {
+        let line = line.trim();
+        if let Some(rest) = line.strip_prefix("name:") {
+            return rest.trim().trim_matches('"').to_string();
+        }
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
+        .expect("schema fixture name")
 }

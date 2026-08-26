@@ -32,23 +32,6 @@ cargo = use_extension(
 # numkong SIMD: copy headers into OUT_DIR so DEP_NUMKONG_INCLUDE is visible to
 # usearch's sandboxed C++ compile.
 cargo.annotation(
-    crate = "usearch",
-    patch_args = ["-p1"],
-    patches = ["//third_party/usearch:drop-out-dir-symlinks.patch"],
-    repositories = ["cargo"],
-)
-cargo.annotation_select(
-    build_script_env = {
-        "CXX": "/usr/bin/c++",
-    },
-    crate = "usearch",
-    repositories = ["cargo"],
-    triples = [
-        "aarch64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    ],
-)
-cargo.annotation(
     crate = "cxx",
     gen_build_script = "on",
     patch_args = ["-p1"],
@@ -77,6 +60,23 @@ cargo.annotation(
     patch_args = ["-p1"],
     patches = ["//third_party/numkong:include-to-outdir.patch"],
     repositories = ["cargo"],
+)
+cargo.annotation(
+    crate = "usearch",
+    patch_args = ["-p1"],
+    patches = ["//third_party/usearch:drop-out-dir-symlinks.patch"],
+    repositories = ["cargo"],
+)
+cargo.annotation_select(
+    build_script_env = {
+        "CXX": "/usr/bin/c++",
+    },
+    crate = "usearch",
+    repositories = ["cargo"],
+    triples = [
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+    ],
 )
 cargo.from_cargo(
     name = "cargo",

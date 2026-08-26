@@ -10,25 +10,29 @@ readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
 [features]
-default = ["remote-git", "numkong"]
-# libgit2 HTTPS and SSH. File remotes and local git work without this;
-# skip it to avoid OpenSSL (`default-features = false`).
-remote-git = ["git2/https", "git2/ssh"]
+default = ["numkong", "remote-git"]
 # USearch SIMD kernels (numkong). Off with `default-features = false`.
 numkong = ["usearch/numkong"]
 # USearch OpenMP executor. Needs libomp (Linux `libomp-dev`; not used by Bazel CI).
 openmp = ["usearch/openmp"]
+# libgit2 HTTPS and SSH. File remotes and local git work without this;
+# skip it to avoid OpenSSL (`default-features = false`).
+remote-git = ["git2/https", "git2/ssh"]
+# Static OpenSSL for a Cargo `+crt-static` Linux CLI. Bazel stays on the
+# system libssl (dynamic CRT).
+vendored-openssl = ["git2/vendored-openssl"]
 
 [dependencies]
+cxx = { workspace = true }
 git2 = { workspace = true }
 regex = { workspace = true }
 scheda-generated = { workspace = true }
+buffa-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tantivy = { workspace = true }
 usearch = { workspace = true }
 yaml_serde = { workspace = true }
-cxx = { workspace = true }
 
 [dev-dependencies]
 git2 = { workspace = true }
