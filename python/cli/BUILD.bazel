@@ -1,7 +1,9 @@
 load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
+load("//bazel:compat.bzl", "NOT_WINDOWS")
 
 _IMPORTS = ["../.."]
 
+# aspect_rules_py uv host: `fail("Unsupported platform windows")`.
 py_library(
     name = "cli_pkg",
     srcs = [
@@ -10,6 +12,7 @@ py_library(
         "main.py",
     ],
     imports = _IMPORTS,
+    target_compatible_with = NOT_WINDOWS,
     visibility = ["//visibility:private"],
     deps = ["//python:python_pkg"],
 )
@@ -20,6 +23,7 @@ py_binary(
     data = ["//rust/cli:scheda"],
     imports = _IMPORTS,
     main = "main.py",
+    target_compatible_with = NOT_WINDOWS,
     visibility = ["//visibility:public"],
     deps = [":cli_pkg"],
 )

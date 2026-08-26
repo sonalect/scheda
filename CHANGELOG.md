@@ -69,6 +69,10 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- Python `py_*` (`python_pkg`, `python/cli`) skip Windows
+  (`target_compatible_with` `NOT_WINDOWS`), same as ruff / pip-audit:
+  `bazel build //...` must not fetch aspect_rules_py's uv host
+  (`Unsupported platform windows`).
 - Write lock is `{vault}/.scheda/write.lock` (STO-4), not under `index/`.
   A leftover `{vault}/.scheda/index/write.lock` is drained on acquire.
 - CLI argv is `14`: `--vault`, `open` / `info` / `create-collection`,

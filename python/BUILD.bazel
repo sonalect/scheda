@@ -9,6 +9,7 @@ py_library(
     name = "python_pkg",
     srcs = ["__init__.py"],
     imports = _IMPORTS,
+    target_compatible_with = NOT_WINDOWS,
     visibility = ["//python:__subpackages__"],
 )
 
