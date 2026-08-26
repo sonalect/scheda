@@ -10,6 +10,7 @@ rust_binary(
     deps = [
         "//rust/scheda",
         "@cargo//:clap",
+        "@cargo//:mimalloc",
         "@cargo//:serde",
         "@cargo//:serde_json",
         "@cargo//:ureq",

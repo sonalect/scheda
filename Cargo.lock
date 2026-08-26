@@ -1207,6 +1207,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mimalloc"
+version = "3.5.0"
+source = "git+https://github.com/amsokol/mimalloc?tag=v3.5.0#5407006cdbac41ea9afd4457c281c08ab108538e"
+dependencies = [
+ "cc",
+]
+
+[[package]]
 name = "minimal-lexical"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1634,6 +1642,7 @@ name = "scheda-cli"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "mimalloc",
  "scheda",
  "serde",
  "serde_json",

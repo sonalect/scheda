@@ -7,7 +7,7 @@ use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tantivy::collector::TopDocs;
+use tantivy::collector::{DocSetCollector, TopDocs};
 use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery, TermSetQuery};
 use tantivy::schema::{
     FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema as TantivySchema, TEXT,
@@ -294,10 +294,28 @@ impl SearchEngine {
         compile_decl: &CollectionDecl,
         filter: &Filter,
     ) -> Result<BTreeSet<(String, String)>, Error> {
-        Ok(self
-            .find(collections, false, compile_decl, filter, 0, u32::MAX)?
-            .into_iter()
-            .collect())
+        self.with_find(
+            collections,
+            compile_decl,
+            filter,
+            "[SearchEngine::find_ids] reload reader",
+            |searcher, query, lexical| {
+                // `DocSetCollector` walks matches. `TopDocs::with_limit(u32::MAX)`
+                // allocates `2 * limit` scored slots (~64 GiB) and aborts on CI.
+                let addrs = searcher
+                    .search(query, &DocSetCollector)
+                    .context(Code::IndexLexical, "[SearchEngine::find_ids] search")?;
+                Ok(ids_from_addrs(
+                    searcher,
+                    lexical,
+                    addrs,
+                    "[SearchEngine::find_ids] fetch document",
+                )?
+                .into_iter()
+                .collect())
+            },
+        )
+        .map(Option::unwrap_or_default)
     }
 
     pub(crate) fn find(
@@ -309,8 +327,57 @@ impl SearchEngine {
         offset: u32,
         count: u32,
     ) -> Result<Vec<(String, String)>, Error> {
-        if collections.is_empty() {
+        let limit = count as usize;
+        if limit == 0 {
             return Ok(Vec::new());
+        }
+        self.with_find(
+            collections,
+            compile_decl,
+            filter,
+            "[SearchEngine::find] reload reader",
+            |searcher, query, lexical| {
+                let off = offset as usize;
+                let addrs: Vec<tantivy::DocAddress> = if journal_ord {
+                    let top = searcher
+                        .search(
+                            query,
+                            &TopDocs::with_limit(limit)
+                                .and_offset(off)
+                                .order_by_fast_field::<u64>("ord", Order::Asc),
+                        )
+                        .context(Code::IndexLexical, "[SearchEngine::find] search")?;
+                    top.into_iter().map(|(_, addr)| addr).collect()
+                } else {
+                    let top = searcher
+                        .search(
+                            query,
+                            &TopDocs::with_limit(limit).and_offset(off).order_by_score(),
+                        )
+                        .context(Code::IndexLexical, "[SearchEngine::find] search")?;
+                    top.into_iter().map(|(_, addr)| addr).collect()
+                };
+                ids_from_addrs(
+                    searcher,
+                    lexical,
+                    addrs,
+                    "[SearchEngine::find] fetch document",
+                )
+            },
+        )
+        .map(Option::unwrap_or_default)
+    }
+
+    fn with_find<T>(
+        &self,
+        collections: &[&str],
+        compile_decl: &CollectionDecl,
+        filter: &Filter,
+        reload_frame: &'static str,
+        f: impl FnOnce(&tantivy::Searcher, &BooleanQuery, &Lexical) -> Result<T, Error>,
+    ) -> Result<Option<T>, Error> {
+        if collections.is_empty() {
+            return Ok(None);
         }
         index::require_current_format(&self.index_dir)?;
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
@@ -320,12 +387,12 @@ impl SearchEngine {
             inner.lexical = open_lexical(&self.index_dir, can_write)?;
         }
         let Some(lexical) = inner.lexical.as_mut() else {
-            return Ok(Vec::new());
+            return Ok(None);
         };
         lexical
             .reader
             .reload()
-            .context(Code::IndexLexical, "[SearchEngine::find] reload reader")?;
+            .context(Code::IndexLexical, reload_frame)?;
         let compiled = query::compile(
             compile_decl,
             &FindFields {
@@ -348,44 +415,7 @@ impl SearchEngine {
             (Occur::Must, compiled),
         ]);
         let searcher = lexical.reader.searcher();
-        let limit = count as usize;
-        let off = offset as usize;
-        if limit == 0 {
-            return Ok(Vec::new());
-        }
-        let addrs: Vec<tantivy::DocAddress> = if journal_ord {
-            let top = searcher
-                .search(
-                    &query,
-                    &TopDocs::with_limit(limit)
-                        .and_offset(off)
-                        .order_by_fast_field::<u64>("ord", Order::Asc),
-                )
-                .context(Code::IndexLexical, "[SearchEngine::find] search")?;
-            top.into_iter().map(|(_, addr)| addr).collect()
-        } else {
-            let top = searcher
-                .search(
-                    &query,
-                    &TopDocs::with_limit(limit).and_offset(off).order_by_score(),
-                )
-                .context(Code::IndexLexical, "[SearchEngine::find] search")?;
-            top.into_iter().map(|(_, addr)| addr).collect()
-        };
-        let mut ids = Vec::new();
-        for addr in addrs {
-            let doc: TantivyDocument = searcher
-                .doc(addr)
-                .context(Code::IndexLexical, "[SearchEngine::find] fetch document")?;
-            let Some(collection) = stored_str(&doc, lexical.f_collection) else {
-                continue;
-            };
-            let Some(id) = stored_str(&doc, lexical.f_id) else {
-                continue;
-            };
-            ids.push((collection, id));
-        }
-        Ok(ids)
+        Ok(Some(f(&searcher, &query, lexical)?))
     }
 
     pub(crate) fn search(
@@ -981,6 +1011,28 @@ fn parse_text_query(parser: &QueryParser, text: &str) -> Option<Box<dyn Query>> 
         return None;
     }
     parser.parse_query(trimmed).ok()
+}
+
+fn ids_from_addrs(
+    searcher: &tantivy::Searcher,
+    lexical: &Lexical,
+    addrs: impl IntoIterator<Item = tantivy::DocAddress>,
+    fetch_frame: &'static str,
+) -> Result<Vec<(String, String)>, Error> {
+    let mut ids = Vec::new();
+    for addr in addrs {
+        let doc: TantivyDocument = searcher
+            .doc(addr)
+            .context(Code::IndexLexical, fetch_frame)?;
+        let Some(collection) = stored_str(&doc, lexical.f_collection) else {
+            continue;
+        };
+        let Some(id) = stored_str(&doc, lexical.f_id) else {
+            continue;
+        };
+        ids.push((collection, id));
+    }
+    Ok(ids)
 }
 
 fn stored_str(doc: &TantivyDocument, field: Field) -> Option<String> {

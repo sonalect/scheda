@@ -1,7 +1,7 @@
 [project]
 name = "scheda"
 version = "0.1.0"
-description = "Locked vLLM sidecars for the Scheda CLI HTTP embedder/reranker"
+description = "Testdata driver for the scheda CLI and locked vLLM HTTP embedder/reranker sidecars. Not a language binding."
 requires-python = ">=3.14,<3.15"
 license = "Apache-2.0"
 # Extra pins: uv's latest of these was <2 days old (2026-08-26). Do not use

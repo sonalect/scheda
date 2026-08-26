@@ -1,5 +1,7 @@
 //! Thin CLI of `07`. JSON is the Protobuf JSON mapping of `api/v1`.
 
+use mimalloc::MiMalloc;
+
 mod args;
 mod http;
 mod onnx;
@@ -18,6 +20,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
+
+#[global_allocator]
+static GLOBAL: MiMalloc = MiMalloc;
 
 fn main() -> std::process::ExitCode {
     match run(std::env::args_os()) {

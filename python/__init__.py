@@ -1,1 +1,1 @@
-"""Python tree for Bazel-run sidecars. Not a Scheda language binding."""
+"""Python tree: CLI testdata driver and vLLM sidecars. Not a Scheda language binding."""
