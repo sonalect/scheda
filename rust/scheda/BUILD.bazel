@@ -3,31 +3,53 @@ load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
-# Matches Cargo.toml [features] default. `openmp` is Cargo-only (needs libomp).
+# Full CI build (`find` + `search` + SIMD). Cargo default is `remote-git`
+# only. `openmp` is Cargo-only (needs libomp).
 _SCHEDA_FEATURES = [
-    "numkong",
+    "find",
+    "search",
+    "simd",
     "remote-git",
+]
+
+# Matches Cargo.toml [features] default. No Tantivy, USearch, or C++.
+_SCHEDA_THIN_FEATURES = [
+    "remote-git",
+]
+
+_SCHEDA_SRCS = glob(["src/**/*.rs"])
+
+_SCHEDA_DEPS = [
+    "//rust/generated:generated_v1",
+    "@cargo//:buffa",
+    "@cargo//:buffa-types",
+    "@cargo//:git2",
+    "@cargo//:regex",
+    "@cargo//:serde",
+    "@cargo//:serde_json",
+    "@cargo//:yaml_serde",
 ]
 
 rust_library(
     name = "scheda",
-    srcs = glob(["src/**/*.rs"]),
+    srcs = _SCHEDA_SRCS,
     crate_features = _SCHEDA_FEATURES,
     crate_name = "scheda",
     visibility = ["//visibility:public"],
-    deps = [
-        "//rust/generated:generated_v1",
-        "@cargo//:buffa",
-        "@cargo//:buffa-types",
+    deps = _SCHEDA_DEPS + [
         "@cargo//:cxx",
-        "@cargo//:git2",
-        "@cargo//:regex",
-        "@cargo//:serde",
-        "@cargo//:serde_json",
         "@cargo//:tantivy",
         "@cargo//:usearch",
-        "@cargo//:yaml_serde",
     ],
+)
+
+rust_library(
+    name = "scheda_thin",
+    srcs = _SCHEDA_SRCS,
+    crate_features = _SCHEDA_THIN_FEATURES,
+    crate_name = "scheda",
+    visibility = ["//rust:__pkg__"],
+    deps = _SCHEDA_DEPS,
 )
 
 rust_test(
@@ -201,6 +223,26 @@ rust_test(
         ":scheda",
         "@cargo//:serde_json",
     ],
+)
+
+rust_test(
+    name = "thin_test",
+    srcs = ["tests/thin.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/thin.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "scheda_thin_test",
+    compile_data = glob(["testdata/**"]),
+    crate = ":scheda_thin",
+    crate_features = _SCHEDA_THIN_FEATURES,
+    visibility = ["//rust:__pkg__"],
 )
 
 rust_doc(

@@ -245,6 +245,7 @@ fn find_in_segment(
     )))
 }
 
+#[cfg(feature = "find")]
 pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
     let mut out = Vec::new();
     for_each_parsed(vault, decl, |path, parsed| {

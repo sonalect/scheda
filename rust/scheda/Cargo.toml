@@ -10,11 +10,15 @@ readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
 [features]
-default = ["numkong", "remote-git"]
-# USearch SIMD kernels (numkong). Off with `default-features = false`.
-numkong = ["usearch/numkong"]
+default = ["remote-git"]
+# Tantivy `find` (lexical Index). `search` pulls this in.
+find = ["dep:tantivy"]
+# Hybrid `search` (BM25 + USearch). Turns `find` on; the reverse does not.
+search = ["find", "dep:usearch", "dep:cxx"]
+# USearch SIMD kernels (`usearch/numkong`). Pulls `search` in.
+simd = ["search", "usearch/numkong"]
 # USearch OpenMP executor. Needs libomp (Linux `libomp-dev`; not used by Bazel CI).
-openmp = ["usearch/openmp"]
+openmp = ["search", "usearch/openmp"]
 # libgit2 HTTPS and SSH. File remotes and local git work without this;
 # skip it to avoid OpenSSL (`default-features = false`).
 remote-git = ["git2/https", "git2/ssh"]
@@ -23,7 +27,7 @@ remote-git = ["git2/https", "git2/ssh"]
 vendored-openssl = ["git2/vendored-openssl"]
 
 [dependencies]
-cxx = { workspace = true }
+cxx = { workspace = true, optional = true }
 git2 = { workspace = true }
 regex = { workspace = true }
 scheda-generated = { workspace = true }
@@ -31,8 +35,8 @@ buffa = { workspace = true }
 buffa-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tantivy = { workspace = true }
-usearch = { workspace = true }
+tantivy = { workspace = true, optional = true }
+usearch = { workspace = true, optional = true }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]
@@ -41,3 +45,40 @@ serde_json = { workspace = true }
 
 [lints]
 workspace = true
+
+# Integration tests that call `find` / `search` need those methods compiled.
+[[test]]
+name = "ann"
+required-features = ["search"]
+
+[[test]]
+name = "catalog"
+required-features = ["search"]
+
+[[test]]
+name = "consumer"
+required-features = ["find"]
+
+[[test]]
+name = "core"
+required-features = ["find"]
+
+[[test]]
+name = "isolated"
+required-features = ["find"]
+
+[[test]]
+name = "journal"
+required-features = ["find"]
+
+[[test]]
+name = "ops"
+required-features = ["search"]
+
+[[test]]
+name = "query"
+required-features = ["find"]
+
+[[test]]
+name = "search"
+required-features = ["search"]

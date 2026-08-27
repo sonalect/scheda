@@ -261,6 +261,7 @@ fn record_id_filename_respects_255_byte_component() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
+#[cfg(feature = "find")]
 #[test]
 fn rename_fails_check_and_find_one_does_not_follow() {
     let scratch = Scratch::new();
@@ -357,6 +358,22 @@ fn journal_replace_one_is_unsupported() {
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn replace_of_unindexed_file_is_not_found() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    let path = scratch.coll_file("north_notes", "orphan.md");
+    fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
+    let got = collection.get("orphan").unwrap();
+    assert_eq!(got.valid, Some(true));
+    let err = collection
+        .replace("orphan", rec_rep(serde_json::json!({"title": "New"})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
 #[test]
@@ -484,6 +501,7 @@ fn reader_find_one_while_writer_holds_lock() {
     assert_eq!(fields_of(&got)["title"], "Hello");
 }
 
+#[cfg(feature = "find")]
 #[test]
 fn header_id_must_match_record_id() {
     let scratch = Scratch::new();

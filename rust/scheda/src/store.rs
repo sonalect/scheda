@@ -288,6 +288,7 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
     }
 }
 
+#[cfg(feature = "find")]
 pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
     let mut out = Vec::new();
     for path in list_files(vault, decl)? {

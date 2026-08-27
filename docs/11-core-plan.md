@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.33, 27 August 2026.
+Document 11 of the Scheda package. Version 0.37, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -56,15 +56,15 @@ hybrid `search` → core acceptance.
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
 IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–19; ISO-1; OPS-1, OPS-3.
 
-Next crate work after this checklist is `12` §4 (consumer readiness; P0–P5 are in).
+Next crate work after this checklist is `12` §4 (consumer readiness; P0–P5 and P8 are in, next is P9).
 **agent** is accepted (`12`). This file does not add those stages.
 
 C10 accepted **core** against the codes as they read then. Several
 consumer readiness stages in `12` §4 amend **core** codes rather than add
 new ones — journal line fidelity under STO-2 and MOD-12 (P1), sequential
 journal read without the lexical Index as `lines` (LIB-19, P2),
-autocommit under GIT-2 (P3), the slug as the only `id` rule (SCH-6, P5),
-the singleton file under STO-2 and SCH-6 (P6). When one of those lands,
+autocommit under GIT-2 (P3), the slug as the only `id` rule (SCH-6, P5).
+When one of those lands,
 the matching C box is re-run, not re-opened
 as a new stage.
 
@@ -369,7 +369,7 @@ Re-run the five gates in `10` §2:
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
 C9. This checklist stops there. **agent** is accepted in `12`. Next crate
-work is `12` §4 (P6–P9; P0–P5 are in).
+work is `12` §4 (P9; P0–P5 and P8 are in, and P6 and P7 are gone).
 
 ---
 

@@ -10,12 +10,22 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
+- Crate features `find` (Tantivy) and `search` (hybrid BM25 + USearch).
+  `search` turns `find` on. `simd` (was `numkong`) turns `search` on
+  and enables USearch SIMD. Cargo `default` is `remote-git` only:
+  `cargo add scheda` does not pull Tantivy or USearch. The CLI enables
+  `find`, `search`, and `simd`. Bazel CI still links those legs.
+  `tantivy`, `usearch`, and `cxx` are optional. A build without `find`
+  still writes Records, marks the Index stale, and leaves `check` to
+  report it; `reindex` under a full build rebuilds the lexical
+  segments. `open` with an embedder without `search` fails
+  `index_vector`. `replace` uses the Record file when `find` is off
+  (same path isolated collections already used).
 - Consumer readiness stages P0–P9 in `12` §4: what the first consumer
   needs before moving a primary layer of text files onto the crate
   (journal line fidelity, ordered journal read, batch commits, isolated
-  slice, dead `id` knobs, singleton format, optional search, layout
-  decisions, acceptance). They do not reopen A0–A7; **agent** stays
-  accepted.
+  slice, dead `id` knobs, optional search, acceptance). They do not
+  reopen A0–A7; **agent** stays accepted.
 - A fixture Vault in test data shaped like a first consumer's primary
   layer: two `document` collections with the same fields, two more
   documents, three journals, one singleton, one isolated journal.
@@ -35,14 +45,25 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
-- README and `10`/`11`/`12` point next crate work at P6–P9. P0–P5 of
+- README and `10`/`11`/`12` point next crate work at P9. P0–P5 and P8 of
   consumer readiness are in, including the unencrypted isolated nested
-  git (`10` §1) and the slug as the only `id` rule.
+  git (`10` §1), the slug as the only `id` rule, and `find` / `search` as
+  opt-in crate features (Cargo default is `remote-git` only). A crate
+  without those features is the same library with named legs off, not a
+  second product (`10` §2). P7 is gone: how a
+  consumer reshapes its own files to fit MOD-8, MOD-16, and STO-4 is its
+  migration, and what those limits cost every consumer is `12` §6.
+- STO-2: a `singleton` is YAML 1.2 in `record.yaml`. The old wording
+  offered a Schema key that picks JSON or YAML; no such key ever
+  existed, and JSON is a subset of YAML 1.2, so an imported JSON file
+  parses unchanged under that name. On-disk bytes and behaviour are
+  unchanged. The stage that held this question (P6) is gone.
 - `12` §6 lists what a second consumer will want and Scheda does not
   have (no delete, one writer, flat directories, Struct doubles,
-  append-only journal, always-on Index legs, embedder only in the CLI,
-  slug-only `id`, fixed singleton name, one-consumer acceptance). Those
-  items are not stages.
+  append-only journal, C++ toolchain unless `search` is off, embedder
+  only in the CLI,
+  slug-only `id`, JSON accepted for Schema but not for a Record,
+  one-consumer acceptance). Those items are not stages.
 - GIT-2: a transaction is the only supported batch. There is no
   `OpenOptions` switch that turns autocommit off. A consumer that
   appends many journal lines holds `begin`/`commit`; otherwise each

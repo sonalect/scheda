@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Code, ContextAs, ContextIo};
+use crate::error::{Code, Context, ContextAs, ContextIo};
 use crate::journal;
 use crate::schema::{self, Kind, Schema};
 use crate::store;
@@ -15,6 +15,7 @@ use crate::{Error, ReindexResult};
 
 pub(crate) const FORMAT_VERSION: u32 = 3;
 const FORMAT_FILE: &str = "format";
+const STALE_FILE: &str = "stale";
 const JOURNAL_DIR: &str = "journal";
 const IDS_FILE: &str = "ids";
 
@@ -319,6 +320,7 @@ fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> R
     Ok(())
 }
 
+#[cfg(feature = "find")]
 pub(crate) fn format_version(index_dir: &Path) -> Result<Option<u32>, Error> {
     let path = index_dir.join(FORMAT_FILE);
     if !path.is_file() {
@@ -339,6 +341,7 @@ pub(crate) fn format_version(index_dir: &Path) -> Result<Option<u32>, Error> {
     }
 }
 
+#[cfg(feature = "find")]
 pub(crate) fn require_current_format(index_dir: &Path) -> Result<(), Error> {
     match format_version(index_dir)? {
         Some(FORMAT_VERSION) => Ok(()),
@@ -351,6 +354,7 @@ pub(crate) fn require_current_format(index_dir: &Path) -> Result<(), Error> {
     }
 }
 
+#[cfg(feature = "find")]
 pub(crate) fn ensure_format(index_dir: &Path) -> Result<(), Error> {
     match format_version(index_dir)? {
         Some(FORMAT_VERSION) => Ok(()),
@@ -366,6 +370,32 @@ pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
     fs::create_dir_all(index_dir).context("[Index::write_format] create dir")?;
     let path = index_dir.join(FORMAT_FILE);
     fs::write(&path, format!("{FORMAT_VERSION}\n")).context("[Index::write_format] write format")
+}
+
+fn stale_path(index_dir: &Path) -> PathBuf {
+    index_dir.join(STALE_FILE)
+}
+
+/// Whether a build that cannot update Tantivy segments wrote Records here.
+#[must_use]
+pub(crate) fn is_stale(index_dir: &Path) -> bool {
+    stale_path(index_dir).is_file()
+}
+
+/// Mark lexical segments out of date after a write that did not update them.
+#[cfg(not(feature = "find"))]
+pub(crate) fn mark_stale(index_dir: &Path) -> Result<(), Error> {
+    fs::create_dir_all(index_dir).context("[Index::mark_stale] create dir")?;
+    fs::write(stale_path(index_dir), []).context("[Index::mark_stale] write stale")
+}
+
+/// Fail closed when lexical segments were aged without a Tantivy update.
+pub(crate) fn require_fresh(index_dir: &Path) -> Result<(), Error> {
+    if is_stale(index_dir) {
+        return Err(Error::index_lexical("index is stale"))
+            .context("[Index::require_fresh] lexical segments");
+    }
+    Ok(())
 }
 
 fn clear_index_dir(index_dir: &Path) -> Result<(), Error> {

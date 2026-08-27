@@ -10,8 +10,8 @@ use crate::error::{Code, Context, ContextAs, ContextIo, bail};
 use crate::id::require_slug;
 use crate::store;
 use crate::{
-    Body, CollectionInfo, Edge, Error, Field, Journal, Object, Schema as ApiSchema, Singleton,
-    Text, Unit, VaultInfo,
+    Body, CollectionInfo, Edge, Error, Field, Journal, Object, Record, Schema as ApiSchema,
+    Singleton, Text, Unit, VaultInfo,
 };
 
 const MIB: u64 = 1024 * 1024;
@@ -251,6 +251,7 @@ pub(crate) struct BodyDecl {
     pub allowed: bool,
     pub fts: bool,
     pub vector: bool,
+    #[cfg(feature = "search")]
     pub field_id: String,
 }
 
@@ -263,6 +264,7 @@ pub(crate) struct FieldDecl {
     pub filter: bool,
     pub fts: bool,
     pub vector: bool,
+    #[cfg(feature = "search")]
     pub field_id: Option<String>,
     pub edge: Option<EdgeDecl>,
     pub default: Option<serde_json::Value>,
@@ -488,6 +490,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
             allowed: true,
             fts: true,
             vector: true,
+            #[cfg(feature = "search")]
             field_id: String::from("body"),
         }),
         (Kind::Document, Some(body)) => Some(finish_body(body)),
@@ -520,6 +523,7 @@ fn finish_body(raw: RawBody) -> BodyDecl {
         allowed: raw.allowed.unwrap_or(true),
         fts: !raw.exclude_fts,
         vector: !raw.exclude_vector,
+        #[cfg(feature = "search")]
         field_id: String::from("body"),
     }
 }
@@ -581,6 +585,7 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
                 (type_, Vec::new(), Some(edge), fts, vector)
             }
         };
+        #[cfg(feature = "search")]
         let field_id = vector.then(|| field.name.clone());
         out.push(FieldDecl {
             name: field.name,
@@ -590,6 +595,7 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
             filter: !field.exclude_find,
             fts,
             vector,
+            #[cfg(feature = "search")]
             field_id,
             edge,
             default: field.default,
@@ -926,6 +932,7 @@ fn body_from_proto(body: &Body) -> BodyDecl {
         allowed: !body.no_body.unwrap_or(false),
         fts: !exclude_fts,
         vector: !exclude_vector,
+        #[cfg(feature = "search")]
         field_id: String::from("body"),
     }
 }
@@ -1024,6 +1031,7 @@ fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
             }
             None => bail!(Error::invalid(format!("schema: field {name} has no spec"))),
         };
+        #[cfg(feature = "search")]
         let field_id = vector.then(|| name.to_owned());
         out.push(FieldDecl {
             name: name.to_owned(),
@@ -1033,6 +1041,7 @@ fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
             filter: !field.exclude_find.unwrap_or(false),
             fts,
             vector,
+            #[cfg(feature = "search")]
             field_id,
             edge,
             default,
@@ -1313,6 +1322,75 @@ pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
     Ok(out)
 }
 
+pub(crate) fn check_strict_edges(
+    schema: &Schema,
+    decl: &CollectionDecl,
+    record: &Record,
+    lookup: impl Fn(&str, &str) -> Result<Record, Error>,
+) -> Result<(), Error> {
+    let fields = store::fields_map(record)?;
+    check_strict_fields(&decl.fields, &fields, schema, &lookup)
+}
+
+fn check_strict_fields(
+    decls: &[FieldDecl],
+    values: &serde_json::Map<String, serde_json::Value>,
+    schema: &Schema,
+    lookup: &impl Fn(&str, &str) -> Result<Record, Error>,
+) -> Result<(), Error> {
+    for field in decls {
+        if let Some(edge) = &field.edge
+            && edge.dangling == Dangling::Strict
+        {
+            if schema.get(&edge.collection).is_none() {
+                bail!(Error::invalid(format!(
+                    "edge {} targets unknown collection {}",
+                    field.name, edge.collection
+                )));
+            }
+            for id in edge_target_ids(values.get(&field.name)) {
+                match lookup(&edge.collection, &id) {
+                    Ok(_) => {}
+                    Err(err) if err.known_code() == Some(crate::Code::NotFound) => {
+                        bail!(Error::invalid(format!(
+                            "strict edge {} target {id} is missing",
+                            field.name
+                        )));
+                    }
+                    Err(err) => bail!(err),
+                }
+            }
+        }
+        match values.get(&field.name) {
+            Some(serde_json::Value::Object(map)) => {
+                check_strict_fields(&field.fields, map, schema, lookup)?;
+            }
+            Some(serde_json::Value::Array(items)) => {
+                for item in items {
+                    if let Some(map) = item.as_object() {
+                        check_strict_fields(&field.fields, map, schema, lookup)?;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn edge_target_ids(value: Option<&serde_json::Value>) -> Vec<String> {
+    match value {
+        Some(serde_json::Value::String(id)) if !id.is_empty() => vec![id.clone()],
+        Some(serde_json::Value::Array(items)) => items
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .filter(|id| !id.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{FieldType, Kind, finish_collection};
@@ -1473,10 +1551,12 @@ mod tests {
         assert!(body.allowed);
         assert!(body.fts);
         assert!(body.vector);
+        #[cfg(feature = "search")]
         assert_eq!(body.field_id, "body");
         assert!(decl.filter_keys.contains("body"));
         assert!(decl.fields[0].fts);
         assert!(decl.fields[0].vector);
+        #[cfg(feature = "search")]
         assert_eq!(decl.fields[0].field_id.as_deref(), Some("title"));
         assert!(!decl.fields[1].fts);
         assert!(!decl.fields[1].vector);

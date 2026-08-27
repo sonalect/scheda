@@ -571,6 +571,30 @@ fn find_by_edge_target_does_not_scan_unrelated() {
     assert_eq!(found.records[0].id.as_deref(), Some("link"));
 }
 
+#[test]
+fn stale_index_fails_closed_until_reindex() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "kryptonite"})))
+        .unwrap();
+    fs::write(vault.index_dir().join("stale"), []).unwrap();
+    let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+    let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+    let got = collection.get("a").unwrap();
+    assert_eq!(got.valid, Some(true));
+    vault.reindex().unwrap();
+    assert!(!vault.index_dir().join("stale").is_file());
+    let found = collection.find(&FindQuery::all(), 0, 10).unwrap();
+    assert_eq!(found.total, Some(1));
+    vault.check().unwrap();
+}
+
 fn peek_schema_name(body: &str) -> String {
     for line in body.lines() {
         let line = line.trim();

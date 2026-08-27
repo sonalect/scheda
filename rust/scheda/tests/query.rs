@@ -374,11 +374,20 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(format.trim(), "3");
     fs::write(vault.index_dir().join("format"), "999\n").unwrap();
     fs::write(vault.index_dir().join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
-    let err = collection
-        .search(&scheda::SearchQuery::default().with_text("foreign"), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexVersion));
-    assert_ne!(err.to_string(), "foreign");
+    #[cfg(feature = "search")]
+    {
+        let err = collection
+            .search(&scheda::SearchQuery::default().with_text("foreign"), None)
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::IndexVersion));
+        assert_ne!(err.to_string(), "foreign");
+    }
+    #[cfg(not(feature = "search"))]
+    {
+        let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::IndexVersion));
+        assert_ne!(err.to_string(), "foreign");
+    }
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
     let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();

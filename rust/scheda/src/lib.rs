@@ -9,16 +9,25 @@
 //!
 //! # Crate features
 //!
-//! Default features are `remote-git` and `numkong`.
-//! `default-features = false` turns both off (file remotes still work).
+//! The default feature is `remote-git`. `cargo add scheda` does not pull
+//! Tantivy or USearch. `search` turns `find` on; `simd` turns `search`
+//! on; the reverse does not. `default-features = false` also drops git
+//! TLS (file remotes still work).
 //!
+//! - **`find`** — Tantivy `Vault::find` / `Collection::find`.
+//!   Writes without it mark the Index stale; `check` reports it, and
+//!   `reindex` under a build with `find` rebuilds the lexical segments.
+//! - **`search`** — hybrid `Vault::search` / `Collection::search`
+//!   (BM25 + USearch). Pulls `find` in. `open` with an embedder without
+//!   this feature fails (`index_vector`): the vector leg is absent.
 //! - **`remote-git`** *(default)* — libgit2 HTTPS and SSH (`git2/https`,
 //!   `git2/ssh`). TLS is platform OpenSSL / Secure Transport / WinHTTP.
 //!   Without it, `https://` and `git@` remotes are `unsupported`.
-//! - **`numkong`** *(default)* — USearch SIMD kernels via the `numkong`
-//!   crate. Needed for fast in-process ANN used by hybrid `search`.
+//! - **`simd`** — USearch SIMD kernels via the `numkong` crate
+//!   (`usearch/numkong`). Pulls `search` in. Needed for fast in-process
+//!   ANN.
 //! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
-//!   libomp (Linux `libomp-dev`). Not enabled in the Bazel default build.
+//!   libomp (Linux `libomp-dev`). Not enabled in the Bazel CI build.
 //!
 //! # Tokio and other async runtimes
 //!
@@ -47,6 +56,7 @@
 
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
+#[cfg(feature = "search")]
 mod ann;
 mod embed;
 mod error;
@@ -55,12 +65,15 @@ mod id;
 mod index;
 mod isolated;
 mod journal;
+#[cfg(feature = "find")]
 mod query;
 mod schema;
+#[cfg(feature = "find")]
 mod search;
 mod store;
 mod vault;
 
+#[cfg(feature = "search")]
 #[doc(hidden)]
 pub use ann::AnnIndex;
 pub use embed::{Embedder, Reranker};
@@ -68,9 +81,14 @@ pub use error::{Code, Repeat};
 pub use journal::JournalLines;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Body, CollectionInfo, Edge, Error, Field, Filter, FindQuery, FindResult, History, Journal,
-    Object, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema, SearchHits,
-    SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history, search_hits,
+    Body, CollectionInfo, Edge, Error, Field, History, Journal, Object, OpenOptions, Record,
+    RecordAdd, RecordReplace, ReindexResult, Schema, Singleton, Text, Unit, VaultInfo, history,
 };
+#[cfg(feature = "find")]
+#[doc(inline)]
+pub use scheda_generated::api::v1::{Filter, FindQuery, FindResult, filter};
+#[cfg(feature = "search")]
+#[doc(inline)]
+pub use scheda_generated::api::v1::{SearchHits, SearchQuery, search_hits};
 pub use schema::Kind;
 pub use vault::{Collection, Vault};

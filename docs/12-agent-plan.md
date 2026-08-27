@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.44, 27 August 2026.
+Document 12 of the Scheda package. Version 0.52, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -35,9 +35,9 @@ P0–P9.
 Tick a box only when the cited *Check:* passes under `bazel test //...` (or the
 named `#[test]`). Do not tick from a verbal claim that the code is ready.
 
-| Mark | Meaning |
-|---|---|
-| `[ ]` | Not done |
+| Mark  | Meaning                                  |
+| ----- | ---------------------------------------- |
+| `[ ]` | Not done                                 |
 | `[x]` | Done; the check lives in the crate tests |
 
 Each stage has **Status:** `not started` | `in progress` | `done`. Set `done`
@@ -58,17 +58,17 @@ P order is in §4. It starts after A7 and does not interleave with it.
 
 ## 2. Dashboard
 
-| Stage | Status | What closes |
-|---|---|---|
-| [A0](#a0-catalog-messages) | done | `VaultInfo` in `api/v1`; listing is `info` |
-| [A1](#a1-catalog-from-schema) | done | AGT-1; isolated listed without sealed fields |
-| [A2](#a2-thin-cli-legacy) | done | Legacy CLI; do not extend; replaced by A4 |
-| [A3](#a3-target-library) | done | Public API = `07` / `13` |
-| [A4](#a4-target-cli) | done | CLI argv = `14` (AGT-2–5) |
-| [A5](#a5-http-embedder-and-reranker) | done | CLI OpenAI embeddings + Cohere rerank (`14`) |
-| [A5b](#a5b-layout-clean-up) | done | Dead `layout` parts out; the `layout` key check exists |
-| [A6](#a6-isolation-at-the-agent-surface) | done | ISO-3 on CLI + library tools |
-| [A7](#a7-agent-acceptance) | done | `10` §4 acceptance |
+| Stage                                    | Status | What closes                                            |
+| ---------------------------------------- | ------ | ------------------------------------------------------ |
+| [A0](#a0-catalog-messages)               | done   | `VaultInfo` in `api/v1`; listing is `info`             |
+| [A1](#a1-catalog-from-schema)            | done   | AGT-1; isolated listed without sealed fields           |
+| [A2](#a2-thin-cli-legacy)                | done   | Legacy CLI; do not extend; replaced by A4              |
+| [A3](#a3-target-library)                 | done   | Public API = `07` / `13`                               |
+| [A4](#a4-target-cli)                     | done   | CLI argv = `14` (AGT-2–5)                              |
+| [A5](#a5-http-embedder-and-reranker)     | done   | CLI OpenAI embeddings + Cohere rerank (`14`)           |
+| [A5b](#a5b-layout-clean-up)              | done   | Dead `layout` parts out; the `layout` key check exists |
+| [A6](#a6-isolation-at-the-agent-surface) | done   | ISO-3 on CLI + library tools                           |
+| [A7](#a7-agent-acceptance)               | done   | `10` §4 acceptance                                     |
 
 **Agent in:** AGT-1–5. ISO-3 when isolated collections exist (`09`, with
 **agent**). AGT-1 listing is `Vault.info` (`VaultInfo.collections`), not a
@@ -421,7 +421,17 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P0–P5 are done; P6–P9 are not started.
+**Status of the part:** in progress. P0–P5 and P8 are done; P9 is not
+started.
+
+Two numbers are empty and stay empty, so the rest keep the names other
+documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
+wrong about the `singleton` file; STO-2 was, since it promised a Schema
+key that picks JSON or YAML and no such key has ever existed, and it now
+states the file plainly. P7 recorded how one consumer would reshape its
+own files to fit MOD-8, MOD-16, and STO-4. That is the consumer's
+migration, not work on this crate (§5); what those three limits cost
+*any* consumer is §6.
 
 The first consumer moves a primary layer of text files under git onto the
 crate: `document` collections it revises in place, and `journal`
@@ -444,18 +454,16 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 
 ### Dashboard
 
-| Stage | Status | What closes |
-|---|---|---|
-| [P0](#p0-consumer-fixture) | done | A fixture Vault shaped like the consumer's primary layer |
-| [P1](#p1-journal-line-fidelity) | done | An integer stays an integer; the line is RFC 8785 |
-| [P2](#p2-ordered-journal-read-without-the-lexical-index) | done | Reading a journal in order without Tantivy |
-| [P3](#p3-many-writes-one-commit) | done | Append per event without a commit per event |
-| [P4](#p4-unencrypted-isolated-slice) | done | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
-| [P5](#p5-dead-id-knobs) | done | Dead `id_pattern` / `id_field` out; the slug rule is the whole rule |
-| [P6](#p6-singleton-file-format) | not started | STO-2 and SCH-6 agree on the singleton file |
-| [P7](#p7-a-consumer-that-does-not-search) | not started | The search stack is not forced on every consumer |
-| [P8](#p8-decisions-without-code) | not started | Layout answers the consumer needs before it moves |
-| [P9](#p9-consumer-acceptance) | not started | The consumer's acceptance list on the P0 fixture |
+| Stage                                                    | Status      | What closes                                                         |
+| -------------------------------------------------------- | ----------- | ------------------------------------------------------------------- |
+| [P0](#p0-consumer-fixture)                               | done        | A fixture Vault shaped like the consumer's primary layer            |
+| [P1](#p1-journal-line-fidelity)                          | done        | An integer stays an integer; the line is RFC 8785                   |
+| [P2](#p2-ordered-journal-read-without-the-lexical-index) | done        | Reading a journal in order without Tantivy                          |
+| [P3](#p3-many-writes-one-commit)                         | done        | Append per event without a commit per event                         |
+| [P4](#p4-unencrypted-isolated-slice)                     | done        | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1)                                |
+| [P5](#p5-dead-id-knobs)                                  | done        | Dead `id_pattern` / `id_field` out; the slug rule is the whole rule |
+| [P8](#p8-find-and-search-as-features)                    | done        | The search stack is not forced on every consumer                    |
+| [P9](#p9-consumer-acceptance)                            | not started | The consumer's acceptance list on the P0 fixture                    |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -464,11 +472,11 @@ An implementer who meets that failure will rename the fixture into
 something meaningless instead of fixing the check.
 
 Then P1 and P2: without them a consumer can neither write nor read its
-journals honestly. Then P3 and P6, each small and each removing one
-migration blocker, and P5, which removes dead machinery rather than a
-blocker. P7 next, because it decides whether a consumer pays
-for Tantivy and USearch it does not use. P4 is the large one and is
-done (`10` §1 unencrypted slice). P9 closes the part.
+journals honestly. Then P3, small and removing one migration blocker, and
+P5, which removes dead machinery rather than a blocker. P4 is the large
+one and is done (`10` §1 unencrypted slice). P8 is in: `find` and
+`search` are crate features, optional on a reduced build. P9 closes the
+part.
 
 Each stage carries **Needs** (stages that must be `done` first) and
 **Decide first** (a question `03`–`10` leaves open, which has to be
@@ -510,9 +518,8 @@ not decide, that is a gap in the specification, and a silent default in
 ### Working in parallel
 
 P1, P2, and P3 all touch the journal write path and the commit rule; run
-them one at a time. P5 removed dead `CollectionDecl` fields. P6 and P7
-touch the singleton file and the build graph, and do not overlap each
-other. P8 is prose and blocks nothing.
+them one at a time. P5 removed dead `CollectionDecl` fields. P8 touches
+the build graph and overlaps nothing.
 
 ---
 
@@ -609,7 +616,7 @@ is why this has been invisible.
 **Needs:** P1, whose line bytes this read hands back.
 
 **Decide first:** `10` §2 — does IDX-2 stay a **core** requirement? That
-sentence decides whether this stage writes code at all, and P7 waits on
+sentence decides whether this stage writes code at all, and P8 waits on
 the same answer. Do not open an editor on `src/` before it is written.
 
 To verify its chain the consumer reads every line of a journal in append
@@ -734,93 +741,72 @@ The slug rule is the whole `id` rule, and the identity field is `id`.
 
 ---
 
-## P6. Singleton file format
+## P8. `find` and `search` as features
 
-**Status:** not started
-
-**Codes:** STO-2, SCH-6, MOD-8, QRY-1.
-
-**Needs:** nothing.
-
-**Decide first:** which of the two documents is wrong — `04` STO-2, which
-lets Schema choose JSON or YAML, or `05` SCH-6, which fixes the file at
-`record.yaml`. Code follows SCH-6 today, so choosing STO-2 is a change of
-behaviour and not only of prose.
-
-`04` STO-2 says a `singleton` is "JSON or YAML 1.2 as Schema says". `05`
-SCH-6 says the file is always `record.yaml`. The code follows SCH-6. Two
-documents of this package disagree, and the consumer keeps two singletons
-that are JSON today.
-
-- [ ] One of the two changes. If the file stays `record.yaml`, STO-2
-      drops "JSON or"; if Schema chooses, `05` §8 gains the key and MOD-8
-      gains the second file name.
-- [ ] Either way `get` returns the file bytes and the format is taken
-      from Schema, never guessed from content (QRY-1, IDX-10).
-
----
-
-## P7. A consumer that does not search
-
-**Status:** not started
+**Status:** done
 
 **Codes:** IDX-2, IDX-3, IDX-8, QRY-4, LIB-1, `10` §2.
 
-**Needs:** P2. Dropping the lexical leg is only possible once a
-sequential journal read does not go through it.
+**Needs:** P2, which moved a sequential journal read off the Index.
 
-**Decide first:** the same `10` §2 sentence as P2. P2 wrote it: IDX-2
-stays **core** for methods that resolve `id` through the Index; `lines`
-walks files. If a **core** build must still link Tantivy for `find`,
-this stage shrinks to the vector leg alone.
+**Decide first:** nothing. The shape below is decided: two features named
+after the two methods, `search` pulls `find` in, generated types stay
+compiled and stop being public.
 
-The crate links Tantivy, USearch, and a bundled libgit2 unconditionally.
-A consumer whose first stage is only writing and reading files pays for
-all three on every build and every test link. That is not a theoretical
-cost; it is what slows the consumer's own iteration today.
+Not urgent: nothing waits on it. Cargo `default` is `remote-git` only.
+`tantivy`, `usearch`, and `cxx` are `optional = true` behind `find` and
+`search`. `git2` is not part of this — git is the product — and its
+network legs are already `remote-git` and `vendored-openssl`.
 
-- [ ] Cargo features let a build drop the vector leg, and with P2 the
-      lexical leg. The default keeps both, so existing consumers see no
-      change.
-- [ ] `10` §2 says which of IDX-2 / IDX-3 a **core** binding must ship.
-      It puts IDX-2 in **core** today; if a feature can remove it, that
-      sentence changes.
-- [ ] With the features off, `open`, `add`, `get`, `history`, `commit`,
-      and `check` work. `find` / `search` return a `code` naming the
-      absent leg, not an empty result that reads as "no match" (QRY-4).
-- [ ] `bazel test //...` covers the reduced build. An untested feature
-      combination rots.
+`search` cannot stand without `find`. `search.proto` imports `find.proto`
+for `SearchQuery.filter`, and the hybrid's lexical half is BM25 on the
+same Tantivy Index under `SearchQuery.lexical_weight`. Without `find`
+what remains is ANN, not `search`.
 
----
+Neither is only a read path. `add` and `replace` write into the Index,
+and `replace` asks it whether the Record exists at all.
 
-## P8. Decisions without code
+```toml
+find   = ["dep:tantivy"]
+search = ["find", "dep:usearch", "dep:cxx"]
+simd   = ["search", "usearch/numkong"]
+```
 
-**Status:** not started
-
-**Codes:** MOD-8, MOD-16, STO-4.
-
-**Needs:** nothing.
-
-**Decide first:** all three boxes are the decision. This stage writes no
-code and its result is prose the consumer can act on.
-
-Three shapes in the consumer's current layout have no direct translation.
-Deciding them here costs a paragraph; discovering them mid-migration
-costs a rewrite. None needs crate work.
-
-- [ ] One of its collections is stored a directory level deeper today,
-      keyed by a field before the `id`. MOD-8 gives flat collection
-      directories with no path template (A5b). Record the answer: that
-      field becomes an ordinary field of one collection, or each of its
-      values becomes its own collection.
-- [ ] One of its files is a work queue whose entries change status in
-      place. A `journal` cannot do that: `replace` is `unsupported` and
-      there is no delete (MOD-16). Record whether such a queue stays the
-      consumer's own file or becomes a `document` collection with one
-      Record per entry.
-- [ ] Its capture path is a second process that writes a buffer of its
-      own. STO-4 allows one writer per working tree. Record that such a
-      buffer stays outside the Vault.
+- [x] `tantivy`, `usearch`, and `cxx` are `optional = true`. Cargo
+      `default` is `remote-git` only. `find`, `search`, and `simd` are
+      opt-in; turning `search` on turns `find` on; turning `simd` on
+      turns `search` on. The fourth combination (`search` without
+      `find`) does not exist. Bazel CI still links those three legs.
+- [x] `Vault::find` / `Collection::find` compile only under `find`, and
+      `Vault::search` / `Collection::search` only under `search`. Calls
+      into Tantivy and USearch sit behind `#[cfg(feature = …)]`; nothing
+      else in `src/` is conditional.
+- [x] The generated types stay compiled and stop being public. `lib.rs`
+      re-exports `Filter`, `FindQuery`, `FindResult`, and `filter` only
+      under `find`, and `SearchQuery`, `SearchHits`, `search_hits`, and
+      `AnnIndex` only under `search`. `scheda-generated` and
+      `bazel run //api/v1:generate` do not change.
+- [x] `replace` decides existence from the Record file, not from the
+      Index. Isolated collections already do exactly that; the same path
+      serves every collection when `find` is off.
+- [x] A build without `find` writes Records and cannot update the Tantivy
+      segments, so it marks the Index stale; `check` reports it and
+      `reindex` under a full build is the cure. A full build never
+      answers `find` from an Index a thin build silently aged (STO-1: the
+      Index is derived, so a stale one is a reported state, not a wrong
+      result).
+- [x] `open` with an embedder in a build without `search` fails with the
+      `code` for the absent leg (IDX-8, QRY-4). Not ignored, and not a
+      second `code` that tells the caller how the crate was compiled.
+      The `open` signature and the `Embedder` / `Reranker` traits are the
+      same in every build.
+- [x] Vault bytes and the `.scheda/index` format do not depend on the
+      feature set. A thin build opens a Vault a full build wrote and the
+      reverse.
+- [x] `10` §2 says the phases grade a build with `find` and `search`
+      on (Bazel CI). Cargo default is `remote-git` only: the same
+      library with those legs off, not a second product.
+- [x] CI builds full.
 
 ---
 
@@ -876,8 +862,8 @@ consumer's own documents and must not be copied into this package
 (SCH-1).
 
 The order in which a consumer moves its data, and what it keeps outside a
-Vault. §4 P8 records the answers a stage depends on; the migration itself
-is the consumer's plan, not a stage here.
+Vault. That is the consumer's plan, not a stage here. What the limits it
+runs into cost every consumer is §6.
 
 ---
 
@@ -896,13 +882,13 @@ first consumer is not mistaken for a decision taken for everybody.
    that cannot forget cannot answer an erasure request, cannot undo a
    wrong write, and cannot drop a collection's contents.
 
-2. **One writer per working tree (STO-4).** P8 answers it for one
-   consumer by keeping a second process's buffer outside the Vault. A
+2. **One writer per working tree (STO-4).** A consumer whose capture path
+   is a second process keeps that buffer outside the Vault. A
    service with several workers, or a daemon beside a CLI, has no answer
    at all: there is no cross-process wait, only `locked`.
 
 3. **Flat collection directories (MOD-8).** A5b removed the caller's
-   path template and was right to; nothing replaced it. P8's answer —
+   path template and was right to; nothing replaced it. The workaround —
    let each value of a field become its own collection — does not scale
    past a handful of values, and one collection of 10⁵–10⁶ Records is
    that many files in one directory. What is missing is a fan-out the
@@ -917,10 +903,10 @@ first consumer is not mistaken for a decision taken for everybody.
    retention, no compaction. Rotation cuts segments and discards nothing,
    so an append-only collection is unbounded by design.
 
-6. **Both Index legs are linked by default (P7).** P7 adds the features
-   and keeps both on, which protects the one consumer that exists and
-   charges every future one for a Tantivy and USearch it may never call.
-   The bundled libgit2 is not even behind a feature.
+6. **A C++ toolchain is mandatory unless `search` is off.** USearch
+   arrives through `cxx`. P8 puts `find` and `search` behind Cargo
+   features; a build without `search` does not need C++. Cargo default
+   does not enable `search`. Bazel CI still does.
 
 7. **The HTTP embedder lives in the CLI, not the crate (QRY-5, A5).**
    Anyone embedding the library writes `Embedder` again, next to an
@@ -930,9 +916,13 @@ first consumer is not mistaken for a decision taken for everybody.
    rule. A URL, an email address, or a foreign key cannot be a Record
    `id`; the caller has to derive a slug and keep the mapping.
 
-9. **A `singleton` is one fixed file name.** P6 may settle it as
-   `record.yaml`. A consumer whose existing file is JSON, or is named
-   otherwise, converts on import.
+9. **JSON is accepted for Schema and refused for a Record.** A Schema
+   file may be `.schema.yaml`, `.schema.yml`, or `.schema.json`, and the
+   loader branches on it. A `singleton` Record has one name,
+   `record.yaml`. Both cannot be the right rule. The fixed Record name is
+   the cheaper one to keep — one on-disk form, no format guessed from
+   content — so the question is whether the three Schema names should
+   become one.
 
 10. **Acceptance is one consumer's list (P9).** A second consumer needs
     acceptance stated against `03`–`10`, not against §4's fixture.

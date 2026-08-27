@@ -3,20 +3,27 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
+#[cfg(feature = "search")]
+use crate::Reranker;
 use crate::error::{Code, ContextAs, ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::isolated;
 use crate::journal;
+#[cfg(feature = "find")]
 use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
-use crate::search::{self, SearchEngine};
+#[cfg(feature = "find")]
+use crate::search::SearchEngine;
 use crate::store;
 use crate::{
-    Embedder, Error, Filter, FindQuery, FindResult, History, OpenOptions, Record, RecordAdd,
-    RecordReplace, ReindexResult, Reranker, Schema, SearchHits, SearchQuery, VaultInfo,
-    search_hits,
+    Embedder, Error, History, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema,
+    VaultInfo,
 };
+#[cfg(feature = "find")]
+use crate::{Filter, FindQuery, FindResult};
+#[cfg(feature = "search")]
+use crate::{SearchHits, SearchQuery, search_hits};
 
 const AUTO_COMMIT_MESSAGE: &str = "scheda";
 
@@ -31,6 +38,7 @@ pub struct Vault {
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
+    #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
 }
@@ -47,6 +55,7 @@ pub struct Collection {
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
+    #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
 }
@@ -57,6 +66,10 @@ impl Vault {
     /// Path exists → open (`remote_repo` ignored). Path missing + `remote_repo`
     /// → clone. Path missing → `git init`. Path exists but is not a Vault →
     /// `invalid`.
+    /// Optional caller embedder. Turns on the vector leg of `search`.
+    /// Without the `search` crate feature, a `Some` value fails
+    /// (`index_vector`): that leg is absent. The signature is the same in
+    /// every build.
     pub fn open(
         path: impl AsRef<Path>,
         options: OpenOptions,
@@ -112,6 +125,13 @@ impl Vault {
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
     ) -> Result<Self, Error> {
+        #[cfg(not(feature = "search"))]
+        if embedder.is_some() {
+            bail!(
+                Error::index_vector("vector index is not available")
+                    .context("[Vault::open] embedder")
+            );
+        }
         let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path).context("[Vault::open] canonicalize vault")?;
         let gitignore_pending = gitignore_needs_write(&path)?;
@@ -129,6 +149,7 @@ impl Vault {
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
         let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
+        #[cfg(feature = "find")]
         let search = Arc::new(SearchEngine::open(&index_dir, false)?);
         let vault = Self {
             path,
@@ -140,6 +161,7 @@ impl Vault {
             written,
             in_txn,
             journal_ids,
+            #[cfg(feature = "find")]
             search,
             embedder,
         };
@@ -220,6 +242,7 @@ impl Vault {
             written: Arc::clone(&self.written),
             in_txn: Arc::clone(&self.in_txn),
             journal_ids: Arc::clone(&self.journal_ids),
+            #[cfg(feature = "find")]
             search: Arc::clone(&self.search),
             embedder: self.embedder.clone(),
         })
@@ -227,6 +250,7 @@ impl Vault {
 
     /// Run a Tantivy Query on the Index, then open matching Record files.
     /// Empty `collections` is every non-isolated collection on this handle.
+    #[cfg(feature = "find")]
     pub fn find(
         &self,
         collections: &[&str],
@@ -247,6 +271,7 @@ impl Vault {
     /// Hybrid retrieval: BM25 and ANN when both are on, then RRF, then an
     /// optional reranker. Empty `collections` is every non-isolated collection
     /// on this handle.
+    #[cfg(feature = "search")]
     pub fn search(
         &self,
         collections: &[&str],
@@ -341,9 +366,12 @@ impl Vault {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
             index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
-        self.search.close_for_rebuild();
-        self.search
-            .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
+        #[cfg(feature = "find")]
+        {
+            self.search.close_for_rebuild();
+            self.search
+                .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
+        }
         *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
         Ok(())
     }
@@ -406,6 +434,7 @@ impl Vault {
         let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")?;
         if slot.is_none() {
             *slot = Some(acquire_write_lock(&self.path)?);
+            #[cfg(feature = "find")]
             self.search.enable_write()?;
         }
         let _ = op;
@@ -447,6 +476,7 @@ impl Vault {
     /// Remote. Does not write Records.
     pub fn check(&self) -> Result<(), Error> {
         isolated::check_perimeter(&self.path)?;
+        index::require_fresh(&self.index_dir)?;
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema)?;
         journal::check_journals(&self.path, &schema)
@@ -495,6 +525,7 @@ impl Vault {
     /// when that tree exists. Needs the write lock.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
+        #[cfg(feature = "find")]
         self.search.close_for_rebuild();
         let schema = schema::load(&self.path)?;
         let (counts, maps) = index::rebuild(&self.path, &schema, &self.index_dir)?;
@@ -502,8 +533,11 @@ impl Vault {
             .journal_ids
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = maps;
+        #[cfg(feature = "find")]
         self.search
             .rebuild(&self.path, &schema, self.embedder.as_deref())?;
+        #[cfg(not(feature = "find"))]
+        index::mark_stale(&self.index_dir)?;
         Ok(counts)
     }
 }
@@ -551,6 +585,7 @@ impl Collection {
             written: Arc::new(Mutex::new(BTreeSet::new())),
             in_txn: Arc::new(Mutex::new(false)),
             journal_ids: Arc::new(Mutex::new(JournalIdMaps::default())),
+            #[cfg(feature = "find")]
             search: Arc::new(SearchEngine::empty()),
             embedder: None,
         }
@@ -639,6 +674,34 @@ impl Collection {
         walk(&self.decl.fields, name)
     }
 
+    fn upsert_lexical(&self, record: &Record) -> Result<(), Error> {
+        if self.decl.isolated {
+            return Ok(());
+        }
+        #[cfg(feature = "find")]
+        {
+            self.search
+                .upsert(&self.decl, record, self.embedder.as_deref())
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            let _ = record;
+            index::mark_stale(&self.index_dir)
+        }
+    }
+
+    fn record_exists(&self, id: &str) -> Result<bool, Error> {
+        if self.decl.isolated {
+            return Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some());
+        }
+        #[cfg(feature = "find")]
+        {
+            self.search.has_id(&self.decl.name, id)
+        }
+        #[cfg(not(feature = "find"))]
+        Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some())
+    }
+
     fn require_write(&self) -> Result<(), Error> {
         let mut slot = self
             .write_lock
@@ -646,6 +709,7 @@ impl Collection {
             .unwrap_or_else(PoisonError::into_inner);
         if slot.is_none() {
             *slot = Some(acquire_write_lock(&self.vault)?);
+            #[cfg(feature = "find")]
             self.search.enable_write()?;
         }
         Ok(())
@@ -676,6 +740,7 @@ impl Collection {
             &self.vault,
             &self.index_dir,
             &self.journal_ids,
+            #[cfg(feature = "find")]
             &self.search,
             self.embedder.as_deref(),
         )
@@ -727,6 +792,7 @@ impl Collection {
                         &self.vault,
                         &self.index_dir,
                         &self.journal_ids,
+                        #[cfg(feature = "find")]
                         &self.search,
                         self.embedder.as_deref(),
                     );
@@ -744,7 +810,7 @@ impl Collection {
         self.require_write()?;
         self.drain_abandoned()?;
         self.prepare_isolated_write()?;
-        search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+        schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
         match self.decl.kind {
@@ -763,11 +829,7 @@ impl Collection {
                 record.path = Some(rel.clone());
                 record.valid = Some(true);
                 self.note_write(rel.clone())?;
-                if !self.decl.isolated
-                    && let Err(err) =
-                        self.search
-                            .upsert(&self.decl, &record, self.embedder.as_deref())
-                {
+                if let Err(err) = self.upsert_lexical(&record) {
                     self.rollback_journal_insert(&id, &rel, &rollback);
                     return Err(err);
                 }
@@ -779,11 +841,7 @@ impl Collection {
                 record.path = Some(rel.clone());
                 record.valid = Some(true);
                 self.note_write(rel.clone())?;
-                if !self.decl.isolated
-                    && let Err(err) =
-                        self.search
-                            .upsert(&self.decl, &record, self.embedder.as_deref())
-                {
+                if let Err(err) = self.upsert_lexical(&record) {
                     let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
                     let _ = self.unnote_write(&rel);
                     return Err(err);
@@ -830,30 +888,22 @@ impl Collection {
         let mut record = record_from_replace(id, &self.decl.name, record);
         self.require_write()?;
         self.drain_abandoned()?;
-        let known = if self.decl.isolated {
-            store::locate_file(&self.vault, &self.decl, id)?.is_some()
-        } else {
-            self.search.has_id(&self.decl.name, id)?
-        };
+        let known = self.record_exists(id)?;
         if !known {
             bail!(Error::not_found(format!(
-                "record {id} is not in the Index of {}",
+                "record {id} is not in {}",
                 self.decl.name
             )));
         }
         self.prepare_isolated_write()?;
-        search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+        schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
         let (_id, rel) = store::replace_document(&self.vault, &self.decl, id, record.clone())?;
         record.path = Some(rel.clone());
         record.valid = Some(true);
         self.note_write(rel.clone())?;
-        if !self.decl.isolated
-            && let Err(err) = self
-                .search
-                .upsert(&self.decl, &record, self.embedder.as_deref())
-        {
+        if let Err(err) = self.upsert_lexical(&record) {
             let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
             let _ = self.unnote_write(&rel);
             return Err(err);
@@ -863,6 +913,7 @@ impl Collection {
     }
 
     /// Run a Tantivy Query on this collection's Index, then open matching files.
+    #[cfg(feature = "find")]
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
         let name = self.decl.name.as_str();
         QueryCtx {
@@ -876,6 +927,7 @@ impl Collection {
 
     /// Hybrid retrieval on this collection: BM25 and ANN when both are on,
     /// then RRF, then an optional reranker.
+    #[cfg(feature = "search")]
     pub fn search(
         &self,
         query: &SearchQuery,
@@ -974,10 +1026,12 @@ fn record_from_replace(id: &str, collection: &str, replace: RecordReplace) -> Re
     record
 }
 
+#[cfg(feature = "search")]
 fn collection_from_record_path(path: &str) -> &str {
     path.split('/').next().unwrap_or("")
 }
 
+#[cfg(feature = "find")]
 fn resolve_collections(
     schema: &LoadedSchema,
     names: &[&str],
@@ -1010,6 +1064,7 @@ fn resolve_collections(
     Ok(out)
 }
 
+#[cfg(feature = "find")]
 fn apply_filter_schema(
     decls: Vec<schema::CollectionDecl>,
     filter: &Filter,
@@ -1027,6 +1082,7 @@ fn apply_filter_schema(
         .collect())
 }
 
+#[cfg(feature = "find")]
 fn read_record(
     vault: &Path,
     schema: &LoadedSchema,
@@ -1048,6 +1104,7 @@ fn read_record(
     }
 }
 
+#[cfg(feature = "find")]
 struct QueryCtx<'a> {
     engine: &'a SearchEngine,
     schema: &'a LoadedSchema,
@@ -1055,6 +1112,7 @@ struct QueryCtx<'a> {
     journal_ids: &'a Mutex<JournalIdMaps>,
 }
 
+#[cfg(feature = "find")]
 impl QueryCtx<'_> {
     fn find(
         &self,
@@ -1102,6 +1160,7 @@ impl QueryCtx<'_> {
         })
     }
 
+    #[cfg(feature = "search")]
     fn search(
         &self,
         embedder: Option<&dyn Embedder>,
@@ -1182,6 +1241,7 @@ impl QueryCtx<'_> {
         Ok(out)
     }
 
+    #[cfg(feature = "search")]
     fn fill_hit_raw(&self, hits: &mut SearchHits) -> Result<(), Error> {
         for hit in &mut hits.hits {
             let collection = hit_collection(hit);
@@ -1201,11 +1261,13 @@ impl QueryCtx<'_> {
     }
 }
 
+#[cfg(feature = "find")]
 fn without_raw(mut record: Record) -> Record {
     record.raw = None;
     record
 }
 
+#[cfg(feature = "search")]
 fn hit_collection(hit: &search_hits::Hit) -> &str {
     hit.collection
         .as_deref()
@@ -1342,14 +1404,20 @@ fn repair_index_after_discard(
     vault: &Path,
     index_dir: &Path,
     journal_ids: &Mutex<JournalIdMaps>,
-    search: &SearchEngine,
+    #[cfg(feature = "find")] search: &SearchEngine,
     embedder: Option<&dyn Embedder>,
 ) -> Result<(), Error> {
     let loaded = schema::load(vault)?;
     *journal_ids.lock().unwrap_or_else(PoisonError::into_inner) =
         index::load_all_journal_ids(vault, index_dir, &loaded)?;
-    search.close_for_rebuild();
-    search.rebuild(vault, &loaded, embedder)
+    #[cfg(feature = "find")]
+    {
+        search.close_for_rebuild();
+        search.rebuild(vault, &loaded, embedder)?;
+    }
+    #[cfg(not(feature = "find"))]
+    let _ = embedder;
+    Ok(())
 }
 
 fn load_written(vault: &Path) -> Result<BTreeSet<String>, Error> {

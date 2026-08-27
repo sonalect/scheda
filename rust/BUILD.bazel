@@ -24,7 +24,10 @@ rust_clippy_test(
         "//rust/scheda:remote_test",
         "//rust/scheda:schema_test",
         "//rust/scheda:scheda",
+        "//rust/scheda:scheda_thin",
+        "//rust/scheda:scheda_thin_test",
         "//rust/scheda:search_test",
+        "//rust/scheda:thin_test",
     ],
 )
 

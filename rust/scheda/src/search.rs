@@ -1,37 +1,53 @@
 //! Hybrid lexical + vector search and one-step edges.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(feature = "search")]
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tantivy::collector::{Count, DocSetCollector, TopDocs};
-use tantivy::query::{BooleanQuery, Occur, Query, QueryParser, TermQuery, TermSetQuery};
+#[cfg(feature = "search")]
+use tantivy::collector::DocSetCollector;
+use tantivy::collector::{Count, TopDocs};
+#[cfg(feature = "search")]
+use tantivy::query::QueryParser;
+use tantivy::query::{BooleanQuery, Occur, Query, TermQuery, TermSetQuery};
 use tantivy::schema::{
     FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema as TantivySchema, TEXT,
     Value as TantivyValue,
 };
 use tantivy::{Index, IndexReader, IndexWriter, Order, ReloadPolicy, TantivyDocument, Term};
 
-use crate::ann::AnnIndex;
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index;
 use crate::query::{self, FindFields};
-use crate::schema::{CollectionDecl, Dangling, FieldDecl, Schema};
+use crate::schema::{self, CollectionDecl, FieldDecl, Schema};
 use crate::store;
-use crate::{Embedder, Error, Filter, Record, SearchHits, SearchQuery, search_hits};
+use crate::{Embedder, Error, Filter, Record};
+#[cfg(feature = "search")]
+use crate::{SearchHits, SearchQuery, search_hits};
+
+#[cfg(feature = "search")]
+use crate::ann::AnnIndex;
 
 const LEXICAL_DIR: &str = "lexical";
+#[cfg(feature = "search")]
 const VECTOR_DIR: &str = "vector";
+#[cfg(feature = "search")]
 const VECTOR_INDEX: &str = "index.usearch";
+#[cfg(feature = "search")]
 const VECTOR_META: &str = "meta.json";
+#[cfg(feature = "search")]
 const VECTOR_KEYS: &str = "keys.json";
 const EDGES_FILE: &str = "edges.jsonl";
 const ORD_FILE: &str = "ord.json";
 const WRITER_HEAP: usize = 16_000_000;
+#[cfg(feature = "search")]
 const RRF_K: f64 = 60.0;
+#[cfg(feature = "search")]
 const DEFAULT_K: usize = 10;
 
 pub(crate) struct SearchEngine {
@@ -41,6 +57,7 @@ pub(crate) struct SearchEngine {
 
 struct Inner {
     lexical: Option<Lexical>,
+    #[cfg(feature = "search")]
     vector: Option<VectorStore>,
     edges: EdgeIndex,
     dirty: bool,
@@ -64,6 +81,7 @@ struct Lexical {
     f_ord: Field,
 }
 
+#[cfg(feature = "search")]
 struct VectorStore {
     ann: AnnIndex,
     keys: BTreeMap<u64, DocRef>,
@@ -73,6 +91,7 @@ struct VectorStore {
     next_key: u64,
 }
 
+#[cfg(feature = "search")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DocRef {
     collection: String,
@@ -81,6 +100,7 @@ struct DocRef {
     field: String,
 }
 
+#[cfg(feature = "search")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct VectorMeta {
     model_id: String,
@@ -104,6 +124,7 @@ struct EdgeIndex {
     by_target: BTreeMap<(String, String, String), Vec<String>>,
 }
 
+#[cfg(feature = "search")]
 struct LegHit {
     collection: String,
     id: String,
@@ -127,6 +148,7 @@ fn collection_query(field: Field, names: &[&str]) -> Box<dyn Query> {
     }
 }
 
+#[cfg(feature = "search")]
 fn allowed_has(allowed: &BTreeMap<String, BTreeSet<String>>, collection: &str, id: &str) -> bool {
     allowed.get(collection).is_some_and(|ids| ids.contains(id))
 }
@@ -135,6 +157,7 @@ impl SearchEngine {
     pub(crate) fn open(index_dir: &Path, can_write: bool) -> Result<Self, Error> {
         let inner = Inner {
             lexical: open_lexical(index_dir, can_write).ok().flatten(),
+            #[cfg(feature = "search")]
             vector: load_vector(index_dir).ok().flatten(),
             edges: load_edges(index_dir).unwrap_or_else(|_| EdgeIndex::default()),
             dirty: false,
@@ -153,6 +176,7 @@ impl SearchEngine {
             index_dir: PathBuf::new(),
             inner: Mutex::new(Inner {
                 lexical: None,
+                #[cfg(feature = "search")]
                 vector: None,
                 edges: EdgeIndex::default(),
                 dirty: false,
@@ -169,7 +193,10 @@ impl SearchEngine {
             return;
         };
         inner.lexical = None;
-        inner.vector = None;
+        #[cfg(feature = "search")]
+        {
+            inner.vector = None;
+        }
         inner.edges = EdgeIndex::default();
         inner.dirty = false;
         inner.next_ord.clear();
@@ -181,10 +208,15 @@ impl SearchEngine {
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
+        #[cfg(not(feature = "search"))]
+        let _ = embedder;
         let can_write = {
             let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
             inner.lexical = None;
-            inner.vector = None;
+            #[cfg(feature = "search")]
+            {
+                inner.vector = None;
+            }
             inner.edges = EdgeIndex::default();
             inner.dirty = false;
             inner.next_ord.clear();
@@ -204,8 +236,13 @@ impl SearchEngine {
                 if record.valid != Some(true) {
                     continue;
                 }
-                let pieces = field_vector_texts(decl, &record)?;
-                let vectors = embed_field_vectors(embedder, pieces)?;
+                #[cfg(feature = "search")]
+                let vectors = {
+                    let pieces = field_vector_texts(decl, &record)?;
+                    embed_field_vectors(embedder, pieces)?
+                };
+                #[cfg(not(feature = "search"))]
+                let vectors: Vec<(String, Vec<f32>)> = Vec::new();
                 let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
                 upsert_record(
                     &mut inner,
@@ -231,8 +268,15 @@ impl SearchEngine {
         if decl.isolated {
             return Ok(());
         }
-        let pieces = field_vector_texts(decl, record)?;
-        let vectors = embed_field_vectors(embedder, pieces)?;
+        #[cfg(not(feature = "search"))]
+        let _ = embedder;
+        #[cfg(feature = "search")]
+        let vectors = {
+            let pieces = field_vector_texts(decl, record)?;
+            embed_field_vectors(embedder, pieces)?
+        };
+        #[cfg(not(feature = "search"))]
+        let vectors: Vec<(String, Vec<f32>)> = Vec::new();
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::upsert] lock")?;
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
@@ -278,6 +322,7 @@ impl SearchEngine {
     }
 
     pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
+        index::require_fresh(&self.index_dir)?;
         match index::format_version(&self.index_dir)? {
             Some(v) if v != index::FORMAT_VERSION => {
                 return Err(Error::index_version(format!(
@@ -325,6 +370,7 @@ impl SearchEngine {
         Ok(!top.is_empty())
     }
 
+    #[cfg(feature = "search")]
     pub(crate) fn find_ids(
         &self,
         collections: &[&str],
@@ -427,6 +473,7 @@ impl SearchEngine {
         if collections.is_empty() || decls.is_empty() {
             return Ok(None);
         }
+        index::require_fresh(&self.index_dir)?;
         index::require_current_format(&self.index_dir)?;
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::with_find] lock")?;
         let can_write = inner.can_write;
@@ -483,6 +530,7 @@ impl SearchEngine {
         Ok(Some(f(&searcher, &query, lexical)?))
     }
 
+    #[cfg(feature = "search")]
     pub(crate) fn search(
         &self,
         collections: &[&str],
@@ -493,6 +541,7 @@ impl SearchEngine {
         if collections.is_empty() {
             return Ok(SearchHits::default());
         }
+        index::require_fresh(&self.index_dir)?;
         index::require_current_format(&self.index_dir)?;
         let Some(text) = query.text.as_deref() else {
             unreachable!("SearchQuery text is required");
@@ -574,6 +623,7 @@ impl Inner {
                 .reload()
                 .context(Code::IndexLexical, "[SearchEngine::commit] reload reader")?;
         }
+        #[cfg(feature = "search")]
         if let Some(vector) = &self.vector {
             save_vector(index_dir, vector)?;
         }
@@ -611,11 +661,14 @@ fn upsert_record(
             index_lexical(lexical, decl, record, &fts_text, ord)?;
             inner.dirty = true;
         }
+        #[cfg(feature = "search")]
         if let Some(embedder) = embedder {
             upsert_vector(inner, embedder, decl, record, vectors)?;
             inner.dirty = true;
         }
     }
+    #[cfg(not(feature = "search"))]
+    let _ = (embedder, vectors);
     Ok(())
 }
 
@@ -729,6 +782,7 @@ fn eq_values(value: &Value) -> Vec<String> {
     }
 }
 
+#[cfg(feature = "search")]
 fn upsert_vector(
     inner: &mut Inner,
     embedder: &dyn Embedder,
@@ -798,6 +852,7 @@ fn upsert_vector(
     Ok(())
 }
 
+#[cfg(feature = "search")]
 fn embed_field_vectors(
     embedder: Option<&dyn Embedder>,
     pieces: Vec<(String, String)>,
@@ -818,6 +873,7 @@ fn embed_field_vectors(
     Ok(out)
 }
 
+#[cfg(feature = "search")]
 fn field_vector_texts(
     decl: &CollectionDecl,
     record: &Record,
@@ -834,6 +890,7 @@ fn field_vector_texts(
     Ok(out)
 }
 
+#[cfg(feature = "search")]
 fn collect_vector_texts(
     decls: &[FieldDecl],
     values: &serde_json::Map<String, Value>,
@@ -863,6 +920,7 @@ fn collect_vector_texts(
     }
 }
 
+#[cfg(feature = "search")]
 fn vector_slots(decl: &CollectionDecl) -> BTreeSet<String> {
     let mut slots = BTreeSet::new();
     collect_vector_slots(&decl.fields, &mut slots);
@@ -874,6 +932,7 @@ fn vector_slots(decl: &CollectionDecl) -> BTreeSet<String> {
     slots
 }
 
+#[cfg(feature = "search")]
 fn collect_vector_slots(fields: &[FieldDecl], slots: &mut BTreeSet<String>) {
     for field in fields {
         if field.vector
@@ -885,6 +944,7 @@ fn collect_vector_slots(fields: &[FieldDecl], slots: &mut BTreeSet<String>) {
     }
 }
 
+#[cfg(feature = "search")]
 fn lexical_search(
     inner: &mut Inner,
     collections: &[&str],
@@ -943,6 +1003,7 @@ fn lexical_search(
     Ok(hits)
 }
 
+#[cfg(feature = "search")]
 fn vector_search(
     inner: &Inner,
     collections: &[&str],
@@ -1020,6 +1081,7 @@ fn vector_search(
     Ok(hits)
 }
 
+#[cfg(feature = "search")]
 struct FusedScores {
     rrf: f64,
     lexical: Option<f64>,
@@ -1027,6 +1089,7 @@ struct FusedScores {
     path: String,
 }
 
+#[cfg(feature = "search")]
 fn fuse(
     lexical: &[LegHit],
     vector: &[LegHit],
@@ -1096,6 +1159,7 @@ fn fuse(
     hits
 }
 
+#[cfg(feature = "search")]
 fn parse_text_query(parser: &QueryParser, text: &str) -> Option<Box<dyn Query>> {
     if let Ok(query) = parser.parse_query(text) {
         return Some(query);
@@ -1268,6 +1332,7 @@ fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
     })
 }
 
+#[cfg(feature = "search")]
 fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
     let dir = index_dir.join(VECTOR_DIR);
     let meta_path = dir.join(VECTOR_META);
@@ -1306,6 +1371,7 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
     }))
 }
 
+#[cfg(feature = "search")]
 fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
     let dir = index_dir.join(VECTOR_DIR);
     fs::create_dir_all(&dir).context("[SearchEngine::save_vector] create dir")?;
@@ -1392,7 +1458,7 @@ fn collect_edges(
 ) {
     for field in decls {
         if field.edge.is_some() {
-            for dst in edge_target_ids(values.get(&field.name)) {
+            for dst in schema::edge_target_ids(values.get(&field.name)) {
                 edges
                     .by_target
                     .entry((src.to_owned(), field.name.clone(), dst))
@@ -1413,19 +1479,6 @@ fn collect_edges(
             }
             _ => {}
         }
-    }
-}
-
-pub(crate) fn edge_target_ids(value: Option<&Value>) -> Vec<String> {
-    match value {
-        Some(Value::String(id)) if !id.is_empty() => vec![id.clone()],
-        Some(Value::Array(items)) => items
-            .iter()
-            .filter_map(Value::as_str)
-            .filter(|id| !id.is_empty())
-            .map(str::to_owned)
-            .collect(),
-        _ => Vec::new(),
     }
 }
 
@@ -1493,64 +1546,11 @@ fn push_strings(value: &Value, out: &mut Vec<String>) {
     }
 }
 
-pub(crate) fn check_strict_edges(
-    schema: &Schema,
-    decl: &CollectionDecl,
-    record: &Record,
-    lookup: impl Fn(&str, &str) -> Result<Record, Error>,
-) -> Result<(), Error> {
-    let fields = store::fields_map(record)?;
-    check_strict_fields(&decl.fields, &fields, schema, &lookup)
-}
-
-fn check_strict_fields(
-    decls: &[FieldDecl],
-    values: &serde_json::Map<String, Value>,
-    schema: &Schema,
-    lookup: &impl Fn(&str, &str) -> Result<Record, Error>,
-) -> Result<(), Error> {
-    for field in decls {
-        if let Some(edge) = &field.edge
-            && edge.dangling == Dangling::Strict
-        {
-            if schema.get(&edge.collection).is_none() {
-                bail!(Error::invalid(format!(
-                    "edge {} targets unknown collection {}",
-                    field.name, edge.collection
-                )));
-            }
-            for id in edge_target_ids(values.get(&field.name)) {
-                match lookup(&edge.collection, &id) {
-                    Ok(_) => {}
-                    Err(err) if err.known_code() == Some(crate::Code::NotFound) => {
-                        bail!(Error::invalid(format!(
-                            "strict edge {} target {id} is missing",
-                            field.name
-                        )));
-                    }
-                    Err(err) => bail!(err),
-                }
-            }
-        }
-        match values.get(&field.name) {
-            Some(Value::Object(map)) => check_strict_fields(&field.fields, map, schema, lookup)?,
-            Some(Value::Array(items)) => {
-                for item in items {
-                    if let Some(map) = item.as_object() {
-                        check_strict_fields(&field.fields, map, schema, lookup)?;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
 fn doc_key(collection: &str, id: &str) -> String {
     format!("{collection}\0{id}")
 }
 
+#[cfg(feature = "search")]
 fn next_ann_key(meta_next: u64, keys: &BTreeMap<u64, DocRef>) -> u64 {
     let max_key = keys.last_key_value().map(|(key, _)| *key).unwrap_or(0);
     meta_next.max(max_key.saturating_add(1)).max(1)

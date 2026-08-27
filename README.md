@@ -41,7 +41,7 @@ does not call a language model, and does not know a profession.
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, Schema, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
 RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, a CLI encoding
-of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P6–P9 (`12` §4). P0–P5 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule). CLI mutations autocommit; batch writes are in-process.
+of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P9 (`12` §4). P0–P5 and P8 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features). CLI mutations autocommit; batch writes are in-process.
 
 ## Documents
 
@@ -91,13 +91,17 @@ libgit2 needs **cmake**, **pkg-config**, and zlib headers. Feature
 (`libssl-dev`), Secure Transport on macOS, WinHTTP on Windows. SSH uses
 vendored libssh2, which still needs OpenSSL headers on Unix (Homebrew
 `openssl` on macOS; keg-only, so set
-`PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"`). Feature
-`numkong` (default) is USearch SIMD. `openmp` is opt-in (Linux
-`libomp-dev`). `default-features = false` drops both git TLS and SIMD
-(file remotes still work); add `features = ["numkong"]` to keep SIMD.
-USearch needs a C++17 compiler: **g++** (Linux), **clang++** / Xcode CLT
-(macOS), **MSVC** Build Tools (Windows). CI runs Bazel on Debian 13, macOS,
-and Windows amd64.
+`PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"`). Features
+`find` and `search` are opt-in: Tantivy `find` and hybrid `search`
+(BM25 + USearch). `search` turns `find` on. `simd` turns `search` on
+and enables USearch SIMD kernels. `openmp` is opt-in (Linux
+`libomp-dev`). Cargo default is `remote-git` only. `default-features =
+false` also drops git TLS (file remotes still work). Add `features =
+["search", "simd"]` for ANN + SIMD, or `features = ["find"]` for
+Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
+**clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
+build without `search` does not need C++. CI runs Bazel on Debian 13,
+macOS, and Windows amd64 (`find`, `search`, and `simd` on).
 
 ```bash
 bazel build //rust/scheda:scheda
@@ -148,7 +152,9 @@ bazel run //python:format       # ruff format
 bazel run //bazel:format        # buildifier -mode=fix
 ```
 
-`cargo test` / `cargo clippy` still work for local iteration. CI runs Bazel.
+`cargo test` / `cargo clippy` still work for local iteration. `cargo test
+-p scheda` is Cargo default (`remote-git` only). For `find` / `search`
+tests: `cargo test -p scheda --features search,simd`. CI runs Bazel.
 `cargo build --release` uses thin LTO, one codegen unit, and symbol strip.
 
 Optional Cargo-only **static CRT** CLI. Bazel and default Cargo stay

@@ -147,8 +147,10 @@ pub(crate) trait ForeignError: fmt::Display {}
 
 impl ForeignError for serde_json::Error {}
 impl ForeignError for yaml_serde::Error {}
+#[cfg(feature = "find")]
 impl ForeignError for tantivy::TantivyError {}
 impl ForeignError for std::time::SystemTimeError {}
+#[cfg(feature = "search")]
 impl ForeignError for cxx::Exception {}
 impl ForeignError for std::str::Utf8Error {}
 impl ForeignError for std::string::FromUtf8Error {}
@@ -207,6 +209,7 @@ macro_rules! bail {
     };
 }
 
+#[cfg(any(test, feature = "search"))]
 macro_rules! ensure {
     ($cond:expr, $err:expr $(,)?) => {
         if !$cond {
@@ -215,7 +218,9 @@ macro_rules! ensure {
     };
 }
 
-pub(crate) use {bail, ensure};
+pub(crate) use bail;
+#[cfg(feature = "search")]
+pub(crate) use ensure;
 
 #[cfg(test)]
 mod tests {

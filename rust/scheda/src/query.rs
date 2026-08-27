@@ -33,6 +33,7 @@ pub(crate) struct FindFields {
     pub collection: Field,
 }
 
+#[cfg(feature = "search")]
 pub(crate) fn is_unconstrained(filter: &Filter) -> bool {
     matches!(filter.kind.as_ref(), Some(Kind::All(_)))
 }
