@@ -1,11 +1,10 @@
 load("@aspect_rules_py//py:defs.bzl", "py_binary", "py_library")
-load("//bazel:compat.bzl", "NOT_WINDOWS")
+load("//bazel:compat.bzl", "LINUX")
 
 _IMPORTS = ["../.."]
 
-# aspect_rules_py uv host: `fail("Unsupported platform windows")`.
-# Windows CI deletes this package in `.bazelrc` instead of relying on
-# target_compatible_with (that still loads the BUILD file).
+# Lock is Linux-only. macOS/Windows CI delete this package in `.bazelrc`;
+# `target_compatible_with` still loads the BUILD file and fetches @pypi.
 py_library(
     name = "cli_pkg",
     srcs = [
@@ -14,7 +13,7 @@ py_library(
         "main.py",
     ],
     imports = _IMPORTS,
-    target_compatible_with = NOT_WINDOWS,
+    target_compatible_with = LINUX,
     visibility = ["//visibility:private"],
     deps = [
         "//python:python_pkg",
@@ -35,7 +34,7 @@ py_library(
         data = ["//rust/cli:scheda"],
         imports = _IMPORTS,
         main = "main.py",
-        target_compatible_with = NOT_WINDOWS,
+        target_compatible_with = LINUX,
         visibility = ["//visibility:public"],
         deps = [":cli_pkg"],
     )

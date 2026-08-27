@@ -11,6 +11,9 @@ common:linux --@pypi//venv=scheda
 common:macos --@pypi//venv=scheda
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles
+# uv.lock is Linux-only (vLLM manylinux). `//python/cli` would compile
+# hf_xet / PyYAML sdists (`No module named build`). Keep //python for ruff.
+common:macos --deleted_packages=python/cli,python/vllm
 # `target_compatible_with` does not stop `//...` from loading these packages.
 # Deleted, they are invisible, so the uv host is not fetched.
 common:windows --deleted_packages=python,python/cli,python/vllm
