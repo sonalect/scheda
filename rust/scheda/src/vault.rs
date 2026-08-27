@@ -145,16 +145,19 @@ impl Vault {
         Ok(vault)
     }
 
+    /// Absolute path of the Vault working tree.
     #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
 
+    /// Index directory: `{vault}/.scheda/index`.
     #[must_use]
     pub fn index_dir(&self) -> &Path {
         &self.index_dir
     }
 
+    /// Whether this handle currently holds `{vault}/.scheda/write.lock`.
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
         self.write_lock
@@ -163,16 +166,19 @@ impl Vault {
             .is_some()
     }
 
+    /// Whether git reports at least one Remote (usually `origin`).
     #[must_use]
     pub fn has_remote(&self) -> bool {
         !self.remotes.is_empty()
     }
 
+    /// Git remote names on this Vault. Empty when there is no Remote.
     #[must_use]
     pub fn remote_names(&self) -> &[String] {
         &self.remotes
     }
 
+    /// `auto_sync` on this handle: after `commit`, `push` when a Remote exists.
     #[must_use]
     pub fn auto_sync(&self) -> bool {
         self.auto_sync
@@ -188,6 +194,10 @@ impl Vault {
         Arc::clone(&self.schema.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
+    /// Handle for one non-isolated collection.
+    ///
+    /// Unknown name → `not_found`. Isolated → `unsupported` until nested
+    /// `{vault}/.isolated/` I/O exists.
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
         let schema = self.schema_arc();
         let Some(decl) = schema.get(name) else {
@@ -351,17 +361,20 @@ impl Vault {
         persist_written(&self.index_dir, &set)
     }
 
+    /// `git push` to `origin`. Needs the write lock.
     pub fn push(&self) -> Result<(), Error> {
         self.require_write_lock("push")?;
         git::push(&self.path)
     }
 
+    /// `git pull` from `origin`, then reload Schema and rebuild the Index.
     pub fn pull(&self) -> Result<(), Error> {
         self.require_write_lock("pull")?;
         git::pull(&self.path)?;
         self.reload_after_restore()
     }
 
+    /// `pull` then `push`. Needs the write lock.
     pub fn sync(&self) -> Result<(), Error> {
         self.require_write_lock("sync")?;
         git::pull(&self.path)?;
@@ -408,6 +421,9 @@ impl Vault {
         result
     }
 
+    /// Validate Schema, encodings, journal lines, `id` uniqueness, and conflict
+    /// markers for non-isolated collections. Does not write Records. Isolated
+    /// Record files are not scanned until nested `{vault}/.isolated/` I/O exists.
     pub fn check(&self) -> Result<(), Error> {
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema)?;
@@ -451,6 +467,8 @@ impl Vault {
         self.collection(name)
     }
 
+    /// Rebuild the Index from Vault files. Writes format version `3` and the
+    /// journal `id` map. Needs the write lock.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
         self.search.close_for_rebuild();
@@ -516,60 +534,72 @@ impl Collection {
         }
     }
 
+    /// Collection directory name (same as Schema `name`).
     #[must_use]
     pub fn name(&self) -> &str {
         &self.decl.name
     }
 
+    /// This collection's Schema as `api.v1.Schema`. Not a Vault listing (`info`).
     pub fn schema(&self) -> Result<Schema, Error> {
         schema::to_proto_schema(&self.decl, false)
     }
 
+    /// Write mode: `document`, `journal`, or `singleton`.
     #[must_use]
     pub fn kind(&self) -> Kind {
         self.decl.kind
     }
 
+    /// Schema `version` of this collection (≥ 1).
     #[must_use]
     pub fn version(&self) -> u32 {
         self.decl.version
     }
 
+    /// Record identity field name. Default `id`.
     #[must_use]
     pub fn id_field(&self) -> &str {
         &self.decl.id_field
     }
 
+    /// Whether `field` is a Schema filter key (`find` / `search` Filter).
     #[must_use]
     pub fn is_filter_key(&self, field: &str) -> bool {
         self.decl.filter_keys.contains(field)
     }
 
+    /// Journal segment size cap in bytes. `None` on `document` / `singleton`.
     #[must_use]
     pub fn segment_max_bytes(&self) -> Option<u64> {
         self.decl.segment_max_bytes
     }
 
+    /// Fixed `id` of a `singleton` collection. `None` otherwise.
     #[must_use]
     pub fn singleton_id(&self) -> Option<&str> {
         self.decl.singleton_id.as_deref()
     }
 
+    /// Schema type name of `name` (`string`, `integer`, …). Nested fields included.
     #[must_use]
     pub fn field_type(&self, name: &str) -> Option<&'static str> {
         self.field(name).map(|field| field.type_.as_str())
     }
 
+    /// Whether Schema marks `name` required. `None` if the field is unknown.
     #[must_use]
     pub fn field_is_required(&self, name: &str) -> Option<bool> {
         self.field(name).map(|field| field.required)
     }
 
+    /// Whether Schema marks `name` nullable. `None` if the field is unknown.
     #[must_use]
     pub fn field_is_nullable(&self, name: &str) -> Option<bool> {
         self.field(name).map(|field| field.nullable)
     }
 
+    /// Whether Schema sets a default for `name`. `None` if the field is unknown.
     #[must_use]
     pub fn field_has_default(&self, name: &str) -> Option<bool> {
         self.field(name).map(|field| field.default.is_some())
@@ -794,6 +824,12 @@ impl Collection {
         .search(self.embedder.as_deref(), &[name], query, reranker)
     }
 
+    /// Git history of the Record file, newest first.
+    ///
+    /// Same identity path as `get`. Does not ask the Index which ids exist.
+    /// `journal`: history of the segment file (whole file in `Entry.raw`), not
+    /// line-level blame. `count` `0` → `invalid`. Missing file → `not_found`.
+    /// A missing Index directory does not stop this call.
     pub fn history(&self, id: &str, offset: u32, count: u32) -> Result<History, Error> {
         crate::id::require_slug("id", id)?;
         if count == 0 {

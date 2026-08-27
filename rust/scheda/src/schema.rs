@@ -29,12 +29,16 @@ const SCHEMA_FILENAMES: [&str; 3] = [SCHEMA_YAML, SCHEMA_YML, SCHEMA_JSON];
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
+    /// One file per Record; `replace` is allowed.
     Document,
+    /// Append-only JSONL segments; `replace` is `unsupported`.
     Journal,
+    /// One file for the collection; replace as a whole.
     Singleton,
 }
 
 impl Kind {
+    /// Schema kind literal: `document`, `journal`, or `singleton`.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {

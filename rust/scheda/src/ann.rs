@@ -61,18 +61,22 @@ impl AnnIndex {
         Ok(Self { inner })
     }
 
+    /// Vector length this index was created with.
     pub fn dimensions(&self) -> usize {
         self.inner.dimensions()
     }
 
+    /// Number of stored keys.
     pub fn len(&self) -> usize {
         self.inner.size()
     }
 
+    /// True when no keys are stored.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
+    /// Insert or replace `key`. `vector` length must match [`dimensions`](Self::dimensions).
     pub fn add(&self, key: u64, vector: &[f32]) -> Result<(), Error> {
         ensure!(
             vector.len() == self.inner.dimensions(),
@@ -89,10 +93,12 @@ impl AnnIndex {
             .context(Code::IndexVector, "[AnnIndex::add] insert vector")
     }
 
+    /// Whether `key` is in the index.
     pub fn contains(&self, key: u64) -> bool {
         self.inner.contains(key)
     }
 
+    /// Delete `key` if present.
     pub fn remove(&self, key: u64) -> Result<(), Error> {
         self.inner
             .remove(key)
@@ -125,6 +131,7 @@ impl AnnIndex {
         Ok(hits.keys.into_iter().zip(hits.distances).collect())
     }
 
+    /// Like [`search`](Self::search), keeping only keys for which `predicate` is true.
     pub fn filtered_search(
         &self,
         query: &[f32],
@@ -152,6 +159,7 @@ impl AnnIndex {
         Ok(hits.keys.into_iter().zip(hits.distances).collect())
     }
 
+    /// Write a dump that [`restore`](Self::restore) can open.
     pub fn save(&self, path: &Path) -> Result<(), Error> {
         self.inner
             .save(path_str(path).context("[AnnIndex::save] path must be UTF-8")?)

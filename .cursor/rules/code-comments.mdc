@@ -1,13 +1,42 @@
 ---
-description: Code comments carry meaning, not pointers to docs/
+description: Public items need rustdoc; comments carry meaning, not docs/ pointers
 alwaysApply: true
 ---
 
 # Code comments are the API docs
 
-Rustdoc (and other API docs) are generated from comments. A reader of those
-pages does not have the design package open. A pointer to a document is not
-an explanation.
+Rustdoc is generated from comments. A reader of those pages does not have
+the design package open. A pointer to a document is not an explanation.
+
+## Coverage
+
+Every **public** (`pub`) item on a handwritten crate surface needs rustdoc
+(`///` or `//!`): crate, module, struct, enum, variant, union, trait,
+associated type/const, `fn`, method, `const`, `static`, type alias, and
+`pub` field.
+
+`pub(crate)` and private items do not. Generated sources
+(`rust/generated/**`, `*_pb.rs`, bindgen) do not: they may stay under
+`#![allow(warnings)]` at the file root.
+
+When you add or change a public item, write the rustdoc in the same edit.
+When you touch a public item that has none, add it. Do not rephrase an
+existing comment unless you are already editing that item.
+
+```rust
+// BAD — public method, no rustdoc
+pub fn name(&self) -> &str {
+    &self.decl.name
+}
+
+// GOOD
+/// Collection directory name (same as Schema `name`).
+pub fn name(&self) -> &str {
+    &self.decl.name
+}
+```
+
+## What the comment says
 
 Do **not** cite `docs/` files, document numbers, or requirement codes in
 code comments (`//`, `///`, `//!`). Do not markdown-link them.
@@ -31,5 +60,3 @@ the citation.
 
 Allowed in comments: public names, on-disk paths, error `code` strings,
 proto field names. Those are the product, not a document index.
-
-Do not rewrite existing comments unless you are already editing that item.

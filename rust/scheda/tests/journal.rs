@@ -449,6 +449,8 @@ fn lines_survives_deleted_index() {
     collection.add("a", rec("x")).unwrap();
     collection.add("b", rec("x")).unwrap();
     collection.add("c", rec("x")).unwrap();
+    // Collection shares the Index writer; drop it before deleting `.scheda`.
+    drop(collection);
     drop(vault);
 
     fs::remove_dir_all(scratch.vault().join(".scheda")).unwrap();

@@ -11,8 +11,11 @@ use crate::{Error, Record};
 /// `--embedder-openai-url` (with `--embedder-model` and
 /// `--embedder-dimensions`) or `--model2vec-embedder`.
 pub trait Embedder: Send + Sync {
+    /// Model id stored with vectors so a later embedder can detect mismatch.
     fn model_id(&self) -> &str;
+    /// Length of each vector. Must be stable for the life of the Index.
     fn dimensions(&self) -> usize;
+    /// Embed `text`. Length of the result must equal [`dimensions`](Self::dimensions).
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error>;
 }
 
@@ -22,6 +25,7 @@ pub trait Embedder: Send + Sync {
 /// model. `None` on `search` → RRF order. The CLI may pass one via
 /// `--reranker-cohere-url` (with `--reranker-model`) on `search`.
 pub trait Reranker: Send + Sync {
+    /// Score one Record against `query`. Higher is better.
     fn score(&self, query: &str, record: &Record) -> Result<f64, Error>;
 
     /// Default: score each record. HTTP rerankers override to batch.
