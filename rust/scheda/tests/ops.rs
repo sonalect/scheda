@@ -49,8 +49,12 @@ impl Drop for Scratch {
 
 const LOG: &str = include_str!("../testdata/journal/log.yaml");
 
-const OPS_JOURNAL: u64 = 10_000;
-const OPS_DOCS: u64 = 1_000;
+// Unix CI loads 10⁴ journal / 10³ document. Windows is one tenth so the
+// same get / extra add / reindex / search checks finish under Bazel
+// `large` (900s) on NTFS. Bulk insert uses one transaction; a git commit
+// per Record is not this check.
+const OPS_JOURNAL: u64 = if cfg!(windows) { 1_000 } else { 10_000 };
+const OPS_DOCS: u64 = if cfg!(windows) { 100 } else { 1_000 };
 
 const OPS_LOG: &str = "\
 name: ops_log
@@ -183,6 +187,9 @@ fn ops_fixture_find_and_insert_and_reindex() {
         Some(std::sync::Arc::new(OpsEmbedder)),
     )
     .unwrap();
+    // One transaction: the check is Index / get / reindex / search on this
+    // volume, not a git commit per Record.
+    vault.begin().unwrap();
     let log = vault.collection("ops_log").unwrap();
     for i in 0..OPS_JOURNAL {
         log.add(&format!("j{i:05}"), rec_log("x")).unwrap();
@@ -193,27 +200,40 @@ fn ops_fixture_find_and_insert_and_reindex() {
             .add(&format!("d{i:04}"), rec_note(&format!("t{i}")))
             .unwrap();
     }
-    for id in ["j00000", "j05000", "j09999"] {
+    vault.commit("ops fixture").unwrap();
+    let first_journal = format!("j{:05}", 0);
+    let mid_journal = format!("j{:05}", OPS_JOURNAL / 2);
+    let last_journal = format!("j{:05}", OPS_JOURNAL - 1);
+    for id in [&first_journal, &mid_journal, &last_journal] {
         let got = log.get(id).unwrap();
-        assert_eq!(got.id.as_deref(), Some(id));
+        assert_eq!(got.id.as_deref(), Some(id.as_str()));
     }
-    notes.get("d0000").unwrap();
-    notes.get("d0999").unwrap();
-    log.add("j10000", rec_log("x")).unwrap();
+    let first_doc = format!("d{:04}", 0);
+    let last_doc = format!("d{:04}", OPS_DOCS - 1);
+    notes.get(&first_doc).unwrap();
+    notes.get(&last_doc).unwrap();
+    let extra = format!("j{OPS_JOURNAL:05}");
+    log.add(&extra, rec_log("x")).unwrap();
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(OPS_JOURNAL + OPS_DOCS + 1));
     assert_eq!(counts.skipped_invalid, Some(0));
     assert_eq!(counts.segments_seen, Some(1));
     let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
     assert_eq!(format.trim(), "3");
+    let mid_doc = OPS_DOCS / 2;
+    let mid_title = format!("t{mid_doc}");
+    let mid_id = format!("d{mid_doc:04}");
     let hits = notes
-        .search(&SearchQuery::default().with_text("t500").with_k(10), None)
+        .search(
+            &SearchQuery::default().with_text(&mid_title).with_k(10),
+            None,
+        )
         .unwrap();
     assert!(
         hits.hits
             .iter()
-            .any(|hit| hit.id.as_deref() == Some("d0500")),
-        "OPS-2 expected d0500 in k"
+            .any(|hit| hit.id.as_deref() == Some(mid_id.as_str())),
+        "hybrid search expected {mid_id} in k"
     );
 }
 

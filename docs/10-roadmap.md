@@ -158,7 +158,7 @@ These are orders of magnitude for an interactive caller on one machine, not SLAs
 
 **OPS-4. Offline embed.** After embedder weights are already on disk, **search** does not need the network. Download of weights is the consumer's install, not the library hot path. *Check (**search**):* a full cycle with the network disabled.
 
-`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9).
+`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9). Linux and macOS CI load those sizes. Windows CI runs the same C8 checks on 10³ journal and 10² document Records (one tenth) so every commit still measures NTFS I/O inside Bazel `large` (900s).
 
 Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A future Index backend (`§5`) is how huge Vaults stay on the same API.
 

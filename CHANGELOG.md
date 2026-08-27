@@ -29,6 +29,10 @@ API or on-disk format changes bump the minor.
   no Schema file until nested `{vault}/.isolated/` I/O exists.
 - README opens with what Scheda is, why it exists, and how a program or
   agent uses it without treating the Index as the database.
+- Windows CI `ops_test` loads 10³ journal and 10² document Records (one
+  tenth of the Unix OPS-1 fixture) so the volume checks finish under
+  Bazel `large` on NTFS. All platforms bulk-insert that fixture in one
+  transaction. Linux and macOS still load 10⁴ / 10³.
 
 ### Fixed
 

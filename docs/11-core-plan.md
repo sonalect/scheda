@@ -279,7 +279,9 @@ SCH-12.
       `reindex`.
 - [x] Fixture ≥ 10⁴ journal Records and ≥ 10³ `document` Records: sampled
       `get` / journal `add` stay in milliseconds, not hundreds
-      (OPS-1).
+      (OPS-1). Linux and macOS CI load those sizes. Windows CI uses 10³
+      journal and 10² document so the same checks fit NTFS under Bazel
+      `large`.
 - [x] Full `reindex` on that fixture completes; counts match a hand tally
       (OPS-3, LIB-16).
 
@@ -322,7 +324,8 @@ this stage.
 - [x] One-step and inverse walks match fixtures (REL-1–3). Multi-step is
       **later**.
 - [x] OPS-2: hybrid `search` on the OPS-1 fixture finishes in tens of
-      milliseconds.
+      milliseconds (Windows CI: same check on the one-tenth volume in
+      C8).
 - [x] OPS-4: with embedder weights already on disk, `search` needs no
       network.
 
