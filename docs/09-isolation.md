@@ -1,6 +1,6 @@
 # 09. Isolation and perimeter
 
-Document 9 of the Scheda package. Version 0.7, 27 August 2026.
+Document 9 of the Scheda package. Version 0.8, 27 August 2026.
 
 What must not leak: network by default (**core**); isolated collections under `{vault}/.isolated/` (gitignored nested git, never the main Remote), sealed fields, and optional encryption of that nested tree (**later**). Terms are in `02`. Schema marks are in SCH-15. Remote traffic is in `04`. Codes: `ISO`. Phase **later** unless marked **core** or **agent**.
 
@@ -10,9 +10,9 @@ An assertion without a check is not a requirement.
 
 ## 1. Network
 
-**ISO-1. No network unless opted in.** With `auto_sync` off and no `clone` / `pull` / `push` / `sync`, Scheda does not open outbound connections for `open`, writes, `commit`, lexical `reindex`, or `search` without an embedder. A network embedder is supplied by the caller (IDX-8). Git credentials are not stored in the Vault (`04`). *Check (**core**):* those operations succeed with the network disabled; a stub embedder that does not call out leaves the audit empty.
+**ISO-1. No network unless opted in.** With `auto_sync` off and no `open` that clones / `pull` / `push` / `sync`, Scheda does not open outbound connections for `open`, writes, `commit`, lexical `reindex`, or `search` without an embedder. A network embedder is supplied by the caller (IDX-8). Git credentials are not stored in the Vault (`04`). *Check (**core**):* those operations succeed with the network disabled; a stub embedder that does not call out leaves the audit empty.
 
-`clone` and `auto_sync` are explicit exceptions (GIT-8, GIT-10). They still do not put host tokens in Record files.
+`open` with `remote_repo` on a missing path and `auto_sync` are explicit exceptions (GIT-8, GIT-10). They still do not put host tokens in Record files.
 
 ---
 
@@ -20,17 +20,17 @@ An assertion without a check is not a requirement.
 
 The Vault is **one directory**. Isolated Records are not a second `open` path elsewhere on disk.
 
-**ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Isolated Records use the same fixed names under that directory (`{id}.md`, journal segments, `record.yaml`). The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `clone` of the main Vault still lists the collection (ISO-3). `init` / first `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
+**ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Isolated Records use the same fixed names under that directory (`{id}.md`, journal segments, `record.yaml`). The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `open` of a clone of the main Vault still lists the collection (ISO-3). First `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
 
 `{vault}/.isolated/` is a git working tree Scheda creates on the first isolated write (`create_collection` with `isolated`, or `add` on that collection). Local `commit` and `history` of isolated Record paths use that nested repository. File mode: owner-only (`0600` on Unix; equivalent ACL on other systems). It is not required to exist for the main Vault to `open`, or for `find` / `search` on non-isolated collections. Deleting `{vault}/.scheda/` does not delete `.isolated/` (Index is disposable; isolated Records are not).
 
 `check` fails if the **parent** git index tracks any path under `.isolated/` (`git add -f` is not a perimeter). *Check (**later**):* fixture Vault with `.isolated/` gitignored; `find` / `search` on a non-isolated collection return no isolated Records; `open` succeeds if `.isolated/` is missing; `git log` in `.isolated/` grows after `add` on an isolated collection; a tracked `.isolated/` path fails `check`.
 
-The caller uses the **same** `Vault` handle. `collection(name)` for an isolated name is the opt-in for those Records. Edges and `search` on a non-isolated collection do not read `.isolated/`. Isolated Index is `{vault}/.isolated/.scheda/` (gitignored in the nested repo), not the main `{vault}/.scheda/`. `Vault.reindex` rebuilds the main Index from main-tree Records; if `.isolated/` exists, it also rebuilds the nested Index. Isolated Record writes commit in the nested git (GIT-2); the Schema stub commit is the main repository.
+The caller uses the **same** `Vault` handle. Until nested I/O exists, `collection(name)` for an isolated name is `unsupported` and `create_collection` with `isolated` writes nothing. After ISO-2, `collection(name)` for an isolated name is the opt-in for those Records. Edges and `search` on a non-isolated collection do not read `.isolated/`. Isolated Index is `{vault}/.isolated/.scheda/` (gitignored in the nested repo), not the main `{vault}/.scheda/`. `Vault.reindex` rebuilds the main Index from main-tree Records; if `.isolated/` exists, it also rebuilds the nested Index. Isolated Record writes commit in the nested git (GIT-2); the Schema stub commit is the main repository.
 
-**ISO-6. Nested isolated git never has a Remote.** Scheda must not `clone` `.isolated/` from a URL, must not `git remote add` there, and must reject `push`, `pull`, `sync`, and `auto_sync` against that nested repository (`unsupported` or `invalid`). `Vault.push` publishes only the main tree. `check` fails if the nested git has remotes configured (a human added `origin` outside Scheda). *Check (**later**):* `push` after an isolated insert does not call the network for `.isolated/` and does not upload those files; a fixture nested repo with `origin` fails `check`.
+**ISO-6. Nested isolated git never has a Remote.** Scheda must not clone `.isolated/` from a URL, must not `git remote add` there, and must reject `push`, `pull`, `sync`, and `auto_sync` against that nested repository (`unsupported` or `invalid`). `Vault.push` publishes only the main tree. `check` fails if the nested git has remotes configured (a human added `origin` outside Scheda). *Check (**later**):* `push` after an isolated insert does not call the network for `.isolated/` and does not upload those files; a fixture nested repo with `origin` fails `check`.
 
-**ISO-3. Agent sees isolation.** `info` / catalog (AGT-1) lists isolated collections as isolated and omits `schema.fields`. Tools that scan the main Index or non-isolated collections cannot `get` / `search` sealed data. Reaching isolated Records is `collection(name)` on this handle (and `secret` if the nested tree is encrypted). *Check (**later**, with **agent**):* agent tools that are not bound to that collection never return a fixture sealed value.
+**ISO-3. Agent sees isolation.** `info` (AGT-1) lists isolated collections as isolated and omits `schema.fields`. Tools that scan the main Index or non-isolated collections cannot `get` / `search` sealed data. Until nested I/O exists, `collection(name)` for an isolated name is `unsupported`. After ISO-2, reaching isolated Records is `collection(name)` on this handle (and `secret` if the nested tree is encrypted). *Check (**agent**):* agent tools that are not bound to that collection never return a fixture sealed value.
 
 **ISO-4. Main Index has no sealed bytes.** The derived Index under `{vault}/.scheda/` does not copy sealed fields or isolated Records (IDX-4). *Check (**later**):* grep of `{vault}/.scheda/` does not contain a fixture sealed string.
 

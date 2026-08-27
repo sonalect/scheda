@@ -1,15 +1,14 @@
-// `Vault.search` / `Collection.search` (`07` LIB-11). Bindings and agent
-// transport (`08`) use the Protobuf JSON mapping, not binary protobuf.
-// Vault files stay YAML / JSONL (`04`).
+// `Vault.search` / `Collection.search`. Bindings and the CLI encode these
+// messages as Protobuf JSON, not binary protobuf. Vault files stay YAML /
+// JSONL.
 //
-// Hybrid retrieval (QRY-3–6): BM25 (Tantivy) and ANN (USearch), fused with
-// RRF. Collection names are a method argument on `Vault.search`, not a
-// field here. No Record path on the request. When `filter` is set, Tantivy
-// runs it first; both legs search only that `(collection, id)` set
-// (lexical: `Must` + text; vector: `filtered_search`). Unset `filter` →
-// both legs on the selected collections. Optional reranker is a library
-// callback on `search`, not a field here (`13`). When set, hits are
-// ordered by `rerank_score`.
+// Hybrid retrieval: BM25 (Tantivy) and ANN (USearch), fused with RRF.
+// Collection names are a method argument on `Vault.search`, not a field
+// here. No Record path on the request. When `filter` is set, Tantivy runs
+// it first; both legs search only that `(collection, id)` set (lexical:
+// `Must` + text; vector: `filtered_search`). Unset `filter` → both legs
+// on the selected collections. Optional reranker is a library callback on
+// `search`, not a field here. When set, hits are ordered by `rerank_score`.
 
 edition = "2024";
 
@@ -63,11 +62,11 @@ message SearchHits {
   repeated Hit hits = 1;
 
   message Hit {
-    // Collection name (directory, MOD-8). Output only. Same as
+    // Collection name (directory). Output only. Same as
     // `Record.collection`.
     string collection = 1;
     string id = 2;
-    // Vault-relative POSIX path (MOD-8). Output only.
+    // Vault-relative POSIX path. Output only.
     string path = 3;
     // Set only when that leg produced the hit.
     double lexical_score = 4;

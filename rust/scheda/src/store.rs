@@ -1,4 +1,4 @@
-//! On-disk `document` / `singleton` files (C3). Journal segments are `journal`.
+//! On-disk `document` / `singleton` files. Journal segments are `journal`.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;

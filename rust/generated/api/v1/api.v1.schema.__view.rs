@@ -3,17 +3,17 @@
 
 #[derive(Clone, Debug, Default)]
 pub struct SchemaView<'a> {
-    /// Integer ≥ 1 (SCH-2). On disk this is `schema_version`. Writes must use
-    /// the current version (SCH-13).
+    /// Integer ≥ 1. On disk this is `schema_version`. Writes must use the
+    /// current version.
     ///
     /// Field 1: `version`
     pub version: ::core::option::Option<u32>,
-    /// Field declarations (SCH-4). May be empty.
+    /// Field declarations. May be empty.
     ///
     /// Field 2: `fields`
     pub fields: ::buffa::RepeatedView<'a, super::super::__buffa::view::FieldView<'a>>,
-    /// SCH-15 (**later**). Default false. `true`: Record files live under
-    /// `{vault}/.isolated/{name}/` (gitignored nested git, ISO-2). Schema file
+    /// Later. Default false. `true`: Record files live under
+    /// `{vault}/.isolated/{name}/` (gitignored nested git). Schema file
     /// stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
     /// collections does not read it.
     ///
@@ -478,15 +478,15 @@ impl SchemaOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Integer ≥ 1 (SCH-2). On disk this is `schema_version`. Writes must use
-    /// the current version (SCH-13).
+    /// Integer ≥ 1. On disk this is `schema_version`. Writes must use the
+    /// current version.
     ///
     /// Field 1: `version`
     #[must_use]
     pub fn version(&self) -> ::core::option::Option<u32> {
         self.0.reborrow().version
     }
-    /// Field declarations (SCH-4). May be empty.
+    /// Field declarations. May be empty.
     ///
     /// Field 2: `fields`
     #[must_use]
@@ -495,8 +495,8 @@ impl SchemaOwnedView {
     ) -> &::buffa::RepeatedView<'_, super::super::__buffa::view::FieldView<'_>> {
         &self.0.reborrow().fields
     }
-    /// SCH-15 (**later**). Default false. `true`: Record files live under
-    /// `{vault}/.isolated/{name}/` (gitignored nested git, ISO-2). Schema file
+    /// Later. Default false. `true`: Record files live under
+    /// `{vault}/.isolated/{name}/` (gitignored nested git). Schema file
     /// stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
     /// collections does not read it.
     ///
@@ -541,12 +541,12 @@ impl ::serde::Serialize for SchemaOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// `journal` segment cap (SCH-14). Size-first: a cap hit closes the segment
-/// even mid-day. Segment files live in the collection directory; the
-/// library names them.
+/// `journal` segment cap. Size-first: a cap hit closes the segment even
+/// mid-day. Segment files live in the collection directory; the library
+/// names them.
 #[derive(Clone, Debug, Default)]
 pub struct JournalView<'a> {
-    /// Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB (SCH-14).
+    /// Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB.
     ///
     /// Field 1: `segment_max_bytes`
     pub segment_max_bytes: ::core::option::Option<u64>,
@@ -555,8 +555,8 @@ pub struct JournalView<'a> {
     ///
     /// Field 2: `segment_max_lines`
     pub segment_max_lines: ::core::option::Option<u64>,
-    /// Set → rotate daily (UTC), still size-first (SCH-14). Omitted → no
-    /// calendar rotation.
+    /// Set → rotate daily (UTC), still size-first. Omitted → no calendar
+    /// rotation.
     ///
     /// Field 3: `daily`
     pub daily: ::buffa::MessageFieldView<super::super::__buffa::view::UnitView<'a>>,
@@ -837,7 +837,7 @@ impl JournalOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB (SCH-14).
+    /// Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB.
     ///
     /// Field 1: `segment_max_bytes`
     #[must_use]
@@ -852,8 +852,8 @@ impl JournalOwnedView {
     pub fn segment_max_lines(&self) -> ::core::option::Option<u64> {
         self.0.reborrow().segment_max_lines
     }
-    /// Set → rotate daily (UTC), still size-first (SCH-14). Omitted → no
-    /// calendar rotation.
+    /// Set → rotate daily (UTC), still size-first. Omitted → no calendar
+    /// rotation.
     ///
     /// Field 3: `daily`
     #[must_use]
@@ -893,7 +893,7 @@ impl ::serde::Serialize for JournalOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// `singleton`: the one Record `id` (MOD-7). Slug checked in the library.
+/// `singleton`: the one Record `id`. Slug checked in the library.
 /// File is always `{name}/record.yaml` (or `.isolated/{name}/record.yaml`).
 #[derive(Clone, Debug, Default)]
 pub struct SingletonView<'a> {
@@ -1140,26 +1140,25 @@ impl ::serde::Serialize for SingletonOwnedView {
 }
 #[derive(Clone, Debug, Default)]
 pub struct FieldView<'a> {
-    /// Field name. Non-empty (SCH-4). Not `id` (SCH-6) or `body` (SCH-7).
+    /// Field name. Non-empty. Not `id` or `body`.
     ///
     /// Field 1: `name`
     pub name: ::core::option::Option<&'a str>,
-    /// Must be present on write (SCH-5). Default false (optional). Nested
-    /// fields of `object` / `object_list` use the same flag.
+    /// Must be present on write. Default false (optional). Nested fields of
+    /// `object` / `object_list` use the same flag.
     ///
     /// Field 2: `required`
     pub required: ::core::option::Option<bool>,
-    /// JSON/YAML `null` is allowed (SCH-5, MOD-18). Default false. Independent
-    /// of `required`.
+    /// JSON/YAML `null` is allowed. Default false. Independent of `required`.
     ///
     /// Field 3: `nullable`
     pub nullable: ::core::option::Option<bool>,
-    /// Exclude from `find` (SCH-8). Default false: the field is a filter key.
+    /// Exclude from `find`. Default false: the field is a filter key.
     ///
     /// Field 4: `exclude_find`
     pub exclude_find: ::core::option::Option<bool>,
-    /// Applied only when this key is present (MOD-12). Otherwise missing stays
-    /// missing. Type must match `spec` (checked in the library).
+    /// Applied only when this key is present. Otherwise missing stays missing.
+    /// Type must match `spec` (checked in the library).
     ///
     /// Field 5: `default`
     pub default: ::buffa::MessageFieldView<
@@ -1960,38 +1959,37 @@ impl FieldOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Field name. Non-empty (SCH-4). Not `id` (SCH-6) or `body` (SCH-7).
+    /// Field name. Non-empty. Not `id` or `body`.
     ///
     /// Field 1: `name`
     #[must_use]
     pub fn name(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().name
     }
-    /// Must be present on write (SCH-5). Default false (optional). Nested
-    /// fields of `object` / `object_list` use the same flag.
+    /// Must be present on write. Default false (optional). Nested fields of
+    /// `object` / `object_list` use the same flag.
     ///
     /// Field 2: `required`
     #[must_use]
     pub fn required(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().required
     }
-    /// JSON/YAML `null` is allowed (SCH-5, MOD-18). Default false. Independent
-    /// of `required`.
+    /// JSON/YAML `null` is allowed. Default false. Independent of `required`.
     ///
     /// Field 3: `nullable`
     #[must_use]
     pub fn nullable(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().nullable
     }
-    /// Exclude from `find` (SCH-8). Default false: the field is a filter key.
+    /// Exclude from `find`. Default false: the field is a filter key.
     ///
     /// Field 4: `exclude_find`
     #[must_use]
     pub fn exclude_find(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().exclude_find
     }
-    /// Applied only when this key is present (MOD-12). Otherwise missing stays
-    /// missing. Type must match `spec` (checked in the library).
+    /// Applied only when this key is present. Otherwise missing stays missing.
+    /// Type must match `spec` (checked in the library).
     ///
     /// Field 5: `default`
     #[must_use]
@@ -2037,7 +2035,7 @@ impl ::serde::Serialize for FieldOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// `string` / `string_list`: lexical and vector search (SCH-9). Default on.
+/// `string` / `string_list`: lexical and vector search. Default on.
 #[derive(Clone, Debug, Default)]
 pub struct TextView<'a> {
     /// Field 1: `exclude_fts`
@@ -2511,8 +2509,7 @@ impl ::serde::Serialize for UnitOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// `object` / `object_list`. Empty `fields`: open map of `string` values
-/// (SCH-4).
+/// `object` / `object_list`. Empty `fields`: open map of `string` values.
 #[derive(Clone, Debug, Default)]
 pub struct ObjectView<'a> {
     /// Field 1: `fields`
@@ -2779,13 +2776,13 @@ impl ::serde::Serialize for ObjectOwnedView {
 }
 #[derive(Clone, Debug, Default)]
 pub struct EdgeView<'a> {
-    /// Target collection name (SCH-11). Must exist in Schema. Slug checked
-    /// in the library.
+    /// Target collection name. Must exist in Schema. Slug checked in the
+    /// library.
     ///
     /// Field 1: `collection`
     pub collection: ::core::option::Option<&'a str>,
     /// Default false (`lax`). `true` rejects a write whose target `id` is
-    /// missing (SCH-11).
+    /// missing.
     ///
     /// Field 4: `strict`
     pub strict: ::core::option::Option<bool>,
@@ -3198,8 +3195,8 @@ impl EdgeOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Target collection name (SCH-11). Must exist in Schema. Slug checked
-    /// in the library.
+    /// Target collection name. Must exist in Schema. Slug checked in the
+    /// library.
     ///
     /// Field 1: `collection`
     #[must_use]
@@ -3207,7 +3204,7 @@ impl EdgeOwnedView {
         self.0.reborrow().collection
     }
     /// Default false (`lax`). `true` rejects a write whose target `id` is
-    /// missing (SCH-11).
+    /// missing.
     ///
     /// Field 4: `strict`
     #[must_use]
@@ -3261,12 +3258,12 @@ impl ::serde::Serialize for EdgeOwnedView {
 #[derive(Clone, Debug, Default)]
 pub struct BodyView<'a> {
     /// Default false: Markdown body is allowed. `true` rejects a non-empty
-    /// body on write (SCH-7). (A proto `bool` cannot default to true.)
+    /// body on write. (A proto `bool` cannot default to true.)
     ///
     /// Field 1: `no_body`
     pub no_body: ::core::option::Option<bool>,
     /// Omit → in the lexical Index: `find` field `body` and BM25. `exclude_fts`
-    /// drops both. `exclude_vector` is SCH-9 only.
+    /// drops both. `exclude_vector` applies only to the vector leg.
     ///
     /// Field 2: `text`
     pub text: ::buffa::MessageFieldView<super::super::__buffa::view::TextView<'a>>,
@@ -3521,7 +3518,7 @@ impl BodyOwnedView {
         self.0.into_bytes()
     }
     /// Default false: Markdown body is allowed. `true` rejects a non-empty
-    /// body on write (SCH-7). (A proto `bool` cannot default to true.)
+    /// body on write. (A proto `bool` cannot default to true.)
     ///
     /// Field 1: `no_body`
     #[must_use]
@@ -3529,7 +3526,7 @@ impl BodyOwnedView {
         self.0.reborrow().no_body
     }
     /// Omit → in the lexical Index: `find` field `body` and BM25. `exclude_fts`
-    /// drops both. `exclude_vector` is SCH-9 only.
+    /// drops both. `exclude_vector` applies only to the vector leg.
     ///
     /// Field 2: `text`
     #[must_use]

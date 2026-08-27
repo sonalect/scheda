@@ -1651,7 +1651,7 @@ pub mod filter {
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
         /// Term value. Type must match the Index (library). JSON `null` is a
-        /// stored null (MOD-18), not “missing”.
+        /// stored null, not “missing”.
         ///
         /// Field 2: `value`
         pub value: ::buffa::MessageFieldView<
@@ -1931,7 +1931,7 @@ pub mod filter {
             self.0.reborrow().field
         }
         /// Term value. Type must match the Index (library). JSON `null` is a
-        /// stored null (MOD-18), not “missing”.
+        /// stored null, not “missing”.
         ///
         /// Field 2: `value`
         #[must_use]
@@ -4776,7 +4776,7 @@ pub mod filter {
             ::serde::Serialize::serialize(&self.0, __s)
         }
     }
-    /// `ExistsQuery`. A non-null indexed value (SCH-8). Not “equals JSON
+    /// `ExistsQuery`. A non-null indexed value. Not “equals JSON
     /// null” — that is `term` with value `null`.
     #[derive(Clone, Debug, Default)]
     pub struct ExistsView<'a> {
@@ -8009,9 +8009,9 @@ pub mod filter {
         }
     }
 }
-/// `Vault.find` / `Collection.find` request (`07` LIB-10). Collection
-/// names, `offset`, and `count` stay method arguments. Unset `filter`
-/// is `invalid`. Unset or false `include_raw` omits `Record.raw`.
+/// `Vault.find` / `Collection.find` request. Collection names, `offset`,
+/// and `count` stay method arguments. Unset `filter` is `invalid`. Unset
+/// or false `include_raw` omits `Record.raw`.
 #[derive(Clone, Debug, Default)]
 pub struct FindQueryView<'a> {
     /// Field 1: `filter`

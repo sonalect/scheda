@@ -3,26 +3,26 @@
 
 #[derive(Clone, Debug, Default)]
 pub struct VaultInfoView<'a> {
-    /// Working-tree root passed to `open` (LIB-4). POSIX when the host uses
-    /// POSIX; not a Record `path`.
+    /// Working-tree root passed to `open`. POSIX when the host uses POSIX;
+    /// not a Record `path`.
     ///
     /// Field 1: `path`
     pub path: ::core::option::Option<&'a str>,
-    /// Index directory `{vault}/.scheda/index` (GIT-13). Not a caller option.
+    /// Index directory `{vault}/.scheda/index`. Not a caller option.
     ///
     /// Field 2: `index_path`
     pub index_path: ::core::option::Option<&'a str>,
-    /// Git remote name Scheda uses (`origin`). Empty means no Remote (GIT-7).
+    /// Git remote name Scheda uses (`origin`). Empty means no Remote.
     /// Other remotes in git config are ignored. Local read; not a fetch.
     ///
     /// Field 3: `remote`
     pub remote: ::core::option::Option<&'a str>,
-    /// `OpenOptions.auto_sync` on this handle (GIT-10). Unset in proto is false.
+    /// `OpenOptions.auto_sync` on this handle. Unset in proto is false.
     ///
     /// Field 4: `auto_sync`
     pub auto_sync: ::core::option::Option<bool>,
-    /// Declared collections (AGT-1). Not inferred from Record directories.
-    /// Isolated collections appear here; `schema.fields` may be omitted (ISO-3).
+    /// Declared collections. Not inferred from Record directories.
+    /// Isolated collections appear here; `schema.fields` may be omitted.
     ///
     /// Field 5: `collections`
     pub collections: ::buffa::RepeatedView<
@@ -327,22 +327,22 @@ impl VaultInfoOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Working-tree root passed to `open` (LIB-4). POSIX when the host uses
-    /// POSIX; not a Record `path`.
+    /// Working-tree root passed to `open`. POSIX when the host uses POSIX;
+    /// not a Record `path`.
     ///
     /// Field 1: `path`
     #[must_use]
     pub fn path(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().path
     }
-    /// Index directory `{vault}/.scheda/index` (GIT-13). Not a caller option.
+    /// Index directory `{vault}/.scheda/index`. Not a caller option.
     ///
     /// Field 2: `index_path`
     #[must_use]
     pub fn index_path(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().index_path
     }
-    /// Git remote name Scheda uses (`origin`). Empty means no Remote (GIT-7).
+    /// Git remote name Scheda uses (`origin`). Empty means no Remote.
     /// Other remotes in git config are ignored. Local read; not a fetch.
     ///
     /// Field 3: `remote`
@@ -350,15 +350,15 @@ impl VaultInfoOwnedView {
     pub fn remote(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().remote
     }
-    /// `OpenOptions.auto_sync` on this handle (GIT-10). Unset in proto is false.
+    /// `OpenOptions.auto_sync` on this handle. Unset in proto is false.
     ///
     /// Field 4: `auto_sync`
     #[must_use]
     pub fn auto_sync(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().auto_sync
     }
-    /// Declared collections (AGT-1). Not inferred from Record directories.
-    /// Isolated collections appear here; `schema.fields` may be omitted (ISO-3).
+    /// Declared collections. Not inferred from Record directories.
+    /// Isolated collections appear here; `schema.fields` may be omitted.
     ///
     /// Field 5: `collections`
     #[must_use]

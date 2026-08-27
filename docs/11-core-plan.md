@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.24, 27 August 2026.
+Document 11 of the Scheda package. Version 0.25, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -41,13 +41,13 @@ hybrid `search` → core acceptance.
 | Stage | Status | What closes |
 |---|---|---|
 | [C0](#c0-skeleton) | done | Names, error codes, stubs; crate builds |
-| [C1](#c1-working-tree-and-lock) | done | `init` / `open`, lock, gitignored Index, ISO-1 local |
+| [C1](#c1-working-tree-and-lock) | done | `open`, lock, gitignored Index, ISO-1 local |
 | [C2](#c2-schema) | done | Load and reject Schema |
 | [C3](#c3-document-and-singleton) | done | Whole-file writes and `get` |
 | [C4](#c4-journal-segments) | done | Append, rotate, scan `get` |
 | [C5](#c5-find-check-reindex) | done | Filters, `check`, disposable Index |
 | [C6](#c6-local-commit-and-history) | done | `commit`, `history` of a path |
-| [C7](#c7-remote) | done | `clone`, `auto_sync`, push/pull/sync |
+| [C7](#c7-remote) | done | `open`+`remote_repo`, `auto_sync`, push/pull/sync |
 | [C8](#c8-journal-id-map-and-size) | done | IDX-5, OPS-1, OPS-3 |
 | [C9](#c9-hybrid-search) | done | BM25 + ANN + RRF (`10` §3) |
 | [C10](#c10-core-acceptance) | done | `10` §2 acceptance |
@@ -55,8 +55,8 @@ hybrid `search` → core acceptance.
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
 IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–18; ISO-1; OPS-1, OPS-3.
 
-Next crate work after this checklist is `10` §1 (unencrypted isolated).
-**agent** follows that slice (`12`). This file does not add those stages.
+Next crate work after this checklist is `10` §1 (unencrypted isolated nested git).
+**agent** is accepted (`12`). This file does not add those stages.
 
 ---
 
@@ -64,9 +64,9 @@ Next crate work after this checklist is `10` §1 (unencrypted isolated).
 
 These must **compile**. They must not be required to pass C0–C8 or C10.
 Writes must not depend on them (`10` §2). **C9** implements **search**
-(`10` §3). After C10, `scheda` codes unencrypted isolated (SCH-15, ISO-2,
-ISO-4, ISO-6, IDX-4) as in `10` §1 (`{vault}/.isolated/`). **agent** (AGT-1–5) and ISO-3 follow
-(`12`). Age encryption (ISO-5, ISO-7–11) stays deferred.
+(`10` §3). After C10, `scheda` codes unencrypted isolated nested git (ISO-2,
+ISO-4, ISO-6, IDX-4) as in `10` §1 (`{vault}/.isolated/`). **agent** (AGT-1–5) and ISO-3 listing
+are accepted (`12`). Age encryption (ISO-5, ISO-7–11) stays deferred.
 
 `delete_one`, line-level journal blame, file watcher: not in this plan (`10`
 §5).
@@ -88,7 +88,7 @@ envelope rules), LIB-5 (typed codes exist), `07` §5.
       `not_fast_forward`, `locked`, `io`, `git`, `index_unusable`,
       `unsupported`. Negative tests assert **codes**, not only message text.
 - [x] `search` (LIB-11) is `unsupported` or an empty stub that does not write.
-- [x] `init` / `open` / `clone` reject `OpenOptions` that fail `api/v1` field
+- [x] `open` rejects `OpenOptions` that fail `api/v1` field
       rules (`invalid`) before creating a tree or taking the lock (`07` LIB-4).
 - [x] `add` / `replace` reject a `Record` that fails `api/v1`
       envelope rules (`invalid`) before Schema writes (`07` LIB-7, LIB-9).
@@ -99,22 +99,23 @@ envelope rules), LIB-5 (typed codes exist), `07` §5.
 
 **Status:** done
 
-**Codes:** LIB-1, LIB-4, LIB-6, LIB-13 (`init` / `open` only), STO-4, GIT-1,
-GIT-5, GIT-6, GIT-7, GIT-8 (local writes once they exist), GIT-9 (`init` /
-`open`; `clone` is C7), GIT-13, ISO-1 (no network on `open` / `init`).
+**Codes:** LIB-1, LIB-4, LIB-6, LIB-13, STO-4, GIT-1,
+GIT-5, GIT-6, GIT-7, GIT-8 (local writes once they exist), GIT-9 (`open`
+create / attach; clone via `remote_repo` is C7), GIT-13, ISO-1 (no network on
+local `open`).
 
-- [x] `init(path)` creates a git working tree with no Remote (GIT-9).
-- [x] `open(path)` on that tree succeeds; Index is `{vault}/.scheda/index`,
-      gitignored, not committed (GIT-1, GIT-13). `init` writes `.gitignore`.
+- [x] `open` of a missing path creates a git working tree with no Remote (GIT-9).
+- [x] `open` on that tree succeeds; Index is `{vault}/.scheda/index`,
+      gitignored, not committed (GIT-1, GIT-13). Creating a Vault writes `.gitignore`.
 - [x] Two `open`s on different roots in one process (GIT-5, LIB-4).
-- [x] Write lock: second write `open` → `locked`; a reader `get` is not
+- [x] Write lock: second writer → `locked`; a reader `get` is not
       blocked once C3 exists (STO-4). Until C3, lock vs second writer is
       enough.
 - [x] `open` with network disabled still reports configured `origin` on
       `info.remote` (GIT-7).
 - [x] Core tests run without an async executor (LIB-6).
 - [x] The library never configures `filter.lfs` (GIT-6).
-- [x] `init` / `open` with `auto_sync` off open no outbound connections
+- [x] `open` with `auto_sync` off opens no outbound connections
       (ISO-1, GIT-8).
 
 ---
@@ -250,8 +251,9 @@ SCH-12.
 
 **Codes:** GIT-8–12, LIB-13, LIB-14, ISO-1.
 
-- [x] `clone(url, path)` produces a Vault whose `origin` is that URL;
-      `open`+`remote_repo` on an existing repo fails (GIT-9).
+- [x] `open` of a missing path with `remote_repo` produces a Vault whose
+      `origin` is that URL; `open`+`remote_repo` on an existing Vault
+      ignores `remote_repo` (GIT-9).
 - [x] `auto_sync` default off: `open` does not change `HEAD` when Remote has
       new commits (GIT-10).
 - [x] `auto_sync` on + fast-forward → `HEAD` matches Remote after `open`;
@@ -344,7 +346,7 @@ Re-run the five gates in `10` §2:
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
 C9. This checklist stops there. **agent** is accepted in `12`. Next crate
-work is `10` §1.
+work is `10` §1 (nested `{vault}/.isolated/` git).
 
 ---
 

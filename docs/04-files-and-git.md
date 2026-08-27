@@ -1,8 +1,8 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.16, 26 August 2026.
+Document 4 of the Scheda package. Version 0.17, 27 August 2026.
 
-Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and `clone`. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
+Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
 An assertion without a check is not a requirement. This package does not use Git LFS.
 
@@ -55,25 +55,26 @@ Line-level “this journal Record's first commit” is **later** (requires blami
 
 ---
 
-## 3. Remote, clone, pull, push
+## 3. Remote, open, pull, push
 
 A **Remote** is the one optional git remote Scheda uses on the Vault repository, named `origin`. GitHub is an example host, not a Scheda type. Auth is git's (credentials, SSH, `GIT_ASKPASS`); Scheda does not store host tokens in the Vault. Extra remotes in git config are ignored.
 
 **GIT-7. Detect Remote without the network.** `open` of an existing working tree reads git config locally. `Vault.info` reports `api.v1.VaultInfo.remote`: `origin` when that remote exists, otherwise empty. That is not a fetch. *Check:* `open` with network disabled still reports `origin` on `info` if it is configured.
 
-**GIT-8. Network is opt-in.** `add`, `replace`, and `create_collection` inside a transaction, and `commit` (the local commit itself), do not call a Remote. Outside a transaction those mutating calls autocommit (GIT-2); then `auto_sync` may `push` (GIT-10). Network happens only for: `clone`; `pull` / `push` / `sync`; auto-pull on `open` when `auto_sync` is on; auto-push after a successful local commit when `auto_sync` is on. *Check:* those writes with `auto_sync` off and no explicit remote call succeed with network disabled.
+**GIT-8. Network is opt-in.** `add`, `replace`, and `create_collection` inside a transaction, and `commit` (the local commit itself), do not call a Remote. Outside a transaction those mutating calls autocommit (GIT-2); then `auto_sync` may `push` (GIT-10). Network happens only for: `open` that clones (`remote_repo` on a missing path); `pull` / `push` / `sync`; auto-pull on `open` when `auto_sync` is on; auto-push after a successful local commit when `auto_sync` is on. *Check:* those writes with `auto_sync` off and no explicit remote call succeed with network disabled.
 
-**GIT-9. `init` vs `clone` vs `open`.**
+**GIT-9. `open` creates, clones, or attaches.** One public call (`07` LIB-13). There is no `init` or `clone` method name.
 
-| Call | Path | Network | Git |
+| `open(path)` | Path | Network | Git |
 |---|---|---|---|
-| `open(path)` | existing working tree | only if `auto_sync` (GIT-10) | read Remote locally |
-| `init(path)` | empty or new directory | no | `git init`, no Remote |
-| `clone(url, path)` | new directory (or `init`/`open` with `remote_repo=url` when the path must not already be a repo) | yes | `git clone`; not `git init` plus a later remote add as the only path |
+| existing Vault working tree | that path | only if `auto_sync` (GIT-10) | attach; `remote_repo` ignored |
+| missing + `remote_repo` | new directory | yes | `git clone`; not `git init` plus a later remote add as the only path |
+| missing, no `remote_repo` | empty or new directory | no | `git init`, no Remote |
+| exists but is not a Vault | that path | no | `invalid` |
 
-If `path` already exists as a repository and the caller passed `remote_repo`, that is a failure (`invalid`), not a silent clone on top. Isolated nested git (**later**) is created by Scheda under `{vault}/.isolated/`; `clone` / `remote_repo` there is forbidden (ISO-6). *Check:* `clone` of a fixture URL produces a Vault whose `origin` is that URL; `init` has no Remote; `open`+`remote_repo` on an existing repo fails.
+Isolated nested git (**later**) is created by Scheda under `{vault}/.isolated/`; `remote_repo` there is forbidden (ISO-6). *Check:* `open` of a missing path with `remote_repo` produces a Vault whose `origin` is that URL; `open` of a missing path without `remote_repo` has no Remote; `open`+`remote_repo` on an existing Vault succeeds and does not change `origin`.
 
-**GIT-10. `auto_sync`.** Option at `open` / `clone` (default **off**). When on **and** a Remote exists:
+**GIT-10. `auto_sync`.** Option at `open` (default **off**). When on **and** a Remote exists:
 
 1. **Auto-pull on `open`:** fetch, then update `HEAD` only if the incoming commits are a **fast-forward**. If not fast-forward (diverged branches, would need merge or rebase), `open` fails with code `not_fast_forward`. Scheda does not merge on open. The working tree is not left in a conflicted state as a successful open.
 2. **Auto-push after a local commit:** same as an explicit `push` after a successful `commit` or autocommit (GIT-12).

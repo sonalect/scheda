@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.37, 27 August 2026.
+Document 2 of the Scheda package. Version 0.38, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `history`, `find`, `search`, `catalog`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `init`, `clone`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `history`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
@@ -134,7 +134,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Library API** — the operations every implementation must provide, named in `07`. Message fields are `api/v1` (Protobuf edition 2024). Language-neutral as a contract. The first binding is Rust.
 
-**`open`** — attach to an existing Vault working tree. Reads the Remote locally (no fetch). `open` does not take the write lock. More than one Vault may be open in one process. Roots do not leak into each other's search.
+**`open`** — attach to a Vault working tree, or create one. Path exists as a Vault → open (`remote_repo` ignored). Path missing and `remote_repo` set → `git clone`. Path missing → `git init`, no Remote. Reads the Remote locally on an existing tree (no fetch unless `auto_sync`). `open` does not take the write lock. More than one Vault may be open in one process. Roots do not leak into each other's search.
 
 **`info`** — snapshot of the open Vault as `api.v1.VaultInfo` (path, Index path, `remote`, `auto_sync`, collections). Not a live handle.
 
@@ -152,15 +152,9 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. `SearchQuery.include_raw` fills `Hit.raw`. Not the same as `find`.
 
-**`catalog`** — Schema serialized as `api/v1` `Schema`. Not inferred from the directory tree.
-
-**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open.
+**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. Until nested `{vault}/.isolated/` I/O, `schema.isolated` is `unsupported` and no file is written.
 
 **`begin`** — start a transaction. Later writes do not create a git commit until `commit` or `discard`.
-
-**`init`** — create a new git repository at a path, no Remote.
-
-**`clone`** — `git clone` from a URL into a path (network). Not `git init`.
 
 **`commit`** — end a transaction and create one git commit for paths Scheda recorded. Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`.
 
@@ -168,7 +162,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Remote** — the one optional git remote Scheda uses on the Vault repository, named `origin`. Empty `VaultInfo.remote` means none. Extra remotes in git config are ignored. Detected on `open` from git config (no fetch). GitHub is one host, not a Scheda type.
 
-**`auto_sync`** — option on `open` / `clone`, default off. When on and a Remote exists: fast-forward `pull` on open, and `push` after a local commit (including autocommit). Not a merge. Details in `04`.
+**`auto_sync`** — option on `open`, default off. When on and a Remote exists: fast-forward `pull` on open, and `push` after a local commit (including autocommit). Not a merge. Details in `04`.
 
 **`pull`** — fetch and fast-forward only. Uses the network.
 
@@ -180,7 +174,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`check`** — validate the Vault against Schema without necessarily writing.
 
-**Agent surface** — the same operations as the library API, plus catalog, over a thin transport (CLI, MCP, or other). The transport contains no product rules.
+**Agent surface** — the same operations as the library API, over a thin transport (CLI, MCP, or other). Schema listing is `info`. The transport contains no product rules.
 
 ---
 

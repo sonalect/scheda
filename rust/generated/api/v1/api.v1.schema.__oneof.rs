@@ -4,8 +4,8 @@
 pub mod schema {
     #[allow(unused_imports)]
     use super::*;
-    /// MOD-2: exactly one kind. The set arm is the kind (`document` |
-    /// `journal` | `singleton`).
+    /// Exactly one kind. The set arm is the kind (`document` | `journal` |
+    /// `singleton`).
     #[derive(Clone, PartialEq, Debug)]
     pub enum Kind {
         Document(::buffa::alloc::boxed::Box<super::super::super::Body>),
@@ -68,7 +68,7 @@ pub mod schema {
 pub mod field {
     #[allow(unused_imports)]
     use super::*;
-    /// Exactly one SCH-4 type or an SCH-11 edge.
+    /// Exactly one type or an edge.
     #[derive(Clone, PartialEq, Debug)]
     pub enum Spec {
         String(::buffa::alloc::boxed::Box<super::super::super::Text>),

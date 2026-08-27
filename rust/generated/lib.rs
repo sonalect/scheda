@@ -320,8 +320,7 @@ impl fmt::Display for api::v1::Error {
 impl std::error::Error for api::v1::Error {}
 
 impl api::v1::OpenOptions {
-    /// Unset `auto_sync` means off (`07` LIB-4). Index is always
-    /// `{vault}/.scheda/index` (GIT-13).
+    /// Unset `auto_sync` means off. Index is always `{vault}/.scheda/index`.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -332,7 +331,8 @@ impl api::v1::OpenOptions {
         self.with_auto_sync(auto_sync)
     }
 
-    /// GIT-9. Empty string is unset (`open` of an existing Vault ignores it).
+    /// Clone URL when `open` path does not exist. Empty string is unset
+    /// (`open` of an existing Vault ignores it).
     #[must_use]
     pub fn remote_repo(self, remote_repo: impl Into<String>) -> Self {
         self.with_remote_repo(remote_repo)

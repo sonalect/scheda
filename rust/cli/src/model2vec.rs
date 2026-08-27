@@ -1,4 +1,4 @@
-//! Operator folder for `--model2vec-embedder` (`14`).
+//! Operator folder for `--model2vec-embedder`.
 //!
 //! The CLI does not ship weights and does not download from the Hub.
 //! The directory must contain Model2Vec files (`config.json`,

@@ -1,7 +1,6 @@
-// Record I/O (`07` LIB-7–10). Bindings and agent transport (`08`) use the
-// Protobuf JSON mapping of these messages, not binary protobuf. Vault
-// files stay YAML / JSONL (`04`). Collection field names are declared on
-// `Schema`, not this file.
+// Record I/O. Bindings and the CLI encode these messages as Protobuf JSON,
+// not binary protobuf. Vault files stay YAML / JSONL. Collection field names
+// are declared on `Schema`, not this file.
 //
 // The collection name on `Record` / `Hit` is output only (`get` / `find` /
 // `search`). `add` / `replace` still take the collection as the handle;
@@ -18,25 +17,23 @@ import "google/protobuf/struct.proto";
 // write envelope:
 // no field validators (same as `History`).
 message Record {
-  // Collection name (directory, MOD-8). Output only. Set on `get` / `find`.
+  // Collection name (directory). Output only. Set on `get` / `find`.
   // Not an input: `add` / `replace` use the collection handle.
   string collection = 1;
   string id = 2;
-  // JSON object: missing keys stay missing (MOD-12), JSON `null` stays
-  // null (MOD-18).
+  // JSON object: missing keys stay missing, JSON `null` stays null.
   google.protobuf.Struct fields = 3;
-  // Markdown body when Schema allows (SCH-7). Empty = none. `journal`:
-  // always empty.
+  // Markdown body when Schema allows. Empty = none. `journal`: always empty.
   string body = 4;
   // Vault-relative POSIX path of the file (`journal`: the segment).
-  // Library-derived (MOD-8). Output only; the caller never sets this.
+  // Library-derived. Output only; the caller never sets this.
   string path = 5;
   // `true` if the file matches current Schema. `false` if it exists but
-  // fails it (SCH-12).
+  // fails it.
   bool valid = 6;
   // Bytes of that Record as stored (`document` / `singleton`: the file;
   // `journal`: the JSONL line). Encrypted isolated: decrypted plaintext
-  // (**later**, LIB-8).
+  // (**later**).
   bytes raw = 7;
 }
 
@@ -44,7 +41,7 @@ message Record {
 message RecordAdd {
   // Empty is allowed; Schema required keys are not a proto rule.
   google.protobuf.Struct fields = 1;
-  // Empty = none. `journal` rejects a non-empty body (SCH-7).
+  // Empty = none. `journal` rejects a non-empty body.
   string body = 2;
 }
 

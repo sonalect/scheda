@@ -1,4 +1,4 @@
-//! Thin CLI of `07`. JSON is the Protobuf JSON mapping of `api/v1`.
+//! Thin CLI of the library. JSON is the Protobuf JSON mapping of `api/v1`.
 
 use mimalloc::MiMalloc;
 

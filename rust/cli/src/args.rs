@@ -1,17 +1,17 @@
-//! Clap surface for the thin CLI (`14`). Command names are `07`.
+//! Clap surface for the thin CLI. Command names match the library methods.
 
 use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 
-/// Thin encoding of the Scheda library API (`07`).
+/// Thin encoding of the Scheda library API.
 ///
 /// JSON of Records and errors is the Protobuf JSON mapping of `api/v1`.
 #[derive(Parser, Debug)]
 #[command(
     name = "scheda",
     version = env!("CARGO_PKG_VERSION"),
-    about = "Thin encoding of the Scheda library API (07).",
+    about = "Thin encoding of the Scheda library API.",
     subcommand_required = true,
     disable_help_subcommand = true
 )]
@@ -20,12 +20,12 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     pub vault: Option<PathBuf>,
 
-    /// GIT-10: pull on open and push after `commit` when a Remote exists.
-    /// Default off (ISO-1 / GIT-8).
+    /// Pull on open and push after `commit` when a Remote exists.
+    /// Default off: `open` stays local.
     #[arg(long, global = true, default_value_t = false)]
     pub auto_sync: bool,
 
-    /// OpenAI-compatible API root (`14`). Joined with `embeddings`.
+    /// OpenAI-compatible API root. Joined with `embeddings`.
     /// Must be set with `--embedder-model` and `--embedder-dimensions`, or none.
     #[arg(
         long,
@@ -87,12 +87,12 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Open or create a Vault (`07` LIB-4 / LIB-13).
+    /// Open or create a Vault. `--remote-repo` is used only when the path is missing.
     Open {
         #[arg(long)]
         remote_repo: Option<String>,
     },
-    /// `api.v1.VaultInfo` (AGT-1 listing).
+    /// `api.v1.VaultInfo`: path, Index path, `remote`, `auto_sync`, collections.
     Info,
     /// Write one collection declaration. `--schema` is Protobuf JSON `Schema`.
     #[command(name = "create-collection")]
@@ -101,7 +101,7 @@ pub enum Command {
         #[arg(long)]
         schema: Option<String>,
     },
-    /// Collection handle (`07`).
+    /// Collection handle.
     Collection {
         name: String,
         #[command(subcommand)]
@@ -120,7 +120,7 @@ pub enum Command {
     Check,
     /// Rebuild the derived Index.
     Reindex,
-    /// Tantivy Query, then files (`07` LIB-10). Unset `--collections` → this Vault.
+    /// Tantivy Query, then files. Unset `--collections` → every non-isolated collection.
     Find {
         #[arg(long, value_delimiter = ',', value_name = "NAME")]
         collections: Vec<String>,
@@ -134,7 +134,7 @@ pub enum Command {
         #[arg(long, default_value_t = false)]
         include_raw: bool,
     },
-    /// Hybrid search (`07` LIB-11). `--query` is Protobuf JSON `SearchQuery`.
+    /// Hybrid search (BM25, ANN, RRF). `--query` is Protobuf JSON `SearchQuery`.
     Search {
         #[arg(long, value_delimiter = ',', value_name = "NAME")]
         collections: Vec<String>,
@@ -165,7 +165,7 @@ pub enum CollectionCommand {
         #[arg(long)]
         id: String,
     },
-    /// Git history of that Record file (LIB-17).
+    /// Git history of that Record file. Newest first.
     History {
         #[arg(long)]
         id: String,
@@ -181,7 +181,7 @@ pub enum CollectionCommand {
         #[arg(long)]
         record: Option<String>,
     },
-    /// Tantivy Query on this collection (`07` LIB-10).
+    /// Tantivy Query on this collection, then files.
     Find {
         #[arg(long)]
         filter: Option<String>,
@@ -193,7 +193,7 @@ pub enum CollectionCommand {
         #[arg(long, default_value_t = false)]
         include_raw: bool,
     },
-    /// Hybrid search on this collection (`07` LIB-11).
+    /// Hybrid search on this collection (BM25, ANN, RRF).
     Search {
         #[command(flatten)]
         search: SearchArgs,

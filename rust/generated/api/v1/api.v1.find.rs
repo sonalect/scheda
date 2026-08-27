@@ -1497,7 +1497,7 @@ pub mod filter {
         )]
         pub field: ::core::option::Option<::buffa::alloc::string::String>,
         /// Term value. Type must match the Index (library). JSON `null` is a
-        /// stored null (MOD-18), not “missing”.
+        /// stored null, not “missing”.
         ///
         /// Field 2: `value`
         #[serde(
@@ -3528,7 +3528,7 @@ pub mod filter {
         from_json: ::buffa::type_registry::any_from_json::<Range>,
         is_wkt: false,
     };
-    /// `ExistsQuery`. A non-null indexed value (SCH-8). Not “equals JSON
+    /// `ExistsQuery`. A non-null indexed value. Not “equals JSON
     /// null” — that is `term` with value `null`.
     #[derive(Clone, PartialEq, Default)]
     #[derive(::serde::Serialize, ::serde::Deserialize)]
@@ -5770,9 +5770,9 @@ pub mod filter {
     #[doc(inline)]
     pub use super::__buffa::view::oneof::filter::Kind as KindView;
 }
-/// `Vault.find` / `Collection.find` request (`07` LIB-10). Collection
-/// names, `offset`, and `count` stay method arguments. Unset `filter`
-/// is `invalid`. Unset or false `include_raw` omits `Record.raw`.
+/// `Vault.find` / `Collection.find` request. Collection names, `offset`,
+/// and `count` stay method arguments. Unset `filter` is `invalid`. Unset
+/// or false `include_raw` omits `Record.raw`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]

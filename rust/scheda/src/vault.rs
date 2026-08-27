@@ -51,7 +51,7 @@ pub struct Collection {
 }
 
 impl Vault {
-    /// Open, create, or clone a Vault (`12` A3).
+    /// Open, create, or clone a Vault.
     ///
     /// Path exists → open (`remote_repo` ignored). Path missing + `remote_repo`
     /// → clone. Path missing → `git init`. Path exists but is not a Vault →
@@ -214,8 +214,8 @@ impl Vault {
         })
     }
 
-    /// Tantivy Query, then files (`13` §3). Empty `collections` is every
-    /// non-isolated collection on this handle.
+    /// Run a Tantivy Query on the Index, then open matching Record files.
+    /// Empty `collections` is every non-isolated collection on this handle.
     pub fn find(
         &self,
         collections: &[&str],
@@ -233,8 +233,9 @@ impl Vault {
         .find(collections, query, offset, count)
     }
 
-    /// Hybrid retrieval (`13` §6). Empty `collections` is every non-isolated
-    /// collection on this handle.
+    /// Hybrid retrieval: BM25 and ANN when both are on, then RRF, then an
+    /// optional reranker. Empty `collections` is every non-isolated collection
+    /// on this handle.
     pub fn search(
         &self,
         collections: &[&str],
@@ -251,7 +252,7 @@ impl Vault {
         .search(self.embedder.as_deref(), collections, query, reranker)
     }
 
-    /// Create one git commit for paths this handle wrote (GIT-2, LIB-12).
+    /// Create one git commit for paths this handle wrote.
     /// Ends the transaction. `invalid` if none is open.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
@@ -263,7 +264,7 @@ impl Vault {
         self.push_if_auto_sync()
     }
 
-    /// Start a transaction (GIT-2, LIB-22). Discards leftover Scheda writes first.
+    /// Start a transaction. Discards leftover Scheda writes first.
     /// `invalid` if a transaction is already open.
     pub fn begin(&self) -> Result<(), Error> {
         self.require_write_lock("begin")?;
@@ -275,7 +276,7 @@ impl Vault {
     }
 
     /// Restore Scheda-recorded paths to HEAD, end the transaction if any,
-    /// reload Schema, and rebuild the Index (GIT-2, LIB-23).
+    /// reload Schema, and rebuild the Index.
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.restore_recorded()?;
@@ -417,10 +418,17 @@ impl Vault {
         Ok(info)
     }
 
-    /// Write one collection declaration (LIB-21). Reloads Schema on this handle.
+    /// Write one collection declaration as `{name}/.schema.yaml`. Reloads Schema
+    /// on this handle. `isolated: true` is `unsupported` until nested isolated
+    /// I/O exists.
     pub fn create_collection(&self, name: &str, schema: Schema) -> Result<Collection, Error> {
-        self.require_write_lock("create_collection")?;
         schema.require_valid()?;
+        if schema.isolated == Some(true) {
+            bail!(Error::unsupported(format!(
+                "isolated collection {name} is not on this Vault handle"
+            )));
+        }
+        self.require_write_lock("create_collection")?;
         let rel = schema::put_collection(&self.path, name, &schema)?;
         self.note_write(rel)?;
         let loaded = schema::load(&self.path)?;
@@ -737,7 +745,7 @@ impl Collection {
         Ok(())
     }
 
-    /// Tantivy Query on the Index, then files (`13` §3).
+    /// Run a Tantivy Query on this collection's Index, then open matching files.
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
         let name = self.decl.name.as_str();
         QueryCtx {
@@ -749,7 +757,8 @@ impl Collection {
         .find(&[name], query, offset, count)
     }
 
-    /// Hybrid retrieval (LIB-11, `13` §6).
+    /// Hybrid retrieval on this collection: BM25 and ANN when both are on,
+    /// then RRF, then an optional reranker.
     pub fn search(
         &self,
         query: &SearchQuery,
@@ -1168,7 +1177,7 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
 }
 
 /// Uncommitted write paths for the next `commit`. Lives under `.scheda/index`
-/// (gitignored) so a process-per-command CLI can `insert_one` then `commit`.
+/// (gitignored) so a process-per-command CLI can write then `commit`.
 fn written_log(index_dir: &Path) -> PathBuf {
     index_dir.join("written")
 }
@@ -1476,6 +1485,25 @@ mod tests {
         assert!(opened.has_remote());
         assert_eq!(opened.remote_names(), &["origin".to_owned()]);
         assert!(!opened.auto_sync());
+    }
+
+    #[test]
+    fn open_on_existing_vault_ignores_remote_repo() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        git::add_remote(vault.path(), "origin", "https://example.invalid/scheda.git").unwrap();
+        drop(vault);
+        let opened = Vault::open(
+            scratch.vault(),
+            OpenOptions::new().remote_repo("https://example.invalid/other.git"),
+            None,
+        )
+        .unwrap();
+        assert_eq!(opened.remote_names(), &["origin".to_owned()]);
+        assert_eq!(
+            git::remotes(opened.path()).unwrap(),
+            vec!["origin".to_owned()]
+        );
     }
 
     #[test]

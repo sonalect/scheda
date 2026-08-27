@@ -5,8 +5,8 @@
 #[derive(::serde::Serialize)]
 #[serde(default)]
 pub struct Schema {
-    /// Integer ≥ 1 (SCH-2). On disk this is `schema_version`. Writes must use
-    /// the current version (SCH-13).
+    /// Integer ≥ 1. On disk this is `schema_version`. Writes must use the
+    /// current version.
     ///
     /// Field 1: `version`
     #[serde(
@@ -15,7 +15,7 @@ pub struct Schema {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub version: ::core::option::Option<u32>,
-    /// Field declarations (SCH-4). May be empty.
+    /// Field declarations. May be empty.
     ///
     /// Field 2: `fields`
     #[serde(
@@ -24,8 +24,8 @@ pub struct Schema {
         deserialize_with = "::buffa::json_helpers::null_as_default"
     )]
     pub fields: ::buffa::alloc::vec::Vec<Field>,
-    /// SCH-15 (**later**). Default false. `true`: Record files live under
-    /// `{vault}/.isolated/{name}/` (gitignored nested git, ISO-2). Schema file
+    /// Later. Default false. `true`: Record files live under
+    /// `{vault}/.isolated/{name}/` (gitignored nested git). Schema file
     /// stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
     /// collections does not read it.
     ///
@@ -505,14 +505,14 @@ pub mod schema {
     #[doc(inline)]
     pub use super::__buffa::view::oneof::schema::Kind as KindView;
 }
-/// `journal` segment cap (SCH-14). Size-first: a cap hit closes the segment
-/// even mid-day. Segment files live in the collection directory; the
-/// library names them.
+/// `journal` segment cap. Size-first: a cap hit closes the segment even
+/// mid-day. Segment files live in the collection directory; the library
+/// names them.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct Journal {
-    /// Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB (SCH-14).
+    /// Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB.
     ///
     /// Field 1: `segment_max_bytes`
     #[serde(
@@ -533,8 +533,8 @@ pub struct Journal {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub segment_max_lines: ::core::option::Option<u64>,
-    /// Set → rotate daily (UTC), still size-first (SCH-14). Omitted → no
-    /// calendar rotation.
+    /// Set → rotate daily (UTC), still size-first. Omitted → no calendar
+    /// rotation.
     ///
     /// Field 3: `daily`
     #[serde(
@@ -721,7 +721,7 @@ pub const __JOURNAL_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::ty
     from_json: ::buffa::type_registry::any_from_json::<Journal>,
     is_wkt: false,
 };
-/// `singleton`: the one Record `id` (MOD-7). Slug checked in the library.
+/// `singleton`: the one Record `id`. Slug checked in the library.
 /// File is always `{name}/record.yaml` (or `.isolated/{name}/record.yaml`).
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
@@ -859,13 +859,13 @@ pub const __SINGLETON_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::
 #[derive(::serde::Serialize)]
 #[serde(default)]
 pub struct Field {
-    /// Field name. Non-empty (SCH-4). Not `id` (SCH-6) or `body` (SCH-7).
+    /// Field name. Non-empty. Not `id` or `body`.
     ///
     /// Field 1: `name`
     #[serde(rename = "name", skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Must be present on write (SCH-5). Default false (optional). Nested
-    /// fields of `object` / `object_list` use the same flag.
+    /// Must be present on write. Default false (optional). Nested fields of
+    /// `object` / `object_list` use the same flag.
     ///
     /// Field 2: `required`
     #[serde(
@@ -873,8 +873,7 @@ pub struct Field {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub required: ::core::option::Option<bool>,
-    /// JSON/YAML `null` is allowed (SCH-5, MOD-18). Default false. Independent
-    /// of `required`.
+    /// JSON/YAML `null` is allowed. Default false. Independent of `required`.
     ///
     /// Field 3: `nullable`
     #[serde(
@@ -882,7 +881,7 @@ pub struct Field {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub nullable: ::core::option::Option<bool>,
-    /// Exclude from `find` (SCH-8). Default false: the field is a filter key.
+    /// Exclude from `find`. Default false: the field is a filter key.
     ///
     /// Field 4: `exclude_find`
     #[serde(
@@ -891,8 +890,8 @@ pub struct Field {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub exclude_find: ::core::option::Option<bool>,
-    /// Applied only when this key is present (MOD-12). Otherwise missing stays
-    /// missing. Type must match `spec` (checked in the library).
+    /// Applied only when this key is present. Otherwise missing stays missing.
+    /// Type must match `spec` (checked in the library).
     ///
     /// Field 5: `default`
     #[serde(
@@ -1736,7 +1735,7 @@ pub mod field {
     #[doc(inline)]
     pub use super::__buffa::view::oneof::field::Spec as SpecView;
 }
-/// `string` / `string_list`: lexical and vector search (SCH-9). Default on.
+/// `string` / `string_list`: lexical and vector search. Default on.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -2009,8 +2008,7 @@ pub const __UNIT_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_
     from_json: ::buffa::type_registry::any_from_json::<Unit>,
     is_wkt: false,
 };
-/// `object` / `object_list`. Empty `fields`: open map of `string` values
-/// (SCH-4).
+/// `object` / `object_list`. Empty `fields`: open map of `string` values.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -2154,8 +2152,8 @@ pub const __OBJECT_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::typ
 #[derive(::serde::Serialize)]
 #[serde(default)]
 pub struct Edge {
-    /// Target collection name (SCH-11). Must exist in Schema. Slug checked
-    /// in the library.
+    /// Target collection name. Must exist in Schema. Slug checked in the
+    /// library.
     ///
     /// Field 1: `collection`
     #[serde(
@@ -2164,7 +2162,7 @@ pub struct Edge {
     )]
     pub collection: ::core::option::Option<::buffa::alloc::string::String>,
     /// Default false (`lax`). `true` rejects a write whose target `id` is
-    /// missing (SCH-11).
+    /// missing.
     ///
     /// Field 4: `strict`
     #[serde(rename = "strict", skip_serializing_if = "::core::option::Option::is_none")]
@@ -2575,7 +2573,7 @@ pub mod edge {
 #[serde(default)]
 pub struct Body {
     /// Default false: Markdown body is allowed. `true` rejects a non-empty
-    /// body on write (SCH-7). (A proto `bool` cannot default to true.)
+    /// body on write. (A proto `bool` cannot default to true.)
     ///
     /// Field 1: `no_body`
     #[serde(
@@ -2585,7 +2583,7 @@ pub struct Body {
     )]
     pub no_body: ::core::option::Option<bool>,
     /// Omit → in the lexical Index: `find` field `body` and BM25. `exclude_fts`
-    /// drops both. `exclude_vector` is SCH-9 only.
+    /// drops both. `exclude_vector` applies only to the vector leg.
     ///
     /// Field 2: `text`
     #[serde(

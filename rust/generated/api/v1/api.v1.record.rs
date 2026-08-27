@@ -8,7 +8,7 @@
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct Record {
-    /// Collection name (directory, MOD-8). Output only. Set on `get` / `find`.
+    /// Collection name (directory). Output only. Set on `get` / `find`.
     /// Not an input: `add` / `replace` use the collection handle.
     ///
     /// Field 1: `collection`
@@ -20,8 +20,7 @@ pub struct Record {
     /// Field 2: `id`
     #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
     pub id: ::core::option::Option<::buffa::alloc::string::String>,
-    /// JSON object: missing keys stay missing (MOD-12), JSON `null` stays
-    /// null (MOD-18).
+    /// JSON object: missing keys stay missing, JSON `null` stays null.
     ///
     /// Field 3: `fields`
     #[serde(
@@ -32,27 +31,26 @@ pub struct Record {
         ::buffa_types::google::protobuf::Struct,
         ::buffa::Inline<::buffa_types::google::protobuf::Struct>,
     >,
-    /// Markdown body when Schema allows (SCH-7). Empty = none. `journal`:
-    /// always empty.
+    /// Markdown body when Schema allows. Empty = none. `journal`: always empty.
     ///
     /// Field 4: `body`
     #[serde(rename = "body", skip_serializing_if = "::core::option::Option::is_none")]
     pub body: ::core::option::Option<::buffa::alloc::string::String>,
     /// Vault-relative POSIX path of the file (`journal`: the segment).
-    /// Library-derived (MOD-8). Output only; the caller never sets this.
+    /// Library-derived. Output only; the caller never sets this.
     ///
     /// Field 5: `path`
     #[serde(rename = "path", skip_serializing_if = "::core::option::Option::is_none")]
     pub path: ::core::option::Option<::buffa::alloc::string::String>,
     /// `true` if the file matches current Schema. `false` if it exists but
-    /// fails it (SCH-12).
+    /// fails it.
     ///
     /// Field 6: `valid`
     #[serde(rename = "valid", skip_serializing_if = "::core::option::Option::is_none")]
     pub valid: ::core::option::Option<bool>,
     /// Bytes of that Record as stored (`document` / `singleton`: the file;
     /// `journal`: the JSONL line). Encrypted isolated: decrypted plaintext
-    /// (**later**, LIB-8).
+    /// (**later**).
     ///
     /// Field 7: `raw`
     #[serde(
@@ -368,7 +366,7 @@ pub struct RecordAdd {
         ::buffa_types::google::protobuf::Struct,
         ::buffa::Inline<::buffa_types::google::protobuf::Struct>,
     >,
-    /// Empty = none. `journal` rejects a non-empty body (SCH-7).
+    /// Empty = none. `journal` rejects a non-empty body.
     ///
     /// Field 2: `body`
     #[serde(rename = "body", skip_serializing_if = "::core::option::Option::is_none")]

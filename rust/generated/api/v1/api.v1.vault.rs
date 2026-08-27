@@ -5,13 +5,13 @@
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct VaultInfo {
-    /// Working-tree root passed to `open` (LIB-4). POSIX when the host uses
-    /// POSIX; not a Record `path`.
+    /// Working-tree root passed to `open`. POSIX when the host uses POSIX;
+    /// not a Record `path`.
     ///
     /// Field 1: `path`
     #[serde(rename = "path", skip_serializing_if = "::core::option::Option::is_none")]
     pub path: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Index directory `{vault}/.scheda/index` (GIT-13). Not a caller option.
+    /// Index directory `{vault}/.scheda/index`. Not a caller option.
     ///
     /// Field 2: `index_path`
     #[serde(
@@ -20,13 +20,13 @@ pub struct VaultInfo {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub index_path: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Git remote name Scheda uses (`origin`). Empty means no Remote (GIT-7).
+    /// Git remote name Scheda uses (`origin`). Empty means no Remote.
     /// Other remotes in git config are ignored. Local read; not a fetch.
     ///
     /// Field 3: `remote`
     #[serde(rename = "remote", skip_serializing_if = "::core::option::Option::is_none")]
     pub remote: ::core::option::Option<::buffa::alloc::string::String>,
-    /// `OpenOptions.auto_sync` on this handle (GIT-10). Unset in proto is false.
+    /// `OpenOptions.auto_sync` on this handle. Unset in proto is false.
     ///
     /// Field 4: `auto_sync`
     #[serde(
@@ -35,8 +35,8 @@ pub struct VaultInfo {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub auto_sync: ::core::option::Option<bool>,
-    /// Declared collections (AGT-1). Not inferred from Record directories.
-    /// Isolated collections appear here; `schema.fields` may be omitted (ISO-3).
+    /// Declared collections. Not inferred from Record directories.
+    /// Isolated collections appear here; `schema.fields` may be omitted.
     ///
     /// Field 5: `collections`
     #[serde(

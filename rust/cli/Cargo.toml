@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Thin CLI encoding of the Scheda library API (`07`)"
+description = "Thin CLI encoding of the Scheda library API"
 publish = false
 
 [[bin]]

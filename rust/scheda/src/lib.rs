@@ -4,9 +4,8 @@
 //! index is derived and lives under `{vault}/.scheda/`, which `open` gitignores.
 //! Scheda does not know a consumer's types.
 //!
-//! This crate is the Rust binding of the [design
-//! package](https://github.com/amsokol/scheda/tree/main/docs). HTML rustdoc is
-//! published on [GitHub Pages](https://amsokol.github.io/scheda/scheda/).
+//! HTML rustdoc is published on
+//! [GitHub Pages](https://amsokol.github.io/scheda/scheda/).
 //!
 //! # Crate features
 //!
@@ -23,8 +22,7 @@
 //!
 //! # Tokio and other async runtimes
 //!
-//! Core operations are synchronous and do not start an async executor
-//! ([LIB-6](https://github.com/amsokol/scheda/blob/main/docs/07-api.md)).
+//! Core operations are synchronous and do not start an async executor.
 //! There is no `tokio` crate feature: disk I/O and libgit2 block the calling
 //! thread. From a Tokio task, run them on the blocking pool so worker threads
 //! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is

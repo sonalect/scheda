@@ -1,4 +1,4 @@
-//! HTTP embedder / reranker (`14`): OpenAI embeddings and Cohere/Jina rerank.
+//! HTTP embedder / reranker: OpenAI embeddings and Cohere/Jina rerank.
 
 use std::env;
 use std::sync::Arc;
@@ -250,14 +250,31 @@ fn post_json(
         .read_json()
         .map_err(|err| map_ureq(err, frame))?;
     if !status.is_success() {
-        let detail = match &value {
-            Value::String(text) if !text.is_empty() => format!(": {text}"),
-            other if !other.is_null() => format!(": {other}"),
-            _ => String::new(),
-        };
-        return Err(Error::invalid(format!("HTTP {status} from {url}{detail}")).context(frame));
+        let host = host_for_error(url);
+        return Err(Error::invalid(format!("HTTP {status} from {host}")).context(frame));
     }
     Ok(value)
+}
+
+fn host_for_error(url: &str) -> String {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    let hostport = rest
+        .rsplit_once('@')
+        .map(|(_, hostport)| hostport)
+        .unwrap_or(rest);
+    let host = hostport
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or(hostport)
+        .trim();
+    if host.is_empty() {
+        String::from("embedder/reranker")
+    } else {
+        host.to_owned()
+    }
 }
 
 fn map_ureq(err: ureq::Error, frame: &str) -> Error {
@@ -271,4 +288,21 @@ fn map_ureq(err: ureq::Error, frame: &str) -> Error {
         Error::io_other(msg)
     };
     error.context(frame)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::host_for_error;
+
+    #[test]
+    fn host_for_error_drops_userinfo_path_and_query() {
+        assert_eq!(
+            host_for_error("https://user:secret@api.example.test/v1/embeddings?token=leak"),
+            "api.example.test"
+        );
+        assert_eq!(
+            host_for_error("http://127.0.0.1:8080/v1/rerank"),
+            "127.0.0.1:8080"
+        );
+    }
 }

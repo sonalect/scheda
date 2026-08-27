@@ -6,38 +6,36 @@
 /// no field validators (same as `History`).
 #[derive(Clone, Debug, Default)]
 pub struct RecordView<'a> {
-    /// Collection name (directory, MOD-8). Output only. Set on `get` / `find`.
+    /// Collection name (directory). Output only. Set on `get` / `find`.
     /// Not an input: `add` / `replace` use the collection handle.
     ///
     /// Field 1: `collection`
     pub collection: ::core::option::Option<&'a str>,
     /// Field 2: `id`
     pub id: ::core::option::Option<&'a str>,
-    /// JSON object: missing keys stay missing (MOD-12), JSON `null` stays
-    /// null (MOD-18).
+    /// JSON object: missing keys stay missing, JSON `null` stays null.
     ///
     /// Field 3: `fields`
     pub fields: ::buffa::MessageFieldView<
         ::buffa_types::google::protobuf::__buffa::view::StructView<'a>,
     >,
-    /// Markdown body when Schema allows (SCH-7). Empty = none. `journal`:
-    /// always empty.
+    /// Markdown body when Schema allows. Empty = none. `journal`: always empty.
     ///
     /// Field 4: `body`
     pub body: ::core::option::Option<&'a str>,
     /// Vault-relative POSIX path of the file (`journal`: the segment).
-    /// Library-derived (MOD-8). Output only; the caller never sets this.
+    /// Library-derived. Output only; the caller never sets this.
     ///
     /// Field 5: `path`
     pub path: ::core::option::Option<&'a str>,
     /// `true` if the file matches current Schema. `false` if it exists but
-    /// fails it (SCH-12).
+    /// fails it.
     ///
     /// Field 6: `valid`
     pub valid: ::core::option::Option<bool>,
     /// Bytes of that Record as stored (`document` / `singleton`: the file;
     /// `journal`: the JSONL line). Encrypted isolated: decrypted plaintext
-    /// (**later**, LIB-8).
+    /// (**later**).
     ///
     /// Field 7: `raw`
     pub raw: ::core::option::Option<&'a [u8]>,
@@ -376,7 +374,7 @@ impl RecordOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Collection name (directory, MOD-8). Output only. Set on `get` / `find`.
+    /// Collection name (directory). Output only. Set on `get` / `find`.
     /// Not an input: `add` / `replace` use the collection handle.
     ///
     /// Field 1: `collection`
@@ -389,8 +387,7 @@ impl RecordOwnedView {
     pub fn id(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().id
     }
-    /// JSON object: missing keys stay missing (MOD-12), JSON `null` stays
-    /// null (MOD-18).
+    /// JSON object: missing keys stay missing, JSON `null` stays null.
     ///
     /// Field 3: `fields`
     #[must_use]
@@ -401,8 +398,7 @@ impl RecordOwnedView {
     > {
         &self.0.reborrow().fields
     }
-    /// Markdown body when Schema allows (SCH-7). Empty = none. `journal`:
-    /// always empty.
+    /// Markdown body when Schema allows. Empty = none. `journal`: always empty.
     ///
     /// Field 4: `body`
     #[must_use]
@@ -410,7 +406,7 @@ impl RecordOwnedView {
         self.0.reborrow().body
     }
     /// Vault-relative POSIX path of the file (`journal`: the segment).
-    /// Library-derived (MOD-8). Output only; the caller never sets this.
+    /// Library-derived. Output only; the caller never sets this.
     ///
     /// Field 5: `path`
     #[must_use]
@@ -418,7 +414,7 @@ impl RecordOwnedView {
         self.0.reborrow().path
     }
     /// `true` if the file matches current Schema. `false` if it exists but
-    /// fails it (SCH-12).
+    /// fails it.
     ///
     /// Field 6: `valid`
     #[must_use]
@@ -427,7 +423,7 @@ impl RecordOwnedView {
     }
     /// Bytes of that Record as stored (`document` / `singleton`: the file;
     /// `journal`: the JSONL line). Encrypted isolated: decrypted plaintext
-    /// (**later**, LIB-8).
+    /// (**later**).
     ///
     /// Field 7: `raw`
     #[must_use]
@@ -472,7 +468,7 @@ pub struct RecordAddView<'a> {
     pub fields: ::buffa::MessageFieldView<
         ::buffa_types::google::protobuf::__buffa::view::StructView<'a>,
     >,
-    /// Empty = none. `journal` rejects a non-empty body (SCH-7).
+    /// Empty = none. `journal` rejects a non-empty body.
     ///
     /// Field 2: `body`
     pub body: ::core::option::Option<&'a str>,
@@ -741,7 +737,7 @@ impl RecordAddOwnedView {
     > {
         &self.0.reborrow().fields
     }
-    /// Empty = none. `journal` rejects a non-empty body (SCH-7).
+    /// Empty = none. `journal` rejects a non-empty body.
     ///
     /// Field 2: `body`
     #[must_use]

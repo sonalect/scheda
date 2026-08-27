@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.29, 27 August 2026.
+Document 1 of the Scheda package. Version 0.30, 27 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -78,7 +78,7 @@ A **Record** has a stable `id` in its collection. The library places the file (M
 
 A collection may be **isolated** (**later**, `09`): Record files under `{vault}/.isolated/` (gitignored nested git, never a Remote). Schema stays in the main tree. `OpenOptions.encrypt` (default off) applies when that nested tree is first created. Encrypted isolated files are [age](https://age-encryption.org/) ASCII armor; isolated I/O takes one `secret` (passphrase or age identity). The main Vault is not encrypted.
 
-An **AI agent** does not get a second, looser API. It gets the same operations, plus a catalog taken from schema so it does not guess paths, and `create_collection` so it does not write Schema YAML by hand. A person may still edit files in an editor; that path is not offered to the agent as “write any Markdown anywhere”.
+An **AI agent** does not get a second, looser API. It gets the same operations, plus `info` taken from Schema so it does not guess paths, and `create_collection` so it does not write Schema YAML by hand. A person may still edit files in an editor; that path is not offered to the agent as “write any Markdown anywhere”.
 
 The library does not score records, does not decide what to show a human, does not call a language model, and does not know a profession. Those belong to the consumer.
 
@@ -86,7 +86,7 @@ The library does not score records, does not decide what to show a human, does n
 
 ## 4. What this is not
 
-**Not a general-purpose database you adopt instead of git.** History, remotes, and conflict markers stay git's. Scheda writes the working tree and, unless a transaction is open, commits each mutating call (message `scheda`). `open` reports the Remote from local git config (`VaultInfo.remote` is `origin` or empty). With `auto_sync`, open fast-forward-pulls and a local commit also `push`. Explicit `sync` / `push` / `pull` always exist. Clone uses a URL instead of `git init`.
+**Not a general-purpose database you adopt instead of git.** History, remotes, and conflict markers stay git's. Scheda writes the working tree and, unless a transaction is open, commits each mutating call (message `scheda`). `open` reports the Remote from local git config (`VaultInfo.remote` is `origin` or empty). With `auto_sync`, open fast-forward-pulls and a local commit also `push`. Explicit `sync` / `push` / `pull` always exist. `open` with `remote_repo` on a missing path clones instead of `git init`.
 
 **Not a second brain, wiki, or knowledge product.** No users, roles, or web UI in the library. No “tools for thought” model of pages.
 

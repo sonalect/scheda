@@ -5,7 +5,19 @@ alwaysApply: true
 
 # Full review
 
-When the user asks for a **full review**, do **not** implement. The deliverable is a **coding plan**. Do the review **in this agent**: no `Task` subagents, no explore/generalPurpose handoff, no weaker model.
+When the user asks for a **full review**, review **all code and all
+docs** in the repository. That means every handwritten source file
+(`src/`, `tests/`, CLI, bindings, BUILD, proto, scripts), and every
+document (`docs/`, README, CHANGELOG, and equivalent). Not `docs/`
+alone. Not the current diff. Not the last stage. Not the focused file.
+
+If the Cursor window has more than one git root, review the repository
+of the focused file (or the one the user named). Do not fold a sibling
+repo into the same plan unless asked.
+
+Do **not** implement. The deliverable is a **coding plan**. Do the review
+**in this agent**: no `Task` subagents, no explore/generalPurpose handoff,
+no weaker model.
 
 ## Checklist
 

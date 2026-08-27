@@ -24,13 +24,13 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub remote_repo: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Later (ISO-5). When Scheda first creates `{vault}/.isolated/`, encrypt
+    /// Later. When Scheda first creates `{vault}/.isolated/`, encrypt
     /// that nested tree. Ignored if `.isolated/` already exists. Default false.
     ///
     /// Field 3: `encrypt`
     #[serde(rename = "encrypt", skip_serializing_if = "::core::option::Option::is_none")]
     pub encrypt: ::core::option::Option<bool>,
-    /// Later (ISO-7). Isolated Record I/O when `.isolated/` is encrypted.
+    /// Later. Isolated Record I/O when `.isolated/` is encrypted.
     /// Empty means unset. `open` of the Vault and main collections do not
     /// require it.
     ///

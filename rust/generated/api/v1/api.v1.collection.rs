@@ -5,15 +5,14 @@
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct CollectionInfo {
-    /// Collection directory (MOD-8). Slug checked in the library (same as
-    /// Record `id`).
+    /// Collection directory. Slug checked in the library (same as Record `id`).
     /// Not a field on `Schema`: `create_collection` takes it as an argument.
     ///
     /// Field 1: `name`
     #[serde(rename = "name", skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::buffa::alloc::string::String>,
     /// Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
-    /// main tree). Isolated Record files live under `.isolated/{name}/` (ISO-2).
+    /// main tree). Isolated Record files live under `.isolated/{name}/`.
     ///
     /// Field 2: `schema`
     #[serde(

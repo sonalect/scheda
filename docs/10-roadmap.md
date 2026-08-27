@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.20, 27 August 2026.
+Document 10 of the Scheda package. Version 0.21, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -16,10 +16,10 @@ Four labels appear on requirements:
 |---|---|
 | **core** | Files are truth, writes are safe, one writer, autocommit or `begin`/`commit`/`discard`, `get` / `find`. No network unless opted in. A consumer can store and retrieve Records with no embedder, no agent transport, and no isolated collections. |
 | **search** | Hybrid `search` that an agent can recall from: ranked BM25, in-process ANN, RRF fusion, Schema-marked fields only, one-step and inverse edge walks. Must not be required to `add` a journal line or `replace` a document. Grep is not this phase. |
-| **agent** | Catalog and a thin encoding of the same API (`08`). Does not block **core**. |
+| **agent** | Schema listing (`info`) and a thin encoding of the same API (`08`). Does not block **core**. |
 | **later** | Isolated collections and their encryption, scale, extra writers, extra walks, conveniences. Must not leak into **core** as hidden dependencies. |
 
-A binding may ship **search** before **agent**. Isolated collections are **later**: they must not be required to pass **core**, **search**, or **agent**. `scheda` implements the unencrypted isolated slice before **agent** (`§1`); that does not make isolated a gate of **agent** for other bindings.
+A binding may ship **search** before **agent**. Isolated collections are **later**: they must not be required to pass **core**, **search**, or **agent**. Nested `{vault}/.isolated/` I/O is not a gate of **agent**.
 
 The first implementation is the Rust crate `scheda`. Other languages (Python, Java, Go, TypeScript, and others) are separate bindings of the same Vault layout and the same operations (`07`). They are accepted on their own after **core** (at least) is true of that binding. They are not a prerequisite for accepting Rust **core**.
 
@@ -27,13 +27,13 @@ The first implementation is the Rust crate `scheda`. Other languages (Python, Ja
 
 The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
 
-**Next in `scheda`.** Unencrypted isolated slice of **later**: SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. A crate consumer needs `{vault}/.isolated/` (gitignored nested git) for collections that must not live in the main git tree or Index. Do not start **agent**, age encryption of that tree, other language bindings, or the rest of §5 until this slice is in the crate.
+Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` / `check` / Index skip them. `collection(name)` and `create_collection` with `isolated` are `unsupported` (no Schema file written). There is no nested git yet.
 
-Order inside that slice (not a second spec): parse `isolated` in Schema (today Schema rejects the key) → `{vault}/.isolated/` nested git, owner-only files, no Remote → `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/` → main Index has no fixture sealed string.
+**Next in `scheda`.** Unencrypted isolated slice of **later**: ISO-2, ISO-4 (nested Index), ISO-6, IDX-4. A crate consumer needs `{vault}/.isolated/` (gitignored nested git, owner-only files, no Remote) so `collection(name)` can read and write those Records. Do not start age encryption of that tree, other language bindings, or the rest of §5 until this slice is in the crate.
 
-**After that slice.** **agent** (AGT-1–5) and ISO-3: library `catalog` → thin CLI of `07` + `catalog` (MCP remains optional) → agent tools on the main Vault never return sealed values. Stage ticks live in `12`.
+Order inside that slice (not a second spec): nested git under `{vault}/.isolated/` → `create_collection` / `add` on an isolated name write there → `find` / `search` on non-isolated collections still return no isolated Records and do not require `.isolated/` → main Index has no fixture sealed string → `check` covers the nested tree.
 
-**Still deferred after those two slices:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
+**Still deferred after that slice:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
 
 ---
 
@@ -50,7 +50,7 @@ Order inside that slice (not a second spec): parse `isolated` in Schema (today S
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** codes in that list are implemented (C9), not stubs. SCH-15, ISO-2, ISO-4, ISO-6, and IDX-4 are the next slice (`§1`). AGT-1–5 and ISO-3 follow. ISO-5, ISO-7–11 stay deferred.
+**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse and ISO-3 on the agent surface are in. Remaining unencrypted isolated work is ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4 (`§1`). ISO-5, ISO-7–11 stay deferred.
 
 **Core is accepted** when:
 
@@ -62,7 +62,7 @@ Order inside that slice (not a second spec): parse `isolated` in Schema (today S
 
 **Rust `scheda`:** those five gates pass (`11` C10; tests in `rust/scheda/tests/core.rs` and the C0–C8 suites). **core** is accepted for this binding.
 
-Order used in `scheda` (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance. Remote operations are **core** but landed after local `commit`. Isolated roots were not in this order. After C10, `scheda` codes the unencrypted isolated slice (`§1`); **agent** and age encryption wait. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
+Order used in `scheda` (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance → agent → unencrypted isolated nested git. Remote operations are **core** but landed after local `commit`. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
 
 ---
 
@@ -89,11 +89,11 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 
 **In:** AGT-1–5.
 
-ISO-3 applies when isolated collections exist and **agent** is on. In `scheda` it is the slice after unencrypted isolated (`§1`), not a reason to delay **agent** once that isolated slice is in.
+ISO-3 applies when isolated collections exist and **agent** is on. Nested `{vault}/.isolated/` I/O is not required to accept **agent**.
 
-**Agent is accepted** when catalog JSON matches Schema files, `create_collection` writes declarations without a raw path tool, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
+**Agent is accepted** when `info` JSON matches Schema files, `create_collection` writes declarations without a raw path tool, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
 
-Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding: after the isolated slice, `scheda` ships a CLI of `07` + `catalog` + `create_collection`. MCP stays an example, not a requirement (`08`).
+Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding of `07` (including `info` and `create_collection`). MCP stays an example, not a requirement (`08`).
 
 **Rust `scheda`:** **agent** is accepted (`12` A7). Catalog is `Vault.info`.
 The thin encoding is CLI argv `14`. ISO-3 holds on that surface when an
@@ -106,17 +106,17 @@ Age encryption stays `§5`.
 
 ### Isolated collections
 
-**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`.
+**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`. Until nested I/O exists, that call is `unsupported`.
 
 ISO-1 stays **core**. The main Vault is never encrypted.
 
 Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption is optional on top.
 
-**Next in `scheda` (unencrypted only):** SCH-15, ISO-2, ISO-4, ISO-6, IDX-4. Parse `isolated` (today Schema rejects the key). `{vault}/.isolated/` nested git; owner-only files; no Remote; `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; main Index has no fixture sealed string.
+**Already in `scheda`:** SCH-15 parse; ISO-3 listing (`info` omits isolated fields); main `find` / `search` / Index skip isolated collections; `create_collection` with `isolated` and `collection(name)` for an isolated name are `unsupported` (no Schema file written).
 
-**After that — agent and ISO-3:** AGT-1–5. `info` / catalog lists isolated collections as isolated and does not return their field values. Tools that are not `collection(name)` for that collection never return a fixture sealed value.
+**Next in `scheda` (unencrypted only):** ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4. `{vault}/.isolated/` nested git; owner-only files; no Remote; `collection(name)` reads and writes those Records; `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; main Index has no fixture sealed string; `check` covers the nested tree.
 
-**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.encrypt` and `secret` wait until the unencrypted nested tree is in. The **agent** slice does not wait on encryption.
+**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.encrypt` and `secret` wait until the unencrypted nested tree is in.
 
 **Isolated is accepted** when:
 
@@ -126,7 +126,7 @@ Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption 
 4. Main Index contains no fixture sealed string (ISO-4, IDX-4).
 5. If **agent** is on: default tools never return that sealed value (ISO-3).
 
-Gate 3 is encryption; it does not block the unencrypted slice. `scheda` has no `{vault}/.isolated/` yet.
+Gate 3 is encryption; it does not block the unencrypted slice. Gate 5 holds in `scheda` today. `scheda` has no `{vault}/.isolated/` nested git yet.
 
 ### Everything else later
 

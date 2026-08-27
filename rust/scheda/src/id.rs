@@ -1,4 +1,4 @@
-//! Record `id` and collection-name slugs (LIB-7, MOD-8). Not proto.
+//! Record `id` and collection-name slugs. Not proto.
 
 use std::sync::LazyLock;
 

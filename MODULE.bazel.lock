@@ -391,7 +391,7 @@
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
           "FILE:@@//Cargo.lock 858fdc2252f0909987856f6cd3bb1f067c068df95d313f2273e534aca0b2607c",
           "FILE:@@//Cargo.toml d01d16fe346aa2de052a078b318187b83241f022deebbb3c2234e82e2536c9da",
-          "FILE:@@//rust/cli/Cargo.toml d7337c1e769e31d308c57f34f7a804f14526cd2ac247648b800447e53df70146",
+          "FILE:@@//rust/cli/Cargo.toml 1d0da67f8495d147e238d0d4c6af058fe64aab2d3724c49ca2e9623a9ebcbcf0",
           "FILE:@@//rust/scheda/Cargo.toml 4604bcad97db02324d6a3dc6374defc43ee5a06772cc188e9b478f8a4abb3f83",
           "FILE:@@//rust/generated/Cargo.toml b51c67c1a3f45254072ff69c5e5dad5b106b54e34331ceae7d1310da27238600",
           "FILE:@@//third_party/buf/plugins/protoc-gen-buffa-packaging/Cargo.lock 094860b137ae02ff2336501075b6e0140a829fdf05ca90bfe309174b588bd545",

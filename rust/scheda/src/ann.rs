@@ -1,4 +1,4 @@
-//! In-process USearch HNSW (IDX-7).
+//! In-process USearch HNSW.
 
 use std::path::Path;
 
@@ -10,7 +10,7 @@ use crate::error::{Code, Context, ContextAs, ensure};
 /// Approximate nearest-neighbour index over `f32` cosine vectors.
 ///
 /// Keys are `u64` hashes of `(collection, id)`. Hidden from rustdoc; not a
-/// LIB-2 name.
+/// library operation name.
 #[doc(hidden)]
 pub struct AnnIndex {
     inner: Index,

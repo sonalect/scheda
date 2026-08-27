@@ -396,6 +396,29 @@ fn create_collection_missing_kind_writes_nothing() {
 }
 
 #[test]
+fn create_collection_isolated_writes_nothing() {
+    let scratch = Scratch::new();
+    let vault = scratch.init();
+    let decl: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "document": {},
+        "isolated": true,
+        "fields": [{"name": "secret", "string": {}}]
+    }))
+    .unwrap();
+    let err = vault.create_collection("west_isolated", decl).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert!(
+        !scratch
+            .vault()
+            .join("west_isolated")
+            .join(".schema.yaml")
+            .exists()
+    );
+    assert!(!scratch.vault().join("west_isolated").exists());
+}
+
+#[test]
 fn create_collection_does_not_persist_layout_json_key() {
     let scratch = Scratch::new();
     let vault = scratch.init();

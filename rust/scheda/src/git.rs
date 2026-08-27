@@ -140,9 +140,10 @@ fn git_credentials(
     if allowed.is_default() {
         return Cred::default();
     }
-    Err(git2::Error::from_str(&format!(
-        "no git credentials available for this remote ({url})"
-    )))
+    let _ = url;
+    Err(git2::Error::from_str(
+        "no git credentials available for this remote",
+    ))
 }
 
 fn default_remote_name(dir: &Path) -> Result<String, Error> {

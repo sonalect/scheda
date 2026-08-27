@@ -708,14 +708,14 @@ pub mod search_hits {
     use super::*;
     #[derive(Clone, Debug, Default)]
     pub struct HitView<'a> {
-        /// Collection name (directory, MOD-8). Output only. Same as
+        /// Collection name (directory). Output only. Same as
         /// `Record.collection`.
         ///
         /// Field 1: `collection`
         pub collection: ::core::option::Option<&'a str>,
         /// Field 2: `id`
         pub id: ::core::option::Option<&'a str>,
-        /// Vault-relative POSIX path (MOD-8). Output only.
+        /// Vault-relative POSIX path. Output only.
         ///
         /// Field 3: `path`
         pub path: ::core::option::Option<&'a str>,
@@ -1079,7 +1079,7 @@ pub mod search_hits {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Collection name (directory, MOD-8). Output only. Same as
+        /// Collection name (directory). Output only. Same as
         /// `Record.collection`.
         ///
         /// Field 1: `collection`
@@ -1092,7 +1092,7 @@ pub mod search_hits {
         pub fn id(&self) -> ::core::option::Option<&'_ str> {
             self.0.reborrow().id
         }
-        /// Vault-relative POSIX path (MOD-8). Output only.
+        /// Vault-relative POSIX path. Output only.
         ///
         /// Field 3: `path`
         #[must_use]

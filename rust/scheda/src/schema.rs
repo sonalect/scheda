@@ -1,4 +1,4 @@
-//! Schema declarations loaded from Vault files (`05`).
+//! Schema declarations loaded from Vault files.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -25,7 +25,7 @@ const SCHEMA_YML: &str = ".schema.yml";
 const SCHEMA_JSON: &str = ".schema.json";
 const SCHEMA_FILENAMES: [&str; 3] = [SCHEMA_YAML, SCHEMA_YML, SCHEMA_JSON];
 
-/// Collection write mode (`03` MOD-2).
+/// Collection write mode: `document`, `journal`, or `singleton`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
@@ -821,7 +821,7 @@ fn edge_to_proto(edge: &EdgeDecl) -> Edge {
     msg
 }
 
-/// Write one collection declaration (LIB-21). Returns the vault-relative POSIX path.
+/// Write one collection declaration. Returns the vault-relative POSIX path.
 pub(crate) fn put_collection(
     vault: &Path,
     name: &str,
@@ -1281,7 +1281,7 @@ fn read_utf8(path: &Path) -> Result<String, Error> {
     String::from_utf8(bytes).context(Code::NotUtf8, "[Schema::read_utf8] decode UTF-8")
 }
 
-/// On-disk directory for a collection: the collection name (MOD-8).
+/// On-disk directory for a collection: the collection name.
 #[must_use]
 pub(crate) fn collection_dir(name: &str) -> &str {
     name

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{OpenOptions, Schema, Vault};
+use scheda::{FindQuery, OpenOptions, Schema, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -174,9 +174,6 @@ fn info_json_matches_schema_files() {
     let notes_yaml = fs::read_to_string(scratch.vault().join("accept_notes/.schema.yaml")).unwrap();
     assert!(notes_yaml.contains("name: accept_notes"));
     assert!(notes_yaml.contains("kind: document"));
-    assert!(notes_yaml.contains("title"));
-    assert!(notes_yaml.contains("tag"));
-    assert!(notes_yaml.contains("rank"));
     let log_yaml = fs::read_to_string(scratch.vault().join("accept_log/.schema.yaml")).unwrap();
     assert!(log_yaml.contains("name: accept_log"));
     assert!(log_yaml.contains("kind: journal"));
@@ -184,6 +181,13 @@ fn info_json_matches_schema_files() {
     let info = stdout_json(&run(&["--vault", &path, "info"]));
     let notes = collection(&info, "accept_notes");
     let notes_schema = &notes["schema"];
+    let lib_notes = scratch
+        .reopen()
+        .collection("accept_notes")
+        .unwrap()
+        .schema()
+        .unwrap();
+    assert_eq!(notes_schema, &serde_json::to_value(&lib_notes).unwrap());
     assert!(notes_schema.get("document").is_some());
     assert_eq!(notes_schema["version"], 1);
     assert_eq!(notes_schema["fields"][0]["name"], "title");
@@ -195,6 +199,13 @@ fn info_json_matches_schema_files() {
     assert!(notes_schema.get("isolated").is_none());
 
     let journal = &collection(&info, "accept_log")["schema"];
+    let lib_log = scratch
+        .reopen()
+        .collection("accept_log")
+        .unwrap()
+        .schema()
+        .unwrap();
+    assert_eq!(journal, &serde_json::to_value(&lib_log).unwrap());
     assert!(journal.get("journal").is_some());
     assert_eq!(journal["fields"][0]["name"], "title");
 
@@ -305,5 +316,64 @@ fn library_and_cli_json_and_code_match() {
     assert_eq!(
         error_json(&cli_err)["code"],
         serde_json::to_value(&lib_err).unwrap()["code"]
+    );
+
+    let lib_info = serde_json::to_value(scratch.reopen().info().unwrap()).unwrap();
+    let cli_info = stdout_json(&run(&["--vault", &path, "info"]));
+    assert_eq!(cli_info["collections"], lib_info["collections"]);
+
+    let lib_find = scratch
+        .reopen()
+        .find(&[], &FindQuery::all(), 0, 10)
+        .unwrap();
+    let cli_find = run(&[
+        "--vault",
+        &path,
+        "find",
+        "--filter",
+        "{\"all\":{}}",
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]);
+    assert_eq!(
+        stdout_json(&cli_find),
+        serde_json::to_value(&lib_find).unwrap()
+    );
+
+    let query: SearchQuery = serde_json::from_value(json!({"text": "Alpha"})).unwrap();
+    let lib_search = scratch.reopen().search(&[], &query, None).unwrap();
+    let cli_search = run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        "{\"text\":\"Alpha\"}",
+    ]);
+    assert_eq!(
+        stdout_json(&cli_search),
+        serde_json::to_value(&lib_search).unwrap()
+    );
+
+    let lib_invalid = scratch
+        .reopen()
+        .collection("accept_notes")
+        .unwrap()
+        .get("bad$id")
+        .unwrap_err();
+    let cli_invalid = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "accept_notes",
+        "get",
+        "--id",
+        "bad$id",
+    ]);
+    assert_eq!(error_json(&cli_invalid)["code"], "CODE_INVALID");
+    assert_eq!(
+        error_json(&cli_invalid)["code"],
+        serde_json::to_value(&lib_invalid).unwrap()["code"]
     );
 }

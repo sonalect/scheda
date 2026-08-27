@@ -1,4 +1,4 @@
-//! On-disk `journal` JSONL segments (C4).
+//! On-disk `journal` JSONL segments.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};

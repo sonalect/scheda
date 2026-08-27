@@ -3,14 +3,13 @@
 
 #[derive(Clone, Debug, Default)]
 pub struct CollectionInfoView<'a> {
-    /// Collection directory (MOD-8). Slug checked in the library (same as
-    /// Record `id`).
+    /// Collection directory. Slug checked in the library (same as Record `id`).
     /// Not a field on `Schema`: `create_collection` takes it as an argument.
     ///
     /// Field 1: `name`
     pub name: ::core::option::Option<&'a str>,
     /// Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
-    /// main tree). Isolated Record files live under `.isolated/{name}/` (ISO-2).
+    /// main tree). Isolated Record files live under `.isolated/{name}/`.
     ///
     /// Field 2: `schema`
     pub schema: ::buffa::MessageFieldView<super::super::__buffa::view::SchemaView<'a>>,
@@ -270,8 +269,7 @@ impl CollectionInfoOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Collection directory (MOD-8). Slug checked in the library (same as
-    /// Record `id`).
+    /// Collection directory. Slug checked in the library (same as Record `id`).
     /// Not a field on `Schema`: `create_collection` takes it as an argument.
     ///
     /// Field 1: `name`
@@ -280,7 +278,7 @@ impl CollectionInfoOwnedView {
         self.0.reborrow().name
     }
     /// Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
-    /// main tree). Isolated Record files live under `.isolated/{name}/` (ISO-2).
+    /// main tree). Isolated Record files live under `.isolated/{name}/`.
     ///
     /// Field 2: `schema`
     #[must_use]

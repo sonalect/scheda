@@ -1,6 +1,5 @@
-// Library API failures (`07` LIB-5). Bindings and agent transport (`08`) use
-// the Protobuf JSON mapping of these messages, not binary protobuf. Vault
-// files stay YAML / JSONL (`04`).
+// Library API failures. Bindings and the CLI encode these messages as
+// Protobuf JSON, not binary protobuf. Vault files stay YAML / JSONL.
 
 edition = "2024";
 
@@ -8,8 +7,8 @@ package api.v1;
 
 import "buf/validate/validate.proto";
 
-// Recoverable failure. `code` is the LIB-5 class; `message` must not replace
-// it.
+// Recoverable failure. `code` is the class a caller branches on; `message`
+// must not replace it.
 message Error {
   // One code per distinct failure class a caller can branch on.
   // Collection/envelope rule text stays in `message` under `CODE_INVALID`.
@@ -73,8 +72,9 @@ message Error {
     CODE_IO_OUT_OF_MEMORY = 438;
     CODE_IO_OTHER = 439;
 
-    // git2 `ErrorCode`, one proto value each. Fast-forward is GIT-10 / GIT-11.
-    // `CODE_GIT_HEAD` is ours (HEAD is not a branch), not a git2 code.
+    // git2 `ErrorCode`, one proto value each. Fast-forward pull/push is
+    // `not_fast_forward`. `CODE_GIT_HEAD` is ours (HEAD is not a branch),
+    // not a git2 code.
     CODE_NOT_FAST_FORWARD = 501;
     CODE_GIT_GENERIC = 502;
     CODE_GIT_NOT_FOUND = 503;
@@ -143,7 +143,7 @@ message Error {
     }
   }];
   // Causal context, outermost frame first: operation names only
-  // (`find_one`, `read`), not a language backtrace. Must not repeat `path`
+  // (`get`, `read`), not a language backtrace. Must not repeat `path`
   // and must not replace `code`.
   repeated string stack = 5 [(buf.validate.field) = {
     repeated: {

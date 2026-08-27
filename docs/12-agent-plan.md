@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.32, 27 August 2026.
+Document 12 of the Scheda package. Version 0.33, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -13,9 +13,9 @@ out of this plan (`10` §1). MCP is an example transport, not a stage here
 
 A0–A7 are done. **agent** is accepted for this binding. A2 was the
 **legacy** CLI; A4 replaced `rust/cli` with argv `14`. Do not revive A2
-names. The unencrypted `{vault}/.isolated/` tree in `10` §1 (SCH-15,
-ISO-2, ISO-4, ISO-6, IDX-4) is not this checklist. Age encryption
-(ISO-5, ISO-7–11) stays out.
+names. The unencrypted `{vault}/.isolated/` tree in `10` §1 (ISO-2 nested git,
+ISO-4, ISO-6, IDX-4) is not this checklist. Schema already parses
+`isolated`. Age encryption (ISO-5, ISO-7–11) stays out.
 
 ---
 
@@ -47,7 +47,7 @@ keep the names `10` and the CHANGELOG already use.
 
 | Stage | Status | What closes |
 |---|---|---|
-| [A0](#a0-catalog-messages) | done | `catalog` in `api/v1` and on the library surface |
+| [A0](#a0-catalog-messages) | done | `VaultInfo` in `api/v1`; listing is `info` |
 | [A1](#a1-catalog-from-schema) | done | AGT-1; isolated listed without sealed fields |
 | [A2](#a2-thin-cli-legacy) | done | Legacy CLI; do not extend; replaced by A4 |
 | [A3](#a3-target-library) | done | Public API = `07` / `13` |
@@ -102,13 +102,14 @@ edges. Do not infer names from directories. Do not
 invent JSON keys that are not in `api/v1`.
 
 A3 replaces the **library method name** `catalog` with `info`
-(`VaultInfo`). A0 boxes stay as the message work that already shipped.
+(`VaultInfo`). A0 boxes below record the message work that shipped; they
+do not restore a `catalog()` method.
 
-- [x] `07` names `catalog` as an **agent** operation (same mapping rules as
-      LIB-2).
-- [x] `api/v1` has a catalog message (or messages) whose Protobuf JSON
-      mapping can hold AGT-1. Generate stubs (`bazel run //api/v1:generate`).
-- [x] Library surface has `catalog` (body may be `todo!` until A1).
+- [x] `07` names AGT-1 listing as `info` (LIB-4, LIB-20), not a `catalog()`
+      method.
+- [x] `api/v1` has a listing message (`VaultInfo` with nested `Schema`) whose
+      Protobuf JSON mapping can hold AGT-1. Generate stubs (`bazel run //api/v1:generate`).
+- [x] Library surface has `Vault::info` (supersedes A0's `catalog()` name).
 - [x] Caller-supplied catalog request messages, if any, fail protovalidate
       as `invalid` before Schema (`07` intro). There is no request envelope
       (LIB-20); constructed `Schema` / `Collection` / `Field`
@@ -125,7 +126,7 @@ A3 replaces the **library method name** `catalog` with `info`
 **Codes:** AGT-1, SCH-1, ISO-3 (catalog half).
 
 Close only after A0. Schema may mark a collection `isolated: true` (`05`
-§8). `catalog` on the main Vault lists those collections as isolated and
+§8). `info` on the main Vault lists those collections as isolated and
 does not include their field values (ISO-3). Field lists and marks come
 from Schema files for collections that are not isolated. `{vault}/.isolated/`
 (ISO-2) is `10` §1 / `09`, not this stage.
@@ -136,12 +137,12 @@ A3 moves this listing to `Vault.info`.
       `fts` / `vector` / `filter` marks, and edges match the Schema files
       (AGT-1, SCH-1).
 - [x] Catalog is not built by walking Record directories (SCH-1, AGT-1).
-- [x] Two Vaults with different collection names: each `catalog` matches
+- [x] Two Vaults with different collection names: each `info` matches
       that Vault; grep of `rust/scheda/src` does not contain those names
       (MOD-1, SCH-1).
-- [x] Isolated collection: `catalog` on the main Vault marks it isolated
-      and omits its field values (ISO-3). `collection(name)` on this handle
-      is how a caller reads those Records (`09` ISO-2).
+- [x] Isolated collection: `info` on the main Vault marks it isolated
+      and omits its field values (ISO-3). Until ISO-2, `collection(name)`
+      for that name is `unsupported`.
 
 ---
 
@@ -156,7 +157,7 @@ The CLI that shipped under A2 (`find-one`, `insert-one`, `catalog`,
 replaces `rust/cli`. Do not add flags or commands here.
 
 - [x] Tool set is `07` operations that mutate or query Records and git,
-      plus `catalog`, `create_collection`, `check`, `reindex`. No family of methods
+      plus `create_collection`. No family of methods
       named after consumer types (AGT-2, SCH-1).
 - [x] Scripted run `find` / `search` → `get` → `add` on a
       `journal` → `commit` uses only those tools (AGT-2).
@@ -173,7 +174,7 @@ replaces `rust/cli`. Do not add flags or commands here.
 - [x] Contract tests for `not_found`, `invalid`, `locked`,
       `index_unusable` (AGT-5). Not `crypto` (later).
 - [x] CLI with `auto_sync` off does not require the network for local
-      `catalog` / `get` / `add` / `commit` (ISO-1, GIT-8).
+      `info` / `get` / `add` / `commit` (ISO-1, GIT-8).
 
 ---
 
@@ -370,9 +371,9 @@ Check: `isolated_sealed_values_stay_off_the_main_vault` in
       value: `info`, `get`, `find`, `search` (ISO-3).
 - [x] `Vault.info` still lists isolated collections as isolated and does
       not include their field values (ISO-3, A1 / A3).
-- [x] Reaching isolated Records requires `collection(name)` on this handle
-      (ISO-2). CLI `collection NAME` for a non-isolated collection must not
-      return isolated Record values.
+- [x] Reaching isolated Records will be `collection(name)` after `10` §1
+      (ISO-2). Until then that call is `unsupported`. CLI `collection NAME`
+      for a non-isolated collection must not return isolated Record values.
 
 ---
 
@@ -381,8 +382,10 @@ Check: `isolated_sealed_values_stay_off_the_main_vault` in
 **Status:** done
 
 Close only after A0–A6. Re-run the three gates in `10` §4. Crate Check:
-`info_json_matches_schema_files`, `tool_writes_cannot_bypass_schema`, and
-`library_and_cli_json_and_code_match` in `rust/cli/tests/agent.rs`.
+`info_json_matches_schema_files` (info nested Schema equals
+`collection.schema()` parsed from files), `tool_writes_cannot_bypass_schema`,
+and `library_and_cli_json_and_code_match` (`info`, `get`, `find`, `search`,
+`not_found`, illegal slug `invalid`) in `rust/cli/tests/agent.rs`.
 
 - [x] `Vault.info` JSON matches Schema files (AGT-1).
 - [x] Tool writes cannot bypass SCH-12 (AGT-3).

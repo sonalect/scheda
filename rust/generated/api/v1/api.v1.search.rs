@@ -454,7 +454,7 @@ pub mod search_hits {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct Hit {
-        /// Collection name (directory, MOD-8). Output only. Same as
+        /// Collection name (directory). Output only. Same as
         /// `Record.collection`.
         ///
         /// Field 1: `collection`
@@ -466,7 +466,7 @@ pub mod search_hits {
         /// Field 2: `id`
         #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
         pub id: ::core::option::Option<::buffa::alloc::string::String>,
-        /// Vault-relative POSIX path (MOD-8). Output only.
+        /// Vault-relative POSIX path. Output only.
         ///
         /// Field 3: `path`
         #[serde(

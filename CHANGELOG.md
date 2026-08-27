@@ -19,6 +19,21 @@ API or on-disk format changes bump the minor.
   Schema files, tool writes cannot bypass SCH-12, and library vs CLI JSON
   (and `code`) match on one Vault.
 
+### Changed
+
+- Library API names (`07` LIB-2): public operations are `open`, `info`,
+  and the rest of A3. There is no `init`, `clone`, or `catalog` method.
+  Creating or cloning a Vault is `open` (GIT-9: existing path ignores
+  `remote_repo`). AGT-1 listing is `info`.
+- `create_collection` with `schema.isolated` is `unsupported` and writes
+  no Schema file until nested `{vault}/.isolated/` I/O exists.
+
+### Fixed
+
+- HTTP embedder/reranker errors report status and host only: they do not
+  echo the response body or URL userinfo. Git credential failures do not
+  put the remote URL in the message.
+
 ### Removed
 
 - `Collection::layout()`. Schema has no layout template (SCH-2, MOD-8);

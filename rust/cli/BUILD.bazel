@@ -19,6 +19,23 @@ rust_binary(
 )
 
 rust_test(
+    name = "http_test",
+    srcs = glob(["src/**/*.rs"]),
+    crate_name = "scheda_cli",
+    crate_root = "src/main.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        "//rust/scheda",
+        "@cargo//:clap",
+        "@cargo//:mimalloc",
+        "@cargo//:model2vec-rs",
+        "@cargo//:serde",
+        "@cargo//:serde_json",
+        "@cargo//:ureq",
+    ],
+)
+
+rust_test(
     name = "cli_test",
     srcs = ["tests/cli.rs"],
     compile_data = glob(["src/**/*.rs"]),

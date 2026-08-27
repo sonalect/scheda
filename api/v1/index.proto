@@ -1,14 +1,13 @@
-// Index rebuild result (`07` LIB-16; IDX-1). Bindings and agent transport
-// (`08`) use the Protobuf JSON mapping of these messages, not binary
-// protobuf. Vault files stay YAML / JSONL (`04`). The Index lives under
-// `{vault}/.scheda/` (GIT-13); isolated Index under `{vault}/.isolated/.scheda/`
-// (ISO-10).
+// Index rebuild result. Bindings and the CLI encode these messages as
+// Protobuf JSON, not binary protobuf. Vault files stay YAML / JSONL. The
+// Index lives under `{vault}/.scheda/`; isolated Index under
+// `{vault}/.isolated/.scheda/`.
 
 edition = "2024";
 
 package api.v1;
 
-// LIB-16. Written by `reindex` from Vault files, not from a previous Index.
+// Written by `reindex` from Vault files, not from a previous Index.
 message ReindexResult {
   uint64 records_read = 1;
   uint64 skipped_invalid = 2;

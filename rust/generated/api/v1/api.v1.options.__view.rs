@@ -12,12 +12,12 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 2: `remote_repo`
     pub remote_repo: ::core::option::Option<&'a str>,
-    /// Later (ISO-5). When Scheda first creates `{vault}/.isolated/`, encrypt
+    /// Later. When Scheda first creates `{vault}/.isolated/`, encrypt
     /// that nested tree. Ignored if `.isolated/` already exists. Default false.
     ///
     /// Field 3: `encrypt`
     pub encrypt: ::core::option::Option<bool>,
-    /// Later (ISO-7). Isolated Record I/O when `.isolated/` is encrypted.
+    /// Later. Isolated Record I/O when `.isolated/` is encrypted.
     /// Empty means unset. `open` of the Vault and main collections do not
     /// require it.
     ///
@@ -292,7 +292,7 @@ impl OpenOptionsOwnedView {
     pub fn remote_repo(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().remote_repo
     }
-    /// Later (ISO-5). When Scheda first creates `{vault}/.isolated/`, encrypt
+    /// Later. When Scheda first creates `{vault}/.isolated/`, encrypt
     /// that nested tree. Ignored if `.isolated/` already exists. Default false.
     ///
     /// Field 3: `encrypt`
@@ -300,7 +300,7 @@ impl OpenOptionsOwnedView {
     pub fn encrypt(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().encrypt
     }
-    /// Later (ISO-7). Isolated Record I/O when `.isolated/` is encrypted.
+    /// Later. Isolated Record I/O when `.isolated/` is encrypted.
     /// Empty means unset. `open` of the Vault and main collections do not
     /// require it.
     ///

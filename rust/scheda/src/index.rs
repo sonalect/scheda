@@ -1,4 +1,4 @@
-//! Disposable Index under `{vault}/.scheda/index` (IDX-1, IDX-2, IDX-5, LIB-16).
+//! Disposable Index under `{vault}/.scheda/index`.
 
 use std::collections::BTreeMap;
 use std::fs::{self, OpenOptions};
@@ -21,7 +21,7 @@ const IDS_FILE: &str = "ids";
 /// In-memory journal `(id → segment path)` maps, keyed by collection name.
 ///
 /// A collection is absent until a map file has been written (`reindex` or the
-/// first writer `insert_one`). Absent means `find_one` must scan files.
+/// first journal write). Absent means lookup must scan files.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct JournalIdMaps {
     collections: BTreeMap<String, BTreeMap<String, String>>,

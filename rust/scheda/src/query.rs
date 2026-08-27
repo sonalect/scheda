@@ -1,4 +1,4 @@
-//! Map `api.v1.Filter` to a Tantivy 0.26 Query (`13` §3).
+//! Map `api.v1.Filter` to a Tantivy 0.26 Query.
 
 use std::ops::Bound as StdBound;
 
@@ -38,7 +38,6 @@ pub(crate) fn is_unconstrained(filter: &Filter) -> bool {
 }
 
 pub(crate) fn validate(decl: &CollectionDecl, filter: &Filter) -> Result<(), Error> {
-    filter.require_valid()?;
     check_fields(decl, filter)
 }
 

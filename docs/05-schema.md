@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.28, 26 August 2026.
+Document 5 of the Scheda package. Version 0.29, 27 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -12,7 +12,7 @@ An assertion without a check is not a requirement. Schema contains no executable
 
 **SCH-1. Schema lives in the Vault.** Collection declarations are UTF-8 YAML 1.2 (or JSON) files under git, next to the records: `{name}/.schema.yaml` (also `.schema.yml` or `.schema.json`). `name` is the collection name and the on-disk directory (MOD-8). The directory name must equal the `name` in the file. Changing Schema is an ordinary git commit. Bindings write a collection file through `create_collection` (`07` LIB-21), not by offering a raw path. A person may still edit those files in an editor (STO-2). Implementation source must not name a consumer's collections. *Check:* a second consumer adds collections without rebuilding Scheda; grep over implementation source does not contain those collection names.
 
-The catalog (`08`) is this data serialized, not a guess from walking files.
+`info` (`08`) is this data serialized, not a guess from walking files.
 
 **SCH-2. One declaration per collection.** Each collection has: name (method argument / directory), kind (`document` | `journal` | `singleton`), `version` (integer ≥ `1`; on disk `schema_version`), field list, and kind-specific options (segment cap for `journal`; fixed Record `id` for `singleton`). There is no layout template. Record file paths are fixed (MOD-8). *Check:* a collection missing kind or `version` is rejected on `open`/`check`; a `layout` key is `invalid`.
 
@@ -103,7 +103,7 @@ literals (`document`, `journal`, `singleton`, field types in SCH-4).
 
 Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record files are the SCH-15 exception (`{vault}/.isolated/{name}/`). Discover collections by scanning the Vault root for directories that do not start with `.` and that contain exactly one of `.schema.yaml`, `.schema.yml`, or `.schema.json`. Skip `.git`, `.scheda`, and `.isolated`. Other files in that directory (for example Markdown) are ignored and are not extractors (SCH-3). A directory whose name is not the `name` in the file is `invalid`. Two schema files in one collection directory are `invalid`.
 
-The catalog (`08`) is this data serialized, not inferred from Record files.
+`info` (`08`) is this data serialized, not inferred from Record files.
 
 | Key | Required | Meaning |
 |---|---|---|

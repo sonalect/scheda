@@ -1,23 +1,22 @@
-// `Vault.find` / `Collection.find` (`07` LIB-10). Bindings and agent
-// transport (`08`) use the Protobuf JSON mapping, not binary protobuf.
-// Vault files stay YAML / JSONL (`04`).
+// `Vault.find` / `Collection.find`. Bindings and the CLI encode these
+// messages as Protobuf JSON, not binary protobuf. Vault files stay YAML /
+// JSONL.
 //
 // `Filter` is a Tantivy 0.26 `Query` tree. The library maps each `kind` to
 // `tantivy::query::*`, runs it on the Index, then opens Record files for
-// the matching `(collection, id)`s (IDX-10). Collection names are a
-// method argument on `Vault.find`, not a field here. No Record path.
-// Unset `kind` is not a query (`invalid`). `all` matches every indexed
-// Record in the selected collections. `QueryParser` is not a `Query`;
-// it is not here.
+// the matching `(collection, id)`s. Collection names are a method argument
+// on `Vault.find`, not a field here. No Record path. Unset `kind` is not a
+// query (`invalid`). `all` matches every indexed Record in the selected
+// collections. `QueryParser` is not a `Query`; it is not here.
 //
 // Paging is the Tantivy collector, not part of `Filter` / `FindQuery`:
 // `(Count, TopDocs::with_limit(count).and_offset(offset))`, then
 // `order_by_score()` unless the selection is exactly one `journal`
-// (append-order fast field, QRY-7). `Count` is indexed hits
-// (`FindResult.total`). `Vault.find` takes collection names, `FindQuery`,
-// `offset`, and `count`. `Collection.find` passes that collection's name.
-// `FindResult` is one page. Output, not a write envelope: no field
-// validators (same as `History`).
+// (append-order fast field). `Count` is indexed hits (`FindResult.total`).
+// `Vault.find` takes collection names, `FindQuery`, `offset`, and `count`.
+// `Collection.find` passes that collection's name. `FindResult` is one
+// page. Output, not a write envelope: no field validators (same as
+// `History`).
 
 edition = "2024";
 
@@ -46,7 +45,7 @@ message Filter {
       string: {min_len: 1}
     }];
     // Term value. Type must match the Index (library). JSON `null` is a
-    // stored null (MOD-18), not “missing”.
+    // stored null, not “missing”.
     google.protobuf.Value value = 2 [(buf.validate.field) = {required: true}];
   }
 
@@ -182,7 +181,7 @@ message Filter {
     Bound upper = 3;
   }
 
-  // `ExistsQuery`. A non-null indexed value (SCH-8). Not “equals JSON
+  // `ExistsQuery`. A non-null indexed value. Not “equals JSON
   // null” — that is `term` with value `null`.
   message Exists {
     // Schema field name or Markdown `body`. Not Record `id` (`id` always
@@ -388,9 +387,9 @@ message Filter {
   }
 }
 
-// `Vault.find` / `Collection.find` request (`07` LIB-10). Collection
-// names, `offset`, and `count` stay method arguments. Unset `filter`
-// is `invalid`. Unset or false `include_raw` omits `Record.raw`.
+// `Vault.find` / `Collection.find` request. Collection names, `offset`,
+// and `count` stay method arguments. Unset `filter` is `invalid`. Unset
+// or false `include_raw` omits `Record.raw`.
 message FindQuery {
   Filter filter = 1 [(buf.validate.field) = {required: true}];
   // When true, fill `Record.raw` on each hit. `get` always returns `raw`.

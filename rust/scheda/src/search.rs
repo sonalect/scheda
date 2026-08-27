@@ -1,4 +1,4 @@
-//! Hybrid lexical + vector search and one-step edges (C9).
+//! Hybrid lexical + vector search and one-step edges.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -193,7 +193,6 @@ impl SearchEngine {
         if can_write {
             index::ensure_format(&self.index_dir)?;
         }
-        let mut prepared = Vec::new();
         for decl in schema.collections().filter(|decl| !decl.isolated) {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
@@ -207,21 +206,19 @@ impl SearchEngine {
                 }
                 let pieces = field_vector_texts(decl, &record)?;
                 let vectors = embed_field_vectors(embedder, pieces)?;
-                prepared.push((decl, record, vectors));
+                let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
+                upsert_record(
+                    &mut inner,
+                    &self.index_dir,
+                    can_write,
+                    decl,
+                    &record,
+                    embedder,
+                    &vectors,
+                )?;
             }
         }
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
-        for (decl, record, vectors) in &prepared {
-            upsert_record(
-                &mut inner,
-                &self.index_dir,
-                can_write,
-                decl,
-                record,
-                embedder,
-                vectors,
-            )?;
-        }
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] commit")?;
         inner.commit(&self.index_dir, can_write)
     }
 
