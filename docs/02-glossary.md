@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.44, 27 August 2026.
+Document 2 of the Scheda package. Version 0.45, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -92,7 +92,7 @@ Replace replaces that file after Schema checks. There is not a set of ids in the
 
 **`id`** — stable identifier of a Record inside its collection.
 
-The library checks `id` as a slug: starts with a Unicode letter or digit, then letters, digits, combining marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@` (max 255 bytes; not a Windows device name; no leading/trailing whitespace; no trailing `.`). Schema may require a tighter pattern (ULID, `kebab-case`, or another). Scheda checks the pattern. It does not mint domain identifiers for the consumer. Renaming a file so that it no longer matches the derived path is rejected: `id` is not the current basename “until someone renames it”.
+The library checks `id` as a slug: starts with a Unicode letter or digit, then letters, digits, combining marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@` (max 255 bytes; not a Windows device name; no leading/trailing whitespace; no trailing `.`). Schema does not add a tighter pattern (SCH-6). Scheda does not mint domain identifiers for the consumer. Renaming a file so that it no longer matches the derived path is rejected: `id` is not the current basename “until someone renames it”.
 
 **Path** — location of the Record in the Vault.
 

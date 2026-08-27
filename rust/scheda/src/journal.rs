@@ -92,7 +92,7 @@ impl JournalLines {
                     "{rel} has git conflict markers"
                 )));
             }
-            let parsed = parse_line(&self.decl, line).map_err(|err| {
+            let parsed = parse_line(line).map_err(|err| {
                 Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
             })?;
             return Ok(Some(record_from_parsed(
@@ -234,7 +234,7 @@ fn find_in_segment(
     id: &str,
 ) -> Result<Record, Error> {
     let path = vault.join(rel);
-    for parsed in parse_segment(decl, &path)? {
+    for parsed in parse_segment(&path)? {
         if parsed.id == id {
             return record_from_parsed(vault, decl, &path, parsed);
         }
@@ -280,7 +280,7 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
                 )));
             }
             for line in complete {
-                let parsed = parse_line(decl, line).map_err(|err| {
+                let parsed = parse_line(line).map_err(|err| {
                     Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
                 })?;
                 if !seen.insert(parsed.id.clone()) {
@@ -289,12 +289,8 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
                         parsed.id, decl.name
                     )));
                 }
-                if let Err(err) = store::validate_fields(
-                    &parsed.fields,
-                    &decl.fields,
-                    Some(decl.id_field.as_str()),
-                    false,
-                ) {
+                if let Err(err) = store::validate_fields(&parsed.fields, &decl.fields, true, false)
+                {
                     bail!(Error::invalid(format!("{rel}: {err}")));
                 }
             }
@@ -320,29 +316,21 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
             decl.name
         )));
     }
-    if let Some(pattern) = &decl.id_pattern
-        && !pattern.is_match(&id)
-    {
-        bail!(Error::invalid(format!(
-            "id {id} does not match collection {} pattern",
-            decl.name
-        )));
-    }
     let mut fields = store::fields_map(&record)?;
     store::apply_defaults(&mut fields, &decl.fields);
-    match fields.get(&decl.id_field) {
+    match fields.get(crate::id::FIELD) {
         Some(Value::String(existing)) if existing == &id => {}
         Some(Value::Null) | None => {
-            fields.insert(decl.id_field.clone(), Value::String(id.clone()));
+            fields.insert(String::from(crate::id::FIELD), Value::String(id.clone()));
         }
         Some(_) => {
             bail!(Error::invalid(format!(
                 "object {} must equal record id {id}",
-                decl.id_field
+                crate::id::FIELD
             )));
         }
     }
-    store::validate_fields(&fields, &decl.fields, Some(decl.id_field.as_str()), false)?;
+    store::validate_fields(&fields, &decl.fields, true, false)?;
     let mut line = canonical_json(&Value::Object(fields))?;
     line.push(b'\n');
     Ok((id, line))
@@ -677,7 +665,7 @@ fn for_each_parsed(
     mut visit: impl FnMut(&Path, ParsedLine) -> Result<bool, Error>,
 ) -> Result<(), Error> {
     for path in list_segments(&journal_dir(vault, decl)?)? {
-        for parsed in parse_segment(decl, &path)? {
+        for parsed in parse_segment(&path)? {
             if !visit(&path, parsed)? {
                 return Ok(());
             }
@@ -718,7 +706,7 @@ fn map_from_files(vault: &Path, decl: &CollectionDecl) -> Result<BTreeMap<String
     Ok(ids)
 }
 
-fn parse_segment(decl: &CollectionDecl, path: &Path) -> Result<Vec<ParsedLine>, Error> {
+fn parse_segment(path: &Path) -> Result<Vec<ParsedLine>, Error> {
     let raw = fs::read(path).context("[Journal::parse_segment] read segment")?;
     let Ok(text) = str::from_utf8(&raw) else {
         return Ok(Vec::new());
@@ -729,7 +717,7 @@ fn parse_segment(decl: &CollectionDecl, path: &Path) -> Result<Vec<ParsedLine>, 
     let (complete, _) = split_complete(text);
     let mut out = Vec::new();
     for line in complete {
-        match parse_line(decl, line) {
+        match parse_line(line) {
             Ok(parsed) => out.push(parsed),
             Err(_) => continue,
         }
@@ -762,7 +750,7 @@ fn split_complete(text: &str) -> (Vec<&str>, Option<&str>) {
     }
 }
 
-fn parse_line(decl: &CollectionDecl, line: &str) -> Result<ParsedLine, Error> {
+fn parse_line(line: &str) -> Result<ParsedLine, Error> {
     if line.is_empty() {
         bail!(Error::invalid("empty journal line"));
     }
@@ -771,13 +759,10 @@ fn parse_line(decl: &CollectionDecl, line: &str) -> Result<ParsedLine, Error> {
     let Value::Object(fields) = value else {
         bail!(Error::invalid("journal line must be a JSON object"));
     };
-    let id = match fields.get(&decl.id_field) {
+    let id = match fields.get(crate::id::FIELD) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
         _ => {
-            bail!(Error::invalid(format!(
-                "journal object {} is missing",
-                decl.id_field
-            )));
+            bail!(Error::invalid("journal object id is missing"));
         }
     };
     let mut raw = line.as_bytes().to_vec();
@@ -792,17 +777,7 @@ fn record_from_parsed(
     parsed: ParsedLine,
 ) -> Result<Record, Error> {
     let rel = store::rel_posix(vault, path)?;
-    let valid = store::validate_fields(
-        &parsed.fields,
-        &decl.fields,
-        Some(decl.id_field.as_str()),
-        false,
-    )
-    .is_ok()
-        && decl
-            .id_pattern
-            .as_ref()
-            .is_none_or(|pattern| pattern.is_match(&parsed.id));
+    let valid = store::validate_fields(&parsed.fields, &decl.fields, true, false).is_ok();
     let mut record = Record::default()
         .with_id(parsed.id)
         .with_collection(decl.name.as_str())

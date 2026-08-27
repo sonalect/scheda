@@ -301,7 +301,7 @@ fn optional_omit_versus_null() {
 }
 
 #[test]
-fn id_pattern_comes_from_schema() {
+fn slug_rejects_slash_in_id() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("slugs.yaml", SLUGS);

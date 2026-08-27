@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.42, 27 August 2026.
+Document 12 of the Scheda package. Version 0.43, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -417,7 +417,7 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P0–P4 are done; P5–P9 are not started.
+**Status of the part:** in progress. P0–P5 are done; P6–P9 are not started.
 
 The first consumer moves a primary layer of text files under git onto the
 crate: `document` collections it revises in place, and `journal`
@@ -447,7 +447,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P2](#p2-ordered-journal-read-without-the-lexical-index) | done | Reading a journal in order without Tantivy |
 | [P3](#p3-many-writes-one-commit) | done | Append per event without a commit per event |
 | [P4](#p4-unencrypted-isolated-slice) | done | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
-| [P5](#p5-id-pattern-in-schema) | not started | `id` pattern reaches `CollectionDecl` |
+| [P5](#p5-dead-id-knobs) | done | Dead `id_pattern` / `id_field` out; the slug rule is the whole rule |
 | [P6](#p6-singleton-file-format) | not started | STO-2 and SCH-6 agree on the singleton file |
 | [P7](#p7-a-consumer-that-does-not-search) | not started | The search stack is not forced on every consumer |
 | [P8](#p8-decisions-without-code) | not started | Layout answers the consumer needs before it moves |
@@ -460,8 +460,9 @@ An implementer who meets that failure will rename the fixture into
 something meaningless instead of fixing the check.
 
 Then P1 and P2: without them a consumer can neither write nor read its
-journals honestly. Then P3, P5, P6 — each small, each removing one
-migration blocker. P7 next, because it decides whether a consumer pays
+journals honestly. Then P3 and P6, each small and each removing one
+migration blocker, and P5, which removes dead machinery rather than a
+blocker. P7 next, because it decides whether a consumer pays
 for Tantivy and USearch it does not use. P4 is the large one and is
 done (`10` §1 unencrypted slice). P9 closes the part.
 
@@ -505,9 +506,9 @@ not decide, that is a gap in the specification, and a silent default in
 ### Working in parallel
 
 P1, P2, and P3 all touch the journal write path and the commit rule; run
-them one at a time. P5, P6, and P7 touch Schema keys, the singleton
-file, and the build graph, and do not overlap each other. P8 is prose
-and blocks nothing.
+them one at a time. P5 removed dead `CollectionDecl` fields. P6 and P7
+touch the singleton file and the build graph, and do not overlap each
+other. P8 is prose and blocks nothing.
 
 ---
 
@@ -704,33 +705,28 @@ Encryption stays out (ISO-5, ISO-7–11).
 
 ---
 
-## P5. `id` pattern in Schema
+## P5. Dead `id` knobs
 
-**Status:** not started
+**Status:** done
 
-**Codes:** SCH-2, SCH-6, MOD-13, MOD-8.
+**Codes:** SCH-6.
 
 **Needs:** nothing.
 
-**Decide first:** nothing. Whether the pattern is anchored is a box of
-this stage, answered in `05`, not a question held open before it.
+**Decide first:** nothing.
 
-`CollectionDecl.id_pattern` is already honoured on write, but nothing
-ever sets it: there is no Schema key, so the field is always unset. The
-consumer wants a ULID pattern on two journals and a slug pattern on its
-document collections, and wants the library to refuse a wrong `id`
-instead of trusting the caller.
+Schema has no `id_pattern` key and no `id_field` key, so nothing can
+ever set the two fields the code carries. Both are dead. Delete them.
+The slug rule is the whole `id` rule, and the identity field is `id`.
 
-- [ ] A Schema key for the pattern, listed in `05` §8 keys and present in
-      `api/v1` `Schema`. A value that is not a valid expression is
-      `invalid` on load and on `create_collection`.
-- [ ] The pattern applies to `add` on every kind, not only `journal`.
-- [ ] The pattern is anchored, or `05` states plainly that it is not. An
-      unanchored pattern that matches a substring is the silent default
-      this plan forbids.
-- [ ] The library slug rule runs first. A pattern narrows it and can
-      never widen it: a pattern that would allow `a/b` still does not
-      create a path (MOD-8).
+- [x] `id_pattern` is gone from `rust/scheda/src` and from
+      `tests/document.rs`. `regex` stays; `id.rs` needs it.
+- [x] `id_field` is gone: the field, its per-collection `String`, and
+      `Collection::id_field()`, whose rustdoc promises a default that
+      cannot vary. Call sites take the `id` constant.
+- [x] `05` says the slug rule is the only constraint on `id`, and `id`
+      is the identity field (SCH-6).
+- [x] `bazel test //...` green.
 
 ---
 

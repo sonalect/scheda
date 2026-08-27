@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.26, 27 August 2026.
+Document 10 of the Scheda package. Version 0.27, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -29,9 +29,9 @@ The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` mu
 
 Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness after P4 is P5–P9 in `12` §4. Do not start other language bindings or the rest of §5 until those are decided.
+**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness after P5 is P6–P9 in `12` §4. Do not start other language bindings or the rest of §5 until those are decided.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). P0–P4 of that list are in: the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4.
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). P0–P5 of that list are in: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4.
 
 **Still deferred:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
 

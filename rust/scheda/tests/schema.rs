@@ -171,16 +171,6 @@ fn unmarked_markdown_is_not_an_extractor() {
 }
 
 #[test]
-fn identity_field_defaults_to_id() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema("east.yaml", EAST);
-    let vault = scratch.reopen().unwrap();
-    let collection = vault.collection("east_docs").unwrap();
-    assert_eq!(collection.id_field(), "id");
-}
-
-#[test]
 fn filter_key_marks_are_honoured() {
     let scratch = Scratch::new();
     drop(scratch.init());

@@ -123,19 +123,14 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
                     "{rel} has git conflict markers"
                 )));
             }
-            let parsed = parse_file(decl, text)?;
+            let parsed = parse_file(text)?;
             if !seen.insert(parsed.id.clone()) {
                 bail!(Error::duplicate_id(format!(
                     "duplicate id {} in {}",
                     parsed.id, decl.name
                 )));
             }
-            if let Err(err) = validate_fields(
-                &parsed.fields,
-                &decl.fields,
-                Some(decl.id_field.as_str()),
-                false,
-            ) {
+            if let Err(err) = validate_fields(&parsed.fields, &decl.fields, true, false) {
                 bail!(Error::invalid(format!("{rel}: {err}")));
             }
             let expected = vault_rel(decl, &record_file(decl, &parsed.id)?);
@@ -172,14 +167,6 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
             "document write used on a journal collection",
         ));
     }
-    if let Some(pattern) = &decl.id_pattern
-        && !pattern.is_match(&id)
-    {
-        bail!(Error::invalid(format!(
-            "id {id} does not match collection {} pattern",
-            decl.name
-        )));
-    }
     if decl.kind == Kind::Singleton {
         let Some(fixed) = decl.singleton_id.as_deref() else {
             bail!(Error::invalid(format!(
@@ -210,19 +197,19 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
     }
     let mut fields = fields_map(&record)?;
     apply_defaults(&mut fields, &decl.fields);
-    match fields.get(&decl.id_field) {
+    match fields.get(crate::id::FIELD) {
         Some(Value::String(existing)) if existing == &id => {}
         Some(Value::Null) | None => {
-            fields.insert(decl.id_field.clone(), Value::String(id.clone()));
+            fields.insert(String::from(crate::id::FIELD), Value::String(id.clone()));
         }
         Some(_) => {
             bail!(Error::invalid(format!(
                 "header {} must equal record id {id}",
-                decl.id_field
+                crate::id::FIELD
             )));
         }
     }
-    validate_fields(&fields, &decl.fields, Some(decl.id_field.as_str()), false)?;
+    validate_fields(&fields, &decl.fields, true, false)?;
     let rel = record_file(decl, &id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
     let path = dir.join(&rel);
@@ -335,7 +322,7 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
     };
     if has_conflict_markers(text) {
         record.valid = Some(false);
-        match parse_file(decl, text) {
+        match parse_file(text) {
             Ok(parsed) => {
                 let _ = fill_parsed(&mut record, parsed);
             }
@@ -347,22 +334,12 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
         }
         return Ok(record.with_raw(raw));
     }
-    match parse_file(decl, text) {
+    match parse_file(text) {
         Ok(parsed) => {
-            let valid = validate_fields(
-                &parsed.fields,
-                &decl.fields,
-                Some(decl.id_field.as_str()),
-                false,
-            )
-            .is_ok()
-                && id_matches_header(decl, &parsed)
+            let valid = validate_fields(&parsed.fields, &decl.fields, true, false).is_ok()
+                && id_matches_header(&parsed)
                 && record_file(decl, &parsed.id)
-                    .is_ok_and(|expected| vault_rel(decl, &expected) == rel)
-                && decl
-                    .id_pattern
-                    .as_ref()
-                    .is_none_or(|pattern| pattern.is_match(&parsed.id));
+                    .is_ok_and(|expected| vault_rel(decl, &expected) == rel);
             if fill_parsed(&mut record, parsed).is_err() {
                 record.valid = Some(false);
             } else {
@@ -390,27 +367,24 @@ fn fallback_id(decl: &CollectionDecl) -> Option<String> {
     decl.singleton_id.clone()
 }
 
-fn id_matches_header(decl: &CollectionDecl, parsed: &ParsedFile) -> bool {
-    match parsed.fields.get(&decl.id_field) {
+fn id_matches_header(parsed: &ParsedFile) -> bool {
+    match parsed.fields.get(crate::id::FIELD) {
         Some(Value::String(s)) => s == &parsed.id,
         _ => false,
     }
 }
 
-fn parse_file(decl: &CollectionDecl, text: &str) -> Result<ParsedFile, Error> {
+fn parse_file(text: &str) -> Result<ParsedFile, Error> {
     let (yaml, body) = split_frontmatter(text);
     let value: Value =
         yaml_serde::from_str(yaml).context(Code::Invalid, "[store::parse_file] decode YAML")?;
     let Value::Object(fields) = value else {
         bail!(Error::invalid("YAML header must be a mapping"));
     };
-    let id = match fields.get(&decl.id_field) {
+    let id = match fields.get(crate::id::FIELD) {
         Some(Value::String(s)) if !s.is_empty() => s.clone(),
         _ => {
-            bail!(Error::invalid(format!(
-                "header {} is missing",
-                decl.id_field
-            )));
+            bail!(Error::invalid("header id is missing"));
         }
     };
     Ok(ParsedFile { id, fields, body })
@@ -482,7 +456,7 @@ pub(crate) fn apply_defaults(fields: &mut Map<String, Value>, decls: &[FieldDecl
 pub(crate) fn validate_fields(
     fields: &Map<String, Value>,
     decls: &[FieldDecl],
-    id_field: Option<&str>,
+    skip_id: bool,
     open: bool,
 ) -> Result<(), Error> {
     if open {
@@ -496,7 +470,7 @@ pub(crate) fn validate_fields(
         return Ok(());
     }
     for key in fields.keys() {
-        if id_field == Some(key.as_str()) {
+        if skip_id && key == crate::id::FIELD {
             continue;
         }
         if !decls.iter().any(|decl| decl.name == *key) {
@@ -625,7 +599,7 @@ fn validate_object(map: &Map<String, Value>, decl: &FieldDecl) -> Result<(), Err
             )));
         }
     }
-    validate_fields(map, &decl.fields, None, false)
+    validate_fields(map, &decl.fields, false, false)
 }
 
 fn is_integer(value: &Value) -> bool {
@@ -852,8 +826,6 @@ mod tests {
             name: String::from("c"),
             kind,
             version: 1,
-            id_field: String::from("id"),
-            id_pattern: None,
             filter_keys: Default::default(),
             segment_max_bytes: None,
             segment_max_lines: None,

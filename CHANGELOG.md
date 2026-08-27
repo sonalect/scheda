@@ -13,7 +13,7 @@ API or on-disk format changes bump the minor.
 - Consumer readiness stages P0–P9 in `12` §4: what the first consumer
   needs before moving a primary layer of text files onto the crate
   (journal line fidelity, ordered journal read, batch commits, isolated
-  slice, Schema `id` pattern, singleton format, optional search, layout
+  slice, dead `id` knobs, singleton format, optional search, layout
   decisions, acceptance). They do not reopen A0–A7; **agent** stays
   accepted.
 - A fixture Vault in test data shaped like a first consumer's primary
@@ -35,9 +35,9 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
-- README and `10`/`11`/`12` point next crate work at P5–P9. P0–P4 of
+- README and `10`/`11`/`12` point next crate work at P6–P9. P0–P5 of
   consumer readiness are in, including the unencrypted isolated nested
-  git (`10` §1).
+  git (`10` §1) and the slug as the only `id` rule.
 - GIT-2: a transaction is the only supported batch. There is no
   `OpenOptions` switch that turns autocommit off. A consumer that
   appends many journal lines holds `begin`/`commit`; otherwise each
@@ -60,6 +60,13 @@ API or on-disk format changes bump the minor.
   `{index}/txn` file. `open` does not resume another process's
   transaction. CLI does not expose `begin` / `commit` / `discard`;
   each mutating CLI command autocommits with message `scheda`.
+
+### Removed
+
+- `Collection::id_field()` and the unused `id_pattern` / `id_field`
+  slots. Record identity is always `id`; the library slug is the only
+  `id` constraint (SCH-6). Schema has no key that renames `id` or adds
+  a pattern.
 
 ### Fixed
 

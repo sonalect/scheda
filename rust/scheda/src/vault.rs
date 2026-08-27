@@ -538,8 +538,6 @@ impl Collection {
                 name: String::from("c"),
                 kind: Kind::Document,
                 version: 1,
-                id_field: String::from("id"),
-                id_pattern: None,
                 filter_keys: std::collections::BTreeSet::new(),
                 segment_max_bytes: None,
                 segment_max_lines: None,
@@ -579,12 +577,6 @@ impl Collection {
     #[must_use]
     pub fn version(&self) -> u32 {
         self.decl.version
-    }
-
-    /// Record identity field name. Default `id`.
-    #[must_use]
-    pub fn id_field(&self) -> &str {
-        &self.decl.id_field
     }
 
     /// Whether `field` is a Schema filter key (`find` / `search` Filter).

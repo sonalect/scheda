@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.31, 27 August 2026.
+Document 11 of the Scheda package. Version 0.32, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -56,15 +56,16 @@ hybrid `search` → core acceptance.
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
 IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–19; ISO-1; OPS-1, OPS-3.
 
-Next crate work after this checklist is `12` §4 (consumer readiness; P0–P4 are in).
+Next crate work after this checklist is `12` §4 (consumer readiness; P0–P5 are in).
 **agent** is accepted (`12`). This file does not add those stages.
 
 C10 accepted **core** against the codes as they read then. Several
 consumer readiness stages in `12` §4 amend **core** codes rather than add
 new ones — journal line fidelity under STO-2 and MOD-12 (P1), sequential
 journal read without the lexical Index as `lines` (LIB-19, P2),
-autocommit under GIT-2 (P3), the singleton file under STO-2 and SCH-6
-(P6). When one of those lands, the matching C box is re-run, not re-opened
+autocommit under GIT-2 (P3), the slug as the only `id` rule (SCH-6, P5),
+the singleton file under STO-2 and SCH-6 (P6). When one of those lands,
+the matching C box is re-run, not re-opened
 as a new stage.
 
 ---
@@ -147,7 +148,7 @@ hard-code a consumer's collection names (SCH-1, MOD-1).
       `string_list`, `object`, `object_list` (SCH-4).
 - [x] Required / optional / `nullable` matrix (SCH-5) — write checks may wait
       for C3 if `open` already rejects illegal declarations.
-- [x] Identity field name default `id`, overridable (SCH-6).
+- [x] Identity field is always `id`; Schema cannot rename it (SCH-6).
 - [x] Filter-key marks parse; `exclude_find` fields cannot be declared as
       filter keys in a way that C5 would honour (SCH-8).
 - [x] Default `segment_max_bytes` is 8 MiB; a cap `> 32 MiB` is rejected
@@ -176,8 +177,8 @@ QRY-1.
       does not follow the rename (MOD-5). May land with C5 `check`.
 - [x] Missing optional field is absent on read-back (MOD-12). Stored `null`
       stays `null` (MOD-18, SCH-5).
-- [x] `id` pattern from Schema; library does not invent a consumer scheme
-      (MOD-6).
+- [x] Record `id` is the library slug; Schema does not add a pattern; the
+      library does not invent a consumer scheme (SCH-6, MOD-6).
 - [x] `singleton`: Schema-fixed `id`; second `add` rejected; then
       `replace` only (MOD-7, MOD-17).
 - [x] `replace` is whole-file; no field patch (MOD-15, LIB-3).
@@ -366,7 +367,7 @@ Re-run the five gates in `10` §2:
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
 C9. This checklist stops there. **agent** is accepted in `12`. Next crate
-work is `12` §4 (P5–P9; unencrypted isolated I/O is P4).
+work is `12` §4 (P6–P9; P0–P5 are in).
 
 ---
 

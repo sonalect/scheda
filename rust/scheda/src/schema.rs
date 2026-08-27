@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Code, Context, ContextAs, ContextIo, bail};
@@ -18,8 +17,6 @@ use crate::{
 const MIB: u64 = 1024 * 1024;
 pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = 8 * MIB;
 pub(crate) const MAX_SEGMENT_MAX_BYTES: u64 = 32 * MIB;
-
-const DEFAULT_ID_FIELD: &str = "id";
 const SCHEMA_YAML: &str = ".schema.yaml";
 const SCHEMA_YML: &str = ".schema.yml";
 const SCHEMA_JSON: &str = ".schema.json";
@@ -277,8 +274,6 @@ pub(crate) struct CollectionDecl {
     pub name: String,
     pub kind: Kind,
     pub version: u32,
-    pub id_field: String,
-    pub id_pattern: Option<Regex>,
     pub filter_keys: BTreeSet<String>,
     pub segment_max_bytes: Option<u64>,
     pub segment_max_lines: Option<u64>,
@@ -509,8 +504,6 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         name: raw.name,
         kind: raw.kind,
         version: raw.version,
-        id_field: DEFAULT_ID_FIELD.to_owned(),
-        id_pattern: None,
         filter_keys,
         segment_max_bytes,
         segment_max_lines,
@@ -910,8 +903,6 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
         name: name.to_owned(),
         kind,
         version,
-        id_field: DEFAULT_ID_FIELD.to_owned(),
-        id_pattern: None,
         filter_keys,
         segment_max_bytes,
         segment_max_lines,
@@ -1368,7 +1359,6 @@ mod tests {
                 FieldType::ObjectList,
             ]
         );
-        assert_eq!(decl.id_field, "id");
         assert_eq!(decl.kind, Kind::Document);
     }
 

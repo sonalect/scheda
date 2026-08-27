@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.18, 27 August 2026.
+Document 3 of the Scheda package. Version 0.19, 27 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -34,7 +34,7 @@ A rare immutable note can still be a `document` the consumer never replaces. `jo
 
 **MOD-5. `id` is stable.** Schema derives the `document` path from `id` (and optional extra path slots). Renaming or moving a file so it no longer matches that derivation is rejected on `check` and must not be treated as a new Record with a new `id`. *Check:* file `notes/alpha.md` with Schema `id` = basename; rename to `beta.md` without changing the header `id` → `check` fails; `get("alpha")` does not silently follow the rename.
 
-**MOD-6. Scheda does not invent domain identifiers.** Schema may require a pattern (ULID, `kebab-case`, or another). The library validates the pattern. The caller supplies `id` on insert (or Schema describes a generation rule the implementation applies without embedding consumer semantics). The library (`07` LIB-7) already requires `id` to be a slug (Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`) so Scheda files (`.schema.yaml`, `.scheda/`) stay distinct from Records. Schema `id.pattern` may only tighten that. *Check:* insert with an `id` that fails the pattern is rejected; implementation source does not hard-code a consumer's id scheme.
+**MOD-6. Scheda does not invent domain identifiers.** The caller supplies `id` on insert. The library (`07` LIB-7) requires `id` to be a slug (Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`) so Scheda files (`.schema.yaml`, `.scheda/`) stay distinct from Records. Schema does not add a pattern on top of that slug (SCH-6). The library does not mint ULIDs, kebab-case, or any other consumer scheme. *Check:* insert with an `id` that fails the slug is rejected; implementation source does not hard-code a consumer's id scheme.
 
 **MOD-7. Singleton identity.** A `singleton` collection has exactly one Record. Schema fixes its `id`. `add` is allowed only when the file is absent; afterwards only `replace`. *Check:* second `add` is rejected; `get` with that `id` round-trips the file.
 
@@ -68,7 +68,7 @@ The numeric default cap is in `05`. It must sit well below common git-host file 
 
 **MOD-18. Null is a value.** A key present with JSON/YAML `null` is not the same as a missing key. Read-back of a stored `null` is `null`, not omission. Schema says when `null` is allowed (SCH-5). *Check:* write `"f": null` on a nullable field; `get` has the key `f` with null; write the same Record omitting `f` (if optional) → no key `f`.
 
-**MOD-13. Header `id` matches identity.** For `document`, the header field `id` (name may be Schema-configured, default `id`) equals the path-derived `id`. For `journal`, the object contains that field and it equals the Record `id`. *Check:* mismatch is rejected on write and on `check`.
+**MOD-13. Header `id` matches identity.** For `document`, the header field `id` equals the path-derived `id`. For `journal`, the object contains that field and it equals the Record `id`. The name is not Schema-configurable (SCH-6). *Check:* mismatch is rejected on write and on `check`.
 
 **MOD-14. Empty body is not a journal.** A `document` with only a header is still a `document`. *Check:* `replace` remains allowed; the collection kind is unchanged.
 
