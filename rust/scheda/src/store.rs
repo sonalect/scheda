@@ -755,10 +755,12 @@ fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Er
 fn rename_replace(tmp: &Path, path: &Path) -> Result<(), Error> {
     #[cfg(windows)]
     {
-        return rename_replace_windows(tmp, path);
+        rename_replace_windows(tmp, path)
     }
     #[cfg(not(windows))]
-    fs::rename(tmp, path).context("[store::atomic_write] rename temp file")
+    {
+        fs::rename(tmp, path).context("[store::atomic_write] rename temp file")
+    }
 }
 
 #[cfg(windows)]
