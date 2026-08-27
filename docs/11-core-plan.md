@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.28, 27 August 2026.
+Document 11 of the Scheda package. Version 0.29, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -246,6 +246,12 @@ SCH-12.
 
 - [x] Several `add` after `begin` without `commit` → `git log` unchanged (GIT-2).
 - [x] `add` without `begin` → one new commit with message `scheda` (GIT-2).
+- [x] A transaction is the only supported batch: 10⁴ (OPS-1 volume)
+      journal `add` after `begin`, one `commit` → `git log` grows by one
+      (GIT-2).
+- [x] Drop the handle mid-transaction after complete journal lines plus
+      a truncated tail; reopen without `begin` / `discard`; `get` returns
+      the complete Records and not the truncated line (STO-5, GIT-2).
 - [x] One `commit(message)` → one commit whose paths are those writes, not
       `git add` of junk at the Vault root (GIT-2, LIB-12).
 - [x] `history(id)` of a `document` / `singleton` (and `journal` via its

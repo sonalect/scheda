@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.24, 27 August 2026.
+Document 10 of the Scheda package. Version 0.25, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -33,7 +33,7 @@ Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collec
 
 Order inside that slice (not a second spec): nested git under `{vault}/.isolated/` → `create_collection` / `add` on an isolated name write there → `find` / `search` on non-isolated collections still return no isolated Records and do not require `.isolated/` → main Index has no fixture sealed string → `check` covers the nested tree.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). The isolated slice above is P4 of that list.
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). P0–P3 of that list are in: GIT-2 keeps autocommit outside a transaction, and a transaction is the only supported batch. The isolated slice above is P4.
 
 Order between the two: P1, P2, and P3 come before the isolated slice, because a consumer that cannot write and read a journal faithfully gains nothing from an isolated one. Everything else in §5 still waits.
 

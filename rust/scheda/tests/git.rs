@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::{ObjectType, Repository};
 use scheda::{Code, OpenOptions, RecordAdd, RecordReplace, Vault};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -401,6 +401,38 @@ fn history_rejects_empty_id_and_zero_count() {
             .known_code(),
         Some(Code::NotFound)
     );
+}
+
+#[test]
+fn killed_mid_batch_keeps_complete_journal_lines() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    scratch.write_schema("log.yaml", LOG);
+    let vault = scratch.reopen();
+    vault.begin().unwrap();
+    let before = log_len(vault.path());
+    let collection = vault.collection("north_log").unwrap();
+    collection.add("e1", rec(json!({}))).unwrap();
+    collection.add("e2", rec(json!({}))).unwrap();
+    let path = scratch.vault().join("north_log").join("00000001.jsonl");
+    let mut text = fs::read_to_string(&path).unwrap();
+    text.push_str(r#"{"id":"partial"}"#);
+    fs::write(&path, &text).unwrap();
+    assert_eq!(log_len(vault.path()), before);
+    drop(collection);
+    drop(vault);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_log").unwrap();
+    assert_eq!(collection.get("e1").unwrap().id.as_deref(), Some("e1"));
+    assert_eq!(collection.get("e2").unwrap().id.as_deref(), Some("e2"));
+    assert_eq!(
+        collection.get("partial").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .ends_with(r#"{"id":"partial"}"#));
+    assert_eq!(log_len(vault.path()), before);
 }
 
 fn peek_schema_name(body: &str) -> String {

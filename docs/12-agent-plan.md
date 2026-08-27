@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.39, 27 August 2026.
+Document 12 of the Scheda package. Version 0.40, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -444,7 +444,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P0](#p0-consumer-fixture) | done | A fixture Vault shaped like the consumer's primary layer |
 | [P1](#p1-journal-line-fidelity) | done | An integer stays an integer; the line is RFC 8785 |
 | [P2](#p2-ordered-journal-read-without-the-lexical-index) | done | Reading a journal in order without Tantivy |
-| [P3](#p3-many-writes-one-commit) | not started | Append per event without a commit per event |
+| [P3](#p3-many-writes-one-commit) | done | Append per event without a commit per event |
 | [P4](#p4-unencrypted-isolated-slice) | not started | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
 | [P5](#p5-id-pattern-in-schema) | not started | `id` pattern reaches `CollectionDecl` |
 | [P6](#p6-singleton-file-format) | not started | STO-2 and SCH-6 agree on the singleton file |
@@ -629,7 +629,7 @@ a specification question before it is an implementation one.
 
 ## P3. Many writes, one commit
 
-**Status:** not started
+**Status:** done
 
 **Codes:** GIT-2, GIT-8, GIT-10, LIB-7, STO-5, OPS-1.
 
@@ -646,16 +646,20 @@ observed event, so on an OPS-1 fixture that rule means 10⁴ commits.
 transaction the only correct way to write and of discarding accepted
 writes if the process dies before `commit`.
 
-- [ ] `04` GIT-2 decides it: either an `OpenOptions` switch that turns
-      autocommit off for the handle, leaving writes in the working tree
-      until `commit`, or a plain statement that a transaction is the only
-      supported batch and a consumer must hold one.
-- [ ] If the switch lands: the field is in `api/v1` `OpenOptions`, the
-      default keeps today's behaviour, `info` reports it (LIB-4), and
+Decided: a transaction is the only supported batch. There is no
+`OpenOptions` switch that turns autocommit off. A consumer that appends
+many journal lines holds `begin` / `commit`. `auto_sync` still pushes
+only after a real commit. The switch did not land; `OpenOptions` and
+`info` are unchanged.
+
+- [x] `04` GIT-2 decides it: a transaction is the only supported batch
+      and a consumer must hold one. There is no `OpenOptions` switch
+      that turns autocommit off.
+- [x] The switch did not land. `OpenOptions` and `info` are unchanged.
       `auto_sync` still pushes only after a real commit (GIT-8, GIT-10).
-- [ ] 10⁴ appends in one batch produce one commit and stay inside the
+- [x] 10⁴ appends in one batch produce one commit and stay inside the
       OPS-1 band.
-- [ ] A process killed mid-batch leaves the last complete line and no
+- [x] A process killed mid-batch leaves the last complete line and no
       partial line; on reopen the accepted set is what the segment holds
       (STO-5, MOD-16).
 

@@ -28,8 +28,12 @@ API or on-disk format changes bump the minor.
 ### Changed
 
 - README and `10`/`11` point next crate work at that list. Isolated
-  nested git (`10` §1) is P4 of it, after journal fidelity and an
-  ordered read.
+  nested git (`10` §1) is P4 of it, after journal fidelity, an ordered
+  read, and a transaction as the only batch.
+- GIT-2: a transaction is the only supported batch. There is no
+  `OpenOptions` switch that turns autocommit off. A consumer that
+  appends many journal lines holds `begin`/`commit`; otherwise each
+  line is one commit.
 - SCH-1 grades `rust/scheda/src`, not test data. A fixture may name a
   consumer's collections without turning that check red.
 - IDX-2 stays **core** for `find` / `search` / `replace`. Sequential

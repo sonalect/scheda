@@ -3,10 +3,11 @@
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use git2::Repository;
 use scheda::{Code, Embedder, OpenOptions, RecordAdd, SearchQuery, Vault};
 use serde_json::json;
 
@@ -189,7 +190,8 @@ fn ops_fixture_find_and_insert_and_reindex() {
     )
     .unwrap();
     // One transaction: the check is Index / get / reindex / search on this
-    // volume, not a git commit per Record.
+    // volume, not a git commit per Record. GIT-2: that batch is one commit.
+    let commits_before = log_len(vault.path());
     vault.begin().unwrap();
     let log = vault.collection("ops_log").unwrap();
     for i in 0..OPS_JOURNAL {
@@ -201,7 +203,9 @@ fn ops_fixture_find_and_insert_and_reindex() {
             .add(&format!("d{i:04}"), rec_note(&format!("t{i}")))
             .unwrap();
     }
+    assert_eq!(log_len(vault.path()), commits_before);
     vault.commit("ops fixture").unwrap();
+    assert_eq!(log_len(vault.path()), commits_before + 1);
     let first_journal = format!("j{:05}", 0);
     let mid_journal = format!("j{:05}", OPS_JOURNAL / 2);
     let last_journal = format!("j{:05}", OPS_JOURNAL - 1);
@@ -264,6 +268,15 @@ fn ops_fixture_find_and_insert_and_reindex() {
             .any(|hit| hit.id.as_deref() == Some(mid_id.as_str())),
         "hybrid search expected {mid_id} in k"
     );
+}
+
+fn log_len(dir: &Path) -> usize {
+    let repo = Repository::open(dir).unwrap();
+    let mut walk = repo.revwalk().unwrap();
+    if walk.push_head().is_err() {
+        return 0;
+    }
+    walk.count()
 }
 
 fn peek_schema_name(body: &str) -> String {

@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.41, 27 August 2026.
+Document 2 of the Scheda package. Version 0.42, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -154,7 +154,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. Until nested `{vault}/.isolated/` I/O, `schema.isolated` is `unsupported` and no file is written.
 
-**`begin`** — start a transaction. Later writes do not create a git commit until `commit` or `discard`.
+**`begin`** — start a transaction. Later writes do not create a git commit until `commit` or `discard`. A transaction is the only supported batch of mutating calls. There is no option that turns autocommit off.
 
 **`commit`** — end a transaction and create one git commit for paths Scheda recorded. Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`.
 
