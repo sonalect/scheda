@@ -148,6 +148,14 @@ fn head_paths(dir: &Path) -> BTreeSet<String> {
 }
 
 #[test]
+fn create_sets_core_longpaths() {
+    let scratch = Scratch::new();
+    let _vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+    let repo = Repository::open(scratch.vault()).unwrap();
+    assert!(repo.config().unwrap().get_bool("core.longpaths").unwrap());
+}
+
+#[test]
 fn inserts_without_commit_leave_git_log_unchanged() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);

@@ -38,6 +38,11 @@ API or on-disk format changes bump the minor.
 - README and `10`/`11`/`12` point next crate work at P6–P9. P0–P5 of
   consumer readiness are in, including the unencrypted isolated nested
   git (`10` §1) and the slug as the only `id` rule.
+- `12` §6 lists what a second consumer will want and Scheda does not
+  have (no delete, one writer, flat directories, Struct doubles,
+  append-only journal, always-on Index legs, embedder only in the CLI,
+  slug-only `id`, fixed singleton name, one-consumer acceptance). Those
+  items are not stages.
 - GIT-2: a transaction is the only supported batch. There is no
   `OpenOptions` switch that turns autocommit off. A consumer that
   appends many journal lines holds `begin`/`commit`; otherwise each
@@ -70,6 +75,10 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- On Windows, `add` of a Record whose absolute path is longer than MAX_PATH
+  no longer fails with git `path too long`. `init`, `clone`, `commit`, and
+  `discard` set `core.longpaths` in the Vault's local git config so libgit2
+  will stage a 255-byte filename component.
 - An `integer` field on a journal line is stored as `1`, not `1.0`.
 - Creating a Vault writes `.gitignore` before `open` takes `write.lock`,
   so a first write right after create is not `CODE_LOCKED`. Repairing

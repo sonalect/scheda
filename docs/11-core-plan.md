@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.32, 27 August 2026.
+Document 11 of the Scheda package. Version 0.33, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -117,6 +117,8 @@ local `open`).
 - [x] `open` of a missing path creates a git working tree with no Remote (GIT-9).
 - [x] `open` on that tree succeeds; Index is `{vault}/.scheda/index`,
       gitignored, not committed (GIT-1, GIT-13). Creating a Vault writes `.gitignore`.
+- [x] Creating a Vault sets local `core.longpaths` so Windows can commit a
+      255-byte filename (GIT-1).
 - [x] Two `open`s on different roots in one process (GIT-5, LIB-4).
 - [x] Write lock: second writer → `locked`; a reader `get` is not
       blocked once C3 exists (STO-4). Until C3, lock vs second writer is

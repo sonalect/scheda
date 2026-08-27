@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.43, 27 August 2026.
+Document 12 of the Scheda package. Version 0.44, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -23,6 +23,10 @@ They are not **agent**, and they do not reopen A0–A7. Their codes cross
 `{vault}/.isolated/` tree of `10` §1 (ISO-2 nested git, ISO-4, ISO-6,
 IDX-4) is P4 here instead of being out of scope. Accepting **agent**
 never waited on a P stage and still does not.
+
+§6 lists what a *second* consumer will want and Scheda does not have.
+Those are open questions, not stages: nothing there blocks A0–A7 or
+P0–P9.
 
 ---
 
@@ -874,3 +878,61 @@ consumer's own documents and must not be copied into this package
 The order in which a consumer moves its data, and what it keeps outside a
 Vault. §4 P8 records the answers a stage depends on; the migration itself
 is the consumer's plan, not a stage here.
+
+---
+
+## 6. Open past the first consumer
+
+§4 asks what one consumer needs. This section asks what a second one will
+need and Scheda does not have. None of these is a stage: no box, no
+status, no *Check:*. They are recorded so that a later plan starts from a
+list instead of from a surprise, and so that a decision taken for the
+first consumer is not mistaken for a decision taken for everybody.
+
+1. **No delete.** `07` §later leaves a journal line undeletable and a
+   `document` delete as a possible `delete_one` outside **core**; §3
+   keeps it out of A0–A7 and no P stage takes it. Today the only way to
+   remove a Record is to delete the file by hand and `reindex`. A store
+   that cannot forget cannot answer an erasure request, cannot undo a
+   wrong write, and cannot drop a collection's contents.
+
+2. **One writer per working tree (STO-4).** P8 answers it for one
+   consumer by keeping a second process's buffer outside the Vault. A
+   service with several workers, or a daemon beside a CLI, has no answer
+   at all: there is no cross-process wait, only `locked`.
+
+3. **Flat collection directories (MOD-8).** A5b removed the caller's
+   path template and was right to; nothing replaced it. P8's answer —
+   let each value of a field become its own collection — does not scale
+   past a handful of values, and one collection of 10⁵–10⁶ Records is
+   that many files in one directory. What is missing is a fan-out the
+   library owns and derives, never one a Schema file supplies.
+
+4. **Fields carry only `double` (MOD-12, `api/v1`).** `RecordAdd.fields`
+   is `google.protobuf.Struct`, so P1 had to make a magnitude above 2^53
+   `invalid`. There is no int64, no bytes, and no exact decimal.
+   Nanosecond timestamps, file sizes, and foreign identifiers do not fit.
+
+5. **A journal only grows (MOD-16).** No `replace`, no line delete, no
+   retention, no compaction. Rotation cuts segments and discards nothing,
+   so an append-only collection is unbounded by design.
+
+6. **Both Index legs are linked by default (P7).** P7 adds the features
+   and keeps both on, which protects the one consumer that exists and
+   charges every future one for a Tantivy and USearch it may never call.
+   The bundled libgit2 is not even behind a feature.
+
+7. **The HTTP embedder lives in the CLI, not the crate (QRY-5, A5).**
+   Anyone embedding the library writes `Embedder` again, next to an
+   OpenAI client this repository already has.
+
+8. **`id` is a slug and nothing else.** After P5 that rule is the whole
+   rule. A URL, an email address, or a foreign key cannot be a Record
+   `id`; the caller has to derive a slug and keep the mapping.
+
+9. **A `singleton` is one fixed file name.** P6 may settle it as
+   `record.yaml`. A consumer whose existing file is JSON, or is named
+   otherwise, converts on import.
+
+10. **Acceptance is one consumer's list (P9).** A second consumer needs
+    acceptance stated against `03`–`10`, not against §4's fixture.

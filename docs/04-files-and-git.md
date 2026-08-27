@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.21, 27 August 2026.
+Document 4 of the Scheda package. Version 0.22, 27 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -33,7 +33,7 @@ relied on; Vaults on those shares are outside **core**.
 
 ## 2. The Vault is a git working tree
 
-**GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s.
+**GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. `init` and `clone` write `core.longpaths` in the Vault's local git config (`commit` and `discard` set it on an older tree that lacks it) so Windows can stage a 255-byte filename component when the absolute path is longer than MAX_PATH. Unix ignores the key. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s. *Check:* after `open` of a new Vault, local `core.longpaths` is true. *Check:* `add` of a 252-character `id` (on-disk `{id}.md` = 255 bytes) commits.
 
 **GIT-2. Autocommit unless a transaction is open.** Outside a transaction, each mutating call (`add`, `replace`, `create_collection`) writes the working tree and then creates one git commit. The default message is `scheda`. Isolated Record paths commit in `{vault}/.isolated/` nested git; Schema stubs and non-isolated files commit in the main repository. If that commit fails, those writes are discarded: only paths Scheda recorded are restored to HEAD (new files are deleted). This is not `git reset --hard` of the whole tree.
 

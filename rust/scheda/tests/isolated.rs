@@ -217,10 +217,13 @@ fn isolated_document_round_trip_and_main_find_skips_it() {
     assert_eq!(page.records[0].id.as_deref(), Some("alpha"));
     let named = vault.find(&["west_isolated"], &Filter::all().into(), 0, 10);
     assert_eq!(named.unwrap_err().known_code(), Some(Code::Unsupported));
-    let haystack = fs::read_to_string(vault.index_dir().join("format")).unwrap();
+    let index_dir = vault.index_dir().to_path_buf();
+    let haystack = fs::read_to_string(index_dir.join("format")).unwrap();
     assert!(!haystack.contains("nested-secret"));
+    // Windows: Tantivy/USearch keep mmap locks until the handle is dropped.
+    drop(vault);
     let mut leaked = false;
-    for entry in walkdir_files(vault.index_dir()) {
+    for entry in walkdir_files(&index_dir) {
         if fs::read(&entry)
             .unwrap()
             .windows(b"nested-secret".len())

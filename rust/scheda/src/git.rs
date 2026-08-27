@@ -39,6 +39,18 @@ fn open_work_tree(dir: &Path) -> Result<Repository, Error> {
     Ok(repo)
 }
 
+/// libgit2 rejects a work-tree path past Windows MAX_PATH unless
+/// `core.longpaths` is set. A 255-byte filename (`{id}.md`) is legal and
+/// often exceeds that once the Vault sits under a user profile directory.
+fn enable_long_paths(repo: &Repository) -> Result<(), Error> {
+    let mut cfg = repo.config().context("[Git] open config")?;
+    if cfg.get_bool("core.longpaths").is_ok_and(|on| on) {
+        return Ok(());
+    }
+    cfg.set_bool("core.longpaths", true)
+        .context("[Git] set core.longpaths")
+}
+
 fn signature(repo: &Repository) -> Result<Signature<'static>, Error> {
     if let Ok(sig) = repo.signature()
         && let (Ok(name), Ok(email)) = (sig.name(), sig.email())
@@ -57,8 +69,8 @@ fn is_unborn(err: &git2::Error) -> bool {
 pub(crate) fn init(dir: &Path) -> Result<(), Error> {
     let mut opts = RepositoryInitOptions::new();
     opts.no_reinit(true);
-    let _repo = Repository::init_opts(dir, &opts).context("[Git::init] create repository")?;
-    Ok(())
+    let repo = Repository::init_opts(dir, &opts).context("[Git::init] create repository")?;
+    enable_long_paths(&repo)
 }
 
 pub(crate) fn is_work_tree(dir: &Path) -> bool {
@@ -107,7 +119,8 @@ pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
         .fetch_options(fetch)
         .clone(url, path)
         .context("[Git::clone] clone repository")?;
-    Ok(())
+    let repo = open_at(path).context("[Git::clone] open cloned repository")?;
+    enable_long_paths(&repo)
 }
 
 fn auth_callbacks() -> RemoteCallbacks<'static> {
@@ -302,6 +315,7 @@ pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), 
         bail!(Error::invalid("nothing to commit"));
     }
     let repo = open_work_tree(dir)?;
+    enable_long_paths(&repo)?;
     let mut index = repo.index().context("[Git::commit] open index")?;
     let mut staged = 0usize;
     for rel in paths {
@@ -349,6 +363,7 @@ pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), 
 /// Does not `git reset --hard` the whole tree.
 pub(crate) fn discard_paths(dir: &Path, paths: &[String]) -> Result<(), Error> {
     let repo = open_work_tree(dir)?;
+    enable_long_paths(&repo)?;
     let head_tree = match repo.head() {
         Ok(head) => Some(
             head.peel_to_tree()
