@@ -720,6 +720,17 @@ impl Collection {
         }
     }
 
+    /// Walk this `journal` in append order without opening the Index.
+    ///
+    /// Closed segments in Schema sequence, each file from first line to last,
+    /// then the open segment. Rotation does not reorder earlier lines. Each
+    /// item is one Record; `raw` is the line bytes including the trailing
+    /// newline. `document` / `singleton` → `unsupported`. A missing Index
+    /// directory does not stop the walk.
+    pub fn lines(&self) -> Result<crate::JournalLines, Error> {
+        journal::journal_lines(&self.vault, &self.decl)
+    }
+
     /// Replace a whole `document` or `singleton`. `journal` → `unsupported`.
     pub fn replace(&self, id: &str, record: RecordReplace) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;

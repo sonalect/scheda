@@ -302,11 +302,7 @@ impl Schema {
 
     #[must_use]
     pub(crate) fn versions(&self) -> Vec<u32> {
-        let mut versions: Vec<u32> = self
-            .collections
-            .values()
-            .map(|decl| decl.version)
-            .collect();
+        let mut versions: Vec<u32> = self.collections.values().map(|decl| decl.version).collect();
         versions.sort_unstable();
         versions.dedup();
         versions

@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.27, 27 August 2026.
+Document 11 of the Scheda package. Version 0.28, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -54,15 +54,15 @@ hybrid `search` → core acceptance.
 | [C10](#c10-core-acceptance) | done | `10` §2 acceptance |
 
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
-IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–18; ISO-1; OPS-1, OPS-3.
+IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–19; ISO-1; OPS-1, OPS-3.
 
 Next crate work after this checklist is `10` §1 (unencrypted isolated nested git).
 **agent** is accepted (`12`). This file does not add those stages.
 
 C10 accepted **core** against the codes as they read then. Several
 consumer readiness stages in `12` §4 amend **core** codes rather than add
-new ones — journal line fidelity under STO-2 and MOD-12 (P1), whether a
-sequential journal read may require the lexical Index under `10` §2 (P2),
+new ones — journal line fidelity under STO-2 and MOD-12 (P1), sequential
+journal read without the lexical Index as `lines` (LIB-19, P2),
 autocommit under GIT-2 (P3), the singleton file under STO-2 and SCH-6
 (P6). When one of those lands, the matching C box is re-run, not re-opened
 as a new stage.

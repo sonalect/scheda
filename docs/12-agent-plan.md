@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.38, 27 August 2026.
+Document 12 of the Scheda package. Version 0.39, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -96,9 +96,8 @@ that is noted on the line. Coming back does not restore an A2 name.
   `//python/vllm:reranker` (locked `vllm` in `uv.lock`; GPU is the
   host's; Hub cache is `<workspace>/.cache/huggingface`).
 - `walk` / `walk_inverse` / `scan` / `init` / `clone` / `catalog` as
-  library or CLI names (`07`, `13`, `14`). P2 needs an ordered journal
-  read that does not go through the lexical Index; if that lands it gets
-  a name decided in `07`, not the A2 `scan`.
+  library or CLI names (`07`, `13`, `14`). Ordered journal read without
+  the Index is `lines` (`07` LIB-19), not the A2 `scan`.
 - `Collection.info`. Listing is `Vault.info`; Schema on a handle is
   `schema()`.
 
@@ -416,7 +415,7 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P0 and P1 are done; no other
+**Status of the part:** in progress. P0, P1, and P2 are done; no other
 stage is started.
 
 The first consumer moves a primary layer of text files under git onto the
@@ -444,7 +443,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 |---|---|---|
 | [P0](#p0-consumer-fixture) | done | A fixture Vault shaped like the consumer's primary layer |
 | [P1](#p1-journal-line-fidelity) | done | An integer stays an integer; the line is RFC 8785 |
-| [P2](#p2-ordered-journal-read-without-the-lexical-index) | not started | Reading a journal in order without Tantivy |
+| [P2](#p2-ordered-journal-read-without-the-lexical-index) | done | Reading a journal in order without Tantivy |
 | [P3](#p3-many-writes-one-commit) | not started | Append per event without a commit per event |
 | [P4](#p4-unencrypted-isolated-slice) | not started | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
 | [P5](#p5-id-pattern-in-schema) | not started | `id` pattern reaches `CollectionDecl` |
@@ -597,7 +596,7 @@ is why this has been invisible.
 
 ## P2. Ordered journal read without the lexical Index
 
-**Status:** not started
+**Status:** done
 
 **Codes:** QRY-7, QRY-2, IDX-2, IDX-5, MOD-16, `10` §2.
 
@@ -614,16 +613,16 @@ order, and it wants that in a build with no search. Today append order is
 path of a pure sequential read. `10` §2 puts IDX-2 in **core**, so this is
 a specification question before it is an implementation one.
 
-- [ ] `10` §2 decides it, and only one answer survives: either the
+- [x] `10` §2 decides it, and only one answer survives: either the
       lexical Index stays **core** and a consumer accepts Tantivy on a
       read, or an ordered journal read is defined that walks segments in
       Schema sequence without opening the Index.
-- [ ] If that read lands: a name decided in `07` — not the A2 `scan`
+- [x] If that read lands: a name decided in `07` — not the A2 `scan`
       (§3) — append order identical to QRY-7 including rotation,
       streaming rather than a materialised list, and raw line bytes (P1).
-- [ ] A missing `.scheda/` does not stop it. `get` and `history` already
+- [x] A missing `.scheda/` does not stop it. `get` and `history` already
       survive a deleted Index (GIT-3); this read matches them.
-- [ ] Fixture of 10⁴ lines across rotated segments: every line once, in
+- [x] Fixture of 10⁴ lines across rotated segments: every line once, in
       order, and memory does not grow with the line count (OPS-1).
 
 ---
@@ -764,8 +763,10 @@ that are JSON today.
 **Needs:** P2. Dropping the lexical leg is only possible once a
 sequential journal read does not go through it.
 
-**Decide first:** the same `10` §2 sentence as P2. If IDX-2 stays
-**core**, this stage shrinks to the vector leg alone.
+**Decide first:** the same `10` §2 sentence as P2. P2 wrote it: IDX-2
+stays **core** for methods that resolve `id` through the Index; `lines`
+walks files. If a **core** build must still link Tantivy for `find`,
+this stage shrinks to the vector leg alone.
 
 The crate links Tantivy, USearch, and a bundled libgit2 unconditionally.
 A consumer whose first stage is only writing and reading files pays for

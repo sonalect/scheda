@@ -21,6 +21,9 @@ API or on-disk format changes bump the minor.
   documents, three journals, one singleton, one isolated journal.
   `check` and `get` run against it; `find` limited to one of the twin
   documents does not return the other.
+- `Collection.lines` walks a `journal` in append order from segment
+  files and does not open the Index. `find` still uses Tantivy. A
+  missing `{vault}/.scheda/` does not stop the walk.
 
 ### Changed
 
@@ -29,6 +32,8 @@ API or on-disk format changes bump the minor.
   ordered read.
 - SCH-1 grades `rust/scheda/src`, not test data. A fixture may name a
   consumer's collections without turning that check red.
+- IDX-2 stays **core** for `find` / `search` / `replace`. Sequential
+  journal read is `lines` and does not open the Index.
 - Journal JSONL is RFC 8785 (STO-2, LIB-18): keys by UTF-16 code unit,
   numbers by ES6 `NumberToString`, strings escaped as the RFC states.
   `RecordAdd.fields` is `google.protobuf.Struct`; an `integer` whose

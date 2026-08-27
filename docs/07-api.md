@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.63, 27 August 2026.
+Document 7 of the Scheda package. Version 0.64, 27 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -20,17 +20,17 @@ An assertion without a check is not a requirement.
 
 **LIB-1. In-process library.** The caller loads Scheda in its own process. A Scheda daemon or HTTP server is not required to read or write. *Check (**core**):* a test writes and reads a local Vault (`auto_sync` off) with no second process and no network.
 
-**LIB-2. Same operations in every language.** Required names: `open`, `info`, `collection`, `add`, `get`, `replace`, `find`, `search`, `begin`, `commit`, `discard`, `push`, `pull`, `sync`, `check`, `reindex`. **Agent** also requires `create_collection` (LIB-21). AGT-1 listing is `info` (LIB-4, LIB-20), not a separate `catalog` method. Optional: `history` (core in this binding). There is no `init`, `clone`, `catalog`, `walk`, or `walk_inverse` as a public name: creating or cloning a Vault is `open` (LIB-13, GIT-9). *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
+**LIB-2. Same operations in every language.** Required names: `open`, `info`, `collection`, `add`, `get`, `replace`, `find`, `search`, `begin`, `commit`, `discard`, `push`, `pull`, `sync`, `check`, `reindex`. **Agent** also requires `create_collection` (LIB-21). AGT-1 listing is `info` (LIB-4, LIB-20), not a separate `catalog` method. Optional: `history`, `lines` (core in this binding). There is no `init`, `clone`, `catalog`, `walk`, `walk_inverse`, or `scan` as a public name: creating or cloning a Vault is `open` (LIB-13, GIT-9). Ordered journal read without the Index is `lines` (LIB-19), not `scan`. *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
 
 **LIB-3. Whole-record writes.** Mutation is `add` or `replace` of the whole Record. There is no partial field patch. SQL against the Index is not a caller API. *Check:* `replace` on `journal` is a failure (`unsupported`).
 
 **LIB-4. Observable `open`.** After `open`, `info` returns `api.v1.VaultInfo`: Vault path, Index path (`{vault}/.scheda/index`), `remote` (GIT-7: `origin` or empty), `auto_sync` on this handle, and the collection list. The Vault root is the only filesystem path the caller supplies. **Later:** isolated collections listed with `schema.isolated` (ISO-3); whether `{vault}/.isolated/` is encrypted (ISO-5). No process-global singleton that forbids a second Vault. Options at `open` include `auto_sync` (GIT-10), `remote_repo` (GIT-9), and an embedder (IDX-8). **Later:** `encrypt` / `secret` for `.isolated/` (ISO-5, ISO-7). The Index directory is not a caller option (GIT-13). `open` does not take the write lock; mutating calls take it for that write. *Check (**core**):* two `open`s on different roots in one process. *Check:* creating a Vault writes `.gitignore` with `.scheda/` and `.isolated/`; Index files are ignored; deleting `.scheda/` does not delete Records. *Check:* `open` with network disabled still reports `origin` on `info.remote` when that remote is configured (GIT-7).
 
-**LIB-5. Failures are coded.** Every failure has a stable code plus an optional human message. The message must not replace the code. Codes in **core** include at least: `not_found`, `invalid`, `conflict` (git markers / unique `id`), `not_fast_forward` (GIT-10, GIT-11), `locked` (STO-4), `io`, `git`, `index_unusable` (QRY-4), `unsupported` (`replace` on `journal`). **Later:** `crypto` (ISO-5). *Check:* negative tests assert codes, not only message text.
+**LIB-5. Failures are coded.** Every failure has a stable code plus an optional human message. The message must not replace the code. Codes in **core** include at least: `not_found`, `invalid`, `conflict` (git markers / unique `id`), `not_fast_forward` (GIT-10, GIT-11), `locked` (STO-4), `io`, `git`, `index_unusable` (QRY-4), `unsupported` (`replace` on `journal`; `lines` on `document` / `singleton`). **Later:** `crypto` (ISO-5). *Check:* negative tests assert codes, not only message text.
 
 How a language surfaces a code is that language's affair. Examples: Rust `Result` with an error type that carries the code; Go `(value, error)`; Python exception or a result object; Java exception or a result type; TypeScript throw or a result object. The code string is what tests and `08` share.
 
-**LIB-6. Sync is enough for core.** `add`, `replace`, `get`, `find`, `begin`, `commit`, `discard` must not require an async runtime. `search` with a local embedder or reranker may be synchronous in the same process. *Check (**core**):* a binding's core tests run without starting an async executor. (Rust: no Tokio required for those tests.)
+**LIB-6. Sync is enough for core.** `add`, `replace`, `get`, `find`, `lines`, `begin`, `commit`, `discard` must not require an async runtime. `search` with a local embedder or reranker may be synchronous in the same process. *Check (**core**):* a binding's core tests run without starting an async executor. (Rust: no Tokio required for those tests.)
 
 ---
 
@@ -72,12 +72,14 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-18. Canonical journal line.** `add` on `journal` writes one RFC 8785 object per line (JSON Canonicalization Scheme: keys in UTF-16 code unit order, numbers as ECMAScript `NumberToString`, strings escaped as the RFC states) so a consumer can hash bytes. `RecordAdd.fields` is `google.protobuf.Struct`; a JSON number there is `number_value` (IEEE 754 binary64). An `integer` field is accepted only when that double is a finite integer whose magnitude is at most 2^53. A larger magnitude is `invalid`; this API does not carry a wider integer. On disk the integer is the decimal digits (`1`), not `1.0`. *Check:* two inserts of equal fields produce equal line bytes aside from field values that differ. *Check:* `integer` `1` is stored as `1`; `1.5` and magnitude above 2^53 are `invalid`.
 
+**LIB-19. `lines()`.** On the collection handle. `journal` only. Walks segment files in Schema sequence (SCH-14): closed segments by name, each file from first line to last, then the open segment. Rotation does not reorder earlier lines. Same append order as QRY-7, without opening the Index (not QRY-2, not IDX-5). Does not take a `Filter`. Each yielded Record has `raw` equal to that line including the trailing newline (LIB-18, STO-2). A line that is not a complete JSON object, or a final line without `\n`, is `invalid` and stops the walk (STO-3). A well-formed line that fails current Schema is yielded with `valid: false`, as `get` does. `document` / `singleton` → `unsupported`. Isolated → `unsupported` until ISO-2. A missing or corrupt `{vault}/.scheda/` does not stop the walk. Streaming: one Record at a time; the binding must not materialise the whole collection. Empty collection → empty walk. In Rust the return is `JournalLines` (`Iterator` of `Result<Record, Error>`). *Check:* insert A, B; rotate; insert C; `lines` → A, B, C in that order, and `raw` matches the segment files. *Check:* delete `.scheda/`; `lines` still yields those Records. *Check:* `document` → `unsupported`. *Check:* 10⁴ lines across rotated segments: every `id` once, in append order; memory does not grow with the line count.
+
 ---
 
 ## 4. What this API refuses
 
 - Partial field patch.
-- A Record file path from the caller. `get` / `add` / `history` take a validated `id` and the library opens, creates, or gits the file. `find` / `replace` / `search` take `id`s from the Index (IDX-10).
+- A Record file path from the caller. `get` / `add` / `history` take a validated `id` and the library opens, creates, or gits the file. `find` / `replace` / `search` take `id`s from the Index (IDX-10). `lines` walks journal segment files the library names; the caller does not pass a path.
 - Delete of a journal line; delete of a `document` may exist later as an explicit `delete_one` (not **core**).
 - Cross-Vault query unless the caller passes two handles into a combined helper (**later**).
 - Shipping a ranking model in the library (QRY-5). An optional reranker **callback** on `search` is allowed (`13`).

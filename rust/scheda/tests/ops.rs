@@ -60,6 +60,7 @@ const OPS_LOG: &str = "\
 name: ops_log
 kind: journal
 version: 1
+segment_max_lines: 100
 fields:
   - name: msg
     string: {}
@@ -204,6 +205,34 @@ fn ops_fixture_find_and_insert_and_reindex() {
     let first_journal = format!("j{:05}", 0);
     let mid_journal = format!("j{:05}", OPS_JOURNAL / 2);
     let last_journal = format!("j{:05}", OPS_JOURNAL - 1);
+    let log_dir = scratch.vault().join("ops_log");
+    let segment_files = fs::read_dir(&log_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            entry
+                .file_name()
+                .to_str()
+                .is_some_and(|name| name.ends_with(".jsonl"))
+        })
+        .count();
+    assert!(
+        segment_files >= 2,
+        "OPS volume must rotate so lines walks more than one segment"
+    );
+    let mut n = 0u64;
+    let mut prev: Option<String> = None;
+    for record in log.lines().unwrap() {
+        let record = record.unwrap();
+        let id = record.id.as_deref().unwrap();
+        if let Some(previous) = prev.as_deref() {
+            assert!(id > previous, "append order: {id} after {previous}");
+        }
+        prev = record.id.clone();
+        n += 1;
+    }
+    assert_eq!(n, OPS_JOURNAL);
+    assert_eq!(prev.as_deref(), Some(last_journal.as_str()));
     for id in [&first_journal, &mid_journal, &last_journal] {
         let got = log.get(id).unwrap();
         assert_eq!(got.id.as_deref(), Some(id.as_str()));
@@ -217,7 +246,7 @@ fn ops_fixture_find_and_insert_and_reindex() {
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(OPS_JOURNAL + OPS_DOCS + 1));
     assert_eq!(counts.skipped_invalid, Some(0));
-    assert_eq!(counts.segments_seen, Some(1));
+    assert_eq!(counts.segments_seen, Some(OPS_JOURNAL / 100 + 1));
     let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
     assert_eq!(format.trim(), "3");
     let mid_doc = OPS_DOCS / 2;

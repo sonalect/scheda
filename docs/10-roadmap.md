@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.23, 27 August 2026.
+Document 10 of the Scheda package. Version 0.24, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -50,11 +50,11 @@ Order between the two: P1, P2, and P3 come before the isolated slice, because a 
 - Schema: SCH-1–8, SCH-12–14 (SCH-7 stores the body in **core**; indexing the body is **search**; SCH-15 is **later**)
 - Index needed for truth and lookup: IDX-1, IDX-2, IDX-5
 - Point read and filter: QRY-1, QRY-2, QRY-7
-- Library: LIB-1–10, LIB-12–18 (`search` itself is LIB-11; isolated/`encrypt` clauses on those ops are **later**)
+- Library: LIB-1–10, LIB-12–19 (`search` itself is LIB-11; isolated/`encrypt` clauses on those ops are **later**)
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-IDX-2 in that list is open. It puts the lexical Index on the path of a plain sequential journal read, because append order is QRY-7 through `find` and `find` is a Tantivy query (QRY-2). A consumer that stores and retrieves with no search still pays for it. `12` §4 P2 must close this here — either IDX-2 stays **core** and that cost is the answer, or an ordered journal read is defined that does not open the Index. P7 depends on the same sentence.
+IDX-2 stays **core** for the Index format and for methods that resolve `id` through the Index (`find`, `search`, `replace`). A sequential journal read is not one of those methods. **Core** also has `lines` (LIB-19): it walks journal segments in Schema sequence and does not open the Index. QRY-7 remains the order of `find` when the Index is present. P7 uses this sentence when it decides which Index legs a **core** build must link.
 
 **Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse and ISO-3 on the agent surface are in. Remaining unencrypted isolated work is ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4 (`§1`). ISO-5, ISO-7–11 stay deferred.
 

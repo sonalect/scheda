@@ -2,8 +2,9 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
-use std::fs::{self, OpenOptions};
-use std::io::Write as IoWrite;
+use std::fs::{self, File, OpenOptions};
+use std::io::{BufRead, BufReader, Write as IoWrite};
+use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,6 +20,118 @@ pub(crate) struct JournalRollback {
     pub(crate) path: PathBuf,
     pub(crate) previous_len: u64,
 }
+
+/// Append-order walk of one `journal` collection.
+///
+/// Yields one Record at a time from segment files. Does not open the Index.
+/// `raw` is the line bytes including the trailing newline.
+pub struct JournalLines {
+    vault: PathBuf,
+    decl: CollectionDecl,
+    segments: Vec<PathBuf>,
+    next_segment: usize,
+    reader: Option<BufReader<File>>,
+    current_path: PathBuf,
+    buf: String,
+    done: bool,
+}
+
+pub(crate) fn journal_lines(vault: &Path, decl: &CollectionDecl) -> Result<JournalLines, Error> {
+    if decl.isolated {
+        bail!(Error::unsupported(
+            "isolated collections are not on this handle"
+        ));
+    }
+    if decl.kind != Kind::Journal {
+        bail!(Error::unsupported("lines is offered for journal only"));
+    }
+    let segments = list_segments(&journal_dir(vault, decl)?)?;
+    Ok(JournalLines {
+        vault: vault.to_path_buf(),
+        decl: decl.clone(),
+        segments,
+        next_segment: 0,
+        reader: None,
+        current_path: PathBuf::new(),
+        buf: String::new(),
+        done: false,
+    })
+}
+
+impl JournalLines {
+    fn next_record(&mut self) -> Result<Option<Record>, Error> {
+        loop {
+            if self.reader.is_none() {
+                let Some(path) = self.segments.get(self.next_segment) else {
+                    return Ok(None);
+                };
+                self.next_segment += 1;
+                self.current_path.clone_from(path);
+                let rel = store::rel_posix(&self.vault, &self.current_path)?;
+                let file = File::open(&self.current_path)
+                    .context("[Journal::lines] open segment")
+                    .map_err(|err| err.with_path(&rel))?;
+                self.reader = Some(BufReader::new(file));
+            }
+            let rel = store::rel_posix(&self.vault, &self.current_path)?;
+            let mut reader = match self.reader.take() {
+                Some(reader) => reader,
+                None => unreachable!("reader was just opened"),
+            };
+            self.buf.clear();
+            let n = reader
+                .read_line(&mut self.buf)
+                .context("[Journal::lines] read line")
+                .map_err(|err| err.with_path(&rel))?;
+            if n == 0 {
+                continue;
+            }
+            self.reader = Some(reader);
+            let Some(line) = self.buf.strip_suffix('\n') else {
+                bail!(Error::invalid(format!(
+                    "{rel} has a truncated line without a trailing newline"
+                )));
+            };
+            if store::has_conflict_markers(line) {
+                bail!(Error::conflict_markers(format!(
+                    "{rel} has git conflict markers"
+                )));
+            }
+            let parsed = parse_line(&self.decl, line).map_err(|err| {
+                Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
+            })?;
+            return Ok(Some(record_from_parsed(
+                &self.vault,
+                &self.decl,
+                &self.current_path,
+                parsed,
+            )?));
+        }
+    }
+}
+
+impl Iterator for JournalLines {
+    type Item = Result<Record, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match self.next_record() {
+            Ok(Some(record)) => Some(Ok(record)),
+            Ok(None) => {
+                self.done = true;
+                None
+            }
+            Err(err) => {
+                self.done = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
+impl FusedIterator for JournalLines {}
 
 pub(crate) fn rollback_insert(write: &JournalRollback) -> Result<(), Error> {
     if write.previous_len == 0 {

@@ -403,6 +403,110 @@ fn integer_above_2_pow_53_is_invalid() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
+#[test]
+fn lines_matches_find_append_order_and_raw_across_rotate() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    collection.add("a", rec("x")).unwrap();
+    collection.add("b", rec("x")).unwrap();
+    collection.add("c", rec("x")).unwrap();
+    assert!(jsonl_names(&scratch.log_dir()).len() >= 2);
+
+    let find_ids: Vec<_> = collection
+        .find(&Filter::all().into(), 0, 100)
+        .unwrap()
+        .records
+        .into_iter()
+        .map(|record| record.id.unwrap())
+        .collect();
+    assert_eq!(find_ids, ["a", "b", "c"]);
+
+    let mut walked = Vec::new();
+    let mut raw_concat = Vec::new();
+    for record in collection.lines().unwrap() {
+        let record = record.unwrap();
+        let id = record.id.clone().unwrap();
+        let got = collection.get(&id).unwrap();
+        assert_eq!(record.raw, got.raw);
+        raw_concat.extend_from_slice(record.raw.as_deref().unwrap());
+        walked.push(id);
+    }
+    assert_eq!(walked, find_ids);
+
+    let mut file_concat = Vec::new();
+    for name in jsonl_names(&scratch.log_dir()) {
+        file_concat.extend(fs::read(scratch.log_dir().join(name)).unwrap());
+    }
+    assert_eq!(raw_concat, file_concat);
+}
+
+#[test]
+fn lines_survives_deleted_index() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    collection.add("a", rec("x")).unwrap();
+    collection.add("b", rec("x")).unwrap();
+    collection.add("c", rec("x")).unwrap();
+    drop(vault);
+
+    fs::remove_dir_all(scratch.vault().join(".scheda")).unwrap();
+    let vault = scratch.reopen();
+    let ids: Vec<_> = vault
+        .collection("south_log")
+        .unwrap()
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["a", "b", "c"]);
+    assert_eq!(
+        vault
+            .collection("south_log")
+            .unwrap()
+            .get("b")
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("b")
+    );
+}
+
+#[test]
+fn lines_on_document_is_unsupported() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "notes.yaml",
+        include_str!("../testdata/document/notes.yaml"),
+    );
+    let vault = scratch.reopen();
+    let err = match vault.collection("north_notes").unwrap().lines() {
+        Ok(_) => panic!("document lines must be unsupported"),
+        Err(err) => err,
+    };
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn lines_truncated_tail_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    collection.add("a", rec("x")).unwrap();
+    let path = scratch.log_dir().join("00000001.jsonl");
+    let mut text = fs::read_to_string(&path).unwrap();
+    text.push_str(r#"{"id":"b","msg":"x"}"#);
+    fs::write(&path, &text).unwrap();
+    let err = collection
+        .lines()
+        .unwrap()
+        .find_map(Result::err)
+        .expect("truncated tail");
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
 fn peek_schema_name(body: &str) -> String {
     for line in body.lines() {
         let line = line.trim();

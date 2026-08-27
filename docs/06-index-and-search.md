@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.31, 27 August 2026.
+Document 6 of the Scheda package. Version 0.32, 27 August 2026.
 
 Normative rules for the derived Index and `get`. **`find` and `search` (how they must work) are `13`.** Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`. Phase **core** or **search** as marked.
 
@@ -10,9 +10,9 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 ## 1. The Index is disposable
 
-**IDX-1. Rebuild from files.** The Index directory is `{vault}/.scheda/` (gitignored; GIT-13). It is not part of a Vault commit or backup. `reindex` reads Schema and Records and rebuilds it. *Check (**core**):* delete `.scheda/`, `get` and `history` of a fixture `document` still return that file; `find` / `replace` of that id fail until `reindex` (IDX-10). After `reindex`, a fixture `find` matches the files.
+**IDX-1. Rebuild from files.** The Index directory is `{vault}/.scheda/` (gitignored; GIT-13). It is not part of a Vault commit or backup. `reindex` reads Schema and Records and rebuilds it. *Check (**core**):* delete `.scheda/`, `get` and `history` of a fixture `document` still return that file; `lines` of a fixture `journal` still yields every line; `find` / `replace` of that id fail until `reindex` (IDX-10). After `reindex`, a fixture `find` matches the files.
 
-**IDX-2. Versioned format.** The Index carries its own format version. **Core** writes `{vault}/.scheda/index/format`: one decimal integer (currently `3`) and a newline. An incompatible or corrupt file is not read “as best effort”: `reindex` or `index_unusable`. `get` and `history` still read Vault / git files. Methods that resolve `id` through the Index (`find`, `search`, `replace`) fail `index_unusable` or empty, never another Vault's ids. *Check (**core**):* corrupt or unknown version → `search` / `find` return no hits or a failure, never another Vault's ids (QRY-4); `get` still matches the files.
+**IDX-2. Versioned format.** The Index carries its own format version. **Core** writes `{vault}/.scheda/index/format`: one decimal integer (currently `3`) and a newline. An incompatible or corrupt file is not read “as best effort”: `reindex` or `index_unusable`. `get`, `history`, and `lines` still read Vault / git files. Methods that resolve `id` through the Index (`find`, `search`, `replace`) fail `index_unusable` or empty, never another Vault's ids. *Check (**core**):* corrupt or unknown version → `search` / `find` return no hits or a failure, never another Vault's ids (QRY-4); `get` and `lines` still match the files.
 
 **IDX-3. Invalid Records stay out of search.** Files that fail current Schema (SCH-12) are omitted from lexical, vector, and edge indexes until they validate. `get` still returns them with a validity flag (`07`). *Check (**search**):* tightened Schema; old file is absent from `search` and present in `get`.
 
@@ -22,7 +22,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 Writes (`add` / `replace`) update this map in the same process when the writer holds the lock. Human edits in an editor are not watched by default: the caller runs `reindex` or `check`. A file watcher is **later**.
 
-**IDX-10. Caller `id` on the filesystem: `get`, `add`, `history`.** Those three validate the slug, then use that identity against the tree (MOD-8). `get` / `history`: `document` `{name}/{id}.md`; `singleton` `{name}/record.yaml` when `id` matches Schema; `journal` the IDX-5 map to the segment (the segment is not named `{id}`). `add` creates the file or line and updates the Index. Every other method that needs a Record (`find`, `search`, `replace`) takes `id`s **from the Index**, then opens those files. A caller `id` on `replace` is an Index lookup, not a path. Unknown to the Index → `not_found` (do not probe `{id}.md` from the raw argument). An `id` the Index returns has already been accepted as a Record identity. *Check (**core**):* `find` `id =` an unindexed orphan file is empty; `get` and `history` of that id still use the file. *Check:* `replace` of an id not in the Index is `not_found` even if the file exists.
+**IDX-10. Caller `id` on the filesystem: `get`, `add`, `history`.** Those three validate the slug, then use that identity against the tree (MOD-8). `get` / `history`: `document` `{name}/{id}.md`; `singleton` `{name}/record.yaml` when `id` matches Schema; `journal` the IDX-5 map to the segment (the segment is not named `{id}`). `add` creates the file or line and updates the Index. `lines` does not take a caller `id`: it walks every journal line in Schema sequence without the Index (`07` LIB-19). Every other method that needs a Record (`find`, `search`, `replace`) takes `id`s **from the Index**, then opens those files. A caller `id` on `replace` is an Index lookup, not a path. Unknown to the Index → `not_found` (do not probe `{id}.md` from the raw argument). An `id` the Index returns has already been accepted as a Record identity. *Check (**core**):* `find` `id =` an unindexed orphan file is empty; `get` and `history` of that id still use the file. *Check:* `replace` of an id not in the Index is `not_found` even if the file exists.
 
 ---
 
@@ -34,7 +34,7 @@ Writes (`add` / `replace`) update this map in the same process when the writer h
 
 `find` does not use vectors. That is `search`. Markdown `body` is a lexical find key unless Schema sets `exclude_fts` (SCH-7). The concatenated BM25 blob is still `search` only.
 
-**QRY-7. `find` order.** Exactly one selected collection and it is `journal`: append order, not score. Closed segments in Schema sequence, each file from first line to last, then the open segment. Rotation does not reorder earlier lines. Implemented as `order_by_fast_field` on an Index ordinal (segment + line, or a monotonic counter). Any other selection (`document` / `singleton`, several collections, mixed kinds): Tantivy score (`order_by_score()`; equal scores use `DocAddress`). Paging is skip/take in that order. *Check (**core**):* insert A, B; rotate; insert C; `find` with `all`, `offset` 0 and `count` 3 → A, B, C. *Check:* `count` `0` → `invalid`.
+**QRY-7. `find` order.** Exactly one selected collection and it is `journal`: append order, not score. Closed segments in Schema sequence, each file from first line to last, then the open segment. Rotation does not reorder earlier lines. Implemented as `order_by_fast_field` on an Index ordinal (segment + line, or a monotonic counter). Any other selection (`document` / `singleton`, several collections, mixed kinds): Tantivy score (`order_by_score()`; equal scores use `DocAddress`). Paging is skip/take in that order. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find`. *Check (**core**):* insert A, B; rotate; insert C; `find` with `all`, `offset` 0 and `count` 3 → A, B, C. *Check:* `count` `0` → `invalid`.
 
 ---
 

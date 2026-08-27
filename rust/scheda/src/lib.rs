@@ -64,6 +64,7 @@ mod vault;
 pub use ann::AnnIndex;
 pub use embed::{Embedder, Reranker};
 pub use error::{Code, Repeat};
+pub use journal::JournalLines;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
     Body, CollectionInfo, Edge, Error, Field, Filter, FindQuery, FindResult, History, Journal,

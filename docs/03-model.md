@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.17, 27 August 2026.
+Document 3 of the Scheda package. Version 0.18, 27 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -90,6 +90,6 @@ Git commit, Remote, `auto_sync`, `sync`, write lock, and working-tree durability
 
 Which fields are indexed, required, or edges — `05`.
 
-How `get` locates a journal `id` without scanning every segment — `06` (Index or equivalent lookup). Until then, a correct but slow scan of segments is allowed for **core** `get`. Order of `find` on a `journal` — `06` (QRY-7: append order).
+How `get` locates a journal `id` without scanning every segment — `06` (Index or equivalent lookup). Until then, a correct but slow scan of segments is allowed for **core** `get`. Order of `find` on a `journal` — `06` (QRY-7: append order). Walking every journal line without the Index — `07` LIB-19 (`lines`).
 
 Canonical journal line bytes (RFC 8785) — `04` STO-2; the library writes that form (`07` LIB-18). This model only requires: one object, one line, stable field identity under MOD-12.

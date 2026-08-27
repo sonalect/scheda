@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.40, 27 August 2026.
+Document 2 of the Scheda package. Version 0.41, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `history`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
