@@ -176,9 +176,9 @@ impl Vault {
         self.auto_sync
     }
 
-    /// Schema `schema_version` values present in this Vault.
+    /// Schema `version` values present in this Vault.
     #[must_use]
-    pub fn schema_versions(&self) -> Vec<u32> {
+    pub fn versions(&self) -> Vec<u32> {
         self.schema_arc().versions()
     }
 
@@ -486,7 +486,7 @@ impl Collection {
             decl: CollectionDecl {
                 name: String::from("c"),
                 kind: Kind::Document,
-                schema_version: 1,
+                version: 1,
                 id_field: String::from("id"),
                 id_pattern: None,
                 filter_keys: std::collections::BTreeSet::new(),
@@ -522,8 +522,8 @@ impl Collection {
     }
 
     #[must_use]
-    pub fn schema_version(&self) -> u32 {
-        self.decl.schema_version
+    pub fn version(&self) -> u32 {
+        self.decl.version
     }
 
     #[must_use]

@@ -14,8 +14,8 @@ import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 
 message Schema {
-  // Integer ≥ 1. On disk this is `schema_version`. Writes must use the
-  // current version.
+  // Integer ≥ 1. Same key on disk and in `create_collection`. Writes
+  // must use the current version.
   uint32 version = 1 [(buf.validate.field) = {
     required: true
     uint32: {gte: 1}

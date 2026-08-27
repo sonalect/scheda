@@ -1,6 +1,7 @@
 //! C10: core acceptance gates (`10` §2, `11` C10).
 //! Collection names here and in `testdata/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src` (MOD-1, SCH-1). That grep is library source only;
+//! test data must not be able to turn it red.
 
 use std::fs;
 use std::path::PathBuf;
@@ -195,6 +196,15 @@ fn src_does_not_name_consumer_collections() {
         "walk_strict",
         "west_indexed",
         "west_isolated",
+        "lessons_personal",
+        "lessons_project",
+        "entities",
+        "profiles",
+        "episodes",
+        "events",
+        "artifact_reachability",
+        "chain_heads",
+        "alias_bindings",
     ] {
         assert!(
             !contains_collection_name(&haystack, name),

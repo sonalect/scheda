@@ -573,7 +573,7 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_and_kind_are_required() {
+    fn version_and_kind_are_required() {
         assert!(Schema::default().validate().is_err());
         let err = Schema::default()
             .require_valid()

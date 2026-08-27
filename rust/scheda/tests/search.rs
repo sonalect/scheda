@@ -54,7 +54,7 @@ const TOKENS: &str = include_str!("../testdata/search/tokens.yaml");
 const TOKEN_EXTRA: &str = "\
 name: token_extra
 kind: document
-schema_version: 1
+version: 1
 fields:
   - name: title
     required: true
@@ -390,7 +390,7 @@ fn invalid_record_is_omitted_from_search() {
     drop(vault);
     scratch.write_schema(
         "tokens.yaml",
-        "name: token_notes\nkind: document\nschema_version: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
+        "name: token_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
     );
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("token_notes").unwrap();

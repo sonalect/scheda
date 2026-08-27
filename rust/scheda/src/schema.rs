@@ -224,7 +224,7 @@ struct RawSingleton {
 struct RawCollection {
     name: String,
     kind: Kind,
-    schema_version: u32,
+    version: u32,
     fields: Vec<RawField>,
     segment_max_bytes: Option<u64>,
     segment_max_lines: Option<u64>,
@@ -272,7 +272,7 @@ pub(crate) struct FieldDecl {
 pub(crate) struct CollectionDecl {
     pub name: String,
     pub kind: Kind,
-    pub schema_version: u32,
+    pub version: u32,
     pub id_field: String,
     pub id_pattern: Option<Regex>,
     pub filter_keys: BTreeSet<String>,
@@ -305,7 +305,7 @@ impl Schema {
         let mut versions: Vec<u32> = self
             .collections
             .values()
-            .map(|decl| decl.schema_version)
+            .map(|decl| decl.version)
             .collect();
         versions.sort_unstable();
         versions.dedup();
@@ -403,9 +403,9 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         bail!(Error::invalid(format!("schema {loc}: name is required")));
     }
     require_slug("collection name", &raw.name).with_context(|| format!("schema {loc}: name"))?;
-    if raw.schema_version < 1 {
+    if raw.version < 1 {
         bail!(Error::invalid(format!(
-            "schema {loc}: schema_version must be >= 1"
+            "schema {loc}: version must be >= 1"
         )));
     }
     match raw.kind {
@@ -508,7 +508,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     Ok(CollectionDecl {
         name: raw.name,
         kind: raw.kind,
-        schema_version: raw.schema_version,
+        version: raw.version,
         id_field: DEFAULT_ID_FIELD.to_owned(),
         id_pattern: None,
         filter_keys,
@@ -663,7 +663,7 @@ pub(crate) fn to_proto_schema(
     decl: &CollectionDecl,
     omit_fields: bool,
 ) -> Result<ApiSchema, Error> {
-    let mut out = ApiSchema::default().with_version(decl.schema_version);
+    let mut out = ApiSchema::default().with_version(decl.version);
     if decl.isolated {
         out = out.with_isolated(true);
     }
@@ -862,7 +862,7 @@ pub(crate) fn put_collection(
 
 fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Error> {
     use scheda_generated::api::v1::__buffa::oneof::schema::Kind as SchemaKind;
-    let schema_version = schema
+    let version = schema
         .version
         .ok_or_else(|| Error::invalid("schema: version is required"))?;
     let (kind, body, singleton_id, segment_max_bytes, segment_max_lines, segment_rotate) =
@@ -909,7 +909,7 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
     Ok(CollectionDecl {
         name: name.to_owned(),
         kind,
-        schema_version,
+        version,
         id_field: DEFAULT_ID_FIELD.to_owned(),
         id_pattern: None,
         filter_keys,
@@ -1065,7 +1065,7 @@ fn json_from_decl(decl: &CollectionDecl) -> Result<String, Error> {
 struct DiskCollection {
     name: String,
     kind: &'static str,
-    schema_version: u32,
+    version: u32,
     fields: Vec<DiskField>,
     #[serde(skip_serializing_if = "Option::is_none")]
     segment_max_bytes: Option<u64>,
@@ -1179,7 +1179,7 @@ impl From<&CollectionDecl> for DiskCollection {
         Self {
             name: decl.name.clone(),
             kind: decl.kind.as_str(),
-            schema_version: decl.schema_version,
+            version: decl.version,
             fields: decl.fields.iter().map(DiskField::from).collect(),
             segment_max_bytes,
             segment_max_lines: decl.segment_max_lines,
@@ -1336,11 +1336,9 @@ mod tests {
 
     #[test]
     fn collection_name_must_be_a_path_component() {
-        let err =
-            parse("name: team/notes\nkind: document\nschema_version: 1\nfields: []\n").unwrap_err();
+        let err = parse("name: team/notes\nkind: document\nversion: 1\nfields: []\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
-        let decl =
-            parse("name: team-notes\nkind: document\nschema_version: 1\nfields: []\n").unwrap();
+        let decl = parse("name: team-notes\nkind: document\nversion: 1\nfields: []\n").unwrap();
         assert_eq!(decl.name, "team-notes");
         assert_eq!(super::collection_dir("team-notes"), "team-notes");
     }
@@ -1348,7 +1346,7 @@ mod tests {
     #[test]
     fn singleton_id_must_be_a_valid_record_id() {
         let err = parse(
-            "name: box\nkind: singleton\nschema_version: 1\nsingleton:\n  id: .hidden\nfields: []\n",
+            "name: box\nkind: singleton\nversion: 1\nsingleton:\n  id: .hidden\nfields: []\n",
         )
         .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -1384,11 +1382,20 @@ mod tests {
     }
 
     #[test]
-    fn missing_schema_version_is_invalid() {
+    fn missing_version_is_invalid() {
         let err = yaml_serde::from_str::<super::RawCollection>(include_str!(
-            "../testdata/schema/missing_schema_version.yaml"
+            "../testdata/schema/missing_version.yaml"
         ))
-        .expect_err("schema_version is required");
+        .expect_err("version is required");
+        let _ = err;
+    }
+
+    #[test]
+    fn leftover_version_alias_is_invalid() {
+        let err = yaml_serde::from_str::<super::RawCollection>(include_str!(
+            "../testdata/schema/unknown_collection_key.yaml"
+        ))
+        .expect_err("unknown key");
         let _ = err;
     }
 
@@ -1404,7 +1411,7 @@ mod tests {
     #[test]
     fn layout_key_is_invalid() {
         let err = yaml_serde::from_str::<super::RawCollection>(
-            "name: c\nkind: document\nschema_version: 1\nlayout:\n  - '{id}.md'\nfields: []\n",
+            "name: c\nkind: document\nversion: 1\nlayout:\n  - '{id}.md'\nfields: []\n",
         )
         .expect_err("layout is unknown");
         let _ = err;
@@ -1418,17 +1425,16 @@ mod tests {
 
     #[test]
     fn field_named_body_is_invalid() {
-        let err = parse(
-            "name: c\nkind: document\nschema_version: 1\nfields:\n  - name: body\n    string: {}\n",
-        )
-        .unwrap_err();
+        let err =
+            parse("name: c\nkind: document\nversion: 1\nfields:\n  - name: body\n    string: {}\n")
+                .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
     fn exclude_fts_body_is_not_a_find_key() {
         let decl = parse(
-            "name: c\nkind: document\nschema_version: 1\nbody:\n  exclude_fts: true\nfields:\n  - name: title\n    string: {}\n",
+            "name: c\nkind: document\nversion: 1\nbody:\n  exclude_fts: true\nfields:\n  - name: title\n    string: {}\n",
         )
         .unwrap();
         assert!(!decl.filter_keys.contains("body"));
@@ -1470,7 +1476,7 @@ mod tests {
     #[test]
     fn search_marks_and_body_parse() {
         let decl = parse(
-            "name: c\nkind: document\nschema_version: 1\nbody: {}\nfields:\n  - name: title\n    string: {}\n  - name: secret\n    string:\n      exclude_fts: true\n      exclude_vector: true\n",
+            "name: c\nkind: document\nversion: 1\nbody: {}\nfields:\n  - name: title\n    string: {}\n  - name: secret\n    string:\n      exclude_fts: true\n      exclude_vector: true\n",
         )
         .unwrap();
         let body = decl.body.as_ref().unwrap();
@@ -1489,7 +1495,7 @@ mod tests {
     #[test]
     fn fts_on_integer_is_invalid() {
         let err = parse(
-            "name: c\nkind: document\nschema_version: 1\nfields:\n  - name: n\n    integer: {}\n    fts: true\n",
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: n\n    integer: {}\n    fts: true\n",
         )
         .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -1497,15 +1503,14 @@ mod tests {
 
     #[test]
     fn body_on_journal_is_invalid() {
-        let err =
-            parse("name: c\nkind: journal\nschema_version: 1\nbody: {}\nfields: []\n").unwrap_err();
+        let err = parse("name: c\nkind: journal\nversion: 1\nbody: {}\nfields: []\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]
     fn edge_arity_is_required() {
         let err = parse(
-            "name: c\nkind: document\nschema_version: 1\nfields:\n  - name: refs\n    edge:\n      collection: c\n",
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: refs\n    edge:\n      collection: c\n",
         )
         .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -1514,7 +1519,7 @@ mod tests {
     #[test]
     fn isolated_mark_parses() {
         let decl = parse(
-            "name: c\nkind: document\nschema_version: 1\nisolated: true\nfields:\n  - name: secret\n    string: {}\n",
+            "name: c\nkind: document\nversion: 1\nisolated: true\nfields:\n  - name: secret\n    string: {}\n",
         )
         .unwrap();
         assert!(decl.isolated);

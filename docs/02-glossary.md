@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.39, 27 August 2026.
+Document 2 of the Scheda package. Version 0.40, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -56,7 +56,7 @@ A document file, a journal line, or a singleton file. It has a stable `id` in it
 
 Which collections exist, their kind, fields, what is required, what is indexed for words or vectors, what is an edge. Record file paths are fixed by kind (MOD-8), not chosen in Schema. Schema contains no executable code. Changing Schema is a git commit like any other file.
 
-Do not confuse with types in the library source. Consumer collection names must not appear in Scheda code.
+Do not confuse with types in the library source. Consumer collection names must not appear in `rust/scheda/src`. Test data may name them.
 
 **Working tree** — git's checkout at the Vault root. Scheda writes files here. Uncommitted writes are visible as ordinary git status.
 

@@ -1,0 +1,6 @@
+name: artifact_reachability
+kind: journal
+version: 1
+fields:
+  - name: note
+    string: {}

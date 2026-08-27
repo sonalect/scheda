@@ -120,7 +120,7 @@ fn rec(fields: Value) -> RecordAdd {
 }
 
 fn notes_schema() -> &'static str {
-    "name: agent_notes\nkind: document\nschema_version: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n"
+    "name: agent_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n"
 }
 
 fn notes_decl() -> Schema {
@@ -577,7 +577,7 @@ const TREE_SEALED: &str = "agent-sealed-tree-token";
 const NESTED_SEALED: &str = "agent-sealed-nested-token";
 
 fn isolated_schema_yaml() -> &'static str {
-    "name: agent_sealed\nkind: document\nschema_version: 1\nisolated: true\nfields:\n  - name: agent_pass\n    required: true\n    string: {}\n"
+    "name: agent_sealed\nkind: document\nversion: 1\nisolated: true\nfields:\n  - name: agent_pass\n    required: true\n    string: {}\n"
 }
 
 fn sealed_document(token: &str) -> String {

@@ -398,10 +398,7 @@ fn integer_above_2_pow_53_is_invalid() {
     let text = fs::read_to_string(scratch.lines_dir().join("00000001.jsonl")).unwrap();
     assert!(text.contains(r#""n":9007199254740992"#), "{text}");
     let err = collection
-        .add(
-            "wide",
-            rec_fields(json!({"n": 18_014_398_509_481_984_u64})),
-        )
+        .add("wide", rec_fields(json!({"n": 18_014_398_509_481_984_u64})))
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

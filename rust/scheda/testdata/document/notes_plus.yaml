@@ -1,6 +1,6 @@
 name: north_notes
 kind: document
-schema_version: 2
+version: 2
 fields:
   - name: title
     required: true

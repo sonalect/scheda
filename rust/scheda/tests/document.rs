@@ -525,7 +525,7 @@ fn collection_name_with_slash_is_invalid() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join(".schema.yaml"),
-        "name: \"a/b\"\nkind: document\nschema_version: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n",
+        "name: \"a/b\"\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n",
     )
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();

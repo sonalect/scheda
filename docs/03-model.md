@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.16, 27 August 2026.
+Document 3 of the Scheda package. Version 0.17, 27 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -10,7 +10,7 @@ An assertion without a check is not a requirement.
 
 ## 1. Collections are declared, not built in
 
-**MOD-1. No universal table.** The consumer declares collections in Schema. Scheda does not ship domain collections and does not put every Record in one bag. *Check:* two Vaults with different collection names work on the same build; grep over implementation source does not contain those names.
+**MOD-1. No universal table.** The consumer declares collections in Schema. Scheda does not ship domain collections and does not put every Record in one bag. *Check:* two Vaults with different collection names work on the same build; grep over `rust/scheda/src` does not contain those names. Test data is not that scope (SCH-1).
 
 **MOD-2. One kind per collection.** Kind is `document`, `journal`, or `singleton`. It does not change for existing records of that collection. A new kind is a new collection (or a Schema version that `05` treats as incompatible). *Check:* Schema with two kinds on one name is rejected; `replace` on a `journal` collection is rejected.
 

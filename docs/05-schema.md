@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.30, 27 August 2026.
+Document 5 of the Scheda package. Version 0.32, 27 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -10,11 +10,11 @@ An assertion without a check is not a requirement. Schema contains no executable
 
 ## 1. Schema is files, not library types
 
-**SCH-1. Schema lives in the Vault.** Collection declarations are UTF-8 YAML 1.2 (or JSON) files under git, next to the records: `{name}/.schema.yaml` (also `.schema.yml` or `.schema.json`). `name` is the collection name and the on-disk directory (MOD-8). The directory name must equal the `name` in the file. Changing Schema is an ordinary git commit. Bindings write a collection file through `create_collection` (`07` LIB-21), not by offering a raw path. A person may still edit those files in an editor (STO-2). Implementation source must not name a consumer's collections. *Check:* a second consumer adds collections without rebuilding Scheda; grep over implementation source does not contain those collection names.
+**SCH-1. Schema lives in the Vault.** Collection declarations are UTF-8 YAML 1.2 (or JSON) files under git, next to the records: `{name}/.schema.yaml` (also `.schema.yml` or `.schema.json`). `name` is the collection name and the on-disk directory (MOD-8). The directory name must equal the `name` in the file. Changing Schema is an ordinary git commit. Bindings write a collection file through `create_collection` (`07` LIB-21), not by offering a raw path. A person may still edit those files in an editor (STO-2). Library source (`rust/scheda/src`) must not name a consumer's collections. Test data may: the check does not search it, so a fixture shaped like a consumer cannot turn SCH-1 red. *Check:* a second consumer adds collections without rebuilding Scheda; grep over `rust/scheda/src` does not contain those collection names.
 
 `info` (`08`) is this data serialized, not a guess from walking files.
 
-**SCH-2. One declaration per collection.** Each collection has: name (method argument / directory), kind (`document` | `journal` | `singleton`), `version` (integer ≥ `1`; on disk `schema_version`), field list, and kind-specific options (segment cap for `journal`; fixed Record `id` for `singleton`). There is no layout template. Record file paths are fixed (MOD-8). *Check:* a collection missing kind or `version` is rejected on `open`/`check`; a `layout` key is `invalid`.
+**SCH-2. One declaration per collection.** Each collection has: name (method argument / directory), kind (`document` | `journal` | `singleton`), `version` (integer ≥ `1`), field list, and kind-specific options (segment cap for `journal`; fixed Record `id` for `singleton`). There is no layout template. Record file paths are fixed (MOD-8). *Check:* a collection missing kind or `version` is rejected on `open`/`check`; a `layout` key is `invalid`.
 
 **SCH-3. No code in Schema.** No scripts, templates that call out to a language runtime, or “on write” hooks inside Schema files. Extracting edges from Markdown `[[wiki-links]]` is allowed only if Schema names a built-in extractor the implementation ships; silence is not an extractor. *Check:* a Schema file that is valid YAML but contains an executable blob is rejected; unmarked Markdown is not scanned for edges.
 
@@ -71,7 +71,7 @@ A default is applied only if Schema states one; otherwise MOD-12 (missing is mis
 
 **SCH-12. Write validates; read does not rewrite.** `add` / `replace` reject a Record that fails the collection's current Schema. An older file that fails a tightened Schema is left on disk. `check` reports it. It does not enter the search Index until it validates (or Schema makes the new field optional). `get` by `id` still returns the file bytes if the path exists, with a validity flag specified in `07`. *Check:* add a required field in Schema `2`; old file still returns from `get`; `search` omits it; new insert without the field fails.
 
-**SCH-13. Forward-compatible evolution.** Adding an optional field does not invalidate files at `schema_version` N when Schema becomes N+1. Changing a field's type, removing a required field, or changing kind requires a bump of `schema_version` and a rule in Schema (`read_as` / migrate-out-of-band). Scheda does not guess. Writes must use the current `schema_version`. *Check:* files at version `1` read under Schema `2` that only added an optional field; a string where Schema now wants a list is rejected on write.
+**SCH-13. Forward-compatible evolution.** Adding an optional field does not invalidate files at `version` N when Schema becomes N+1. Changing a field's type, removing a required field, or changing kind requires a bump of `version` and a rule in Schema (`read_as` / migrate-out-of-band). Scheda does not guess. Writes must use the current `version`. *Check:* files at version `1` read under Schema `2` that only added an optional field; a string where Schema now wants a list is rejected on write.
 
 ---
 
@@ -109,7 +109,7 @@ Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record files are th
 |---|---|---|
 | `name` | yes | Collection name. Unique in the Vault. Same slug as Record `id` (library): Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes, no trailing `.` or whitespace, not a Windows device name. The on-disk directory is this name (MOD-8). |
 | `kind` | yes | `document` \| `journal` \| `singleton` |
-| `schema_version` | yes | Integer ≥ `1` |
+| `version` | yes | Integer ≥ `1` |
 | `id` | — | Removed. Identity is always Record `id`. |
 | `fields` | yes | List of field declarations (may be empty). |
 | `segment_max_bytes` | `journal` only | Integer bytes. Omitted → **8 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |

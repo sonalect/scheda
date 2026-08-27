@@ -1,6 +1,6 @@
 name: south_lines
 kind: journal
-schema_version: 1
+version: 1
 fields:
   - name: n
     integer: {}

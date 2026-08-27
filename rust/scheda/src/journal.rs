@@ -709,7 +709,7 @@ fn record_from_parsed(
 #[cfg(test)]
 mod tests {
     use super::{canonical_json, civil_from_unix_days, write_canonical};
-    use serde_json::{json, Number, Value};
+    use serde_json::{Number, Value, json};
 
     #[test]
     fn canonical_json_sorts_object_keys() {

@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.30, 27 August 2026.
+Document 1 of the Scheda package. Version 0.31, 27 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -44,7 +44,7 @@ The library is the disciplined path for programs and agents. It is not a gate in
 
 A library that names the caller's collections in source is a framework, not a store. The next consumer then forks the library or lives with the wrong nouns.
 
-Collections, field names, what is searchable, and what is a link are **data in the Vault**. Changing them is a commit. Grep over an implementation must not find the first consumer's type names.
+Collections, field names, what is searchable, and what is a link are **data in the Vault**. Changing them is a commit. Grep over library source (`rust/scheda/src`) must not find the first consumer's type names. Test data is not that grep.
 
 ### Challenge 4. Git is a history tool, not a row lock
 

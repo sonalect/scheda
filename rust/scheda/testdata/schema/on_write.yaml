@@ -1,5 +1,5 @@
 name: c
 kind: document
-schema_version: 1
+version: 1
 fields: []
 on_write: echo hi

@@ -59,7 +59,7 @@ const OPS_DOCS: u64 = if cfg!(windows) { 100 } else { 1_000 };
 const OPS_LOG: &str = "\
 name: ops_log
 kind: journal
-schema_version: 1
+version: 1
 fields:
   - name: msg
     string: {}
@@ -68,7 +68,7 @@ fields:
 const OPS_NOTES: &str = "\
 name: north_notes
 kind: document
-schema_version: 1
+version: 1
 fields:
   - name: title
     required: true

@@ -16,17 +16,26 @@ API or on-disk format changes bump the minor.
   slice, Schema `id` pattern, singleton format, optional search, layout
   decisions, acceptance). They do not reopen A0–A7; **agent** stays
   accepted.
+- A fixture Vault in test data shaped like a first consumer's primary
+  layer: two `document` collections with the same fields, two more
+  documents, three journals, one singleton, one isolated journal.
+  `check` and `get` run against it; `find` limited to one of the twin
+  documents does not return the other.
 
 ### Changed
 
 - README and `10`/`11` point next crate work at that list. Isolated
   nested git (`10` §1) is P4 of it, after journal fidelity and an
   ordered read.
+- SCH-1 grades `rust/scheda/src`, not test data. A fixture may name a
+  consumer's collections without turning that check red.
 - Journal JSONL is RFC 8785 (STO-2, LIB-18): keys by UTF-16 code unit,
   numbers by ES6 `NumberToString`, strings escaped as the RFC states.
   `RecordAdd.fields` is `google.protobuf.Struct`; an `integer` whose
   magnitude exceeds 2^53 is `invalid`. There is no wider integer
   carrier.
+- Schema files and `Collection::version` use `version` (same as
+  `api.v1.Schema`). A leftover `schema_version` key is `invalid`.
 
 ### Fixed
 

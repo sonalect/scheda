@@ -1,0 +1,9 @@
+name: chain_heads
+kind: singleton
+version: 1
+singleton:
+  id: heads
+fields:
+  - name: title
+    required: true
+    string: {}

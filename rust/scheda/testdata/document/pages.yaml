@@ -1,6 +1,6 @@
 name: north_pages
 kind: document
-schema_version: 1
+version: 1
 fields:
   - name: title
     required: true

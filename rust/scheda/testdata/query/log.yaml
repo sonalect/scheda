@@ -1,6 +1,6 @@
 name: query_log
 kind: journal
-schema_version: 1
+version: 1
 fields:
   - name: tag
     string: {}

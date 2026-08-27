@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.22, 27 August 2026.
+Document 10 of the Scheda package. Version 0.23, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -63,7 +63,7 @@ IDX-2 in that list is open. It puts the lexical Index on the path of a plain seq
 1. Every **core** code above has a passing check in the first binding.
 2. A fixture Vault is readable without the library (STO-2) and through `get` (QRY-1).
 3. Deleting the Index does not lose Records (STO-1, IDX-1).
-4. Implementation source does not name a consumer's collections (SCH-1, MOD-1).
+4. Library source (`rust/scheda/src`) does not name a consumer's collections (SCH-1, MOD-1). Test data is not that grep.
 5. `auto_sync` off: writes and `commit` succeed with the network disabled (GIT-8, ISO-1).
 
 **Rust `scheda`:** those five gates pass (`11` C10; tests in `rust/scheda/tests/core.rs` and the C0–C8 suites). **core** is accepted for this binding.

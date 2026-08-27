@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.36, 27 August 2026.
+Document 12 of the Scheda package. Version 0.38, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -416,8 +416,8 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P1 is done; no other stage is
-started.
+**Status of the part:** in progress. P0 and P1 are done; no other
+stage is started.
 
 The first consumer moves a primary layer of text files under git onto the
 crate: `document` collections it revises in place, and `journal`
@@ -442,7 +442,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 
 | Stage | Status | What closes |
 |---|---|---|
-| [P0](#p0-consumer-fixture) | not started | A fixture Vault shaped like the consumer's primary layer |
+| [P0](#p0-consumer-fixture) | done | A fixture Vault shaped like the consumer's primary layer |
 | [P1](#p1-journal-line-fidelity) | done | An integer stays an integer; the line is RFC 8785 |
 | [P2](#p2-ordered-journal-read-without-the-lexical-index) | not started | Reading a journal in order without Tantivy |
 | [P3](#p3-many-writes-one-commit) | not started | Append per event without a commit per event |
@@ -513,7 +513,7 @@ and blocks nothing.
 
 ## P0. Consumer fixture
 
-**Status:** not started
+**Status:** done
 
 **Codes:** SCH-1, MOD-1, MOD-8, STO-2, QRY-1.
 
@@ -536,14 +536,14 @@ The isolated `journal` is declared in Schema and its files are placed by
 hand, the way the A6 fixture already does it. Writing a Record there is
 P4, and `check` does not reach the nested tree until then.
 
-- [ ] Fixture lives in test data. Collection names come from its Schema
+- [x] Fixture lives in test data. Collection names come from its Schema
       files; no name is compiled into `rust/scheda/src` (SCH-1).
-- [ ] The MOD-1 / SCH-1 grep check names `rust/scheda/src` as its scope,
+- [x] The MOD-1 / SCH-1 grep check names `rust/scheda/src` as its scope,
       in the test and in `05`. Test data must not be able to turn SCH-1
       red.
-- [ ] `check` passes on the fixture; `get` of each kind returns bytes
+- [x] `check` passes on the fixture; `get` of each kind returns bytes
       equal to the file (STO-2, QRY-1).
-- [ ] Two `document` collections with identical field lists: a Record
+- [x] Two `document` collections with identical field lists: a Record
       accepted by one is accepted by the other; `find` limited to one
       returns none of the other's Records (MOD-8, QRY-2).
 

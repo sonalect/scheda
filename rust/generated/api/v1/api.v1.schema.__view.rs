@@ -3,8 +3,8 @@
 
 #[derive(Clone, Debug, Default)]
 pub struct SchemaView<'a> {
-    /// Integer ≥ 1. On disk this is `schema_version`. Writes must use the
-    /// current version.
+    /// Integer ≥ 1. Same key on disk and in `create_collection`. Writes
+    /// must use the current version.
     ///
     /// Field 1: `version`
     pub version: ::core::option::Option<u32>,
@@ -478,8 +478,8 @@ impl SchemaOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Integer ≥ 1. On disk this is `schema_version`. Writes must use the
-    /// current version.
+    /// Integer ≥ 1. Same key on disk and in `create_collection`. Writes
+    /// must use the current version.
     ///
     /// Field 1: `version`
     #[must_use]

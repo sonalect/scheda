@@ -1,5 +1,5 @@
 name: east_log
 kind: journal
-schema_version: 1
+version: 1
 segment_max_bytes: 50331648
 fields: []

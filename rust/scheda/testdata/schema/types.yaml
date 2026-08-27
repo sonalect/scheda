@@ -1,6 +1,6 @@
 name: c
 kind: document
-schema_version: 1
+version: 1
 fields:
   - name: s
     string: {}

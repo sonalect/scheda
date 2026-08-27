@@ -350,7 +350,7 @@ fn check_reports_schema_failure_with_path() {
     drop(vault);
     scratch.write_schema(
         "notes.yaml",
-        "name: query_notes\nkind: document\nschema_version: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    required: true\n    string: {}\n",
+        "name: query_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    required: true\n    string: {}\n",
     );
     let vault = scratch.reopen();
     let got = vault.collection("query_notes").unwrap().get("a").unwrap();
@@ -572,7 +572,7 @@ fn exists_json_subpaths_matches_nested_field() {
         r#"
 name: query_notes
 kind: document
-schema_version: 1
+version: 1
 fields:
   - name: title
     string: {}
@@ -660,7 +660,7 @@ fn exclude_fts_body_is_not_a_find_key() {
         r#"
 name: query_notes
 kind: document
-schema_version: 1
+version: 1
 body:
   exclude_fts: true
 fields:

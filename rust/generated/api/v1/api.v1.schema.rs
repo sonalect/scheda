@@ -5,8 +5,8 @@
 #[derive(::serde::Serialize)]
 #[serde(default)]
 pub struct Schema {
-    /// Integer ≥ 1. On disk this is `schema_version`. Writes must use the
-    /// current version.
+    /// Integer ≥ 1. Same key on disk and in `create_collection`. Writes
+    /// must use the current version.
     ///
     /// Field 1: `version`
     #[serde(

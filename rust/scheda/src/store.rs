@@ -849,7 +849,7 @@ mod tests {
         CollectionDecl {
             name: String::from("c"),
             kind,
-            schema_version: 1,
+            version: 1,
             id_field: String::from("id"),
             id_pattern: None,
             filter_keys: Default::default(),

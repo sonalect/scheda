@@ -57,8 +57,7 @@ const WEST: &str = include_str!("../testdata/schema/west.yaml");
 const EAST: &str = include_str!("../testdata/schema/east.yaml");
 const WEST_JSON: &str = include_str!("../testdata/schema/west.json");
 const WEST_MISSING_KIND: &str = include_str!("../testdata/schema/west_missing_kind.yaml");
-const WEST_MISSING_SCHEMA_VERSION: &str =
-    include_str!("../testdata/schema/west_missing_schema_version.yaml");
+const WEST_MISSING_VERSION: &str = include_str!("../testdata/schema/west_missing_version.yaml");
 const WEST_ON_WRITE: &str = include_str!("../testdata/schema/west_on_write.yaml");
 const WEST_BAD_EDGE: &str = include_str!("../testdata/schema/bad_edge.yaml");
 const WIKI: &str = include_str!("../testdata/schema/wiki.md");
@@ -80,7 +79,7 @@ fn schema_under_git_is_read_on_open_and_check() {
     assert!(scratch.vault().join(".git").is_dir());
     let collection = vault.collection("west_docs").unwrap();
     assert_eq!(collection.kind(), Kind::Document);
-    assert_eq!(collection.schema_version(), 1);
+    assert_eq!(collection.version(), 1);
     assert_eq!(collection.field_type("title"), Some("string"));
     assert_eq!(collection.field_is_required("title"), Some(true));
     assert_eq!(collection.field_is_nullable("title"), Some(false));
@@ -97,10 +96,10 @@ fn missing_kind_is_rejected_on_open() {
 }
 
 #[test]
-fn missing_schema_version_is_rejected_on_open() {
+fn missing_version_is_rejected_on_open() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
+    scratch.write_schema("west.yaml", WEST_MISSING_VERSION);
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -117,7 +116,7 @@ fn executable_blob_key_is_rejected() {
 const WEST_LAYOUT: &str = "\
 name: west_docs
 kind: document
-schema_version: 1
+version: 1
 layout:
   - '{id}.md'
 fields:
@@ -145,7 +144,7 @@ fn layout_key_is_invalid_on_open_and_check() {
     drop(scratch.init());
     scratch.write_schema(
         "west.json",
-        r#"{"name":"west_docs","kind":"document","schema_version":1,"layout":["x.md"],"fields":[{"name":"title","string":{}}]}"#,
+        r#"{"name":"west_docs","kind":"document","version":1,"layout":["x.md"],"fields":[{"name":"title","string":{}}]}"#,
     );
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -227,8 +226,8 @@ fn two_vaults_with_different_collection_names() {
     east_vault.collection("east_docs").unwrap();
     assert!(west_vault.collection("east_docs").is_err());
     assert!(east_vault.collection("west_docs").is_err());
-    assert_eq!(west_vault.schema_versions(), &[1]);
-    assert_eq!(east_vault.schema_versions(), &[2]);
+    assert_eq!(west_vault.versions(), &[1]);
+    assert_eq!(east_vault.versions(), &[2]);
 }
 
 #[test]
@@ -268,7 +267,7 @@ fn collection_dir_must_match_name() {
 fn check_rereads_schema_from_disk() {
     let scratch = Scratch::new();
     let vault = scratch.init();
-    scratch.write_schema("west.yaml", WEST_MISSING_SCHEMA_VERSION);
+    scratch.write_schema("west.yaml", WEST_MISSING_VERSION);
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

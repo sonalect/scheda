@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.26, 27 August 2026.
+Document 11 of the Scheda package. Version 0.27, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -140,7 +140,7 @@ YAML/JSON keys used in fixtures must already appear in `05` §8. Do not
 hard-code a consumer's collection names (SCH-1, MOD-1).
 
 - [x] Schema lives under git; `open` / `check` reads it (SCH-1).
-- [x] Missing kind or `schema_version` → rejected (SCH-2).
+- [x] Missing kind or `version` → rejected (SCH-2).
 - [x] Executable blob in Schema → rejected; unmarked Markdown is not an
       extractor (SCH-3).
 - [x] Core field types round-trip: `string`, `integer`, `number`, `boolean`,
@@ -351,8 +351,8 @@ Re-run the five gates in `10` §2:
 - [x] Fixture Vault readable without the library (STO-2) and through
       `get` (QRY-1).
 - [x] Deleting the Index does not lose Records (STO-1, IDX-1).
-- [x] Implementation source does not name a consumer's collections (SCH-1,
-      MOD-1).
+- [x] `rust/scheda/src` does not name a consumer's collections (SCH-1,
+      MOD-1). Test data is not that grep.
 - [x] `auto_sync` off: writes and `commit` succeed with the network disabled
       (GIT-8, ISO-1).
 

@@ -1,0 +1,9 @@
+name: entities
+kind: document
+version: 1
+body:
+  allowed: false
+fields:
+  - name: title
+    required: true
+    string: {}
