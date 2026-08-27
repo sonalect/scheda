@@ -1,12 +1,19 @@
-//! A4: thin CLI (`08` AGT-2–5, `12`, `14`). Collection names here must not
+//! A4/A5: thin CLI (`08` AGT-2–5, `12`, `14`). Collection names here must not
 //! appear in `rust/cli/src` (SCH-1).
 
 use std::fs;
-use std::path::PathBuf;
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::path::{Path, PathBuf};
 use std::process::{self, Command};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::{self, JoinHandle};
+use std::time::Duration;
 
-use scheda::{Filter, OpenOptions, RecordAdd, Schema, SearchQuery, Vault};
+use scheda::{
+    Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery, Vault,
+};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -848,4 +855,496 @@ fn peek_schema_name(body: &str) -> String {
         .ok()
         .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
         .expect("schema fixture name")
+}
+
+const HTTP_MODEL: &str = "scheda-a5-stub";
+const RERANK_MODEL: &str = "scheda-a5-rerank";
+
+fn join_leaf(base: &str, leaf: &str) -> String {
+    format!("{}/{leaf}", base.trim().trim_end_matches('/'))
+}
+
+fn embed_vector(text: &str) -> [f32; 4] {
+    if text == "car" || text == "automobile" {
+        [1.0, 0.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0, 0.0]
+    }
+}
+
+fn vector_query(text: &str) -> String {
+    serde_json::to_string(
+        &SearchQuery::default()
+            .with_text(text)
+            .with_k(5)
+            .with_lexical_weight(0.0),
+    )
+    .unwrap()
+}
+
+fn run_embed(path: &str, url: &str, rest: &[&str]) -> Run {
+    let mut args = Vec::with_capacity(8 + rest.len());
+    args.extend([
+        "--vault",
+        path,
+        "--embedder-openai-url",
+        url,
+        "--embedder-model",
+        HTTP_MODEL,
+        "--embedder-dimensions",
+        "4",
+    ]);
+    args.extend(rest);
+    run(&args)
+}
+
+fn hit_ids(hits: &Value) -> Vec<&str> {
+    hits["hits"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|hit| hit["id"].as_str())
+        .collect()
+}
+
+fn set_dead_origin(vault: &Path) {
+    let config = vault.join(".git/config");
+    let mut body = fs::read_to_string(&config).unwrap();
+    if !body.contains("[remote \"origin\"]") {
+        body.push_str(
+            "\n[remote \"origin\"]\n\turl = http://127.0.0.1:1/dead.git\n\tfetch = +refs/heads/*:refs/remotes/origin/*\n",
+        );
+        fs::write(config, body).unwrap();
+    }
+}
+
+struct HttpStub {
+    base: String,
+    seen: Arc<Mutex<Vec<String>>>,
+    shutdown: Arc<AtomicBool>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl HttpStub {
+    fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let seen_thread = Arc::clone(&seen);
+        let shutdown_thread = Arc::clone(&shutdown);
+        let handle = thread::spawn(move || {
+            while !shutdown_thread.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((stream, _)) => handle_conn(stream, &seen_thread),
+                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+        Self {
+            base: format!("http://{addr}/v1/"),
+            seen,
+            shutdown,
+            handle: Some(handle),
+        }
+    }
+}
+
+impl Drop for HttpStub {
+    fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn handle_conn(stream: TcpStream, seen: &Mutex<Vec<String>>) {
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+    let mut reader = BufReader::new(stream);
+    let Ok(Some((path, body))) = read_request(&mut reader) else {
+        return;
+    };
+    let stream = reader.get_mut();
+    if path.contains("embeddings") {
+        let input = body.get("input").and_then(Value::as_str).unwrap_or("");
+        seen.lock().unwrap().push(input.to_owned());
+        write_json(
+            stream,
+            &json!({ "data": [{ "embedding": embed_vector(input) }] }),
+        );
+        return;
+    }
+    if path.contains("rerank") {
+        let results = body
+            .get("documents")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .enumerate()
+            .map(|(index, doc)| {
+                let text = match doc {
+                    Value::String(text) => text.as_str(),
+                    other => other.as_str().unwrap_or(""),
+                };
+                let score = if text.contains("car") || text.contains("automobile") {
+                    0.9
+                } else {
+                    0.1
+                };
+                json!({ "index": index, "relevance_score": score })
+            })
+            .collect::<Vec<_>>();
+        write_json(stream, &json!({ "results": results }));
+    }
+}
+
+fn read_request(reader: &mut BufReader<TcpStream>) -> io::Result<Option<(String, Value)>> {
+    let mut first = String::new();
+    if reader.read_line(&mut first)? == 0 {
+        return Ok(None);
+    }
+    let path = first.split_whitespace().nth(1).unwrap_or("/").to_owned();
+    let mut content_length = 0usize;
+    loop {
+        let mut line = String::new();
+        let n = reader.read_line(&mut line)?;
+        if n == 0 || line == "\r\n" || line == "\n" {
+            break;
+        }
+        if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+            content_length = rest.trim().parse().unwrap_or(0);
+        }
+    }
+    let mut buf = vec![0; content_length];
+    reader.read_exact(&mut buf)?;
+    let body = serde_json::from_slice(&buf).unwrap_or(Value::Null);
+    Ok(Some((path, body)))
+}
+
+fn write_json(stream: &mut TcpStream, value: &Value) {
+    let payload = value.to_string();
+    let _ = write!(
+        stream,
+        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        payload.len()
+    );
+    let _ = stream.flush();
+}
+
+struct ParsedUrl {
+    hostport: String,
+    path: String,
+}
+
+fn parse_http_url(url: &str) -> Result<ParsedUrl, scheda::Error> {
+    let rest = url
+        .strip_prefix("http://")
+        .ok_or_else(|| scheda::Error::invalid("test HTTP URL must be http"))?;
+    let (hostport, path) = rest.split_once('/').unwrap_or((rest, ""));
+    Ok(ParsedUrl {
+        hostport: hostport.to_owned(),
+        path: format!("/{path}"),
+    })
+}
+
+fn post_json(url: &str, body: &Value) -> Result<Value, scheda::Error> {
+    let parsed = parse_http_url(url)?;
+    let addr: SocketAddr = parsed
+        .hostport
+        .parse()
+        .map_err(|err| scheda::Error::invalid(format!("bad test HTTP URL: {err}")))?;
+    let payload = body.to_string();
+    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+        .map_err(|err| scheda::Error::io_other(err.to_string()))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|err| scheda::Error::io_other(err.to_string()))?;
+    let request = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+        parsed.path,
+        parsed.hostport,
+        payload.len(),
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|err| scheda::Error::io_other(err.to_string()))?;
+    let mut buf = Vec::new();
+    stream
+        .read_to_end(&mut buf)
+        .map_err(|err| scheda::Error::io_other(err.to_string()))?;
+    let text = String::from_utf8(buf).map_err(|err| scheda::Error::invalid(err.to_string()))?;
+    let (_, body) = text
+        .split_once("\r\n\r\n")
+        .ok_or_else(|| scheda::Error::invalid("test HTTP response has no body"))?;
+    serde_json::from_str(body.trim()).map_err(|err| scheda::Error::invalid(err.to_string()))
+}
+
+struct HttpEmbedder {
+    url: String,
+    model: String,
+    model_id: String,
+}
+
+impl HttpEmbedder {
+    fn new(base: &str) -> Self {
+        let url = join_leaf(base, "embeddings");
+        Self {
+            model_id: format!("{url} {HTTP_MODEL}"),
+            url,
+            model: HTTP_MODEL.to_owned(),
+        }
+    }
+}
+
+impl Embedder for HttpEmbedder {
+    fn model_id(&self) -> &str {
+        &self.model_id
+    }
+
+    fn dimensions(&self) -> usize {
+        4
+    }
+
+    fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
+        let value = post_json(&self.url, &json!({ "model": self.model, "input": text }))?;
+        let embedding = value
+            .get("data")
+            .and_then(Value::as_array)
+            .and_then(|rows| rows.first())
+            .and_then(|row| row.get("embedding"))
+            .and_then(Value::as_array)
+            .ok_or_else(|| scheda::Error::invalid("embeddings response has no embedding"))?;
+        embedding
+            .iter()
+            .map(|item| {
+                item.as_f64()
+                    .map(|n| n as f32)
+                    .ok_or_else(|| scheda::Error::invalid("embeddings response is not float32"))
+            })
+            .collect()
+    }
+}
+
+struct HttpReranker {
+    url: String,
+    model: String,
+}
+
+impl HttpReranker {
+    fn new(base: &str) -> Self {
+        Self {
+            url: join_leaf(base, "rerank"),
+            model: RERANK_MODEL.to_owned(),
+        }
+    }
+}
+
+impl Reranker for HttpReranker {
+    fn score(&self, query: &str, record: &Record) -> Result<f64, scheda::Error> {
+        let scores = self.score_many(query, std::slice::from_ref(record))?;
+        scores
+            .into_iter()
+            .next()
+            .ok_or_else(|| scheda::Error::invalid("rerank response has no relevance_score"))
+    }
+
+    fn score_many(&self, query: &str, records: &[Record]) -> Result<Vec<f64>, scheda::Error> {
+        if records.is_empty() {
+            return Ok(Vec::new());
+        }
+        let documents = records
+            .iter()
+            .map(|record| {
+                serde_json::to_string(&json!({
+                    "fields": record.fields,
+                    "body": record.body,
+                }))
+                .map_err(|err| scheda::Error::invalid(err.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        let value = post_json(
+            &self.url,
+            &json!({
+                "model": self.model,
+                "query": query,
+                "documents": documents,
+            }),
+        )?;
+        let results = value
+            .get("results")
+            .and_then(Value::as_array)
+            .ok_or_else(|| scheda::Error::invalid("rerank response has no results"))?;
+        let mut scores = vec![None; records.len()];
+        for hit in results {
+            let index = hit
+                .get("index")
+                .and_then(Value::as_u64)
+                .ok_or_else(|| scheda::Error::invalid("rerank response is missing index"))?
+                as usize;
+            let score = hit
+                .get("relevance_score")
+                .and_then(Value::as_f64)
+                .ok_or_else(|| scheda::Error::invalid("rerank response has no relevance_score"))?;
+            let Some(slot) = scores.get_mut(index) else {
+                return Err(scheda::Error::invalid(
+                    "rerank response index is out of range",
+                ));
+            };
+            *slot = Some(score);
+        }
+        scores
+            .into_iter()
+            .map(|score| {
+                score.ok_or_else(|| scheda::Error::invalid("rerank response is missing a document"))
+            })
+            .collect()
+    }
+}
+
+#[test]
+fn http_embedder_writes_vectors_and_scores_match() {
+    let stub = HttpStub::start();
+    let scratch = Scratch::new();
+    let path = vault_arg(&scratch);
+    let url = stub.base.as_str();
+    let schema = serde_json::to_string(&notes_decl()).unwrap();
+    let decoy = json!({"fields":{"title":"banana"}}).to_string();
+    let vehicle = json!({"fields":{"title":"car"}}).to_string();
+    let split = json!({"fields":{"title":"zzzz"},"body":"car"}).to_string();
+    let replaced = json!({"fields":{"title":"automobile"}}).to_string();
+    let query = vector_query("automobile");
+
+    let open = run(&["--vault", &path, "open"]);
+    assert_eq!(open.status, 0, "stderr={}", open.stderr);
+    let created = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "http_notes",
+        "--schema",
+        &schema,
+    ]);
+    assert_eq!(created.status, 0, "stderr={}", created.stderr);
+
+    let begin = run(&["--vault", &path, "begin"]);
+    assert_eq!(begin.status, 0, "stderr={}", begin.stderr);
+    for (id, record) in [
+        ("decoy", decoy.as_str()),
+        ("vehicle", vehicle.as_str()),
+        ("split", split.as_str()),
+    ] {
+        let add = run_embed(
+            &path,
+            url,
+            &[
+                "collection",
+                "http_notes",
+                "add",
+                "--id",
+                id,
+                "--record",
+                record,
+            ],
+        );
+        assert_eq!(add.status, 0, "stderr={}", add.stderr);
+    }
+    let commit = run(&["--vault", &path, "commit", "-m", "a5"]);
+    assert_eq!(commit.status, 0, "stderr={}", commit.stderr);
+
+    {
+        let seen = stub.seen.lock().unwrap();
+        assert!(
+            seen.iter().filter(|text| text.as_str() == "car").count() >= 2,
+            "per-field embed missed title/body car: {seen:?}"
+        );
+        assert!(seen.iter().any(|text| text == "zzzz"), "{seen:?}");
+        assert!(seen.iter().any(|text| text == "banana"), "{seen:?}");
+    }
+
+    let search = run_embed(&path, url, &["search", "--query", &query]);
+    let hits = stdout_json(&search);
+    let ids = hit_ids(&hits);
+    assert!(ids.contains(&"vehicle"), "{ids:?}");
+    assert!(ids.contains(&"split"), "{ids:?}");
+    for id in ["vehicle", "split"] {
+        let hit = hits["hits"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|hit| hit["id"] == id)
+            .unwrap();
+        assert!(hit.get("vectorScore").is_some(), "{hit}");
+        assert!(hit.get("lexicalScore").is_none(), "{hit}");
+    }
+
+    let replace = run_embed(
+        &path,
+        url,
+        &[
+            "collection",
+            "http_notes",
+            "replace",
+            "--id",
+            "vehicle",
+            "--record",
+            &replaced,
+        ],
+    );
+    assert_eq!(replace.status, 0, "stderr={}", replace.stderr);
+    let reindex = run_embed(&path, url, &["reindex"]);
+    assert_eq!(reindex.status, 0, "stderr={}", reindex.stderr);
+    let again = run_embed(&path, url, &["search", "--query", &query]);
+    assert_eq!(again.status, 0, "stderr={}", again.stderr);
+    let again_hits = stdout_json(&again);
+    let ids = hit_ids(&again_hits);
+    assert!(ids.contains(&"vehicle"), "{ids:?}");
+
+    let query: SearchQuery = serde_json::from_str(&query).unwrap();
+    let embedder = Arc::new(HttpEmbedder::new(url));
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), Some(embedder)).unwrap();
+    let lib = vault.search(&[], &query, None).unwrap();
+    let lib_json = serde_json::to_value(&lib).unwrap();
+    let cli = run_embed(
+        &path,
+        url,
+        &["search", "--query", &vector_query("automobile")],
+    );
+    assert_eq!(stdout_json(&cli), lib_json);
+
+    let reranker = HttpReranker::new(url);
+    let lib = vault.search(&[], &query, Some(&reranker)).unwrap();
+    let lib_json = serde_json::to_value(&lib).unwrap();
+    assert!(
+        lib.hits.iter().all(|hit| hit.rerank_score.is_some()),
+        "{lib_json}"
+    );
+    let cli = run_embed(
+        &path,
+        url,
+        &[
+            "search",
+            "--query",
+            &vector_query("automobile"),
+            "--reranker-cohere-url",
+            url,
+            "--reranker-model",
+            RERANK_MODEL,
+        ],
+    );
+    assert_eq!(stdout_json(&cli), lib_json);
+
+    set_dead_origin(&scratch.vault());
+    let info = run_embed(&path, url, &["info"]);
+    assert_eq!(info.status, 0, "stderr={}", info.stderr);
+    let got = run_embed(
+        &path,
+        url,
+        &["collection", "http_notes", "get", "--id", "vehicle"],
+    );
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
 }

@@ -206,7 +206,9 @@ impl Reranker for CohereReranker {
         }
         scores
             .into_iter()
-            .map(|score| score.ok_or_else(|| Error::invalid("rerank response is missing a document")))
+            .map(|score| {
+                score.ok_or_else(|| Error::invalid("rerank response is missing a document"))
+            })
             .collect()
     }
 }
@@ -253,9 +255,7 @@ fn post_json(
             other if !other.is_null() => format!(": {other}"),
             _ => String::new(),
         };
-        return Err(
-            Error::invalid(format!("HTTP {status} from {url}{detail}")).context(frame)
-        );
+        return Err(Error::invalid(format!("HTTP {status} from {url}{detail}")).context(frame));
     }
     Ok(value)
 }

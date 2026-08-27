@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.27, 27 August 2026.
+Document 12 of the Scheda package. Version 0.29, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -11,7 +11,7 @@ The first implementation is the crate `scheda`. Other language bindings are
 out of this plan (`10` §1). MCP is an example transport, not a stage here
 (`08` AGT-4).
 
-A0–A4 are done. A5 is HTTP embedder/reranker in the CLI. A2 was the
+A0–A5 are done. A2 was the
 **legacy** CLI; A4 replaced `rust/cli` with argv `14`. Do not revive A2
 names. The unencrypted `{vault}/.isolated/` tree in `10` §1 (SCH-15,
 ISO-2, ISO-4, ISO-6, IDX-4) is not this checklist. Age encryption
@@ -37,7 +37,9 @@ Amend the spec; do not invent a silent default in code. Do not copy
 `rust/cli` names that are not on `07`.
 
 Suggested crate order: A3 (`07` / `13`) → A4 (CLI `14`) → A5 (HTTP
-embedder `14`) → A6 (ISO-3 on that surface) → A7.
+embedder `14`) → A5b (dead `layout` parts) → A6 (ISO-3 on that surface)
+→ A7. A5b does not depend on A5; it is numbered `b` so that A6 and A7
+keep the names `10` and the CHANGELOG already use.
 
 ---
 
@@ -50,7 +52,8 @@ embedder `14`) → A6 (ISO-3 on that surface) → A7.
 | [A2](#a2-thin-cli-legacy) | done | Legacy CLI; do not extend; replaced by A4 |
 | [A3](#a3-target-library) | done | Public API = `07` / `13` |
 | [A4](#a4-target-cli) | done | CLI argv = `14` (AGT-2–5) |
-| [A5](#a5-http-embedder-and-reranker) | in progress | CLI OpenAI embeddings + Cohere rerank (`14`) |
+| [A5](#a5-http-embedder-and-reranker) | done | CLI OpenAI embeddings + Cohere rerank (`14`) |
+| [A5b](#a5b-layout-clean-up) | not started | Dead `layout` parts out; the `layout` key check exists |
 | [A6](#a6-isolation-at-the-agent-surface) | not started | ISO-3 on CLI + library tools |
 | [A7](#a7-agent-acceptance) | not started | `10` §4 acceptance |
 
@@ -265,7 +268,7 @@ embedder / reranker is A5.
 
 ## A5. HTTP embedder and reranker
 
-**Status:** in progress
+**Status:** done
 
 **Codes:** IDX-8, QRY-5, `13` §4–6, `14`.
 
@@ -280,7 +283,9 @@ hermeticity). Hub weights go to `<workspace>/.cache/huggingface`
 CC BY-NC 4.0) share those ports. Testdata driver:
 `bazel run //python/cli:cli_LLMs` (Qwen HTTP), `//python/cli:cli_jina`
 (Jina HTTP), and `//python/cli:cli_model2vec` (local Model2Vec cache).
-Not a library check.
+Not a library check. Crate Check:
+`http_embedder_writes_vectors_and_scores_match` in `rust/cli/tests/cli.rs`
+(loopback OpenAI/Cohere stub).
 
 - [x] `--embedder-openai-url` + `--embedder-model` +
       `--embedder-dimensions`: `POST` OpenAI embeddings JSON; implement
@@ -289,7 +294,7 @@ Not a library check.
       set (Bearer from that env; missing/empty → `invalid`); unset → no
       auth. Unset HTTP flags still turn the vector leg off. Not with
       `--model2vec-embedder`.
-- [ ] `add` / `replace` / `reindex` with the embedder set write per-field
+- [x] `add` / `replace` / `reindex` with the embedder set write per-field
       vectors (`13` §5). `search` vector leg retrieves those ids (QRY-3
       synonym fixture: hit from the vector leg).
 - [x] `--reranker-cohere-url` + `--reranker-model` on `search` only:
@@ -298,11 +303,54 @@ Not a library check.
       back with `rerank_score`. Unset → RRF, no `rerank_score`.
       `--reranker-api-key-env-var` when set (same Bearer rule as the
       embedder).
-- [ ] Same endpoint, library `Embedder` / `Reranker` vs CLI: vector /
+- [x] Same endpoint, library `Embedder` / `Reranker` vs CLI: vector /
       rerank scores match (AGT-4). `auto_sync` off still does not call
       git remotes (ISO-1).
-- [ ] Tests and Clippy clean. No `panic!` / `unwrap` / `expect` / `assert!`
+- [x] Tests and Clippy clean. No `panic!` / `unwrap` / `expect` / `assert!`
       in `rust/cli/src` (`07` §5).
+
+---
+
+## A5b. Layout clean-up
+
+**Status:** not started
+
+**Codes:** SCH-2, MOD-8, LIB-21, ISO-2 (`09` §2).
+
+Schema has no `layout`. A path template in a file a human edits is
+data-driven path construction: `../`, an absolute path, `.git/`,
+`.scheda/`, `.isolated/`, a symlink escape, a Windows device name, or two
+Records deriving one path. Record paths are fixed by kind (MOD-8), and
+that decision stands. What is left is the wreckage of the removal: a dead
+field on a public struct is an invitation to fill it again, and the
+negative check three documents promise has no test. Deletion plus that
+test, not a feature.
+
+Independent of A5 — this stage touches Schema and tests, not the CLI.
+Close it before A6 so isolation lands on a Schema with no dead path
+machinery: `09` ISO-2 still speaks of layout templates under
+`.isolated/`.
+
+- [ ] `CollectionDecl.layout` and `Collection::layout()` are gone from
+      `rust/scheda/src`. Removing a public accessor is a CHANGELOG entry;
+      the version number stays `10` §8, not this plan.
+- [ ] Fixtures carrying the field are gone: `layout: Vec::new()` in
+      `schema.rs` and `store.rs`, `layout: vec!["c/{id}.md"]` in the
+      `vault.rs` unit test.
+- [ ] Tests asserting the accessor are gone: `catalog.rs`
+      (`written.layout().is_empty()`), `schema.rs` (`collection.layout()`).
+      `tests/document.rs::extra_layout_slots_write_derived_path` is
+      deleted or renamed to what it now asserts — a flat `{name}/{id}.md`
+      path. A test whose name promises the opposite of its body is worse
+      than no test.
+- [ ] New negative test, the *Check:* SCH-2, MOD-8, and LIB-21 already
+      state: a Schema file with a `layout` key → `invalid` on `open` /
+      `check`; `create_collection` with a leftover `layout` key →
+      `invalid` and no file written. `RawCollection` denies unknown keys
+      today, so this pins existing behaviour rather than changing it.
+- [ ] `09` ISO-2 drops “Layout templates are relative to that directory”.
+      Isolated Records use the same fixed names under `.isolated/{name}/`.
+- [ ] Tests and Clippy clean. `bazel test //...` green.
 
 ---
 
