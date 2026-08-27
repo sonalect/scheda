@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.23, 27 August 2026.
+Document 4 of the Scheda package. Version 0.25, 27 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -16,7 +16,7 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **Exception (**later**, ISO-5):** `{vault}/.isolated/` with `encrypt` stores isolated Record files as age ASCII armor. Those files are still UTF-8 text and `git diff`able as armor, not as YAML/JSONL. Plaintext is recovered with the `secret` (Scheda or `age -d`), not by opening the blob in an editor. The main Vault tree is never this exception.
 
-**STO-3. Journal lines are not rewritten.** Same as MOD-16: no update/delete API. On read/`check`, a line that is not a single JSON object, or a final line without `\n`, is an error. Scheda does not silently truncate or rewrite the segment to “fix” it. *Check:* flip bytes in the middle of a closed segment → `check` fails; `replace` on the collection → error.
+**STO-3. Journal lines are not rewritten.** Same as MOD-16: no update/delete API (`replace` and `remove` are `unsupported`). On read/`check`, a line that is not a single JSON object, or a final line without `\n`, is an error. Scheda does not silently truncate or rewrite the segment to “fix” it. *Check:* flip bytes in the middle of a closed segment → `check` fails; `replace` / `remove` on the collection → error.
 
 **STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5).
 
@@ -27,7 +27,7 @@ survive a crash. Locks do not travel with `git push` / `git pull`. Two clones
 are two working trees: each may have a writer. NFS/SMB lock semantics are not
 relied on; Vaults on those shares are outside **core**.
 
-**STO-5. A failed write is not the new truth.** Validation failure, a full disk, or a killed process must not leave a half-written `document` or `singleton` as the file at the Record path, and must not leave a `journal` segment cut in the middle of a line as an accepted Record. *Check:* interrupt `replace` / `add`; after reopen, the set of accepted Records equals the last successful write. Technique for `document`/`singleton`: write a sibling temp file in the same directory, `fsync`, rename over the target. Technique for `journal`: write one complete line including `\n`; a tail without `\n` is not a Record (STO-3).
+**STO-5. A failed write is not the new truth.** Validation failure, a full disk, or a killed process must not leave a half-written `document` or `singleton` as the file at the Record path, must not leave a `journal` segment cut in the middle of a line as an accepted Record, and must not leave a partial `remove` (the path holds the whole file or no file). *Check:* interrupt `replace` / `add` / `remove`; after reopen, the set of accepted Records equals the last successful write. Technique for `document`/`singleton` writes: write a sibling temp file in the same directory, `fsync`, rename over the target. Technique for `remove`: unlink the Record file (atomic: the path holds the file or nothing). Technique for `journal`: write one complete line including `\n`; a tail without `\n` is not a Record (STO-3).
 
 ---
 
@@ -35,7 +35,7 @@ relied on; Vaults on those shares are outside **core**.
 
 **GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. `init` and `clone` write `core.longpaths` in the Vault's local git config (`commit` and `discard` set it on an older tree that lacks it) so Windows can stage a 255-byte filename component when the absolute path is longer than MAX_PATH. Unix ignores the key. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s. *Check:* after `open` of a new Vault, local `core.longpaths` is true. *Check:* `add` of a 252-character `id` (on-disk `{id}.md` = 255 bytes) commits.
 
-**GIT-2. Autocommit unless a transaction is open.** Outside a transaction, each mutating call (`add`, `replace`, `create_collection`) writes the working tree and then creates one git commit. The default message is `scheda`. Isolated Record paths commit in `{vault}/.isolated/` nested git; Schema stubs and non-isolated files commit in the main repository. If that commit fails, those writes are discarded: only paths Scheda recorded are restored to HEAD (new files are deleted). This is not `git reset --hard` of the whole tree.
+**GIT-2. Autocommit unless a transaction is open.** Outside a transaction, each mutating call (`add`, `replace`, `remove`, `create_collection`) writes the working tree and then creates one git commit. The default message is `scheda`. Isolated Record paths commit in `{vault}/.isolated/` nested git; Schema stubs and non-isolated files commit in the main repository. If that commit fails, those writes are discarded: only paths Scheda recorded are restored to HEAD (new files are deleted). This is not `git reset --hard` of the whole tree.
 
 A transaction is the only supported batch. There is no `OpenOptions` field that turns autocommit off for the handle. The caller chooses: each mutating call is its own commit (no `begin`), or many writes then one `commit`. A consumer that appends many journal lines must hold a transaction; otherwise each line is one commit.
 
@@ -49,7 +49,7 @@ The CLI does not expose `begin` / `commit` / `discard`. Each mutating CLI comman
 
 Who owns untracked files the human created in the Vault is the caller's problem; Scheda does not auto-add them.
 
-**GIT-3. History of a Record.** `Collection.history(id, …)` is the same identity path as `get` (IDX-10): validate the slug, then git commits that touched that file (hash, time, author, message, bytes at that commit). Newest first: `offset` 0 is the latest commit. Does not ask the Index which ids exist. The caller does not pass a path. `journal`: IDX-5 map to the segment, then git of that file. That is a VCS address of bytes, not a Schema `revision` field, and not journal `find` append order. Isolated Records use the nested git. *Check:* two commits editing one `document`; the API's snapshots match `git show` of that file; first `history` page entry is the newer commit. *Check:* delete `.scheda/`; `history` of a fixture `document` still matches `git show`.
+**GIT-3. History of a Record.** `Collection.history(id, …)` is the same identity path as `get` (IDX-10): validate the slug, then git commits that touched that file (hash, time, author, message, bytes at that commit). Newest first: `offset` 0 is the latest commit. Does not ask the Index which ids exist. The caller does not pass a path. `journal`: IDX-5 map to the segment, then git of that file. That is a VCS address of bytes, not a Schema `revision` field, and not journal `find` append order. Isolated Records use the nested git. After `remove`, the file is gone and `history` still returns the commits that stored it; an `id` that never had a commit and has no file is `not_found`. *Check:* two commits editing one `document`; the API's snapshots match `git show` of that file; first `history` page entry is the newer commit. *Check:* `remove` then `history` still matches `git show` of those commits. *Check:* delete `.scheda/`; `history` of a fixture `document` still matches `git show`.
 
 Line-level “this journal Record's first commit” is **later** (requires blaming JSONL). **Core** `history(id)` on `journal` is git history of the segment file.
 
@@ -78,7 +78,7 @@ A **Remote** is the one optional git remote Scheda uses on the Vault repository,
 | missing, no `remote_repo` | empty or new directory | no | `git init`, no Remote |
 | exists but is not a Vault | that path | no | `invalid` |
 
-Isolated nested git (**later**) is created by Scheda under `{vault}/.isolated/`; `remote_repo` there is forbidden (ISO-6). *Check:* `open` of a missing path with `remote_repo` produces a Vault whose `origin` is that URL; `open` of a missing path without `remote_repo` has no Remote; `open`+`remote_repo` on an existing Vault succeeds and does not change `origin`.
+Isolated nested git (**later** phase, implemented) is created by Scheda under `{vault}/.isolated/`; `remote_repo` there is forbidden (ISO-6). *Check:* `open` of a missing path with `remote_repo` produces a Vault whose `origin` is that URL; `open` of a missing path without `remote_repo` has no Remote; `open`+`remote_repo` on an existing Vault succeeds and does not change `origin`.
 
 **GIT-10. `auto_sync`.** Option at `open` (default **off**). When on **and** a Remote exists:
 
@@ -105,7 +105,7 @@ Hooks on the Vault repository are the consumer's. They must not assume they may 
 
 ## 4. Index location (git)
 
-**GIT-13. Index is in the Vault tree and gitignored.** Creating a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/`. The main Index lives under `{vault}/.scheda/`. Isolated Index (**later**) lives under `{vault}/.isolated/.scheda/`, gitignored in the nested repo. Callers do not choose an Index directory. `{vault}/.scheda/tx.log` is the crash journal of uncommitted Scheda paths (GIT-2), not Index; `reindex` does not delete it. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1), including `{vault}/.isolated/` Records.
+**GIT-13. Index is in the Vault tree and gitignored.** Creating a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/`. The main Index lives under `{vault}/.scheda/`. Isolated Index (**later** phase, implemented) lives under `{vault}/.isolated/.scheda/`, gitignored in the nested repo. Callers do not choose an Index directory. `{vault}/.scheda/tx.log` is the crash journal of uncommitted Scheda paths (GIT-2), not Index; `reindex` does not delete it. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1), including `{vault}/.isolated/` Records.
 
 Format and rebuild semantics: `06`.
 

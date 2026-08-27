@@ -10,6 +10,14 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
+- `Collection::remove(id)` on `document` and `singleton`. Unlinks the
+  Record file, stages the deletion like `add` / `replace` (autocommit
+  outside a transaction, batch inside one), and drops the Record from
+  the Index. `journal` is `unsupported`. Unknown `id` is `not_found`;
+  an illegal slug is `invalid` before any file is touched. `history(id)`
+  still answers from git after the file is gone. CLI:
+  `collection NAME remove --id ID`. A build without `find` still
+  deletes the file and marks the Index stale.
 - Crate features `find` (Tantivy) and `search` (hybrid BM25 + USearch).
   `search` turns `find` on. `simd` (was `numkong`) turns `search` on
   and enables USearch SIMD. Cargo `default` is `remote-git` only:
@@ -21,7 +29,7 @@ API or on-disk format changes bump the minor.
   segments. `open` with an embedder without `search` fails
   `index_vector`. `replace` uses the Record file when `find` is off
   (same path isolated collections already used).
-- Consumer readiness stages P0–P9 in `12` §4: what the first consumer
+- Consumer readiness stages P0–P10 in `12` §4: what the first consumer
   needs before moving a primary layer of text files onto the crate
   (journal line fidelity, ordered journal read, batch commits, isolated
   slice, dead `id` knobs, optional search, acceptance). They do not
@@ -45,10 +53,11 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
-- README and `10`/`11`/`12` point next crate work at P9. P0–P5 and P8 of
-  consumer readiness are in, including the unencrypted isolated nested
-  git (`10` §1), the slug as the only `id` rule, and `find` / `search` as
-  opt-in crate features (Cargo default is `remote-git` only). A crate
+- README and `10`/`11`/`12` point next crate work at P10. P0–P5, P8, and
+  P9 of consumer readiness are in, including the unencrypted isolated nested
+  git (`10` §1), the slug as the only `id` rule, `find` / `search` as
+  opt-in crate features (Cargo default is `remote-git` only), and `remove`
+  on `document` and `singleton`. A crate
   without those features is the same library with named legs off, not a
   second product (`10` §2). P7 is gone: how a
   consumer reshapes its own files to fit MOD-8, MOD-16, and STO-4 is its
@@ -59,7 +68,7 @@ API or on-disk format changes bump the minor.
   parses unchanged under that name. On-disk bytes and behaviour are
   unchanged. The stage that held this question (P6) is gone.
 - `12` §6 lists what a second consumer will want and Scheda does not
-  have (no delete, one writer, flat directories, Struct doubles,
+  have (journal line cannot leave, one writer, flat directories, Struct doubles,
   append-only journal, C++ toolchain unless `search` is off, embedder
   only in the CLI,
   slug-only `id`, JSON accepted for Schema but not for a Record,

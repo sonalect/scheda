@@ -138,6 +138,7 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
         CollectionCommand::Replace { id, record } => {
             collection.replace(&id, parse_replace(record.as_deref())?)
         }
+        CollectionCommand::Remove { id } => collection.remove(&id),
         CollectionCommand::Find {
             filter,
             offset,

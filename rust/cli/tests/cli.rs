@@ -202,6 +202,8 @@ fn help_lists_lib2_tools_not_collection_names() {
         "find-one",
         "insert-one",
         "replace-one",
+        "delete-one",
+        "delete_one",
         "scan",
         "walk",
         "walk-inverse",
@@ -292,6 +294,55 @@ fn scripted_find_search_get_journal_add_commit() {
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
     assert!(add.stdout.trim().is_empty());
+}
+
+#[test]
+fn collection_remove_deletes_the_record() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let gone = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "remove",
+        "--id",
+        "alpha",
+    ]);
+    assert_eq!(gone.status, 0, "stderr={}", gone.stderr);
+    assert!(gone.stdout.trim().is_empty());
+    let missing = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "get",
+        "--id",
+        "alpha",
+    ]);
+    assert_eq!(error_json(&missing)["code"], "CODE_NOT_FOUND");
+    let journal = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_log",
+        "add",
+        "--id",
+        "e1",
+        "--record",
+        &json!({"fields":{"title":"logged"}}).to_string(),
+    ]);
+    assert_eq!(journal.status, 0, "stderr={}", journal.stderr);
+    let bad = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_log",
+        "remove",
+        "--id",
+        "e1",
+    ]);
+    assert_eq!(error_json(&bad)["code"], "CODE_UNSUPPORTED");
 }
 
 #[test]

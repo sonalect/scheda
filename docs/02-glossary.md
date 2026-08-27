@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.45, 27 August 2026.
+Document 2 of the Scheda package. Version 0.46, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `remove`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
@@ -68,11 +68,11 @@ Do not confuse with types in the library source. Consumer collection names must 
 
 **`document`** — one file per Record.
 
-YAML header plus optional Markdown body, or YAML throughout. The body may be empty. Replace updates the file as a whole. History of the Record is git history of its file (`Collection.history(id)`), not a Scheda revision type.
+YAML header plus optional Markdown body, or YAML throughout. The body may be empty. Replace updates the file as a whole. `remove` unlinks it. History of the Record is git history of its file (`Collection.history(id)`), not a Scheda revision type.
 
 **`journal`** — append-only JSONL records in a collection directory.
 
-Each line is one Record (one JSON object, `\n`, no comments). Append only: there is no library operation to update or delete a line. On disk this is **not** one unbounded file. The collection is a directory of **segments**. Append writes to the single open segment. Schema closes that file when it hits a size cap (and optionally a line cap or calendar boundary). A closed segment is never rewritten.
+Each line is one Record (one JSON object, `\n`, no comments). Append only: there is no library operation to update or delete a line (`replace` and `remove` are `unsupported`). On disk this is **not** one unbounded file. The collection is a directory of **segments**. Append writes to the single open segment. Schema closes that file when it hits a size cap (and optionally a line cap or calendar boundary). A closed segment is never rewritten.
 
 Git does not use LFS in this design. Hosts commonly warn near 50 MiB and reject near 100 MiB per file; a JSONL that grows in place also makes every commit rewrite a large blob. Segments stay small enough that ordinary git remains usable. The default cap belongs in `05`; it must sit well below those host limits.
 
@@ -146,7 +146,9 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`replace`** — replace a whole `document` or `singleton`. Resolve `id` in the Index first, then write that file. Error on `journal`.
 
-**`history`** — git history of one Record by `id`, newest first. Same identity path as `get` (validate slug, then that file). Not an Index lookup. Not journal `find` append order.
+**`remove`** — delete a `document` or `singleton` Record. Unlinks the file and drops it from the Index. Autocommits unless a transaction is open. Error on `journal`. After the file is gone, `history(id)` still answers from git.
+
+**`history`** — git history of one Record by `id`, newest first. Same identity path as `get` (validate slug, then that file). Not an Index lookup. Not journal `find` append order. After `remove`, the commits that stored the file remain.
 
 **`find`** — select records with a Tantivy query tree (`api.v1.FindQuery`: required `Filter` — boolean must / should / must_not, term, phrase, range, `all`, … — plus `include_raw`; default omits `Record.raw`), including identity `id`. On Vault: a set of collection names (empty = this Vault, non-isolated). On Collection: that collection only. Query the Index, then open the files for the `(collection, id)`s it returns. Paged (`offset`, `count`); one page is `api.v1.FindResult` (`records` plus `total`: indexed hits, not page length). One `journal` collection: append order; otherwise score order. Every indexed Record in the selected collections is `all`. Not by meaning.
 

@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.32, 27 August 2026.
+Document 10 of the Scheda package. Version 0.34, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -29,11 +29,11 @@ The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` mu
 
 Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness after P8 is P9 in `12` §4. Do not start other language bindings or the rest of §5 until that is decided.
+**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness after P9 is P10 in `12` §4. Do not start other language bindings or the rest of §5 until those are decided.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5 and P8 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4. `find` and `search` are opt-in crate features (P8); Cargo default is `remote-git` only.
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, and P9 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4. `find` and `search` are opt-in crate features (P8); Cargo default is `remote-git` only. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave.
 
-**Still deferred:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
+**Still deferred:** ISO-5, ISO-7–11; file watcher; journal line delete; REL-4; extra language bindings.
 
 ---
 
@@ -46,7 +46,7 @@ Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collec
 - Schema: SCH-1–8, SCH-12–14 (SCH-7 stores the body in **core**; indexing the body is **search**; SCH-15 is **later**)
 - Index needed for truth and lookup: IDX-1, IDX-2, IDX-5
 - Point read and filter: QRY-1, QRY-2, QRY-7
-- Library: LIB-1–10, LIB-12–19 (`search` itself is LIB-11; isolated/`encrypt` clauses on those ops are **later**)
+- Library: LIB-1–10, LIB-12–19, LIB-24 (`search` itself is LIB-11; isolated/`encrypt` clauses on those ops are **later**)
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
@@ -134,7 +134,7 @@ Not required of **core**, **search**, or **agent**:
 
 - File watcher for human edits (default remains `reindex`, IDX-5).
 - Line-level journal blame (`history` of a JSONL line). `history(id)` of the segment that holds that `id` stays **core** (GIT-3, LIB-17).
-- `delete_one` for `document` (not for `journal` lines).
+- Journal line `remove` (not for `document` / `singleton`: those have LIB-24).
 - REL-4 multi-step walk.
 - Two vector generations at once on embedder change (SCH-10: rebuild is enough).
 - Server-side Index for tens of millions of Records: a new Index implementation behind `07`, not a new primary layer. Callers still must not speak SQL.

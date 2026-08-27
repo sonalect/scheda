@@ -12,7 +12,7 @@ library. Collections are `document` (one file per record), `journal`
 fields, search marks, and edges; the library does not know a consumer's
 types. The **Index** is derived, lives under `{vault}/.scheda/` (gitignored),
 and can be deleted and rebuilt from files. The public API is CRUD-shaped
-(`open`, `add`, `get`, `replace`, `find`, `search`, `begin`, `commit`,
+(`open`, `add`, `get`, `replace`, `remove`, `find`, `search`, `begin`, `commit`,
 `discard`). The CLI encodes those operations except `begin` / `commit` /
 `discard` (each mutating CLI command autocommits). It is not a compatibility layer for MongoDB, CouchDB, or SQL.
 The first implementation is Rust; others (Python, Java, Go, TypeScript, and
@@ -41,7 +41,7 @@ does not call a language model, and does not know a profession.
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, Schema, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
 RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, a CLI encoding
-of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P9 (`12` §4). P0–P5 and P8 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features). CLI mutations autocommit; batch writes are in-process.
+of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P10 (`12` §4). P0–P5, P8, and P9 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`). CLI mutations autocommit; batch writes are in-process.
 
 ## Documents
 
@@ -62,7 +62,7 @@ The design is a numbered package in `docs/`, in English.
 | [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated git root and age encryption (**later**)                                    |
 | [10-roadmap.md](docs/10-roadmap.md)                   | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
-| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P9 consumer readiness for the first consumer                       |
+| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P10 consumer readiness for the first consumer                       |
 
 ## Layout
 

@@ -137,6 +137,45 @@ fn replace_uses_the_record_file() {
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
+#[test]
+fn remove_uses_the_record_file() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("thin_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "First"})))
+        .unwrap();
+    collection.remove("alpha").unwrap();
+    assert_eq!(
+        collection.get("alpha").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert!(
+        !scratch
+            .vault()
+            .join("thin_notes")
+            .join("alpha.md")
+            .is_file()
+    );
+    let err = collection.remove("missing").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotFound));
+}
+
+#[cfg(not(feature = "find"))]
+#[test]
+fn remove_marks_index_stale() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("thin_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "Keep"})))
+        .unwrap();
+    collection.remove("alpha").unwrap();
+    assert!(vault.index_dir().join("stale").is_file());
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+}
+
 #[cfg(not(feature = "find"))]
 #[test]
 fn replace_of_on_disk_file_does_not_need_the_index() {

@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.37, 27 August 2026.
+Document 11 of the Scheda package. Version 0.39, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -54,9 +54,9 @@ hybrid `search` → core acceptance.
 | [C10](#c10-core-acceptance) | done | `10` §2 acceptance |
 
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
-IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–19; ISO-1; OPS-1, OPS-3.
+IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–19, LIB-24; ISO-1; OPS-1, OPS-3.
 
-Next crate work after this checklist is `12` §4 (consumer readiness; P0–P5 and P8 are in, next is P9).
+Next crate work after this checklist is `12` §4 (consumer readiness; P0–P5, P8, and P9 are in, next is P10).
 **agent** is accepted (`12`). This file does not add those stages.
 
 C10 accepted **core** against the codes as they read then. Several
@@ -78,7 +78,7 @@ Writes must not depend on them (`10` §2). **C9** implements **search**
 ISO-4, ISO-6, IDX-4) as in `10` §1 (`{vault}/.isolated/`, `12` P4). **agent** (AGT-1–5) and ISO-3 listing
 are accepted (`12`). Age encryption (ISO-5, ISO-7–11) stays deferred.
 
-`delete_one`, line-level journal blame, file watcher: not in this plan (`10`
+Journal line `remove`, line-level journal blame, file watcher: not in this plan (`10`
 §5).
 
 ---
@@ -369,7 +369,7 @@ Re-run the five gates in `10` §2:
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
 C9. This checklist stops there. **agent** is accepted in `12`. Next crate
-work is `12` §4 (P9; P0–P5 and P8 are in, and P6 and P7 are gone).
+work is `12` §4 (P10; P0–P5, P8, and P9 are in, and P6 and P7 are gone).
 
 ---
 

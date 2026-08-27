@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.53, 27 August 2026.
+Document 14 of the Scheda package. Version 0.54, 27 August 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -56,7 +56,7 @@ methods with that `NAME` (no `--collections`). Stdout JSON includes
 `raw`). `--filter` is `FindQuery.filter` JSON.
 
 The CLI does not encode `begin` / `commit` / `discard`. Each mutating
-command (`create-collection`, `collection … add` / `replace`) autocommits
+command (`create-collection`, `collection … add` / `replace` / `remove`) autocommits
 with message `scheda`. Batch writes are a library-handle concern (`07`
 LIB-12, LIB-22, LIB-23).
 
@@ -106,6 +106,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `get` | `--id ID` |
 | `history` | `--id ID --offset N --count N` |
 | `replace` | `--id ID --record JSON` (or stdin) |
+| `remove` | `--id ID` |
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 

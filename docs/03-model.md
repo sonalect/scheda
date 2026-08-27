@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.19, 27 August 2026.
+Document 3 of the Scheda package. Version 0.20, 27 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -19,7 +19,7 @@ Kind exists so write mode and disk layout stay coupled:
 | Kind | Why it exists |
 |---|---|
 | `document` | One editable file per Record; `get` is a path. People and git see a file. |
-| `journal` | Append-only facts in volume: no update/delete API; many lines packed into JSONL **segments** so git stays usable without LFS. |
+| `journal` | Append-only facts in volume: no `replace` and no `remove`; many lines packed into JSONL **segments** so git stays usable without LFS. |
 | `singleton` | One small file for the collection; replace as a whole. Not a journal dump. |
 
 A rare immutable note can still be a `document` the consumer never replaces. `journal` is for the packed, append-only case.
@@ -50,7 +50,7 @@ A rare immutable note can still be a `document` the consumer never replaces. `jo
 | `journal` | `{name}/*.jsonl` (library names segments) |
 | `singleton` | `{name}/record.yaml` |
 
-The caller never passes a Record path. `get` / `add` / `history` validate `id` then open, create, or git that file. `find` / `replace` / `search` take `id`s from the Index, then open those files (IDX-10). *Check:* `create_collection` with a `layout` key → `invalid`; a collection named `a/b` is `invalid`; `get("alpha")` reads `{name}/alpha.md` for a `document`.
+The caller never passes a Record path. `get` / `add` / `history` / `remove` validate `id` then open, create, git, or unlink that file. `find` / `replace` / `search` take `id`s from the Index, then open those files (IDX-10). *Check:* `create_collection` with a `layout` key → `invalid`; a collection named `a/b` is `invalid`; `get("alpha")` reads `{name}/alpha.md` for a `document`.
 
 **MOD-9. Journal path is the segment, not the `id`.** The Record still lives at `(collection, id)`. The file path is the open or closed segment that contains the line. Callers must not treat the segment name as `id`. *Check:* `get` does not require the caller to pass a segment name.
 
@@ -76,11 +76,11 @@ The numeric default cap is in `05`. It must sit well below common git-host file 
 
 ## 5. Writes implied by kind
 
-**MOD-15. `document`.** `add` creates the file. `replace` replaces the whole file (header and body). Partial field patch is not a Scheda operation. *Check:* replace changes bytes of that path only.
+**MOD-15. `document`.** `add` creates the file. `replace` replaces the whole file (header and body). `remove` unlinks the file. Partial field patch is not a Scheda operation. *Check:* replace changes bytes of that path only. *Check:* `remove` then `get` → `not_found`; the file is gone.
 
-**MOD-16. `journal`.** `add` appends one RFC 8785 line to the open segment (newline `\n`, no comments, one object; STO-2). `replace` and delete-line do not exist. A truncated or binary-corrupted line is detected on read/`check` and is not silently repaired. *Check:* `replace` → error; mid-file corruption → `check` fails; valid lines before the damage remain readable as specified in `04`.
+**MOD-16. `journal`.** `add` appends one RFC 8785 line to the open segment (newline `\n`, no comments, one object; STO-2). `replace` and `remove` do not exist (`unsupported`). A journal has no remove: rewriting a segment would break the append-only guarantee a caller's checksum chain rests on. A truncated or binary-corrupted line is detected on read/`check` and is not silently repaired. *Check:* `replace` → error; `remove` → error; mid-file corruption → `check` fails; valid lines before the damage remain readable as specified in `04`.
 
-**MOD-17. `singleton`.** Replace is the whole file after Schema validation. The file must remain small for the same git reasons as a segment. *Check:* `add` of a second logical Record is rejected (see MOD-7).
+**MOD-17. `singleton`.** Replace is the whole file after Schema validation. `remove` unlinks `record.yaml`; a later `add` of the Schema `id` is allowed again (MOD-7). The file must remain small for the same git reasons as a segment. *Check:* `add` of a second logical Record is rejected (see MOD-7). *Check:* `remove` then `get` → `not_found`.
 
 ---
 

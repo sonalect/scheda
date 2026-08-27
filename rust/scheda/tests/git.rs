@@ -435,6 +435,151 @@ fn history_rejects_empty_id_and_zero_count() {
 }
 
 #[test]
+fn history_after_remove_still_answers_from_git() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add(
+            "alpha",
+            rec_body(json!({"title": "one", "count": 1}), "first"),
+        )
+        .unwrap();
+    vault.commit("first edit").unwrap();
+    vault.begin().unwrap();
+    collection
+        .replace(
+            "alpha",
+            rec_rep_body(json!({"title": "two", "count": 2}), "second"),
+        )
+        .unwrap();
+    vault.commit("second edit").unwrap();
+    let path = collection.get("alpha").unwrap().path.unwrap();
+    let before = collection.history("alpha", 0, 100).unwrap();
+    assert_eq!(before.entries.len(), 2);
+    vault.begin().unwrap();
+    collection.remove("alpha").unwrap();
+    vault.commit("gone").unwrap();
+    assert_eq!(
+        collection.get("alpha").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    let snaps = collection.history("alpha", 0, 100).unwrap();
+    assert_eq!(snaps.entries.len(), before.entries.len());
+    let before_hashes: BTreeSet<_> = before
+        .entries
+        .iter()
+        .filter_map(|entry| entry.hash.as_deref())
+        .collect();
+    let after_hashes: BTreeSet<_> = snaps
+        .entries
+        .iter()
+        .filter_map(|entry| entry.hash.as_deref())
+        .collect();
+    assert_eq!(after_hashes, before_hashes);
+    for entry in &snaps.entries {
+        assert_eq!(
+            entry.raw.as_deref().unwrap(),
+            git_show(vault.path(), entry.hash.as_deref().unwrap(), &path)
+        );
+    }
+    let texts: Vec<String> = snaps
+        .entries
+        .iter()
+        .map(|entry| String::from_utf8(entry.raw.clone().unwrap()).unwrap())
+        .collect();
+    assert!(
+        texts.iter().any(|text| text.contains("second")),
+        "{texts:?}"
+    );
+    assert!(texts.iter().any(|text| text.contains("first")), "{texts:?}");
+}
+
+#[test]
+fn remove_autocommits_outside_a_transaction() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    scratch.write_schema("notes.yaml", NOTES);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .unwrap();
+    let before = log_len(vault.path());
+    collection.remove("alpha").unwrap();
+    assert_eq!(log_len(vault.path()), before + 1);
+    assert_eq!(
+        collection.get("alpha").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert!(
+        !scratch
+            .vault()
+            .join("north_notes")
+            .join("alpha.md")
+            .is_file()
+    );
+    assert!(!head_paths(vault.path()).contains("north_notes/alpha.md"));
+}
+
+#[test]
+fn remove_inside_transaction_is_one_commit() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .unwrap();
+    collection
+        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .unwrap();
+    vault.commit("keep both").unwrap();
+    let before = log_len(vault.path());
+    vault.begin().unwrap();
+    collection.remove("alpha").unwrap();
+    assert_eq!(log_len(vault.path()), before);
+    vault.commit("drop alpha").unwrap();
+    assert_eq!(log_len(vault.path()), before + 1);
+    assert_eq!(
+        collection.get("alpha").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert_eq!(collection.get("beta").unwrap().id.as_deref(), Some("beta"));
+}
+
+#[test]
+fn abandoned_remove_is_restored_on_next_autocommit() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .unwrap();
+    vault.commit("keep").unwrap();
+    vault.begin().unwrap();
+    collection.remove("alpha").unwrap();
+    assert!(
+        !scratch
+            .vault()
+            .join("north_notes")
+            .join("alpha.md")
+            .is_file()
+    );
+    drop(collection);
+    drop(vault);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .unwrap();
+    assert_eq!(
+        collection.get("alpha").unwrap().id.as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(collection.get("beta").unwrap().id.as_deref(), Some("beta"));
+}
+
+#[test]
 fn killed_mid_batch_keeps_complete_journal_lines() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());

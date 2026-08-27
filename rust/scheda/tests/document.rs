@@ -7,6 +7,8 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(feature = "find")]
+use scheda::Filter;
 use scheda::{Code, OpenOptions, Record, RecordAdd, RecordReplace, Vault};
 use serde_json::{Map, Value};
 
@@ -343,6 +345,124 @@ fn singleton_second_insert_then_replace() {
     let text = fs::read_to_string(scratch.coll_file("north_inbox", "record.yaml")).unwrap();
     assert!(text.contains("Second"));
     assert!(!text.contains("First"));
+}
+
+#[test]
+fn remove_deletes_file_and_get_is_not_found() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "Keep"})))
+        .unwrap();
+    collection
+        .add("beta", rec(serde_json::json!({"title": "Stay"})))
+        .unwrap();
+    collection.remove("alpha").unwrap();
+    assert_eq!(
+        collection.get("alpha").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert!(!scratch.coll_file("north_notes", "alpha.md").exists());
+    assert_eq!(collection.get("beta").unwrap().id.as_deref(), Some("beta"));
+    let north = scratch.vault().join("north_notes");
+    let tmps = tmp_names(&north);
+    assert!(tmps.is_empty(), "partial remove leftover: {tmps:?}");
+}
+
+#[test]
+fn remove_unknown_id_is_not_found() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    let err = collection.remove("missing").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotFound));
+}
+
+#[test]
+fn remove_illegal_slug_is_invalid_before_any_file() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "Keep"})))
+        .unwrap();
+    for id in ["", ".hidden", "CON", "foo.", "foo "] {
+        let err = collection.remove(id).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
+    }
+    assert!(scratch.coll_file("north_notes", "alpha.md").is_file());
+}
+
+#[test]
+fn journal_remove_is_unsupported() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("log.yaml", LOG);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_log").unwrap();
+    collection.add("e1", rec(serde_json::json!({}))).unwrap();
+    let err = collection.remove("e1").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert!(collection.get("e1").is_ok());
+}
+
+#[test]
+fn singleton_remove_then_add_again() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("inbox.yaml", INBOX);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_inbox").unwrap();
+    collection
+        .add("inbox", rec(serde_json::json!({"title": "First"})))
+        .unwrap();
+    collection.remove("inbox").unwrap();
+    assert_eq!(
+        collection.get("inbox").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert!(!scratch.coll_file("north_inbox", "record.yaml").exists());
+    collection
+        .add("inbox", rec(serde_json::json!({"title": "Again"})))
+        .unwrap();
+    assert_eq!(
+        fields_of(&collection.get("inbox").unwrap())["title"],
+        "Again"
+    );
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn remove_leaves_find() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "Gone"})))
+        .unwrap();
+    collection
+        .add("beta", rec(serde_json::json!({"title": "Stay"})))
+        .unwrap();
+    collection.remove("alpha").unwrap();
+    let page = collection.find(&Filter::all().into(), 0, 10).unwrap();
+    assert_eq!(page.total, Some(1));
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].id.as_deref(), Some("beta"));
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn remove_of_unindexed_file_is_not_found() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    let path = scratch.coll_file("north_notes", "orphan.md");
+    fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
+    assert!(collection.get("orphan").is_ok());
+    let err = collection.remove("orphan").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotFound));
+    assert!(path.is_file());
 }
 
 #[test]

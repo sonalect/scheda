@@ -690,6 +690,21 @@ impl Collection {
         }
     }
 
+    fn forget_lexical(&self, id: &str) -> Result<(), Error> {
+        if self.decl.isolated {
+            return Ok(());
+        }
+        #[cfg(feature = "find")]
+        {
+            self.search.forget(&self.decl, id)
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            let _ = id;
+            index::mark_stale(&self.index_dir)
+        }
+    }
+
     fn record_exists(&self, id: &str) -> Result<bool, Error> {
         if self.decl.isolated {
             return Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some());
@@ -912,6 +927,41 @@ impl Collection {
         Ok(())
     }
 
+    /// Delete a `document` or `singleton` Record. `journal` → `unsupported`.
+    ///
+    /// Unknown `id` → `not_found`. An illegal slug → `invalid` before any
+    /// file is touched. The file is unlinked as a whole and staged like
+    /// `add` / `replace`: autocommit outside a transaction, part of the
+    /// batch inside one. Isolated collections use the nested git. When
+    /// `find` is on, the Record leaves the Index; when `find` is off, the
+    /// Index is marked stale.
+    pub fn remove(&self, id: &str) -> Result<(), Error> {
+        crate::id::require_slug("id", id)?;
+        if self.decl.kind == Kind::Journal {
+            bail!(Error::unsupported("remove is not offered for journal"));
+        }
+        self.require_write()?;
+        self.drain_abandoned()?;
+        let known = self.record_exists(id)?;
+        if !known {
+            bail!(Error::not_found(format!(
+                "record {id} is not in {}",
+                self.decl.name
+            )));
+        }
+        self.prepare_isolated_write()?;
+        let rel = store::record_rel(&self.decl, id)?;
+        self.note_write(rel.clone())?;
+        store::remove_document(&self.vault, &self.decl, id)?;
+        if let Err(err) = self.forget_lexical(id) {
+            let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+            let _ = self.unnote_write(&rel);
+            return Err(err);
+        }
+        self.finish_mutation()?;
+        Ok(())
+    }
+
     /// Run a Tantivy Query on this collection's Index, then open matching files.
     #[cfg(feature = "find")]
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
@@ -947,16 +997,47 @@ impl Collection {
     ///
     /// Same identity path as `get`. Does not ask the Index which ids exist.
     /// `journal`: history of the segment file (whole file in `Entry.raw`), not
-    /// line-level blame. `count` `0` → `invalid`. Missing file → `not_found`.
-    /// A missing Index directory does not stop this call.
+    /// line-level blame. `count` `0` → `invalid`. After `remove`, commits
+    /// that stored the file are still returned. An `id` that never had a
+    /// commit and has no file → `not_found`. A missing Index directory
+    /// does not stop this call.
     pub fn history(&self, id: &str, offset: u32, count: u32) -> Result<History, Error> {
         crate::id::require_slug("id", id)?;
         if count == 0 {
             bail!(Error::invalid("history count must be > 0"));
         }
-        let record = self.get(id)?;
-        let path = record.path.as_deref().unwrap_or("");
-        let (repo, git_path) = isolated::git_addr(&self.vault, path);
+        let rel = match self.decl.kind {
+            Kind::Journal => {
+                let record = self.get(id)?;
+                record.path.unwrap_or_default()
+            }
+            Kind::Document | Kind::Singleton => {
+                if self
+                    .decl
+                    .singleton_id
+                    .as_deref()
+                    .is_some_and(|fixed| fixed != id)
+                {
+                    bail!(Error::not_found(format!(
+                        "record {id} is not in {}",
+                        self.decl.name
+                    )));
+                }
+                let rel = store::record_rel(&self.decl, id)?;
+                let on_disk = store::locate_file(&self.vault, &self.decl, id)?.is_some();
+                if !on_disk {
+                    let (repo, git_path) = isolated::git_addr(&self.vault, &rel);
+                    if !git::is_work_tree(&repo) || !git::path_has_history(&repo, &git_path)? {
+                        bail!(Error::not_found(format!(
+                            "record {id} is not in {}",
+                            self.decl.name
+                        )));
+                    }
+                }
+                rel
+            }
+        };
+        let (repo, git_path) = isolated::git_addr(&self.vault, &rel);
         if self.decl.isolated && !git::is_work_tree(&repo) {
             return Ok(History {
                 entries: Vec::new(),

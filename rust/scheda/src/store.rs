@@ -73,6 +73,38 @@ pub(crate) fn replace_document(
     Ok((prepared.id, rel))
 }
 
+/// Vault-relative POSIX path of the Record file for `id`, whether or not
+/// the file exists. `journal` is not a document path.
+pub(crate) fn record_rel(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
+    Ok(vault_rel(decl, &record_file(decl, id)?))
+}
+
+/// Unlink the Record file. Missing → `not_found`. The unlink is the whole
+/// file or no file; it does not rewrite bytes in place.
+pub(crate) fn remove_document(
+    vault: &Path,
+    decl: &CollectionDecl,
+    id: &str,
+) -> Result<String, Error> {
+    let Some(path) = locate_file(vault, decl, id)? else {
+        bail!(Error::not_found(format!(
+            "record {id} is not in {}",
+            decl.name
+        )));
+    };
+    let rel = rel_posix(vault, &path)?;
+    match fs::remove_file(&path) {
+        Ok(()) => Ok(rel),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            bail!(Error::not_found(format!(
+                "record {id} is not in {}",
+                decl.name
+            )))
+        }
+        Err(err) => Err(err).context("[store::remove_document] unlink record"),
+    }
+}
+
 pub(crate) fn find_document(
     vault: &Path,
     decl: &CollectionDecl,

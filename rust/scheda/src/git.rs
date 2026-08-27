@@ -395,6 +395,34 @@ pub(crate) fn discard_paths(dir: &Path, paths: &[String]) -> Result<(), Error> {
     Ok(())
 }
 
+/// True when any commit reachable from HEAD stored `path` in its tree.
+pub(crate) fn path_has_history(dir: &Path, path: &str) -> Result<bool, Error> {
+    require_vault_rel(path)?;
+    let repo = open_work_tree(dir)?;
+    match repo.head() {
+        Ok(_) => {}
+        Err(err) if is_unborn(&err) => return Ok(false),
+        Err(err) => bail!(git_fail(err, "[Git::path_has_history] read HEAD")),
+    }
+    let mut revwalk = repo
+        .revwalk()
+        .context("[Git::path_has_history] start revwalk")?;
+    revwalk
+        .push_head()
+        .context("[Git::path_has_history] walk from HEAD")?;
+    for oid in revwalk {
+        let oid = oid.context("[Git::path_has_history] next commit")?;
+        let commit = repo
+            .find_commit(oid)
+            .context("[Git::path_has_history] read commit")?;
+        let tree = commit.tree().context("[Git::path_has_history] read tree")?;
+        if tree.get_path(Path::new(path)).is_ok() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn history(
     dir: &Path,
     path: &str,

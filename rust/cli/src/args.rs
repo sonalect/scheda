@@ -172,6 +172,11 @@ pub enum CollectionCommand {
         #[arg(long)]
         record: Option<String>,
     },
+    /// Delete a `document` or `singleton`. `journal` → `unsupported`.
+    Remove {
+        #[arg(long)]
+        id: String,
+    },
     /// Tantivy Query on this collection, then files.
     Find {
         #[arg(long)]

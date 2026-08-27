@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.52, 27 August 2026.
+Document 12 of the Scheda package. Version 0.53, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -16,7 +16,7 @@ A0–A7 are done. **agent** is accepted for this binding. A2 was the
 names. Schema already parses `isolated`. Age encryption (ISO-5,
 ISO-7–11) stays out.
 
-Stages P0–P9 in §4 are the second half of this file: what the **first
+Stages P0–P10 in §4 are the second half of this file: what the **first
 consumer** needs before it can move its primary layer onto the crate.
 They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
@@ -26,7 +26,7 @@ never waited on a P stage and still does not.
 
 §6 lists what a *second* consumer will want and Scheda does not have.
 Those are open questions, not stages: nothing there blocks A0–A7 or
-P0–P9.
+P0–P10.
 
 ---
 
@@ -75,7 +75,7 @@ P order is in §4. It starts after A7 and does not interleave with it.
 `catalog` command.
 
 Consumer readiness has its own dashboard in §4. A green A0–A7 does not
-imply a green P0–P9, and the reverse is also true.
+imply a green P0–P10, and the reverse is also true.
 
 ---
 
@@ -89,7 +89,9 @@ that is noted on the line. Coming back does not restore an A2 name.
   chooses CLI (`10` §4).
 - ISO-5, ISO-7–11, LIB-5 `crypto`. AGT-5's *Check (**later**):* `crypto`
   waits on encryption.
-- File watcher, `delete_one`, REL-4, extra language bindings (`10` §5).
+- File watcher, removing a Record, REL-4, extra language bindings
+  (`10` §5). Removal comes back as P9, under the name `remove`; the A2
+  name `delete_one` does not.
   The watcher question is open in the consumer's requirements too; no P
   stage takes it, so `reindex` after a human edit stays the answer.
 - Collection-named tools or product rules in the CLI (`08`).
@@ -421,8 +423,8 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P0–P5 and P8 are done; P9 is not
-started.
+**Status of the part:** in progress. P0–P5, P8, and P9 are done; P10
+is not started.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -463,7 +465,8 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P4](#p4-unencrypted-isolated-slice)                     | done        | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1)                                |
 | [P5](#p5-dead-id-knobs)                                  | done        | Dead `id_pattern` / `id_field` out; the slug rule is the whole rule |
 | [P8](#p8-find-and-search-as-features)                    | done        | The search stack is not forced on every consumer                    |
-| [P9](#p9-consumer-acceptance)                            | not started | The consumer's acceptance list on the P0 fixture                    |
+| [P9](#p9-remove-a-record)                                | done        | A Record can leave, on `document` and `singleton`                   |
+| [P10](#p10-consumer-acceptance)                          | not started | The consumer's acceptance list on the P0 fixture                    |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -475,8 +478,8 @@ Then P1 and P2: without them a consumer can neither write nor read its
 journals honestly. Then P3, small and removing one migration blocker, and
 P5, which removes dead machinery rather than a blocker. P4 is the large
 one and is done (`10` §1 unencrypted slice). P8 is in: `find` and
-`search` are crate features, optional on a reduced build. P9 closes the
-part.
+`search` are crate features, optional on a reduced build. P9 is in:
+`remove` on `document` and `singleton`. P10 closes the part.
 
 Each stage carries **Needs** (stages that must be `done` first) and
 **Decide first** (a question `03`–`10` leaves open, which has to be
@@ -547,6 +550,12 @@ means. Settle that before the fixture exists, not after it fails.
 The isolated `journal` is declared in Schema and its files are placed by
 hand, the way the A6 fixture already does it. Writing a Record there is
 P4, and `check` does not reach the nested tree until then.
+
+The consumer's shape moved after this stage closed: its work queue became
+a `document` (an entry has to leave when it is handled, which a `journal`
+forbids), and a second `singleton` joined. The fixture is therefore one
+`document` and one `singleton` short of that shape. P10 grows the fixture
+rather than reopening this stage.
 
 - [x] Fixture lives in test data. Collection names come from its Schema
       files; no name is compiled into `rust/scheda/src` (SCH-1).
@@ -810,11 +819,55 @@ simd   = ["search", "usearch/numkong"]
 
 ---
 
-## P9. Consumer acceptance
+## P9. Remove a Record
+
+**Status:** done
+
+**Codes:** MOD-16, STO-5, GIT-2, IDX-10, LIB-5, `07` §later.
+
+**Needs:** nothing.
+
+**Decide first:** nothing. The kinds are decided: `document` and
+`singleton` only.
+
+Today a Record can be written and revised but never removed. The only
+way out is to delete the file by hand and `reindex`, which is not an API
+and is not safe under a transaction. A consumer with a work queue needs
+an entry to leave when it is handled, and a store that cannot forget
+cannot answer an erasure request either.
+
+A `journal` keeps none of this: `add` appends and nothing rewrites a
+line, so a caller's checksum chain over the segment stays sound
+(MOD-16). Removing a line stays out, later and otherwise.
+
+- [x] `Collection::remove(id)` on `document` and `singleton`; `journal`
+      → `unsupported`. The name is `remove`; `delete_one` was an A2 name
+      and does not come back (§3).
+- [x] Unknown `id` → `not_found`. An illegal slug → `invalid`, before
+      any file is touched.
+- [x] The Record file is deleted and staged like any other mutation:
+      autocommit outside a transaction, part of the batch inside one
+      (GIT-2). Isolated collections use the nested git.
+- [x] The Record leaves the Index, so `find` and `search` stop returning
+      it and `get` answers `not_found`. Under a build without `find` the
+      file still goes and the Index is marked stale (P8).
+- [x] An interrupted `remove` leaves either the whole file or no file,
+      never a partial one, and the accepted set on reopen matches
+      (STO-5).
+- [x] `history(id)` still answers from git after the file is gone: the
+      commits that touched it are the record of what was there.
+- [x] `07` gains the method and drops it from its **later** list; `02`
+      gains the term; `14` gains `collection NAME remove ID`; `03`
+      MOD-16 says plainly that a `journal` has no remove.
+- [x] `bazel test //...` green.
+
+---
+
+## P10. Consumer acceptance
 
 **Status:** not started
 
-**Codes:** STO-1, STO-2, SCH-1, QRY-1, OPS-1, OPS-3.
+**Codes:** STO-1, STO-2, SCH-1, QRY-1, LIB-19, ISO-2, OPS-1, OPS-3.
 
 **Needs:** P0 for the fixture, and every other stage either `done` or
 recorded as unmet in its last box.
@@ -824,16 +877,34 @@ recorded as unmet in its last box.
 Run the consumer's acceptance list against the P0 fixture. Passing it is
 what "migrate without friction" means; anything short of it is a promise.
 
+The first box grows the fixture to the shape the consumer settled on
+after P0 closed. Run it first: the boxes below expect those collections
+to be there.
+
+- [ ] The fixture gains a third non-paired `document` (a work queue: an
+      entry is revised in place and then removed) and a second
+      `singleton`. Its isolated `journal` is written through the API, not
+      placed by hand (P4).
 - [ ] The fixture opens and reads in an editor and in `git` with no crate
-      (STO-2).
+      (STO-2), and `get` of every kind through the crate returns bytes
+      equal to the file (QRY-1).
 - [ ] Delete the Index and `reindex`: same Records, same content, and the
       counts match a hand tally of files and lines (STO-1, OPS-3).
 - [ ] `rust/scheda/src` holds no consumer collection name (SCH-1, MOD-1,
       P0).
+- [ ] The Cargo default build, which has neither `find` nor `search`,
+      writes every kind and reads it back: `get`, `history`, and `lines`
+      on the fixture, with `.scheda/` deleted for the `lines` case (P8,
+      P2, LIB-19).
+- [ ] The isolated collection round-trips on the same handle: `add` and
+      `get` under `{vault}/.isolated/`, `find` on the main tree returns
+      none of it, and `check` covers the nested tree (ISO-2, ISO-4, P4).
 - [ ] OPS-1 volume on the fixture: 10⁴ journal Records and 10³
       documents, with `get` and `add` in milliseconds.
 - [ ] Every P stage is `done`, or its entry names the consumer
       requirement that stays unmet and why.
+- [ ] A Record removed with `remove` is gone from `get`, `find`, and the
+      files, and `check` passes after it (P9).
 
 ---
 
@@ -875,12 +946,11 @@ status, no *Check:*. They are recorded so that a later plan starts from a
 list instead of from a surprise, and so that a decision taken for the
 first consumer is not mistaken for a decision taken for everybody.
 
-1. **No delete.** `07` §later leaves a journal line undeletable and a
-   `document` delete as a possible `delete_one` outside **core**; §3
-   keeps it out of A0–A7 and no P stage takes it. Today the only way to
-   remove a Record is to delete the file by hand and `reindex`. A store
-   that cannot forget cannot answer an erasure request, cannot undo a
-   wrong write, and cannot drop a collection's contents.
+1. **A journal line cannot leave.** P9 gives `document` and `singleton` a
+   `remove`, and stops there on purpose: rewriting a segment would break
+   the append-only guarantee a caller's checksum chain rests on
+   (MOD-16). So an erasure request that reaches a journal still has no
+   answer, and neither has retention (item 5).
 
 2. **One writer per working tree (STO-4).** A consumer whose capture path
    is a second process keeps that buffer outside the Vault. A
@@ -924,5 +994,5 @@ first consumer is not mistaken for a decision taken for everybody.
    content — so the question is whether the three Schema names should
    become one.
 
-10. **Acceptance is one consumer's list (P9).** A second consumer needs
+10. **Acceptance is one consumer's list (P10).** A second consumer needs
     acceptance stated against `03`–`10`, not against §4's fixture.

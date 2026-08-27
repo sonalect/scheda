@@ -153,6 +153,30 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
 }
 
 #[test]
+fn remove_leaves_search() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "hit",
+            rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+        )
+        .unwrap();
+    collection
+        .add(
+            "keep",
+            rec(json!({"title": "kryptonite also", "tag": "red"})),
+        )
+        .unwrap();
+    collection.remove("hit").unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
+    let ids = hit_ids(&hits);
+    assert!(!ids.contains(&"hit"), "removed id still a hit: {ids:?}");
+    assert!(ids.contains(&"keep"), "kept id missing: {ids:?}");
+}
+
+#[test]
 fn vault_search_scopes_collections() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());

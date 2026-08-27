@@ -260,6 +260,43 @@ fn isolated_replace_and_history_use_nested_git() {
 }
 
 #[test]
+fn isolated_remove_uses_nested_git() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    write_schema(&scratch, WEST_ISOLATED);
+    let vault = scratch.reopen();
+    let collection = vault.collection("west_isolated").unwrap();
+    collection
+        .add("secret", rec(json!({"west_pass": "one"})))
+        .unwrap();
+    vault.begin().unwrap();
+    collection
+        .replace("secret", rec_rep(json!({"west_pass": "two"})))
+        .unwrap();
+    vault.commit("second").unwrap();
+    let nested = scratch.vault().join(".isolated");
+    let before = log_len(&nested);
+    let hist_before = collection.history("secret", 0, 10).unwrap();
+    assert!(hist_before.entries.len() >= 2);
+    collection.remove("secret").unwrap();
+    assert_eq!(
+        collection.get("secret").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert!(
+        !scratch
+            .vault()
+            .join(".isolated")
+            .join("west_isolated")
+            .join("secret.md")
+            .is_file()
+    );
+    assert_eq!(log_len(&nested), before + 1);
+    let hist = collection.history("secret", 0, 10).unwrap();
+    assert_eq!(hist.entries.len(), hist_before.entries.len());
+}
+
+#[test]
 fn check_fails_when_nested_git_has_a_remote() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());

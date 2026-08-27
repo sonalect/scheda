@@ -302,6 +302,27 @@ impl SearchEngine {
         )
     }
 
+    pub(crate) fn forget(&self, decl: &CollectionDecl, id: &str) -> Result<(), Error> {
+        if decl.isolated {
+            return Ok(());
+        }
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::forget] lock")?;
+        if !inner.can_write {
+            bail!(Error::index_lexical("search index is not open for write"));
+        }
+        match index::format_version(&self.index_dir)? {
+            Some(v) if v != index::FORMAT_VERSION => {
+                return Err(Error::index_version(format!(
+                    "index format {v} is not {}",
+                    index::FORMAT_VERSION
+                ))
+                .context("[SearchEngine::forget] check version"));
+            }
+            _ => index::ensure_format(&self.index_dir)?,
+        }
+        forget_record(&mut inner, &decl.name, id)
+    }
+
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::enable_write] lock")?;
         inner.can_write = true;
@@ -669,6 +690,40 @@ fn upsert_record(
     }
     #[cfg(not(feature = "search"))]
     let _ = (embedder, vectors);
+    Ok(())
+}
+
+fn forget_record(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Error> {
+    forget_source(&mut inner.edges, collection, id);
+    inner.dirty = true;
+    if let Some(lexical) = inner.lexical.as_mut()
+        && let Some(writer) = &lexical.writer
+    {
+        let key = doc_key(collection, id);
+        writer.delete_term(Term::from_field_text(lexical.f_key, &key));
+    }
+    #[cfg(feature = "search")]
+    forget_vector(inner, collection, id)?;
+    Ok(())
+}
+
+#[cfg(feature = "search")]
+fn forget_vector(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Error> {
+    let Some(store) = inner.vector.as_mut() else {
+        return Ok(());
+    };
+    let stale: Vec<u64> = store
+        .keys
+        .iter()
+        .filter(|(_, doc)| doc.collection == collection && doc.id == id)
+        .map(|(key, _)| *key)
+        .collect();
+    for key in stale {
+        if store.ann.contains(key) {
+            store.ann.remove(key)?;
+        }
+        store.keys.remove(&key);
+    }
     Ok(())
 }
 

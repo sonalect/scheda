@@ -1,6 +1,6 @@
 # 09. Isolation and perimeter
 
-Document 9 of the Scheda package. Version 0.9, 27 August 2026.
+Document 9 of the Scheda package. Version 0.10, 27 August 2026.
 
 What must not leak: network by default (**core**); isolated collections under `{vault}/.isolated/` (gitignored nested git, never the main Remote), sealed fields, and optional encryption of that nested tree (**later**). Terms are in `02`. Schema marks are in SCH-15. Remote traffic is in `04`. Codes: `ISO`. Phase **later** unless marked **core** or **agent**.
 
@@ -19,6 +19,8 @@ An assertion without a check is not a requirement.
 ## 2. Isolated collection (**later**)
 
 The Vault is **one directory**. Isolated Records are not a second `open` path elsewhere on disk.
+
+This section is implemented in `scheda` without encryption: nested git, `0600`, no Remote, nested Index, `check` over that tree, and `journal` as well as `document`. The phase tag stays **later** for a reason: a binding does not need `.isolated/` to pass **core**, **search**, or **agent**. Section 3 (age encryption) is not implemented.
 
 **ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Isolated Records use the same fixed names under that directory (`{id}.md`, journal segments, `record.yaml`). The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `open` of a clone of the main Vault still lists the collection (ISO-3). First `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
 

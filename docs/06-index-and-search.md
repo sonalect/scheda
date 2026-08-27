@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.34, 27 August 2026.
+Document 6 of the Scheda package. Version 0.35, 27 August 2026.
 
 Normative rules for the derived Index and `get`. **`find` and `search` (how they must work) are `13`.** Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`. Phase **core** or **search** as marked.
 
@@ -22,7 +22,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 Writes (`add` / `replace`) update this map in the same process when the writer holds the lock. Human edits in an editor are not watched by default: the caller runs `reindex` or `check`. A file watcher is **later**.
 
-**IDX-10. Caller `id` on the filesystem: `get`, `add`, `history`.** Those three validate the slug, then use that identity against the tree (MOD-8). `get` / `history`: `document` `{name}/{id}.md`; `singleton` `{name}/record.yaml` when `id` matches Schema; `journal` the IDX-5 map to the segment (the segment is not named `{id}`). `add` creates the file or line and updates the Index. `lines` does not take a caller `id`: it walks every journal line in Schema sequence without the Index (`07` LIB-19). Every other method that needs a Record (`find`, `search`, `replace`) takes `id`s **from the Index**, then opens those files. A caller `id` on `replace` is an Index lookup, not a path, when `find` is on. Unknown to the Index → `not_found` (do not probe `{id}.md` from the raw argument). When `find` is off, `replace` uses the Record file, as isolated collections already do. An `id` the Index returns has already been accepted as a Record identity. *Check (**core**):* `find` `id =` an unindexed orphan file is empty; `get` and `history` of that id still use the file. *Check (**find**):* `replace` of an id not in the Index is `not_found` even if the file exists.
+**IDX-10. Caller `id` on the filesystem: `get`, `add`, `history`.** Those three validate the slug, then use that identity against the tree (MOD-8). `get` / `history`: `document` `{name}/{id}.md`; `singleton` `{name}/record.yaml` when `id` matches Schema; `journal` the IDX-5 map to the segment (the segment is not named `{id}`). `add` creates the file or line and updates the Index. `remove` unlinks a `document` / `singleton` file and drops it from the Index (`journal` is `unsupported`). After `remove`, `history` still walks git of that path. `lines` does not take a caller `id`: it walks every journal line in Schema sequence without the Index (`07` LIB-19). Every other method that needs a Record (`find`, `search`, `replace`, `remove`) takes `id`s **from the Index**, then opens or unlinks those files. A caller `id` on `replace` / `remove` is an Index lookup, not a path, when `find` is on. Unknown to the Index → `not_found` (do not probe `{id}.md` from the raw argument). When `find` is off, `replace` / `remove` use the Record file, as isolated collections already do. An `id` the Index returns has already been accepted as a Record identity. *Check (**core**):* `find` `id =` an unindexed orphan file is empty; `get` and `history` of that id still use the file. *Check (**find**):* `replace` / `remove` of an id not in the Index is `not_found` even if the file exists.
 
 ---
 
@@ -48,7 +48,7 @@ The Index is a **retrieval** engine an agent can recall from, not a substring de
 
 **IDX-8. Embedder is injected.** The caller passes an embedder (a function or interface; in Rust, typically a trait). The library does not require the network to embed. No embedder → vector leg off; lexical, `find`, and writes still work. An embedder that calls the network is the caller's; core git with `auto_sync` off still GIT-8. *Check:* build and query with no embedder; a stub that returns a fixed vector fills the vector table; those runs make no unexpected connections.
 
-**IDX-9. Incremental update.** After a successful write, the Index for that Record is updated (lexical, vector if embedder present, edges, journal map). `reindex` remains the way to repair or to pick up editor edits. *Check:* `add` then `search` without a full `reindex` finds the new Record when **search** is on.
+**IDX-9. Incremental update.** After a successful write, the Index for that Record is updated (lexical, vector if embedder present, edges, journal map). `remove` drops that Record from the Index. `reindex` remains the way to repair or to pick up editor edits. *Check:* `add` then `search` without a full `reindex` finds the new Record when **search** is on. *Check:* `remove` then `find` / `search` do not return that `id`.
 
 ---
 
