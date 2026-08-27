@@ -104,7 +104,7 @@ impl JournalIdMaps {
 pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<JournalIdMaps, Error> {
     let mut maps = JournalIdMaps::default();
     for decl in schema.collections() {
-        if decl.kind != Kind::Journal {
+        if decl.isolated || decl.kind != Kind::Journal {
             continue;
         }
         let path = ids_path(index_dir, &decl.name);
@@ -128,7 +128,7 @@ pub(crate) fn rebuild(
     let mut skipped_invalid = 0u64;
     let mut segments_seen = 0u64;
     let mut maps = JournalIdMaps::default();
-    for decl in schema.collections() {
+    for decl in schema.collections().filter(|decl| !decl.isolated) {
         match decl.kind {
             Kind::Journal => {
                 let (records, invalid, segments, ids) = journal::reindex_map(vault, decl)?;

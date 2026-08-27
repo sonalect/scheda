@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.30, 27 August 2026.
+Document 12 of the Scheda package. Version 0.31, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -11,7 +11,7 @@ The first implementation is the crate `scheda`. Other language bindings are
 out of this plan (`10` §1). MCP is an example transport, not a stage here
 (`08` AGT-4).
 
-A0–A5b are done. A2 was the
+A0–A6 are done. A2 was the
 **legacy** CLI; A4 replaced `rust/cli` with argv `14`. Do not revive A2
 names. The unencrypted `{vault}/.isolated/` tree in `10` §1 (SCH-15,
 ISO-2, ISO-4, ISO-6, IDX-4) is not this checklist. Age encryption
@@ -54,7 +54,7 @@ keep the names `10` and the CHANGELOG already use.
 | [A4](#a4-target-cli) | done | CLI argv = `14` (AGT-2–5) |
 | [A5](#a5-http-embedder-and-reranker) | done | CLI OpenAI embeddings + Cohere rerank (`14`) |
 | [A5b](#a5b-layout-clean-up) | done | Dead `layout` parts out; the `layout` key check exists |
-| [A6](#a6-isolation-at-the-agent-surface) | not started | ISO-3 on CLI + library tools |
+| [A6](#a6-isolation-at-the-agent-surface) | done | ISO-3 on CLI + library tools |
 | [A7](#a7-agent-acceptance) | not started | `10` §4 acceptance |
 
 **Agent in:** AGT-1–5. ISO-3 when isolated collections exist (`09`, with
@@ -355,18 +355,22 @@ machinery.
 
 ## A6. Isolation at the agent surface
 
-**Status:** not started
+**Status:** done
 
 **Codes:** ISO-3, AGT-1.
 
-Close only after A5. Unencrypted isolated is already in (`10` §1). This
-stage is the agent half of isolation, not encryption.
+Close only after A5. Nested `{vault}/.isolated/` I/O (`10` §1) is not this
+stage. This is the agent half of isolation, not encryption. Isolated
+`collection(name)` stays `unsupported` until that slice (A3). Crate
+Check: `isolated_sealed_values_stay_off_the_main_vault` in
+`rust/scheda/tests/catalog.rs` and `cli_omits_isolated_sealed_values` in
+`rust/cli/tests/cli.rs`.
 
-- [ ] Agent tools bound to the main Vault never return a fixture sealed
+- [x] Agent tools bound to the main Vault never return a fixture sealed
       value: `info`, `get`, `find`, `search` (ISO-3).
-- [ ] `Vault.info` still lists isolated collections as isolated and does
+- [x] `Vault.info` still lists isolated collections as isolated and does
       not include their field values (ISO-3, A1 / A3).
-- [ ] Reaching isolated Records requires `collection(name)` on this handle
+- [x] Reaching isolated Records requires `collection(name)` on this handle
       (ISO-2). CLI `collection NAME` for a non-isolated collection must not
       return isolated Record values.
 

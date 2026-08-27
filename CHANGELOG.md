@@ -8,6 +8,14 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- ISO-3 on the agent surface: `Vault.info`, Vault `find` / `search`, and
+  CLI `collection NAME` for a non-isolated collection omit isolated
+  Schema field names and do not return a fixture sealed Record. Isolated
+  `collection(name)` stays `unsupported` until nested `{vault}/.isolated/`
+  I/O (`10` §1). The main Index does not scan isolated collections.
+
 ### Removed
 
 - `Collection::layout()`. Schema has no layout template (SCH-2, MOD-8);

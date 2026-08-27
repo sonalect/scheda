@@ -100,7 +100,7 @@ pub(crate) fn find_document(
 
 pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error> {
     for decl in schema.collections() {
-        if !matches!(decl.kind, Kind::Document | Kind::Singleton) {
+        if decl.isolated || !matches!(decl.kind, Kind::Document | Kind::Singleton) {
             continue;
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -245,6 +245,9 @@ fn vault_rel(decl: &CollectionDecl, file: &str) -> String {
 }
 
 fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<PathBuf>, Error> {
+    if decl.isolated {
+        return Ok(None);
+    }
     if decl.kind == Kind::Singleton
         && decl
             .singleton_id
@@ -259,6 +262,9 @@ fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<P
 }
 
 pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
+    if decl.isolated {
+        return Ok(Vec::new());
+    }
     let dir = schema::join_in_collection(vault, &decl.name, "")?;
     if !dir.is_dir() {
         return Ok(Vec::new());

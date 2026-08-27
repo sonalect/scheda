@@ -194,7 +194,7 @@ impl SearchEngine {
             index::ensure_format(&self.index_dir)?;
         }
         let mut prepared = Vec::new();
-        for decl in schema.collections() {
+        for decl in schema.collections().filter(|decl| !decl.isolated) {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
                 crate::schema::Kind::Document | crate::schema::Kind::Singleton => {

@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, OpenOptions, RecordAdd, Schema, Vault};
+use scheda::{Code, FindQuery, OpenOptions, RecordAdd, Schema, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -219,6 +219,104 @@ fn catalog_lists_isolated_without_fields() {
     let err = vault.collection("west_isolated").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     vault.collection("west_docs").unwrap();
+}
+
+const TREE_SEALED: &str = "west-sealed-tree-token";
+const NESTED_SEALED: &str = "west-sealed-nested-token";
+
+fn plant_isolated_sealed(scratch: &Scratch) {
+    let tree = scratch.vault().join("west_isolated").join("sealed.md");
+    fs::write(
+        tree,
+        format!("---\nid: sealed\nwest_pass: {TREE_SEALED}\n---\n"),
+    )
+    .unwrap();
+    let nested = scratch.vault().join(".isolated").join("west_isolated");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(
+        nested.join("sealed.md"),
+        format!("---\nid: sealed\nwest_pass: {NESTED_SEALED}\n---\n"),
+    )
+    .unwrap();
+}
+
+fn assert_no_sealed(haystack: &str) {
+    assert!(
+        !haystack.contains(TREE_SEALED),
+        "main-tree sealed value leaked: {haystack}"
+    );
+    assert!(
+        !haystack.contains(NESTED_SEALED),
+        "nested sealed value leaked: {haystack}"
+    );
+}
+
+#[test]
+fn isolated_sealed_values_stay_off_the_main_vault() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    scratch.write_schema("isolated.yaml", WEST_ISOLATED);
+    let vault = scratch.reopen();
+    vault
+        .collection("west_docs")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "Alpha public"})))
+        .unwrap();
+    plant_isolated_sealed(&scratch);
+    vault.reindex().unwrap();
+
+    let info = catalog_json(&vault);
+    let isolated = collection(&info, "west_isolated");
+    assert_eq!(isolated["schema"]["isolated"], true);
+    assert!(isolated["schema"].get("fields").is_none());
+    let info_dump = info.to_string();
+    assert!(!info_dump.contains("west_pass"));
+    assert_no_sealed(&info_dump);
+
+    let page = vault.find(&[], &FindQuery::all(), 0, 10).unwrap();
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].id.as_deref(), Some("alpha"));
+    assert_eq!(page.records[0].collection.as_deref(), Some("west_docs"));
+    let page_dump = serde_json::to_string(&page).unwrap();
+    assert!(!page_dump.contains("west_pass"));
+    assert_no_sealed(&page_dump);
+
+    let hits = vault
+        .search(&[], &SearchQuery::default().with_text("Alpha public"), None)
+        .unwrap();
+    assert_eq!(hits.hits.len(), 1);
+    assert_eq!(hits.hits[0].id.as_deref(), Some("alpha"));
+    assert_eq!(hits.hits[0].collection.as_deref(), Some("west_docs"));
+    assert_no_sealed(&serde_json::to_string(&hits).unwrap());
+
+    let miss = vault
+        .search(&[], &SearchQuery::default().with_text(NESTED_SEALED), None)
+        .unwrap();
+    assert!(miss.hits.is_empty());
+    let miss_tree = vault
+        .search(&[], &SearchQuery::default().with_text(TREE_SEALED), None)
+        .unwrap();
+    assert!(miss_tree.hits.is_empty());
+
+    let got = vault.collection("west_docs").unwrap().get("alpha").unwrap();
+    assert_eq!(got.id.as_deref(), Some("alpha"));
+    assert_no_sealed(&serde_json::to_string(&got).unwrap());
+    let missing = vault.collection("west_docs").unwrap().get("sealed");
+    assert_eq!(missing.unwrap_err().known_code(), Some(Code::NotFound));
+
+    let scoped = vault
+        .collection("west_docs")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(scoped.records.len(), 1);
+    assert_no_sealed(&serde_json::to_string(&scoped).unwrap());
+
+    let err = vault.collection("west_isolated").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    let named = vault.find(&["west_isolated"], &FindQuery::all(), 0, 10);
+    assert_eq!(named.unwrap_err().known_code(), Some(Code::Unsupported));
 }
 
 #[test]

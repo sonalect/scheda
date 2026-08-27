@@ -135,6 +135,9 @@ fn find_in_segment(
 }
 
 pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
+    if decl.isolated {
+        return Ok(Vec::new());
+    }
     let mut out = Vec::new();
     for_each_parsed(vault, decl, |path, parsed| {
         out.push(record_from_parsed(vault, decl, path, parsed)?);
@@ -145,7 +148,7 @@ pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Re
 
 pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error> {
     for decl in schema.collections() {
-        if decl.kind != Kind::Journal {
+        if decl.isolated || decl.kind != Kind::Journal {
             continue;
         }
         let mut seen = BTreeSet::new();

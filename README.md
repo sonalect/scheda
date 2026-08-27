@@ -10,11 +10,13 @@ collection API is CRUD-shaped (`add`, `get`, `replace`, `find`,
 `search`, `begin`, `commit`, `discard`). It is not a compatibility layer for MongoDB, CouchDB, or
 SQL.
 
-**Status: core C0–C10 and search C9 in the Rust crate; agent A0–A5b
-(catalog + `create_collection` + CLI `14` + HTTP embedder/reranker).** Files, git, Schema, `find` /
+**Status: core C0–C10 and search C9 in the Rust crate; agent A0–A6
+(catalog + `create_collection` + CLI `14` + HTTP embedder/reranker +
+ISO-3).** Files, git, Schema, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
-RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, and a CLI encoding
-of `07`. Next: A6 ISO-3 and the unencrypted isolated git root (`10` §1).
+RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, a CLI encoding
+of `07`, and agent tools that omit isolated sealed values. Next: A7 agent
+acceptance. The unencrypted isolated git root stays `10` §1.
 
 ## Documents
 
@@ -35,7 +37,7 @@ The design is a numbered package in `docs/`, in English.
 | [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated git root and age encryption (**later**)                                    |
 | [10-roadmap.md](docs/10-roadmap.md)                   | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
-| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A5b done; A6 ISO-3, A7 remaining                                                                   |
+| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A6 done; A7 remaining                                                                              |
 
 ## Layout
 

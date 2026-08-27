@@ -1,5 +1,5 @@
-//! A4/A5: thin CLI (`08` AGT-2–5, `12`, `14`). Collection names here must not
-//! appear in `rust/cli/src` (SCH-1).
+//! A4/A5/A6: thin CLI (`08` AGT-2–5, ISO-3, `12`, `14`). Collection names here
+//! must not appear in `rust/cli/src` (SCH-1).
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -556,7 +556,7 @@ fn src_does_not_name_fixture_collections() {
         include_str!("../src/args.rs"),
         include_str!("../src/model2vec.rs")
     );
-    for name in ["agent_notes", "agent_log", "agent_pages"] {
+    for name in ["agent_notes", "agent_log", "agent_pages", "agent_sealed"] {
         assert!(
             !contains_collection_name(&src, name),
             "CLI source names {name}"
@@ -571,6 +571,166 @@ fn contains_collection_name(haystack: &str, name: &str) -> bool {
         let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
         before.is_none_or(|c| !ident(c)) && after.is_none_or(|c| !ident(c))
     })
+}
+
+const TREE_SEALED: &str = "agent-sealed-tree-token";
+const NESTED_SEALED: &str = "agent-sealed-nested-token";
+
+fn isolated_schema_yaml() -> &'static str {
+    "name: agent_sealed\nkind: document\nschema_version: 1\nisolated: true\nfields:\n  - name: agent_pass\n    required: true\n    string: {}\n"
+}
+
+fn sealed_document(token: &str) -> String {
+    format!("---\nid: sealed\nagent_pass: {token}\n---\n")
+}
+
+fn plant_isolated_sealed(scratch: &Scratch) {
+    let dir = scratch.vault().join("agent_sealed");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".schema.yaml"), isolated_schema_yaml()).unwrap();
+    fs::write(dir.join("sealed.md"), sealed_document(TREE_SEALED)).unwrap();
+    let nested = scratch.vault().join(".isolated").join("agent_sealed");
+    fs::create_dir_all(&nested).unwrap();
+    fs::write(nested.join("sealed.md"), sealed_document(NESTED_SEALED)).unwrap();
+}
+
+fn assert_no_sealed(haystack: &str) {
+    assert!(
+        !haystack.contains("agent_pass"),
+        "isolated field leaked: {haystack}"
+    );
+    assert!(
+        !haystack.contains(TREE_SEALED),
+        "main-tree sealed value leaked: {haystack}"
+    );
+    assert!(
+        !haystack.contains(NESTED_SEALED),
+        "nested sealed value leaked: {haystack}"
+    );
+}
+
+#[test]
+fn cli_omits_isolated_sealed_values() {
+    let scratch = fixture_with_note();
+    plant_isolated_sealed(&scratch);
+    let path = vault_arg(&scratch);
+    let reindex = run(&["--vault", &path, "reindex"]);
+    assert_eq!(reindex.status, 0, "stderr={}", reindex.stderr);
+
+    let info = stdout_json(&run(&["--vault", &path, "info"]));
+    let isolated = info["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|col| col["name"] == "agent_sealed")
+        .unwrap();
+    assert_eq!(isolated["schema"]["isolated"], true);
+    assert!(isolated["schema"].get("fields").is_none());
+    assert_no_sealed(&info.to_string());
+
+    let filter = all_filter();
+    let found = stdout_json(&run(&[
+        "--vault", &path, "find", "--filter", &filter, "--offset", "0", "--count", "10",
+    ]));
+    assert_eq!(found["records"].as_array().unwrap().len(), 1);
+    assert_eq!(found["records"][0]["id"], "alpha");
+    assert_eq!(found["records"][0]["collection"], "agent_notes");
+    assert_no_sealed(&found.to_string());
+
+    let search = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query("Alpha token"),
+    ]));
+    assert_eq!(search["hits"][0]["id"], "alpha");
+    assert_eq!(search["hits"][0]["collection"], "agent_notes");
+    assert_no_sealed(&search.to_string());
+
+    let miss = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query(NESTED_SEALED),
+    ]));
+    assert_eq!(
+        miss["hits"].as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "sealed token must not be a search hit: {miss}"
+    );
+
+    let got = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "get",
+        "--id",
+        "alpha",
+    ]));
+    assert_eq!(got["id"], "alpha");
+    assert_no_sealed(&got.to_string());
+
+    let scoped = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "find",
+        "--filter",
+        &filter,
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]));
+    assert_eq!(scoped["records"].as_array().unwrap().len(), 1);
+    assert_no_sealed(&scoped.to_string());
+
+    let scoped_search = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "search",
+        "--query",
+        &text_query("Alpha token"),
+    ]));
+    assert_eq!(scoped_search["hits"][0]["id"], "alpha");
+    assert_eq!(scoped_search["hits"][0]["collection"], "agent_notes");
+    assert_no_sealed(&scoped_search.to_string());
+
+    let isolated_get = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_sealed",
+        "get",
+        "--id",
+        "sealed",
+    ]);
+    assert_eq!(error_json(&isolated_get)["code"], "CODE_UNSUPPORTED");
+    assert_no_sealed(&isolated_get.stdout);
+    assert_no_sealed(&isolated_get.stderr);
+
+    let named = run(&[
+        "--vault",
+        &path,
+        "find",
+        "--collections",
+        "agent_sealed",
+        "--filter",
+        &filter,
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]);
+    assert_eq!(error_json(&named)["code"], "CODE_UNSUPPORTED");
+    assert_no_sealed(&named.stdout);
+    assert_no_sealed(&named.stderr);
 }
 
 #[test]
