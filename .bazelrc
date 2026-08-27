@@ -1,9 +1,16 @@
 # Write build outputs in a platform-specific directory;
 # avoid outputs being wiped and rewritten when switching between platforms.
 common --experimental_platform_in_output_dir
+common --enable_platform_specific_config
 # Use a symlink prefix to avoid clobbering the workspace root.
 build --symlink_prefix=.bazel/
 # @pypi packages from [project] dependencies (implicit venv = project name).
-common --@pypi//venv=scheda
+# Not a `common` flag: evaluating @pypi fetches aspect_rules_py's uv host,
+# which fail()s on Windows (`Unsupported platform windows`).
+common:linux --@pypi//venv=scheda
+common:macos --@pypi//venv=scheda
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles
+# `target_compatible_with` does not stop `//...` from loading these packages.
+# Deleted, they are invisible, so the uv host is not fetched.
+common:windows --deleted_packages=python,python/cli,python/vllm

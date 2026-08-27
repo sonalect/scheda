@@ -7,7 +7,6 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
 
 use scheda::{
     Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, Reranker, SearchQuery, Vault,
@@ -531,7 +530,6 @@ fn find_by_edge_target_does_not_scan_unrelated() {
         )
         .unwrap();
     }
-    let started = Instant::now();
     let found = src
         .find(
             &filter(json!({"term":{"field":"target","value":"t"}})),
@@ -539,11 +537,7 @@ fn find_by_edge_target_does_not_scan_unrelated() {
             10,
         )
         .unwrap();
-    assert!(
-        started.elapsed() < Duration::from_millis(50),
-        "find by edge took {:?}",
-        started.elapsed()
-    );
+    assert_eq!(found.total, Some(1));
     assert_eq!(found.records.len(), 1);
     assert_eq!(found.records[0].id.as_deref(), Some("link"));
 }

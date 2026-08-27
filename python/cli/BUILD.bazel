@@ -4,6 +4,8 @@ load("//bazel:compat.bzl", "NOT_WINDOWS")
 _IMPORTS = ["../.."]
 
 # aspect_rules_py uv host: `fail("Unsupported platform windows")`.
+# Windows CI deletes this package in `.bazelrc` instead of relying on
+# target_compatible_with (that still loads the BUILD file).
 py_library(
     name = "cli_pkg",
     srcs = [
