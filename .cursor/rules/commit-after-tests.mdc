@@ -1,0 +1,29 @@
+---
+description: Do not git commit until bazel test //... has passed on the current tree
+alwaysApply: true
+---
+
+# Test before commit
+
+Never create a git commit until `bazel test //...` has exited 0 on **this
+working tree** in this session. `cargo test` alone is not enough: CI runs
+Bazel (`//bazel:lint`, generate checks, Python, the rest).
+
+Follow `.cursor/rules/run-commands.mdc`: repo root (`MODULE.bazel`),
+`required_permissions: ["all"]`. After `api/v1/*.proto` edits, generate first.
+
+```bash
+bazel test //... --keep_going --test_output=errors
+```
+
+If it fails, fix and re-run. Do not commit a red tree.
+
+```text
+# BAD — commit after a local cargo test, skip Bazel
+# (this failed Linux CI: MODULE.bazel # reformat from //bazel:lint)
+
+# GOOD — Bazel green, then git add / commit / push
+```
+
+Do not skip for “format-only”, “comments”, `.bazelrc`, or `MODULE.bazel`.
+The user must explicitly waive this rule to commit without that test.

@@ -6,6 +6,7 @@ module(
 )
 
 bazel_dep(name = "aspect_rules_py", version = "1.11.7")
+
 # uv host fail()s on Windows; platform_libc's default is still evaluated
 # for rust/proto. Stub msvc so analysis is not poisoned.
 single_version_override(
@@ -14,6 +15,7 @@ single_version_override(
     patches = ["//third_party/aspect_rules_py:windows-uv-host.patch"],
     version = "1.11.7",
 )
+
 bazel_dep(name = "bazel_lib", version = "3.7.1")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
 bazel_dep(name = "bazel_utils_bazel", version = "0.2.3")
