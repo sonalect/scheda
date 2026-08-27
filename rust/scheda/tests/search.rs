@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use scheda::{
-    Code, Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, SearchQuery, Vault,
+    Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, Reranker, SearchQuery, Vault,
 };
 use serde_json::{Value, json};
 
@@ -96,8 +96,8 @@ fn rec_body(fields: Value, body: &str) -> RecordAdd {
     serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
 }
 
-fn filter(value: Value) -> Filter {
-    serde_json::from_value(value).unwrap()
+fn filter(value: Value) -> FindQuery {
+    serde_json::from_value::<Filter>(value).unwrap().into()
 }
 
 fn q(text: &str, k: u32) -> SearchQuery {
@@ -353,6 +353,30 @@ fn filter_applies_before_ranking() {
     let hits = collection.search(&query, None).unwrap();
     let ids = hit_ids(&hits);
     assert_eq!(ids, ["keep"]);
+}
+
+#[test]
+fn search_omits_raw_unless_include_raw() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "keep",
+            rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+        )
+        .unwrap();
+    let omitted = collection.search(&q("kryptonite", 5), None).unwrap();
+    assert!(omitted.hits[0].raw.is_none());
+    let included = collection
+        .search(&q("kryptonite", 5).with_include_raw(true), None)
+        .unwrap();
+    assert!(
+        included.hits[0]
+            .raw
+            .as_ref()
+            .is_some_and(|raw| !raw.is_empty())
+    );
 }
 
 #[test]

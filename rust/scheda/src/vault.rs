@@ -12,8 +12,9 @@ use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 use crate::search::{self, SearchEngine};
 use crate::store;
 use crate::{
-    Embedder, Error, Filter, FindResult, History, OpenOptions, Record, RecordAdd, RecordReplace,
-    ReindexResult, Reranker, Schema, SearchHits, SearchQuery, VaultInfo,
+    Embedder, Error, Filter, FindQuery, FindResult, History, OpenOptions, Record, RecordAdd,
+    RecordReplace, ReindexResult, Reranker, Schema, SearchHits, SearchQuery, VaultInfo,
+    search_hits,
 };
 
 const AUTO_COMMIT_MESSAGE: &str = "scheda";
@@ -219,7 +220,7 @@ impl Vault {
     pub fn find(
         &self,
         collections: &[&str],
-        filter: &Filter,
+        query: &FindQuery,
         offset: u32,
         count: u32,
     ) -> Result<FindResult, Error> {
@@ -230,7 +231,7 @@ impl Vault {
             vault: &self.path,
             journal_ids: &self.journal_ids,
         }
-        .find(collections, filter, offset, count)
+        .find(collections, query, offset, count)
     }
 
     /// Hybrid retrieval (`13` §6). Empty `collections` is every non-isolated
@@ -699,7 +700,7 @@ impl Collection {
     }
 
     /// Tantivy Query on the Index, then files (`13` §3).
-    pub fn find(&self, filter: &Filter, offset: u32, count: u32) -> Result<FindResult, Error> {
+    pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
         let name = self.decl.name.as_str();
         QueryCtx {
             engine: &self.search,
@@ -707,7 +708,7 @@ impl Collection {
             vault: &self.vault,
             journal_ids: &self.journal_ids,
         }
-        .find(&[name], filter, offset, count)
+        .find(&[name], query, offset, count)
     }
 
     /// Hybrid retrieval (LIB-11, `13` §6).
@@ -877,14 +878,16 @@ impl QueryCtx<'_> {
     fn find(
         &self,
         names: &[&str],
-        filter: &Filter,
+        query: &FindQuery,
         offset: u32,
         count: u32,
     ) -> Result<FindResult, Error> {
         if count == 0 {
             bail!(Error::invalid("find count must be > 0"));
         }
-        filter.require_valid()?;
+        query.require_valid()?;
+        let filter = &*query.filter;
+        let include_raw = query.include_raw == Some(true);
         let explicit = !names.is_empty();
         let decls =
             apply_filter_schema(resolve_collections(self.schema, names)?, filter, explicit)?;
@@ -902,7 +905,11 @@ impl QueryCtx<'_> {
         let mut records = Vec::new();
         for (collection, id) in page.ids {
             match read_record(self.vault, self.schema, self.journal_ids, &collection, &id) {
-                Ok(record) => records.push(record),
+                Ok(record) => records.push(if include_raw {
+                    record
+                } else {
+                    without_raw(record)
+                }),
                 Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
                 Err(err) => bail!(err),
             }
@@ -944,19 +951,19 @@ impl QueryCtx<'_> {
             None | Some(0) => 10,
             Some(n) => n as usize,
         };
+        let include_raw = query.include_raw == Some(true);
         let Some(reranker) = reranker else {
             hits.hits.truncate(k);
+            if include_raw {
+                self.fill_hit_raw(&mut hits)?;
+            }
             return Ok(hits);
         };
         let text = query.text.as_deref().unwrap_or("");
         let pool = hits.hits.len();
         let mut scored = Vec::with_capacity(pool);
-        for hit in hits.hits {
-            let collection = hit
-                .collection
-                .as_deref()
-                .filter(|name| !name.is_empty())
-                .unwrap_or_else(|| collection_from_record_path(hit.path.as_deref().unwrap_or("")));
+        for mut hit in hits.hits {
+            let collection = hit_collection(&hit);
             let record = read_record(
                 self.vault,
                 self.schema,
@@ -965,6 +972,9 @@ impl QueryCtx<'_> {
                 hit.id.as_deref().unwrap_or(""),
             )?;
             let score = reranker.score(text, &record)?;
+            if include_raw {
+                hit.raw.clone_from(&record.raw);
+            }
             scored.push((score, hit));
         }
         scored.sort_by(|a, b| {
@@ -980,6 +990,36 @@ impl QueryCtx<'_> {
         }
         Ok(out)
     }
+
+    fn fill_hit_raw(&self, hits: &mut SearchHits) -> Result<(), Error> {
+        for hit in &mut hits.hits {
+            let collection = hit_collection(hit);
+            match read_record(
+                self.vault,
+                self.schema,
+                self.journal_ids,
+                collection,
+                hit.id.as_deref().unwrap_or(""),
+            ) {
+                Ok(record) => hit.raw = record.raw,
+                Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
+                Err(err) => bail!(err),
+            }
+        }
+        Ok(())
+    }
+}
+
+fn without_raw(mut record: Record) -> Record {
+    record.raw = None;
+    record
+}
+
+fn hit_collection(hit: &search_hits::Hit) -> &str {
+    hit.collection
+        .as_deref()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| collection_from_record_path(hit.path.as_deref().unwrap_or("")))
 }
 
 fn remote_repo_url(options: &OpenOptions) -> Option<&str> {

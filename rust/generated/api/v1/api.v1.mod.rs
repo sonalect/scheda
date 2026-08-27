@@ -87,6 +87,7 @@ pub mod __buffa {
         reg.register_json_any(super::filter::__MORE_LIKE_THIS_JSON_ANY);
         reg.register_json_any(super::filter::more_like_this::__FIELDS_JSON_ANY);
         reg.register_json_any(super::filter::more_like_this::fields::__FIELD_JSON_ANY);
+        reg.register_json_any(super::__FIND_QUERY_JSON_ANY);
         reg.register_json_any(super::__FIND_RESULT_JSON_ANY);
         reg.register_json_any(super::__HISTORY_JSON_ANY);
         reg.register_json_any(super::history::__ENTRY_JSON_ANY);
@@ -158,6 +159,10 @@ pub use self::__buffa::view::RecordReplaceOwnedView;
 pub use self::__buffa::view::FilterView;
 #[doc(inline)]
 pub use self::__buffa::view::FilterOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::FindQueryView;
+#[doc(inline)]
+pub use self::__buffa::view::FindQueryOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::FindResultView;
 #[doc(inline)]

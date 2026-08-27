@@ -28,9 +28,9 @@ mod validate {
                 reason = "module exists to include protovalidate output"
             )]
             use crate::generated::api::v1::{
-                Body, CollectionInfo, Edge, Error, Field, Filter, FindResult, History, Journal,
-                Object, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema,
-                SearchHits, SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history,
+                Body, CollectionInfo, Edge, Error, Field, Filter, FindQuery, FindResult, History,
+                Journal, Object, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult,
+                Schema, SearchHits, SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history,
                 search_hits,
             };
 
@@ -38,9 +38,12 @@ mod validate {
                 #[allow(unused_imports, reason = "generated validators may not touch view")]
                 pub use crate::generated::api::v1::__buffa::view;
                 pub mod oneof {
-                    #[allow(clippy::wildcard_imports, reason = "re-export generated oneof modules")]
-                    pub use crate::generated::api::v1::__buffa::oneof::*;
                     pub use crate::generated::api::v1::__buffa::oneof::filter::more_like_this;
+                    #[allow(
+                        clippy::wildcard_imports,
+                        reason = "re-export generated oneof modules"
+                    )]
+                    pub use crate::generated::api::v1::__buffa::oneof::*;
                 }
             }
 
@@ -357,6 +360,28 @@ impl api::v1::Filter {
     }
 }
 
+impl From<api::v1::Filter> for api::v1::FindQuery {
+    fn from(filter: api::v1::Filter) -> Self {
+        Self {
+            filter: filter.into(),
+            ..Self::default()
+        }
+    }
+}
+
+impl api::v1::FindQuery {
+    /// `Filter::all()` with `include_raw` unset (omit `Record.raw`).
+    #[must_use]
+    pub fn all() -> Self {
+        api::v1::Filter::all().into()
+    }
+
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
 impl api::v1::Record {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
@@ -413,7 +438,7 @@ mod tests {
     use protovalidate_buffa::Validate;
 
     use super::api::v1::{
-        Body, Error, Field, Filter, OpenOptions, Record, Schema, SearchQuery, history,
+        Body, Error, Field, Filter, FindQuery, OpenOptions, Record, Schema, SearchQuery, history,
     };
 
     #[test]
@@ -469,6 +494,13 @@ mod tests {
     }
 
     #[test]
+    fn find_query_filter_is_required() {
+        assert!(FindQuery::default().validate().is_err());
+        assert!(FindQuery::all().require_valid().is_ok());
+        assert!(FindQuery::from(Filter::all()).require_valid().is_ok());
+    }
+
+    #[test]
     fn record_default_is_valid() {
         assert!(Record::default().validate().is_ok());
         assert!(Record::default().require_valid().is_ok());
@@ -477,8 +509,7 @@ mod tests {
 
     #[test]
     fn history_entry_time_json_is_rfc3339() {
-        let json =
-            serde_json::to_value(history::Entry::default().with_time(0)).expect("json");
+        let json = serde_json::to_value(history::Entry::default().with_time(0)).expect("json");
         assert_eq!(json["time"], "1970-01-01T00:00:00Z");
     }
 

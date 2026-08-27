@@ -25,6 +25,10 @@ git2 = { version = "=0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
 mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.0" }
+model2vec-rs = { version = "=0.2.1", default-features = false, features = [
+    "fancy-regex",
+    "local-only",
+] }
 protovalidate-buffa = { version = "=0.6.0", default-features = false }
 regex = "=1.13.1"
 scheda = { path = "rust/scheda" }

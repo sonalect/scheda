@@ -15,6 +15,10 @@ node_modules/
 .venv/
 __pycache__/
 
-# Local CLI test Vault (`python/cli` import)
+# Local CLI test Vaults (`python/cli` import)
 /.vault-test/
+/.vault-test-LLMs/
+/.vault-test-jina/
+/.vault-test-model2vec/
+/.cache/
 /.scheda/

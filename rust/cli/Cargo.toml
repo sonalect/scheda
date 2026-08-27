@@ -19,6 +19,7 @@ vendored-openssl = ["scheda/vendored-openssl"]
 [dependencies]
 clap = { workspace = true }
 mimalloc = { workspace = true }
+model2vec-rs = { workspace = true }
 scheda = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

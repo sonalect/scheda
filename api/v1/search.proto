@@ -28,7 +28,10 @@ message SearchQuery {
   Filter filter = 3;
   // Unset → 1. Zero turns that leg off. When set: finite and >= 0.
   double lexical_weight = 4 [(buf.validate.field) = {
-    double: {gte: 0 finite: true}
+    double: {
+      gte: 0
+      finite: true
+    }
     cel: [
       {
         id: "search.lexical_weight.finite"
@@ -38,7 +41,10 @@ message SearchQuery {
     ]
   }];
   double vector_weight = 5 [(buf.validate.field) = {
-    double: {gte: 0 finite: true}
+    double: {
+      gte: 0
+      finite: true
+    }
     cel: [
       {
         id: "search.vector_weight.finite"
@@ -47,6 +53,8 @@ message SearchQuery {
       }
     ]
   }];
+  // When true, fill `Hit.raw`. Unset or false → omit those bytes.
+  bool include_raw = 6;
 }
 
 // Output, not a write envelope: no field validators (same as `FindResult`).
@@ -67,5 +75,7 @@ message SearchHits {
     double rrf_score = 6;
     // Set only when `search` was called with a reranker.
     double rerank_score = 7;
+    // Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
+    bytes raw = 8;
   }
 }

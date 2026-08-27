@@ -17,6 +17,10 @@ pub struct SearchQueryView<'a> {
     pub lexical_weight: ::core::option::Option<f64>,
     /// Field 5: `vector_weight`
     pub vector_weight: ::core::option::Option<f64>,
+    /// When true, fill `Hit.raw`. Unset or false → omit those bytes.
+    ///
+    /// Field 6: `include_raw`
+    pub include_raw: ::core::option::Option<bool>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for SearchQueryView<'a> {
@@ -96,6 +100,13 @@ impl<'a> ::buffa::MessageView<'a> for SearchQueryView<'a> {
                 )?;
                 view.vector_weight = Some(::buffa::types::decode_double(&mut cur)?);
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.include_raw = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -131,6 +142,7 @@ impl<'a> ::buffa::MessageView<'a> for SearchQueryView<'a> {
             },
             lexical_weight: self.lexical_weight,
             vector_weight: self.vector_weight,
+            include_raw: self.include_raw,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -162,6 +174,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SearchQueryView<'a> {
         if self.vector_weight.is_some() {
             size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
         }
+        if self.include_raw.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -192,6 +207,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SearchQueryView<'a> {
         }
         if let Some(v) = self.vector_weight {
             ::buffa::types::put_double_field(5u32, v, buf);
+        }
+        if let Some(v) = self.include_raw {
+            ::buffa::types::put_bool_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -238,6 +256,9 @@ impl<'__a> ::serde::Serialize for SearchQueryView<'__a> {
                     "vectorWeight",
                     &::buffa::json_helpers::ProtoJson(&__v),
                 )?;
+        }
+        if let ::core::option::Option::Some(__v) = self.include_raw {
+            __map.serialize_entry("includeRaw", &__v)?;
         }
         __map.end()
     }
@@ -360,6 +381,13 @@ impl SearchQueryOwnedView {
     #[must_use]
     pub fn vector_weight(&self) -> ::core::option::Option<f64> {
         self.0.reborrow().vector_weight
+    }
+    /// When true, fill `Hit.raw`. Unset or false → omit those bytes.
+    ///
+    /// Field 6: `include_raw`
+    #[must_use]
+    pub fn include_raw(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().include_raw
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<SearchQueryView<'static>>>
@@ -703,6 +731,10 @@ pub mod search_hits {
         ///
         /// Field 7: `rerank_score`
         pub rerank_score: ::core::option::Option<f64>,
+        /// Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
+        ///
+        /// Field 8: `raw`
+        pub raw: ::core::option::Option<&'a [u8]>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for HitView<'a> {
@@ -784,6 +816,13 @@ pub mod search_hits {
                     )?;
                     view.rerank_score = Some(::buffa::types::decode_double(&mut cur)?);
                 }
+                8u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.raw = Some(::buffa::types::borrow_bytes(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -819,6 +858,7 @@ pub mod search_hits {
                 vector_score: self.vector_score,
                 rrf_score: self.rrf_score,
                 rerank_score: self.rerank_score,
+                raw: self.raw.map(|b| (b).to_vec()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -851,6 +891,9 @@ pub mod search_hits {
             if self.rerank_score.is_some() {
                 size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
             }
+            if let Some(ref v) = self.raw {
+                size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -882,6 +925,9 @@ pub mod search_hits {
             }
             if let Some(v) = self.rerank_score {
                 ::buffa::types::put_double_field(7u32, v, buf);
+            }
+            if let Some(ref v) = self.raw {
+                ::buffa::types::put_shared_bytes_field(8u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -940,6 +986,9 @@ pub mod search_hits {
                         "rerankScore",
                         &::buffa::json_helpers::ProtoJson(&__v),
                     )?;
+            }
+            if let ::core::option::Option::Some(__v) = self.raw {
+                __map.serialize_entry("raw", &::buffa::json_helpers::BytesJson(__v))?;
             }
             __map.end()
         }
@@ -1073,6 +1122,13 @@ pub mod search_hits {
         #[must_use]
         pub fn rerank_score(&self) -> ::core::option::Option<f64> {
             self.0.reborrow().rerank_score
+        }
+        /// Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
+        ///
+        /// Field 8: `raw`
+        #[must_use]
+        pub fn raw(&self) -> ::core::option::Option<&'_ [u8]> {
+            self.0.reborrow().raw
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<HitView<'static>>> for HitOwnedView {

@@ -14,8 +14,11 @@ API or on-disk format changes bump the minor.
   in the same `find` pass as the page). Not `records` length: a missing
   file is omitted from the page and does not decrease `total`. Always
   filled; there is no `include_total` flag.
-- README: step-by-step `python/cli` (vLLM sidecars, `import` /
-  `reindex`, `find` and `search` examples).
+- README: step-by-step `python/cli` (separate LLMs and Model2Vec
+  walkthroughs: vLLM sidecars or local Model2Vec, `import` /
+  `reindex`, `find` and `search` examples). Model2Vec section opens
+  with a disclaimer: static embeddings miss QRY-3 paraphrases; the
+  commands exist to contrast quality with Qwen.
 - `find` compiles every `api.v1.Filter` kind (`phrase`, `phrase_prefix`,
   `fuzzy`, `regex`, `regex_phrase`, `range`, `more_like_this`). Token
   queries run on per-field positions in the lexical Index. Markdown
@@ -27,21 +30,39 @@ API or on-disk format changes bump the minor.
 - `Record.collection` and `SearchHits.Hit.collection` (output only) so
   Vault-wide `find` / `search` can name the collection without parsing
   `path`. First field on those messages (`collection = 1`).
+- `--model2vec-embedder DIR`: local Model2Vec files (`config.json`,
+  `tokenizer.json`, `model.safetensors`). CLI loads them with
+  `model2vec-rs` (`local-only`; no Hub download). Extra files (README)
+  are allowed; hidden names are ignored. Missing a required file →
+  `invalid`. Not with the HTTP embedder flags.
 - `docs/14-cli.md`: target CLI argv (LIB-2 names; drop `scan` / `walk`;
-  `--onnx-embedder` for the vector leg; `--reranker-onnx` on `search`).
+  `--model2vec-embedder` for the local vector leg; HTTP embedder /
+  Cohere reranker on `search`).
 - Locked vLLM sidecars: `bazel run //python/vllm:embedder` (OpenAI
   `/v1/embeddings` on `:8080`) and `//python/vllm:reranker` (Cohere
   `/v1/rerank` on `:8081`). `vllm==0.27.1` in `uv.lock`; Linux, host
   NVIDIA driver; `tags = ["manual"]` so `bazel build //...` does not
-  fetch torch.
-- `python/cli`: `bazel run //python/cli:cli -- import|reindex|find|search`
-  (or `python -m python.cli …`). `import` creates
-  `<workspace>/.vault-test` if needed and `get` / `add`s missing
-  `python/cli/testdata/animals` documents. `reindex` / `find` / `search`
-  wrap the scheda binary (`14`). Bare `search` runs fixture `topics.yaml`
-  and checks QRY-3 `expect_ids`. HTTP embedder/reranker default to the
-  local Qwen sidecars (`:8080` / `:8081`); `--lexical-only` turns them
-  off. Existing ids on `import` trigger `reindex` so vectors are filled.
+  fetch torch. Hub weights go to `<workspace>/.cache/huggingface`
+  (`HF_HOME`; an already-set `HF_HOME` wins). Opt-in Jina pair
+  (`//python/vllm:embedder_jina` / `:reranker_jina`, same ports;
+  `jinaai/jina-embeddings-v5-text-small` + `jinaai/jina-reranker-v3.5`;
+  CC BY-NC 4.0). `cli_jina` uses Vault `.vault-test-jina`.
+- `python/cli`: `bazel run //python/cli:cli_LLMs` (Vault
+  `.vault-test-LLMs`, Qwen HTTP sidecars), `//python/cli:cli_jina`
+  (Vault `.vault-test-jina`, Jina HTTP, CC BY-NC), and
+  `//python/cli:cli_model2vec` (Vault `.vault-test-model2vec`, local
+  Model2Vec). `import|reindex|find|search` (or `python -m python.cli
+  --backend llms|jina|model2vec …`). `import` creates that Vault if needed
+  and `get` / `add`s missing `python/cli/testdata/animals` documents.
+  `cli_model2vec` downloads `minishlab/potion-multilingual-128M` into
+  `.cache/model2vec/potion-multilingual-128M` on `reindex` when files are
+  missing (`huggingface_hub` / `hf-xet`; `HF_TOKEN` when set; size and
+  Hub hash checked). Bare `search`
+  runs fixture `topics.yaml` and checks QRY-3 `expect_ids`.
+  `--lexical-only` turns embedder/reranker flags off. `cli_model2vec`
+  loads Model2Vec on `reindex` and `search`. `import` / `find` omit
+  `--model2vec-embedder`. `cli_LLMs` `add` still passes the HTTP
+  embedder.
 - `docs/12-agent-plan.md`: A3 wire `07` / `13`; A4 CLI `14` is done; A2 is
   legacy and must not be extended. A5 is HTTP embedder/reranker
   (`--embedder-openai-url` / `--reranker-cohere-url`). Isolation is A6;
@@ -59,8 +80,23 @@ API or on-disk format changes bump the minor.
   `Vault::create_collection` / CLI `create-collection` write one
   `Collection` (LIB-21) so agents do not hand-write Schema YAML.
 
+### Fixed
+
+- `python/cli` Model2Vec Hub fetch uses `huggingface_hub` (`hf-xet`)
+  instead of one urllib GET through the Xet HTTP bridge, which truncated
+  `model.safetensors`.
+- vLLM sidecars `snapshot_download` the Qwen repo (tqdm on stderr)
+  before `vllm serve`, so EngineCore is not stuck on a silent Hub fetch.
+- `cli_model2vec` loads Model2Vec on `reindex` (Hub ensure) and
+  `search` (local cache, no Hub). `import` / `find` do not download or
+  run the model. `import` no longer trailing-`reindex`es.
+  `cli_LLMs` `add` still calls the HTTP embedder.
+
 ### Removed
 
+- `--onnx-embedder` and `--reranker-onnx`. The vector leg is HTTP
+  embedder flags or `--model2vec-embedder`. Rerank on `search` is HTTP
+  Cohere/Jina only (`--reranker-cohere-url` / `--reranker-model`).
 - Legacy CLI names: `find-one`, `insert-one`, `replace-one`, `scan`,
   `catalog`, `init` / `clone` as commands, `push-remote` / `pull-remote` /
   `sync-remote`, `walk`, `--text` on `search`. The binary is `14`.
@@ -69,6 +105,19 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- `cli_model2vec` Hub default is `minishlab/potion-multilingual-128M`
+  (multilingual, ~512 MiB), not `potion-retrieval-32M` or
+  `potion-base-8M`. The driver passes `--model2vec-embedder` on
+  `reindex` and `search`.
+- `find` takes `api.v1.FindQuery` (`filter` required, `include_raw`)
+  instead of a bare `Filter` (LIB-10). Unset or false `include_raw`
+  omits `Record.raw`; `get` still always returns `raw`.
+- `SearchQuery.include_raw` (default false) fills `SearchHits.Hit.raw`.
+  CLI `--include-raw` on `find` / `search`.
+- `python/cli` `find` / `search` / `reindex` stdout is YAML. Multiple
+  records, hits, or topic reports are YAML documents separated by `---`.
+  `FindResult.total` is a first document when the page is non-empty.
+  `Record.raw` / `Hit.raw` only with `--include-raw`.
 - Python `py_*` (`python_pkg`, `python/cli`) skip Windows
   (`target_compatible_with` `NOT_WINDOWS`), same as ruff / pip-audit:
   `bazel build //...` must not fetch aspect_rules_py's uv host
@@ -78,9 +127,9 @@ API or on-disk format changes bump the minor.
 - CLI argv is `14`: `--vault`, `open` / `info` / `create-collection`,
   `collection NAME <subcommand>`, Vault `find` / `search` with
   `--collections`. JSON is the Protobuf JSON mapping of `api/v1`.
-  `--onnx-embedder` / `--reranker-onnx` require exactly `model.onnx` and
-  `tokenizer.json` (missing or extra non-hidden names → `invalid`; hidden
-  names such as `.metadata.yaml` are ignored; unset → no vector leg / RRF).
+  `--model2vec-embedder DIR` requires `config.json`, `tokenizer.json`,
+  and `model.safetensors` (missing → `invalid`; extra files allowed;
+  hidden names ignored; unset → no vector leg unless HTTP embedder flags).
   `--embedder-openai-url` / `--embedder-model` / `--embedder-dimensions`
   (all three or none) and `--reranker-cohere-url` / `--reranker-model`
   (both or none) call OpenAI embeddings and Cohere/Jina rerank over HTTP

@@ -165,7 +165,7 @@ fn records_do_not_cross_vaults() {
     let east_scan = east_vault
         .collection("east_docs")
         .unwrap()
-        .find(&Filter::all(), 0, 1000)
+        .find(&Filter::all().into(), 0, 1000)
         .unwrap();
     assert_eq!(east_scan.records.len(), 1);
     assert_eq!(

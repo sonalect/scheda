@@ -31,6 +31,7 @@ py_library(
     visibility = ["//visibility:private"],
     deps = [
         ":vllm_pkg",
+        "@pypi//huggingface_hub",
         "@pypi//vllm",
     ],
 )
@@ -57,6 +58,40 @@ py_binary(
     data = ["qwen3_reranker.jinja"],
     imports = _IMPORTS,
     main = "reranker.py",
+    package_collisions = _COLLISIONS,
+    tags = _TAGS,
+    target_compatible_with = _LINUX,
+    venv = "scheda",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":serve_lib",
+        "@pypi//vllm",
+    ],
+)
+
+# CC BY-NC 4.0 Hub weights. Same ports as Qwen; stop `:embedder` / `:reranker`
+# first. `tags = ["manual"]` so `bazel build //...` does not fetch them.
+py_binary(
+    name = "embedder_jina",
+    srcs = ["embedder_jina.py"],
+    imports = _IMPORTS,
+    main = "embedder_jina.py",
+    package_collisions = _COLLISIONS,
+    tags = _TAGS,
+    target_compatible_with = _LINUX,
+    venv = "scheda",
+    visibility = ["//visibility:public"],
+    deps = [
+        ":serve_lib",
+        "@pypi//vllm",
+    ],
+)
+
+py_binary(
+    name = "reranker_jina",
+    srcs = ["reranker_jina.py"],
+    imports = _IMPORTS,
+    main = "reranker_jina.py",
     package_collisions = _COLLISIONS,
     tags = _TAGS,
     target_compatible_with = _LINUX,

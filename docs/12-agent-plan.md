@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.22, 26 August 2026.
+Document 12 of the Scheda package. Version 0.27, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -70,12 +70,12 @@ These must not block A0–A7. Writes must not depend on them (`10` §4–5).
   waits on encryption.
 - File watcher, `delete_one`, REL-4, extra language bindings (`10` §5).
 - Collection-named tools or product rules in the CLI (`08`).
-- ONNX weights in this repository. `--onnx-embedder` / `--reranker-onnx`
-  still accept operator folders (`14`). The crate does not ship a model
-  (QRY-5). Prefer `--embedder-openai-url` / `--reranker-cohere-url` for
-  Qwen3-class models. Local sidecars: `bazel run //python/vllm:embedder`
-  and `//python/vllm:reranker` (locked `vllm` in `uv.lock`; GPU is the
-  host's).
+- Weights in this repository. `--model2vec-embedder` still accepts an
+  operator folder (`14`). The crate does not ship a model (QRY-5). Prefer
+  `--embedder-openai-url` / `--reranker-cohere-url` for Qwen3-class
+  models. Local sidecars: `bazel run //python/vllm:embedder` and
+  `//python/vllm:reranker` (locked `vllm` in `uv.lock`; GPU is the
+  host's; Hub cache is `<workspace>/.cache/huggingface`).
 - `walk` / `walk_inverse` / `scan` / `init` / `clone` / `catalog` as
   library or CLI names (`07`, `13`, `14`).
 - `Collection.info`. Listing is `Vault.info`; Schema on a handle is
@@ -197,21 +197,23 @@ Close only after A1. Public crate API is `07` / `13`. `Embedder` /
       `collection(name)` returns the handle.
 - [x] Collection: `name`, `schema`, `add(id, RecordAdd)`, `get(id)`,
       `replace(id, RecordReplace)`, `history(id, offset, count)`,
-      `find(filter, offset, count)`, `search(query, reranker?)`.
+      `find(query, offset, count)`, `search(query, reranker?)`.
       No `Collection::info`.
-- [x] `Vault::find(collections, filter, offset, count)` and
+- [x] `Vault::find(collections, query, offset, count)` and
       `Vault::search(collections, query, reranker?)` (`07` LIB-10, LIB-11,
       `13`). Empty names = every non-isolated collection on this handle.
       Unknown name → `not_found`; isolated → `unsupported`. Collection
       `find` / `search` call those with `&[self.name]`. `Record.collection`
-      / `Hit.collection` are output only.
+      / `Hit.collection` are output only. `FindQuery.include_raw` /
+      `SearchQuery.include_raw` default off.
 - [x] `find`: Tantivy Query tree (`13` §3). `count` `0` → `invalid`. No
       `scan`. `document` / `singleton` score order; `journal` append order.
 - [x] `search`: `SearchQuery` (`k` only; no offset). RRF. Pool at least
       `max(k, 50)`. Optional `Reranker`; `Hit.rerank_score` only when set
       (`13` §6). No paging.
 - [x] Embedder at `open` only (`13` §4). One vector per field (`13` §5).
-      No embedder → vector leg off. Library does not load ONNX (QRY-5).
+      No embedder → vector leg off. Library does not load a ranking model
+      (QRY-5).
 - [x] Tests and Clippy clean. No `panic!` / `unwrap` / `expect` / `assert!`
       in `src/` (`07` §5).
 
@@ -225,28 +227,28 @@ Close only after A1. Public crate API is `07` / `13`. `Embedder` /
 
 Close only after A3. Replace `rust/cli` with a thin encoding of `07`.
 Argv is `14`. JSON is the Protobuf JSON mapping of `api/v1`. Operator
-dirs are checked here (missing / extra names → `invalid`). HTTP
+Model2Vec dirs are checked here (missing required files → `invalid`). HTTP
 embedder / reranker is A5.
 
-- [x] Globals: `--vault PATH` (required), `--auto-sync`, `--onnx-embedder
-      DIR` (`model.onnx` + `tokenizer.json`; missing → `invalid`; unset →
-      no vector leg).
+- [x] Globals: `--vault PATH` (required), `--auto-sync`,
+      `--model2vec-embedder DIR` (`config.json` + `tokenizer.json` +
+      `model.safetensors`; missing → `invalid`; unset → no vector leg).
 - [x] `open [--remote-repo URL]`. No `init` / `clone`. `--remote-repo` is
       not global.
 - [x] Vault commands: `info`, `create-collection NAME --schema`,
       `collection NAME <subcommand>`, `begin`, `commit -m`, `discard`,
       `check`, `reindex`, `find`, `search`, `push`, `pull`, `sync`. No `catalog`.
 - [x] Vault `find [--collections NAME,…] --filter --offset --count` and
-      Vault `search [--collections NAME,…] --query` [`--reranker-onnx`]
-      (`14`). Unset `--collections` → every non-isolated collection.
+      Vault `search [--collections NAME,…] --query` (`14`). Unset
+      `--collections` → every non-isolated collection.
       Unknown name → `not_found`; isolated → `unsupported`. Collection
       `find` / `search` have no `--collections`. JSON includes
       `Record.collection` / `Hit.collection`.
 - [x] `collection NAME` subcommands: `schema`, `add`, `get`, `history`,
       `replace`, `find`, `search`. No `--collection` flag.
-- [x] `search --query JSON` (or stdin) [`--reranker-onnx DIR`]. No
-      `--text` / `--query` dual path. `--reranker-onnx` only on `search`
-      (same two files; missing → `invalid`; unset → RRF).
+- [x] `search --query JSON` (or stdin) [`--reranker-cohere-url` /
+      `--reranker-model`]. No `--text` / `--query` dual path. Reranker
+      flags only on `search` (unset → RRF).
 - [x] Gone: `find-one`, `insert-one`, `replace-one`, `scan`, `walk`,
       `walk-inverse`, `push-remote`, `pull-remote`, `sync-remote`,
       `history --path`, Record path from the caller.
@@ -267,13 +269,18 @@ embedder / reranker is A5.
 
 **Codes:** IDX-8, QRY-5, `13` §4–6, `14`.
 
-Close only after A4. A4 argv and ONNX folder checks stay. This stage
+Close only after A4. A4 argv and Model2Vec folder checks stay. This stage
 wires `--embedder-openai-url` / `--reranker-cohere-url`. The **library**
 still does not call HTTP (QRY-5); only `rust/cli` does. ISO-1: those
 flags are opt-in; `auto_sync` off still does not call git remotes. Local
 Qwen sidecars are `bazel run //python/vllm:embedder` and `:reranker`
 (locked `vllm` in `uv.lock`, host NVIDIA driver; not Echo sandbox
-hermeticity). Not a library check.
+hermeticity). Hub weights go to `<workspace>/.cache/huggingface`
+(`HF_HOME`). Opt-in Jina sidecars (`:embedder_jina` / `:reranker_jina`,
+CC BY-NC 4.0) share those ports. Testdata driver:
+`bazel run //python/cli:cli_LLMs` (Qwen HTTP), `//python/cli:cli_jina`
+(Jina HTTP), and `//python/cli:cli_model2vec` (local Model2Vec cache).
+Not a library check.
 
 - [x] `--embedder-openai-url` + `--embedder-model` +
       `--embedder-dimensions`: `POST` OpenAI embeddings JSON; implement
@@ -281,16 +288,16 @@ hermeticity). Not a library check.
       partial). `http`/`https` only. `--embedder-api-key-env-var` when
       set (Bearer from that env; missing/empty → `invalid`); unset → no
       auth. Unset HTTP flags still turn the vector leg off. Not with
-      `--onnx-embedder`.
+      `--model2vec-embedder`.
 - [ ] `add` / `replace` / `reindex` with the embedder set write per-field
       vectors (`13` §5). `search` vector leg retrieves those ids (QRY-3
       synonym fixture: hit from the vector leg).
 - [x] `--reranker-cohere-url` + `--reranker-model` on `search` only:
       implement `Reranker`; `POST` Cohere/Jina `{ query, documents,
       model }`. Both flags or none (`invalid` if partial). Hits come
-      back with `rerank_score`. Unset → RRF, no `rerank_score`. Not with
-      `--reranker-onnx`. `--reranker-api-key-env-var` when set (same
-      Bearer rule as the embedder).
+      back with `rerank_score`. Unset → RRF, no `rerank_score`.
+      `--reranker-api-key-env-var` when set (same Bearer rule as the
+      embedder).
 - [ ] Same endpoint, library `Embedder` / `Reranker` vs CLI: vector /
       rerank scores match (AGT-4). `auto_sync` off still does not call
       git remotes (ISO-1).

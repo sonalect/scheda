@@ -191,7 +191,9 @@ fn post_json(url: &str, key: Option<&str>, body: Value, frame: &str) -> Result<V
     if let Some(key) = key {
         request = request.header("Authorization", format!("Bearer {key}"));
     }
-    let mut response = request.send_json(&body).map_err(|err| map_ureq(err, frame))?;
+    let mut response = request
+        .send_json(&body)
+        .map_err(|err| map_ureq(err, frame))?;
     let status = response.status();
     let value: Value = response
         .body_mut()

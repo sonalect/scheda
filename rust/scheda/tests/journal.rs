@@ -156,7 +156,7 @@ fn size_cap_closes_segment_without_rewriting_it() {
     assert!(before.len() as u64 <= 45);
     assert!(scratch.log_dir().join("00000002.jsonl").is_file());
     let ids: Vec<_> = collection
-        .find(&Filter::all(), 0, 1000)
+        .find(&Filter::all().into(), 0, 1000)
         .unwrap()
         .records
         .into_iter()
@@ -195,7 +195,7 @@ fn empty_find_and_scan_keep_append_order_across_rotate() {
     collection.add("a", rec("x")).unwrap();
     collection.add("b", rec("x")).unwrap();
     collection.add("c", rec("x")).unwrap();
-    let found = collection.find(&Filter::all(), 0, 1000).unwrap();
+    let found = collection.find(&Filter::all().into(), 0, 1000).unwrap();
     assert_eq!(found.total, Some(3));
     let scan_ids: Vec<_> = found
         .records
@@ -203,7 +203,7 @@ fn empty_find_and_scan_keep_append_order_across_rotate() {
         .map(|record| record.id.unwrap())
         .collect();
     let find_ids: Vec<_> = collection
-        .find(&Filter::all(), 0, 100)
+        .find(&Filter::all().into(), 0, 100)
         .unwrap()
         .records
         .into_iter()

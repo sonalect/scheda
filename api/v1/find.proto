@@ -10,11 +10,11 @@
 // Record in the selected collections. `QueryParser` is not a `Query`;
 // it is not here.
 //
-// Paging is the Tantivy collector, not part of `Filter`:
+// Paging is the Tantivy collector, not part of `Filter` / `FindQuery`:
 // `(Count, TopDocs::with_limit(count).and_offset(offset))`, then
 // `order_by_score()` unless the selection is exactly one `journal`
 // (append-order fast field, QRY-7). `Count` is indexed hits
-// (`FindResult.total`). `Vault.find` takes collection names, `Filter`,
+// (`FindResult.total`). `Vault.find` takes collection names, `FindQuery`,
 // `offset`, and `count`. `Collection.find` passes that collection's name.
 // `FindResult` is one page. Output, not a write envelope: no field
 // validators (same as `History`).
@@ -71,7 +71,9 @@ message Filter {
       string: {min_len: 1}
     }];
     // Tokens in order. At least two.
-    repeated string terms = 2 [(buf.validate.field) = {repeated: {min_items: 2}}];
+    repeated string terms = 2 [(buf.validate.field) = {
+      repeated: {min_items: 2}
+    }];
     // Extra positions allowed between tokens. Unset or `0` → adjacent.
     uint32 slop = 3;
   }
@@ -86,7 +88,9 @@ message Filter {
     }];
     // Complete tokens before the prefix. Last Tantivy term is `prefix`.
     // Together with `prefix` there must be at least two terms.
-    repeated string terms = 2 [(buf.validate.field) = {repeated: {min_items: 1}}];
+    repeated string terms = 2 [(buf.validate.field) = {
+      repeated: {min_items: 1}
+    }];
     // Prefix of the last token (not a full term).
     string prefix = 3 [(buf.validate.field) = {
       required: true
@@ -109,7 +113,9 @@ message Filter {
       string: {min_len: 1}
     }];
     // Max edits. Tantivy `u8`. Unset or `0` → exact.
-    uint32 distance = 3 [(buf.validate.field) = {uint32: {lte: 255}}];
+    uint32 distance = 3 [(buf.validate.field) = {
+      uint32: {lte: 255}
+    }];
     // `true` → `FuzzyTermQuery::new_prefix` (prefix of `term`).
     bool prefix = 4;
     // `true` → a transposition costs 1, not 2.
@@ -270,7 +276,10 @@ message Filter {
     // Extra weight for non-max clauses. Unset or `0` → max only. Finite
     // and ≥ 0.
     float tie_breaker = 2 [(buf.validate.field) = {
-      float: {finite: true gte: 0}
+      float: {
+        finite: true
+        gte: 0
+      }
       cel: [
         {
           id: "filter.disjunction_max.tie_breaker.finite"
@@ -307,7 +316,9 @@ message Filter {
       option (buf.validate.oneof).required = true;
       // Record identity in this collection. Library maps it to the
       // indexed document (not a Tantivy `DocAddress`).
-      string id = 1 [(buf.validate.field) = {string: {min_len: 1}}];
+      string id = 1 [(buf.validate.field) = {
+        string: {min_len: 1}
+      }];
       // Caller-supplied field values instead of a stored Record.
       Fields fields = 2;
     }
@@ -375,6 +386,15 @@ message Filter {
     // More-like-this.
     MoreLikeThis more_like_this = 16;
   }
+}
+
+// `Vault.find` / `Collection.find` request (`07` LIB-10). Collection
+// names, `offset`, and `count` stay method arguments. Unset `filter`
+// is `invalid`. Unset or false `include_raw` omits `Record.raw`.
+message FindQuery {
+  Filter filter = 1 [(buf.validate.field) = {required: true}];
+  // When true, fill `Record.raw` on each hit. `get` always returns `raw`.
+  bool include_raw = 2;
 }
 
 // One `find` page. Output; no field validators.

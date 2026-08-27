@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, RecordAdd, Vault};
+use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -73,8 +73,8 @@ fn rec_body(fields: Value, body: &str) -> RecordAdd {
     serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
 }
 
-fn filter(value: Value) -> Filter {
-    serde_json::from_value(value).unwrap()
+fn filter(value: Value) -> FindQuery {
+    serde_json::from_value::<Filter>(value).unwrap().into()
 }
 
 fn ids(result: &scheda::FindResult) -> Vec<&str> {
@@ -103,18 +103,18 @@ fn empty_filter_and_scan_return_every_record() {
         .add("b", rec(json!({"title": "B", "tag": "blue"})))
         .unwrap();
     collection.add("c", rec(json!({"title": "C"}))).unwrap();
-    let found = collection.find(&Filter::all(), 0, 100).unwrap();
+    let found = collection.find(&Filter::all().into(), 0, 100).unwrap();
     assert_eq!(found.records.len(), 3);
     assert_eq!(found.total, Some(3));
     assert_eq!(
         collection
-            .find(&Filter::all(), 0, 1000)
+            .find(&Filter::all().into(), 0, 1000)
             .unwrap()
             .records
             .len(),
         3
     );
-    let page = collection.find(&Filter::all(), 0, 1).unwrap();
+    let page = collection.find(&Filter::all().into(), 0, 1).unwrap();
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.total, Some(3));
 }
@@ -124,8 +124,29 @@ fn find_count_zero_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
-    let err = collection.find(&Filter::all(), 0, 0).unwrap_err();
+    let err = collection.find(&Filter::all().into(), 0, 0).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn find_omits_raw_unless_include_raw() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "A", "tag": "red"})))
+        .unwrap();
+    let omitted = collection.find(&FindQuery::all(), 0, 10).unwrap();
+    assert!(omitted.records[0].raw.is_none());
+    let included = collection
+        .find(&FindQuery::all().with_include_raw(true), 0, 10)
+        .unwrap();
+    assert!(
+        included.records[0]
+            .raw
+            .as_ref()
+            .is_some_and(|raw| !raw.is_empty())
+    );
 }
 
 #[test]
@@ -145,7 +166,7 @@ fn vault_find_empty_names_is_all_collections() {
         .unwrap()
         .add("home", rec(json!({"title": "Home"})))
         .unwrap();
-    let all = vault.find(&[], &Filter::all(), 0, 100).unwrap();
+    let all = vault.find(&[], &Filter::all().into(), 0, 100).unwrap();
     let mut all_ids = ids(&all);
     all_ids.sort_unstable();
     assert_eq!(all_ids, ["home", "red"]);
@@ -163,7 +184,7 @@ fn vault_find_empty_names_is_all_collections() {
     assert_eq!(names, [("home", "query_pages"), ("red", "query_notes")]);
     assert_eq!(
         ids(&vault
-            .find(&["query_notes"], &Filter::all(), 0, 100)
+            .find(&["query_notes"], &Filter::all().into(), 0, 100)
             .unwrap()),
         ["red"]
     );
@@ -180,7 +201,7 @@ fn vault_find_empty_names_is_all_collections() {
     );
     assert_eq!(
         vault
-            .find(&["missing"], &Filter::all(), 0, 10)
+            .find(&["missing"], &Filter::all().into(), 0, 10)
             .unwrap_err()
             .known_code(),
         Some(Code::NotFound)
@@ -288,7 +309,7 @@ fn document_filter_on_project_field() {
         )
         .unwrap();
     assert_eq!(ids(&projects), ["alpha"]);
-    let all_page = collection.find(&Filter::all(), 0, 100).unwrap();
+    let all_page = collection.find(&Filter::all().into(), 0, 100).unwrap();
     let mut all = ids(&all_page);
     all.sort_unstable();
     assert_eq!(all, ["alpha", "home"]);
@@ -312,7 +333,7 @@ fn journal_empty_find_keeps_append_order() {
         .unwrap();
     assert_eq!(ids(&found), ["a"]);
     assert_eq!(
-        ids(&collection.find(&Filter::all(), 0, 1000).unwrap()),
+        ids(&collection.find(&Filter::all().into(), 0, 1000).unwrap()),
         ["a", "b"]
     );
 }

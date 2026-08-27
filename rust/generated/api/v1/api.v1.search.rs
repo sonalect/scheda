@@ -41,6 +41,15 @@ pub struct SearchQuery {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub vector_weight: ::core::option::Option<f64>,
+    /// When true, fill `Hit.raw`. Unset or false → omit those bytes.
+    ///
+    /// Field 6: `include_raw`
+    #[serde(
+        rename = "includeRaw",
+        alias = "include_raw",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub include_raw: ::core::option::Option<bool>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -53,6 +62,7 @@ impl ::core::fmt::Debug for SearchQuery {
             .field("filter", &self.filter)
             .field("lexical_weight", &self.lexical_weight)
             .field("vector_weight", &self.vector_weight)
+            .field("include_raw", &self.include_raw)
             .finish()
     }
 }
@@ -93,6 +103,13 @@ impl SearchQuery {
     ///Sets [`Self::vector_weight`] to `Some(value)`, consuming and returning `self`.
     pub fn with_vector_weight(mut self, value: f64) -> Self {
         self.vector_weight = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::include_raw`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_include_raw(mut self, value: bool) -> Self {
+        self.include_raw = Some(value);
         self
     }
 }
@@ -136,6 +153,9 @@ impl ::buffa::Message for SearchQuery {
         if self.vector_weight.is_some() {
             size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
         }
+        if self.include_raw.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -165,6 +185,9 @@ impl ::buffa::Message for SearchQuery {
         }
         if let Some(v) = self.vector_weight {
             ::buffa::types::put_double_field(5u32, v, buf);
+        }
+        if let Some(v) = self.include_raw {
+            ::buffa::types::put_bool_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -227,6 +250,15 @@ impl ::buffa::Message for SearchQuery {
                     ::buffa::types::decode_double(buf)?,
                 );
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.include_raw = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -240,6 +272,7 @@ impl ::buffa::Message for SearchQuery {
         self.filter = ::buffa::MessageField::none();
         self.lexical_weight = ::core::option::Option::None;
         self.vector_weight = ::core::option::Option::None;
+        self.include_raw = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -477,6 +510,15 @@ pub mod search_hits {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub rerank_score: ::core::option::Option<f64>,
+        /// Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
+        ///
+        /// Field 8: `raw`
+        #[serde(
+            rename = "raw",
+            with = "::buffa::json_helpers::opt_bytes",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub raw: ::core::option::Option<::buffa::alloc::vec::Vec<u8>>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -491,6 +533,7 @@ pub mod search_hits {
                 .field("vector_score", &self.vector_score)
                 .field("rrf_score", &self.rrf_score)
                 .field("rerank_score", &self.rerank_score)
+                .field("raw", &self.raw)
                 .finish()
         }
     }
@@ -560,6 +603,16 @@ pub mod search_hits {
             self.rerank_score = Some(value);
             self
         }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::raw`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_raw(
+            mut self,
+            value: impl Into<::buffa::alloc::vec::Vec<u8>>,
+        ) -> Self {
+            self.raw = Some(value.into());
+            self
+        }
     }
     ::buffa::impl_default_instance!(Hit);
     impl ::buffa::MessageName for Hit {
@@ -602,6 +655,9 @@ pub mod search_hits {
             if self.rerank_score.is_some() {
                 size += 1u64 + ::buffa::types::FIXED64_ENCODED_LEN as u64;
             }
+            if let Some(ref v) = self.raw {
+                size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -632,6 +688,9 @@ pub mod search_hits {
             }
             if let Some(v) = self.rerank_score {
                 ::buffa::types::put_double_field(7u32, v, buf);
+            }
+            if let Some(ref v) = self.raw {
+                ::buffa::types::put_shared_bytes_field(8u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -716,6 +775,16 @@ pub mod search_hits {
                         ::buffa::types::decode_double(buf)?,
                     );
                 }
+                8u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_bytes(
+                        self.raw.get_or_insert_with(::buffa::alloc::vec::Vec::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -731,6 +800,7 @@ pub mod search_hits {
             self.vector_score = ::core::option::Option::None;
             self.rrf_score = ::core::option::Option::None;
             self.rerank_score = ::core::option::Option::None;
+            self.raw = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }

@@ -45,7 +45,10 @@ message Schema {
 message Journal {
   // Byte cap. Omitted → default 8 MiB. If set, 1…32 MiB (SCH-14).
   uint64 segment_max_bytes = 1 [(buf.validate.field) = {
-    uint64: {gte: 1 lte: 33554432}
+    uint64: {
+      gte: 1
+      lte: 33554432
+    }
   }];
   // Optional line cap in addition to the byte cap. Omitted → no line cap.
   // If present, must be >= 1.

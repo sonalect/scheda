@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.15, 27 August 2026.
+Document 13 of the Scheda package. Version 0.17, 27 August 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -12,13 +12,13 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 
 | | `find` | `search` |
 |---|---|---|
-| Call | Vault `find(collections, filter, offset, count)`. Collection `find(filter, offset, count)` calls that with its name. | Vault `search(collections, query, reranker?)`. Collection `search(query, reranker?)` calls that with its name. |
-| In | `api.v1.Filter` plus a set of collection names (empty = this Vault, non-isolated) | `api.v1.SearchQuery` (`text` required) plus the same name set |
-| Out | `api.v1.FindResult` (`records` plus `total`; `Record.collection` on each hit) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker) |
+| Call | Vault `find(collections, query, offset, count)`. Collection `find(query, offset, count)` calls that with its name. | Vault `search(collections, query, reranker?)`. Collection `search(query, reranker?)` calls that with its name. |
+| In | `api.v1.FindQuery` (`Filter` required; `include_raw` default false) plus a set of collection names (empty = this Vault, non-isolated) | `api.v1.SearchQuery` (`text` required; `include_raw` default false) plus the same name set |
+| Out | `api.v1.FindResult` (`records` plus `total`; `Record.collection` on each hit; `Record.raw` only if `include_raw`) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker; `raw` only if `include_raw`) |
 | Engine | Tantivy Query only | BM25 (Tantivy) **and** ANN (USearch), RRF, then optional rerank |
 | Vectors | no | yes, if an embedder is set |
 
-Names are a method argument, not a field on `Filter` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → `unsupported`.
+Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → `unsupported`.
 
 `get` / `add` / `history` do not wait on the Index. `find` / `search` / `replace` take `id`s from the Index, then open files. Orphan file: `get` works; `find` / `search` skip it until indexed.
 
@@ -38,11 +38,11 @@ First write or `reindex` creates the engines if missing. `add` / `replace` updat
 
 ## 3. `find`
 
-1. Validate `Filter` (`kind` required). `count == 0` → `invalid`. Resolve `collections` (empty → non-isolated on this handle). Explicit name whose Schema rejects the `Filter` → `invalid`. Empty set: omit collections that reject it.
+1. Validate `FindQuery` (`Filter.kind` required). `count == 0` → `invalid`. Resolve `collections` (empty → non-isolated on this handle). Explicit name whose Schema rejects the `Filter` → `invalid`. Empty set: omit collections that reject it.
 2. Run that Query on the vault Tantivy index with `MUST` collection in the resolved names.
 3. Collector: `(Count, TopDocs::with_limit(count).and_offset(offset))` in one `search()`. `Count` is indexed hits (`FindResult.total`).
 4. Order: exactly one resolved collection and it is `journal` → append order (`order_by_fast_field` on segment+line ordinal). Otherwise `order_by_score()`. Rotation does not reorder old lines.
-5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`; `total` is still the match count. A missing file is omitted from `records` and does not decrease `total`.
+5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`; `total` is still the match count. A missing file is omitted from `records` and does not decrease `total`. Unset or false `include_raw` omits `Record.raw`; true fills it (`get` always returns `raw`).
 
 `Filter` is a Tantivy 0.26 Query tree (`all`, `empty`, `term`, `term_set`, `phrase`, `phrase_prefix`, `fuzzy`, `regex`, `regex_phrase`, `range`, `exists`, `boolean` with `must` / `should` / `must_not`, `boost`, `const_score`, `disjunction_max`, `more_like_this`). No QueryParser string. AND = `OCCUR_MUST`, OR = `OCCUR_SHOULD`. Field `id` is Record identity (`term`, `term_set`, `range` only). Field `body` is Markdown prose on `document` (unless `no_body` or `exclude_fts`). `exclude_find` fields cannot appear. `id` cannot be excluded.
 
@@ -64,10 +64,10 @@ plus `model_id` and `dimensions`. No function → vector leg off; `find`, BM25, 
 
 CLI hook (`14`): `--embedder-openai-url` plus `--embedder-model` and
 `--embedder-dimensions` (OpenAI `POST` `{URL}embeddings`), or
-`--onnx-embedder DIR`. All three HTTP flags or none. Unset → lexical
+`--model2vec-embedder DIR`. All three HTTP flags or none. Unset → lexical
 only. The CLI is that program; Scheda still does not ship weights.
 
-Scheda does not ship weights, ONNX, or a chat LLM.
+Scheda does not ship weights or a chat LLM.
 
 ---
 
@@ -100,6 +100,7 @@ Steps:
 3. Vector (weight > 0 and embedder set): `embed(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
 4. Fuse ranks with RRF. Candidate pool is **larger than `k`**: at least `max(k, 50)` from the fused list (or all fused hits if fewer).
 5. If a **reranker** is passed to `search`: `get` each pooled Record; call `score(query.text, record)` once per candidate; sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
+6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
 
 Invalid / missing Index → no hits or `index_unusable`, never another Vault’s ids.
 
@@ -111,12 +112,11 @@ Not a model inside Scheda. Not a proto field. Same idea as the embedder: the **p
 score(query_text, record) → float
 ```
 
-`None` → order is RRF. Network inside that function is the program’s problem. The library does not load ONNX/cross-encoder plugins by itself.
+`None` → order is RRF. Network inside that function is the program’s problem. The library does not load a ranking model (QRY-5).
 
 CLI hook on `search` (`14`): `--reranker-cohere-url` plus
-`--reranker-model` (Cohere/Jina `POST` `{URL}rerank`), or
-`--reranker-onnx DIR`. Both HTTP flags or none. Unset → RRF. Missing
-ONNX files → `invalid`.
+`--reranker-model` (Cohere/Jina `POST` `{URL}rerank`). Both HTTP flags
+or none. Unset → RRF.
 
 ---
 

@@ -143,9 +143,7 @@ fn fixture_with_note() -> Scratch {
     vault
         .create_collection("agent_notes", notes_decl())
         .unwrap();
-    vault
-        .create_collection("agent_log", log_decl())
-        .unwrap();
+    vault.create_collection("agent_log", log_decl()).unwrap();
     vault
         .collection("agent_notes")
         .unwrap()
@@ -187,7 +185,7 @@ fn help_lists_lib2_tools_not_collection_names() {
         "push",
         "pull",
         "sync",
-        "onnx-embedder",
+        "model2vec-embedder",
         "embedder-openai-url",
         "embedder-model",
         "embedder-dimensions",
@@ -208,11 +206,10 @@ fn help_lists_lib2_tools_not_collection_names() {
         "sync-remote",
         "init",
         "clone",
+        "onnx-embedder",
+        "reranker-onnx",
     ] {
-        assert!(
-            !help.contains(gone),
-            "legacy {gone} still in help:\n{help}"
-        );
+        assert!(!help.contains(gone), "legacy {gone} still in help:\n{help}");
     }
     assert!(!help.contains("agent_notes"));
     assert!(!help.contains("west_docs"));
@@ -226,6 +223,15 @@ fn scripted_find_search_get_journal_add_commit() {
     let query = text_query("Alpha");
 
     let found = run(&[
+        "--vault", &path, "find", "--filter", &filter, "--offset", "0", "--count", "10",
+    ]);
+    let page = stdout_json(&found);
+    assert_eq!(page["records"][0]["id"], "alpha");
+    assert_eq!(page["records"][0]["collection"], "agent_notes");
+    assert_eq!(page["total"], 1);
+    assert!(page["records"][0].get("raw").is_none());
+
+    let found_raw = run(&[
         "--vault",
         &path,
         "find",
@@ -235,11 +241,10 @@ fn scripted_find_search_get_journal_add_commit() {
         "0",
         "--count",
         "10",
+        "--include-raw",
     ]);
-    let page = stdout_json(&found);
-    assert_eq!(page["records"][0]["id"], "alpha");
-    assert_eq!(page["records"][0]["collection"], "agent_notes");
-    assert_eq!(page["total"], 1);
+    let page_raw = stdout_json(&found_raw);
+    assert!(page_raw["records"][0]["raw"].as_str().is_some());
 
     let search = run(&["--vault", &path, "search", "--query", &query]);
     let hits = stdout_json(&search);
@@ -427,13 +432,7 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
     assert_eq!(error_json(&invalid)["code"], "CODE_INVALID");
 
     fs::write(scratch.vault().join(".scheda/index/format"), "999\n").unwrap();
-    let unusable = run(&[
-        "--vault",
-        &path,
-        "search",
-        "--query",
-        &text_query("Alpha"),
-    ]);
+    let unusable = run(&["--vault", &path, "search", "--query", &text_query("Alpha")]);
     assert_eq!(error_json(&unusable)["code"], "CODE_INDEX_VERSION");
 }
 
@@ -548,7 +547,7 @@ fn src_does_not_name_fixture_collections() {
         "{}\n{}\n{}",
         include_str!("../src/main.rs"),
         include_str!("../src/args.rs"),
-        include_str!("../src/onnx.rs")
+        include_str!("../src/model2vec.rs")
     );
     for name in ["agent_notes", "agent_log", "agent_pages"] {
         assert!(
@@ -631,7 +630,7 @@ fn vault_find_scopes_collections() {
 }
 
 #[test]
-fn onnx_embedder_dir_must_have_both_files() {
+fn model2vec_embedder_dir_must_have_model_files() {
     let scratch = fixture_with_note();
     let path = vault_arg(&scratch);
     let dir = scratch.root.join("ops");
@@ -640,75 +639,28 @@ fn onnx_embedder_dir_must_have_both_files() {
     let missing = run(&[
         "--vault",
         &path,
-        "--onnx-embedder",
+        "--model2vec-embedder",
         &dir.display().to_string(),
         "info",
-    ]);
-    assert_eq!(error_json(&missing)["code"], "CODE_INVALID");
-
-    fs::write(dir.join("model.onnx"), b"not-onnx").unwrap();
-    fs::write(dir.join("extra.bin"), b"x").unwrap();
-    let extra = run(&[
-        "--vault",
-        &path,
-        "--onnx-embedder",
-        &dir.display().to_string(),
-        "info",
-    ]);
-    assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-}
-
-#[test]
-fn reranker_onnx_only_on_search_and_missing_is_invalid() {
-    let scratch = fixture_with_note();
-    let path = vault_arg(&scratch);
-    let dir = scratch.root.join("rank");
-    fs::create_dir_all(&dir).unwrap();
-    let missing = run(&[
-        "--vault",
-        &path,
-        "search",
-        "--query",
-        &text_query("Alpha"),
-        "--reranker-onnx",
-        &dir.display().to_string(),
     ]);
     assert_eq!(error_json(&missing)["code"], "CODE_INVALID");
 }
 
 #[test]
-fn embedder_openai_rejects_partial_flags_non_http_and_onnx_together() {
+fn embedder_openai_rejects_partial_flags_non_http_and_model2vec_together() {
     let scratch = fixture_with_note();
     let path = vault_arg(&scratch);
     let url = "http://127.0.0.1:8080/v1/";
     let ftp = "ftp://127.0.0.1/v1/";
     let model = "Qwen/Qwen3-Embedding-0.6B";
 
-    let url_only = run(&[
-        "--vault",
-        &path,
-        "--embedder-openai-url",
-        url,
-        "info",
-    ]);
+    let url_only = run(&["--vault", &path, "--embedder-openai-url", url, "info"]);
     assert_eq!(error_json(&url_only)["code"], "CODE_INVALID");
 
-    let model_only = run(&[
-        "--vault",
-        &path,
-        "--embedder-model",
-        model,
-        "info",
-    ]);
+    let model_only = run(&["--vault", &path, "--embedder-model", model, "info"]);
     assert_eq!(error_json(&model_only)["code"], "CODE_INVALID");
 
-    let dim_only = run(&[
-        "--vault",
-        &path,
-        "--embedder-dimensions",
-        "1024",
-        "info",
-    ]);
+    let dim_only = run(&["--vault", &path, "--embedder-dimensions", "1024", "info"]);
     assert_eq!(error_json(&dim_only)["code"], "CODE_INVALID");
 
     let missing_dim = run(&[
@@ -750,8 +702,9 @@ fn embedder_openai_rejects_partial_flags_non_http_and_onnx_together() {
 
     let dir = scratch.root.join("ops");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join("model.onnx"), b"not-onnx").unwrap();
+    fs::write(dir.join("config.json"), "{}").unwrap();
     fs::write(dir.join("tokenizer.json"), "{}").unwrap();
+    fs::write(dir.join("model.safetensors"), b"not-a-model").unwrap();
     let both = run(&[
         "--vault",
         &path,
@@ -761,7 +714,7 @@ fn embedder_openai_rejects_partial_flags_non_http_and_onnx_together() {
         model,
         "--embedder-dimensions",
         "1024",
-        "--onnx-embedder",
+        "--model2vec-embedder",
         &dir.display().to_string(),
         "info",
     ]);
@@ -813,6 +766,10 @@ fn reranker_cohere_only_on_search_and_rejects_partial_or_non_http() {
     assert!(
         help.contains("reranker-api-key-env-var"),
         "missing reranker-api-key-env-var:\n{help}"
+    );
+    assert!(
+        !help.contains("reranker-onnx"),
+        "legacy reranker-onnx still in search help:\n{help}"
     );
 
     let url_only = run(&[

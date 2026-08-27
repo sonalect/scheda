@@ -12,6 +12,7 @@ dependencies = [
     "click==8.4.2",
     "cryptography==50.0.0",
     "googleapis-common-protos==1.75.1",
+    "huggingface-hub==1.28.0",
     "mcp==2.0.0",
     "mcp-types==2.0.0",
     "transformers==5.15.1",
@@ -51,7 +52,7 @@ convention = "google"
 "python/__init__.py" = ["D104"]
 "python/cli/__init__.py" = ["D104"]
 "python/cli/__main__.py" = ["D104"]
-"python/cli/main.py" = ["ANN401", "S404"]
+"python/cli/main.py" = ["ANN401", "S310", "S404"]
 "python/vllm/__init__.py" = ["D104"]
 
 [tool.ruff.format]

@@ -4,7 +4,7 @@ use mimalloc::MiMalloc;
 
 mod args;
 mod http;
-mod onnx;
+mod model2vec;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
-    Embedder, Error, Filter, OpenOptions, RecordAdd, RecordReplace, Reranker, Schema, SearchQuery,
-    Vault,
+    Embedder, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Reranker, Schema,
+    SearchQuery, Vault,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -63,7 +63,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         embedder_model,
         embedder_dimensions,
         embedder_api_key_env_var,
-        onnx_embedder,
+        model2vec_embedder,
         command,
     } = cli;
     let embedder = load_embedder(
@@ -71,7 +71,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         embedder_model.as_deref(),
         embedder_dimensions,
         embedder_api_key_env_var.as_deref(),
-        onnx_embedder.as_deref(),
+        model2vec_embedder.as_deref(),
     )?;
     match command {
         Command::Open { remote_repo } => {
@@ -89,31 +89,25 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             let collection = vault.create_collection(&name, schema)?;
             emit_json(&collection.schema()?)
         }
-        Command::Collection {
-            name,
-            command,
-        } => collection_dispatch(
-            &open_existing(&vault, auto_sync, embedder)?,
-            &name,
-            command,
-        ),
+        Command::Collection { name, command } => {
+            collection_dispatch(&open_existing(&vault, auto_sync, embedder)?, &name, command)
+        }
         Command::Begin => open_existing(&vault, auto_sync, embedder)?.begin(),
         Command::Commit { message } => open_existing(&vault, auto_sync, embedder)?.commit(&message),
         Command::Discard => open_existing(&vault, auto_sync, embedder)?.discard(),
         Command::Check => open_existing(&vault, auto_sync, embedder)?.check(),
-        Command::Reindex => {
-            emit_json(&open_existing(&vault, auto_sync, embedder)?.reindex()?)
-        }
+        Command::Reindex => emit_json(&open_existing(&vault, auto_sync, embedder)?.reindex()?),
         Command::Find {
             collections,
             filter,
             offset,
             count,
+            include_raw,
         } => {
             let vault = open_existing(&vault, auto_sync, embedder)?;
             let names = collection_names(&collections);
-            let filter = parse_filter(filter.as_deref())?;
-            emit_json(&vault.find(&names, &filter, offset, count)?)
+            let query = parse_find_query(filter.as_deref(), include_raw)?;
+            emit_json(&vault.find(&names, &query, offset, count)?)
         }
         Command::Search {
             collections,
@@ -121,12 +115,11 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         } => {
             let vault = open_existing(&vault, auto_sync, embedder)?;
             let names = collection_names(&collections);
-            let query = parse_search_query(search.query.as_deref())?;
+            let query = parse_search_query(search.query.as_deref(), search.include_raw)?;
             let reranker = load_reranker(
                 search.reranker_cohere_url.as_deref(),
                 search.reranker_model.as_deref(),
                 search.reranker_api_key_env_var.as_deref(),
-                search.reranker_onnx.as_deref(),
             )?;
             emit_json(&vault.search(&names, &query, reranker.as_deref())?)
         }
@@ -136,17 +129,11 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
     }
 }
 
-fn collection_dispatch(
-    vault: &Vault,
-    name: &str,
-    command: CollectionCommand,
-) -> Result<(), Error> {
+fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) -> Result<(), Error> {
     let collection = vault.collection(name)?;
     match command {
         CollectionCommand::Schema => emit_json(&collection.schema()?),
-        CollectionCommand::Add { id, record } => {
-            collection.add(&id, parse_add(record.as_deref())?)
-        }
+        CollectionCommand::Add { id, record } => collection.add(&id, parse_add(record.as_deref())?),
         CollectionCommand::Get { id } => emit_json(&collection.get(&id)?),
         CollectionCommand::History { id, offset, count } => {
             emit_json(&collection.history(&id, offset, count)?)
@@ -158,25 +145,26 @@ fn collection_dispatch(
             filter,
             offset,
             count,
+            include_raw,
         } => {
-            let filter = parse_filter(filter.as_deref())?;
-            emit_json(&collection.find(&filter, offset, count)?)
+            let query = parse_find_query(filter.as_deref(), include_raw)?;
+            emit_json(&collection.find(&query, offset, count)?)
         }
         CollectionCommand::Search {
-            search: SearchArgs {
-                query,
-                reranker_cohere_url,
-                reranker_model,
-                reranker_api_key_env_var,
-                reranker_onnx,
-            },
+            search:
+                SearchArgs {
+                    query,
+                    reranker_cohere_url,
+                    reranker_model,
+                    reranker_api_key_env_var,
+                    include_raw,
+                },
         } => {
-            let query = parse_search_query(query.as_deref())?;
+            let query = parse_search_query(query.as_deref(), include_raw)?;
             let reranker = load_reranker(
                 reranker_cohere_url.as_deref(),
                 reranker_model.as_deref(),
                 reranker_api_key_env_var.as_deref(),
-                reranker_onnx.as_deref(),
             )?;
             emit_json(&collection.search(&query, reranker.as_deref())?)
         }
@@ -217,19 +205,19 @@ fn load_embedder(
     model: Option<&str>,
     dimensions: Option<usize>,
     key_env: Option<&str>,
-    onnx_dir: Option<&Path>,
+    model2vec_dir: Option<&Path>,
 ) -> Result<Option<Arc<dyn Embedder>>, Error> {
     let url = nonempty(url);
     let model = nonempty(model);
     let key_env = nonempty(key_env);
-    if onnx_dir.is_some()
+    if model2vec_dir.is_some()
         && (url.is_some() || model.is_some() || dimensions.is_some() || key_env.is_some())
     {
         return Err(Error::invalid(
-            "use HTTP embedder flags or --onnx-embedder, not both",
+            "use HTTP embedder flags or --model2vec-embedder, not both",
         ));
     }
-    match (url, model, dimensions, onnx_dir) {
+    match (url, model, dimensions, model2vec_dir) {
         (None, None, None, None) => {
             if key_env.is_some() {
                 return Err(Error::invalid(
@@ -238,7 +226,7 @@ fn load_embedder(
             }
             Ok(None)
         }
-        (None, None, None, Some(dir)) => Ok(Some(onnx::load_embedder(dir)?)),
+        (None, None, None, Some(dir)) => Ok(Some(model2vec::load_embedder(dir)?)),
         (Some(url), Some(model), Some(dimensions), None) => {
             Ok(Some(http::load_embedder(url, model, dimensions, key_env)?))
         }
@@ -252,18 +240,12 @@ fn load_reranker(
     url: Option<&str>,
     model: Option<&str>,
     key_env: Option<&str>,
-    onnx_dir: Option<&Path>,
 ) -> Result<Option<Arc<dyn Reranker>>, Error> {
     let url = nonempty(url);
     let model = nonempty(model);
     let key_env = nonempty(key_env);
-    if onnx_dir.is_some() && (url.is_some() || model.is_some() || key_env.is_some()) {
-        return Err(Error::invalid(
-            "use HTTP reranker flags or --reranker-onnx, not both",
-        ));
-    }
-    match (url, model, onnx_dir) {
-        (None, None, None) => {
+    match (url, model) {
+        (None, None) => {
             if key_env.is_some() {
                 return Err(Error::invalid(
                     "--reranker-api-key-env-var requires the HTTP reranker flags",
@@ -271,8 +253,7 @@ fn load_reranker(
             }
             Ok(None)
         }
-        (None, None, Some(dir)) => Ok(Some(onnx::load_reranker(dir)?)),
-        (Some(url), Some(model), None) => Ok(Some(http::load_reranker(url, model, key_env)?)),
+        (Some(url), Some(model)) => Ok(Some(http::load_reranker(url, model, key_env)?)),
         _ => Err(Error::invalid(
             "--reranker-cohere-url and --reranker-model must both be set, or none",
         )),
@@ -292,11 +273,23 @@ fn parse_filter(json: Option<&str>) -> Result<Filter, Error> {
     Ok(filter)
 }
 
-fn parse_search_query(json: Option<&str>) -> Result<SearchQuery, Error> {
-    let query: SearchQuery = parse_json(&json_input(
+fn parse_find_query(json: Option<&str>, include_raw: bool) -> Result<FindQuery, Error> {
+    let mut query = FindQuery::from(parse_filter(json)?);
+    if include_raw {
+        query = query.with_include_raw(true);
+    }
+    query.require_valid()?;
+    Ok(query)
+}
+
+fn parse_search_query(json: Option<&str>, include_raw: bool) -> Result<SearchQuery, Error> {
+    let mut query: SearchQuery = parse_json(&json_input(
         json,
         "missing query JSON (pass --query or stdin)",
     )?)?;
+    if include_raw {
+        query = query.with_include_raw(true);
+    }
     query.require_valid()?;
     Ok(query)
 }

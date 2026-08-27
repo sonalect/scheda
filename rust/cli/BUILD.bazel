@@ -11,6 +11,7 @@ rust_binary(
         "//rust/scheda",
         "@cargo//:clap",
         "@cargo//:mimalloc",
+        "@cargo//:model2vec-rs",
         "@cargo//:serde",
         "@cargo//:serde_json",
         "@cargo//:ureq",

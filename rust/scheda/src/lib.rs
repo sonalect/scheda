@@ -69,9 +69,9 @@ pub use embed::{Embedder, Reranker};
 pub use error::{Code, Repeat};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Body, CollectionInfo, Edge, Error, Field, Filter, FindResult, History, Journal, Object,
-    OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema, SearchHits, SearchQuery,
-    Singleton, Text, Unit, VaultInfo, filter, history, search_hits,
+    Body, CollectionInfo, Edge, Error, Field, Filter, FindQuery, FindResult, History, Journal,
+    Object, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema, SearchHits,
+    SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history, search_hits,
 };
 pub use schema::Kind;
 pub use vault::{Collection, Vault};

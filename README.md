@@ -30,7 +30,7 @@ The design is a numbered package in `docs/`, in English.
 | [05-schema.md](docs/05-schema.md)                     | Schema as Vault data: fields, versions, index marks, edges, journal size cap                                          |
 | [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, `get`                                                                                               |
 | [13-find-and-search.md](docs/13-find-and-search.md)   | Target `find` / `search`: Tantivy Query, hybrid BM25 + USearch, per-field vectors, optional reranker                  |
-| [14-cli.md](docs/14-cli.md)                           | Target `scheda` CLI argv (`07`; `--embedder-openai-url`; `--reranker-cohere-url` on `search`)                         |
+| [14-cli.md](docs/14-cli.md)                           | Target `scheda` CLI argv (`07`; `--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url` on `search`) |
 | [07-api.md](docs/07-api.md)                           | Language-neutral library operations; message fields in `api/v1`                                                       |
 | [08-agent.md](docs/08-agent.md)                       | Same operations for an AI agent, Schema catalog, thin transport                                                       |
 | [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated git root and age encryption (**later**)                                    |
@@ -48,7 +48,7 @@ The design is a numbered package in `docs/`, in English.
 | [`rust/scheda`](rust/scheda)       | First implementation: Rust crate `scheda`                                                                                                         |
 | [`rust/cli`](rust/cli)             | Thin CLI binary `scheda` (`07` / `14`, AGT-2–5)                                                                                                   |
 | [`python/vllm`](python/vllm)       | `bazel run` vLLM sidecars (locked `uv.lock`; Linux)                                                                                               |
-| [`python/cli`](python/cli)         | Testdata driver for the `scheda` binary (`import` / `reindex` / `find` / `search` → `<workspace>/.vault-test`; fixtures in `python/cli/testdata`) |
+| [`python/cli`](python/cli)         | Testdata driver: `cli_LLMs`, `cli_jina` (CC BY-NC), `cli_model2vec`; fixtures in `python/cli/testdata` |
 | [`MODULE.bazel`](MODULE.bazel)     | Bazel module: host toolchain, crate_universe, Buf, linters                                                                                        |
 
 Dependency versions live only in the root `[workspace.dependencies]`. Member
@@ -81,7 +81,8 @@ bazel test //...
 
 Local Qwen HTTP sidecars (**Linux only**, host NVIDIA driver, **at least
 16 GiB** GPU memory for both processes on one card; `tags = ["manual"]`
-so `bazel build //...` does not fetch torch):
+so `bazel build //...` does not fetch torch). Weights go to
+`<workspace>/.cache/huggingface`:
 
 ```bash
 bazel run //python/vllm:embedder   # 127.0.0.1:8080  OpenAI /v1/embeddings
@@ -159,17 +160,28 @@ for /f %i in ('rustc --print host-tuple') do cargo build -p scheda-cli --release
 ## Python CLI
 
 Driver for the `scheda` binary against `python/cli/testdata/animals`
-(`mammals`, `birds`, `reptiles`). Vault: `<workspace>/.vault-test`
-(gitignored). Flags and JSON: [`docs/14-cli.md`](docs/14-cli.md).
+(`mammals`, `birds`, `reptiles`). Three Bazel targets, three gitignored
+Vaults. Flags and JSON: [`docs/14-cli.md`](docs/14-cli.md).
 
 Run commands from the clone root.
 
-**Requirements (vLLM sidecars / vector `import` / `reindex` / `search`):**
-Linux only; host NVIDIA driver; **at least 16 GiB** of GPU memory so
-embedder and reranker fit on one card. First start downloads Qwen
-weights. `find` and `--lexical-only` do not need a GPU.
+| Target | Vault | Embedder |
+| --- | --- | --- |
+| `//python/cli:cli_LLMs` | `.vault-test-LLMs` | Qwen HTTP sidecars (`:8080` / `:8081`) |
+| `//python/cli:cli_jina` | `.vault-test-jina` | Jina HTTP sidecars (`:8080` / `:8081`, CC BY-NC) |
+| `//python/cli:cli_model2vec` | `.vault-test-model2vec` | `minishlab/potion-multilingual-128M` on `reindex` / `search` |
 
-### 1. Embedding and rerank models
+`python -m python.cli --backend llms|jina|model2vec …` is the same driver.
+
+### LLMs
+
+**Requirements:** Linux only; host NVIDIA driver; **at least 16 GiB** of
+GPU memory so embedder and reranker fit on one card. First start
+`snapshot_download`s Qwen weights into `<workspace>/.cache/huggingface`
+(`HF_HOME`; an already-set `HF_HOME` wins; tqdm on stderr). On a cold
+cache, start the embedder and wait until it is listening before the
+reranker, so the two Hub fetches do not stall each other. `find` and
+`--lexical-only` do not need a GPU.
 
 Leave these two processes running (separate terminals):
 
@@ -178,52 +190,55 @@ bazel run //python/vllm:embedder   # 127.0.0.1:8080  OpenAI /v1/embeddings
 bazel run //python/vllm:reranker   # 127.0.0.1:8081  Cohere /v1/rerank
 ```
 
-`python/cli` defaults to those URLs (`Qwen/Qwen3-Embedding-0.6B` dim
+`cli_LLMs` defaults to those URLs (`Qwen/Qwen3-Embedding-0.6B` dim
 1024, `Qwen/Qwen3-Reranker-0.6B`). No GPU: pass `--lexical-only` on
 every command below (BM25 / RRF only; no vectors).
 
-### 2. Import and reindex
+#### 1. Import and reindex
 
 ```bash
-bazel run //python/cli:cli -- import
-bazel run //python/cli:cli -- reindex
+bazel run //python/cli:cli_LLMs -- import
+bazel run //python/cli:cli_LLMs -- reindex
 ```
 
-`import` `open`s `.vault-test` if needed, `create-collection` from each
-`.schema.yaml`, then `add`s missing Markdown documents. Embedder flags
-go on every `scheda` call, so `add` writes `index/vector/`. `reindex`
-rebuilds lexical and vector indexes from files (use it after an Index
-format change, or if you imported without the embedder). Stdout of
-`reindex` is `ReindexResult` JSON.
+`import` `open`s `.vault-test-LLMs` if needed, `create-collection` from
+each `.schema.yaml`, then `add`s missing Markdown documents. Embedder
+flags go on `add` / `reindex` / `search`, so `add` writes `index/vector/`.
+`reindex` rebuilds lexical and vector indexes from files (use it after
+an Index format change, or if you imported without the embedder).
+Stdout of `reindex` is `ReindexResult` YAML.
 
-### 3. `find`
+#### 2. `find`
 
 Structured `Filter` on Schema fields, Record `id`, and Markdown `body`
-(unless `exclude_fts`). Not meaning.
+(unless `exclude_fts`). Not meaning. `term` is the whole field value. A
+word in title or body is `phrase` / `regex`, or `search`. Stdout is YAML:
+`total` then each Record, `---` between documents (`raw` only with
+`--include-raw`).
 
 ```bash
-bazel run //python/cli:cli -- find
-bazel run //python/cli:cli -- find --collection mammals
-bazel run //python/cli:cli -- find --filter '{"phrase":{"field":"title","terms":["giant","panda"]}}'
-bazel run //python/cli:cli -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
-bazel run //python/cli:cli -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
+bazel run //python/cli:cli_LLMs -- find
+bazel run //python/cli:cli_LLMs -- find --collection mammals
+bazel run //python/cli:cli_LLMs -- find --filter '{"phrase":{"field":"title","terms":["giant","panda"]}}'
+bazel run //python/cli:cli_LLMs -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
+bazel run //python/cli:cli_LLMs -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
 ```
 
-`term` is the whole field value. A word in title or body is `phrase` /
-`regex`, or `search`.
-
-### 4. `search`
+#### 3. `search`
 
 Hybrid BM25 + ANN, RRF, then the reranker. Hits are the top `k` after
 ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off (meaning
-only).
+only). `--no-reranker` keeps RRF order. `--topic` / bare `search` use
+`python/cli/testdata/animals/topics.yaml` (paraphrases; expected ids).
+Hits print as YAML (`---` between hits); `--include-raw` adds `Hit.raw`.
+Bare `search` prints one YAML document per topic.
 
 ```bash
-bazel run //python/cli:cli -- search --collection mammals --k 2 --text "seasonal migration"
+bazel run //python/cli:cli_LLMs -- search --collection mammals --k 2 --text "seasonal migration"
 ```
 
 ```bash
-bazel run //python/cli:cli -- search --query '{
+bazel run //python/cli:cli_LLMs -- search --query '{
   "text": "species that hunt when there is no light by measuring how long a self-made sound takes to bounce back from prey",
   "k": 2,
   "lexicalWeight": 0
@@ -231,12 +246,113 @@ bazel run //python/cli:cli -- search --query '{
 ```
 
 ```bash
-bazel run //python/cli:cli -- search --topic biosonar
-bazel run //python/cli:cli -- search
+bazel run //python/cli:cli_LLMs -- search --topic biosonar
+bazel run //python/cli:cli_LLMs -- search
 ```
 
-`--topic` / bare `search` use `python/cli/testdata/animals/topics.yaml`
-(paraphrases; expected ids). `--no-reranker` keeps RRF order.
+### Jina (CC BY-NC)
+
+Same ports as Qwen. Stop `//python/vllm:embedder` / `:reranker` first.
+Weights are **CC BY-NC 4.0** (not the Apache default). Own Vault
+`.vault-test-jina` (SCH-10: do not mix with Qwen vectors).
+
+```bash
+bazel run //python/vllm:embedder_jina   # jina-embeddings-v5-text-small
+bazel run //python/vllm:reranker_jina   # jina-reranker-v3.5
+```
+
+Then the same walkthrough as LLMs, with `cli_jina`:
+
+```bash
+bazel run //python/cli:cli_jina -- import
+bazel run //python/cli:cli_jina -- reindex
+bazel run //python/cli:cli_jina -- search --query '{
+  "text": "species that hunt when there is no light by measuring how long a self-made sound takes to bounce back from prey",
+  "k": 2,
+  "lexicalWeight": 0
+}'
+```
+
+`cli_jina` defaults to those Hub ids (dim 1024). `find` / `--lexical-only`
+do not need the sidecars.
+
+### Model2Vec
+
+> **Disclaimer:** Model2Vec is too weak for the paraphrases in this
+> walkthrough. Any Hub checkpoint in this family (static token lookup,
+> including `potion-multilingual-128M`) returns the **wrong** Records on
+> vector-only `search`. This section exists so you can run the **same
+> commands as LLMs** and see the quality gap versus Qwen. For the
+> expected hits, use `//python/cli:cli_LLMs`.
+
+No GPU. `import` and `find` do not load Model2Vec (no Hub fetch, no
+`--model2vec-embedder`). On first `reindex`, `huggingface_hub`
+(`hf-xet`) downloads `minishlab/potion-multilingual-128M` (multilingual,
+~512 MiB) into
+`<workspace>/.cache/model2vec/potion-multilingual-128M` (`config.json`,
+`tokenizer.json`, `model.safetensors`; tqdm on stderr). Later `reindex`
+runs reuse the cache after size and Hub hash checks (LFS SHA-256, or git
+blob SHA-1 for small files). `search` loads that cache to embed the
+query (no Hub). Set `HF_TOKEN` to a Hugging Face token if the Hub
+throttles anonymous downloads. `--model2vec-embedder DIR` overrides the
+cache path. Search uses RRF (no local reranker).
+
+#### 1. Import and reindex
+
+```bash
+bazel run //python/cli:cli_model2vec -- import
+bazel run //python/cli:cli_model2vec -- reindex
+```
+
+`import` `open`s `.vault-test-model2vec` if needed, `create-collection`
+from each `.schema.yaml`, then `add`s missing Markdown documents. It
+does not load Model2Vec. `reindex` downloads the cache if needed, loads
+the embedder once, and fills `index/vector/`. A later `reindex` rebuilds
+lexical and vector indexes after an Index format change. Stdout of
+`reindex` is `ReindexResult` YAML.
+
+#### 2. `find`
+
+Structured `Filter` on Schema fields, Record `id`, and Markdown `body`
+(unless `exclude_fts`). Not meaning. `term` is the whole field value. A
+word in title or body is `phrase` / `regex`, or `search`. Stdout is YAML:
+`total` then each Record, `---` between documents (`raw` only with
+`--include-raw`).
+
+```bash
+bazel run //python/cli:cli_model2vec -- find
+bazel run //python/cli:cli_model2vec -- find --collection mammals
+bazel run //python/cli:cli_model2vec -- find --filter '{"phrase":{"field":"title","terms":["giant","panda"]}}'
+bazel run //python/cli:cli_model2vec -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
+bazel run //python/cli:cli_model2vec -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
+```
+
+#### 3. `search`
+
+Hybrid BM25 + ANN, then RRF (no local reranker). Loads the Model2Vec
+cache to embed the query (run `reindex` first). Hits are the top `k`
+after ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off
+(meaning only). `--topic` / bare `search` use
+`python/cli/testdata/animals/topics.yaml` (paraphrases; expected ids).
+Hits print as YAML (`---` between hits); `--include-raw` adds `Hit.raw`.
+Bare `search` prints one YAML document per topic.
+
+```bash
+bazel run //python/cli:cli_model2vec -- search --collection mammals --k 2 --text "seasonal migration"
+```
+
+```bash
+bazel run //python/cli:cli_model2vec -- search --query '{
+  "text": "species that hunt when there is no light by measuring how long a self-made sound takes to bounce back from prey",
+  "k": 2,
+  "lexicalWeight": 0
+}'
+```
+
+```bash
+bazel run //python/cli:cli_model2vec -- search --topic biosonar
+bazel run //python/cli:cli_model2vec -- search
+```
 
 ## Changelog
 

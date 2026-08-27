@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.36, 27 August 2026.
+Document 2 of the Scheda package. Version 0.37, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -148,9 +148,9 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`history`** — git history of one Record by `id`, newest first. Same identity path as `get` (validate slug, then that file). Not an Index lookup. Not journal `find` append order.
 
-**`find`** — select records with a Tantivy query tree (`api.v1.Filter`: boolean must / should / must_not, term, phrase, range, `all`, …), including identity `id`. On Vault: a set of collection names (empty = this Vault, non-isolated). On Collection: that collection only. Query the Index, then open the files for the `(collection, id)`s it returns. Paged (`offset`, `count`); one page is `api.v1.FindResult` (`records` plus `total`: indexed hits, not page length). One `journal` collection: append order; otherwise score order. Every indexed Record in the selected collections is `all`. Not by meaning.
+**`find`** — select records with a Tantivy query tree (`api.v1.FindQuery`: required `Filter` — boolean must / should / must_not, term, phrase, range, `all`, … — plus `include_raw`; default omits `Record.raw`), including identity `id`. On Vault: a set of collection names (empty = this Vault, non-isolated). On Collection: that collection only. Query the Index, then open the files for the `(collection, id)`s it returns. Paged (`offset`, `count`); one page is `api.v1.FindResult` (`records` plus `total`: indexed hits, not page length). One `journal` collection: append order; otherwise score order. Every indexed Record in the selected collections is `all`. Not by meaning.
 
-**`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. Not the same as `find`.
+**`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. `SearchQuery.include_raw` fills `Hit.raw`. Not the same as `find`.
 
 **`catalog`** — Schema serialized as `api/v1` `Schema`. Not inferred from the directory tree.
 

@@ -132,7 +132,9 @@ message Error {
   string message = 2;
   // Vault-relative POSIX path of the file this failure is about, same
   // meaning as `Record.path`. Unset when there is no such file.
-  string path = 3 [(buf.validate.field) = {string: {min_len: 1}}];
+  string path = 3 [(buf.validate.field) = {
+    string: {min_len: 1}
+  }];
   Repeat repeat = 4 [(buf.validate.field) = {
     required: true
     enum: {
@@ -144,6 +146,10 @@ message Error {
   // (`find_one`, `read`), not a language backtrace. Must not repeat `path`
   // and must not replace `code`.
   repeated string stack = 5 [(buf.validate.field) = {
-    repeated: {items: {string: {min_len: 1}}}
+    repeated: {
+      items: {
+        string: {min_len: 1}
+      }
+    }
   }];
 }

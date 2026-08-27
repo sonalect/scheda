@@ -31,7 +31,7 @@ pub struct Cli {
         long,
         global = true,
         value_name = "URL",
-        conflicts_with = "onnx_embedder"
+        conflicts_with = "model2vec_embedder"
     )]
     pub embedder_openai_url: Option<String>,
 
@@ -41,7 +41,7 @@ pub struct Cli {
         long,
         global = true,
         value_name = "NAME",
-        conflicts_with = "onnx_embedder"
+        conflicts_with = "model2vec_embedder"
     )]
     pub embedder_model: Option<String>,
 
@@ -51,7 +51,7 @@ pub struct Cli {
         long,
         global = true,
         value_name = "N",
-        conflicts_with = "onnx_embedder"
+        conflicts_with = "model2vec_embedder"
     )]
     pub embedder_dimensions: Option<usize>,
 
@@ -61,12 +61,13 @@ pub struct Cli {
         long,
         global = true,
         value_name = "NAME",
-        conflicts_with = "onnx_embedder"
+        conflicts_with = "model2vec_embedder"
     )]
     pub embedder_api_key_env_var: Option<String>,
 
-    /// Directory with exactly `model.onnx` and `tokenizer.json`.
-    /// Unset → vector leg off unless the HTTP embedder flags are set.
+    /// Directory with Model2Vec files (`config.json`, `tokenizer.json`,
+    /// `model.safetensors`). Unset → vector leg off unless the HTTP
+    /// embedder flags are set.
     #[arg(
         long,
         global = true,
@@ -78,7 +79,7 @@ pub struct Cli {
             "embedder_api_key_env_var"
         ]
     )]
-    pub onnx_embedder: Option<PathBuf>,
+    pub model2vec_embedder: Option<PathBuf>,
 
     #[command(subcommand)]
     pub command: Command,
@@ -129,6 +130,9 @@ pub enum Command {
         offset: u32,
         #[arg(long)]
         count: u32,
+        /// `FindQuery.include_raw`. Default false: omit `Record.raw`.
+        #[arg(long, default_value_t = false)]
+        include_raw: bool,
     },
     /// Hybrid search (`07` LIB-11). `--query` is Protobuf JSON `SearchQuery`.
     Search {
@@ -185,6 +189,9 @@ pub enum CollectionCommand {
         offset: u32,
         #[arg(long)]
         count: u32,
+        /// `FindQuery.include_raw`. Default false: omit `Record.raw`.
+        #[arg(long, default_value_t = false)]
+        include_raw: bool,
     },
     /// Hybrid search on this collection (`07` LIB-11).
     Search {
@@ -199,25 +206,17 @@ pub struct SearchArgs {
     #[arg(long)]
     pub query: Option<String>,
     /// Cohere/Jina API root. Joined with `rerank`. With `--reranker-model`,
-    /// or none. Unset → RRF unless `--reranker-onnx`.
-    #[arg(long, value_name = "URL", conflicts_with = "reranker_onnx")]
+    /// or none. Unset → RRF.
+    #[arg(long, value_name = "URL")]
     pub reranker_cohere_url: Option<String>,
     /// Rerank `model` JSON field. With `--reranker-cohere-url`, or none.
-    #[arg(long, value_name = "NAME", conflicts_with = "reranker_onnx")]
+    #[arg(long, value_name = "NAME")]
     pub reranker_model: Option<String>,
     /// Env var whose value is `Authorization: Bearer`. Unset → no auth.
     /// Only with the HTTP reranker flags. Missing/empty var → `invalid`.
-    #[arg(long, value_name = "NAME", conflicts_with = "reranker_onnx")]
+    #[arg(long, value_name = "NAME")]
     pub reranker_api_key_env_var: Option<String>,
-    /// Directory with exactly `model.onnx` and `tokenizer.json`. Unset → RRF.
-    #[arg(
-        long,
-        value_name = "DIR",
-        conflicts_with_all = [
-            "reranker_cohere_url",
-            "reranker_model",
-            "reranker_api_key_env_var"
-        ]
-    )]
-    pub reranker_onnx: Option<PathBuf>,
+    /// `SearchQuery.include_raw`. Default false: omit `Hit.raw`.
+    #[arg(long, default_value_t = false)]
+    pub include_raw: bool,
 }
