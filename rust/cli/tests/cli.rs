@@ -184,9 +184,6 @@ fn help_lists_lib2_tools_not_collection_names() {
         "collection",
         "find",
         "search",
-        "begin",
-        "commit",
-        "discard",
         "check",
         "reindex",
         "push",
@@ -215,11 +212,19 @@ fn help_lists_lib2_tools_not_collection_names() {
         "clone",
         "onnx-embedder",
         "reranker-onnx",
+        "begin",
+        "discard",
     ] {
         assert!(!help.contains(gone), "legacy {gone} still in help:\n{help}");
     }
     assert!(!help.contains("agent_notes"));
     assert!(!help.contains("west_docs"));
+}
+
+#[test]
+fn commit_subcommand_is_gone() {
+    let gone_txn = run(&["commit", "-m", "no"]);
+    assert_ne!(gone_txn.status, 0, "stdout={}", gone_txn.stdout);
 }
 
 #[test]
@@ -274,9 +279,6 @@ fn scripted_find_search_get_journal_add_commit() {
     assert!(record["path"].as_str().unwrap().contains("alpha"));
     assert_eq!(record["valid"], true);
 
-    let begin = run(&["--vault", &path, "begin"]);
-    assert_eq!(begin.status, 0, "stderr={}", begin.stderr);
-
     let add = run(&[
         "--vault",
         &path,
@@ -290,10 +292,6 @@ fn scripted_find_search_get_journal_add_commit() {
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
     assert!(add.stdout.trim().is_empty());
-
-    let commit = run(&["--vault", &path, "commit", "--message", "agent run"]);
-    assert_eq!(commit.status, 0, "stderr={}", commit.stderr);
-    assert!(commit.stdout.trim().is_empty());
 }
 
 #[test]
@@ -473,9 +471,6 @@ fn auto_sync_off_local_info_get_add_commit() {
         .collect();
     assert_eq!(names, ["agent_notes"]);
 
-    let begin = run(&["--vault", &path, "begin"]);
-    assert_eq!(begin.status, 0, "stderr={}", begin.stderr);
-
     let add = run(&[
         "--vault",
         &path,
@@ -503,9 +498,6 @@ fn auto_sync_off_local_info_get_add_commit() {
     assert_eq!(record["collection"], "agent_notes");
     assert_eq!(record["valid"], true);
     assert!(record.get("path").is_some());
-
-    let commit = run(&["--vault", &path, "commit", "-m", "local"]);
-    assert_eq!(commit.status, 0, "stderr={}", commit.stderr);
 }
 
 #[test]
@@ -1393,8 +1385,6 @@ fn http_embedder_writes_vectors_and_scores_match() {
     ]);
     assert_eq!(created.status, 0, "stderr={}", created.stderr);
 
-    let begin = run(&["--vault", &path, "begin"]);
-    assert_eq!(begin.status, 0, "stderr={}", begin.stderr);
     for (id, record) in [
         ("decoy", decoy.as_str()),
         ("vehicle", vehicle.as_str()),
@@ -1415,8 +1405,6 @@ fn http_embedder_writes_vectors_and_scores_match() {
         );
         assert_eq!(add.status, 0, "stderr={}", add.stderr);
     }
-    let commit = run(&["--vault", &path, "commit", "-m", "a5"]);
-    assert_eq!(commit.status, 0, "stderr={}", commit.stderr);
 
     {
         let seen = stub.seen.lock().unwrap();

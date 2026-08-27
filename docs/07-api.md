@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.66, 27 August 2026.
+Document 7 of the Scheda package. Version 0.67, 27 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -20,7 +20,7 @@ An assertion without a check is not a requirement.
 
 **LIB-1. In-process library.** The caller loads Scheda in its own process. A Scheda daemon or HTTP server is not required to read or write. *Check (**core**):* a test writes and reads a local Vault (`auto_sync` off) with no second process and no network.
 
-**LIB-2. Same operations in every language.** Required names: `open`, `info`, `collection`, `add`, `get`, `replace`, `find`, `search`, `begin`, `commit`, `discard`, `push`, `pull`, `sync`, `check`, `reindex`. **Agent** also requires `create_collection` (LIB-21). AGT-1 listing is `info` (LIB-4, LIB-20), not a separate `catalog` method. Optional: `history`, `lines` (core in this binding). There is no `init`, `clone`, `catalog`, `walk`, `walk_inverse`, or `scan` as a public name: creating or cloning a Vault is `open` (LIB-13, GIT-9). Ordered journal read without the Index is `lines` (LIB-19), not `scan`. *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
+**LIB-2. Same operations in every language.** Required names: `open`, `info`, `collection`, `add`, `get`, `replace`, `find`, `search`, `begin`, `commit`, `discard`, `push`, `pull`, `sync`, `check`, `reindex`. **Agent** also requires `create_collection` (LIB-21). AGT-1 listing is `info` (LIB-4, LIB-20), not a separate `catalog` method. Optional: `history`, `lines` (core in this binding). There is no `init`, `clone`, `catalog`, `walk`, `walk_inverse`, or `scan` as a public name: creating or cloning a Vault is `open` (LIB-13, GIT-9). Ordered journal read without the Index is `lines` (LIB-19), not `scan`. The CLI does not encode `begin` / `commit` / `discard` (GIT-2: a process-per-command CLI cannot hold a transaction). *Check:* a binding that omits a required name is incomplete; aliases are allowed only if the docs of that binding list the mapping.
 
 **LIB-3. Whole-record writes.** Mutation is `add` or `replace` of the whole Record. There is no partial field patch. SQL against the Index is not a caller API. *Check:* `replace` on `journal` is a failure (`unsupported`).
 
@@ -54,11 +54,11 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 ## 3. Git and maintenance
 
-**LIB-12. `commit(message)`.** GIT-2. Ends the transaction. A transaction is the only supported batch. `invalid` if none is open, or if the message is empty, or if there is nothing to commit. Creates one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). If `auto_sync` is on, then `push` of the main tree only (GIT-10, GIT-12, ISO-6).
+**LIB-12. `commit(message)`.** GIT-2. Ends the transaction on this handle. A transaction is the only supported batch. `invalid` if none is open on this handle, or if the message is empty, or if there is nothing to commit. Creates one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). If `auto_sync` is on, then `push` of the main tree only (GIT-10, GIT-12, ISO-6). The CLI does not encode this name.
 
-**LIB-22. `begin()`.** GIT-2. Enter a transaction. Needs the write lock. Discards leftover Scheda writes first. `invalid` if a transaction is already open.
+**LIB-22. `begin()`.** GIT-2. Enter a transaction on this handle. Needs the write lock. Discards leftover Scheda writes first. `invalid` if a transaction is already open on this handle. The flag is in memory on this handle; `open` does not resume another process's transaction. Dropping the handle ends it without a git commit. The CLI does not encode this name.
 
-**LIB-23. `discard()`.** GIT-2. Restore Scheda-recorded paths to HEAD, end the transaction if any, reload Schema, and rebuild the Index. Needs the write lock. Allowed without an open transaction (crash leftovers).
+**LIB-23. `discard()`.** GIT-2. Restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload Schema, and rebuild the Index. Needs the write lock. Allowed without an open transaction (crash leftovers). The CLI does not encode this name.
 
 **LIB-13. `open(path)`.** GIT-9. One public call. Path exists as a Vault → open (`remote_repo` ignored). Path missing and `remote_repo` set → `git clone`. Path missing → `git init`, no Remote. Path exists but is not a Vault → `invalid`. **Later:** `{vault}/.isolated/` is created by Scheda, never cloned (ISO-6). `OpenOptions.encrypt` applies when that nested tree is first created; isolated Record I/O then requires `secret` (ISO-5, ISO-7). `open` of the Vault does not require `secret`.
 

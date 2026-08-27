@@ -92,9 +92,6 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         Command::Collection { name, command } => {
             collection_dispatch(&open_existing(&vault, auto_sync, embedder)?, &name, command)
         }
-        Command::Begin => open_existing(&vault, auto_sync, embedder)?.begin(),
-        Command::Commit { message } => open_existing(&vault, auto_sync, embedder)?.commit(&message),
-        Command::Discard => open_existing(&vault, auto_sync, embedder)?.discard(),
         Command::Check => open_existing(&vault, auto_sync, embedder)?.check(),
         Command::Reindex => emit_json(&open_existing(&vault, auto_sync, embedder)?.reindex()?),
         Command::Find {

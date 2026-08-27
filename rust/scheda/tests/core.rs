@@ -226,7 +226,6 @@ fn writes_and_commit_do_not_need_the_network() {
         .unwrap()
         .add("local", rec(json!({"title": "local"})))
         .unwrap();
-    vault.commit("local only").unwrap();
     vault.reindex().unwrap();
     let got = vault.collection("west_docs").unwrap().get("local").unwrap();
     assert_eq!(fields_of(&got).get("title").unwrap(), "local");

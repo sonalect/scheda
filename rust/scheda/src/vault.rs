@@ -126,8 +126,9 @@ impl Vault {
         let journal_ids = Arc::new(Mutex::new(index::load_all_journal_ids(
             &path, &index_dir, &schema,
         )?));
-        let written = Arc::new(Mutex::new(load_written(&index_dir)?));
-        let in_txn = Arc::new(Mutex::new(load_txn(&index_dir)?));
+        let written = Arc::new(Mutex::new(load_written(&path)?));
+        let in_txn = Arc::new(Mutex::new(false));
+        let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
         let search = Arc::new(SearchEngine::open(&index_dir, false)?);
         let vault = Self {
             path,
@@ -262,37 +263,49 @@ impl Vault {
         .search(self.embedder.as_deref(), collections, query, reranker)
     }
 
-    /// End the transaction and create one git commit per repository that has
-    /// recorded paths (main tree and/or `{vault}/.isolated/`). `invalid` if
-    /// none is open, the message is empty, or there is nothing to commit.
+    /// End the transaction on this handle and create one git commit per
+    /// repository that has recorded paths (main tree and/or
+    /// `{vault}/.isolated/`). The transaction flag is only in this process:
+    /// a new `open` does not resume it. `invalid` if none is open, the
+    /// message is empty, or there is nothing to commit.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
         if !flag(&self.in_txn) {
             bail!(Error::invalid("commit requires an open transaction"));
         }
         self.commit_recorded(message)?;
-        set_flag(&self.index_dir, &self.in_txn, false)?;
+        set_in_txn(&self.in_txn, false);
         self.push_if_auto_sync()
     }
 
-    /// Start a transaction. Discards leftover Scheda writes first.
-    /// `invalid` if a transaction is already open.
+    /// Start a transaction on this handle. Later writes on this handle do
+    /// not autocommit until `commit` or `discard`. Dropping the handle ends
+    /// the transaction without a git commit; recorded paths stay in
+    /// `{vault}/.scheda/tx.log` until `begin`, `discard`, or a mutating
+    /// call outside a transaction restores them.
+    ///
+    /// Discards leftover Scheda writes first. `invalid` if a transaction is
+    /// already open on this handle.
     pub fn begin(&self) -> Result<(), Error> {
         self.require_write_lock("begin")?;
         if flag(&self.in_txn) {
             bail!(Error::invalid("already in a transaction"));
         }
         self.restore_recorded()?;
-        set_flag(&self.index_dir, &self.in_txn, true)
+        set_in_txn(&self.in_txn, true);
+        Ok(())
     }
 
-    /// Restore Scheda-recorded paths to HEAD in the repository that owns each
-    /// path, end the transaction if any, reload Schema, and rebuild the Index
-    /// (including `{vault}/.isolated/.scheda/` when that tree exists).
+    /// Restore Scheda-recorded paths to HEAD in the repository that owns
+    /// each path, end the transaction if any on this handle, reload Schema,
+    /// and rebuild the Index (including `{vault}/.isolated/.scheda/` when
+    /// that tree exists). Allowed without an open transaction so a later
+    /// process can clear crash leftovers.
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.restore_recorded()?;
-        set_flag(&self.index_dir, &self.in_txn, false)
+        set_in_txn(&self.in_txn, false);
+        Ok(())
     }
 
     fn commit_recorded(&self, message: &str) -> Result<(), Error> {
@@ -303,7 +316,7 @@ impl Vault {
         isolated::commit_recorded(&self.path, message, &paths)?;
         let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         set.clear();
-        persist_written(&self.index_dir, &set)
+        persist_written(&self.path, &set)
     }
 
     fn restore_recorded(&self) -> Result<(), Error> {
@@ -311,7 +324,7 @@ impl Vault {
             let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
             let paths: Vec<String> = set.iter().cloned().collect();
             set.clear();
-            persist_written(&self.index_dir, &set)?;
+            persist_written(&self.path, &set)?;
             paths
         };
         if paths.is_empty() {
@@ -333,6 +346,13 @@ impl Vault {
             .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
         *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
         Ok(())
+    }
+
+    fn drain_abandoned(&self) -> Result<(), Error> {
+        if flag(&self.in_txn) {
+            return Ok(());
+        }
+        self.restore_recorded()
     }
 
     fn finish_mutation(&self) -> Result<(), Error> {
@@ -358,7 +378,7 @@ impl Vault {
     fn note_write(&self, rel: String) -> Result<(), Error> {
         let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         set.insert(rel);
-        persist_written(&self.index_dir, &set)
+        persist_written(&self.path, &set)
     }
 
     /// `git push` to `origin`. Needs the write lock.
@@ -451,6 +471,7 @@ impl Vault {
     pub fn create_collection(&self, name: &str, schema: Schema) -> Result<Collection, Error> {
         schema.require_valid()?;
         self.require_write_lock("create_collection")?;
+        self.drain_abandoned()?;
         if schema.isolated == Some(true)
             && let Some(rel) = isolated::ensure(&self.path)?
         {
@@ -641,7 +662,31 @@ impl Collection {
     fn note_write(&self, rel: String) -> Result<(), Error> {
         let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         set.insert(rel);
-        persist_written(&self.index_dir, &set)
+        persist_written(&self.vault, &set)
+    }
+
+    fn drain_abandoned(&self) -> Result<(), Error> {
+        if flag(&self.in_txn) {
+            return Ok(());
+        }
+        let paths: Vec<String> = {
+            let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            let paths: Vec<String> = set.iter().cloned().collect();
+            set.clear();
+            persist_written(&self.vault, &set)?;
+            paths
+        };
+        if paths.is_empty() {
+            return Ok(());
+        }
+        isolated::discard_recorded(&self.vault, &paths)?;
+        repair_index_after_discard(
+            &self.vault,
+            &self.index_dir,
+            &self.journal_ids,
+            &self.search,
+            self.embedder.as_deref(),
+        )
     }
 
     fn prepare_isolated_write(&self) -> Result<(), Error> {
@@ -670,7 +715,7 @@ impl Collection {
             Ok(()) => {
                 let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
                 set.clear();
-                persist_written(&self.index_dir, &set)?;
+                persist_written(&self.vault, &set)?;
                 if self.auto_sync && !self.remotes.is_empty() {
                     git::push(&self.vault)?;
                 }
@@ -681,7 +726,7 @@ impl Collection {
                     let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
                     let paths: Vec<String> = set.iter().cloned().collect();
                     set.clear();
-                    persist_written(&self.index_dir, &set)?;
+                    persist_written(&self.vault, &set)?;
                     paths
                 };
                 let _ = isolated::discard_recorded(&self.vault, &paths);
@@ -705,6 +750,7 @@ impl Collection {
         record.require_valid()?;
         let mut record = record_from_add(id, &self.decl.name, record);
         self.require_write()?;
+        self.drain_abandoned()?;
         self.prepare_isolated_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
@@ -789,6 +835,9 @@ impl Collection {
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("replace is not offered for journal"));
         }
+        let mut record = record_from_replace(id, &self.decl.name, record);
+        self.require_write()?;
+        self.drain_abandoned()?;
         let known = if self.decl.isolated {
             store::locate_file(&self.vault, &self.decl, id)?.is_some()
         } else {
@@ -800,8 +849,6 @@ impl Collection {
                 self.decl.name
             )));
         }
-        let mut record = record_from_replace(id, &self.decl.name, record);
-        self.require_write()?;
         self.prepare_isolated_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
@@ -882,7 +929,7 @@ impl Collection {
     fn unnote_write(&self, rel: &str) -> Result<(), Error> {
         let mut set = crate::error::mutex(&self.written, "[Collection::unnote_write] lock")?;
         set.remove(rel);
-        persist_written(&self.index_dir, &set)
+        persist_written(&self.vault, &set)
     }
 
     fn rollback_journal_insert(&self, id: &str, rel: &str, rollback: &journal::JournalRollback) {
@@ -1269,7 +1316,7 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
 
 /// Write `.scheda/` and `.isolated/` into `.gitignore` and commit when this
 /// tree is new (init or clone). No writer exists yet, so this does not take
-/// `write.lock`. A later `begin` is then the first `try_lock`.
+/// `write.lock`. A later mutating call is then the first `try_lock`.
 fn commit_gitignore_if_needed(vault: &Path) -> Result<(), Error> {
     if ensure_gitignore(vault)? {
         git::commit(vault, AUTO_COMMIT_MESSAGE, &[String::from(".gitignore")])?;
@@ -1277,43 +1324,25 @@ fn commit_gitignore_if_needed(vault: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// Uncommitted write paths for the next `commit`. Lives under `.scheda/index`
-/// (gitignored) so a process-per-command CLI can write then `commit`.
-fn written_log(index_dir: &Path) -> PathBuf {
-    index_dir.join("written")
-}
-
-fn txn_log(index_dir: &Path) -> PathBuf {
-    index_dir.join("txn")
+/// Uncommitted write paths after a crash. Next to `write.lock`, not under
+/// `index/`, so `reindex` does not delete the journal.
+fn tx_log(vault: &Path) -> PathBuf {
+    vault.join(".scheda").join("tx.log")
 }
 
 fn flag(slot: &Mutex<bool>) -> bool {
     *slot.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-fn set_flag(index_dir: &Path, slot: &Mutex<bool>, on: bool) -> Result<(), Error> {
+fn set_in_txn(slot: &Mutex<bool>, on: bool) {
     *slot.lock().unwrap_or_else(PoisonError::into_inner) = on;
-    persist_txn(index_dir, on)
 }
 
-fn load_txn(index_dir: &Path) -> Result<bool, Error> {
-    match fs::read(txn_log(index_dir)) {
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err(err).context("[Vault::open] read txn flag"),
-        Ok(_) => Ok(true),
-    }
-}
-
-fn persist_txn(index_dir: &Path, on: bool) -> Result<(), Error> {
-    let path = txn_log(index_dir);
-    if on {
-        fs::write(&path, b"1\n").context("[Vault] write txn flag")
-    } else {
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err).context("[Vault] remove txn flag"),
-        }
+fn remove_if_exists(path: &Path) -> Result<(), Error> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).context("[Vault] remove tx.log"),
     }
 }
 
@@ -1331,14 +1360,14 @@ fn repair_index_after_discard(
     search.rebuild(vault, &loaded, embedder)
 }
 
-fn load_written(index_dir: &Path) -> Result<BTreeSet<String>, Error> {
-    match fs::read(written_log(index_dir)) {
+fn load_written(vault: &Path) -> Result<BTreeSet<String>, Error> {
+    match fs::read(tx_log(vault)) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
-        Err(err) => Err(err).context("[Vault::open] read written paths"),
+        Err(err) => Err(err).context("[Vault::open] read tx.log"),
         Ok(bytes) if bytes.is_empty() => Ok(BTreeSet::new()),
         Ok(bytes) => {
             let text = std::str::from_utf8(&bytes)
-                .context(Code::NotUtf8, "[Vault::open] decode written paths")?;
+                .context(Code::NotUtf8, "[Vault::open] decode tx.log")?;
             Ok(text
                 .lines()
                 .filter(|line| !line.is_empty())
@@ -1348,14 +1377,10 @@ fn load_written(index_dir: &Path) -> Result<BTreeSet<String>, Error> {
     }
 }
 
-fn persist_written(index_dir: &Path, set: &BTreeSet<String>) -> Result<(), Error> {
-    let path = written_log(index_dir);
+fn persist_written(vault: &Path, set: &BTreeSet<String>) -> Result<(), Error> {
+    let path = tx_log(vault);
     if set.is_empty() {
-        match fs::remove_file(&path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err).context("[Vault] remove written paths"),
-        }
+        remove_if_exists(&path)
     } else {
         let mut bytes = Vec::new();
         for rel in set {

@@ -82,7 +82,9 @@ fn rec_rep_body(fields: Value, body: &str) -> RecordReplace {
 fn open_notes(scratch: &Scratch) -> Vault {
     drop(scratch.init());
     scratch.write_schema("notes.yaml", NOTES);
-    scratch.reopen()
+    let vault = scratch.reopen();
+    vault.begin().unwrap();
+    vault
 }
 
 fn log_len(dir: &Path) -> usize {
@@ -188,7 +190,7 @@ fn commit_stages_written_paths_not_vault_root_junk() {
 }
 
 #[test]
-fn commit_after_reopen_still_stages_written_paths() {
+fn abandoned_writes_are_discarded_on_next_autocommit() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
@@ -196,11 +198,31 @@ fn commit_after_reopen_still_stages_written_paths() {
         .add("alpha", rec(json!({"title": "A", "count": 1})))
         .unwrap();
     let rel = collection.get("alpha").unwrap().path.unwrap();
+    let journal = scratch.vault().join(".scheda").join("tx.log");
+    assert!(journal.is_file(), "{}", journal.display());
     drop(collection);
     drop(vault);
     let vault = scratch.reopen();
-    vault.commit("after reopen").unwrap();
-    assert!(head_paths(vault.path()).contains(&rel));
+    assert_eq!(
+        vault.commit("after reopen").unwrap_err().known_code(),
+        Some(Code::Invalid)
+    );
+    let collection = vault.collection("north_notes").unwrap();
+    assert_eq!(
+        collection.get("alpha").unwrap().id.as_deref(),
+        Some("alpha")
+    );
+    let before = log_len(vault.path());
+    collection
+        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .unwrap();
+    assert_eq!(
+        collection.get("alpha").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert_eq!(collection.get("beta").unwrap().id.as_deref(), Some("beta"));
+    assert!(!scratch.vault().join(&rel).is_file());
+    assert_eq!(log_len(vault.path()), before + 1);
 }
 
 #[test]
@@ -254,6 +276,7 @@ fn history_of_singleton_and_journal_segment() {
     scratch.write_schema("inbox.yaml", INBOX);
     scratch.write_schema("log.yaml", LOG);
     let vault = scratch.reopen();
+    vault.begin().unwrap();
     vault
         .collection("north_inbox")
         .unwrap()

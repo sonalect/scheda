@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.43, 27 August 2026.
+Document 2 of the Scheda package. Version 0.44, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -154,11 +154,11 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. `schema.isolated` writes Record files under `{vault}/.isolated/` and creates the nested git if needed.
 
-**`begin`** — start a transaction. Later writes do not create a git commit until `commit` or `discard`. A transaction is the only supported batch of mutating calls. There is no option that turns autocommit off.
+**`begin`** — start a transaction on a library handle. Later writes on that handle do not create a git commit until `commit` or `discard`. A transaction is the only supported batch of mutating calls. There is no option that turns autocommit off. The CLI does not expose this name.
 
-**`commit`** — end a transaction and create one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`.
+**`commit`** — end a transaction on this handle and create one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`. The CLI does not expose this name.
 
-**`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any, reload Schema, rebuild the Index.
+**`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload Schema, rebuild the Index. The CLI does not expose this name.
 
 **Remote** — the one optional git remote Scheda uses on the Vault repository, named `origin`. Empty `VaultInfo.remote` means none. Extra remotes in git config are ignored. Detected on `open` from git config (no fetch). GitHub is one host, not a Scheda type.
 

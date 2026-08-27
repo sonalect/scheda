@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.20, 27 August 2026.
+Document 4 of the Scheda package. Version 0.21, 27 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -39,9 +39,13 @@ relied on; Vaults on those shares are outside **core**.
 
 A transaction is the only supported batch. There is no `OpenOptions` field that turns autocommit off for the handle. The caller chooses: each mutating call is its own commit (no `begin`), or many writes then one `commit`. A consumer that appends many journal lines must hold a transaction; otherwise each line is one commit.
 
-`begin` takes the write lock's process into a transaction: leftover Scheda writes are discarded first; `invalid` if a transaction is already open. Inside a transaction, mutating calls do not commit. `commit(message)` ends the transaction and creates one git commit per repository that has recorded paths (main tree and/or `{vault}/.isolated/`), with that message; a side with no recorded paths is skipped. Those two commits are not one atomic unit. It is `invalid` if no transaction is open, or if there is nothing to commit on either side. `discard` restores those paths to HEAD in the repository that owns each path, reloads Schema, and rebuilds the Index (including the nested Index when `.isolated/` exists); it is allowed without an open transaction to clear crash leftovers. Staging is only those recorded paths. It must not `git add` the whole tree in a way that stages junk at the Vault root, and must not stage isolated paths into the parent git.
+A transaction is a property of one library handle while that process holds the write lock (STO-4). It is not a flag on the working tree. `open` always starts with no transaction. Dropping the handle ends the transaction without a git commit. Recorded paths stay in `{vault}/.scheda/tx.log` (next to `write.lock`, not under `index/`) so a later process can restore them. `open` / `get` / `check` / `reindex` do not restore them. The next `begin`, `discard`, or mutating call outside a transaction restores those paths to HEAD. `reindex` does not delete `{vault}/.scheda/tx.log`.
 
-*Check:* several inserts after `begin` without `commit` → `git log` unchanged; one `commit` → one new commit whose paths are those writes. *Check:* `add` without `begin` → one new commit with message `scheda`. *Check:* 10⁴ journal `add` after `begin`, one `commit` → `git log` grows by one. *Check:* drop the handle mid-transaction after complete journal lines plus a truncated tail; reopen without `begin` / `discard`; `get` returns the complete Records and not the truncated line (STO-5).
+The CLI does not expose `begin` / `commit` / `discard`. Each mutating CLI command autocommits. Batch writes are a library-handle concern.
+
+`begin` takes this handle into a transaction: leftover Scheda writes are discarded first; `invalid` if a transaction is already open on this handle. Inside a transaction, mutating calls do not commit. `commit(message)` ends the transaction and creates one git commit per repository that has recorded paths (main tree and/or `{vault}/.isolated/`), with that message; a side with no recorded paths is skipped. Those two commits are not one atomic unit. It is `invalid` if no transaction is open, or if there is nothing to commit on either side. `discard` restores those paths to HEAD in the repository that owns each path, reloads Schema, and rebuilds the Index (including the nested Index when `.isolated/` exists); it is allowed without an open transaction to clear crash leftovers. Staging is only those recorded paths. It must not `git add` the whole tree in a way that stages junk at the Vault root, and must not stage isolated paths into the parent git.
+
+*Check:* several inserts after `begin` without `commit` → `git log` unchanged; one `commit` → one new commit whose paths are those writes. *Check:* `add` without `begin` → one new commit with message `scheda`. *Check:* 10⁴ journal `add` after `begin`, one `commit` → `git log` grows by one. *Check:* drop the handle mid-transaction after complete journal lines plus a truncated tail; reopen without `begin` / `discard`; `get` returns the complete Records and not the truncated line (STO-5). *Check:* drop the handle mid-transaction; reopen; `commit` is `invalid`; the next `add` without `begin` discards the leftover and the abandoned `id` is gone.
 
 Who owns untracked files the human created in the Vault is the caller's problem; Scheda does not auto-add them.
 
@@ -101,7 +105,7 @@ Hooks on the Vault repository are the consumer's. They must not assume they may 
 
 ## 4. Index location (git)
 
-**GIT-13. Index is in the Vault tree and gitignored.** Creating a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/`. The main Index lives under `{vault}/.scheda/`. Isolated Index (**later**) lives under `{vault}/.isolated/.scheda/`, gitignored in the nested repo. Callers do not choose an Index directory. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1), including `{vault}/.isolated/` Records.
+**GIT-13. Index is in the Vault tree and gitignored.** Creating a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/`. The main Index lives under `{vault}/.scheda/`. Isolated Index (**later**) lives under `{vault}/.isolated/.scheda/`, gitignored in the nested repo. Callers do not choose an Index directory. `{vault}/.scheda/tx.log` is the crash journal of uncommitted Scheda paths (GIT-2), not Index; `reindex` does not delete it. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1), including `{vault}/.isolated/` Records.
 
 Format and rebuild semantics: `06`.
 

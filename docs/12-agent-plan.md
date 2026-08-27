@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.41, 27 August 2026.
+Document 12 of the Scheda package. Version 0.42, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -257,8 +257,9 @@ embedder / reranker is A5.
 - [x] `open [--remote-repo URL]`. No `init` / `clone`. `--remote-repo` is
       not global.
 - [x] Vault commands: `info`, `create-collection NAME --schema`,
-      `collection NAME <subcommand>`, `begin`, `commit -m`, `discard`,
-      `check`, `reindex`, `find`, `search`, `push`, `pull`, `sync`. No `catalog`.
+      `collection NAME <subcommand>`, `check`, `reindex`, `find`,
+      `search`, `push`, `pull`, `sync`. No `catalog`. No `begin` /
+      `commit` / `discard` (GIT-2: CLI autocommits each mutation).
 - [x] Vault `find [--collections NAME,…] --filter --offset --count` and
       Vault `search [--collections NAME,…] --query` (`14`). Unset
       `--collections` → every non-isolated collection.
@@ -272,15 +273,16 @@ embedder / reranker is A5.
       flags only on `search` (unset → RRF).
 - [x] Gone: `find-one`, `insert-one`, `replace-one`, `scan`, `walk`,
       `walk-inverse`, `push-remote`, `pull-remote`, `sync-remote`,
-      `history --path`, Record path from the caller.
-- [x] Scripted run `find` / `search` → `get` → `add` on a `journal` →
-      `commit` uses only those tools (AGT-2).
+      `history --path`, Record path from the caller, `begin`, `commit`,
+      `discard`.
+- [x] Scripted run `find` / `search` → `get` → `add` on a `journal`
+      uses only those tools (AGT-2). CLI `add` autocommits.
 - [x] `create-collection` then `add` without a hand-written Schema file
       (LIB-21, AGT-3). Extra field → `invalid` (SCH-12).
 - [x] Same Vault, same operation: library vs CLI JSON and error `code`
       match (AGT-4, AGT-5).
 - [x] `auto_sync` off does not require the network for local `info` /
-      `get` / `add` / `commit` (ISO-1, GIT-8).
+      `get` / `add` (ISO-1, GIT-8). CLI `add` autocommits.
 
 ---
 

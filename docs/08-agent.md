@@ -1,6 +1,6 @@
 # 08. Agent surface
 
-Document 8 of the Scheda package. Version 0.18, 27 August 2026.
+Document 8 of the Scheda package. Version 0.19, 27 August 2026.
 
 How an AI agent uses Scheda: the same operations as `07`, over a thin
 transport. Schema listing is `info` (AGT-1). The agent is not a second
@@ -17,7 +17,7 @@ A person may read Vault files without Scheda (STO-2). That is not a substitute f
 
 **AGT-1. Catalog from Schema.** The agent (or the caller wrapping it) can list collections, kinds, fields, index marks, and edges — serialized from Schema as nested `api.v1.Schema` on `Vault.info` (`api.v1.VaultInfo`), not inferred from directory names. There is no `catalog()` method. *Check:* a fixture Schema exported as JSON; names match the Schema files.
 
-**AGT-2. Few tools, not one per collection.** The tool set is the `07` operations that mutate or query Records and git, plus `create_collection`. `info` is the listing (AGT-1). There is no family of methods named after consumer types. *Check:* a scripted run “`find` / `search` → `get` → `add` on a `journal` → `commit`” uses only those tools.
+**AGT-2. Few tools, not one per collection.** The tool set is the `07` operations that mutate or query Records and git, plus `create_collection`. `info` is the listing (AGT-1). There is no family of methods named after consumer types. CLI transport omits `begin` / `commit` / `discard` (GIT-2); each mutating CLI command autocommits. An in-process agent that holds a library handle may still batch with those names. *Check:* a scripted CLI run “`find` / `search` → `get` → `add` on a `journal`” uses only those tools.
 
 Include when a Remote exists: `push`, `pull`, `sync`, and `auto_sync` as an `open` option — same meaning as `04`. Do not add a second “GitHub tool”.
 
@@ -35,7 +35,7 @@ Include when a Remote exists: `push`, `pull`, `sync`, and `auto_sync` as an `ope
 
 - That `exclude_fts` / `exclude_vector` fields are still in `search` (SCH-9).
 - That `search` is a language-model answer (QRY-3).
-- That a mutating call skipped a git commit because a transaction was open, or that it used a caller message without `begin` (GIT-2).
+- That a mutating CLI command skipped a git commit because a transaction was open, or that it used a caller message without `begin` (GIT-2). Batch writes need an in-process library handle.
 - That `open` pulled unless `auto_sync` was on and the pull was a fast-forward (GIT-10).
 - That it holds the write lock if it opened for read (STO-4).
 

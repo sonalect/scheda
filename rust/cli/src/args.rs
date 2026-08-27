@@ -20,7 +20,7 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "PATH")]
     pub vault: Option<PathBuf>,
 
-    /// Pull on open and push after `commit` when a Remote exists.
+    /// Pull on open and push after a local commit when a Remote exists.
     /// Default off: `open` stays local.
     #[arg(long, global = true, default_value_t = false)]
     pub auto_sync: bool,
@@ -107,15 +107,6 @@ pub enum Command {
         #[command(subcommand)]
         command: CollectionCommand,
     },
-    /// Start a transaction. Later writes do not autocommit until `commit` or `discard`.
-    Begin,
-    /// One git commit of paths this handle wrote. Ends the transaction.
-    Commit {
-        #[arg(long, short)]
-        message: String,
-    },
-    /// Restore Scheda-recorded paths to HEAD and end the transaction if any.
-    Discard,
     /// Validate Schema, encodings, ids, and conflict markers.
     Check,
     /// Rebuild the derived Index.

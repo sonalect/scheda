@@ -53,14 +53,19 @@ API or on-disk format changes bump the minor.
   carrier.
 - Schema files and `Collection::version` use `version` (same as
   `api.v1.Schema`). A leftover `schema_version` key is `invalid`.
-- The uncommitted-path log (`written`) is newline-separated vault-relative
-  paths only. A leftover JSON array from 0.1 is not read.
+- The uncommitted-path log is `{vault}/.scheda/tx.log` (next to
+  `write.lock`), newline-separated vault-relative paths. It is not
+  under `index/`, so `reindex` does not delete it.
+- Transactions are in memory on a library handle. There is no
+  `{index}/txn` file. `open` does not resume another process's
+  transaction. CLI does not expose `begin` / `commit` / `discard`;
+  each mutating CLI command autocommits with message `scheda`.
 
 ### Fixed
 
 - An `integer` field on a journal line is stored as `1`, not `1.0`.
 - Creating a Vault writes `.gitignore` before `open` takes `write.lock`,
-  so `begin` right after create is not `CODE_LOCKED`. Repairing
+  so a first write right after create is not `CODE_LOCKED`. Repairing
   `.gitignore` on an existing Vault still uses the lock, then
   `File::unlock` before `open` returns.
 

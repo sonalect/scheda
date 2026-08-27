@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.52, 27 August 2026.
+Document 14 of the Scheda package. Version 0.53, 27 August 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -38,9 +38,6 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 | `info` | |
 | `create-collection` | `NAME --schema JSON` (or stdin) |
 | `collection` | `NAME <subcommand>` |
-| `begin` | |
-| `commit` | `-m` / `--message TEXT` |
-| `discard` | |
 | `check` | |
 | `reindex` | |
 | `find` | [`--collections NAME,…`] `--filter JSON --offset N --count N` [`--include-raw`] |
@@ -57,6 +54,11 @@ methods with that `NAME` (no `--collections`). Stdout JSON includes
 `collection` on each `Record` / `Hit`. `--include-raw` sets
 `FindQuery.include_raw` / `SearchQuery.include_raw` (default off: omit
 `raw`). `--filter` is `FindQuery.filter` JSON.
+
+The CLI does not encode `begin` / `commit` / `discard`. Each mutating
+command (`create-collection`, `collection … add` / `replace`) autocommits
+with message `scheda`. Batch writes are a library-handle concern (`07`
+LIB-12, LIB-22, LIB-23).
 
 `--reranker-cohere-url URL`: Cohere/Jina API root (`http`/`https`). CLI
 `POST`s `{URL}rerank` with `{ query, documents, model }`. With
