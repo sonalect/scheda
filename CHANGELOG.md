@@ -8,6 +8,21 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- Consumer readiness stages P0–P9 in `12` §4: what the first consumer
+  needs before moving a primary layer of text files onto the crate
+  (journal line fidelity, ordered journal read, batch commits, isolated
+  slice, Schema `id` pattern, singleton format, optional search, layout
+  decisions, acceptance). They do not reopen A0–A7; **agent** stays
+  accepted.
+
+### Changed
+
+- README and `10`/`11` point next crate work at that list. Isolated
+  nested git (`10` §1) is P4 of it, after journal fidelity and an
+  ordered read.
+
 ## [0.3.0] - 2026-08-27
 
 ### Added

@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.21, 27 August 2026.
+Document 10 of the Scheda package. Version 0.22, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -33,6 +33,10 @@ Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collec
 
 Order inside that slice (not a second spec): nested git under `{vault}/.isolated/` → `create_collection` / `add` on an isolated name write there → `find` / `search` on non-isolated collections still return no isolated Records and do not require `.isolated/` → main Index has no fixture sealed string → `check` covers the nested tree.
 
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). The isolated slice above is P4 of that list.
+
+Order between the two: P1, P2, and P3 come before the isolated slice, because a consumer that cannot write and read a journal faithfully gains nothing from an isolated one. Everything else in §5 still waits.
+
 **Still deferred after that slice:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
 
 ---
@@ -49,6 +53,8 @@ Order inside that slice (not a second spec): nested git under `{vault}/.isolated
 - Library: LIB-1–10, LIB-12–18 (`search` itself is LIB-11; isolated/`encrypt` clauses on those ops are **later**)
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
+
+IDX-2 in that list is open. It puts the lexical Index on the path of a plain sequential journal read, because append order is QRY-7 through `find` and `find` is a Tantivy query (QRY-2). A consumer that stores and retrieves with no search still pays for it. `12` §4 P2 must close this here — either IDX-2 stays **core** and that cost is the answer, or an ordered journal read is defined that does not open the Index. P7 depends on the same sentence.
 
 **Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse and ISO-3 on the agent surface are in. Remaining unencrypted isolated work is ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4 (`§1`). ISO-5, ISO-7–11 stay deferred.
 

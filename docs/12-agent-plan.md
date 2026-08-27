@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.33, 27 August 2026.
+Document 12 of the Scheda package. Version 0.34, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -13,9 +13,16 @@ out of this plan (`10` §1). MCP is an example transport, not a stage here
 
 A0–A7 are done. **agent** is accepted for this binding. A2 was the
 **legacy** CLI; A4 replaced `rust/cli` with argv `14`. Do not revive A2
-names. The unencrypted `{vault}/.isolated/` tree in `10` §1 (ISO-2 nested git,
-ISO-4, ISO-6, IDX-4) is not this checklist. Schema already parses
-`isolated`. Age encryption (ISO-5, ISO-7–11) stays out.
+names. Schema already parses `isolated`. Age encryption (ISO-5,
+ISO-7–11) stays out.
+
+Stages P0–P9 in §4 are the second half of this file: what the **first
+consumer** needs before it can move its primary layer onto the crate.
+They are not **agent**, and they do not reopen A0–A7. Their codes cross
+**core**, **search**, and **later**, so the unencrypted
+`{vault}/.isolated/` tree of `10` §1 (ISO-2 nested git, ISO-4, ISO-6,
+IDX-4) is P4 here instead of being out of scope. Accepting **agent**
+never waited on a P stage and still does not.
 
 ---
 
@@ -41,6 +48,8 @@ embedder `14`) → A5b (dead `layout` parts) → A6 (ISO-3 on that surface)
 → A7. A5b does not depend on A5; it is numbered `b` so that A6 and A7
 keep the names `10` and the CHANGELOG already use.
 
+P order is in §4. It starts after A7 and does not interleave with it.
+
 ---
 
 ## 2. Dashboard
@@ -61,17 +70,24 @@ keep the names `10` and the CHANGELOG already use.
 **agent**). AGT-1 listing is `Vault.info` (`VaultInfo.collections`), not a
 `catalog` command.
 
+Consumer readiness has its own dashboard in §4. A green A0–A7 does not
+imply a green P0–P9, and the reverse is also true.
+
 ---
 
-## 3. Out of this plan
+## 3. Out of A0–A7
 
 These must not block A0–A7. Writes must not depend on them (`10` §4–5).
+Some of them are consumer requirements and come back as P stages in §4;
+that is noted on the line. Coming back does not restore an A2 name.
 
 - MCP, HTTP, or a second transport. AGT-4 needs one thin encoding; `scheda`
   chooses CLI (`10` §4).
 - ISO-5, ISO-7–11, LIB-5 `crypto`. AGT-5's *Check (**later**):* `crypto`
   waits on encryption.
 - File watcher, `delete_one`, REL-4, extra language bindings (`10` §5).
+  The watcher question is open in the consumer's requirements too; no P
+  stage takes it, so `reindex` after a human edit stays the answer.
 - Collection-named tools or product rules in the CLI (`08`).
 - Weights in this repository. `--model2vec-embedder` still accepts an
   operator folder (`14`). The crate does not ship a model (QRY-5). Prefer
@@ -80,7 +96,9 @@ These must not block A0–A7. Writes must not depend on them (`10` §4–5).
   `//python/vllm:reranker` (locked `vllm` in `uv.lock`; GPU is the
   host's; Hub cache is `<workspace>/.cache/huggingface`).
 - `walk` / `walk_inverse` / `scan` / `init` / `clone` / `catalog` as
-  library or CLI names (`07`, `13`, `14`).
+  library or CLI names (`07`, `13`, `14`). P2 needs an ordered journal
+  read that does not go through the lexical Index; if that lands it gets
+  a name decided in `07`, not the A2 `scan`.
 - `Collection.info`. Listing is `Vault.info`; Schema on a handle is
   `schema()`.
 
@@ -396,7 +414,326 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ---
 
-## 4. What this document does not decide
+## 4. First-consumer readiness
+
+**Status of the part:** not started.
+
+The first consumer moves a primary layer of text files under git onto the
+crate: `document` collections it revises in place, and `journal`
+collections it appends to and never rewrites. It keeps its own
+requirements document for a storage engine, written with its own code
+names. Those names collide with ours in spelling and not in number, so
+this part does not cite them, and it does not name that consumer or its
+collections (SCH-1, MOD-1). Every box below states behaviour and cites
+**Scheda** codes (`03`–`10`).
+
+A P stage closes the way an A stage does: the cited *Check:* passes under
+`bazel test //...`. Two ground rules:
+
+- A P stage may amend `03`–`10`, and several must. Where a box does, it
+  names the document and the code. Amending the spec is the work; a
+  silent default in `src/` is not.
+- A P stage must not put a consumer's collection name in the crate.
+  SCH-1 and MOD-1 stand: grep over `rust/scheda/src` does not contain
+  those names.
+
+### Dashboard
+
+| Stage | Status | What closes |
+|---|---|---|
+| [P0](#p0-consumer-fixture) | not started | A fixture Vault shaped like the consumer's primary layer |
+| [P1](#p1-journal-line-fidelity) | not started | An integer stays an integer; the line is RFC 8785 |
+| [P2](#p2-ordered-journal-read-without-the-lexical-index) | not started | Reading a journal in order without Tantivy |
+| [P3](#p3-many-writes-one-commit) | not started | Append per event without a commit per event |
+| [P4](#p4-unencrypted-isolated-slice) | not started | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
+| [P5](#p5-id-pattern-in-schema) | not started | `id` pattern reaches `CollectionDecl` |
+| [P6](#p6-singleton-file-format) | not started | STO-2 and SCH-6 agree on the singleton file |
+| [P7](#p7-a-consumer-that-does-not-search) | not started | The search stack is not forced on every consumer |
+| [P8](#p8-decisions-without-code) | not started | Layout answers the consumer needs before it moves |
+| [P9](#p9-consumer-acceptance) | not started | The consumer's acceptance list on the P0 fixture |
+
+**Order.** P1 and P2 first: without them the consumer can neither write
+nor read its journals honestly. Then P3, P5, P6 — each small, each
+removing one migration blocker. P7 next, because it decides whether a
+consumer pays for Tantivy and USearch it does not use. P4 is the large
+one and is already `10` §1 Next. P0 can start at any point; P9 closes the
+part.
+
+---
+
+## P0. Consumer fixture
+
+**Status:** not started
+
+**Codes:** SCH-1, MOD-1, MOD-8, STO-2, QRY-1.
+
+One fixture Vault shaped like the consumer's primary layer, so the later
+stages have something honest to run against: two `document` collections
+with identical field lists, two further `document` collections, three
+`journal` collections, one `singleton`, and one isolated `journal`.
+
+A fixture of that shape carries collection names that belong to a
+consumer, which is what the SCH-1 grep forbids. That check is about
+library source, not test data, and today's wording does not say which it
+means.
+
+- [ ] Fixture lives in test data. Collection names come from its Schema
+      files; no name is compiled into `rust/scheda/src` (SCH-1).
+- [ ] The MOD-1 / SCH-1 grep check names `rust/scheda/src` as its scope,
+      in the test and in `05`. Test data must not be able to turn SCH-1
+      red.
+- [ ] `check` passes on the fixture; `get` of each kind returns bytes
+      equal to the file (STO-2, QRY-1).
+- [ ] Two `document` collections with identical field lists: a Record
+      accepted by one is accepted by the other; `find` limited to one
+      returns none of the other's Records (MOD-8, QRY-2).
+
+---
+
+## P1. Journal line fidelity
+
+**Status:** not started
+
+**Codes:** STO-2, STO-3, MOD-12, MOD-16, QRY-1, SCH-4.
+
+The consumer chains its own checksum over each journal line, so the bytes
+it reads back must be the bytes it meant to write. Two things stand in
+the way, and neither has failed loudly yet.
+
+Every number entering the library is a `double`: `RecordAdd.fields` is
+`google.protobuf.Struct`, and the bridge builds `serde_json::Number::from_f64`.
+The line is then printed with `Number::to_string`. A field Schema calls
+`integer` lands on disk as `1.0`. A person reading the JSONL sees `1.0`,
+and a consumer that canonicalises `1` never matches the file.
+
+The line is also sorted-key JSON rather than RFC 8785: keys sort in
+`serde_json::Map` order, which is UTF-8 byte order, not UTF-16 code unit
+order; numbers print through Rust's shortest round-trip, not ES6
+`NumberToString`. For ASCII keys and small integers the two agree, which
+is why this has been invisible.
+
+- [ ] An `integer` field round-trips as an integer. `add`, then read the
+      segment: the line holds `1`, not `1.0`. Same after `reindex` and
+      through `get` (MOD-12, STO-2).
+- [ ] Canonical form is RFC 8785 and `04` STO-2 says so: keys by UTF-16
+      code unit, numbers by ES6 `NumberToString`, strings escaped as the
+      RFC states.
+- [ ] `get` and `find` with `include_raw` on a `journal` return the exact
+      bytes of that line, byte for byte equal to the segment (QRY-1).
+- [ ] Round-trip fixture: integers, negative integers, finite fractions,
+      nested objects, a list, and a non-ASCII key. Bytes are stable
+      across `add` → `get` → re-encode.
+- [ ] A caller value on an `integer` field that is not integral is
+      `invalid`, not truncated (SCH-4).
+- [ ] An integer the `Struct` bridge cannot carry exactly (magnitude above
+      2^53) is `invalid` on write, not silently rounded. If that limit is
+      unacceptable, `07` says what carries the value instead.
+
+---
+
+## P2. Ordered journal read without the lexical Index
+
+**Status:** not started
+
+**Codes:** QRY-7, QRY-2, IDX-2, IDX-5, MOD-16, `10` §2.
+
+To verify its chain the consumer reads every line of a journal in append
+order, and it wants that in a build with no search. Today append order is
+`find` (QRY-7), `find` runs a Tantivy query (QRY-2), and `get` on a
+`journal` goes through the IDX-5 map. The whole lexical Index sits on the
+path of a pure sequential read. `10` §2 puts IDX-2 in **core**, so this is
+a specification question before it is an implementation one.
+
+- [ ] `10` §2 decides it, and only one answer survives: either the
+      lexical Index stays **core** and a consumer accepts Tantivy on a
+      read, or an ordered journal read is defined that walks segments in
+      Schema sequence without opening the Index.
+- [ ] If that read lands: a name decided in `07` — not the A2 `scan`
+      (§3) — append order identical to QRY-7 including rotation,
+      streaming rather than a materialised list, and raw line bytes (P1).
+- [ ] A missing `.scheda/` does not stop it. `get` and `history` already
+      survive a deleted Index (GIT-3); this read matches them.
+- [ ] Fixture of 10⁴ lines across rotated segments: every line once, in
+      order, and memory does not grow with the line count (OPS-1).
+
+---
+
+## P3. Many writes, one commit
+
+**Status:** not started
+
+**Codes:** GIT-2, GIT-8, GIT-10, LIB-7, STO-5, OPS-1.
+
+GIT-2 is deliberate: outside a transaction each mutating call autocommits
+with the message `scheda`. The consumer appends one journal Record per
+observed event, so on an OPS-1 fixture that rule means 10⁴ commits.
+`begin` / `commit` already answers it, at the price of making a
+transaction the only correct way to write and of discarding accepted
+writes if the process dies before `commit`.
+
+- [ ] `04` GIT-2 decides it: either an `OpenOptions` switch that turns
+      autocommit off for the handle, leaving writes in the working tree
+      until `commit`, or a plain statement that a transaction is the only
+      supported batch and a consumer must hold one.
+- [ ] If the switch lands: the field is in `api/v1` `OpenOptions`, the
+      default keeps today's behaviour, `info` reports it (LIB-4), and
+      `auto_sync` still pushes only after a real commit (GIT-8, GIT-10).
+- [ ] 10⁴ appends in one batch produce one commit and stay inside the
+      OPS-1 band.
+- [ ] A process killed mid-batch leaves the last complete line and no
+      partial line; on reopen the accepted set is what the segment holds
+      (STO-5, MOD-16).
+
+---
+
+## P4. Unencrypted isolated slice
+
+**Status:** not started
+
+**Codes:** ISO-2, ISO-4, ISO-6, IDX-4, LIB-21, `10` §1.
+
+This is `10` §1 Next, recorded here because a consumer waits on it and
+because the consumer's shape adds requirements the roadmap order does not
+mention. It needs exactly one isolated collection, and that collection is
+a `journal`: its Records must stay out of the published history and be
+readable only by their owner. Encryption stays out (ISO-5, ISO-7–11).
+
+- [ ] The `10` §1 order holds: nested git under `{vault}/.isolated/` →
+      `create_collection` / `add` on an isolated name write there →
+      non-isolated `find` / `search` return nothing isolated and do not
+      require `.isolated/` → the main Index holds no sealed fixture
+      string → `check` covers the nested tree.
+- [ ] `journal` works isolated, not only `document`: segments, rotation,
+      and the IDX-5 map inside `{vault}/.isolated/.scheda/` (ISO-4,
+      IDX-4).
+- [ ] Files are `0600`; the parent repository does not track
+      `.isolated/`; the nested repository has no Remote and `check` fails
+      if one appears (ISO-6).
+- [ ] A batch of isolated appends is one nested commit, not one per line
+      (P3).
+- [ ] `collection(name)` stops being `unsupported` for an isolated name;
+      the **Later** clause of `07` LIB-21 becomes the rule.
+
+---
+
+## P5. `id` pattern in Schema
+
+**Status:** not started
+
+**Codes:** SCH-2, SCH-6, MOD-13, MOD-8.
+
+`CollectionDecl.id_pattern` is already honoured on write, but nothing
+ever sets it: there is no Schema key, so the field is always unset. The
+consumer wants a ULID pattern on two journals and a slug pattern on its
+document collections, and wants the library to refuse a wrong `id`
+instead of trusting the caller.
+
+- [ ] A Schema key for the pattern, listed in `05` §8 keys and present in
+      `api/v1` `Schema`. A value that is not a valid expression is
+      `invalid` on load and on `create_collection`.
+- [ ] The pattern applies to `add` on every kind, not only `journal`.
+- [ ] The pattern is anchored, or `05` states plainly that it is not. An
+      unanchored pattern that matches a substring is the silent default
+      this plan forbids.
+- [ ] The library slug rule runs first. A pattern narrows it and can
+      never widen it: a pattern that would allow `a/b` still does not
+      create a path (MOD-8).
+
+---
+
+## P6. Singleton file format
+
+**Status:** not started
+
+**Codes:** STO-2, SCH-6, MOD-8, QRY-1.
+
+`04` STO-2 says a `singleton` is "JSON or YAML 1.2 as Schema says". `05`
+SCH-6 says the file is always `record.yaml`. The code follows SCH-6. Two
+documents of this package disagree, and the consumer keeps two singletons
+that are JSON today.
+
+- [ ] One of the two changes. If the file stays `record.yaml`, STO-2
+      drops "JSON or"; if Schema chooses, `05` §8 gains the key and MOD-8
+      gains the second file name.
+- [ ] Either way `get` returns the file bytes and the format is taken
+      from Schema, never guessed from content (QRY-1, IDX-10).
+
+---
+
+## P7. A consumer that does not search
+
+**Status:** not started
+
+**Codes:** IDX-2, IDX-3, IDX-8, QRY-4, LIB-1, `10` §2.
+
+The crate links Tantivy, USearch, and a bundled libgit2 unconditionally.
+A consumer whose first stage is only writing and reading files pays for
+all three on every build and every test link. That is not a theoretical
+cost; it is what slows the consumer's own iteration today.
+
+- [ ] Cargo features let a build drop the vector leg, and with P2 the
+      lexical leg. The default keeps both, so existing consumers see no
+      change.
+- [ ] `10` §2 says which of IDX-2 / IDX-3 a **core** binding must ship.
+      It puts IDX-2 in **core** today; if a feature can remove it, that
+      sentence changes.
+- [ ] With the features off, `open`, `add`, `get`, `history`, `commit`,
+      and `check` work. `find` / `search` return a `code` naming the
+      absent leg, not an empty result that reads as "no match" (QRY-4).
+- [ ] `bazel test //...` covers the reduced build. An untested feature
+      combination rots.
+
+---
+
+## P8. Decisions without code
+
+**Status:** not started
+
+**Codes:** MOD-8, MOD-16, STO-4.
+
+Three shapes in the consumer's current layout have no direct translation.
+Deciding them here costs a paragraph; discovering them mid-migration
+costs a rewrite. None needs crate work.
+
+- [ ] One of its collections is stored a directory level deeper today,
+      keyed by a field before the `id`. MOD-8 gives flat collection
+      directories with no path template (A5b). Record the answer: that
+      field becomes an ordinary field of one collection, or each of its
+      values becomes its own collection.
+- [ ] One of its files is a work queue whose entries change status in
+      place. A `journal` cannot do that: `replace` is `unsupported` and
+      there is no delete (MOD-16). Record whether such a queue stays the
+      consumer's own file or becomes a `document` collection with one
+      Record per entry.
+- [ ] Its capture path is a second process that writes a buffer of its
+      own. STO-4 allows one writer per working tree. Record that such a
+      buffer stays outside the Vault.
+
+---
+
+## P9. Consumer acceptance
+
+**Status:** not started
+
+**Codes:** STO-1, STO-2, SCH-1, QRY-1, OPS-1, OPS-3.
+
+Run the consumer's acceptance list against the P0 fixture. Passing it is
+what "migrate without friction" means; anything short of it is a promise.
+
+- [ ] The fixture opens and reads in an editor and in `git` with no crate
+      (STO-2).
+- [ ] Delete the Index and `reindex`: same Records, same content, and the
+      counts match a hand tally of files and lines (STO-1, OPS-3).
+- [ ] `rust/scheda/src` holds no consumer collection name (SCH-1, MOD-1,
+      P0).
+- [ ] OPS-1 volume on the fixture: 10⁴ journal Records and 10³
+      documents, with `get` and `add` in milliseconds.
+- [ ] Every P stage is `done`, or its entry names the consumer
+      requirement that stays unmet and why.
+
+---
+
+## 5. What this document does not decide
 
 Calendar dates or crate version numbers (`10` §8).
 
@@ -414,3 +751,12 @@ Vault hooks: already the consumer's (`04`). A CLI note must not recurse
 into the same write lock (`10` §7); this plan does not design hooks.
 
 ISO-5 `encrypt` / `secret` / `crypto`.
+
+The consumer's schemas, field names, and identifier formats. §4 says what
+the engine must be able to express; the shapes themselves stay in the
+consumer's own documents and must not be copied into this package
+(SCH-1).
+
+The order in which a consumer moves its data, and what it keeps outside a
+Vault. §4 P8 records the answers a stage depends on; the migration itself
+is the consumer's plan, not a stage here.
