@@ -33,6 +33,8 @@ API or on-disk format changes bump the minor.
 - HTTP embedder/reranker errors report status and host only: they do not
   echo the response body or URL userinfo. Git credential failures do not
   put the remote URL in the message.
+- Dropping a Vault waits for Tantivy merge threads so a later `open` on
+  the same tree is not `index_lexical` (`LockBusy`).
 
 ### Removed
 

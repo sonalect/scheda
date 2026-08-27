@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1097,7 +1097,10 @@ impl HttpStub {
         let handle = thread::spawn(move || {
             while !shutdown_thread.load(Ordering::Relaxed) {
                 match listener.accept() {
-                    Ok((stream, _)) => handle_conn(stream, &seen_thread),
+                    Ok((stream, _)) => {
+                        let _ = stream.set_nonblocking(false);
+                        handle_conn(stream, &seen_thread);
+                    }
                     Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
                         thread::sleep(Duration::from_millis(5));
                     }
@@ -1124,42 +1127,41 @@ impl Drop for HttpStub {
 }
 
 fn handle_conn(stream: TcpStream, seen: &Mutex<Vec<String>>) {
+    let _ = stream.set_nonblocking(false);
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
     let mut reader = BufReader::new(stream);
-    let Ok(Some((path, body))) = read_request(&mut reader) else {
-        return;
-    };
-    let stream = reader.get_mut();
-    if path.contains("embeddings") {
-        let input = body.get("input").and_then(Value::as_str).unwrap_or("");
-        seen.lock().unwrap().push(input.to_owned());
-        write_json(
-            stream,
-            &json!({ "data": [{ "embedding": embed_vector(input) }] }),
-        );
-        return;
-    }
-    if path.contains("rerank") {
-        let results = body
-            .get("documents")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .map(|(index, doc)| {
-                let text = match doc {
-                    Value::String(text) => text.as_str(),
-                    other => other.as_str().unwrap_or(""),
-                };
-                let score = if text.contains("car") || text.contains("automobile") {
-                    0.9
-                } else {
-                    0.1
-                };
-                json!({ "index": index, "relevance_score": score })
-            })
-            .collect::<Vec<_>>();
-        write_json(stream, &json!({ "results": results }));
+    if let Ok(Some((path, body))) = read_request(&mut reader) {
+        let stream = reader.get_mut();
+        if path.contains("embeddings") {
+            let input = body.get("input").and_then(Value::as_str).unwrap_or("");
+            seen.lock().unwrap().push(input.to_owned());
+            write_json(
+                stream,
+                &json!({ "data": [{ "embedding": embed_vector(input) }] }),
+            );
+        } else if path.contains("rerank") {
+            let results = body
+                .get("documents")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .map(|(index, doc)| {
+                    let text = match doc {
+                        Value::String(text) => text.as_str(),
+                        other => other.as_str().unwrap_or(""),
+                    };
+                    let score = if text.contains("car") || text.contains("automobile") {
+                        0.9
+                    } else {
+                        0.1
+                    };
+                    json!({ "index": index, "relevance_score": score })
+                })
+                .collect::<Vec<_>>();
+            write_json(stream, &json!({ "results": results }));
+        }
+        let _ = stream.shutdown(Shutdown::Write);
     }
 }
 

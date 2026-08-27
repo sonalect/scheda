@@ -547,6 +547,11 @@ impl Drop for SearchEngine {
         let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
         let can_write = inner.can_write;
         let _ = inner.commit(&self.index_dir, can_write);
+        if let Some(lexical) = inner.lexical.as_mut()
+            && let Some(writer) = lexical.writer.take()
+        {
+            let _ = writer.wait_merging_threads();
+        }
     }
 }
 
