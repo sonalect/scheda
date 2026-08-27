@@ -40,6 +40,10 @@ API or on-disk format changes bump the minor.
 ### Fixed
 
 - An `integer` field on a journal line is stored as `1`, not `1.0`.
+- Creating a Vault writes `.gitignore` before `open` takes `write.lock`,
+  so `begin` right after create is not `CODE_LOCKED`. Repairing
+  `.gitignore` on an existing Vault still uses the lock, then
+  `File::unlock` before `open` returns.
 
 ## [0.3.0] - 2026-08-27
 

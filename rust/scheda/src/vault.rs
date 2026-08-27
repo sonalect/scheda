@@ -86,6 +86,7 @@ impl Vault {
     ) -> Result<Self, Error> {
         prepare_new_work_tree(path)?;
         git::init(path)?;
+        commit_gitignore_if_needed(path)?;
         Self::open_existing(path, options, embedder)
     }
 
@@ -101,6 +102,7 @@ impl Vault {
         }
         prepare_new_work_tree(path)?;
         git::clone(url, path)?;
+        commit_gitignore_if_needed(path)?;
         Self::open_existing(path, without_remote_repo(options), embedder)
     }
 
@@ -377,6 +379,8 @@ impl Vault {
         Ok(())
     }
 
+    /// Patch `.gitignore` on an existing Vault. Takes `write.lock` for that
+    /// write, then `unlock`s so `open` does not keep the writer lock.
     fn write_gitignore_under_lock(&self) -> Result<(), Error> {
         {
             let mut slot = crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
@@ -394,7 +398,12 @@ impl Vault {
         {
             let mut slot =
                 crate::error::mutex(&self.write_lock, "[Vault::open] release write lock")?;
-            *slot = None;
+            if let Some(file) = slot.take()
+                && let Err(err) = file.unlock()
+                && result.is_ok()
+            {
+                return Err(err).context("[Vault::open] unlock write lock");
+            }
         }
         result
     }
@@ -1176,6 +1185,16 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
     Ok(true)
 }
 
+/// Write `.scheda/` and `.isolated/` into `.gitignore` and commit when this
+/// tree is new (init or clone). No writer exists yet, so this does not take
+/// `write.lock`. A later `begin` is then the first `try_lock`.
+fn commit_gitignore_if_needed(vault: &Path) -> Result<(), Error> {
+    if ensure_gitignore(vault)? {
+        git::commit(vault, AUTO_COMMIT_MESSAGE, &[String::from(".gitignore")])?;
+    }
+    Ok(())
+}
+
 /// Uncommitted write paths for the next `commit`. Lives under `.scheda/index`
 /// (gitignored) so a process-per-command CLI can write then `commit`.
 fn written_log(index_dir: &Path) -> PathBuf {
@@ -1450,6 +1469,31 @@ mod tests {
         assert_ne!(vault_a.path(), vault_b.path());
         assert!(!vault_a.holds_write_lock());
         assert!(!vault_b.holds_write_lock());
+    }
+
+    #[test]
+    fn begin_after_create_is_not_locked() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        assert!(!vault.holds_write_lock());
+        vault.begin().unwrap();
+        assert!(vault.holds_write_lock());
+    }
+
+    #[test]
+    fn begin_after_gitignore_repair_is_not_locked() {
+        let scratch = Scratch::new();
+        let created = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        drop(created);
+        fs::write(scratch.vault().join(".gitignore"), "other\n").unwrap();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        assert!(!vault.holds_write_lock());
+        vault.begin().unwrap();
+        assert!(vault.holds_write_lock());
+        let gitignore = fs::read_to_string(scratch.vault().join(".gitignore")).unwrap();
+        assert!(gitignore.lines().any(|line| line.trim() == ".scheda/"));
+        assert!(gitignore.lines().any(|line| line.trim() == ".isolated/"));
+        assert!(gitignore.lines().any(|line| line.trim() == "other"));
     }
 
     #[test]
