@@ -27,6 +27,7 @@ If Unreleased already states the change, leave it. If it is stale or wrong, edit
 
 - The commit is **only** `CHANGELOG.md`.
 - rustfmt / comment-only / `.cursor/rules` with no library, CLI, or `docs/` product change.
+- Clippy / rustc lint-only: same contract, same on-disk bytes, same CLI; a green CI build is not a user-facing effect.
 - The user explicitly waived the changelog for this commit.
 
-Do not skip for “small” API, CLI flags, error codes, or Vault/Schema/Index behaviour.
+Do not skip for “small” API, CLI flags, error codes, or Vault/Schema/Index behaviour. A lint fix that changes a failure, path, flag, `code`, or what the caller sees is not lint-only.
