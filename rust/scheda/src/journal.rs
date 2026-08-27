@@ -14,13 +14,37 @@ use crate::schema::{self, CollectionDecl, Kind, Schema, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
 
+pub(crate) struct JournalRollback {
+    pub(crate) path: PathBuf,
+    pub(crate) previous_len: u64,
+}
+
+pub(crate) fn rollback_insert(write: &JournalRollback) -> Result<(), Error> {
+    if write.previous_len == 0 {
+        match fs::remove_file(&write.path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).context("[Journal::rollback] remove new segment"),
+        }
+    } else {
+        let file = OpenOptions::new()
+            .write(true)
+            .open(&write.path)
+            .context("[Journal::rollback] open segment")?;
+        file.set_len(write.previous_len)
+            .context("[Journal::rollback] truncate segment")?;
+        file.sync_all()
+            .context("[Journal::rollback] fsync segment")
+    }
+}
+
 pub(crate) fn insert_journal(
     vault: &Path,
     decl: &CollectionDecl,
     record: Record,
     index_dir: &Path,
     maps: &mut JournalIdMaps,
-) -> Result<(String, String), Error> {
+) -> Result<(String, String, JournalRollback), Error> {
     let (id, line) = prepare_line(decl, record)?;
     match maps.contains(&decl.name, &id) {
         Some(true) => {
@@ -41,8 +65,16 @@ pub(crate) fn insert_journal(
     }
     let dir = journal_dir(vault, decl)?;
     fs::create_dir_all(&dir).context("[Journal::insert] create dir")?;
-    let path = open_segment_path(&dir, decl, line.len() as u64)?;
+    let path = open_segment_path(&dir, decl, line.len() as u64, maps)?;
+    let previous_len = if path.is_file() {
+        fs::metadata(&path)
+            .context("[Journal::insert] stat segment")?
+            .len()
+    } else {
+        0
+    };
     append_line(&path, &line)?;
+    maps.add_segment_line(&path);
     let rel = store::rel_posix(vault, &path)?;
     if maps.contains(&decl.name, &id).is_some() {
         index::remember_id(index_dir, maps, &decl.name, &id, &rel)?;
@@ -50,7 +82,14 @@ pub(crate) fn insert_journal(
         let ids = map_from_files(vault, decl)?;
         index::rewrite_collection(index_dir, maps, &decl.name, ids)?;
     }
-    Ok((id, rel))
+    Ok((
+        id,
+        rel,
+        JournalRollback {
+            path,
+            previous_len,
+        },
+    ))
 }
 
 pub(crate) fn find_journal(
@@ -73,15 +112,16 @@ pub(crate) fn find_journal(
 }
 
 fn find_journal_scan(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
-    for (path, parsed) in scan_parsed(vault, decl)? {
+    let mut found = None;
+    for_each_parsed(vault, decl, |path, parsed| {
         if parsed.id == id {
-            return record_from_parsed(vault, decl, &path, parsed);
+            found = Some(record_from_parsed(vault, decl, path, parsed)?);
+            Ok(false)
+        } else {
+            Ok(true)
         }
-    }
-    Err(Error::not_found(format!(
-        "record {id} is not in {}",
-        decl.name
-    )))
+    })?;
+    found.ok_or_else(|| Error::not_found(format!("record {id} is not in {}", decl.name)))
 }
 
 fn find_in_segment(
@@ -104,9 +144,10 @@ fn find_in_segment(
 
 pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
     let mut out = Vec::new();
-    for (path, parsed) in scan_parsed(vault, decl)? {
-        out.push(record_from_parsed(vault, decl, &path, parsed)?);
-    }
+    for_each_parsed(vault, decl, |path, parsed| {
+        out.push(record_from_parsed(vault, decl, path, parsed)?);
+        Ok(true)
+    })?;
     Ok(out)
 }
 
@@ -199,7 +240,7 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
         }
     }
     store::validate_fields(&fields, &decl.fields, Some(decl.id_field.as_str()), false)?;
-    let mut line = canonical_json(&Value::Object(fields.clone()))?;
+    let mut line = canonical_json(&Value::Object(fields))?;
     line.push(b'\n');
     Ok((id, line))
 }
@@ -234,10 +275,8 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
             out.push(']');
         }
         Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
             out.push('{');
-            for (i, key) in keys.into_iter().enumerate() {
+            for (i, (key, value)) in map.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
@@ -245,7 +284,7 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
                     .context(Code::Invalid, "[Journal::write_canonical] encode JSON key")?;
                 out.push_str(&encoded);
                 out.push(':');
-                write_canonical(&map[key], out)?;
+                write_canonical(value, out)?;
             }
             out.push('}');
         }
@@ -284,17 +323,27 @@ fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
     Ok(out)
 }
 
-fn open_segment_path(dir: &Path, decl: &CollectionDecl, line_len: u64) -> Result<PathBuf, Error> {
+fn open_segment_path(
+    dir: &Path,
+    decl: &CollectionDecl,
+    line_len: u64,
+    maps: &mut JournalIdMaps,
+) -> Result<PathBuf, Error> {
     let segments = list_segments(dir)?;
     if let Some(last) = segments.last()
-        && !segment_is_full(last, decl, line_len)?
+        && !segment_is_full(last, decl, line_len, maps)?
     {
         return Ok(last.clone());
     }
     Ok(dir.join(next_segment_name(&segments, decl)?))
 }
 
-fn segment_is_full(path: &Path, decl: &CollectionDecl, line_len: u64) -> Result<bool, Error> {
+fn segment_is_full(
+    path: &Path,
+    decl: &CollectionDecl,
+    line_len: u64,
+    maps: &mut JournalIdMaps,
+) -> Result<bool, Error> {
     if !path.exists() {
         return Ok(false);
     }
@@ -315,8 +364,7 @@ fn segment_is_full(path: &Path, decl: &CollectionDecl, line_len: u64) -> Result<
         return Ok(true);
     }
     if let Some(max_lines) = decl.segment_max_lines {
-        let text = fs::read_to_string(path).context("[Journal::segment_is_full] count lines")?;
-        let lines = text.bytes().filter(|b| *b == b'\n').count() as u64;
+        let lines = maps.ensure_segment_lines(path, count_newlines)?;
         if lines >= max_lines {
             return Ok(true);
         }
@@ -418,34 +466,49 @@ fn append_line(path: &Path, line: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
-fn id_exists(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<bool, Error> {
-    for (_, parsed) in scan_parsed(vault, decl)? {
-        if parsed.id == id {
-            return Ok(true);
+fn count_newlines(path: &Path) -> Result<u64, Error> {
+    use std::io::Read;
+    let mut file = fs::File::open(path).context("[Journal::count_newlines] open segment")?;
+    let mut buf = [0u8; 8192];
+    let mut lines = 0u64;
+    loop {
+        let n = file
+            .read(&mut buf)
+            .context("[Journal::count_newlines] read segment")?;
+        if n == 0 {
+            break;
         }
+        lines += buf[..n].iter().filter(|byte| **byte == b'\n').count() as u64;
     }
-    Ok(false)
+    Ok(lines)
 }
 
-fn scan_parsed(vault: &Path, decl: &CollectionDecl) -> Result<Vec<(PathBuf, ParsedLine)>, Error> {
-    let mut out = Vec::new();
-    for path in list_segments(&journal_dir(vault, decl)?)? {
-        let raw = fs::read(&path).context("[Journal::scan_parsed] read segment")?;
-        let Ok(text) = str::from_utf8(&raw) else {
-            continue;
-        };
-        if store::has_conflict_markers(text) {
-            continue;
+fn id_exists(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<bool, Error> {
+    let mut found = false;
+    for_each_parsed(vault, decl, |_, parsed| {
+        if parsed.id == id {
+            found = true;
+            Ok(false)
+        } else {
+            Ok(true)
         }
-        let (complete, _) = split_complete(text);
-        for line in complete {
-            match parse_line(decl, line) {
-                Ok(parsed) => out.push((path.clone(), parsed)),
-                Err(_) => break,
+    })?;
+    Ok(found)
+}
+
+fn for_each_parsed(
+    vault: &Path,
+    decl: &CollectionDecl,
+    mut visit: impl FnMut(&Path, ParsedLine) -> Result<bool, Error>,
+) -> Result<(), Error> {
+    for path in list_segments(&journal_dir(vault, decl)?)? {
+        for parsed in parse_segment(decl, &path)? {
+            if !visit(&path, parsed)? {
+                return Ok(());
             }
         }
     }
-    Ok(out)
+    Ok(())
 }
 
 pub(crate) fn reindex_map(
@@ -456,25 +519,27 @@ pub(crate) fn reindex_map(
     let mut records = 0u64;
     let mut invalid = 0u64;
     let mut ids = std::collections::BTreeMap::new();
-    for (path, parsed) in scan_parsed(vault, decl)? {
+    for_each_parsed(vault, decl, |path, parsed| {
         records += 1;
-        let record = record_from_parsed(vault, decl, &path, parsed)?;
+        let record = record_from_parsed(vault, decl, path, parsed)?;
         if record.valid != Some(true) {
             invalid += 1;
         }
         if let (Some(id), Some(rel)) = (record.id, record.path) {
             ids.insert(id, rel);
         }
-    }
+        Ok(true)
+    })?;
     Ok((records, invalid, segments, ids))
 }
 
 fn map_from_files(vault: &Path, decl: &CollectionDecl) -> Result<BTreeMap<String, String>, Error> {
     let mut ids = std::collections::BTreeMap::new();
-    for (path, parsed) in scan_parsed(vault, decl)? {
-        let rel = store::rel_posix(vault, &path)?;
+    for_each_parsed(vault, decl, |path, parsed| {
+        let rel = store::rel_posix(vault, path)?;
         ids.insert(parsed.id, rel);
-    }
+        Ok(true)
+    })?;
     Ok(ids)
 }
 
@@ -491,7 +556,7 @@ fn parse_segment(decl: &CollectionDecl, path: &Path) -> Result<Vec<ParsedLine>, 
     for line in complete {
         match parse_line(decl, line) {
             Ok(parsed) => out.push(parsed),
-            Err(_) => break,
+            Err(_) => continue,
         }
     }
     Ok(out)

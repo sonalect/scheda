@@ -29,6 +29,7 @@ const VECTOR_INDEX: &str = "index.usearch";
 const VECTOR_META: &str = "meta.json";
 const VECTOR_KEYS: &str = "keys.json";
 const EDGES_FILE: &str = "edges.jsonl";
+const ORD_FILE: &str = "ord.json";
 const WRITER_HEAP: usize = 16_000_000;
 const RRF_K: f64 = 60.0;
 const DEFAULT_K: usize = 10;
@@ -69,6 +70,7 @@ struct VectorStore {
     model_id: String,
     dimensions: usize,
     field_ids: BTreeSet<String>,
+    next_key: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -85,6 +87,8 @@ struct VectorMeta {
     dimensions: usize,
     #[serde(default)]
     field_ids: Vec<String>,
+    #[serde(default)]
+    next_key: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -123,8 +127,8 @@ fn collection_query(field: Field, names: &[&str]) -> Box<dyn Query> {
     }
 }
 
-fn allowed_has(allowed: &BTreeSet<(String, String)>, collection: &str, id: &str) -> bool {
-    allowed.contains(&(collection.to_owned(), id.to_owned()))
+fn allowed_has(allowed: &BTreeMap<String, BTreeSet<String>>, collection: &str, id: &str) -> bool {
+    allowed.get(collection).is_some_and(|ids| ids.contains(id))
 }
 
 impl SearchEngine {
@@ -135,7 +139,7 @@ impl SearchEngine {
             edges: load_edges(index_dir).unwrap_or_else(|_| EdgeIndex::default()),
             dirty: false,
             can_write,
-            next_ord: BTreeMap::new(),
+            next_ord: load_next_ord(index_dir).unwrap_or_default(),
         };
         Ok(Self {
             index_dir: index_dir.to_path_buf(),
@@ -159,7 +163,10 @@ impl SearchEngine {
     }
 
     pub(crate) fn close_for_rebuild(&self) {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Ok(mut inner) = crate::error::mutex(&self.inner, "[SearchEngine::close_for_rebuild] lock")
+        else {
+            return;
+        };
         inner.lexical = None;
         inner.vector = None;
         inner.edges = EdgeIndex::default();
@@ -173,16 +180,19 @@ impl SearchEngine {
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
-        inner.lexical = None;
-        inner.vector = None;
-        inner.edges = EdgeIndex::default();
-        inner.dirty = false;
-        inner.next_ord.clear();
-        let can_write = inner.can_write;
+        let can_write = {
+            let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
+            inner.lexical = None;
+            inner.vector = None;
+            inner.edges = EdgeIndex::default();
+            inner.dirty = false;
+            inner.next_ord.clear();
+            inner.can_write
+        };
         if can_write {
             index::ensure_format(&self.index_dir)?;
         }
+        let mut prepared = Vec::new();
         for decl in schema.collections() {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
@@ -194,15 +204,22 @@ impl SearchEngine {
                 if record.valid != Some(true) {
                     continue;
                 }
-                upsert_record(
-                    &mut inner,
-                    &self.index_dir,
-                    can_write,
-                    decl,
-                    &record,
-                    embedder,
-                )?;
+                let pieces = field_vector_texts(decl, &record)?;
+                let vectors = embed_field_vectors(embedder, pieces)?;
+                prepared.push((decl, record, vectors));
             }
+        }
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
+        for (decl, record, vectors) in &prepared {
+            upsert_record(
+                &mut inner,
+                &self.index_dir,
+                can_write,
+                decl,
+                record,
+                embedder,
+                vectors,
+            )?;
         }
         inner.commit(&self.index_dir, can_write)
     }
@@ -213,22 +230,35 @@ impl SearchEngine {
         record: &Record,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let pieces = field_vector_texts(decl, record)?;
+        let vectors = embed_field_vectors(embedder, pieces)?;
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::upsert] lock")?;
         if !inner.can_write {
-            return Ok(());
-        }
-        if record.valid != Some(true) {
-            return Ok(());
+            bail!(Error::index_lexical("search index is not open for write"));
         }
         match index::format_version(&self.index_dir)? {
-            Some(v) if v != index::FORMAT_VERSION => return Ok(()),
+            Some(v) if v != index::FORMAT_VERSION => {
+                return Err(Error::index_version(format!(
+                    "index format {v} is not {}",
+                    index::FORMAT_VERSION
+                ))
+                .context("[SearchEngine::upsert] check version"));
+            }
             _ => index::ensure_format(&self.index_dir)?,
         }
-        upsert_record(&mut inner, &self.index_dir, true, decl, record, embedder)
+        upsert_record(
+            &mut inner,
+            &self.index_dir,
+            true,
+            decl,
+            record,
+            embedder,
+            &vectors,
+        )
     }
 
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::enable_write] lock")?;
         inner.can_write = true;
         if let Some(lexical) = inner.lexical.as_mut()
             && lexical.writer.is_none()
@@ -248,11 +278,17 @@ impl SearchEngine {
 
     pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
         match index::format_version(&self.index_dir)? {
-            Some(v) if v != index::FORMAT_VERSION => return Ok(false),
+            Some(v) if v != index::FORMAT_VERSION => {
+                return Err(Error::index_version(format!(
+                    "index format {v} is not {}",
+                    index::FORMAT_VERSION
+                ))
+                .context("[SearchEngine::has_id] check version"));
+            }
             None => return Ok(false),
             _ => {}
         }
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::has_id] lock")?;
         let can_write = inner.can_write;
         inner.commit(&self.index_dir, can_write)?;
         if inner.lexical.is_none() {
@@ -291,12 +327,12 @@ impl SearchEngine {
     pub(crate) fn find_ids(
         &self,
         collections: &[&str],
-        compile_decl: &CollectionDecl,
+        decls: &[CollectionDecl],
         filter: &Filter,
-    ) -> Result<BTreeSet<(String, String)>, Error> {
+    ) -> Result<BTreeMap<String, BTreeSet<String>>, Error> {
         self.with_find(
             collections,
-            compile_decl,
+            decls,
             filter,
             "[SearchEngine::find_ids] reload reader",
             |searcher, query, lexical| {
@@ -305,14 +341,16 @@ impl SearchEngine {
                 let addrs = searcher
                     .search(query, &DocSetCollector)
                     .context(Code::IndexLexical, "[SearchEngine::find_ids] search")?;
-                Ok(ids_from_addrs(
+                let mut allowed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+                for (collection, id) in ids_from_addrs(
                     searcher,
                     lexical,
                     addrs,
                     "[SearchEngine::find_ids] fetch document",
-                )?
-                .into_iter()
-                .collect())
+                )? {
+                    allowed.entry(collection).or_default().insert(id);
+                }
+                Ok(allowed)
             },
         )
         .map(Option::unwrap_or_default)
@@ -322,7 +360,7 @@ impl SearchEngine {
         &self,
         collections: &[&str],
         journal_ord: bool,
-        compile_decl: &CollectionDecl,
+        decls: &[CollectionDecl],
         filter: &Filter,
         offset: u32,
         count: u32,
@@ -333,7 +371,7 @@ impl SearchEngine {
         }
         self.with_find(
             collections,
-            compile_decl,
+            decls,
             filter,
             "[SearchEngine::find] reload reader",
             |searcher, query, lexical| {
@@ -380,16 +418,16 @@ impl SearchEngine {
     fn with_find<T>(
         &self,
         collections: &[&str],
-        compile_decl: &CollectionDecl,
+        decls: &[CollectionDecl],
         filter: &Filter,
         reload_frame: &'static str,
         f: impl FnOnce(&tantivy::Searcher, &BooleanQuery, &Lexical) -> Result<T, Error>,
     ) -> Result<Option<T>, Error> {
-        if collections.is_empty() {
+        if collections.is_empty() || decls.is_empty() {
             return Ok(None);
         }
         index::require_current_format(&self.index_dir)?;
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::with_find] lock")?;
         let can_write = inner.can_write;
         inner.commit(&self.index_dir, can_write)?;
         if inner.lexical.is_none() {
@@ -402,27 +440,44 @@ impl SearchEngine {
             .reader
             .reload()
             .context(Code::IndexLexical, reload_frame)?;
-        let compiled = query::compile(
-            compile_decl,
-            &FindFields {
-                id: lexical.f_id,
-                eq: lexical.f_eq,
-                exists: lexical.f_exists,
-                null: lexical.f_null,
-                tok: lexical.f_tok,
-                text: lexical.f_text,
-                collection: lexical.f_collection,
-            },
-            &lexical.index,
-            filter,
-        )?;
-        let query = BooleanQuery::new(vec![
-            (
-                Occur::Must,
-                collection_query(lexical.f_collection, collections),
-            ),
-            (Occur::Must, compiled),
-        ]);
+        let fields = FindFields {
+            id: lexical.f_id,
+            eq: lexical.f_eq,
+            exists: lexical.f_exists,
+            null: lexical.f_null,
+            tok: lexical.f_tok,
+            text: lexical.f_text,
+            collection: lexical.f_collection,
+        };
+        let query = if decls.len() == 1 {
+            let compiled = query::compile(&decls[0], &fields, &lexical.index, filter)?;
+            BooleanQuery::new(vec![
+                (
+                    Occur::Must,
+                    collection_query(lexical.f_collection, collections),
+                ),
+                (Occur::Must, compiled),
+            ])
+        } else {
+            let mut clauses = Vec::with_capacity(decls.len());
+            for decl in decls {
+                let compiled = query::compile(decl, &fields, &lexical.index, filter)?;
+                clauses.push((
+                    Occur::Should,
+                    Box::new(BooleanQuery::new(vec![
+                        (
+                            Occur::Must,
+                            Box::new(TermQuery::new(
+                                Term::from_field_text(lexical.f_collection, &decl.name),
+                                IndexRecordOption::Basic,
+                            )),
+                        ),
+                        (Occur::Must, compiled),
+                    ])) as Box<dyn Query>,
+                ));
+            }
+            BooleanQuery::new(clauses)
+        };
         let searcher = lexical.reader.searcher();
         Ok(Some(f(&searcher, &query, lexical)?))
     }
@@ -432,7 +487,7 @@ impl SearchEngine {
         collections: &[&str],
         query: &SearchQuery,
         embedder: Option<&dyn Embedder>,
-        allowed: Option<&BTreeSet<(String, String)>>,
+        allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
     ) -> Result<SearchHits, Error> {
         if collections.is_empty() {
             return Ok(SearchHits::default());
@@ -448,7 +503,15 @@ impl SearchEngine {
         let lexical_weight = query.lexical_weight.unwrap_or(1.0);
         let vector_weight = query.vector_weight.unwrap_or(1.0);
         let pool = k.max(50);
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let query_vec = if vector_weight > 0.0 {
+            match embedder {
+                Some(embedder) => Some(embedder.embed(text)?),
+                None => None,
+            }
+        } else {
+            None
+        };
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::search] lock")?;
         let can_write = inner.can_write;
         inner.commit(&self.index_dir, can_write)?;
         if inner.lexical.is_none() {
@@ -460,7 +523,14 @@ impl SearchEngine {
             Vec::new()
         };
         let vector_hits = if vector_weight > 0.0 {
-            vector_search(&inner, collections, text, pool, embedder, allowed)?
+            vector_search(
+                &inner,
+                collections,
+                query_vec.as_deref(),
+                pool,
+                embedder,
+                allowed,
+            )?
         } else {
             Vec::new()
         };
@@ -502,6 +572,7 @@ impl Inner {
             save_vector(index_dir, vector)?;
         }
         save_edges(index_dir, &self.edges)?;
+        save_next_ord(index_dir, &self.next_ord)?;
         self.dirty = false;
         Ok(())
     }
@@ -514,6 +585,7 @@ fn upsert_record(
     decl: &CollectionDecl,
     record: &Record,
     embedder: Option<&dyn Embedder>,
+    vectors: &[(String, Vec<f32>)],
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref().filter(|id| !id.is_empty()) else {
         return Ok(());
@@ -522,10 +594,8 @@ fn upsert_record(
     forget_source(&mut inner.edges, &decl.name, id);
     add_edges(&mut inner.edges, decl, record)?;
     if can_write {
-        if inner.lexical.is_none()
-            && let Ok(lexical) = create_lexical(index_dir, true)
-        {
-            inner.lexical = Some(lexical);
+        if inner.lexical.is_none() {
+            inner.lexical = Some(create_lexical(index_dir, true)?);
         }
         let ord = inner.next_ord.get(&decl.name).copied().unwrap_or(0);
         inner
@@ -533,11 +603,12 @@ fn upsert_record(
             .insert(decl.name.clone(), ord.saturating_add(1));
         if let Some(lexical) = inner.lexical.as_mut() {
             index_lexical(lexical, decl, record, &fts_text, ord)?;
+            inner.dirty = true;
         }
         if let Some(embedder) = embedder {
-            upsert_vector(inner, embedder, decl, record)?;
+            upsert_vector(inner, embedder, decl, record, vectors)?;
+            inner.dirty = true;
         }
-        inner.dirty = true;
     }
     Ok(())
 }
@@ -572,8 +643,8 @@ fn index_lexical(
         Code::IndexLexical,
         "[SearchEngine::index_lexical] tokenizer",
     )?;
-    index_find_fields(lexical, &mut doc, &decl.fields, &values, &mut analyzer);
-    index_find_body(lexical, &mut doc, decl, record, &mut analyzer);
+    index_find_fields(lexical, &mut doc, &decl.fields, &values, &mut analyzer)?;
+    index_find_body(lexical, &mut doc, decl, record, &mut analyzer)?;
     writer.add_document(doc).context(
         Code::IndexLexical,
         "[SearchEngine::index_lexical] add document",
@@ -587,7 +658,7 @@ fn index_find_fields(
     decls: &[FieldDecl],
     values: &serde_json::Map<String, Value>,
     analyzer: &mut tantivy::tokenizer::TextAnalyzer,
-) {
+) -> Result<(), Error> {
     for field in decls {
         if field.filter {
             match values.get(&field.name) {
@@ -598,26 +669,27 @@ fn index_find_fields(
                 Some(value) => {
                     doc.add_text(lexical.f_exists, &field.name);
                     for text in eq_values(value) {
-                        doc.add_text(lexical.f_eq, query::eq_term(&field.name, &text));
-                        query::add_field_tokens(doc, lexical.f_tok, &field.name, &text, analyzer);
+                        doc.add_text(lexical.f_eq, query::eq_term(&field.name, &text)?);
+                        query::add_field_tokens(doc, lexical.f_tok, &field.name, &text, analyzer)?;
                     }
                 }
             }
         }
         match values.get(&field.name) {
             Some(Value::Object(map)) => {
-                index_find_fields(lexical, doc, &field.fields, map, analyzer);
+                index_find_fields(lexical, doc, &field.fields, map, analyzer)?;
             }
             Some(Value::Array(items)) => {
                 for item in items {
                     if let Some(map) = item.as_object() {
-                        index_find_fields(lexical, doc, &field.fields, map, analyzer);
+                        index_find_fields(lexical, doc, &field.fields, map, analyzer)?;
                     }
                 }
             }
             _ => {}
         }
     }
+    Ok(())
 }
 
 fn index_find_body(
@@ -626,19 +698,19 @@ fn index_find_body(
     decl: &CollectionDecl,
     record: &Record,
     analyzer: &mut tantivy::tokenizer::TextAnalyzer,
-) {
+) -> Result<(), Error> {
     let Some(body) = decl.body.as_ref() else {
-        return;
+        return Ok(());
     };
     if !body.allowed || !body.fts {
-        return;
+        return Ok(());
     }
     let Some(text) = record.body.as_deref().filter(|text| !text.is_empty()) else {
-        return;
+        return Ok(());
     };
     doc.add_text(lexical.f_exists, "body");
-    doc.add_text(lexical.f_eq, query::eq_term("body", text));
-    query::add_field_tokens(doc, lexical.f_tok, "body", text, analyzer);
+    query::add_field_tokens(doc, lexical.f_tok, "body", text, analyzer)?;
+    Ok(())
 }
 
 fn eq_values(value: &Value) -> Vec<String> {
@@ -656,6 +728,7 @@ fn upsert_vector(
     embedder: &dyn Embedder,
     decl: &CollectionDecl,
     record: &Record,
+    vectors: &[(String, Vec<f32>)],
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref() else {
         return Ok(());
@@ -674,6 +747,7 @@ fn upsert_vector(
             model_id: model_id.to_owned(),
             dimensions,
             field_ids: slots.clone(),
+            next_key: 1,
         });
     }
     let Some(store) = inner.vector.as_mut() else {
@@ -695,31 +769,47 @@ fn upsert_vector(
         }
         store.keys.remove(&key);
     }
-    let pieces = field_vector_texts(decl, record)?;
-    for (field, text) in pieces {
-        if text.is_empty() {
-            continue;
-        }
-        let vector = embedder.embed(&text)?;
+    for (field, vector) in vectors {
         if vector.len() != dimensions {
             bail!(Error::invalid(format!(
                 "embedder returned {} dimensions, expected {dimensions}",
                 vector.len()
             )));
         }
-        let key = ann_key(&decl.name, id, &field);
-        store.ann.add(key, &vector)?;
+        let key = store.next_key.max(1);
+        store.next_key = key.saturating_add(1);
+        store.ann.add(key, vector)?;
         store.keys.insert(
             key,
             DocRef {
                 collection: decl.name.clone(),
                 id: id.to_owned(),
                 path: path.clone(),
-                field,
+                field: field.clone(),
             },
         );
     }
     Ok(())
+}
+
+fn embed_field_vectors(
+    embedder: Option<&dyn Embedder>,
+    pieces: Vec<(String, String)>,
+) -> Result<Vec<(String, Vec<f32>)>, Error> {
+    let Some(embedder) = embedder else {
+        return Ok(Vec::new());
+    };
+    if embedder.dimensions() == 0 {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (field, text) in pieces {
+        if text.is_empty() {
+            continue;
+        }
+        out.push((field, embedder.embed(&text)?));
+    }
+    Ok(out)
 }
 
 fn field_vector_texts(
@@ -794,7 +884,7 @@ fn lexical_search(
     collections: &[&str],
     text: &str,
     pool: usize,
-    allowed: Option<&BTreeSet<(String, String)>>,
+    allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
 ) -> Result<Vec<LegHit>, Error> {
     let Some(lexical) = inner.lexical.as_mut() else {
         return Ok(Vec::new());
@@ -850,12 +940,15 @@ fn lexical_search(
 fn vector_search(
     inner: &Inner,
     collections: &[&str],
-    text: &str,
+    query: Option<&[f32]>,
     pool: usize,
     embedder: Option<&dyn Embedder>,
-    allowed: Option<&BTreeSet<(String, String)>>,
+    allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
 ) -> Result<Vec<LegHit>, Error> {
     let Some(embedder) = embedder else {
+        return Ok(Vec::new());
+    };
+    let Some(query) = query else {
         return Ok(Vec::new());
     };
     let Some(store) = inner.vector.as_ref() else {
@@ -867,7 +960,6 @@ fn vector_search(
     if store.ann.is_empty() {
         return Ok(Vec::new());
     }
-    let query = embedder.embed(text)?;
     if query.len() != store.dimensions {
         bail!(Error::invalid(format!(
             "embedder returned {} dimensions, expected {}",
@@ -878,7 +970,7 @@ fn vector_search(
     let names: BTreeSet<&str> = collections.iter().copied().collect();
     let raw = store
         .ann
-        .filtered_search(&query, pool.saturating_mul(8).max(pool), |key| {
+        .filtered_search(query, pool.saturating_mul(8).max(pool), |key| {
             store.keys.get(&key).is_some_and(|doc| {
                 names.contains(doc.collection.as_str())
                     && allowed.is_none_or(|set| allowed_has(set, &doc.collection, &doc.id))
@@ -1061,10 +1153,10 @@ fn lexical_schema() -> TantivySchema {
     builder.add_text_field("collection", STRING | STORED);
     builder.add_text_field("id", STRING | STORED);
     builder.add_text_field("path", STRING | STORED);
-    builder.add_text_field("text", TEXT | STORED);
-    builder.add_text_field("eq", STRING | STORED);
-    builder.add_text_field("exists", STRING | STORED);
-    builder.add_text_field("null", STRING | STORED);
+    builder.add_text_field("text", TEXT);
+    builder.add_text_field("eq", STRING);
+    builder.add_text_field("exists", STRING);
+    builder.add_text_field("null", STRING);
     builder.add_text_field("tok", TEXT);
     builder.add_u64_field("ord", FAST | INDEXED | STORED);
     builder.build()
@@ -1197,12 +1289,14 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
     } else {
         BTreeMap::new()
     };
+    let next_key = next_ann_key(meta.next_key, &keys);
     Ok(Some(VectorStore {
         ann,
         keys,
         model_id: meta.model_id,
         dimensions: meta.dimensions,
         field_ids: meta.field_ids.into_iter().collect(),
+        next_key,
     }))
 }
 
@@ -1214,6 +1308,7 @@ fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
         model_id: store.model_id.clone(),
         dimensions: store.dimensions,
         field_ids: store.field_ids.iter().cloned().collect(),
+        next_key: store.next_key,
     };
     let meta_bytes = serde_json::to_vec_pretty(&meta)
         .context(Code::Invalid, "[SearchEngine::save_vector] encode meta")?;
@@ -1450,6 +1545,34 @@ fn doc_key(collection: &str, id: &str) -> String {
     format!("{collection}\0{id}")
 }
 
-fn ann_key(collection: &str, id: &str, field: &str) -> u64 {
-    crate::fnv::digest(format!("{collection}\0{id}\0{field}").as_bytes())
+fn next_ann_key(meta_next: u64, keys: &BTreeMap<u64, DocRef>) -> u64 {
+    let max_key = keys.last_key_value().map(|(key, _)| *key).unwrap_or(0);
+    meta_next.max(max_key.saturating_add(1)).max(1)
+}
+
+fn load_next_ord(index_dir: &Path) -> Result<BTreeMap<String, u64>, Error> {
+    let path = index_dir.join(ORD_FILE);
+    if !path.is_file() {
+        return Ok(BTreeMap::new());
+    }
+    let raw = fs::read(&path).context("[SearchEngine::load_next_ord] read ord")?;
+    serde_json::from_slice(&raw).context(
+        Code::IndexCorrupt,
+        "[SearchEngine::load_next_ord] decode ord",
+    )
+}
+
+fn save_next_ord(index_dir: &Path, next_ord: &BTreeMap<String, u64>) -> Result<(), Error> {
+    let path = index_dir.join(ORD_FILE);
+    if next_ord.is_empty() {
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).context("[SearchEngine::save_next_ord] remove ord"),
+        }
+    } else {
+        let bytes = serde_json::to_vec(next_ord)
+            .context(Code::Invalid, "[SearchEngine::save_next_ord] encode ord")?;
+        store::atomic_write(&path, &bytes)
+    }
 }

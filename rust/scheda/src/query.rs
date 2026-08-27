@@ -192,7 +192,7 @@ fn compile_term(fields: &FindFields, term: &filter::Term) -> Result<Box<dyn Quer
     }
     let value = proto_term_text(&term.value)?;
     Ok(Box::new(TermQuery::new(
-        Term::from_field_text(fields.eq, &eq_term(name, &value)),
+        Term::from_field_text(fields.eq, &eq_term(name, &value)?),
         IndexRecordOption::Basic,
     )))
 }
@@ -210,7 +210,7 @@ fn compile_term_set(fields: &FindFields, term: &filter::TermSet) -> Result<Box<d
             terms.push(Term::from_field_text(fields.null, name));
         } else {
             let text = proto_term_text(value)?;
-            terms.push(Term::from_field_text(fields.eq, &eq_term(name, &text)));
+            terms.push(Term::from_field_text(fields.eq, &eq_term(name, &text)?));
         }
     }
     Ok(Box::new(TermSetQuery::new(terms)))
@@ -298,8 +298,8 @@ fn compile_phrase(
     }
     let terms: Vec<Term> = tokens
         .iter()
-        .map(|token| Term::from_field_text(fields.tok, &eq_term(name, token)))
-        .collect();
+        .map(|token| eq_term(name, token).map(|text| Term::from_field_text(fields.tok, &text)))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut query = PhraseQuery::new(terms);
     if let Some(slop) = phrase.slop {
         query.set_slop(slop);
@@ -330,8 +330,8 @@ fn compile_phrase_prefix(
     }
     let terms: Vec<Term> = tokens
         .iter()
-        .map(|token| Term::from_field_text(fields.tok, &eq_term(name, token)))
-        .collect();
+        .map(|token| eq_term(name, token).map(|text| Term::from_field_text(fields.tok, &text)))
+        .collect::<Result<Vec<_>, _>>()?;
     let mut query = PhrasePrefixQuery::new(terms);
     if let Some(max) = prefix.max_expansions.filter(|n| *n > 0) {
         query.set_max_expansions(max);
@@ -355,7 +355,7 @@ fn compile_fuzzy(
     if token.is_empty() {
         bail!(Error::invalid("fuzzy term is empty"));
     }
-    let term = Term::from_field_text(fields.tok, &eq_term(name, token));
+    let term = Term::from_field_text(fields.tok, &eq_term(name, token)?);
     let distance = u8::try_from(fuzzy.distance.unwrap_or(0)).unwrap_or(u8::MAX);
     let transposition = fuzzy.transposition_cost_one.unwrap_or(false);
     if fuzzy.prefix.unwrap_or(false) {
@@ -417,7 +417,7 @@ fn range_bound(
     upper: bool,
 ) -> Result<StdBound<Term>, Error> {
     let Some(bound) = bound else {
-        return Ok(unbounded_field_bound(field, prefix, upper));
+        return unbounded_field_bound(field, prefix, upper);
     };
     match bound.kind.as_ref() {
         Some(BoundKind::Included(value)) => {
@@ -426,17 +426,25 @@ fn range_bound(
         Some(BoundKind::Excluded(value)) => {
             Ok(StdBound::Excluded(range_term(field, prefix, value)?))
         }
-        None => Ok(unbounded_field_bound(field, prefix, upper)),
+        None => Ok(unbounded_field_bound(field, prefix, upper)?),
     }
 }
 
-fn unbounded_field_bound(field: Field, prefix: Option<&str>, upper: bool) -> StdBound<Term> {
+fn unbounded_field_bound(
+    field: Field,
+    prefix: Option<&str>,
+    upper: bool,
+) -> Result<StdBound<Term>, Error> {
     match prefix {
-        None => StdBound::Unbounded,
-        Some(name) if upper => {
-            StdBound::Excluded(Term::from_field_text(field, &format!("{name}\u{0001}")))
-        }
-        Some(name) => StdBound::Included(Term::from_field_text(field, &eq_term(name, ""))),
+        None => Ok(StdBound::Unbounded),
+        Some(name) if upper => Ok(StdBound::Excluded(Term::from_field_text(
+            field,
+            &format!("{name}\u{0001}"),
+        ))),
+        Some(name) => Ok(StdBound::Included(Term::from_field_text(
+            field,
+            &eq_term(name, "")?,
+        ))),
     }
 }
 
@@ -447,7 +455,7 @@ fn range_term(
 ) -> Result<Term, Error> {
     let text = proto_term_text(value)?;
     Ok(match prefix {
-        Some(name) => Term::from_field_text(field, &eq_term(name, &text)),
+        Some(name) => Term::from_field_text(field, &eq_term(name, &text)?),
         None => Term::from_field_text(field, &text),
     })
 }
@@ -595,8 +603,14 @@ impl Query for MoreLikeThisIdQuery {
     }
 }
 
-pub(crate) fn eq_term(field: &str, value: &str) -> String {
-    format!("{field}\0{value}")
+pub(crate) fn eq_term(field: &str, value: &str) -> Result<String, Error> {
+    if field.contains('\0') || value.contains('\0') {
+        // Indexed as `{field}\0{value}` in one STRING field.
+        return Err(Error::invalid(
+            "filter field or value must not contain NUL",
+        ));
+    }
+    Ok(format!("{field}\0{value}"))
 }
 
 pub(crate) fn add_field_tokens(
@@ -605,20 +619,23 @@ pub(crate) fn add_field_tokens(
     field_name: &str,
     value: &str,
     analyzer: &mut TextAnalyzer,
-) {
+) -> Result<(), Error> {
     let mut stream = analyzer.token_stream(value);
     let mut tokens = Vec::new();
     let mut position = 0usize;
     while stream.advance() {
-        let mut token = stream.token().clone();
-        token.text = eq_term(field_name, &token.text);
-        token.position = position;
-        token.position_length = 1;
-        tokens.push(token);
+        let token = stream.token();
+        tokens.push(tantivy::tokenizer::Token {
+            offset_from: token.offset_from,
+            offset_to: token.offset_to,
+            position,
+            text: eq_term(field_name, &token.text)?,
+            position_length: 1,
+        });
         position += 1;
     }
     if tokens.is_empty() {
-        return;
+        return Ok(());
     }
     doc.add_pre_tokenized_text(
         f_tok,
@@ -627,6 +644,7 @@ pub(crate) fn add_field_tokens(
             tokens,
         },
     );
+    Ok(())
 }
 
 fn analyze_tokens(index: &Index, field: Field, text: &str) -> Result<Vec<String>, Error> {

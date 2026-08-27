@@ -90,7 +90,6 @@ fn src_rs() -> String {
         include_str!("../src/ann.rs"),
         include_str!("../src/embed.rs"),
         include_str!("../src/error.rs"),
-        include_str!("../src/fnv.rs"),
         include_str!("../src/git.rs"),
         include_str!("../src/id.rs"),
         include_str!("../src/index.rs"),

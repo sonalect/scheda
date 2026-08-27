@@ -27,6 +27,7 @@ cxx = { workspace = true }
 git2 = { workspace = true }
 regex = { workspace = true }
 scheda-generated = { workspace = true }
+buffa = { workspace = true }
 buffa-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

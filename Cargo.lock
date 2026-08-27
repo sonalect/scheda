@@ -2022,8 +2022,9 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
+ "buffa 0.9.1",
  "buffa-types",
  "cxx",
  "git2",
@@ -2038,7 +2039,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "clap",
  "mimalloc",
@@ -2051,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-generated"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "buffa 0.9.1",
  "buffa-types",

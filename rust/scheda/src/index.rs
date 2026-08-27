@@ -25,6 +25,7 @@ const IDS_FILE: &str = "ids";
 #[derive(Clone, Debug, Default)]
 pub(crate) struct JournalIdMaps {
     collections: BTreeMap<String, BTreeMap<String, String>>,
+    segment_lines: BTreeMap<PathBuf, u64>,
 }
 
 #[derive(Debug)]
@@ -66,6 +67,37 @@ impl JournalIdMaps {
 
     fn replace_collection(&mut self, collection: String, ids: BTreeMap<String, String>) {
         self.collections.insert(collection, ids);
+    }
+
+    pub(crate) fn forget_id(&mut self, collection: &str, id: &str) {
+        if let Some(ids) = self.collections.get_mut(collection) {
+            ids.remove(id);
+        }
+    }
+
+    pub(crate) fn add_segment_line(&mut self, path: &Path) {
+        if let Some(n) = self.segment_lines.get_mut(path) {
+            *n = n.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn forget_segment_line(&mut self, path: &Path) {
+        if let Some(n) = self.segment_lines.get_mut(path) {
+            *n = n.saturating_sub(1);
+        }
+    }
+
+    pub(crate) fn ensure_segment_lines(
+        &mut self,
+        path: &Path,
+        count: impl FnOnce(&Path) -> Result<u64, Error>,
+    ) -> Result<u64, Error> {
+        if let Some(n) = self.segment_lines.get(path) {
+            return Ok(*n);
+        }
+        let n = count(path)?;
+        self.segment_lines.insert(path.to_path_buf(), n);
+        Ok(n)
     }
 }
 
@@ -133,6 +165,21 @@ pub(crate) fn remember_id(
     append_ids_line(index_dir, collection, id, rel)?;
     maps.put(collection.to_owned(), id.to_owned(), rel.to_owned());
     Ok(())
+}
+
+pub(crate) fn forget_remembered(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    collection: &str,
+    id: &str,
+) -> Result<(), Error> {
+    maps.forget_id(collection, id);
+    let ids = maps
+        .collections
+        .get(collection)
+        .cloned()
+        .unwrap_or_default();
+    write_ids_file(index_dir, collection, &ids)
 }
 
 pub(crate) fn rewrite_collection(
@@ -213,6 +260,8 @@ fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> R
         .context("[Index::append_ids_line] open ids")?;
     file.write_all(&encoded)
         .context("[Index::append_ids_line] write ids")?;
+    file.sync_all()
+        .context("[Index::append_ids_line] fsync ids")?;
     Ok(())
 }
 

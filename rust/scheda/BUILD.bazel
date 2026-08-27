@@ -17,6 +17,7 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = [
         "//rust/generated:generated_v1",
+        "@cargo//:buffa",
         "@cargo//:buffa-types",
         "@cargo//:cxx",
         "@cargo//:git2",

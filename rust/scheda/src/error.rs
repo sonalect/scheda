@@ -5,8 +5,21 @@
 //! `ContextAs`, IO/git maps) and `ensure!` / `bail!`.
 
 use std::fmt;
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 pub use scheda_generated::api::v1::error::{Code, Repeat};
+
+/// Fail closed if a previous holder paniced with this mutex.
+pub(crate) fn mutex<'a, T>(
+    mutex: &'a Mutex<T>,
+    frame: &'static str,
+) -> Result<MutexGuard<'a, T>, crate::Error> {
+    mutex
+        .lock()
+        .map_err(|_: PoisonError<MutexGuard<'a, T>>| {
+            crate::Error::io_other("mutex poisoned").context(frame)
+        })
+}
 
 #[must_use]
 pub(crate) fn io_code(err: &std::io::Error) -> Code {

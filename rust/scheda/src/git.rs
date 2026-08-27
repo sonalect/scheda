@@ -10,7 +10,7 @@ use git2::build::{CheckoutBuilder, RepoBuilder};
 use git2::{
     AnnotatedCommit, Commit as GitCommit, Cred, CredentialType, DiffOptions, ErrorCode,
     FetchOptions, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
-    RepositoryOpenFlags, Signature, Sort,
+    RepositoryOpenFlags, Signature, Sort, Status, StatusOptions,
 };
 
 use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code};
@@ -187,7 +187,27 @@ fn branch_refname(repo: &Repository) -> Result<String, Error> {
     }
 }
 
+fn worktree_has_local_changes(repo: &Repository) -> Result<bool, Error> {
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true)
+        .exclude_submodules(true);
+    let statuses = repo
+        .statuses(Some(&mut opts))
+        .context("[Git::fast_forward] status")?;
+    Ok(statuses.iter().any(|entry| {
+        let status = entry.status();
+        !status.is_empty() && status != Status::CURRENT && !status.is_ignored()
+    }))
+}
+
 fn fast_forward(repo: &Repository, fetch_commit: &AnnotatedCommit<'_>) -> Result<(), Error> {
+    if worktree_has_local_changes(repo)? {
+        bail!(
+            Error::git_uncommitted("working tree has local changes; pull needs a clean tree")
+                .context("[Git::fast_forward] require clean tree")
+        );
+    }
     let refname = branch_refname(repo)?;
     match repo.find_reference(&refname) {
         Ok(mut local) => {
@@ -269,13 +289,20 @@ pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), 
     let mut staged = 0usize;
     for rel in paths {
         let abs = dir.join(rel);
-        if !abs.is_file() {
-            continue;
+        if abs.is_file() {
+            index
+                .add_path(Path::new(rel))
+                .with_context(|| format!("[Git::commit] stage {rel}"))?;
+            staged += 1;
+        } else {
+            match index.remove_path(Path::new(rel)) {
+                Ok(()) => staged += 1,
+                Err(err) if err.code() == ErrorCode::NotFound => {}
+                Err(err) => {
+                    return Err(err).with_context(|| format!("[Git::commit] remove {rel}"));
+                }
+            }
         }
-        index
-            .add_path(Path::new(rel))
-            .with_context(|| format!("[Git::commit] stage {rel}"))?;
-        staged += 1;
     }
     if staged == 0 {
         bail!(Error::invalid("nothing to commit"));
@@ -336,7 +363,12 @@ pub(crate) fn discard_paths(dir: &Path, paths: &[String]) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<history::Entry>, Error> {
+pub(crate) fn history(
+    dir: &Path,
+    path: &str,
+    offset: u32,
+    count: u32,
+) -> Result<Vec<history::Entry>, Error> {
     require_vault_rel(path)?;
     let repo = open_work_tree(dir)?;
     match repo.head() {
@@ -351,7 +383,13 @@ pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<history::Entry>, Err
     revwalk
         .push_head()
         .context("[Git::history] walk from HEAD")?;
-    let mut out = Vec::new();
+    struct Hit {
+        oid: git2::Oid,
+        seconds: i64,
+        author: String,
+        message: String,
+    }
+    let mut hits = Vec::new();
     for oid in revwalk {
         let oid = oid.context("[Git::history] next commit")?;
         let commit = repo
@@ -361,12 +399,9 @@ pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<history::Entry>, Err
             continue;
         }
         let tree = commit.tree().context("[Git::history] read tree")?;
-        let Ok(entry) = tree.get_path(Path::new(path)) else {
+        if tree.get_path(Path::new(path)).is_err() {
             continue;
-        };
-        let blob = repo
-            .find_blob(entry.id())
-            .context("[Git::history] read blob")?;
+        }
         let author = commit.author();
         let name = author.name().unwrap_or("");
         let email = author.email().unwrap_or("");
@@ -375,18 +410,39 @@ pub(crate) fn history(dir: &Path, path: &str) -> Result<Vec<history::Entry>, Err
         } else {
             format!("{name} <{email}>")
         };
+        hits.push(Hit {
+            oid,
+            seconds: commit.time().seconds(),
+            author,
+            message: commit.message().unwrap_or("").to_owned(),
+        });
+    }
+    hits.sort_by_key(|hit| std::cmp::Reverse(hit.seconds));
+    let mut out = Vec::new();
+    for hit in hits
+        .into_iter()
+        .skip(offset as usize)
+        .take(count as usize)
+    {
+        let commit = repo
+            .find_commit(hit.oid)
+            .context("[Git::history] read commit")?;
+        let tree = commit.tree().context("[Git::history] read tree")?;
+        let entry = tree
+            .get_path(Path::new(path))
+            .context("[Git::history] read path")?;
+        let blob = repo
+            .find_blob(entry.id())
+            .context("[Git::history] read blob")?;
         out.push(
             history::Entry::default()
-                .with_hash(oid.to_string())
-                .with_time(commit.time().seconds())
-                .with_author(author)
-                .with_message(commit.message().unwrap_or("").to_owned())
+                .with_hash(hit.oid.to_string())
+                .with_time(hit.seconds)
+                .with_author(hit.author)
+                .with_message(hit.message)
                 .with_raw(blob.content().to_vec()),
         );
     }
-    out.sort_by_key(|entry| {
-        std::cmp::Reverse(entry.time.as_option().map(|time| time.seconds).unwrap_or(0))
-    });
     Ok(out)
 }
 

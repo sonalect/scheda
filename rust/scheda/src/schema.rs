@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{Code, Context, ContextAs, ContextIo, bail};
 use crate::id::require_slug;
+use crate::store;
 use crate::{
     Body, CollectionInfo, Edge, Error, Field, Journal, Object, Schema as ApiSchema, Singleton,
     Text, Unit, VaultInfo,
@@ -857,7 +858,7 @@ pub(crate) fn put_collection(
     } else {
         yaml_from_decl(&decl)?
     };
-    fs::write(&path, body).context("[Schema::put_collection] write collection")?;
+    store::atomic_write(&path, body.as_bytes())?;
     Ok(rel)
 }
 

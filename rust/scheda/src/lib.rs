@@ -52,7 +52,6 @@
 mod ann;
 mod embed;
 mod error;
-mod fnv;
 mod git;
 mod id;
 mod index;

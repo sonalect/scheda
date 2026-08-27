@@ -5,6 +5,9 @@ use std::io::Write;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use buffa::MessageField;
+use buffa_types::google::protobuf::__buffa::oneof::value::Kind as ProtoKind;
+use buffa_types::google::protobuf::{ListValue, NullValue, Struct as ProtoStruct, Value as ProtoValue};
 use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
@@ -312,10 +315,9 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
         .map_err(|err| err.with_path(&rel))?;
     let mut record = Record::default()
         .with_collection(decl.name.as_str())
-        .with_path(rel.clone())
-        .with_raw(raw.clone());
+        .with_path(rel.clone());
     let Ok(text) = str::from_utf8(&raw) else {
-        return Ok(record.with_id("").with_valid(false));
+        return Ok(record.with_id("").with_valid(false).with_raw(raw));
     };
     if has_conflict_markers(text) {
         record.valid = Some(false);
@@ -329,7 +331,7 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
                 }
             }
         }
-        return Ok(record);
+        return Ok(record.with_raw(raw));
     }
     match parse_file(decl, text) {
         Ok(parsed) => {
@@ -352,14 +354,14 @@ pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Res
             } else {
                 record.valid = Some(valid);
             }
-            Ok(record)
+            Ok(record.with_raw(raw))
         }
         Err(_) => {
             record.valid = Some(false);
             if let Some(id) = fallback_id(decl) {
                 record.id = Some(id);
             }
-            Ok(record)
+            Ok(record.with_raw(raw))
         }
     }
 }
@@ -435,9 +437,8 @@ fn encode_file(
     fields: &Map<String, Value>,
     body: Option<&str>,
 ) -> Result<Vec<u8>, Error> {
-    let json = Value::Object(fields.clone());
     let yaml =
-        yaml_serde::to_string(&json).context(Code::Invalid, "[store::encode_file] encode YAML")?;
+        yaml_serde::to_string(fields).context(Code::Invalid, "[store::encode_file] encode YAML")?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
     if decl.kind == Kind::Document
         && let Some(body) = body
@@ -633,30 +634,83 @@ fn is_finite_number(value: &Value) -> bool {
 }
 
 pub(crate) fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
-    let value =
-        serde_json::to_value(record).context(Code::Invalid, "[store::fields_map] encode fields")?;
-    match value.get("fields") {
-        None | Some(Value::Null) => Ok(Map::new()),
-        Some(Value::Object(map)) => Ok(map.clone()),
-        Some(_) => Err(Error::invalid("fields must be a JSON object")),
-    }
+    let Some(fields) = record.fields.as_option() else {
+        return Ok(Map::new());
+    };
+    proto_struct_to_map(fields)
 }
 
 pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result<(), Error> {
-    let mut envelope = serde_json::Map::new();
-    if let Some(id) = &record.id {
-        envelope.insert(String::from("id"), Value::String(id.clone()));
-    }
-    envelope.insert(String::from("fields"), Value::Object(map));
-    let mut next: Record = serde_json::from_value(Value::Object(envelope))
-        .context(Code::Invalid, "[store::put_fields] decode fields")?;
-    next.collection = record.collection.clone();
-    next.path = record.path.clone();
-    next.valid = record.valid;
-    next.body = record.body.clone();
-    next.raw = record.raw.clone();
-    *record = next;
+    record.fields = MessageField::some(map_to_proto_struct(map)?);
     Ok(())
+}
+
+fn proto_struct_to_map(fields: &ProtoStruct) -> Result<Map<String, Value>, Error> {
+    let mut map = Map::new();
+    for (key, value) in &fields.fields {
+        map.insert(key.clone(), proto_value_to_json(value)?);
+    }
+    Ok(map)
+}
+
+fn proto_value_to_json(value: &ProtoValue) -> Result<Value, Error> {
+    match value.kind.as_ref() {
+        None | Some(ProtoKind::NullValue(_)) => Ok(Value::Null),
+        Some(ProtoKind::NumberValue(n)) => {
+            let Some(number) = serde_json::Number::from_f64(*n) else {
+                bail!(Error::invalid("number must be finite"));
+            };
+            Ok(Value::Number(number))
+        }
+        Some(ProtoKind::StringValue(text)) => Ok(Value::String(text.clone())),
+        Some(ProtoKind::BoolValue(flag)) => Ok(Value::Bool(*flag)),
+        Some(ProtoKind::StructValue(nested)) => Ok(Value::Object(proto_struct_to_map(nested)?)),
+        Some(ProtoKind::ListValue(list)) => {
+            let mut items = Vec::with_capacity(list.values.len());
+            for item in &list.values {
+                items.push(proto_value_to_json(item)?);
+            }
+            Ok(Value::Array(items))
+        }
+    }
+}
+
+fn map_to_proto_struct(map: Map<String, Value>) -> Result<ProtoStruct, Error> {
+    map_ref_to_proto_struct(&map)
+}
+
+fn map_ref_to_proto_struct(map: &Map<String, Value>) -> Result<ProtoStruct, Error> {
+    let mut fields = ProtoStruct::default();
+    for (key, value) in map {
+        fields.fields.insert(key.clone(), json_to_proto_value(value)?);
+    }
+    Ok(fields)
+}
+
+fn json_to_proto_value(value: &Value) -> Result<ProtoValue, Error> {
+    let kind = match value {
+        Value::Null => ProtoKind::NullValue(buffa::EnumValue::from(NullValue::NULL_VALUE)),
+        Value::Bool(flag) => ProtoKind::BoolValue(*flag),
+        Value::Number(n) => {
+            let Some(number) = n.as_f64() else {
+                bail!(Error::invalid("number must be finite"));
+            };
+            ProtoKind::NumberValue(number)
+        }
+        Value::String(text) => ProtoKind::StringValue(text.clone()),
+        Value::Array(items) => {
+            let mut list = ListValue::default();
+            for item in items {
+                list.values.push(json_to_proto_value(item)?);
+            }
+            ProtoKind::from(list)
+        }
+        Value::Object(map) => ProtoKind::from(map_ref_to_proto_struct(map)?),
+    };
+    Ok(ProtoValue {
+        kind: Some(kind),
+        ..ProtoValue::default()
+    })
 }
 
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
@@ -690,10 +744,40 @@ fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Er
 /// `fs::rename` cannot replace an existing file on Windows.
 fn rename_replace(tmp: &Path, path: &Path) -> Result<(), Error> {
     #[cfg(windows)]
-    if path.exists() {
-        fs::remove_file(path).context("[store::atomic_write] remove existing")?;
+    {
+        return rename_replace_windows(tmp, path);
     }
+    #[cfg(not(windows))]
     fs::rename(tmp, path).context("[store::atomic_write] rename temp file")
+}
+
+#[cfg(windows)]
+fn rename_replace_windows(tmp: &Path, path: &Path) -> Result<(), Error> {
+    use std::os::windows::ffi::OsStrExt;
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+
+    unsafe extern "system" {
+        fn MoveFileExW(
+            existing: *const u16,
+            new: *const u16,
+            flags: u32,
+        ) -> i32;
+    }
+
+    fn wide(path: &Path) -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    }
+
+    let from = wide(tmp);
+    let to = wide(path);
+    // SAFETY: both buffers are NUL-terminated UTF-16 from `encode_wide`.
+    let ok = unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING) };
+    if ok == 0 {
+        Err(std::io::Error::last_os_error()).context("[store::atomic_write] replace file")
+    } else {
+        Ok(())
+    }
 }
 
 pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
@@ -722,7 +806,7 @@ pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
 }
 
 pub(crate) fn has_conflict_markers(text: &str) -> bool {
-    text.contains("\n<<<<<<< ") || text.starts_with("<<<<<<< ")
+    text.contains("<<<<<<<") || text.contains(">>>>>>>")
 }
 
 #[cfg(test)]

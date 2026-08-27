@@ -415,6 +415,35 @@ fn insert_is_searchable_without_reindex() {
     assert!(ids.contains(&"fresh"), "{ids:?}");
 }
 
+struct FailingEmbedder;
+
+impl Embedder for FailingEmbedder {
+    fn model_id(&self) -> &str {
+        "fail-stub"
+    }
+
+    fn dimensions(&self) -> usize {
+        4
+    }
+
+    fn embed(&self, _: &str) -> Result<Vec<f32>, scheda::Error> {
+        Err(scheda::Error::invalid("embed failed"))
+    }
+}
+
+#[test]
+fn failed_embed_rolls_back_the_new_record() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, Some(Arc::new(FailingEmbedder)));
+    let collection = vault.collection("token_notes").unwrap();
+    let err = collection
+        .add("fresh", rec(json!({"title": "kryptonite"})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let missing = collection.get("fresh").unwrap_err();
+    assert_eq!(missing.known_code(), Some(Code::NotFound));
+}
+
 #[test]
 fn missing_format_fails_closed() {
     let scratch = Scratch::new();

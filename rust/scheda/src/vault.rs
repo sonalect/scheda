@@ -3,7 +3,7 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::error::{Code, ContextAs, ContextIo, bail, io_code};
+use crate::error::{ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::journal;
@@ -111,7 +111,7 @@ impl Vault {
     ) -> Result<Self, Error> {
         let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path).context("[Vault::open] canonicalize vault")?;
-        let wrote_gitignore = ensure_gitignore(&path)?;
+        let gitignore_pending = gitignore_needs_write(&path)?;
         let index_dir = path.join(".scheda").join("index");
         fs::create_dir_all(&index_dir).context("[Vault::open] create index dir")?;
         let index_dir = fs::canonicalize(&index_dir).context("[Vault::open] canonicalize index")?;
@@ -137,9 +137,8 @@ impl Vault {
             search,
             embedder,
         };
-        if wrote_gitignore {
-            vault.note_write(String::from(".gitignore"))?;
-            vault.finish_mutation()?;
+        if gitignore_pending {
+            vault.write_gitignore_under_lock()?;
         }
         Ok(vault)
     }
@@ -356,26 +355,48 @@ impl Vault {
 
     pub fn pull(&self) -> Result<(), Error> {
         self.require_write_lock("pull")?;
-        git::pull(&self.path)
+        git::pull(&self.path)?;
+        self.reload_after_restore()
     }
 
     pub fn sync(&self) -> Result<(), Error> {
         self.require_write_lock("sync")?;
         git::pull(&self.path)?;
+        self.reload_after_restore()?;
         git::push(&self.path)
     }
 
     fn require_write_lock(&self, op: &str) -> Result<(), Error> {
-        let mut slot = self
-            .write_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")?;
         if slot.is_none() {
             *slot = Some(acquire_write_lock(&self.path)?);
             self.search.enable_write()?;
         }
         let _ = op;
         Ok(())
+    }
+
+    fn write_gitignore_under_lock(&self) -> Result<(), Error> {
+        {
+            let mut slot =
+                crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
+            if slot.is_none() {
+                *slot = Some(acquire_write_lock(&self.path)?);
+            }
+        }
+        let result = (|| {
+            if ensure_gitignore(&self.path)? {
+                self.note_write(String::from(".gitignore"))?;
+                self.finish_mutation()?;
+            }
+            Ok(())
+        })();
+        {
+            let mut slot =
+                crate::error::mutex(&self.write_lock, "[Vault::open] release write lock")?;
+            *slot = None;
+        }
+        result
     }
 
     pub fn check(&self) -> Result<(), Error> {
@@ -625,34 +646,51 @@ impl Collection {
     pub fn add(&self, id: &str, record: RecordAdd) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
-        let record = record_from_add(id, &self.decl.name, record);
+        let mut record = record_from_add(id, &self.decl.name, record);
         self.require_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
         match self.decl.kind {
             Kind::Journal => {
-                let mut maps = self
-                    .journal_ids
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
-                let (id, rel) = journal::insert_journal(
+                let mut maps = crate::error::mutex(
+                    &self.journal_ids,
+                    "[Collection::add] lock journal ids",
+                )?;
+                let (id, rel, rollback) = journal::insert_journal(
                     &self.vault,
                     &self.decl,
-                    record,
+                    record.clone(),
                     &self.index_dir,
                     &mut maps,
                 )?;
                 drop(maps);
-                self.note_write(rel)?;
-                self.index_id(&id)?;
+                record.path = Some(rel.clone());
+                record.valid = Some(true);
+                self.note_write(rel.clone())?;
+                if let Err(err) = self
+                    .search
+                    .upsert(&self.decl, &record, self.embedder.as_deref())
+                {
+                    self.rollback_journal_insert(&id, &rel, &rollback);
+                    return Err(err);
+                }
                 self.finish_mutation()?;
                 Ok(())
             }
             Kind::Document | Kind::Singleton => {
-                let (id, rel) = store::insert_document(&self.vault, &self.decl, record)?;
-                self.note_write(rel)?;
-                self.index_id(&id)?;
+                let (_id, rel) = store::insert_document(&self.vault, &self.decl, record.clone())?;
+                record.path = Some(rel.clone());
+                record.valid = Some(true);
+                self.note_write(rel.clone())?;
+                if let Err(err) = self
+                    .search
+                    .upsert(&self.decl, &record, self.embedder.as_deref())
+                {
+                    let _ = git::discard_paths(&self.vault, std::slice::from_ref(&rel));
+                    let _ = self.unnote_write(&rel);
+                    return Err(err);
+                }
                 self.finish_mutation()?;
                 Ok(())
             }
@@ -687,14 +725,23 @@ impl Collection {
                 self.decl.name
             )));
         }
-        let record = record_from_replace(id, &self.decl.name, record);
+        let mut record = record_from_replace(id, &self.decl.name, record);
         self.require_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
-        let (id, rel) = store::replace_document(&self.vault, &self.decl, id, record)?;
-        self.note_write(rel)?;
-        self.index_id(&id)?;
+        let (_id, rel) = store::replace_document(&self.vault, &self.decl, id, record.clone())?;
+        record.path = Some(rel.clone());
+        record.valid = Some(true);
+        self.note_write(rel.clone())?;
+        if let Err(err) = self
+            .search
+            .upsert(&self.decl, &record, self.embedder.as_deref())
+        {
+            let _ = git::discard_paths(&self.vault, std::slice::from_ref(&rel));
+            let _ = self.unnote_write(&rel);
+            return Err(err);
+        }
         self.finish_mutation()?;
         Ok(())
     }
@@ -734,22 +781,35 @@ impl Collection {
         }
         let record = self.get(id)?;
         let path = record.path.as_deref().unwrap_or("");
-        let entries = git::history(&self.vault, path)?;
-        let page = entries
-            .into_iter()
-            .skip(offset as usize)
-            .take(count as usize)
-            .collect();
+        let entries = git::history(&self.vault, path, offset, count)?;
         Ok(History {
-            entries: page,
+            entries,
             ..History::default()
         })
     }
 
-    fn index_id(&self, id: &str) -> Result<(), Error> {
-        let record = self.get(id)?;
-        self.search
-            .upsert(&self.decl, &record, self.embedder.as_deref())
+    fn unnote_write(&self, rel: &str) -> Result<(), Error> {
+        let mut set = crate::error::mutex(&self.written, "[Collection::unnote_write] lock")?;
+        set.remove(rel);
+        persist_written(&self.index_dir, &set)
+    }
+
+    fn rollback_journal_insert(
+        &self,
+        id: &str,
+        rel: &str,
+        rollback: &journal::JournalRollback,
+    ) {
+        let _ = journal::rollback_insert(rollback);
+        if let Ok(mut maps) =
+            crate::error::mutex(&self.journal_ids, "[Collection::add] rollback maps")
+        {
+            let _ = index::forget_remembered(&self.index_dir, &mut maps, &self.decl.name, id);
+            maps.forget_segment_line(&rollback.path);
+        }
+        if rollback.previous_len == 0 {
+            let _ = self.unnote_write(rel);
+        }
     }
 
     fn lookup(&self, collection: &str, id: &str) -> Result<Record, Error> {
@@ -787,10 +847,6 @@ fn record_from_replace(id: &str, collection: &str, replace: RecordReplace) -> Re
     record.fields = replace.fields;
     record.body = replace.body;
     record
-}
-
-fn search_filter(query: &SearchQuery) -> Filter {
-    (*query.filter).clone()
 }
 
 fn collection_from_record_path(path: &str) -> &str {
@@ -901,7 +957,7 @@ impl QueryCtx<'_> {
         let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
         let page = self
             .engine
-            .find(&collections, journal_ord, &decls[0], filter, offset, count)?;
+            .find(&collections, journal_ord, &decls, filter, offset, count)?;
         let mut records = Vec::new();
         for (collection, id) in page.ids {
             match read_record(self.vault, self.schema, self.journal_ids, &collection, &id) {
@@ -930,19 +986,19 @@ impl QueryCtx<'_> {
     ) -> Result<SearchHits, Error> {
         query.require_valid()?;
         let explicit = !names.is_empty();
-        let filter = search_filter(query);
+        let filter = &*query.filter;
         let mut decls = resolve_collections(self.schema, names)?;
         if filter.kind.is_some() {
-            decls = apply_filter_schema(decls, &filter, explicit)?;
+            decls = apply_filter_schema(decls, filter, explicit)?;
         }
         if decls.is_empty() {
             return Ok(SearchHits::default());
         }
         let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
-        let allowed = if filter.kind.is_none() || query::is_unconstrained(&filter) {
+        let allowed = if filter.kind.is_none() || query::is_unconstrained(filter) {
             None
         } else {
-            Some(self.engine.find_ids(&collections, &decls[0], &filter)?)
+            Some(self.engine.find_ids(&collections, &decls, filter)?)
         };
         let mut hits = self
             .engine
@@ -960,23 +1016,33 @@ impl QueryCtx<'_> {
             return Ok(hits);
         };
         let text = query.text.as_deref().unwrap_or("");
-        let pool = hits.hits.len();
-        let mut scored = Vec::with_capacity(pool);
-        for mut hit in hits.hits {
-            let collection = hit_collection(&hit);
-            let record = read_record(
+        let mut records = Vec::with_capacity(hits.hits.len());
+        for hit in &hits.hits {
+            records.push(read_record(
                 self.vault,
                 self.schema,
                 self.journal_ids,
-                collection,
+                hit_collection(hit),
                 hit.id.as_deref().unwrap_or(""),
-            )?;
-            let score = reranker.score(text, &record)?;
-            if include_raw {
-                hit.raw.clone_from(&record.raw);
-            }
-            scored.push((score, hit));
+            )?);
         }
+        let scores = reranker.score_many(text, &records)?;
+        if scores.len() != records.len() || scores.len() != hits.hits.len() {
+            bail!(Error::invalid(
+                "reranker score_many must return one score per record"
+            ));
+        }
+        let mut scored: Vec<_> = scores
+            .into_iter()
+            .zip(hits.hits)
+            .zip(records)
+            .map(|((score, mut hit), record)| {
+                if include_raw {
+                    hit.raw.clone_from(&record.raw);
+                }
+                (score, hit)
+            })
+            .collect();
         scored.sort_by(|a, b| {
             b.0.partial_cmp(&a.0)
                 .unwrap_or(std::cmp::Ordering::Equal)
@@ -1065,6 +1131,23 @@ fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
         fs::create_dir_all(path).context("[Vault::init] create vault")?;
     }
     Ok(())
+}
+
+fn gitignore_needs_write(vault: &Path) -> Result<bool, Error> {
+    let path = vault.join(".gitignore");
+    if !path.exists() {
+        return Ok(true);
+    }
+    let text = fs::read_to_string(&path).context("[Vault::open] read gitignore")?;
+    let already_scheda = text.lines().any(|line| {
+        let line = line.trim();
+        line == ".scheda/" || line == ".scheda"
+    });
+    let already_isolated = text.lines().any(|line| {
+        let line = line.trim();
+        line == ".isolated/" || line == ".isolated"
+    });
+    Ok(!(already_scheda && already_isolated))
 }
 
 fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
@@ -1157,8 +1240,19 @@ fn load_written(index_dir: &Path) -> Result<BTreeSet<String>, Error> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
         Err(err) => Err(err).context("[Vault::open] read written paths"),
         Ok(bytes) if bytes.is_empty() => Ok(BTreeSet::new()),
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .context(Code::Invalid, "[Vault::open] decode written paths"),
+        Ok(bytes) => match serde_json::from_slice(&bytes) {
+            Ok(set) => Ok(set),
+            Err(_) => {
+                let text = std::str::from_utf8(&bytes).map_err(|err| {
+                    Error::invalid(err.to_string()).context("[Vault::open] decode written paths")
+                })?;
+                Ok(text
+                    .lines()
+                    .filter(|line| !line.is_empty())
+                    .map(str::to_owned)
+                    .collect())
+            }
+        },
     }
 }
 
@@ -1171,9 +1265,12 @@ fn persist_written(index_dir: &Path, set: &BTreeSet<String>) -> Result<(), Error
             Err(err) => Err(err).context("[Vault] remove written paths"),
         }
     } else {
-        let bytes =
-            serde_json::to_vec(set).context(Code::Invalid, "[Vault] encode written paths")?;
-        fs::write(&path, bytes).context("[Vault] write written paths")
+        let mut bytes = Vec::new();
+        for rel in set {
+            bytes.extend_from_slice(rel.as_bytes());
+            bytes.push(b'\n');
+        }
+        store::atomic_write(&path, &bytes)
     }
 }
 

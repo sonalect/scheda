@@ -23,4 +23,13 @@ pub trait Embedder: Send + Sync {
 /// `--reranker-cohere-url` (with `--reranker-model`) on `search` (`14`).
 pub trait Reranker: Send + Sync {
     fn score(&self, query: &str, record: &Record) -> Result<f64, Error>;
+
+    /// Default: score each record. HTTP rerankers override to batch.
+    fn score_many(&self, query: &str, records: &[Record]) -> Result<Vec<f64>, Error> {
+        let mut out = Vec::with_capacity(records.len());
+        for record in records {
+            out.push(self.score(query, record)?);
+        }
+        Ok(out)
+    }
 }

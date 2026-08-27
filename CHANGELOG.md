@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-27
+
 ### Added
 
 - `FindResult.total`: indexed hits matching the Filter (Tantivy `Count`
@@ -82,6 +84,20 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- Failed `add` / `replace` no longer leave an unindexed file that the next
+  autocommit would publish. The document is discarded; a journal append is
+  truncated (or the new segment removed).
+- `pull` / `sync` reload Schema, journal id maps, and rebuild the Index after
+  a successful pull.
+- Journal `find` order survives restart: `next_ord` is persisted under the
+  Index. ANN keys are monotonic (no FNV-1a collisions).
+- HTTP embedder `POST` body is `{ model, input }` only (`14`). Sending
+  OpenAI `dimensions` made vLLM/Qwen return HTTP 400.
+- Multi-collection `find` compiles the Filter per collection. Journal scan
+  skips a bad JSONL line instead of dropping later records. Windows replace
+  uses `MoveFileExW`. `open` writes `.gitignore` under the write lock, then
+  releases it. `fast_forward` refuses a dirty worktree. `history` loads blobs
+  only for the requested page.
 - `python/cli` Model2Vec Hub fetch uses `huggingface_hub` (`hf-xet`)
   instead of one urllib GET through the Xet HTTP bridge, which truncated
   `model.safetensors`.
@@ -105,6 +121,11 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- Embed of the search query (and per-field vectors on write/rebuild) runs
+  outside the search mutex. Poisoned locks fail `CODE_IO_OTHER` instead of
+  continuing. Index format mismatch on `upsert` / `has_id` is
+  `CODE_INDEX_VERSION`, not a silent no-op. Journal ids map appends are
+  fsync'd. CLI rerank batches `score_many` and reuses one HTTP agent.
 - `cli_model2vec` Hub default is `minishlab/potion-multilingual-128M`
   (multilingual, ~512 MiB), not `potion-retrieval-32M` or
   `potion-base-8M`. The driver passes `--model2vec-embedder` on
@@ -370,9 +391,11 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.2.0]
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/amsokol/scheda/releases/tag/v0.2.0
 [0.1.0]: https://github.com/amsokol/scheda/releases/tag/v0.1.0
 [0.0.1]: https://github.com/amsokol/scheda/releases/tag/v0.0.1
