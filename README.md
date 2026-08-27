@@ -1,14 +1,41 @@
 # Scheda
 
-Git-backed document store: text files as the source of truth, a derived index
-outside git, and a library API. The first implementation is Rust; others
-(Python, Java, Go, TypeScript, and more) may follow.
+Scheda is a human-, AI-agent-, and process-friendly **library** for a
+document store: records are ordinary text files in a git working tree,
+not a database file. It is not a wiki, a second brain, a daemon, or a
+hosted product.
 
-A Vault is a git working tree. Collections are `document` (one file per
-record), `journal` (append-only JSONL segments), or `singleton`. The public
-collection API is CRUD-shaped (`add`, `get`, `replace`, `find`,
-`search`, `begin`, `commit`, `discard`). It is not a compatibility layer for MongoDB, CouchDB, or
-SQL.
+**What it is.** Records live as ordinary UTF-8 files in a **Vault** — a git
+working tree a person can open in an editor and in `git` without this
+library. Collections are `document` (one file per record), `journal`
+(append-only JSONL segments), or `singleton`. Schema in the Vault names
+fields, search marks, and edges; the library does not know a consumer's
+types. The **Index** is derived, lives under `{vault}/.scheda/` (gitignored),
+and can be deleted and rebuilt from files. The public API is CRUD-shaped
+(`open`, `add`, `get`, `replace`, `find`, `search`, `begin`, `commit`,
+`discard`). It is not a compatibility layer for MongoDB, CouchDB, or SQL.
+The first implementation is Rust; others (Python, Java, Go, TypeScript, and
+more) may follow.
+
+**Why it exists.** Work that matters still lands as text: notes, configs,
+journals, Markdown with a YAML header. Git already versions that text. The
+moment those files need to be queried — by field, by words, by meaning — the
+usual move is a document database plus a vector database. The files become
+an export. The human and the AI agent no longer share one tree: the agent
+searches a store the human cannot `git log`, and the human edits files the
+index does not see until someone remembers to sync. Scheda is the case in
+between: **files stay the source of truth**, git stays the history, and a
+library gives structured access and search without inventing a second store.
+
+**How it is useful.** A program can `find` and `search` (BM25, in-process
+ANN, RRF) and write records without treating the index as the database:
+wipe the Index, rebuild, get the same files back. An AI agent gets the same
+operations as the library (plus `info` from Schema and `create_collection`),
+not a looser “write any Markdown anywhere” path. A person still diffs a
+field as text and recovers last week's bytes with git. Embedding weights,
+if any, stay in the caller's install; without an embedder, vector search is
+off and the rest still works. The library does not score records for a UI,
+does not call a language model, and does not know a profession.
 
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, Schema, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +

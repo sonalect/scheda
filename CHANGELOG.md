@@ -27,6 +27,8 @@ API or on-disk format changes bump the minor.
   `remote_repo`). AGT-1 listing is `info`.
 - `create_collection` with `schema.isolated` is `unsupported` and writes
   no Schema file until nested `{vault}/.isolated/` I/O exists.
+- README opens with what Scheda is, why it exists, and how a program or
+  agent uses it without treating the Index as the database.
 
 ### Fixed
 
