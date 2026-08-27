@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.15, 25 August 2026.
+Document 3 of the Scheda package. Version 0.16, 27 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -78,7 +78,7 @@ The numeric default cap is in `05`. It must sit well below common git-host file 
 
 **MOD-15. `document`.** `add` creates the file. `replace` replaces the whole file (header and body). Partial field patch is not a Scheda operation. *Check:* replace changes bytes of that path only.
 
-**MOD-16. `journal`.** `add` appends one canonical line to the open segment (newline `\n`, no comments, one object). `replace` and delete-line do not exist. A truncated or binary-corrupted line is detected on read/`check` and is not silently repaired. *Check:* `replace` → error; mid-file corruption → `check` fails; valid lines before the damage remain readable as specified in `04`.
+**MOD-16. `journal`.** `add` appends one RFC 8785 line to the open segment (newline `\n`, no comments, one object; STO-2). `replace` and delete-line do not exist. A truncated or binary-corrupted line is detected on read/`check` and is not silently repaired. *Check:* `replace` → error; mid-file corruption → `check` fails; valid lines before the damage remain readable as specified in `04`.
 
 **MOD-17. `singleton`.** Replace is the whole file after Schema validation. The file must remain small for the same git reasons as a segment. *Check:* `add` of a second logical Record is rejected (see MOD-7).
 
@@ -92,4 +92,4 @@ Which fields are indexed, required, or edges — `05`.
 
 How `get` locates a journal `id` without scanning every segment — `06` (Index or equivalent lookup). Until then, a correct but slow scan of segments is allowed for **core** `get`. Order of `find` on a `journal` — `06` (QRY-7: append order).
 
-Canonical JSON (for example RFC 8785) of a journal line — `07`, so consumers can hash bytes. This model only requires: one object, one line, stable field identity under MOD-12.
+Canonical journal line bytes (RFC 8785) — `04` STO-2; the library writes that form (`07` LIB-18). This model only requires: one object, one line, stable field identity under MOD-12.

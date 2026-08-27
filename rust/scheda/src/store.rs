@@ -20,6 +20,10 @@ static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
 
 const FS_NAME_MAX: usize = 255;
 
+/// Consecutive integers in IEEE 754 binary64. `google.protobuf.Value`
+/// `number_value` is that type; an `integer` field beyond this is not exact.
+const BINARY64_EXACT_INT_MAGNITUDE: u64 = 1 << 53;
+
 pub(crate) fn insert_document(
     vault: &Path,
     decl: &CollectionDecl,
@@ -623,14 +627,38 @@ fn validate_object(map: &Map<String, Value>, decl: &FieldDecl) -> Result<(), Err
 }
 
 fn is_integer(value: &Value) -> bool {
-    match value {
-        Value::Number(n) => {
-            n.is_i64()
-                || n.is_u64()
-                || n.as_f64()
-                    .is_some_and(|f| f.is_finite() && f.fract() == 0.0)
+    let Value::Number(n) = value else {
+        return false;
+    };
+    if let Some(u) = n.as_u64() {
+        return u <= BINARY64_EXACT_INT_MAGNITUDE;
+    }
+    if let Some(i) = n.as_i64() {
+        return i.unsigned_abs() <= BINARY64_EXACT_INT_MAGNITUDE;
+    }
+    n.as_f64().is_some_and(|f| {
+        f.is_finite() && f.fract() == 0.0 && f.abs() <= BINARY64_EXACT_INT_MAGNITUDE as f64
+    })
+}
+
+/// `google.protobuf.Value` numbers are binary64. An exact integer whose
+/// magnitude is at most 2^53 is stored as a JSON integer so a journal line
+/// prints `1` rather than `1.0`.
+fn json_number_from_proto_f64(n: f64) -> Result<Value, Error> {
+    if !n.is_finite() {
+        bail!(Error::invalid("number must be finite"));
+    }
+    if n.fract() == 0.0 && n.abs() <= BINARY64_EXACT_INT_MAGNITUDE as f64 {
+        if n >= 0.0 {
+            Ok(Value::Number((n as u64).into()))
+        } else {
+            Ok(Value::Number((n as i64).into()))
         }
-        _ => false,
+    } else {
+        let Some(number) = serde_json::Number::from_f64(n) else {
+            bail!(Error::invalid("number must be finite"));
+        };
+        Ok(Value::Number(number))
     }
 }
 
@@ -664,12 +692,7 @@ fn proto_struct_to_map(fields: &ProtoStruct) -> Result<Map<String, Value>, Error
 fn proto_value_to_json(value: &ProtoValue) -> Result<Value, Error> {
     match value.kind.as_ref() {
         None | Some(ProtoKind::NullValue(_)) => Ok(Value::Null),
-        Some(ProtoKind::NumberValue(n)) => {
-            let Some(number) = serde_json::Number::from_f64(*n) else {
-                bail!(Error::invalid("number must be finite"));
-            };
-            Ok(Value::Number(number))
-        }
+        Some(ProtoKind::NumberValue(n)) => json_number_from_proto_f64(*n),
         Some(ProtoKind::StringValue(text)) => Ok(Value::String(text.clone())),
         Some(ProtoKind::BoolValue(flag)) => Ok(Value::Bool(*flag)),
         Some(ProtoKind::StructValue(nested)) => Ok(Value::Object(proto_struct_to_map(nested)?)),

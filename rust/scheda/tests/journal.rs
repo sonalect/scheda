@@ -6,7 +6,8 @@ use std::path::PathBuf;
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, RecordAdd, RecordReplace, Vault};
+use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Vault};
+use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -55,6 +56,10 @@ impl Scratch {
     fn log_dir(&self) -> PathBuf {
         self.vault().join("south_log")
     }
+
+    fn lines_dir(&self) -> PathBuf {
+        self.vault().join("south_lines")
+    }
 }
 
 impl Drop for Scratch {
@@ -64,25 +69,36 @@ impl Drop for Scratch {
 }
 
 const LOG: &str = include_str!("../testdata/journal/log.yaml");
+const LINES: &str = include_str!("../testdata/journal/lines.yaml");
 const ALPHA_JSONL: &str = include_str!("../testdata/journal/alpha.jsonl");
 
 fn rec(msg: &str) -> RecordAdd {
-    serde_json::from_value(serde_json::json!({
+    serde_json::from_value(json!({
         "fields": { "msg": msg },
     }))
     .unwrap()
 }
 
 fn rec_rep(msg: &str) -> RecordReplace {
-    serde_json::from_value(serde_json::json!({
+    serde_json::from_value(json!({
         "fields": { "msg": msg },
     }))
     .unwrap()
 }
 
+fn rec_fields(fields: serde_json::Value) -> RecordAdd {
+    serde_json::from_value(json!({ "fields": fields })).unwrap()
+}
+
 fn open_log(scratch: &Scratch) -> Vault {
     drop(scratch.init());
     scratch.write_schema("log.yaml", LOG);
+    scratch.reopen()
+}
+
+fn open_lines(scratch: &Scratch) -> Vault {
+    drop(scratch.init());
+    scratch.write_schema("lines.yaml", LINES);
     scratch.reopen()
 }
 
@@ -281,6 +297,111 @@ fn journal_rejects_markdown_body() {
         .collection("south_log")
         .unwrap()
         .add("a", record)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn integer_field_round_trips_as_integer_not_1_0() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let collection = vault.collection("south_lines").unwrap();
+    collection.add("a", rec_fields(json!({"n": 1}))).unwrap();
+    let path = scratch.lines_dir().join("00000001.jsonl");
+    let before = fs::read(&path).unwrap();
+    let text = str::from_utf8(&before).unwrap();
+    assert!(text.contains(r#""n":1"#), "{text}");
+    assert!(!text.contains(r#""n":1.0"#), "{text}");
+    vault.reindex().unwrap();
+    assert_eq!(fs::read(&path).unwrap(), before);
+    let got = collection.get("a").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(before.as_slice()));
+    assert_eq!(got.valid, Some(true));
+}
+
+#[test]
+fn get_and_find_include_raw_match_segment_line() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let collection = vault.collection("south_lines").unwrap();
+    collection.add("a", rec_fields(json!({"n": 1}))).unwrap();
+    let line = fs::read(scratch.lines_dir().join("00000001.jsonl")).unwrap();
+    let got = collection.get("a").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(line.as_slice()));
+    let found = collection
+        .find(&FindQuery::all().with_include_raw(true), 0, 10)
+        .unwrap();
+    assert_eq!(found.records.len(), 1);
+    assert_eq!(found.records[0].raw.as_deref(), Some(line.as_slice()));
+    let omitted = collection.find(&Filter::all().into(), 0, 10).unwrap();
+    assert!(omitted.records[0].raw.is_none());
+}
+
+#[test]
+fn journal_line_round_trip_fixture_is_rfc_8785() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let collection = vault.collection("south_lines").unwrap();
+    let fields = json!({
+        "n": 1,
+        "neg": -42,
+        "x": 0.5,
+        "tags": ["a", "b"],
+        "meta": {
+            "z": "ascii",
+            "\u{1F600}": "grin",
+            "\u{FB33}": "he",
+        },
+    });
+    collection.add("one", rec_fields(fields.clone())).unwrap();
+    let path = scratch.lines_dir().join("00000001.jsonl");
+    let line = fs::read_to_string(&path).unwrap();
+    let expected = "{\"id\":\"one\",\"meta\":{\"z\":\"ascii\",\"\u{1F600}\":\"grin\",\"\u{FB33}\":\"he\"},\"n\":1,\"neg\":-42,\"tags\":[\"a\",\"b\"],\"x\":0.5}\n";
+    assert_eq!(line, expected);
+
+    let got = collection.get("one").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(line.as_bytes()));
+
+    let mut again = fields;
+    if let serde_json::Value::Object(map) = &mut again {
+        map.insert(String::from("id"), json!("two"));
+    }
+    collection.add("two", rec_fields(again)).unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    let mut lines = text.lines();
+    let first = lines.next().unwrap();
+    let second = lines.next().unwrap();
+    assert_eq!(second, first.replace("one", "two"));
+}
+
+#[test]
+fn non_integral_integer_field_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let err = vault
+        .collection("south_lines")
+        .unwrap()
+        .add("frac", rec_fields(json!({"n": 1.5})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(!scratch.lines_dir().join("00000001.jsonl").is_file());
+}
+
+#[test]
+fn integer_above_2_pow_53_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let collection = vault.collection("south_lines").unwrap();
+    collection
+        .add("edge", rec_fields(json!({"n": 9_007_199_254_740_992_u64})))
+        .unwrap();
+    let text = fs::read_to_string(scratch.lines_dir().join("00000001.jsonl")).unwrap();
+    assert!(text.contains(r#""n":9007199254740992"#), "{text}");
+    let err = collection
+        .add(
+            "wide",
+            rec_fields(json!({"n": 18_014_398_509_481_984_u64})),
+        )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

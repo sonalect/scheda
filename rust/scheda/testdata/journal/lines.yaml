@@ -1,0 +1,14 @@
+name: south_lines
+kind: journal
+schema_version: 1
+fields:
+  - name: n
+    integer: {}
+  - name: neg
+    integer: {}
+  - name: x
+    number: {}
+  - name: tags
+    string_list: {}
+  - name: meta
+    object: {}

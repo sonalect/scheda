@@ -22,6 +22,15 @@ API or on-disk format changes bump the minor.
 - README and `10`/`11` point next crate work at that list. Isolated
   nested git (`10` §1) is P4 of it, after journal fidelity and an
   ordered read.
+- Journal JSONL is RFC 8785 (STO-2, LIB-18): keys by UTF-16 code unit,
+  numbers by ES6 `NumberToString`, strings escaped as the RFC states.
+  `RecordAdd.fields` is `google.protobuf.Struct`; an `integer` whose
+  magnitude exceeds 2^53 is `invalid`. There is no wider integer
+  carrier.
+
+### Fixed
+
+- An `integer` field on a journal line is stored as `1`, not `1.0`.
 
 ## [0.3.0] - 2026-08-27
 

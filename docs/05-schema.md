@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.29, 27 August 2026.
+Document 5 of the Scheda package. Version 0.30, 27 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -27,14 +27,14 @@ An assertion without a check is not a requirement. Schema contains no executable
 | Type | On disk | Notes |
 |---|---|---|
 | `string` | JSON/YAML string | |
-| `integer` | JSON/YAML number with no fractional part | `1.5` rejected |
+| `integer` | JSON/YAML number with no fractional part and magnitude at most 2^53 | `1.5` rejected; a value `google.protobuf.Struct` `number_value` (IEEE 754 binary64) cannot hold exactly is `invalid` (`07` LIB-18) |
 | `number` | finite JSON/YAML number | JSON does not encode NaN/Infinity; YAML `.nan` / `.inf` rejected |
 | `boolean` | `true` / `false` | |
 | `string_list` | array of strings | empty `[]` is a value, not missing |
 | `object` | map | keys Schema lists, or open with `string` values |
 | `object_list` | array of maps | empty `[]` is a value, not missing; each item's fields are declared with the same type set (nesting allowed) |
 
-Unknown types are rejected. Flags `required` / `optional` / `nullable` apply to nested fields of `object` and `object_list` items the same way. *Check:* insert with a field not in Schema → error; insert with a known field of the wrong type → error; `object_list` of two maps round-trips; `number` `0.5` accepted; the same value on an `integer` field is rejected.
+Unknown types are rejected. Flags `required` / `optional` / `nullable` apply to nested fields of `object` and `object_list` items the same way. *Check:* insert with a field not in Schema → error; insert with a known field of the wrong type → error; `object_list` of two maps round-trips; `number` `0.5` accepted; the same value on an `integer` field is rejected; an `integer` whose magnitude exceeds 2^53 is rejected.
 
 **SCH-5. Required, optional, nullable.** Required fields must be present on write. Optional fields may be absent. Independently, Schema may mark a field `nullable` (default false).
 

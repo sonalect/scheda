@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.62, 27 August 2026.
+Document 7 of the Scheda package. Version 0.63, 27 August 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -70,7 +70,7 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 **LIB-17. `history(id, offset, count)`.** GIT-3. On the collection handle. Same identity path as `get` (IDX-10): validate the slug, then git history of that file. Does not ask the Index which ids exist. **Core** for `document` / `singleton`. For `journal`, IDX-5 map then git history of the **segment file** (the whole file in `Entry.raw`); line-level blame is **later**. The caller passes Record `id`, not a file path. Missing file → `not_found`. Paged, newest first: `offset` skips that many commits, `count` is the page size (`invalid` if `count` is 0). Returns `api/v1` `History` with `repeated Entry`: commit hash, `google.protobuf.Timestamp` `time` (UTC; git stores whole seconds since epoch), author, message, and file bytes (`raw`). Isolated collections use the nested git. Past the end of history → empty `entries`. *Check:* two commits editing one `document`; snapshots match `git show` of the file Scheda stores. *Check:* `count` `0` → `invalid`; `offset` beyond the last commit → empty `entries`; unknown `id` → `not_found`. *Check:* delete `.scheda/`; `history` of a fixture `document` still matches `git show`.
 
-**LIB-18. Canonical journal line.** `add` on `journal` writes one object per line whose object key order is RFC 8785 (JSON Canonicalization Scheme) so a consumer can hash bytes. *Check:* two inserts of equal fields produce equal line bytes aside from field values that differ.
+**LIB-18. Canonical journal line.** `add` on `journal` writes one RFC 8785 object per line (JSON Canonicalization Scheme: keys in UTF-16 code unit order, numbers as ECMAScript `NumberToString`, strings escaped as the RFC states) so a consumer can hash bytes. `RecordAdd.fields` is `google.protobuf.Struct`; a JSON number there is `number_value` (IEEE 754 binary64). An `integer` field is accepted only when that double is a finite integer whose magnitude is at most 2^53. A larger magnitude is `invalid`; this API does not carry a wider integer. On disk the integer is the decimal digits (`1`), not `1.0`. *Check:* two inserts of equal fields produce equal line bytes aside from field values that differ. *Check:* `integer` `1` is stored as `1`; `1.5` and magnitude above 2^53 are `invalid`.
 
 ---
 

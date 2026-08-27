@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.17, 27 August 2026.
+Document 4 of the Scheda package. Version 0.18, 27 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -12,7 +12,7 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **STO-1. Recoverable from the tree.** Anything the library cannot rebuild from Vault text files must not exist in Scheda. The Index is not truth. *Check:* delete the Index, open the Vault with another copy of an implementation, `reindex`; the set of Records and each Record's content match the files.
 
-**STO-2. Readable without the library.** Records are UTF-8 without BOM. `document`: Markdown with YAML 1.2 between `---`, or YAML 1.2 throughout. `journal`: JSONL, one object per line, `\n`, no comments. `singleton`: JSON or YAML 1.2 as Schema says. *Check:* a fixture Vault opens in an editor and in `git` with no Scheda; `git diff` after changing a field shows that field's text, not a binary dump.
+**STO-2. Readable without the library.** Records are UTF-8 without BOM. `document`: Markdown with YAML 1.2 between `---`, or YAML 1.2 throughout. `journal`: JSONL, one RFC 8785 (JSON Canonicalization Scheme) object per line, `\n`, no comments. Object keys are sorted by UTF-16 code unit; numbers by ECMAScript `NumberToString`; strings escaped as the RFC states. An `integer` field is the decimal digits (`1`), not `1.0`. `singleton`: JSON or YAML 1.2 as Schema says. *Check:* a fixture Vault opens in an editor and in `git` with no Scheda; `git diff` after changing a field shows that field's text, not a binary dump. *Check:* a journal line with an `integer` field holds `1`, not `1.0`.
 
 **Exception (**later**, ISO-5):** `{vault}/.isolated/` with `encrypt` stores isolated Record files as age ASCII armor. Those files are still UTF-8 text and `git diff`able as armor, not as YAML/JSONL. Plaintext is recovered with the `secret` (Scheda or `age -d`), not by opening the blob in an editor. The main Vault tree is never this exception.
 
@@ -111,7 +111,7 @@ Schema language and the numeric segment size default — `05`.
 
 How `get` finds a journal `id` without a full scan — `06`.
 
-Canonical JSON of a line for hashing — `07`.
+The journal line form is STO-2 (RFC 8785). The library writes that form on `add` (`07` LIB-18).
 
 Optional age encryption of `{vault}/.isolated/` — `09` (**later**).
 

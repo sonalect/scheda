@@ -1,8 +1,9 @@
 //! On-disk `journal` JSONL segments.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::Write as IoWrite;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -251,14 +252,13 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
         Value::Null => out.push_str("null"),
         Value::Bool(true) => out.push_str("true"),
         Value::Bool(false) => out.push_str("false"),
-        Value::Number(n) => out.push_str(&n.to_string()),
-        Value::String(s) => {
-            let encoded = serde_json::to_string(s).context(
-                Code::Invalid,
-                "[Journal::write_canonical] encode JSON string",
-            )?;
-            out.push_str(&encoded);
+        Value::Number(n) => {
+            let Some(number) = n.as_f64() else {
+                bail!(Error::invalid("JSON number must be finite"));
+            };
+            write_es6_number(number, out)?;
         }
+        Value::String(s) => write_json_string(s, out),
         Value::Array(items) => {
             out.push('[');
             for (i, item) in items.iter().enumerate() {
@@ -271,20 +271,93 @@ fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
         }
         Value::Object(map) => {
             out.push('{');
-            for (i, (key, value)) in map.iter().enumerate() {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort_unstable_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
+            for (i, key) in keys.iter().enumerate() {
                 if i > 0 {
                     out.push(',');
                 }
-                let encoded = serde_json::to_string(key)
-                    .context(Code::Invalid, "[Journal::write_canonical] encode JSON key")?;
-                out.push_str(&encoded);
+                write_json_string(key, out);
                 out.push(':');
+                let Some(value) = map.get(*key) else {
+                    unreachable!("key came from the same map");
+                };
                 write_canonical(value, out)?;
             }
             out.push('}');
         }
     }
     Ok(())
+}
+
+/// ECMAScript `NumberToString` as required by RFC 8785. `-0` is `0`.
+fn write_es6_number(n: f64, out: &mut String) -> Result<(), Error> {
+    if !n.is_finite() {
+        bail!(Error::invalid("JSON number must be finite"));
+    }
+    if n == 0.0 {
+        out.push('0');
+        return Ok(());
+    }
+    if n < 0.0 {
+        out.push('-');
+    }
+    let abs = n.abs();
+    if (1e-6..1e21).contains(&abs) {
+        write!(out, "{abs}").map_err(|_| Error::invalid("cannot format JSON number"))?;
+    } else {
+        write_es6_scientific(abs, out);
+    }
+    Ok(())
+}
+
+fn write_es6_scientific(abs: f64, out: &mut String) {
+    let sci = format!("{abs:e}");
+    let Some((mant, exp)) = sci.split_once('e') else {
+        out.push_str(&sci);
+        return;
+    };
+    out.push_str(mant);
+    out.push('e');
+    if let Some(rest) = exp.strip_prefix('-') {
+        out.push('-');
+        out.push_str(strip_leading_zeros(rest));
+    } else {
+        out.push('+');
+        let rest = exp.strip_prefix('+').unwrap_or(exp);
+        out.push_str(strip_leading_zeros(rest));
+    }
+}
+
+fn strip_leading_zeros(s: &str) -> &str {
+    let trimmed = s.trim_start_matches('0');
+    if trimmed.is_empty() { "0" } else { trimmed }
+}
+
+/// RFC 8785 string: only `"`, `\`, and U+0000–U+001F are escaped. UTF-8
+/// `str` cannot hold a lone surrogate, which the RFC would reject.
+fn write_json_string(s: &str, out: &mut String) {
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\u{0C}' => out.push_str("\\f"),
+            '\r' => out.push_str("\\r"),
+            c if (c as u32) <= 0x1F => {
+                const HEX: &[u8; 16] = b"0123456789abcdef";
+                let n = c as u32;
+                out.push_str("\\u00");
+                out.push(HEX[(n >> 4) as usize] as char);
+                out.push(HEX[(n & 0xF) as usize] as char);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
 }
 
 fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
@@ -636,7 +709,7 @@ fn record_from_parsed(
 #[cfg(test)]
 mod tests {
     use super::{canonical_json, civil_from_unix_days, write_canonical};
-    use serde_json::json;
+    use serde_json::{json, Number, Value};
 
     #[test]
     fn canonical_json_sorts_object_keys() {
@@ -655,6 +728,52 @@ mod tests {
         let mut out = String::new();
         write_canonical(&json!([true, null, "x"]), &mut out).unwrap();
         assert_eq!(out, r#"[true,null,"x"]"#);
+    }
+
+    #[test]
+    fn rfc8785_float_one_prints_as_integer() {
+        let n = Number::from_f64(1.0).unwrap();
+        assert_eq!(canonical_json(&Value::Number(n)).unwrap(), b"1");
+    }
+
+    #[test]
+    fn rfc8785_minus_zero_prints_as_zero() {
+        let n = Number::from_f64(-0.0).unwrap();
+        assert_eq!(canonical_json(&Value::Number(n)).unwrap(), b"0");
+    }
+
+    #[test]
+    fn rfc8785_sample_object() {
+        let mut string = String::from("€$");
+        string.push('\u{000F}');
+        string.push('\n');
+        string.push_str("A'B");
+        string.push('"');
+        string.push('\\');
+        string.push('\\');
+        string.push('"');
+        string.push('/');
+        let value = json!({
+            "numbers": [333_333_333.333_333_3, 1e30, 4.50, 2e-3, 1e-27],
+            "string": string,
+            "literals": [null, true, false],
+        });
+        let bytes = canonical_json(&value).unwrap();
+        let expected = "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}";
+        assert_eq!(String::from_utf8(bytes).unwrap(), expected);
+    }
+
+    #[test]
+    fn rfc8785_keys_sort_by_utf16_code_unit() {
+        let value = json!({
+            "\u{FB33}": 1,
+            "\u{1F600}": 2,
+        });
+        let bytes = canonical_json(&value).unwrap();
+        let text = String::from_utf8(bytes).unwrap();
+        let grin = text.find('\u{1F600}').unwrap();
+        let hebrew = text.find('\u{FB33}').unwrap();
+        assert!(grin < hebrew, "{text}");
     }
 
     #[test]

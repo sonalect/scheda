@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.38, 27 August 2026.
+Document 2 of the Scheda package. Version 0.39, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -100,7 +100,7 @@ For `document`, `{collection}/{id}.md`. For `journal`, the segment file that con
 
 **Fields** — structured values.
 
-In a `document` or `singleton`, fields live in the YAML (or JSON) header or file. In a `journal`, fields are the JSON object on the line. Types include `string`, `integer`, `number`, `boolean`, `string_list`, `object`, `object_list` (`05`). Missing is missing: Scheda does not insert `false`, `0`, `""`, `[]`, or `null` unless Schema states a default. A stored JSON `null` is a value, not omission (`03`).
+In a `document` or `singleton`, fields live in the YAML (or JSON) header or file. In a `journal`, fields are the RFC 8785 JSON object on the line (`04` STO-2). Types include `string`, `integer`, `number`, `boolean`, `string_list`, `object`, `object_list` (`05`). Missing is missing: Scheda does not insert `false`, `0`, `""`, `[]`, or `null` unless Schema states a default. A stored JSON `null` is a value, not omission (`03`).
 
 **Body** — free text after the header, typically Markdown. Allowed to be empty. In the lexical Index (`find` field `body` and BM25) unless Schema sets `exclude_fts`; in vectors unless `exclude_vector`.
 

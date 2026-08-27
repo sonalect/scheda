@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.34, 27 August 2026.
+Document 12 of the Scheda package. Version 0.36, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -416,7 +416,8 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** not started.
+**Status of the part:** in progress. P1 is done; no other stage is
+started.
 
 The first consumer moves a primary layer of text files under git onto the
 crate: `document` collections it revises in place, and `journal`
@@ -442,7 +443,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | Stage | Status | What closes |
 |---|---|---|
 | [P0](#p0-consumer-fixture) | not started | A fixture Vault shaped like the consumer's primary layer |
-| [P1](#p1-journal-line-fidelity) | not started | An integer stays an integer; the line is RFC 8785 |
+| [P1](#p1-journal-line-fidelity) | done | An integer stays an integer; the line is RFC 8785 |
 | [P2](#p2-ordered-journal-read-without-the-lexical-index) | not started | Reading a journal in order without Tantivy |
 | [P3](#p3-many-writes-one-commit) | not started | Append per event without a commit per event |
 | [P4](#p4-unencrypted-isolated-slice) | not started | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
@@ -452,12 +453,61 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P8](#p8-decisions-without-code) | not started | Layout answers the consumer needs before it moves |
 | [P9](#p9-consumer-acceptance) | not started | The consumer's acceptance list on the P0 fixture |
 
-**Order.** P1 and P2 first: without them the consumer can neither write
-nor read its journals honestly. Then P3, P5, P6 — each small, each
-removing one migration blocker. P7 next, because it decides whether a
-consumer pays for Tantivy and USearch it does not use. P4 is the large
-one and is already `10` §1 Next. P0 can start at any point; P9 closes the
-part.
+**Order.** P0 first, and its grep box before its fixture box: a fixture
+shaped like a consumer carries that consumer's collection names, and
+until SCH-1 says it grades library source, adding one turns SCH-1 red.
+An implementer who meets that failure will rename the fixture into
+something meaningless instead of fixing the check.
+
+Then P1 and P2: without them a consumer can neither write nor read its
+journals honestly. Then P3, P5, P6 — each small, each removing one
+migration blocker. P7 next, because it decides whether a consumer pays
+for Tantivy and USearch it does not use. P4 is the large one and is
+already `10` §1 Next. P9 closes the part.
+
+Each stage carries **Needs** (stages that must be `done` first) and
+**Decide first** (a question `03`–`10` leaves open, which has to be
+answered before any code). Those two lines are the running order; the
+paragraph above is only its reasoning.
+
+### Running one stage
+
+Hand an implementer one stage, never the part. A stage is the unit
+because it carries its own spec amendment, its own tests, and its own
+CHANGELOG line. Two stages in one session lose that separation and the
+review cannot tell which change closed which box.
+
+For any P stage, in this order:
+
+1. Read the stage. If it has **Decide first**, that answer is not the
+   implementer's to invent: it changes `03`–`10` for every consumer.
+   Settle it, write it into the named document, then start.
+2. Amend the documents the boxes name. A box citing `04` STO-2 or
+   `10` §2 means that file changes in this stage. Code that contradicts
+   an unamended document is the failure this plan exists to prevent.
+3. Set **Status:** `in progress` in the stage and in the dashboard.
+4. Implement in `rust/scheda`. `src/` returns `Result`: no `panic!`,
+   `unwrap`, `expect`, or `assert!` (`07` §5). After editing
+   `api/v1/*.proto`, run `bazel run //api/v1:generate` before the tests,
+   or the build fails on stale stubs.
+5. Write the check each box names as a real test. A box with no test
+   stays `[ ]`, whatever the code does.
+6. Run `bazel test //... --keep_going` from the repository root. Green,
+   or the stage is not done. `cargo test` alone is not that gate.
+7. Tick the boxes a passing test covers, set **Status:** `done` in the
+   stage and in the dashboard, and add the CHANGELOG entry under
+   `[Unreleased]`.
+
+Stop and ask rather than guess. If a box needs something `03`–`10` does
+not decide, that is a gap in the specification, and a silent default in
+`src/` hides it instead of closing it (§1).
+
+### Working in parallel
+
+P1, P2, and P3 all touch the journal write path and the commit rule; run
+them one at a time. P5, P6, and P7 touch Schema keys, the singleton
+file, and the build graph, and do not overlap each other. P8 is prose
+and blocks nothing.
 
 ---
 
@@ -467,6 +517,11 @@ part.
 
 **Codes:** SCH-1, MOD-1, MOD-8, STO-2, QRY-1.
 
+**Needs:** nothing.
+
+**Decide first:** nothing. The grep box settles the scope question
+itself, in `05`.
+
 One fixture Vault shaped like the consumer's primary layer, so the later
 stages have something honest to run against: two `document` collections
 with identical field lists, two further `document` collections, three
@@ -475,7 +530,11 @@ with identical field lists, two further `document` collections, three
 A fixture of that shape carries collection names that belong to a
 consumer, which is what the SCH-1 grep forbids. That check is about
 library source, not test data, and today's wording does not say which it
-means.
+means. Settle that before the fixture exists, not after it fails.
+
+The isolated `journal` is declared in Schema and its files are placed by
+hand, the way the A6 fixture already does it. Writing a Record there is
+P4, and `check` does not reach the nested tree until then.
 
 - [ ] Fixture lives in test data. Collection names come from its Schema
       files; no name is compiled into `rust/scheda/src` (SCH-1).
@@ -492,9 +551,14 @@ means.
 
 ## P1. Journal line fidelity
 
-**Status:** not started
+**Status:** done
 
 **Codes:** STO-2, STO-3, MOD-12, MOD-16, QRY-1, SCH-4.
+
+**Needs:** nothing.
+
+**Decide first:** nothing; the boxes name the answers. What that limit
+costs a caller is now `07` LIB-18.
 
 The consumer chains its own checksum over each journal line, so the bytes
 it reads back must be the bytes it meant to write. Two things stand in
@@ -512,20 +576,20 @@ order; numbers print through Rust's shortest round-trip, not ES6
 `NumberToString`. For ASCII keys and small integers the two agree, which
 is why this has been invisible.
 
-- [ ] An `integer` field round-trips as an integer. `add`, then read the
+- [x] An `integer` field round-trips as an integer. `add`, then read the
       segment: the line holds `1`, not `1.0`. Same after `reindex` and
       through `get` (MOD-12, STO-2).
-- [ ] Canonical form is RFC 8785 and `04` STO-2 says so: keys by UTF-16
+- [x] Canonical form is RFC 8785 and `04` STO-2 says so: keys by UTF-16
       code unit, numbers by ES6 `NumberToString`, strings escaped as the
       RFC states.
-- [ ] `get` and `find` with `include_raw` on a `journal` return the exact
+- [x] `get` and `find` with `include_raw` on a `journal` return the exact
       bytes of that line, byte for byte equal to the segment (QRY-1).
-- [ ] Round-trip fixture: integers, negative integers, finite fractions,
+- [x] Round-trip fixture: integers, negative integers, finite fractions,
       nested objects, a list, and a non-ASCII key. Bytes are stable
       across `add` → `get` → re-encode.
-- [ ] A caller value on an `integer` field that is not integral is
+- [x] A caller value on an `integer` field that is not integral is
       `invalid`, not truncated (SCH-4).
-- [ ] An integer the `Struct` bridge cannot carry exactly (magnitude above
+- [x] An integer the `Struct` bridge cannot carry exactly (magnitude above
       2^53) is `invalid` on write, not silently rounded. If that limit is
       unacceptable, `07` says what carries the value instead.
 
@@ -536,6 +600,12 @@ is why this has been invisible.
 **Status:** not started
 
 **Codes:** QRY-7, QRY-2, IDX-2, IDX-5, MOD-16, `10` §2.
+
+**Needs:** P1, whose line bytes this read hands back.
+
+**Decide first:** `10` §2 — does IDX-2 stay a **core** requirement? That
+sentence decides whether this stage writes code at all, and P7 waits on
+the same answer. Do not open an editor on `src/` before it is written.
 
 To verify its chain the consumer reads every line of a journal in append
 order, and it wants that in a build with no search. Today append order is
@@ -564,6 +634,12 @@ a specification question before it is an implementation one.
 
 **Codes:** GIT-2, GIT-8, GIT-10, LIB-7, STO-5, OPS-1.
 
+**Needs:** nothing.
+
+**Decide first:** `04` GIT-2 — an `OpenOptions` switch, or a statement
+that a transaction is the only supported batch. The boxes below split on
+that answer.
+
 GIT-2 is deliberate: outside a transaction each mutating call autocommits
 with the message `scheda`. The consumer appends one journal Record per
 observed event, so on an OPS-1 fixture that rule means 10⁴ commits.
@@ -591,6 +667,13 @@ writes if the process dies before `commit`.
 **Status:** not started
 
 **Codes:** ISO-2, ISO-4, ISO-6, IDX-4, LIB-21, `10` §1.
+
+**Needs:** P1 and P3. The isolated tree is a `journal` under its own git,
+so a wrong line form or a commit per line is the same defect in a
+smaller repository.
+
+**Decide first:** nothing. `10` §1 already fixes the order and `09` the
+rules; this stage implements them.
 
 This is `10` §1 Next, recorded here because a consumer waits on it and
 because the consumer's shape adds requirements the roadmap order does not
@@ -622,6 +705,11 @@ readable only by their owner. Encryption stays out (ISO-5, ISO-7–11).
 
 **Codes:** SCH-2, SCH-6, MOD-13, MOD-8.
 
+**Needs:** nothing.
+
+**Decide first:** nothing. Whether the pattern is anchored is a box of
+this stage, answered in `05`, not a question held open before it.
+
 `CollectionDecl.id_pattern` is already honoured on write, but nothing
 ever sets it: there is no Schema key, so the field is always unset. The
 consumer wants a ULID pattern on two journals and a slug pattern on its
@@ -647,6 +735,13 @@ instead of trusting the caller.
 
 **Codes:** STO-2, SCH-6, MOD-8, QRY-1.
 
+**Needs:** nothing.
+
+**Decide first:** which of the two documents is wrong — `04` STO-2, which
+lets Schema choose JSON or YAML, or `05` SCH-6, which fixes the file at
+`record.yaml`. Code follows SCH-6 today, so choosing STO-2 is a change of
+behaviour and not only of prose.
+
 `04` STO-2 says a `singleton` is "JSON or YAML 1.2 as Schema says". `05`
 SCH-6 says the file is always `record.yaml`. The code follows SCH-6. Two
 documents of this package disagree, and the consumer keeps two singletons
@@ -665,6 +760,12 @@ that are JSON today.
 **Status:** not started
 
 **Codes:** IDX-2, IDX-3, IDX-8, QRY-4, LIB-1, `10` §2.
+
+**Needs:** P2. Dropping the lexical leg is only possible once a
+sequential journal read does not go through it.
+
+**Decide first:** the same `10` §2 sentence as P2. If IDX-2 stays
+**core**, this stage shrinks to the vector leg alone.
 
 The crate links Tantivy, USearch, and a bundled libgit2 unconditionally.
 A consumer whose first stage is only writing and reading files pays for
@@ -691,6 +792,11 @@ cost; it is what slows the consumer's own iteration today.
 
 **Codes:** MOD-8, MOD-16, STO-4.
 
+**Needs:** nothing.
+
+**Decide first:** all three boxes are the decision. This stage writes no
+code and its result is prose the consumer can act on.
+
 Three shapes in the consumer's current layout have no direct translation.
 Deciding them here costs a paragraph; discovering them mid-migration
 costs a rewrite. None needs crate work.
@@ -716,6 +822,11 @@ costs a rewrite. None needs crate work.
 **Status:** not started
 
 **Codes:** STO-1, STO-2, SCH-1, QRY-1, OPS-1, OPS-3.
+
+**Needs:** P0 for the fixture, and every other stage either `done` or
+recorded as unmet in its last box.
+
+**Decide first:** nothing.
 
 Run the consumer's acceptance list against the P0 fixture. Passing it is
 what "migrate without friction" means; anything short of it is a promise.
