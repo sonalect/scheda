@@ -378,8 +378,7 @@ impl Vault {
 
     fn write_gitignore_under_lock(&self) -> Result<(), Error> {
         {
-            let mut slot =
-                crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
+            let mut slot = crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
             if slot.is_none() {
                 *slot = Some(acquire_write_lock(&self.path)?);
             }
@@ -480,7 +479,6 @@ impl Collection {
                 name: String::from("c"),
                 kind: Kind::Document,
                 schema_version: 1,
-                layout: vec![String::from("c/{id}.md")],
                 id_field: String::from("id"),
                 id_pattern: None,
                 filter_keys: std::collections::BTreeSet::new(),
@@ -533,11 +531,6 @@ impl Collection {
     #[must_use]
     pub fn segment_max_bytes(&self) -> Option<u64> {
         self.decl.segment_max_bytes
-    }
-
-    #[must_use]
-    pub fn layout(&self) -> &[String] {
-        &self.decl.layout
     }
 
     #[must_use]
@@ -653,10 +646,8 @@ impl Collection {
         })?;
         match self.decl.kind {
             Kind::Journal => {
-                let mut maps = crate::error::mutex(
-                    &self.journal_ids,
-                    "[Collection::add] lock journal ids",
-                )?;
+                let mut maps =
+                    crate::error::mutex(&self.journal_ids, "[Collection::add] lock journal ids")?;
                 let (id, rel, rollback) = journal::insert_journal(
                     &self.vault,
                     &self.decl,
@@ -794,12 +785,7 @@ impl Collection {
         persist_written(&self.index_dir, &set)
     }
 
-    fn rollback_journal_insert(
-        &self,
-        id: &str,
-        rel: &str,
-        rollback: &journal::JournalRollback,
-    ) {
+    fn rollback_journal_insert(&self, id: &str, rel: &str, rollback: &journal::JournalRollback) {
         let _ = journal::rollback_insert(rollback);
         if let Ok(mut maps) =
             crate::error::mutex(&self.journal_ids, "[Collection::add] rollback maps")

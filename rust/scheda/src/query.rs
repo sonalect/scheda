@@ -606,9 +606,7 @@ impl Query for MoreLikeThisIdQuery {
 pub(crate) fn eq_term(field: &str, value: &str) -> Result<String, Error> {
     if field.contains('\0') || value.contains('\0') {
         // Indexed as `{field}\0{value}` in one STRING field.
-        return Err(Error::invalid(
-            "filter field or value must not contain NUL",
-        ));
+        return Err(Error::invalid("filter field or value must not contain NUL"));
     }
     Ok(format!("{field}\0{value}"))
 }

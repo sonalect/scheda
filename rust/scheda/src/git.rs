@@ -419,11 +419,7 @@ pub(crate) fn history(
     }
     hits.sort_by_key(|hit| std::cmp::Reverse(hit.seconds));
     let mut out = Vec::new();
-    for hit in hits
-        .into_iter()
-        .skip(offset as usize)
-        .take(count as usize)
-    {
+    for hit in hits.into_iter().skip(offset as usize).take(count as usize) {
         let commit = repo
             .find_commit(hit.oid)
             .context("[Git::history] read commit")?;

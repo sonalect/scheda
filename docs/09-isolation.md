@@ -1,6 +1,6 @@
 # 09. Isolation and perimeter
 
-Document 9 of the Scheda package. Version 0.6, 25 August 2026.
+Document 9 of the Scheda package. Version 0.7, 27 August 2026.
 
 What must not leak: network by default (**core**); isolated collections under `{vault}/.isolated/` (gitignored nested git, never the main Remote), sealed fields, and optional encryption of that nested tree (**later**). Terms are in `02`. Schema marks are in SCH-15. Remote traffic is in `04`. Codes: `ISO`. Phase **later** unless marked **core** or **agent**.
 
@@ -20,7 +20,7 @@ An assertion without a check is not a requirement.
 
 The Vault is **one directory**. Isolated Records are not a second `open` path elsewhere on disk.
 
-**ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Layout templates are relative to that directory. The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `clone` of the main Vault still lists the collection (ISO-3). `init` / first `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
+**ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Isolated Records use the same fixed names under that directory (`{id}.md`, journal segments, `record.yaml`). The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `clone` of the main Vault still lists the collection (ISO-3). `init` / first `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
 
 `{vault}/.isolated/` is a git working tree Scheda creates on the first isolated write (`create_collection` with `isolated`, or `add` on that collection). Local `commit` and `history` of isolated Record paths use that nested repository. File mode: owner-only (`0600` on Unix; equivalent ACL on other systems). It is not required to exist for the main Vault to `open`, or for `find` / `search` on non-isolated collections. Deleting `{vault}/.scheda/` does not delete `.isolated/` (Index is disposable; isolated Records are not).
 

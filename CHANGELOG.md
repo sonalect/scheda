@@ -8,6 +8,12 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Removed
+
+- `Collection::layout()`. Schema has no layout template (SCH-2, MOD-8);
+  Record paths stay the kind-fixed names. A leftover `layout` key in a
+  Schema file is `invalid`.
+
 ## [0.2.0] - 2026-08-27
 
 ### Added

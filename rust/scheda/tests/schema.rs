@@ -84,7 +84,6 @@ fn schema_under_git_is_read_on_open_and_check() {
     assert_eq!(collection.field_type("title"), Some("string"));
     assert_eq!(collection.field_is_required("title"), Some(true));
     assert_eq!(collection.field_is_nullable("title"), Some(false));
-    assert_eq!(collection.layout(), &[] as &[String]);
     vault.check().unwrap();
 }
 
@@ -111,6 +110,43 @@ fn executable_blob_key_is_rejected() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_ON_WRITE);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+const WEST_LAYOUT: &str = "\
+name: west_docs
+kind: document
+schema_version: 1
+layout:
+  - '{id}.md'
+fields:
+  - name: title
+    string: {}
+";
+
+#[test]
+fn layout_key_is_invalid_on_open_and_check() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_LAYOUT);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    let vault = scratch.reopen().unwrap();
+    scratch.write_schema("west.yaml", WEST_LAYOUT);
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "west.json",
+        r#"{"name":"west_docs","kind":"document","schema_version":1,"layout":["x.md"],"fields":[{"name":"title","string":{}}]}"#,
+    );
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

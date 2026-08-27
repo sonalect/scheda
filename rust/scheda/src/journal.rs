@@ -33,8 +33,7 @@ pub(crate) fn rollback_insert(write: &JournalRollback) -> Result<(), Error> {
             .context("[Journal::rollback] open segment")?;
         file.set_len(write.previous_len)
             .context("[Journal::rollback] truncate segment")?;
-        file.sync_all()
-            .context("[Journal::rollback] fsync segment")
+        file.sync_all().context("[Journal::rollback] fsync segment")
     }
 }
 
@@ -82,14 +81,7 @@ pub(crate) fn insert_journal(
         let ids = map_from_files(vault, decl)?;
         index::rewrite_collection(index_dir, maps, &decl.name, ids)?;
     }
-    Ok((
-        id,
-        rel,
-        JournalRollback {
-            path,
-            previous_len,
-        },
-    ))
+    Ok((id, rel, JournalRollback { path, previous_len }))
 }
 
 pub(crate) fn find_journal(

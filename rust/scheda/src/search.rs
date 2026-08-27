@@ -163,7 +163,8 @@ impl SearchEngine {
     }
 
     pub(crate) fn close_for_rebuild(&self) {
-        let Ok(mut inner) = crate::error::mutex(&self.inner, "[SearchEngine::close_for_rebuild] lock")
+        let Ok(mut inner) =
+            crate::error::mutex(&self.inner, "[SearchEngine::close_for_rebuild] lock")
         else {
             return;
         };

@@ -273,7 +273,6 @@ pub(crate) struct CollectionDecl {
     pub name: String,
     pub kind: Kind,
     pub schema_version: u32,
-    pub layout: Vec<String>,
     pub id_field: String,
     pub id_pattern: Option<Regex>,
     pub filter_keys: BTreeSet<String>,
@@ -510,7 +509,6 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         name: raw.name,
         kind: raw.kind,
         schema_version: raw.schema_version,
-        layout: Vec::new(),
         id_field: DEFAULT_ID_FIELD.to_owned(),
         id_pattern: None,
         filter_keys,
@@ -912,7 +910,6 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
         name: name.to_owned(),
         kind,
         schema_version,
-        layout: Vec::new(),
         id_field: DEFAULT_ID_FIELD.to_owned(),
         id_pattern: None,
         filter_keys,
@@ -1401,6 +1398,15 @@ mod tests {
             "../testdata/schema/on_write.yaml"
         ))
         .expect_err("unknown key");
+        let _ = err;
+    }
+
+    #[test]
+    fn layout_key_is_invalid() {
+        let err = yaml_serde::from_str::<super::RawCollection>(
+            "name: c\nkind: document\nschema_version: 1\nlayout:\n  - '{id}.md'\nfields: []\n",
+        )
+        .expect_err("layout is unknown");
         let _ = err;
     }
 

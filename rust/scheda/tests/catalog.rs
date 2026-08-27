@@ -255,7 +255,6 @@ fn create_collection_then_insert_one_without_reopen() {
         .unwrap();
     assert_eq!(written.name(), "west_docs");
     assert_eq!(written.kind(), scheda::Kind::Document);
-    assert!(written.layout().is_empty());
     assert!(
         scratch
             .vault()
@@ -296,6 +295,24 @@ fn create_collection_missing_kind_writes_nothing() {
             .join(".schema.yaml")
             .exists()
     );
+}
+
+#[test]
+fn create_collection_does_not_persist_layout_json_key() {
+    let scratch = Scratch::new();
+    let vault = scratch.init();
+    let json = json!({
+        "version": 1,
+        "document": {},
+        "layout": ["c/{id}.md"],
+        "fields": [{"name": "title", "string": {}}]
+    });
+    assert!(json.get("layout").is_some());
+    let decl: Schema = serde_json::from_value(json).unwrap();
+    vault.create_collection("west_docs", decl).unwrap();
+    let path = scratch.vault().join("west_docs").join(".schema.yaml");
+    let yaml = fs::read_to_string(&path).unwrap();
+    assert!(!yaml.contains("layout"), "{yaml}");
 }
 
 #[test]

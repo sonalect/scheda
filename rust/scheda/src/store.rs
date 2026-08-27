@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use buffa::MessageField;
 use buffa_types::google::protobuf::__buffa::oneof::value::Kind as ProtoKind;
-use buffa_types::google::protobuf::{ListValue, NullValue, Struct as ProtoStruct, Value as ProtoValue};
+use buffa_types::google::protobuf::{
+    ListValue, NullValue, Struct as ProtoStruct, Value as ProtoValue,
+};
 use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
@@ -682,7 +684,9 @@ fn map_to_proto_struct(map: Map<String, Value>) -> Result<ProtoStruct, Error> {
 fn map_ref_to_proto_struct(map: &Map<String, Value>) -> Result<ProtoStruct, Error> {
     let mut fields = ProtoStruct::default();
     for (key, value) in map {
-        fields.fields.insert(key.clone(), json_to_proto_value(value)?);
+        fields
+            .fields
+            .insert(key.clone(), json_to_proto_value(value)?);
     }
     Ok(fields)
 }
@@ -758,11 +762,7 @@ fn rename_replace_windows(tmp: &Path, path: &Path) -> Result<(), Error> {
     const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
 
     unsafe extern "system" {
-        fn MoveFileExW(
-            existing: *const u16,
-            new: *const u16,
-            flags: u32,
-        ) -> i32;
+        fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
 
     fn wide(path: &Path) -> Vec<u16> {
@@ -819,7 +819,6 @@ mod tests {
             name: String::from("c"),
             kind,
             schema_version: 1,
-            layout: Vec::new(),
             id_field: String::from("id"),
             id_pattern: None,
             filter_keys: Default::default(),

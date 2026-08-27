@@ -14,11 +14,9 @@ pub(crate) fn mutex<'a, T>(
     mutex: &'a Mutex<T>,
     frame: &'static str,
 ) -> Result<MutexGuard<'a, T>, crate::Error> {
-    mutex
-        .lock()
-        .map_err(|_: PoisonError<MutexGuard<'a, T>>| {
-            crate::Error::io_other("mutex poisoned").context(frame)
-        })
+    mutex.lock().map_err(|_: PoisonError<MutexGuard<'a, T>>| {
+        crate::Error::io_other("mutex poisoned").context(frame)
+    })
 }
 
 #[must_use]

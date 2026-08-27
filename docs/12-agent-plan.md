@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.29, 27 August 2026.
+Document 12 of the Scheda package. Version 0.30, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -11,7 +11,7 @@ The first implementation is the crate `scheda`. Other language bindings are
 out of this plan (`10` §1). MCP is an example transport, not a stage here
 (`08` AGT-4).
 
-A0–A5 are done. A2 was the
+A0–A5b are done. A2 was the
 **legacy** CLI; A4 replaced `rust/cli` with argv `14`. Do not revive A2
 names. The unencrypted `{vault}/.isolated/` tree in `10` §1 (SCH-15,
 ISO-2, ISO-4, ISO-6, IDX-4) is not this checklist. Age encryption
@@ -53,7 +53,7 @@ keep the names `10` and the CHANGELOG already use.
 | [A3](#a3-target-library) | done | Public API = `07` / `13` |
 | [A4](#a4-target-cli) | done | CLI argv = `14` (AGT-2–5) |
 | [A5](#a5-http-embedder-and-reranker) | done | CLI OpenAI embeddings + Cohere rerank (`14`) |
-| [A5b](#a5b-layout-clean-up) | not started | Dead `layout` parts out; the `layout` key check exists |
+| [A5b](#a5b-layout-clean-up) | done | Dead `layout` parts out; the `layout` key check exists |
 | [A6](#a6-isolation-at-the-agent-surface) | not started | ISO-3 on CLI + library tools |
 | [A7](#a7-agent-acceptance) | not started | `10` §4 acceptance |
 
@@ -313,7 +313,7 @@ Not a library check. Crate Check:
 
 ## A5b. Layout clean-up
 
-**Status:** not started
+**Status:** done
 
 **Codes:** SCH-2, MOD-8, LIB-21, ISO-2 (`09` §2).
 
@@ -328,29 +328,28 @@ test, not a feature.
 
 Independent of A5 — this stage touches Schema and tests, not the CLI.
 Close it before A6 so isolation lands on a Schema with no dead path
-machinery: `09` ISO-2 still speaks of layout templates under
-`.isolated/`.
+machinery.
 
-- [ ] `CollectionDecl.layout` and `Collection::layout()` are gone from
+- [x] `CollectionDecl.layout` and `Collection::layout()` are gone from
       `rust/scheda/src`. Removing a public accessor is a CHANGELOG entry;
       the version number stays `10` §8, not this plan.
-- [ ] Fixtures carrying the field are gone: `layout: Vec::new()` in
+- [x] Fixtures carrying the field are gone: `layout: Vec::new()` in
       `schema.rs` and `store.rs`, `layout: vec!["c/{id}.md"]` in the
       `vault.rs` unit test.
-- [ ] Tests asserting the accessor are gone: `catalog.rs`
+- [x] Tests asserting the accessor are gone: `catalog.rs`
       (`written.layout().is_empty()`), `schema.rs` (`collection.layout()`).
       `tests/document.rs::extra_layout_slots_write_derived_path` is
       deleted or renamed to what it now asserts — a flat `{name}/{id}.md`
       path. A test whose name promises the opposite of its body is worse
       than no test.
-- [ ] New negative test, the *Check:* SCH-2, MOD-8, and LIB-21 already
+- [x] New negative test, the *Check:* SCH-2, MOD-8, and LIB-21 already
       state: a Schema file with a `layout` key → `invalid` on `open` /
       `check`; `create_collection` with a leftover `layout` key →
       `invalid` and no file written. `RawCollection` denies unknown keys
       today, so this pins existing behaviour rather than changing it.
-- [ ] `09` ISO-2 drops “Layout templates are relative to that directory”.
+- [x] `09` ISO-2 drops “Layout templates are relative to that directory”.
       Isolated Records use the same fixed names under `.isolated/{name}/`.
-- [ ] Tests and Clippy clean. `bazel test //...` green.
+- [x] Tests and Clippy clean. `bazel test //...` green.
 
 ---
 

@@ -210,7 +210,7 @@ fn markdown_and_yaml_only_and_empty_body() {
 }
 
 #[test]
-fn extra_layout_slots_write_derived_path() {
+fn document_writes_flat_id_md_path() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("pages.yaml", PAGES);
@@ -248,7 +248,7 @@ fn record_id_rejects_dot_prefix_and_windows_device_names() {
 }
 
 #[test]
-fn layout_filename_respects_255_byte_component() {
+fn record_id_filename_respects_255_byte_component() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
