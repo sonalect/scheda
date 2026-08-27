@@ -33,3 +33,19 @@ rust_test(
         "@cargo//:serde_json",
     ],
 )
+
+rust_test(
+    name = "agent_test",
+    srcs = ["tests/agent.rs"],
+    compile_data = glob(["src/**/*.rs"]),
+    crate_root = "tests/agent.rs",
+    data = [":scheda"],
+    env = {
+        "CARGO_BIN_EXE_scheda": "$(rootpath :scheda)",
+    },
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        "//rust/scheda",
+        "@cargo//:serde_json",
+    ],
+)

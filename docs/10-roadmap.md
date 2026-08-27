@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.19, 25 August 2026.
+Document 10 of the Scheda package. Version 0.20, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -23,7 +23,7 @@ A binding may ship **search** before **agent**. Isolated collections are **later
 
 The first implementation is the Rust crate `scheda`. Other languages (Python, Java, Go, TypeScript, and others) are separate bindings of the same Vault layout and the same operations (`07`). They are accepted on their own after **core** (at least) is true of that binding. They are not a prerequisite for accepting Rust **core**.
 
-**First binding (`scheda`).** **core** is accepted (`11` C10). **search** is accepted (`11` C9). No other language binding exists yet. Stage ticks and *Check:* tests live in `11`, `12`, and `rust/scheda/tests/`.
+**First binding (`scheda`).** **core** is accepted (`11` C10). **search** is accepted (`11` C9). **agent** is accepted (`12` A7). No other language binding exists yet. Stage ticks and *Check:* tests live in `11`, `12`, `rust/scheda/tests/`, and `rust/cli/tests/`.
 
 The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
 
@@ -95,9 +95,10 @@ ISO-3 applies when isolated collections exist and **agent** is on. In `scheda` i
 
 Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding: after the isolated slice, `scheda` ships a CLI of `07` + `catalog` + `create_collection`. MCP stays an example, not a requirement (`08`).
 
-**Rust `scheda`:** **agent** A0–A2 are in (catalog + `create_collection` + thin CLI). A3–A4 remain.
-Unencrypted isolated (`§1`) is still the next **later** slice; A3 is ISO-3
-on that surface once the slice exists.
+**Rust `scheda`:** **agent** is accepted (`12` A7). Catalog is `Vault.info`.
+The thin encoding is CLI argv `14`. ISO-3 holds on that surface when an
+isolated collection exists; nested `{vault}/.isolated/` I/O stays `§1`.
+Age encryption stays `§5`.
 
 ---
 

@@ -15,6 +15,9 @@ API or on-disk format changes bump the minor.
   Schema field names and do not return a fixture sealed Record. Isolated
   `collection(name)` stays `unsupported` until nested `{vault}/.isolated/`
   I/O (`10` §1). The main Index does not scan isolated collections.
+- **agent** accepted for the Rust binding (`10` §4): `Vault.info` matches
+  Schema files, tool writes cannot bypass SCH-12, and library vs CLI JSON
+  (and `code`) match on one Vault.
 
 ### Removed
 

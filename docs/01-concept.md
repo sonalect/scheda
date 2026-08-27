@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.28, 25 August 2026.
+Document 1 of the Scheda package. Version 0.29, 27 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -106,7 +106,7 @@ A store that only searches is a demo. A store that cannot be opened as files is 
 
 Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
 
-Next in `scheda` is the unencrypted isolated slice: `{vault}/.isolated/` nested git, owner-only files, no Remote (`10` §1). The **agent** catalog and a thin encoding of the same operations follow that slice. They do not block **core**. They must not grow a method per collection type. Age encryption of `.isolated/` stays deferred.
+Next in `scheda` is the unencrypted isolated slice: `{vault}/.isolated/` nested git, owner-only files, no Remote (`10` §1). **agent** is accepted (`12`). Age encryption of `.isolated/` stays deferred.
 
 What is deliberately later after those slices: optional age encryption of `{vault}/.isolated/` (`09`); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
 
@@ -127,7 +127,7 @@ What is deliberately later after those slices: optional age encryption of `{vaul
 | `09` | Isolation and perimeter |
 | `10` | Phases, acceptance, what `scheda` codes next, open questions, deferrals |
 | `11` | Rust stage checklist (core, then hybrid `search`; both done) |
-| `12` | Rust stage checklist (**agent**; not started; after unencrypted isolated) |
+| `12` | Rust stage checklist (**agent**; done) |
 | `13` | `find` and `search` (target: Tantivy Query, hybrid BM25 + USearch, per-field vectors) |
 
 Checkable requirements live in `03`–`09` and `13`, and are gathered with phases in `10`. This document does not list them.
@@ -136,6 +136,6 @@ Checkable requirements live in `03`–`09` and `13`, and are gathered with phase
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10) and **search** (C9) are accepted (`10`, `11`). Next work is the unencrypted isolated slice of **later** (`10` §1). **agent** (including ISO-3) follows that slice (`12`). Age encryption of `{vault}/.isolated/`, extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Next work is the unencrypted isolated slice of **later** (`10` §1). Age encryption of `{vault}/.isolated/`, extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.

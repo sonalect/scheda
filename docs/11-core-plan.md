@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.23, 25 August 2026.
+Document 11 of the Scheda package. Version 0.24, 27 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -343,8 +343,8 @@ Re-run the five gates in `10` §2:
       (GIT-8, ISO-1).
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
-C9. This checklist stops there. Next crate work is `10` §1. **agent** is
-`12`.
+C9. This checklist stops there. **agent** is accepted in `12`. Next crate
+work is `10` §1.
 
 ---
 
