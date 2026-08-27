@@ -702,7 +702,7 @@ fn cli_omits_isolated_sealed_values() {
     assert_eq!(scoped_search["hits"][0]["collection"], "agent_notes");
     assert_no_sealed(&scoped_search.to_string());
 
-    let isolated_get = run(&[
+    let isolated_get = stdout_json(&run(&[
         "--vault",
         &path,
         "collection",
@@ -710,10 +710,10 @@ fn cli_omits_isolated_sealed_values() {
         "get",
         "--id",
         "sealed",
-    ]);
-    assert_eq!(error_json(&isolated_get)["code"], "CODE_UNSUPPORTED");
-    assert_no_sealed(&isolated_get.stdout);
-    assert_no_sealed(&isolated_get.stderr);
+    ]));
+    assert_eq!(isolated_get["id"], "sealed");
+    assert!(isolated_get.to_string().contains(NESTED_SEALED));
+    assert!(!isolated_get.to_string().contains(TREE_SEALED));
 
     let named = run(&[
         "--vault",

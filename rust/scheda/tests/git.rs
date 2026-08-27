@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::{ObjectType, Repository};
 use scheda::{Code, OpenOptions, RecordAdd, RecordReplace, Vault};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -429,9 +429,11 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
         collection.get("partial").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(fs::read_to_string(&path)
-        .unwrap()
-        .ends_with(r#"{"id":"partial"}"#));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .ends_with(r#"{"id":"partial"}"#)
+    );
     assert_eq!(log_len(vault.path()), before);
 }
 

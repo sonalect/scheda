@@ -1,6 +1,6 @@
 # 08. Agent surface
 
-Document 8 of the Scheda package. Version 0.17, 27 August 2026.
+Document 8 of the Scheda package. Version 0.18, 27 August 2026.
 
 How an AI agent uses Scheda: the same operations as `07`, over a thin
 transport. Schema listing is `info` (AGT-1). The agent is not a second
@@ -27,7 +27,7 @@ Include when a Remote exists: `push`, `pull`, `sync`, and `auto_sync` as an `ope
 
 **AGT-5. Machine-readable results.** Each tool result includes, as applicable: `id`, collection, path, `valid`, search scores, and on failure a `code` from LIB-5 (plus `not_fast_forward` where `04` says; **later:** `crypto` where `09` says). A human message is optional and must not replace `code`. *Check:* contract tests for `not_found`, `invalid`, `locked`, `index_unusable`. *Check (**later**):* `crypto`.
 
-Until nested `{vault}/.isolated/` I/O (ISO-2), `collection(name)` for an isolated collection is `unsupported`. Default tools on the Vault must not return sealed values (ISO-3). **Later:** isolated Record I/O for the agent uses the same `secret` as `OpenOptions` (LIB-13); reaching those Records is `collection(name)` on this handle.
+`collection(name)` for an isolated collection reaches those Records. Default tools on the Vault must not return sealed values (ISO-3). **Later:** isolated Record I/O for the agent uses the same `secret` as `OpenOptions` (LIB-13).
 
 ---
 

@@ -228,6 +228,9 @@ impl SearchEngine {
         record: &Record,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
+        if decl.isolated {
+            return Ok(());
+        }
         let pieces = field_vector_texts(decl, record)?;
         let vectors = embed_field_vectors(embedder, pieces)?;
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::upsert] lock")?;

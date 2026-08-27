@@ -12,7 +12,7 @@ use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
-use crate::schema::{self, CollectionDecl, Kind, Schema, SegmentRotate};
+use crate::schema::{CollectionDecl, Kind, Schema, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
 
@@ -37,11 +37,6 @@ pub struct JournalLines {
 }
 
 pub(crate) fn journal_lines(vault: &Path, decl: &CollectionDecl) -> Result<JournalLines, Error> {
-    if decl.isolated {
-        bail!(Error::unsupported(
-            "isolated collections are not on this handle"
-        ));
-    }
     if decl.kind != Kind::Journal {
         bail!(Error::unsupported("lines is offered for journal only"));
     }
@@ -178,6 +173,7 @@ pub(crate) fn insert_journal(
     }
     let dir = journal_dir(vault, decl)?;
     fs::create_dir_all(&dir).context("[Journal::insert] create dir")?;
+    crate::isolated::restrict_record(vault, &dir)?;
     let path = open_segment_path(&dir, decl, line.len() as u64, maps)?;
     let previous_len = if path.is_file() {
         fs::metadata(&path)
@@ -187,6 +183,7 @@ pub(crate) fn insert_journal(
         0
     };
     append_line(&path, &line)?;
+    crate::isolated::restrict_record(vault, &path)?;
     maps.add_segment_line(&path);
     let rel = store::rel_posix(vault, &path)?;
     if maps.contains(&decl.name, &id).is_some() {
@@ -249,9 +246,6 @@ fn find_in_segment(
 }
 
 pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
-    if decl.isolated {
-        return Ok(Vec::new());
-    }
     let mut out = Vec::new();
     for_each_parsed(vault, decl, |path, parsed| {
         out.push(record_from_parsed(vault, decl, path, parsed)?);
@@ -262,7 +256,7 @@ pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Re
 
 pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error> {
     for decl in schema.collections() {
-        if decl.isolated || decl.kind != Kind::Journal {
+        if decl.kind != Kind::Journal {
             continue;
         }
         let mut seen = BTreeSet::new();
@@ -474,7 +468,7 @@ fn write_json_string(s: &str, out: &mut String) {
 }
 
 fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
-    schema::join_in_collection(vault, &decl.name, "")
+    crate::isolated::records_dir(vault, decl)
 }
 
 fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {

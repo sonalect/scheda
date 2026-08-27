@@ -13,7 +13,7 @@ use buffa_types::google::protobuf::{
 use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
-use crate::schema::{self, CollectionDecl, FieldDecl, FieldType, Kind, Schema};
+use crate::schema::{CollectionDecl, FieldDecl, FieldType, Kind, Schema};
 use crate::{Error, Record};
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
@@ -37,6 +37,7 @@ pub(crate) fn insert_document(
         )));
     }
     atomic_write(&prepared.path, &prepared.bytes)?;
+    crate::isolated::restrict_record(vault, &prepared.path)?;
     let rel = rel_posix(vault, &prepared.path)?;
     Ok((prepared.id, rel))
 }
@@ -67,6 +68,7 @@ pub(crate) fn replace_document(
         )));
     }
     atomic_write(&prepared.path, &prepared.bytes)?;
+    crate::isolated::restrict_record(vault, &prepared.path)?;
     let rel = rel_posix(vault, &prepared.path)?;
     Ok((prepared.id, rel))
 }
@@ -104,7 +106,7 @@ pub(crate) fn find_document(
 
 pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error> {
     for decl in schema.collections() {
-        if decl.isolated || !matches!(decl.kind, Kind::Document | Kind::Singleton) {
+        if !matches!(decl.kind, Kind::Document | Kind::Singleton) {
             continue;
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -222,7 +224,8 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
     }
     validate_fields(&fields, &decl.fields, Some(decl.id_field.as_str()), false)?;
     let rel = record_file(decl, &id)?;
-    let path = schema::join_in_collection(vault, &decl.name, &rel)?;
+    let dir = crate::isolated::records_dir(vault, decl)?;
+    let path = dir.join(&rel);
     let body = record.body.filter(|body| !body.is_empty());
     let bytes = encode_file(decl, &fields, body.as_deref())?;
     Ok(Prepared { id, path, bytes })
@@ -245,13 +248,14 @@ fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
 }
 
 fn vault_rel(decl: &CollectionDecl, file: &str) -> String {
-    format!("{}/{file}", schema::collection_dir(&decl.name))
+    crate::isolated::vault_rel(decl, file)
 }
 
-fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<PathBuf>, Error> {
-    if decl.isolated {
-        return Ok(None);
-    }
+pub(crate) fn locate_file(
+    vault: &Path,
+    decl: &CollectionDecl,
+    id: &str,
+) -> Result<Option<PathBuf>, Error> {
     if decl.kind == Kind::Singleton
         && decl
             .singleton_id
@@ -261,15 +265,13 @@ fn locate_file(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Option<P
         return Ok(None);
     }
     let file = record_file(decl, id)?;
-    let path = schema::join_in_collection(vault, &decl.name, &file)?;
+    let dir = crate::isolated::records_dir(vault, decl)?;
+    let path = dir.join(&file);
     Ok(path.is_file().then_some(path))
 }
 
 pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
-    if decl.isolated {
-        return Ok(Vec::new());
-    }
-    let dir = schema::join_in_collection(vault, &decl.name, "")?;
+    let dir = crate::isolated::records_dir(vault, decl)?;
     if !dir.is_dir() {
         return Ok(Vec::new());
     }

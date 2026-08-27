@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.42, 27 August 2026.
+Document 2 of the Scheda package. Version 0.43, 27 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -152,11 +152,11 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. `SearchQuery.include_raw` fills `Hit.raw`. Not the same as `find`.
 
-**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. Until nested `{vault}/.isolated/` I/O, `schema.isolated` is `unsupported` and no file is written.
+**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. `schema.isolated` writes Record files under `{vault}/.isolated/` and creates the nested git if needed.
 
 **`begin`** — start a transaction. Later writes do not create a git commit until `commit` or `discard`. A transaction is the only supported batch of mutating calls. There is no option that turns autocommit off.
 
-**`commit`** — end a transaction and create one git commit for paths Scheda recorded. Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`.
+**`commit`** — end a transaction and create one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`.
 
 **`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any, reload Schema, rebuild the Index.
 

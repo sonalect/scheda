@@ -53,6 +53,7 @@ mod error;
 mod git;
 mod id;
 mod index;
+mod isolated;
 mod journal;
 mod query;
 mod schema;

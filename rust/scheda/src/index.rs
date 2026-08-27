@@ -69,6 +69,11 @@ impl JournalIdMaps {
         self.collections.insert(collection, ids);
     }
 
+    pub(crate) fn extend_maps(&mut self, other: Self) {
+        self.collections.extend(other.collections);
+        self.segment_lines.extend(other.segment_lines);
+    }
+
     pub(crate) fn forget_id(&mut self, collection: &str, id: &str) {
         if let Some(ids) = self.collections.get_mut(collection) {
             ids.remove(id);
@@ -102,9 +107,30 @@ impl JournalIdMaps {
 }
 
 pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<JournalIdMaps, Error> {
+    load_journal_ids_matching(index_dir, schema, false)
+}
+
+pub(crate) fn load_all_journal_ids(
+    vault: &Path,
+    main_index: &Path,
+    schema: &Schema,
+) -> Result<JournalIdMaps, Error> {
+    let mut maps = load_journal_ids(main_index, schema)?;
+    let nested = crate::isolated::index_dir(vault);
+    if nested.is_dir() {
+        maps.extend_maps(load_journal_ids_matching(&nested, schema, true)?);
+    }
+    Ok(maps)
+}
+
+fn load_journal_ids_matching(
+    index_dir: &Path,
+    schema: &Schema,
+    isolated: bool,
+) -> Result<JournalIdMaps, Error> {
     let mut maps = JournalIdMaps::default();
     for decl in schema.collections() {
-        if decl.isolated || decl.kind != Kind::Journal {
+        if decl.isolated != isolated || decl.kind != Kind::Journal {
             continue;
         }
         let path = ids_path(index_dir, &decl.name);
@@ -123,12 +149,40 @@ pub(crate) fn rebuild(
     schema: &Schema,
     index_dir: &Path,
 ) -> Result<(ReindexResult, JournalIdMaps), Error> {
+    let (mut counts, mut maps) = rebuild_matching(vault, schema, index_dir, false)?;
+    if crate::isolated::root(vault).is_dir() {
+        let nested = crate::isolated::index_dir(vault);
+        fs::create_dir_all(&nested).context("[Index::rebuild] create isolated index")?;
+        let isolated_counts;
+        let isolated_maps;
+        (isolated_counts, isolated_maps) = rebuild_matching(vault, schema, &nested, true)?;
+        counts.records_read =
+            Some(counts.records_read.unwrap_or(0) + isolated_counts.records_read.unwrap_or(0));
+        counts.skipped_invalid = Some(
+            counts.skipped_invalid.unwrap_or(0) + isolated_counts.skipped_invalid.unwrap_or(0),
+        );
+        counts.segments_seen =
+            Some(counts.segments_seen.unwrap_or(0) + isolated_counts.segments_seen.unwrap_or(0));
+        maps.extend_maps(isolated_maps);
+    }
+    Ok((counts, maps))
+}
+
+fn rebuild_matching(
+    vault: &Path,
+    schema: &Schema,
+    index_dir: &Path,
+    isolated: bool,
+) -> Result<(ReindexResult, JournalIdMaps), Error> {
     clear_index_dir(index_dir)?;
     let mut records_read = 0u64;
     let mut skipped_invalid = 0u64;
     let mut segments_seen = 0u64;
     let mut maps = JournalIdMaps::default();
-    for decl in schema.collections().filter(|decl| !decl.isolated) {
+    for decl in schema
+        .collections()
+        .filter(|decl| decl.isolated == isolated)
+    {
         match decl.kind {
             Kind::Journal => {
                 let (records, invalid, segments, ids) = journal::reindex_map(vault, decl)?;

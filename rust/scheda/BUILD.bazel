@@ -161,6 +161,19 @@ rust_test(
 )
 
 rust_test(
+    name = "isolated_test",
+    srcs = ["tests/isolated.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/isolated.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:git2",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "catalog_test",
     srcs = ["tests/catalog.rs"],
     compile_data = glob([

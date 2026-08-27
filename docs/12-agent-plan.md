@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.40, 27 August 2026.
+Document 12 of the Scheda package. Version 0.41, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -415,8 +415,7 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P0, P1, and P2 are done; no other
-stage is started.
+**Status of the part:** in progress. P0–P4 are done; P5–P9 are not started.
 
 The first consumer moves a primary layer of text files under git onto the
 crate: `document` collections it revises in place, and `journal`
@@ -445,7 +444,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P1](#p1-journal-line-fidelity) | done | An integer stays an integer; the line is RFC 8785 |
 | [P2](#p2-ordered-journal-read-without-the-lexical-index) | done | Reading a journal in order without Tantivy |
 | [P3](#p3-many-writes-one-commit) | done | Append per event without a commit per event |
-| [P4](#p4-unencrypted-isolated-slice) | not started | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
+| [P4](#p4-unencrypted-isolated-slice) | done | ISO-2, ISO-4, ISO-6, IDX-4 (`10` §1) |
 | [P5](#p5-id-pattern-in-schema) | not started | `id` pattern reaches `CollectionDecl` |
 | [P6](#p6-singleton-file-format) | not started | STO-2 and SCH-6 agree on the singleton file |
 | [P7](#p7-a-consumer-that-does-not-search) | not started | The search stack is not forced on every consumer |
@@ -462,7 +461,7 @@ Then P1 and P2: without them a consumer can neither write nor read its
 journals honestly. Then P3, P5, P6 — each small, each removing one
 migration blocker. P7 next, because it decides whether a consumer pays
 for Tantivy and USearch it does not use. P4 is the large one and is
-already `10` §1 Next. P9 closes the part.
+done (`10` §1 unencrypted slice). P9 closes the part.
 
 Each stage carries **Needs** (stages that must be `done` first) and
 **Decide first** (a question `03`–`10` leaves open, which has to be
@@ -667,7 +666,7 @@ only after a real commit. The switch did not land; `OpenOptions` and
 
 ## P4. Unencrypted isolated slice
 
-**Status:** not started
+**Status:** done
 
 **Codes:** ISO-2, ISO-4, ISO-6, IDX-4, LIB-21, `10` §1.
 
@@ -678,26 +677,27 @@ smaller repository.
 **Decide first:** nothing. `10` §1 already fixes the order and `09` the
 rules; this stage implements them.
 
-This is `10` §1 Next, recorded here because a consumer waits on it and
-because the consumer's shape adds requirements the roadmap order does not
-mention. It needs exactly one isolated collection, and that collection is
-a `journal`: its Records must stay out of the published history and be
-readable only by their owner. Encryption stays out (ISO-5, ISO-7–11).
+This is the unencrypted slice of `10` §1, recorded here because a
+consumer waits on it and because the consumer's shape adds requirements
+the roadmap order does not mention. It needs exactly one isolated
+collection, and that collection is a `journal`: its Records must stay
+out of the published history and be readable only by their owner.
+Encryption stays out (ISO-5, ISO-7–11).
 
-- [ ] The `10` §1 order holds: nested git under `{vault}/.isolated/` →
+- [x] The `10` §1 order holds: nested git under `{vault}/.isolated/` →
       `create_collection` / `add` on an isolated name write there →
       non-isolated `find` / `search` return nothing isolated and do not
       require `.isolated/` → the main Index holds no sealed fixture
       string → `check` covers the nested tree.
-- [ ] `journal` works isolated, not only `document`: segments, rotation,
+- [x] `journal` works isolated, not only `document`: segments, rotation,
       and the IDX-5 map inside `{vault}/.isolated/.scheda/` (ISO-4,
       IDX-4).
-- [ ] Files are `0600`; the parent repository does not track
+- [x] Files are `0600`; the parent repository does not track
       `.isolated/`; the nested repository has no Remote and `check` fails
       if one appears (ISO-6).
-- [ ] A batch of isolated appends is one nested commit, not one per line
+- [x] A batch of isolated appends is one nested commit, not one per line
       (P3).
-- [ ] `collection(name)` stops being `unsupported` for an isolated name;
+- [x] `collection(name)` stops being `unsupported` for an isolated name;
       the **Later** clause of `07` LIB-21 becomes the rule.
 
 ---

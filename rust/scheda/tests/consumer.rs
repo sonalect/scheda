@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, RecordAdd, Vault};
+use scheda::{Filter, OpenOptions, RecordAdd, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -245,8 +245,12 @@ fn check_passes_and_get_raw_matches_each_kind() {
         &["chain_heads", "record.yaml"],
     );
 
-    let err = vault.collection("alias_bindings").unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert_raw_eq_file(
+        &vault,
+        "alias_bindings",
+        "bound",
+        &[".isolated", "alias_bindings", "00000001.jsonl"],
+    );
 }
 
 #[test]

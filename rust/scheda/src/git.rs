@@ -278,6 +278,22 @@ pub(crate) fn push(dir: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// True when the git index tracks `prefix` or any path under it.
+pub(crate) fn index_has_prefix(dir: &Path, prefix: &str) -> Result<bool, Error> {
+    let repo = open_work_tree(dir)?;
+    let index = repo.index().context("[Git::index_has_prefix] open index")?;
+    let prefix = prefix.trim_end_matches('/');
+    let nested = format!("{prefix}/");
+    for entry in index.iter() {
+        let path = std::str::from_utf8(&entry.path)
+            .context(Code::NotUtf8, "[Git::index_has_prefix] path")?;
+        if path == prefix || path.starts_with(&nested) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), Error> {
     if message.trim().is_empty() {
         bail!(Error::invalid("commit message is empty"));

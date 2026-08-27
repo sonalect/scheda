@@ -40,7 +40,7 @@ does not call a language model, and does not know a profession.
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, Schema, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
 RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, a CLI encoding
-of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P0–P9 (`12` §4). P0–P3 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one `begin`/`commit`). The unencrypted isolated git root (`10` §1) is P4.
+of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P5–P9 (`12` §4). P0–P4 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git).
 
 ## Documents
 

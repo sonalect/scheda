@@ -24,12 +24,20 @@ API or on-disk format changes bump the minor.
 - `Collection.lines` walks a `journal` in append order from segment
   files and does not open the Index. `find` still uses Tantivy. A
   missing `{vault}/.scheda/` does not stop the walk.
+- Unencrypted isolated collections (ISO-2, ISO-4, ISO-6, IDX-4): Record
+  files live under `{vault}/.isolated/` in a nested git with no Remote;
+  Schema stubs stay in the main tree. `collection(name)` and
+  `create_collection` with `isolated` read and write that tree. Files
+  are owner-only (`0600` on Unix). `find` / `search` on the main Index
+  skip isolated names (`unsupported` when named). `commit` / `discard`
+  split recorded paths across the two repositories. Age encryption
+  stays deferred.
 
 ### Changed
 
-- README and `10`/`11` point next crate work at that list. Isolated
-  nested git (`10` §1) is P4 of it, after journal fidelity, an ordered
-  read, and a transaction as the only batch.
+- README and `10`/`11`/`12` point next crate work at P5–P9. P0–P4 of
+  consumer readiness are in, including the unencrypted isolated nested
+  git (`10` §1).
 - GIT-2: a transaction is the only supported batch. There is no
   `OpenOptions` switch that turns autocommit off. A consumer that
   appends many journal lines holds `begin`/`commit`; otherwise each
@@ -45,6 +53,8 @@ API or on-disk format changes bump the minor.
   carrier.
 - Schema files and `Collection::version` use `version` (same as
   `api.v1.Schema`). A leftover `schema_version` key is `invalid`.
+- The uncommitted-path log (`written`) is newline-separated vault-relative
+  paths only. A leftover JSON array from 0.1 is not read.
 
 ### Fixed
 

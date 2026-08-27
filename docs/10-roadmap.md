@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.25, 27 August 2026.
+Document 10 of the Scheda package. Version 0.26, 27 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -27,17 +27,13 @@ The first implementation is the Rust crate `scheda`. Other languages (Python, Ja
 
 The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
 
-Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` / `check` / Index skip them. `collection(name)` and `create_collection` with `isolated` are `unsupported` (no Schema file written). There is no nested git yet.
+Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** Unencrypted isolated slice of **later**: ISO-2, ISO-4 (nested Index), ISO-6, IDX-4. A crate consumer needs `{vault}/.isolated/` (gitignored nested git, owner-only files, no Remote) so `collection(name)` can read and write those Records. Do not start age encryption of that tree, other language bindings, or the rest of §5 until this slice is in the crate.
+**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness after P4 is P5–P9 in `12` §4. Do not start other language bindings or the rest of §5 until those are decided.
 
-Order inside that slice (not a second spec): nested git under `{vault}/.isolated/` → `create_collection` / `add` on an isolated name write there → `find` / `search` on non-isolated collections still return no isolated Records and do not require `.isolated/` → main Index has no fixture sealed string → `check` covers the nested tree.
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). P0–P4 of that list are in: the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. What it still needs is the P0–P9 checklist in `12` §4. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and four of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2, P6 on STO-2 against SCH-6). P0–P3 of that list are in: GIT-2 keeps autocommit outside a transaction, and a transaction is the only supported batch. The isolated slice above is P4.
-
-Order between the two: P1, P2, and P3 come before the isolated slice, because a consumer that cannot write and read a journal faithfully gains nothing from an isolated one. Everything else in §5 still waits.
-
-**Still deferred after that slice:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
+**Still deferred:** ISO-5, ISO-7–11; file watcher; `delete_one`; REL-4; extra language bindings.
 
 ---
 
@@ -56,7 +52,7 @@ Order between the two: P1, P2, and P3 come before the isolated slice, because a 
 
 IDX-2 stays **core** for the Index format and for methods that resolve `id` through the Index (`find`, `search`, `replace`). A sequential journal read is not one of those methods. **Core** also has `lines` (LIB-19): it walks journal segments in Schema sequence and does not open the Index. QRY-7 remains the order of `find` when the Index is present. P7 uses this sentence when it decides which Index legs a **core** build must link.
 
-**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse and ISO-3 on the agent surface are in. Remaining unencrypted isolated work is ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4 (`§1`). ISO-5, ISO-7–11 stay deferred.
+**Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse, ISO-3 listing, and the unencrypted isolated slice (ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4) are in (`12` P4). ISO-5, ISO-7–11 stay deferred.
 
 **Core is accepted** when:
 
@@ -103,8 +99,8 @@ Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipp
 
 **Rust `scheda`:** **agent** is accepted (`12` A7). Catalog is `Vault.info`.
 The thin encoding is CLI argv `14`. ISO-3 holds on that surface when an
-isolated collection exists; nested `{vault}/.isolated/` I/O stays `§1`.
-Age encryption stays `§5`.
+isolated collection exists. Unencrypted nested `{vault}/.isolated/` I/O
+is in (`12` P4). Age encryption stays `§5`.
 
 ---
 
@@ -112,17 +108,15 @@ Age encryption stays `§5`.
 
 ### Isolated collections
 
-**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`. Until nested I/O exists, that call is `unsupported`.
+**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`.
 
 ISO-1 stays **core**. The main Vault is never encrypted.
 
 Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption is optional on top.
 
-**Already in `scheda`:** SCH-15 parse; ISO-3 listing (`info` omits isolated fields); main `find` / `search` / Index skip isolated collections; `create_collection` with `isolated` and `collection(name)` for an isolated name are `unsupported` (no Schema file written).
+**Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-4 nested Index; ISO-6 no Remote; IDX-4 (main Index has no sealed bytes). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`. `check` covers the nested tree.
 
-**Next in `scheda` (unencrypted only):** ISO-2 nested git, ISO-4 nested Index, ISO-6, IDX-4. `{vault}/.isolated/` nested git; owner-only files; no Remote; `collection(name)` reads and writes those Records; `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; main Index has no fixture sealed string; `check` covers the nested tree.
-
-**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.encrypt` and `secret` wait until the unencrypted nested tree is in.
+**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.encrypt` and `secret` wait.
 
 **Isolated is accepted** when:
 
@@ -132,7 +126,7 @@ Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption 
 4. Main Index contains no fixture sealed string (ISO-4, IDX-4).
 5. If **agent** is on: default tools never return that sealed value (ISO-3).
 
-Gate 3 is encryption; it does not block the unencrypted slice. Gate 5 holds in `scheda` today. `scheda` has no `{vault}/.isolated/` nested git yet.
+Gate 3 is encryption; it does not block the unencrypted slice. Gates 1, 2, 4, and 5 hold in `scheda` today.
 
 ### Everything else later
 

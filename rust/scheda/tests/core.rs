@@ -196,6 +196,7 @@ fn src_does_not_name_consumer_collections() {
         "walk_strict",
         "west_indexed",
         "west_isolated",
+        "sealed_log",
         "lessons_personal",
         "lessons_project",
         "entities",

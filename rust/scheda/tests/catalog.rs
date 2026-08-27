@@ -216,8 +216,7 @@ fn catalog_lists_isolated_without_fields() {
     assert!(isolated["schema"].get("fields").is_none());
     let dump = isolated.to_string();
     assert!(!dump.contains("west_pass"));
-    let err = vault.collection("west_isolated").unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    vault.collection("west_isolated").unwrap();
     vault.collection("west_docs").unwrap();
 }
 
@@ -313,8 +312,12 @@ fn isolated_sealed_values_stay_off_the_main_vault() {
     assert_eq!(scoped.records.len(), 1);
     assert_no_sealed(&serde_json::to_string(&scoped).unwrap());
 
-    let err = vault.collection("west_isolated").unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    let isolated = vault.collection("west_isolated").unwrap();
+    let sealed = isolated.get("sealed").unwrap();
+    assert_eq!(sealed.id.as_deref(), Some("sealed"));
+    let sealed_dump = serde_json::to_string(&sealed).unwrap();
+    assert!(sealed_dump.contains(NESTED_SEALED));
+    assert!(!sealed_dump.contains(TREE_SEALED));
     let named = vault.find(&["west_isolated"], &FindQuery::all(), 0, 10);
     assert_eq!(named.unwrap_err().known_code(), Some(Code::Unsupported));
 }
@@ -396,7 +399,7 @@ fn create_collection_missing_kind_writes_nothing() {
 }
 
 #[test]
-fn create_collection_isolated_writes_nothing() {
+fn create_collection_isolated_writes_schema_and_nested_git() {
     let scratch = Scratch::new();
     let vault = scratch.init();
     let decl: Schema = serde_json::from_value(json!({
@@ -406,16 +409,24 @@ fn create_collection_isolated_writes_nothing() {
         "fields": [{"name": "secret", "string": {}}]
     }))
     .unwrap();
-    let err = vault.create_collection("west_isolated", decl).unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    let written = vault.create_collection("west_isolated", decl).unwrap();
+    assert_eq!(written.name(), "west_isolated");
     assert!(
-        !scratch
+        scratch
             .vault()
             .join("west_isolated")
             .join(".schema.yaml")
-            .exists()
+            .is_file()
     );
-    assert!(!scratch.vault().join("west_isolated").exists());
+    assert!(scratch.vault().join(".isolated").join(".git").exists());
+    written.add("s1", rec(json!({"secret": "nested"}))).unwrap();
+    let got = vault
+        .collection("west_isolated")
+        .unwrap()
+        .get("s1")
+        .unwrap();
+    assert_eq!(got.id.as_deref(), Some("s1"));
+    assert_eq!(got.path.as_deref(), Some(".isolated/west_isolated/s1.md"));
 }
 
 #[test]

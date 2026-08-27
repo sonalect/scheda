@@ -3,9 +3,10 @@ use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
-use crate::error::{ContextIo, bail, io_code};
+use crate::error::{Code, ContextAs, ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
+use crate::isolated;
 use crate::journal;
 use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
@@ -122,7 +123,9 @@ impl Vault {
             git::pull(&path)?;
         }
         let schema = Arc::new(schema::load(&path)?);
-        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&index_dir, &schema)?));
+        let journal_ids = Arc::new(Mutex::new(index::load_all_journal_ids(
+            &path, &index_dir, &schema,
+        )?));
         let written = Arc::new(Mutex::new(load_written(&index_dir)?));
         let in_txn = Arc::new(Mutex::new(load_txn(&index_dir)?));
         let search = Arc::new(SearchEngine::open(&index_dir, false)?);
@@ -194,10 +197,10 @@ impl Vault {
         Arc::clone(&self.schema.lock().unwrap_or_else(PoisonError::into_inner))
     }
 
-    /// Handle for one non-isolated collection.
+    /// Handle for one collection.
     ///
-    /// Unknown name → `not_found`. Isolated → `unsupported` until nested
-    /// `{vault}/.isolated/` I/O exists.
+    /// Unknown name → `not_found`. Isolated collections live under
+    /// `{vault}/.isolated/{name}/` on this same handle.
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
         let schema = self.schema_arc();
         let Some(decl) = schema.get(name) else {
@@ -205,11 +208,6 @@ impl Vault {
                 "collection {name} is not in Schema"
             )));
         };
-        if decl.isolated {
-            bail!(Error::unsupported(format!(
-                "isolated collection {name} is not on this Vault handle"
-            )));
-        }
         Ok(Collection {
             vault: self.path.clone(),
             index_dir: self.index_dir.clone(),
@@ -264,8 +262,9 @@ impl Vault {
         .search(self.embedder.as_deref(), collections, query, reranker)
     }
 
-    /// Create one git commit for paths this handle wrote.
-    /// Ends the transaction. `invalid` if none is open.
+    /// End the transaction and create one git commit per repository that has
+    /// recorded paths (main tree and/or `{vault}/.isolated/`). `invalid` if
+    /// none is open, the message is empty, or there is nothing to commit.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
         if !flag(&self.in_txn) {
@@ -287,8 +286,9 @@ impl Vault {
         set_flag(&self.index_dir, &self.in_txn, true)
     }
 
-    /// Restore Scheda-recorded paths to HEAD, end the transaction if any,
-    /// reload Schema, and rebuild the Index.
+    /// Restore Scheda-recorded paths to HEAD in the repository that owns each
+    /// path, end the transaction if any, reload Schema, and rebuild the Index
+    /// (including `{vault}/.isolated/.scheda/` when that tree exists).
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.restore_recorded()?;
@@ -300,7 +300,7 @@ impl Vault {
             let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
             set.iter().cloned().collect()
         };
-        git::commit(&self.path, message, &paths)?;
+        isolated::commit_recorded(&self.path, message, &paths)?;
         let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
         set.clear();
         persist_written(&self.index_dir, &set)
@@ -317,7 +317,7 @@ impl Vault {
         if paths.is_empty() {
             return Ok(());
         }
-        git::discard_paths(&self.path, &paths)?;
+        isolated::discard_recorded(&self.path, &paths)?;
         self.reload_after_restore()
     }
 
@@ -327,7 +327,7 @@ impl Vault {
             .journal_ids
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
-            index::load_journal_ids(&self.index_dir, &loaded)?;
+            index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
         self.search.close_for_rebuild();
         self.search
             .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
@@ -422,9 +422,11 @@ impl Vault {
     }
 
     /// Validate Schema, encodings, journal lines, `id` uniqueness, and conflict
-    /// markers for non-isolated collections. Does not write Records. Isolated
-    /// Record files are not scanned until nested `{vault}/.isolated/` I/O exists.
+    /// markers. Isolated Record files are scanned when `{vault}/.isolated/`
+    /// exists. Parent git must not track `.isolated/`; nested git must have no
+    /// Remote. Does not write Records.
     pub fn check(&self) -> Result<(), Error> {
+        isolated::check_perimeter(&self.path)?;
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema)?;
         journal::check_journals(&self.path, &schema)
@@ -444,16 +446,16 @@ impl Vault {
     }
 
     /// Write one collection declaration as `{name}/.schema.yaml`. Reloads Schema
-    /// on this handle. `isolated: true` is `unsupported` until nested isolated
-    /// I/O exists.
+    /// on this handle. `isolated: true` stores Records under `{vault}/.isolated/`
+    /// and creates the nested git if needed.
     pub fn create_collection(&self, name: &str, schema: Schema) -> Result<Collection, Error> {
         schema.require_valid()?;
-        if schema.isolated == Some(true) {
-            bail!(Error::unsupported(format!(
-                "isolated collection {name} is not on this Vault handle"
-            )));
-        }
         self.require_write_lock("create_collection")?;
+        if schema.isolated == Some(true)
+            && let Some(rel) = isolated::ensure(&self.path)?
+        {
+            self.note_write(rel)?;
+        }
         let rel = schema::put_collection(&self.path, name, &schema)?;
         self.note_write(rel)?;
         let loaded = schema::load(&self.path)?;
@@ -461,14 +463,15 @@ impl Vault {
             .journal_ids
             .lock()
             .unwrap_or_else(PoisonError::into_inner) =
-            index::load_journal_ids(&self.index_dir, &loaded)?;
+            index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
         *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
         self.finish_mutation()?;
         self.collection(name)
     }
 
     /// Rebuild the Index from Vault files. Writes format version `3` and the
-    /// journal `id` map. Needs the write lock.
+    /// journal `id` map. Isolated collections rebuild `{vault}/.isolated/.scheda/`
+    /// when that tree exists. Needs the write lock.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
         self.search.close_for_rebuild();
@@ -641,6 +644,20 @@ impl Collection {
         persist_written(&self.index_dir, &set)
     }
 
+    fn prepare_isolated_write(&self) -> Result<(), Error> {
+        if !self.decl.isolated {
+            return Ok(());
+        }
+        if let Some(rel) = isolated::ensure(&self.vault)? {
+            self.note_write(rel)?;
+        }
+        Ok(())
+    }
+
+    fn ids_index_dir(&self) -> PathBuf {
+        isolated::ids_index_dir(&self.vault, &self.index_dir, self.decl.isolated)
+    }
+
     fn finish_mutation(&self) -> Result<(), Error> {
         if flag(&self.in_txn) {
             return Ok(());
@@ -649,7 +666,7 @@ impl Collection {
             let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
             set.iter().cloned().collect()
         };
-        match git::commit(&self.vault, AUTO_COMMIT_MESSAGE, &paths) {
+        match isolated::commit_recorded(&self.vault, AUTO_COMMIT_MESSAGE, &paths) {
             Ok(()) => {
                 let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
                 set.clear();
@@ -667,7 +684,7 @@ impl Collection {
                     persist_written(&self.index_dir, &set)?;
                     paths
                 };
-                let _ = git::discard_paths(&self.vault, &paths);
+                let _ = isolated::discard_recorded(&self.vault, &paths);
                 if !paths.is_empty() {
                     let _ = repair_index_after_discard(
                         &self.vault,
@@ -688,6 +705,7 @@ impl Collection {
         record.require_valid()?;
         let mut record = record_from_add(id, &self.decl.name, record);
         self.require_write()?;
+        self.prepare_isolated_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
@@ -695,20 +713,22 @@ impl Collection {
             Kind::Journal => {
                 let mut maps =
                     crate::error::mutex(&self.journal_ids, "[Collection::add] lock journal ids")?;
+                let index_dir = self.ids_index_dir();
                 let (id, rel, rollback) = journal::insert_journal(
                     &self.vault,
                     &self.decl,
                     record.clone(),
-                    &self.index_dir,
+                    &index_dir,
                     &mut maps,
                 )?;
                 drop(maps);
                 record.path = Some(rel.clone());
                 record.valid = Some(true);
                 self.note_write(rel.clone())?;
-                if let Err(err) = self
-                    .search
-                    .upsert(&self.decl, &record, self.embedder.as_deref())
+                if !self.decl.isolated
+                    && let Err(err) =
+                        self.search
+                            .upsert(&self.decl, &record, self.embedder.as_deref())
                 {
                     self.rollback_journal_insert(&id, &rel, &rollback);
                     return Err(err);
@@ -721,11 +741,12 @@ impl Collection {
                 record.path = Some(rel.clone());
                 record.valid = Some(true);
                 self.note_write(rel.clone())?;
-                if let Err(err) = self
-                    .search
-                    .upsert(&self.decl, &record, self.embedder.as_deref())
+                if !self.decl.isolated
+                    && let Err(err) =
+                        self.search
+                            .upsert(&self.decl, &record, self.embedder.as_deref())
                 {
-                    let _ = git::discard_paths(&self.vault, std::slice::from_ref(&rel));
+                    let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
                     let _ = self.unnote_write(&rel);
                     return Err(err);
                 }
@@ -768,7 +789,12 @@ impl Collection {
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("replace is not offered for journal"));
         }
-        if !self.search.has_id(&self.decl.name, id)? {
+        let known = if self.decl.isolated {
+            store::locate_file(&self.vault, &self.decl, id)?.is_some()
+        } else {
+            self.search.has_id(&self.decl.name, id)?
+        };
+        if !known {
             bail!(Error::not_found(format!(
                 "record {id} is not in the Index of {}",
                 self.decl.name
@@ -776,6 +802,7 @@ impl Collection {
         }
         let mut record = record_from_replace(id, &self.decl.name, record);
         self.require_write()?;
+        self.prepare_isolated_write()?;
         search::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
@@ -783,11 +810,12 @@ impl Collection {
         record.path = Some(rel.clone());
         record.valid = Some(true);
         self.note_write(rel.clone())?;
-        if let Err(err) = self
-            .search
-            .upsert(&self.decl, &record, self.embedder.as_deref())
+        if !self.decl.isolated
+            && let Err(err) = self
+                .search
+                .upsert(&self.decl, &record, self.embedder.as_deref())
         {
-            let _ = git::discard_paths(&self.vault, std::slice::from_ref(&rel));
+            let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
             let _ = self.unnote_write(&rel);
             return Err(err);
         }
@@ -837,7 +865,14 @@ impl Collection {
         }
         let record = self.get(id)?;
         let path = record.path.as_deref().unwrap_or("");
-        let entries = git::history(&self.vault, path, offset, count)?;
+        let (repo, git_path) = isolated::git_addr(&self.vault, path);
+        if self.decl.isolated && !git::is_work_tree(&repo) {
+            return Ok(History {
+                entries: Vec::new(),
+                ..History::default()
+            });
+        }
+        let entries = git::history(&repo, &git_path, offset, count)?;
         Ok(History {
             entries,
             ..History::default()
@@ -855,7 +890,7 @@ impl Collection {
         if let Ok(mut maps) =
             crate::error::mutex(&self.journal_ids, "[Collection::add] rollback maps")
         {
-            let _ = index::forget_remembered(&self.index_dir, &mut maps, &self.decl.name, id);
+            let _ = index::forget_remembered(&self.ids_index_dir(), &mut maps, &self.decl.name, id);
             maps.forget_segment_line(&rollback.path);
         }
         if rollback.previous_len == 0 {
@@ -1291,7 +1326,7 @@ fn repair_index_after_discard(
 ) -> Result<(), Error> {
     let loaded = schema::load(vault)?;
     *journal_ids.lock().unwrap_or_else(PoisonError::into_inner) =
-        index::load_journal_ids(index_dir, &loaded)?;
+        index::load_all_journal_ids(vault, index_dir, &loaded)?;
     search.close_for_rebuild();
     search.rebuild(vault, &loaded, embedder)
 }
@@ -1301,19 +1336,15 @@ fn load_written(index_dir: &Path) -> Result<BTreeSet<String>, Error> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
         Err(err) => Err(err).context("[Vault::open] read written paths"),
         Ok(bytes) if bytes.is_empty() => Ok(BTreeSet::new()),
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(set) => Ok(set),
-            Err(_) => {
-                let text = std::str::from_utf8(&bytes).map_err(|err| {
-                    Error::invalid(err.to_string()).context("[Vault::open] decode written paths")
-                })?;
-                Ok(text
-                    .lines()
-                    .filter(|line| !line.is_empty())
-                    .map(str::to_owned)
-                    .collect())
-            }
-        },
+        Ok(bytes) => {
+            let text = std::str::from_utf8(&bytes)
+                .context(Code::NotUtf8, "[Vault::open] decode written paths")?;
+            Ok(text
+                .lines()
+                .filter(|line| !line.is_empty())
+                .map(str::to_owned)
+                .collect())
+        }
     }
 }
 
