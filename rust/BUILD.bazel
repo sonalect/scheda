@@ -14,6 +14,7 @@ rust_clippy_test(
         "//rust/scheda:ann_test",
         "//rust/scheda:catalog_test",
         "//rust/scheda:consumer_test",
+        "//rust/scheda:consumer_thin_test",
         "//rust/scheda:core_test",
         "//rust/scheda:document_test",
         "//rust/scheda:git_test",

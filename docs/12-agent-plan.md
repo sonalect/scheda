@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.53, 27 August 2026.
+Document 12 of the Scheda package. Version 0.54, 27 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -423,8 +423,7 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** in progress. P0–P5, P8, and P9 are done; P10
-is not started.
+**Status of the part:** done. P0–P5, P8, P9, and P10 are done.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -466,7 +465,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P5](#p5-dead-id-knobs)                                  | done        | Dead `id_pattern` / `id_field` out; the slug rule is the whole rule |
 | [P8](#p8-find-and-search-as-features)                    | done        | The search stack is not forced on every consumer                    |
 | [P9](#p9-remove-a-record)                                | done        | A Record can leave, on `document` and `singleton`                   |
-| [P10](#p10-consumer-acceptance)                          | not started | The consumer's acceptance list on the P0 fixture                    |
+| [P10](#p10-consumer-acceptance)                          | done        | The consumer's acceptance list on the P0 fixture                    |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -479,7 +478,8 @@ journals honestly. Then P3, small and removing one migration blocker, and
 P5, which removes dead machinery rather than a blocker. P4 is the large
 one and is done (`10` §1 unencrypted slice). P8 is in: `find` and
 `search` are crate features, optional on a reduced build. P9 is in:
-`remove` on `document` and `singleton`. P10 closes the part.
+`remove` on `document` and `singleton`. P10 is in: acceptance on the
+fixture. The part is closed.
 
 Each stage carries **Needs** (stages that must be `done` first) and
 **Decide first** (a question `03`–`10` leaves open, which has to be
@@ -865,7 +865,7 @@ line, so a caller's checksum chain over the segment stays sound
 
 ## P10. Consumer acceptance
 
-**Status:** not started
+**Status:** done
 
 **Codes:** STO-1, STO-2, SCH-1, QRY-1, LIB-19, ISO-2, OPS-1, OPS-3.
 
@@ -881,29 +881,32 @@ The first box grows the fixture to the shape the consumer settled on
 after P0 closed. Run it first: the boxes below expect those collections
 to be there.
 
-- [ ] The fixture gains a third non-paired `document` (a work queue: an
+Crate Check: `rust/scheda/tests/consumer.rs` (full build and Cargo
+default / `consumer_thin_test`).
+
+- [x] The fixture gains a third non-paired `document` (a work queue: an
       entry is revised in place and then removed) and a second
       `singleton`. Its isolated `journal` is written through the API, not
       placed by hand (P4).
-- [ ] The fixture opens and reads in an editor and in `git` with no crate
+- [x] The fixture opens and reads in an editor and in `git` with no crate
       (STO-2), and `get` of every kind through the crate returns bytes
       equal to the file (QRY-1).
-- [ ] Delete the Index and `reindex`: same Records, same content, and the
+- [x] Delete the Index and `reindex`: same Records, same content, and the
       counts match a hand tally of files and lines (STO-1, OPS-3).
-- [ ] `rust/scheda/src` holds no consumer collection name (SCH-1, MOD-1,
+- [x] `rust/scheda/src` holds no consumer collection name (SCH-1, MOD-1,
       P0).
-- [ ] The Cargo default build, which has neither `find` nor `search`,
+- [x] The Cargo default build, which has neither `find` nor `search`,
       writes every kind and reads it back: `get`, `history`, and `lines`
       on the fixture, with `.scheda/` deleted for the `lines` case (P8,
       P2, LIB-19).
-- [ ] The isolated collection round-trips on the same handle: `add` and
+- [x] The isolated collection round-trips on the same handle: `add` and
       `get` under `{vault}/.isolated/`, `find` on the main tree returns
       none of it, and `check` covers the nested tree (ISO-2, ISO-4, P4).
-- [ ] OPS-1 volume on the fixture: 10⁴ journal Records and 10³
+- [x] OPS-1 volume on the fixture: 10⁴ journal Records and 10³
       documents, with `get` and `add` in milliseconds.
-- [ ] Every P stage is `done`, or its entry names the consumer
+- [x] Every P stage is `done`, or its entry names the consumer
       requirement that stays unmet and why.
-- [ ] A Record removed with `remove` is gone from `get`, `find`, and the
+- [x] A Record removed with `remove` is gone from `get`, `find`, and the
       files, and `check` passes after it (P9).
 
 ---

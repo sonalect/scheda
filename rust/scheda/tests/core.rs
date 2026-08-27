@@ -86,6 +86,7 @@ fn read_src_rs() -> String {
         include_str!("../src/git.rs"),
         include_str!("../src/id.rs"),
         include_str!("../src/index.rs"),
+        include_str!("../src/isolated.rs"),
         include_str!("../src/journal.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
@@ -205,6 +206,8 @@ fn src_does_not_name_consumer_collections() {
         "events",
         "artifact_reachability",
         "chain_heads",
+        "run_heads",
+        "pending_items",
         "alias_bindings",
     ] {
         assert!(

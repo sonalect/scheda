@@ -35,10 +35,13 @@ API or on-disk format changes bump the minor.
   slice, dead `id` knobs, optional search, acceptance). They do not
   reopen A0–A7; **agent** stays accepted.
 - A fixture Vault in test data shaped like a first consumer's primary
-  layer: two `document` collections with the same fields, two more
-  documents, three journals, one singleton, one isolated journal.
-  `check` and `get` run against it; `find` limited to one of the twin
-  documents does not return the other.
+  layer: two `document` collections with the same fields, three more
+  documents (one a work queue), three journals, two singletons, one
+  isolated journal written through the API. `check` and `get` run
+  against it; `find` limited to one of the twin documents does not
+  return the other. P10 acceptance runs on that fixture: delete the
+  Index and `reindex` (counts match a file tally), Cargo default
+  `get` / `history` / `lines`, OPS-1 volume, and `remove` then `check`.
 - `Collection.lines` walks a `journal` in append order from segment
   files and does not open the Index. `find` still uses Tantivy. A
   missing `{vault}/.scheda/` does not stop the walk.
@@ -53,15 +56,16 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
-- README and `10`/`11`/`12` point next crate work at P10. P0–P5, P8, and
-  P9 of consumer readiness are in, including the unencrypted isolated nested
-  git (`10` §1), the slug as the only `id` rule, `find` / `search` as
-  opt-in crate features (Cargo default is `remote-git` only), and `remove`
-  on `document` and `singleton`. A crate
-  without those features is the same library with named legs off, not a
-  second product (`10` §2). P7 is gone: how a
-  consumer reshapes its own files to fit MOD-8, MOD-16, and STO-4 is its
+- README and `10`/`11`/`12` close consumer readiness P0–P10. P0–P5, P8,
+  P9, and P10 are in, including the unencrypted isolated nested git
+  (`10` §1), the slug as the only `id` rule, `find` / `search` as
+  opt-in crate features (Cargo default is `remote-git` only), `remove`
+  on `document` and `singleton`, and acceptance on the consumer fixture.
+  A crate without those features is the same library with named legs
+  off, not a second product (`10` §2). P7 is gone: how a consumer
+  reshapes its own files to fit MOD-8, MOD-16, and STO-4 is its
   migration, and what those limits cost every consumer is `12` §6.
+  Next crate work is age encryption of `{vault}/.isolated/` (`10` §5).
 - STO-2: a `singleton` is YAML 1.2 in `record.yaml`. The old wording
   offered a Schema key that picks JSON or YAML; no such key ever
   existed, and JSON is a subset of YAML 1.2, so an imported JSON file

@@ -212,6 +212,24 @@ rust_test(
 
 rust_test(
     name = "consumer_test",
+    size = "large",
+    srcs = ["tests/consumer.rs"],
+    compile_data = glob([
+        "src/**/*.rs",
+        "testdata/**",
+    ]),
+    crate_features = ["find"],
+    crate_root = "tests/consumer.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:git2",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "consumer_thin_test",
     srcs = ["tests/consumer.rs"],
     compile_data = glob([
         "src/**/*.rs",
@@ -220,7 +238,8 @@ rust_test(
     crate_root = "tests/consumer.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
-        ":scheda",
+        ":scheda_thin",
+        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )

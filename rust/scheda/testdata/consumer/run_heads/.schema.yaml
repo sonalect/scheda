@@ -1,0 +1,9 @@
+name: run_heads
+kind: singleton
+version: 1
+singleton:
+  id: cursor
+fields:
+  - name: title
+    required: true
+    string: {}

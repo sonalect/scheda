@@ -57,7 +57,6 @@ required-features = ["search"]
 
 [[test]]
 name = "consumer"
-required-features = ["find"]
 
 [[test]]
 name = "core"

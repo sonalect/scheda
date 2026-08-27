@@ -41,7 +41,7 @@ does not call a language model, and does not know a profession.
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, Schema, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
 RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, a CLI encoding
-of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Next: consumer readiness P10 (`12` §4). P0–P5, P8, and P9 are in (fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`). CLI mutations autocommit; batch writes are in-process.
+of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Consumer readiness P0–P10 is in (`12` §4): fixture, RFC 8785 journal lines, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, and acceptance on that fixture. CLI mutations autocommit; batch writes are in-process. Next: age encryption of `{vault}/.isolated/` (`10` §5).
 
 ## Documents
 
