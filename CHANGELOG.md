@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-08-28
+
 ### Added
 
 - `object` / `object_list` Schema arm `values`: an open map whose keys
@@ -588,13 +590,15 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.4.1]
 - [0.4.0]
 - [0.3.0]
 - [0.2.0]
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/amsokol/scheda/releases/tag/v0.4.1
 [0.4.0]: https://github.com/amsokol/scheda/releases/tag/v0.4.0
 [0.3.0]: https://github.com/amsokol/scheda/releases/tag/v0.3.0
 [0.2.0]: https://github.com/amsokol/scheda/releases/tag/v0.2.0
