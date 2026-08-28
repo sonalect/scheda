@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -192,7 +194,7 @@ impl SearchEngine {
         else {
             return;
         };
-        inner.lexical = None;
+        let lexical = inner.lexical.take();
         #[cfg(feature = "search")]
         {
             inner.vector = None;
@@ -200,6 +202,8 @@ impl SearchEngine {
         inner.edges = EdgeIndex::default();
         inner.dirty = false;
         inner.next_ord.clear();
+        drop(inner);
+        shutdown_lexical(lexical);
     }
 
     pub(crate) fn rebuild(
@@ -212,7 +216,7 @@ impl SearchEngine {
         let _ = embedder;
         let can_write = {
             let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
-            inner.lexical = None;
+            let lexical = inner.lexical.take();
             #[cfg(feature = "search")]
             {
                 inner.vector = None;
@@ -220,7 +224,10 @@ impl SearchEngine {
             inner.edges = EdgeIndex::default();
             inner.dirty = false;
             inner.next_ord.clear();
-            inner.can_write
+            let can_write = inner.can_write;
+            drop(inner);
+            shutdown_lexical(lexical);
+            can_write
         };
         if can_write {
             index::ensure_format(&self.index_dir)?;
@@ -329,15 +336,10 @@ impl SearchEngine {
         if let Some(lexical) = inner.lexical.as_mut()
             && lexical.writer.is_none()
         {
-            lexical.writer = Some(
-                lexical
-                    .index
-                    .writer_with_num_threads(1, WRITER_HEAP)
-                    .context(
-                        Code::IndexLexical,
-                        "[SearchEngine::enable_write] open writer",
-                    )?,
-            );
+            lexical.writer = Some(open_lexical_writer(
+                &lexical.index,
+                "[SearchEngine::enable_write] open writer",
+            )?);
         }
         Ok(())
     }
@@ -615,6 +617,38 @@ impl SearchEngine {
     }
 }
 
+fn shutdown_lexical(lexical: Option<Lexical>) {
+    let Some(mut lexical) = lexical else {
+        return;
+    };
+    if let Some(writer) = lexical.writer.take() {
+        let _ = writer.wait_merging_threads();
+    }
+}
+
+fn open_lexical_writer(index: &Index, frame: &'static str) -> Result<IndexWriter, Error> {
+    let mut delay = Duration::from_millis(10);
+    let mut last = None;
+    for attempt in 0..8 {
+        match index.writer_with_num_threads(1, WRITER_HEAP) {
+            Ok(writer) => return Ok(writer),
+            Err(err) => {
+                let busy = err.to_string().contains("LockBusy");
+                last = Some(err);
+                if !busy || attempt == 7 {
+                    break;
+                }
+                thread::sleep(delay);
+                delay = delay.saturating_mul(2);
+            }
+        }
+    }
+    match last {
+        Some(err) => Err(err).context(Code::IndexLexical, frame),
+        None => unreachable!("open_lexical_writer always stores the last Err"),
+    }
+}
+
 impl Drop for SearchEngine {
     fn drop(&mut self) {
         let Ok(mut inner) = self.inner.lock() else {
@@ -622,11 +656,9 @@ impl Drop for SearchEngine {
         };
         let can_write = inner.can_write;
         let _ = inner.commit(&self.index_dir, can_write);
-        if let Some(lexical) = inner.lexical.as_mut()
-            && let Some(writer) = lexical.writer.take()
-        {
-            let _ = writer.wait_merging_threads();
-        }
+        let lexical = inner.lexical.take();
+        drop(inner);
+        shutdown_lexical(lexical);
     }
 }
 
@@ -1357,8 +1389,8 @@ fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
         .get_field("ord")
         .context(Code::IndexLexical, "[SearchEngine::bind_lexical] field ord")?;
     let writer = if can_write {
-        Some(index.writer_with_num_threads(1, WRITER_HEAP).context(
-            Code::IndexLexical,
+        Some(open_lexical_writer(
+            &index,
             "[SearchEngine::bind_lexical] open writer",
         )?)
     } else {

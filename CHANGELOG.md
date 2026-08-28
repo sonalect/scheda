@@ -18,6 +18,12 @@ API or on-disk format changes bump the minor.
   `values`. `nullable` keeps its meaning. Dynamic keys are not `find`
   keys.
 
+### Fixed
+
+- Dropping or rebuilding the Index waits for Tantivy merge threads
+  before the next `IndexWriter`. A later `begin` on the same tree
+  retries `LockBusy` instead of failing `index_lexical`.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added
