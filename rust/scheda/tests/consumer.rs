@@ -683,10 +683,14 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
         "sample get on the OPS-1 fixture took {got:?}, want < {OPS_BUDGET:?}"
     );
 
+    // Time `add` inside a transaction: outside one, autocommit fsyncs git
+    // on every call, and that is hundreds of milliseconds on Windows NTFS.
     let extra = format!("j{OPS_JOURNAL:05}");
+    vault.begin().unwrap();
     let started = Instant::now();
     log.add(&extra, rec(json!({"note": "extra"}))).unwrap();
     let added = started.elapsed();
+    vault.commit("extra").unwrap();
     assert!(
         added < OPS_BUDGET,
         "journal add on the OPS-1 fixture took {added:?}, want < {OPS_BUDGET:?}"

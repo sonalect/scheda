@@ -123,6 +123,10 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- Windows CI `ops_volume_get_and_add_stay_in_milliseconds` times the
+  sample journal `add` inside a transaction. Autocommit fsyncs git on
+  every call; that is hundreds of milliseconds on NTFS and is not the
+  OPS-1 band.
 - Mixed isolated+main `commit`: if the main-tree commit fails after the
   nested git commit succeeded, nested `HEAD` is reset to the commit it
   had before that nested commit (working tree included).
