@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `object` / `object_list` Schema arm `values`: an open map whose keys
+  the author invents and whose values have a declared type. Mutually
+  exclusive with `fields`; omitting both is still an open map of
+  `string` values. `required`, `default`, and `exclude_find` on the
+  `values` entry are `invalid`, and so is an `edge` anywhere beneath
+  `values`. `nullable` keeps its meaning. Dynamic keys are not `find`
+  keys.
+
 ## [0.4.0] - 2026-08-28
 
 ### Added

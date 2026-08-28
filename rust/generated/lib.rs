@@ -608,4 +608,34 @@ mod tests {
         assert_eq!(json["name"], "title");
         assert!(json.get("string").is_some());
     }
+
+    #[test]
+    fn object_values_flags_are_invalid() {
+        let ok: Field = serde_json::from_value(serde_json::json!({
+            "name": "env",
+            "object": {"values": {"name": "axis", "integer": {}}}
+        }))
+        .expect("field json");
+        let mut schema = Schema::default().with_version(1);
+        schema.kind = Body::default().into();
+        schema.fields.push(ok);
+        assert!(schema.require_valid().is_ok());
+
+        for values in [
+            serde_json::json!({"name": "axis", "required": true, "integer": {}}),
+            serde_json::json!({"name": "axis", "excludeFind": true, "integer": {}}),
+            serde_json::json!({"name": "axis", "default": 1, "integer": {}}),
+        ] {
+            let field: Field = serde_json::from_value(serde_json::json!({
+                "name": "env",
+                "object": {"values": values}
+            }))
+            .expect("field json");
+            let mut schema = Schema::default().with_version(1);
+            schema.kind = Body::default().into();
+            schema.fields.push(field);
+            let err = schema.require_valid().expect_err("values flag");
+            assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
+        }
+    }
 }

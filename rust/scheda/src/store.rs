@@ -528,91 +528,77 @@ pub(crate) fn validate_fields(
                     )));
                 }
             }
-            Some(value) => check_type(value, decl)?,
+            Some(value) => check_type_at(value, decl, &format!("field {}", decl.name))?,
         }
     }
     Ok(())
 }
 
-fn check_type(value: &Value, decl: &FieldDecl) -> Result<(), Error> {
+fn check_type_at(value: &Value, decl: &FieldDecl, loc: &str) -> Result<(), Error> {
     match decl.type_ {
         FieldType::String => {
             if !value.is_string() {
-                bail!(Error::invalid(format!(
-                    "field {} must be a string",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be a string")));
             }
         }
         FieldType::Boolean => {
             if !value.is_boolean() {
-                bail!(Error::invalid(format!(
-                    "field {} must be a boolean",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be a boolean")));
             }
         }
         FieldType::Integer => {
             if !is_integer(value) {
-                bail!(Error::invalid(format!(
-                    "field {} must be an integer",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be an integer")));
             }
         }
         FieldType::Number => {
             if !is_finite_number(value) {
-                bail!(Error::invalid(format!(
-                    "field {} must be a finite number",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be a finite number")));
             }
         }
         FieldType::StringList => {
             let Some(items) = value.as_array() else {
-                bail!(Error::invalid(format!(
-                    "field {} must be a string_list",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be a string_list")));
             };
             if items.iter().any(|item| !item.is_string()) {
-                bail!(Error::invalid(format!(
-                    "field {} must be a string_list",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be a string_list")));
             }
         }
         FieldType::Object => {
             let Some(map) = value.as_object() else {
-                bail!(Error::invalid(format!(
-                    "field {} must be an object",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be an object")));
             };
-            validate_object(map, decl)?;
+            validate_object(map, decl, loc)?;
         }
         FieldType::ObjectList => {
             let Some(items) = value.as_array() else {
-                bail!(Error::invalid(format!(
-                    "field {} must be an object_list",
-                    decl.name
-                )));
+                bail!(Error::invalid(format!("{loc} must be an object_list")));
             };
             for item in items {
                 let Some(map) = item.as_object() else {
-                    bail!(Error::invalid(format!(
-                        "field {} must be an object_list",
-                        decl.name
-                    )));
+                    bail!(Error::invalid(format!("{loc} must be an object_list")));
                 };
-                validate_object(map, decl)?;
+                validate_object(map, decl, loc)?;
             }
         }
     }
     Ok(())
 }
 
-fn validate_object(map: &Map<String, Value>, decl: &FieldDecl) -> Result<(), Error> {
+fn validate_object(map: &Map<String, Value>, decl: &FieldDecl, loc: &str) -> Result<(), Error> {
+    if let Some(values) = &decl.values {
+        for (key, value) in map {
+            let entry = format!("{loc} values {} key {key}", values.name);
+            match value {
+                Value::Null if values.nullable => {}
+                Value::Null => {
+                    bail!(Error::invalid(format!("{entry} is not nullable")));
+                }
+                value => check_type_at(value, values, &entry)?,
+            }
+        }
+        return Ok(());
+    }
     if decl.fields.is_empty() {
         for (key, value) in map {
             if !value.is_string() && !value.is_null() {

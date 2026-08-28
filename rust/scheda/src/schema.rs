@@ -110,6 +110,7 @@ struct RawUnit {}
 struct RawObject {
     #[serde(default)]
     fields: Vec<RawField>,
+    values: Option<Box<RawField>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -269,6 +270,7 @@ pub(crate) struct FieldDecl {
     pub edge: Option<EdgeDecl>,
     pub default: Option<serde_json::Value>,
     pub fields: Vec<FieldDecl>,
+    pub values: Option<Box<FieldDecl>>,
 }
 
 #[derive(Clone, Debug)]
@@ -528,52 +530,65 @@ fn finish_body(raw: RawBody) -> BodyDecl {
     }
 }
 
+// A field name is a key in the Record, where `id` and `body` are taken. The
+// `values` entry of an open map names no key: it only labels that entry in
+// error messages, so both names are free there.
+#[derive(Clone, Copy, PartialEq)]
+enum NameRole {
+    Key,
+    Label,
+}
+
 fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Error> {
+    finish_fields_as(raw, path, NameRole::Key)
+}
+
+fn finish_fields_as(
+    raw: Vec<RawField>,
+    path: &Path,
+    role: NameRole,
+) -> Result<Vec<FieldDecl>, Error> {
     let loc = path.display();
     let mut out = Vec::with_capacity(raw.len());
     for field in raw {
         if field.name.is_empty() {
             bail!(Error::invalid(format!("schema {loc}: field name is empty")));
         }
-        if field.name == "id" || field.name == "body" {
+        if role == NameRole::Key && (field.name == "id" || field.name == "body") {
             bail!(Error::invalid(format!(
                 "schema {loc}: field name {} is reserved",
                 field.name
             )));
         }
         let spec = field.spec()?;
-        let (type_, nested, edge, fts, vector) = match spec {
+        let (type_, nested, values, edge, fts, vector) = match spec {
             RawSpec::String(text) => (
                 FieldType::String,
                 Vec::new(),
                 None,
+                None,
                 !text.exclude_fts,
                 !text.exclude_vector,
             ),
-            RawSpec::Integer => (FieldType::Integer, Vec::new(), None, false, false),
-            RawSpec::Number => (FieldType::Number, Vec::new(), None, false, false),
-            RawSpec::Boolean => (FieldType::Boolean, Vec::new(), None, false, false),
+            RawSpec::Integer => (FieldType::Integer, Vec::new(), None, None, false, false),
+            RawSpec::Number => (FieldType::Number, Vec::new(), None, None, false, false),
+            RawSpec::Boolean => (FieldType::Boolean, Vec::new(), None, None, false, false),
             RawSpec::StringList(text) => (
                 FieldType::StringList,
                 Vec::new(),
                 None,
+                None,
                 !text.exclude_fts,
                 !text.exclude_vector,
             ),
-            RawSpec::Object(object) => (
-                FieldType::Object,
-                finish_fields(object.fields, path)?,
-                None,
-                false,
-                false,
-            ),
-            RawSpec::ObjectList(object) => (
-                FieldType::ObjectList,
-                finish_fields(object.fields, path)?,
-                None,
-                false,
-                false,
-            ),
+            RawSpec::Object(object) => {
+                let (nested, values) = finish_object(&field.name, object, path)?;
+                (FieldType::Object, nested, values, None, false, false)
+            }
+            RawSpec::ObjectList(object) => {
+                let (nested, values) = finish_object(&field.name, object, path)?;
+                (FieldType::ObjectList, nested, values, None, false, false)
+            }
             RawSpec::Edge(raw_edge) => {
                 let edge = finish_edge(&field.name, raw_edge, path)?;
                 let type_ = match edge.multiplicity {
@@ -582,7 +597,7 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
                 };
                 let fts = edge.fts;
                 let vector = edge.vector;
-                (type_, Vec::new(), Some(edge), fts, vector)
+                (type_, Vec::new(), None, Some(edge), fts, vector)
             }
         };
         #[cfg(feature = "search")]
@@ -600,9 +615,85 @@ fn finish_fields(raw: Vec<RawField>, path: &Path) -> Result<Vec<FieldDecl>, Erro
             edge,
             default: field.default,
             fields: nested,
+            values,
         });
     }
     Ok(out)
+}
+
+fn finish_object(
+    name: &str,
+    raw: RawObject,
+    path: &Path,
+) -> Result<(Vec<FieldDecl>, Option<Box<FieldDecl>>), Error> {
+    let loc = path.display();
+    if !raw.fields.is_empty() && raw.values.is_some() {
+        bail!(Error::invalid(format!(
+            "schema {loc}: object {name} must not set both fields and values"
+        )));
+    }
+    if let Some(values) = raw.values {
+        refuse_values_flags(&values, path)?;
+        let values = finish_one_field(*values, path)?;
+        if let Some(offender) = edge_under_values(&values) {
+            bail!(Error::invalid(format!(
+                "schema {loc}: values {offender} must not set edge"
+            )));
+        }
+        Ok((Vec::new(), Some(Box::new(values))))
+    } else {
+        Ok((finish_fields(raw.fields, path)?, None))
+    }
+}
+
+fn finish_one_field(raw: RawField, path: &Path) -> Result<FieldDecl, Error> {
+    let mut fields = finish_fields_as(vec![raw], path, NameRole::Label)?;
+    match fields.pop() {
+        Some(field) if fields.is_empty() => Ok(field),
+        _ => bail!(Error::invalid(format!(
+            "schema {}: values is empty",
+            path.display()
+        ))),
+    }
+}
+
+fn refuse_values_flags(field: &RawField, path: &Path) -> Result<(), Error> {
+    let loc = path.display();
+    if field.required {
+        bail!(Error::invalid(format!(
+            "schema {loc}: values {} must not set required",
+            field.name
+        )));
+    }
+    if field.exclude_find {
+        bail!(Error::invalid(format!(
+            "schema {loc}: values {} must not set exclude_find",
+            field.name
+        )));
+    }
+    if field.default.is_some() {
+        bail!(Error::invalid(format!(
+            "schema {loc}: values {} must not set default",
+            field.name
+        )));
+    }
+    Ok(())
+}
+
+// An edge is a dangling check *and* a `find` key. Under a key Schema does
+// not name it could only ever be the first, so it is refused everywhere
+// beneath `values`, not only as the value type itself. Returns the name of
+// the first offending field.
+fn edge_under_values(field: &FieldDecl) -> Option<&str> {
+    if field.edge.is_some() {
+        return Some(&field.name);
+    }
+    for nested in &field.fields {
+        if let Some(name) = edge_under_values(nested) {
+            return Some(name);
+        }
+    }
+    field.values.as_deref().and_then(edge_under_values)
 }
 
 fn finish_edge(name: &str, raw: RawEdge, path: &Path) -> Result<EdgeDecl, Error> {
@@ -786,15 +877,23 @@ fn field_spec_to_proto(
         FieldType::Number => Spec::Number(Box::default()),
         FieldType::Boolean => Spec::Boolean(Box::default()),
         FieldType::StringList => Spec::StringList(Box::new(text())),
-        FieldType::Object => Spec::Object(Box::new(Object {
-            fields: fields_to_proto(&field.fields)?,
-            ..Object::default()
-        })),
-        FieldType::ObjectList => Spec::ObjectList(Box::new(Object {
-            fields: fields_to_proto(&field.fields)?,
-            ..Object::default()
-        })),
+        FieldType::Object => Spec::Object(Box::new(object_to_proto(field)?)),
+        FieldType::ObjectList => Spec::ObjectList(Box::new(object_to_proto(field)?)),
     })
+}
+
+fn object_to_proto(field: &FieldDecl) -> Result<Object, Error> {
+    let mut obj = Object::default();
+    if let Some(values) = &field.values {
+        let mut fields = fields_to_proto(std::slice::from_ref(values.as_ref()))?;
+        let Some(msg) = fields.pop() else {
+            bail!(Error::invalid("schema: values is empty"));
+        };
+        obj.values = msg.into();
+    } else {
+        obj.fields = fields_to_proto(&field.fields)?;
+    }
+    Ok(obj)
 }
 
 fn edge_to_proto(edge: &EdgeDecl) -> Edge {
@@ -938,6 +1037,10 @@ fn body_from_proto(body: &Body) -> BodyDecl {
 }
 
 fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
+    fields_from_proto_as(fields, NameRole::Key)
+}
+
+fn fields_from_proto_as(fields: &[Field], role: NameRole) -> Result<Vec<FieldDecl>, Error> {
     use scheda_generated::api::v1::__buffa::oneof::edge::Arity;
     use scheda_generated::api::v1::__buffa::oneof::field::Spec;
     let mut out = Vec::with_capacity(fields.len());
@@ -947,7 +1050,7 @@ fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
             .as_deref()
             .filter(|name| !name.is_empty())
             .ok_or_else(|| Error::invalid("schema: field name is required"))?;
-        if name == "id" || name == "body" {
+        if role == NameRole::Key && (name == "id" || name == "body") {
             bail!(Error::invalid(format!(
                 "schema: field name {name} is reserved"
             )));
@@ -959,38 +1062,34 @@ fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
             ),
             None => None,
         };
-        let (type_, nested, edge, fts, vector) = match field.spec.as_ref() {
+        let (type_, nested, values, edge, fts, vector) = match field.spec.as_ref() {
             Some(Spec::String(text)) => (
                 FieldType::String,
                 Vec::new(),
                 None,
+                None,
                 !text.exclude_fts.unwrap_or(false),
                 !text.exclude_vector.unwrap_or(false),
             ),
-            Some(Spec::Integer(_)) => (FieldType::Integer, Vec::new(), None, false, false),
-            Some(Spec::Number(_)) => (FieldType::Number, Vec::new(), None, false, false),
-            Some(Spec::Boolean(_)) => (FieldType::Boolean, Vec::new(), None, false, false),
+            Some(Spec::Integer(_)) => (FieldType::Integer, Vec::new(), None, None, false, false),
+            Some(Spec::Number(_)) => (FieldType::Number, Vec::new(), None, None, false, false),
+            Some(Spec::Boolean(_)) => (FieldType::Boolean, Vec::new(), None, None, false, false),
             Some(Spec::StringList(text)) => (
                 FieldType::StringList,
                 Vec::new(),
                 None,
+                None,
                 !text.exclude_fts.unwrap_or(false),
                 !text.exclude_vector.unwrap_or(false),
             ),
-            Some(Spec::Object(object)) => (
-                FieldType::Object,
-                fields_from_proto(&object.fields)?,
-                None,
-                false,
-                false,
-            ),
-            Some(Spec::ObjectList(object)) => (
-                FieldType::ObjectList,
-                fields_from_proto(&object.fields)?,
-                None,
-                false,
-                false,
-            ),
+            Some(Spec::Object(object)) => {
+                let (nested, values) = object_from_proto(object)?;
+                (FieldType::Object, nested, values, None, false, false)
+            }
+            Some(Spec::ObjectList(object)) => {
+                let (nested, values) = object_from_proto(object)?;
+                (FieldType::ObjectList, nested, values, None, false, false)
+            }
             Some(Spec::Edge(raw)) => {
                 let collection = raw
                     .collection
@@ -1027,7 +1126,7 @@ fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
                 };
                 let fts = edge.fts;
                 let vector = edge.vector;
-                (type_, Vec::new(), Some(edge), fts, vector)
+                (type_, Vec::new(), None, Some(edge), fts, vector)
             }
             None => bail!(Error::invalid(format!("schema: field {name} has no spec"))),
         };
@@ -1046,9 +1145,34 @@ fn fields_from_proto(fields: &[Field]) -> Result<Vec<FieldDecl>, Error> {
             edge,
             default,
             fields: nested,
+            values,
         });
     }
     Ok(out)
+}
+
+fn object_from_proto(object: &Object) -> Result<(Vec<FieldDecl>, Option<Box<FieldDecl>>), Error> {
+    if !object.fields.is_empty() && object.values.as_option().is_some() {
+        bail!(Error::invalid(
+            "schema: object must not set both fields and values"
+        ));
+    }
+    let values = match object.values.as_option() {
+        Some(field) => {
+            let mut fields = fields_from_proto_as(std::slice::from_ref(field), NameRole::Label)?;
+            let Some(values) = fields.pop() else {
+                bail!(Error::invalid("schema: values is empty"));
+            };
+            if let Some(offender) = edge_under_values(&values) {
+                bail!(Error::invalid(format!(
+                    "schema: values {offender} must not set edge"
+                )));
+            }
+            Some(Box::new(values))
+        }
+        None => None,
+    };
+    Ok((fields_from_proto(&object.fields)?, values))
 }
 
 fn yaml_from_decl(decl: &CollectionDecl) -> Result<String, Error> {
@@ -1111,6 +1235,8 @@ struct DiskText {
 struct DiskObject {
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fields: Vec<DiskField>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    values: Option<Box<DiskField>>,
 }
 
 #[derive(Serialize)]
@@ -1230,17 +1356,23 @@ impl From<&FieldDecl> for DiskField {
             FieldType::Boolean => disk.boolean = Some(DiskUnit {}),
             FieldType::StringList => disk.string_list = Some(text()),
             FieldType::Object => {
-                disk.object = Some(DiskObject {
-                    fields: field.fields.iter().map(DiskField::from).collect(),
-                });
+                disk.object = Some(disk_object(field));
             }
             FieldType::ObjectList => {
-                disk.object_list = Some(DiskObject {
-                    fields: field.fields.iter().map(DiskField::from).collect(),
-                });
+                disk.object_list = Some(disk_object(field));
             }
         }
         disk
+    }
+}
+
+fn disk_object(field: &FieldDecl) -> DiskObject {
+    DiskObject {
+        fields: field.fields.iter().map(DiskField::from).collect(),
+        values: field
+            .values
+            .as_deref()
+            .map(|v| Box::new(DiskField::from(v))),
     }
 }
 
@@ -1594,5 +1726,113 @@ mod tests {
         .unwrap();
         assert!(decl.isolated);
         assert_eq!(decl.fields[0].name, "secret");
+    }
+
+    #[test]
+    fn object_values_parses_and_is_not_a_find_key() {
+        let decl = parse(
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        object:\n          fields:\n            - name: significant\n              integer: {}\n",
+        )
+        .unwrap();
+        let env = &decl.fields[0];
+        assert_eq!(env.name, "env");
+        let values = env.values.as_ref().expect("values");
+        assert_eq!(values.name, "axis");
+        assert_eq!(values.type_, FieldType::Object);
+        assert_eq!(values.fields[0].name, "significant");
+        assert!(decl.filter_keys.contains("env"));
+        assert!(decl.filter_keys.contains("body"));
+        assert!(!decl.filter_keys.contains("axis"));
+        assert!(!decl.filter_keys.contains("significant"));
+        assert!(!decl.filter_keys.contains("prod"));
+    }
+
+    #[test]
+    fn object_fields_and_values_together_is_invalid() {
+        let err = parse(
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      fields:\n        - name: prod\n          string: {}\n      values:\n        name: axis\n        integer: {}\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(err.to_string().contains("both fields and values"));
+    }
+
+    #[test]
+    fn object_values_refuses_required_default_exclude_find_and_edge() {
+        for (yaml, needle) in [
+            (
+                "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        required: true\n        integer: {}\n",
+                "must not set required",
+            ),
+            (
+                "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        default: 1\n        integer: {}\n",
+                "must not set default",
+            ),
+            (
+                "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        exclude_find: true\n        integer: {}\n",
+                "must not set exclude_find",
+            ),
+            (
+                "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        edge:\n          collection: c\n          one: {}\n",
+                "must not set edge",
+            ),
+        ] {
+            let err = parse(yaml).unwrap_err();
+            assert_eq!(err.known_code(), Some(Code::Invalid));
+            assert!(err.to_string().contains(needle), "{err}");
+        }
+    }
+
+    #[test]
+    fn object_values_refuses_an_edge_nested_under_the_value_type() {
+        let err = parse(
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        object:\n          fields:\n            - name: owner\n              edge:\n                collection: c\n                one: {}\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(err.to_string().contains("owner"), "{err}");
+        assert!(err.to_string().contains("must not set edge"), "{err}");
+    }
+
+    #[test]
+    fn object_values_round_trips_through_proto() {
+        let decl = parse(
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        integer: {}\n",
+        )
+        .unwrap();
+        let proto = super::to_proto_schema(&decl, false).unwrap();
+        let json = serde_json::to_value(&proto).unwrap();
+        assert_eq!(json["fields"][0]["object"]["values"]["name"], "axis");
+        assert!(
+            json["fields"][0]["object"]["values"]
+                .get("integer")
+                .is_some()
+        );
+        assert!(json["fields"][0]["object"].get("fields").is_none());
+        let back = super::decl_from_proto("c", &proto).unwrap();
+        assert_eq!(back.fields[0].values.as_ref().unwrap().name, "axis");
+        assert_eq!(
+            back.fields[0].values.as_ref().unwrap().type_,
+            FieldType::Integer
+        );
+    }
+
+    #[test]
+    fn object_values_takes_id_as_a_label_but_not_as_a_nested_key() {
+        let decl = parse(
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: id\n        integer: {}\n",
+        )
+        .unwrap();
+        assert_eq!(decl.fields[0].values.as_ref().unwrap().name, "id");
+        let proto = super::to_proto_schema(&decl, false).unwrap();
+        let back = super::decl_from_proto("c", &proto).unwrap();
+        assert_eq!(back.fields[0].values.as_ref().unwrap().name, "id");
+
+        let err = parse(
+            "name: c\nkind: document\nversion: 1\nfields:\n  - name: env\n    object:\n      values:\n        name: axis\n        object:\n          fields:\n            - name: body\n              string: {}\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(err.to_string().contains("reserved"), "{err}");
     }
 }

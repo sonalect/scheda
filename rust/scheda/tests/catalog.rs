@@ -380,6 +380,112 @@ fn create_collection_then_insert_one_without_reopen() {
 }
 
 #[test]
+fn create_collection_prints_object_values_in_catalog() {
+    let scratch = Scratch::new();
+    let vault = scratch.init();
+    let decl: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "document": {},
+        "fields": [{
+            "name": "env",
+            "object": {
+                "values": {
+                    "name": "axis",
+                    "object": {
+                        "fields": [{"name": "significant", "integer": {}}]
+                    }
+                }
+            }
+        }]
+    }))
+    .unwrap();
+    vault.create_collection("west_docs", decl).unwrap();
+    let yaml = fs::read_to_string(scratch.vault().join("west_docs/.schema.yaml")).unwrap();
+    assert!(yaml.contains("values:"));
+    assert!(yaml.contains("name: axis"));
+    let json = catalog_json(&vault);
+    let env = &collection(&json, "west_docs")["schema"]["fields"][0];
+    assert_eq!(env["name"], "env");
+    assert_eq!(env["object"]["values"]["name"], "axis");
+    assert_eq!(
+        env["object"]["values"]["object"]["fields"][0]["name"],
+        "significant"
+    );
+    let lib = scratch
+        .reopen()
+        .collection("west_docs")
+        .unwrap()
+        .schema()
+        .unwrap();
+    let lib_json = serde_json::to_value(&lib).unwrap();
+    assert_eq!(lib_json["fields"][0]["object"]["values"]["name"], "axis");
+}
+
+#[test]
+fn create_collection_rejects_object_fields_and_values() {
+    let scratch = Scratch::new();
+    let vault = scratch.init();
+    let decl: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "document": {},
+        "fields": [{
+            "name": "env",
+            "object": {
+                "fields": [{"name": "prod", "string": {}}],
+                "values": {"name": "axis", "integer": {}}
+            }
+        }]
+    }))
+    .unwrap();
+    let err = vault.create_collection("west_docs", decl).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(
+        !scratch
+            .vault()
+            .join("west_docs")
+            .join(".schema.yaml")
+            .exists()
+    );
+}
+
+#[test]
+fn create_collection_rejects_edge_nested_under_values() {
+    let scratch = Scratch::new();
+    let vault = scratch.init();
+    let decl: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "document": {},
+        "fields": [{
+            "name": "env",
+            "object": {
+                "values": {
+                    "name": "axis",
+                    "object": {
+                        "fields": [{
+                            "name": "owner",
+                            "edge": {"collection": "west_docs", "one": {}}
+                        }]
+                    }
+                }
+            }
+        }]
+    }))
+    .unwrap();
+    let err = vault.create_collection("west_docs", decl).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("owner"), "{message}");
+    assert!(message.contains("must not set edge"), "{message}");
+    assert!(
+        !scratch
+            .vault()
+            .join("west_docs")
+            .join(".schema.yaml")
+            .exists()
+    );
+}
+
+#[test]
 fn create_collection_missing_kind_writes_nothing() {
     let scratch = Scratch::new();
     let vault = scratch.init();

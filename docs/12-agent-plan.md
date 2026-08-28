@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.57, 28 August 2026.
+Document 12 of the Scheda package. Version 0.61, 28 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -16,7 +16,7 @@ A0–A7 are done. **agent** is accepted for this binding. A2 was the
 names. Schema already parses `isolated`. Age encryption (ISO-5,
 ISO-7–11) stays out.
 
-Stages P0–P10 in §4 are the second half of this file: what the **first
+Stages P0–P11 in §4 are the second half of this file: what the **first
 consumer** needs before it can move its primary layer onto the crate.
 They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
@@ -26,7 +26,7 @@ never waited on a P stage and still does not.
 
 §6 lists what a *second* consumer will want and Scheda does not have.
 Those are open questions, not stages: nothing there blocks A0–A7 or
-P0–P10.
+P0–P11.
 
 ---
 
@@ -75,7 +75,7 @@ P order is in §4. It starts after A7 and does not interleave with it.
 `catalog` command.
 
 Consumer readiness has its own dashboard in §4. A green A0–A7 does not
-imply a green P0–P10, and the reverse is also true.
+imply a green P0–P11, and the reverse is also true.
 
 ---
 
@@ -433,7 +433,8 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** done. P0–P5, P8, P9, and P10 are done.
+**Status of the part:** all stages done. P0–P5, P8, P9, P10, and P11
+are done.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -476,6 +477,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P8](#p8-find-and-search-as-features)                    | done        | The search stack is not forced on every consumer                    |
 | [P9](#p9-remove-a-record)                                | done        | A Record can leave, on `document` and `singleton`                   |
 | [P10](#p10-consumer-acceptance)                          | done        | The consumer's acceptance list on the P0 fixture                    |
+| [P11](#p11-open-maps-with-a-typed-value)                 | done        | A map whose keys the author invents and whose values are not strings |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -489,7 +491,16 @@ P5, which removes dead machinery rather than a blocker. P4 is the large
 one and is done (`10` §1 unencrypted slice). P8 is in: `find` and
 `search` are crate features, optional on a reduced build. P9 is in:
 `remove` on `document` and `singleton`. P10 is in: acceptance on the
-fixture. The part is closed.
+fixture.
+
+P11 is in: an `object` takes listed keys, a typed open map (`values`), or
+an open map of strings when both arms are omitted.
+
+P11 came after that acceptance and is last for a reason: nothing already
+written stops working without it, and it blocks only the part of a
+primary layer that is configuration rather than content. It needs no
+other stage and overlaps none of them, so it can run whenever there is
+room.
 
 Each stage carries **Needs** (stages that must be `done` first) and
 **Decide first** (a question `03`–`10` leaves open, which has to be
@@ -920,6 +931,99 @@ default / `consumer_thin_test`).
 - [x] A Record removed with `remove` is gone from `get`, `find`, and the
       files, and `check` passes after it (P9).
 
+## P11. Open maps with a typed value
+
+**Status:** done
+
+**Codes:** SCH-4, SCH-5, SCH-8, SCH-9, MOD-12.
+
+**Needs:** none. It touches Schema parsing and field validation, nothing
+else.
+
+**Decide first:** settled. The key is `values`. The value declaration
+keeps the required `name`, which labels one entry in error messages and
+is never a key on disk. An `edge` under `values` is refused, and §6 item
+11 records why that refusal is not final.
+
+An `object` today is one of two things: a map whose keys Schema lists, or
+an open map whose values must be strings (`05` SCH-4).
+Configuration-shaped data is neither. Its keys are invented by whoever
+writes the file — an axis name, a category name, a registry name — and
+its values are objects or numbers, not strings. Such a caller gives up
+either the keys (every map rewritten as a list of objects, changing a
+file format that already exists outside this library) or the schema (the
+map kept in a body and checked by hand). Both are losses the library can
+avoid.
+
+`object` and `object_list` gain a second arm. `fields` lists keys and
+stays exactly as it is. `values` declares the type of every value under a
+key the Schema does not name. The two are mutually exclusive, and
+omitting both keeps today's meaning, so no existing Schema file changes
+what it says.
+
+```yaml
+- name: env
+  object:
+    values:
+      name: axis        # labels one entry in error messages; never a key on disk
+      object:
+        fields:
+          - name: significant
+            integer: {}
+```
+
+`values` reuses the field entry, so nesting is recursive: a map of maps
+of `integer` is two `values` deep, and the value of a map may itself be
+an `object_list`. Three keys on that entry are meaningless and are
+refused rather than ignored — `required` (whether a key is present is the
+writer's choice, MOD-12), `default` (there is no key to apply it to), and
+`exclude_find` (a dynamic key is not a find key to begin with, SCH-8).
+`nullable` keeps its meaning. Because that entry names no key, `id` and
+`body` are free for its label, while a field nested under it is a key
+again and refuses both. `edge` is refused anywhere beneath `values`,
+not only as the value type itself: an edge is a filter key and a dangling
+check, and a key no Schema names can be neither. Half of an edge under a
+deeper nesting would be the same loss wearing a longer path.
+
+The Index does not change. `object` and `object_list` are never FTS or
+vector (SCH-9), and filter keys are collected from declared names
+(SCH-8), so a typed open map adds no column, no query key, and no
+rebuild.
+
+- [x] `05` SCH-4 and `05` §8 state `fields` **xor** `values` on `object`
+      and `object_list`, and that omitting both is still the open map of
+      `string` values.
+- [x] `api/v1` `schema.proto` carries the arm. Generated `Validate`
+      refuses `required` / `default` / `exclude_find` on `values`. `edge`
+      under `values`, and both `fields` and `values`, are `invalid` at
+      Schema load (YAML and `create_collection`); protovalidate-buffa
+      cannot transpile that xor over a repeated message or `has(edge)`
+      on a oneof. Run
+      `bazel run //api/v1:generate` before the tests.
+- [x] A Record whose values under unnamed keys all match the declared
+      type round-trips through `add` and `get`.
+- [x] A value of the wrong type is `invalid`, and the message names the
+      field, the `values` label, and the offending key.
+- [x] Recursion holds: a map whose values are maps of `integer` accepts
+      `2` and rejects `"2"`.
+- [x] `required`, `default`, or `exclude_find` on the `values` entry is
+      `invalid` at Schema load, not silently dropped, and so is an `edge`
+      anywhere beneath `values`, at any depth.
+- [x] `nullable` on the `values` entry keeps its meaning: `null` under a
+      key passes with it and is `invalid` without it.
+- [x] `object_list` takes `values` as well, and a wrong-typed value in one
+      item of the list is `invalid`.
+- [x] An `object` with neither arm still accepts a map of strings and
+      still rejects a non-string value: the P0 fixture and
+      `testdata/schema/types.yaml` pass unchanged.
+- [x] The `values` label names no key, so `id` and `body` are accepted
+      there while a nested field under it still refuses both.
+- [x] Schema round-trips through proto and back with the arm intact, and
+      the A1 catalog prints it.
+- [x] `find` gains no key: filter keys for a collection carrying such a
+      field are what they were.
+- [x] CHANGELOG under `[Unreleased]`; `05` version bumped.
+
 ---
 
 ## 5. What this document does not decide
@@ -1010,3 +1114,12 @@ first consumer is not mistaken for a decision taken for everybody.
 
 10. **Acceptance is one consumer's list (P10).** A second consumer needs
     acceptance stated against `03`–`10`, not against §4's fixture.
+
+11. **An edge cannot be the value of an open map (P11).** `values` takes
+    any type but `edge`, because an edge is two promises — the dangling
+    check and a `find` key — and a key no Schema names can keep only the
+    first. The same relation written as an `object_list` keeps both, so
+    nothing is lost today. What would change that is a caller whose file
+    format is already a map of identifiers and cannot be reshaped; then
+    the question is whether a half-edge under a clearly different name is
+    better than no edge at all.

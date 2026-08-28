@@ -264,6 +264,289 @@ fn field_types_reject_unknown_and_round_trip() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
+#[test]
+fn typed_open_map_round_trips_and_names_the_bad_key() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "maps.yaml",
+        "\
+name: c
+kind: document
+version: 1
+fields:
+  - name: env
+    object:
+      values:
+        name: axis
+        object:
+          fields:
+            - name: significant
+              integer: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    let fields = json!({"env": {"prod": {"significant": 1}, "staging": {"significant": 0}}});
+    collection.add("ok", rec(fields.clone())).unwrap();
+    let got = fields_of(&collection.get("ok").unwrap());
+    assert_eq!(
+        got.get("env").unwrap()["prod"]["significant"].as_f64(),
+        Some(1.0)
+    );
+
+    let err = collection
+        .add("bad", rec(json!({"env": {"prod": "yes"}})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("env"), "{message}");
+    assert!(message.contains("axis"), "{message}");
+    assert!(message.contains("prod"), "{message}");
+
+    assert!(collection.is_filter_key("env"));
+    assert!(!collection.is_filter_key("axis"));
+    assert!(!collection.is_filter_key("prod"));
+    assert!(!collection.is_filter_key("significant"));
+    let err = collection
+        .find(
+            &serde_json::from_value::<Filter>(json!({"term":{"field":"axis","value":"prod"}}))
+                .unwrap()
+                .into(),
+            0,
+            10,
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    vault.check().unwrap();
+}
+
+#[test]
+fn typed_open_map_honours_nullable_on_the_value() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "nullable.yaml",
+        "\
+name: c
+kind: document
+version: 1
+fields:
+  - name: loose
+    object:
+      values:
+        name: axis
+        nullable: true
+        integer: {}
+  - name: strict
+    object:
+      values:
+        name: axis
+        integer: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    collection
+        .add("ok", rec(json!({"loose": {"prod": null}, "strict": {}})))
+        .unwrap();
+    let got = fields_of(&collection.get("ok").unwrap());
+    assert!(got["loose"]["prod"].is_null());
+
+    let err = collection
+        .add("bad", rec(json!({"loose": {}, "strict": {"prod": null}})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("strict"), "{message}");
+    assert!(message.contains("prod"), "{message}");
+    assert!(message.contains("nullable"), "{message}");
+}
+
+#[test]
+fn object_list_takes_a_typed_open_map_too() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "rows.yaml",
+        "\
+name: c
+kind: document
+version: 1
+fields:
+  - name: rows
+    object_list:
+      values:
+        name: cell
+        integer: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    collection
+        .add("ok", rec(json!({"rows": [{"a": 1}, {"b": 2, "c": 3}]})))
+        .unwrap();
+    let got = fields_of(&collection.get("ok").unwrap());
+    assert_eq!(got["rows"][1]["c"].as_f64(), Some(3.0));
+
+    let err = collection
+        .add("bad", rec(json!({"rows": [{"a": 1}, {"b": "2"}]})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("rows"), "{message}");
+    assert!(message.contains("cell"), "{message}");
+    assert!(message.contains("key b"), "{message}");
+}
+
+#[test]
+fn nested_open_maps_of_integer_accept_2_and_reject_string() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "grid.yaml",
+        "\
+name: c
+kind: document
+version: 1
+fields:
+  - name: grid
+    object:
+      values:
+        name: row
+        object:
+          values:
+            name: cell
+            integer: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    collection
+        .add("ok", rec(json!({"grid": {"r1": {"x": 2, "y": 3}}})))
+        .unwrap();
+    let got = fields_of(&collection.get("ok").unwrap());
+    assert_eq!(got["grid"]["r1"]["x"].as_f64(), Some(2.0));
+
+    let err = collection
+        .add("bad", rec(json!({"grid": {"r1": {"x": "2"}}})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("grid"), "{message}");
+    assert!(message.contains("cell"), "{message}");
+    assert!(message.contains("x"), "{message}");
+}
+
+#[test]
+fn untyped_open_map_accepts_strings_and_rejects_a_number() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "open.yaml",
+        "\
+name: c
+kind: document
+version: 1
+fields:
+  - name: meta
+    object: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    collection
+        .add("ok", rec(json!({"meta": {"k": "v", "empty": ""}})))
+        .unwrap();
+    let got = fields_of(&collection.get("ok").unwrap());
+    assert_eq!(got["meta"]["k"], "v");
+    assert_eq!(got["meta"]["empty"], "");
+
+    let err = collection
+        .add("bad", rec(json!({"meta": {"k": 1}})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("meta"), "{message}");
+    assert!(message.contains("k"), "{message}");
+    assert!(message.contains("must be a string"), "{message}");
+}
+
+#[test]
+fn typed_open_map_may_be_omitted_from_the_record() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "maps.yaml",
+        "\
+name: c
+kind: document
+version: 1
+fields:
+  - name: env
+    object:
+      values:
+        name: axis
+        integer: {}
+  - name: title
+    string: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    collection
+        .add("omit", rec(json!({"title": "none"})))
+        .unwrap();
+    let omitted = fields_of(&collection.get("omit").unwrap());
+    assert_eq!(omitted.get("title").unwrap(), "none");
+    assert!(!omitted.contains_key("env"));
+
+    collection
+        .add("empty", rec(json!({"title": "empty", "env": {}})))
+        .unwrap();
+    let empty = fields_of(&collection.get("empty").unwrap());
+    assert_eq!(empty["env"], json!({}));
+}
+
+#[test]
+fn journal_takes_a_typed_open_map_too() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "log.yaml",
+        "\
+name: c
+kind: journal
+version: 1
+fields:
+  - name: env
+    object:
+      values:
+        name: axis
+        integer: {}
+",
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("c").unwrap();
+    collection
+        .add("ok", rec(json!({"env": {"prod": 1, "staging": 0}})))
+        .unwrap();
+    let got = fields_of(&collection.get("ok").unwrap());
+    assert_eq!(got["env"]["prod"].as_f64(), Some(1.0));
+    let line = fs::read_to_string(scratch.vault().join("c").join("00000001.jsonl")).unwrap();
+    assert_eq!(line, "{\"env\":{\"prod\":1,\"staging\":0},\"id\":\"ok\"}\n");
+
+    let err = collection
+        .add("bad", rec(json!({"env": {"prod": "1"}})))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.to_string();
+    assert!(message.contains("env"), "{message}");
+    assert!(message.contains("axis"), "{message}");
+    assert!(message.contains("key prod"), "{message}");
+    vault.check().unwrap();
+}
+
 fn peek_schema_name(body: &str) -> String {
     for line in body.lines() {
         let line = line.trim();

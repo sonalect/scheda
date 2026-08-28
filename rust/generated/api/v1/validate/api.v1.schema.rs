@@ -999,6 +999,131 @@ impl ::protovalidate_buffa::Validate for Object {
                     );
             }
         }
+        if let Some(inner) = self.values.as_option() {
+            if let Err(sub) = inner.validate() {
+                violations
+                    .extend(
+                        sub
+                            .violations
+                            .into_iter()
+                            .map(|mut v| {
+                                v.field
+                                    .elements
+                                    .insert(
+                                        0,
+                                        ::protovalidate_buffa::FieldPathElement {
+                                            field_number: Some(2i32),
+                                            field_name: Some(::std::borrow::Cow::Borrowed("values")),
+                                            field_type: Some(::protovalidate_buffa::FieldType::Message),
+                                            key_type: None,
+                                            value_type: None,
+                                            subscript: None,
+                                        },
+                                    );
+                                v
+                            }),
+                    );
+            }
+        }
+        if let ::core::option::Option::Some(__cel_inner) = self.values.as_option() {
+            if !((!(__cel_inner.required.unwrap_or(false)))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("values")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "object.values.no_required",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "values must not set required",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
+        if let ::core::option::Option::Some(__cel_inner) = self.values.as_option() {
+            if !((!(__cel_inner.exclude_find.unwrap_or(false)))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("values")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "object.values.no_exclude_find",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "values must not set exclude_find",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
+        if let ::core::option::Option::Some(__cel_inner) = self.values.as_option() {
+            if !((!(__cel_inner.default.is_set()))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("values")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "object.values.no_default",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "values must not set default",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
         let (
             rt_violation,
             violations,

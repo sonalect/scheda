@@ -2008,7 +2008,13 @@ pub const __UNIT_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_
     from_json: ::buffa::type_registry::any_from_json::<Unit>,
     is_wkt: false,
 };
-/// `object` / `object_list`. Empty `fields`: open map of `string` values.
+/// `object` / `object_list`. `fields` lists keys. `values` types every
+/// unnamed key. The two are mutually exclusive. Omitting both: open map
+/// of `string` values. The xor is a library check: protovalidate-buffa
+/// cannot transpile CEL over a repeated message. `values` flags that
+/// cannot apply (`required`, `default`, `exclude_find`) are refused
+/// here. `edge` under `values` is a library check (CEL cannot see a
+/// oneof arm as `this.edge`).
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -2020,13 +2026,25 @@ pub struct Object {
         deserialize_with = "::buffa::json_helpers::null_as_default"
     )]
     pub fields: ::buffa::alloc::vec::Vec<Field>,
+    /// Type of every value under a key Schema does not name. `name` labels
+    /// one entry in error messages and is never a key on disk.
+    ///
+    /// Field 2: `values`
+    #[serde(
+        rename = "values",
+        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+    )]
+    pub values: ::buffa::MessageField<Field, ::buffa::Inline<Field>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
 }
 impl ::core::fmt::Debug for Object {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("Object").field("fields", &self.fields).finish()
+        f.debug_struct("Object")
+            .field("fields", &self.fields)
+            .field("values", &self.values)
+            .finish()
     }
 }
 impl Object {
@@ -2064,6 +2082,14 @@ impl ::buffa::Message for Object {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if self.values.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.values.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -2081,6 +2107,14 @@ impl ::buffa::Message for Object {
                 buf,
             );
             v.write_to(__cache, buf);
+        }
+        if self.values.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                2u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.values.write_to(__cache, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -2107,6 +2141,17 @@ impl ::buffa::Message for Object {
                 ::buffa::Message::merge_length_delimited(&mut elem, buf, ctx)?;
                 self.fields.push(elem);
             }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::Message::merge_length_delimited(
+                    self.values.get_or_insert_default(),
+                    buf,
+                    ctx,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -2116,6 +2161,7 @@ impl ::buffa::Message for Object {
     }
     fn clear(&mut self) {
         self.fields.clear();
+        self.values = ::buffa::MessageField::none();
         self.__buffa_unknown_fields.clear();
     }
 }

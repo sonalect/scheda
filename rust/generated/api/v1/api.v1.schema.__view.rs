@@ -2509,11 +2509,22 @@ impl ::serde::Serialize for UnitOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// `object` / `object_list`. Empty `fields`: open map of `string` values.
+/// `object` / `object_list`. `fields` lists keys. `values` types every
+/// unnamed key. The two are mutually exclusive. Omitting both: open map
+/// of `string` values. The xor is a library check: protovalidate-buffa
+/// cannot transpile CEL over a repeated message. `values` flags that
+/// cannot apply (`required`, `default`, `exclude_find`) are refused
+/// here. `edge` under `values` is a library check (CEL cannot see a
+/// oneof arm as `this.edge`).
 #[derive(Clone, Debug, Default)]
 pub struct ObjectView<'a> {
     /// Field 1: `fields`
     pub fields: ::buffa::RepeatedView<'a, super::super::__buffa::view::FieldView<'a>>,
+    /// Type of every value under a key Schema does not name. `name` labels
+    /// one entry in error messages and is never a key on disk.
+    ///
+    /// Field 2: `values`
+    pub values: ::buffa::MessageFieldView<super::super::__buffa::view::FieldView<'a>>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for ObjectView<'a> {
@@ -2544,6 +2555,27 @@ impl<'a> ::buffa::MessageView<'a> for ObjectView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                match view.values.as_mut() {
+                    Some(existing) => {
+                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
+                    }
+                    None => {
+                        view.values = ::buffa::MessageFieldView::set(
+                            <super::super::__buffa::view::FieldView as ::buffa::MessageView>::decode_view_ctx(
+                                sub,
+                                __sub_ctx,
+                            )?,
+                        );
+                    }
+                }
+            }
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
@@ -2589,6 +2621,15 @@ impl<'a> ::buffa::MessageView<'a> for ObjectView<'a> {
                 .iter()
                 .map(|v| v.to_owned_from_source(__buffa_src))
                 .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
+            values: match self.values.as_option() {
+                Some(v) => {
+                    ::buffa::MessageField::<
+                        super::super::Field,
+                        ::buffa::Inline<super::super::Field>,
+                    >::some(v.to_owned_from_source(__buffa_src)?)
+                }
+                None => ::buffa::MessageField::none(),
+            },
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -2603,6 +2644,14 @@ impl<'a> ::buffa::ViewEncode<'a> for ObjectView<'a> {
         for v in &self.fields {
             let __slot = __cache.reserve();
             let inner_size = v.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
+        if self.values.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.values.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -2627,6 +2676,14 @@ impl<'a> ::buffa::ViewEncode<'a> for ObjectView<'a> {
             );
             v.write_to(__cache, buf);
         }
+        if self.values.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                2u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.values.write_to(__cache, buf);
+        }
         self.__buffa_unknown_fields.write_to(buf);
     }
 }
@@ -2650,6 +2707,11 @@ impl<'__a> ::serde::Serialize for ObjectView<'__a> {
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
         if !self.fields.is_empty() {
             __map.serialize_entry("fields", &*self.fields)?;
+        }
+        {
+            if let ::core::option::Option::Some(__v) = self.values.as_option() {
+                __map.serialize_entry("values", __v)?;
+            }
         }
         __map.end()
     }
@@ -2744,6 +2806,16 @@ impl ObjectOwnedView {
         &self,
     ) -> &::buffa::RepeatedView<'_, super::super::__buffa::view::FieldView<'_>> {
         &self.0.reborrow().fields
+    }
+    /// Type of every value under a key Schema does not name. `name` labels
+    /// one entry in error messages and is never a key on disk.
+    ///
+    /// Field 2: `values`
+    #[must_use]
+    pub fn values(
+        &self,
+    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::FieldView<'_>> {
+        &self.0.reborrow().values
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<ObjectView<'static>>> for ObjectOwnedView {

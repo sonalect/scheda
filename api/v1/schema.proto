@@ -107,9 +107,36 @@ message Text {
 // `integer` / `number` / `boolean`, and Edge `one` / `many`.
 message Unit {}
 
-// `object` / `object_list`. Empty `fields`: open map of `string` values.
+// `object` / `object_list`. `fields` lists keys. `values` types every
+// unnamed key. The two are mutually exclusive. Omitting both: open map
+// of `string` values. The xor is a library check: protovalidate-buffa
+// cannot transpile CEL over a repeated message. `values` flags that
+// cannot apply (`required`, `default`, `exclude_find`) are refused
+// here. `edge` under `values` is a library check (CEL cannot see a
+// oneof arm as `this.edge`).
 message Object {
   repeated Field fields = 1;
+  // Type of every value under a key Schema does not name. `name` labels
+  // one entry in error messages and is never a key on disk.
+  Field values = 2 [(buf.validate.field) = {
+    cel: [
+      {
+        id: "object.values.no_required"
+        message: "values must not set required"
+        expression: "!this.required"
+      },
+      {
+        id: "object.values.no_exclude_find"
+        message: "values must not set exclude_find"
+        expression: "!this.exclude_find"
+      },
+      {
+        id: "object.values.no_default"
+        message: "values must not set default"
+        expression: "!has(this.default)"
+      }
+    ]
+  }];
 }
 
 message Edge {

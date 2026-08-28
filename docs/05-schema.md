@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.33, 27 August 2026.
+Document 5 of the Scheda package. Version 0.34, 28 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -31,10 +31,10 @@ An assertion without a check is not a requirement. Schema contains no executable
 | `number` | finite JSON/YAML number | JSON does not encode NaN/Infinity; YAML `.nan` / `.inf` rejected |
 | `boolean` | `true` / `false` | |
 | `string_list` | array of strings | empty `[]` is a value, not missing |
-| `object` | map | keys Schema lists, or open with `string` values |
-| `object_list` | array of maps | empty `[]` is a value, not missing; each item's fields are declared with the same type set (nesting allowed) |
+| `object` | map | keys Schema lists (`fields`), or open with `values` (declared type of every unnamed key), or open with `string` values when both are omitted |
+| `object_list` | array of maps | empty `[]` is a value, not missing; each item follows the same `fields` **xor** `values` rule as `object` (nesting allowed) |
 
-Unknown types are rejected. Flags `required` / `optional` / `nullable` apply to nested fields of `object` and `object_list` items the same way. *Check:* insert with a field not in Schema → error; insert with a known field of the wrong type → error; `object_list` of two maps round-trips; `number` `0.5` accepted; the same value on an `integer` field is rejected; an `integer` whose magnitude exceeds 2^53 is rejected.
+Unknown types are rejected. Flags `required` / `optional` / `nullable` apply to nested fields of `object` and `object_list` items the same way. On `values`, `nullable` keeps that meaning; `required`, `default`, and `exclude_find` are `invalid` at Schema load, and so is an `edge` anywhere beneath `values`, however deeply nested: under a key Schema does not name an edge could keep its dangling check but never be a find key. The `values` `name` labels one entry in error messages and is never a key on disk, so `id` and `body` are free for it. *Check:* insert with a field not in Schema → error; insert with a known field of the wrong type → error; `object_list` of two maps round-trips; `number` `0.5` accepted; the same value on an `integer` field is rejected; an `integer` whose magnitude exceeds 2^53 is rejected; a `values` map of the declared type round-trips; a value of the wrong type is `invalid` and names the field, the `values` label, and the key; `fields` and `values` together is `invalid`; an `edge` nested under `values` is `invalid`.
 
 **SCH-5. Required, optional, nullable.** Required fields must be present on write. Optional fields may be absent. Independently, Schema may mark a field `nullable` (default false).
 
@@ -49,7 +49,7 @@ A default is applied only if Schema states one; otherwise MOD-12 (missing is mis
 
 **SCH-7. Body marks (`document` only).** Schema says whether a Markdown body is forbidden (`no_body`) and whether it is excluded from the lexical Index and from vector search (`text.exclude_fts` / `text.exclude_vector`). Default: body allowed and in the lexical Index (`find` field `body` and BM25) and in vectors. *Check:* `no_body` with a non-empty body → write error; `exclude_fts` body text is not a `find` key and is not found by lexical `search`; **core** still stores the body.
 
-**SCH-8. Filter keys.** `find` takes `api.v1.Filter` (IDX-10): a Tantivy 0.26 `Query` tree (`find.proto`), then files for those `id`s. Every declared field may appear in a leaf (`term`, `term_set`, `phrase`, `range`, `exists`, …) unless Schema sets `exclude_find`. Record identity `id` is always allowed; it is not a Schema field and cannot be `exclude_find`. Markdown `body` is a find key on `document` when the body is allowed and not `exclude_fts` (SCH-7); it is not a Schema field. `term` on `id` with JSON `null` is `invalid`. There is no path-prefix query: the caller never supplies a Record path. Existence (`exists`) means a non-null indexed value (`ExistsQuery`). Equality to JSON `null` is a `term` whose value is `null` (stored `null`, not absent). Combine with `boolean` (`must` / `should` / `must_not`). *Check:* `find` on an `exclude_find` field → error; `find` on an unmarked field round-trips; `term` `f = null` does not return a Record that omitted `f`. *Check:* `term` `id = "alpha"` returns that Record when it is in the Index. *Check:* `regex` / `phrase` on `body` hits prose that is not in a Schema field; `exclude_fts` body → `invalid`. **Core** for `find`; ranking is `06`.
+**SCH-8. Filter keys.** `find` takes `api.v1.Filter` (IDX-10): a Tantivy 0.26 `Query` tree (`find.proto`), then files for those `id`s. Every declared field may appear in a leaf (`term`, `term_set`, `phrase`, `range`, `exists`, …) unless Schema sets `exclude_find`. Record identity `id` is always allowed; it is not a Schema field and cannot be `exclude_find`. Markdown `body` is a find key on `document` when the body is allowed and not `exclude_fts` (SCH-7); it is not a Schema field. A `values` label and keys Schema does not name are not find keys. `term` on `id` with JSON `null` is `invalid`. There is no path-prefix query: the caller never supplies a Record path. Existence (`exists`) means a non-null indexed value (`ExistsQuery`). Equality to JSON `null` is a `term` whose value is `null` (stored `null`, not absent). Combine with `boolean` (`must` / `should` / `must_not`). *Check:* `find` on an `exclude_find` field → error; `find` on an unmarked field round-trips; `term` `f = null` does not return a Record that omitted `f`. *Check:* `term` `id = "alpha"` returns that Record when it is in the Index. *Check:* `regex` / `phrase` on `body` hits prose that is not in a Schema field; `exclude_fts` body → `invalid`. **Core** for `find`; ranking is `06`.
 
 ---
 
@@ -138,7 +138,7 @@ Each item of `fields`:
 
 | Key | Required | Meaning |
 |---|---|---|
-| `name` | yes | Field name. Non-empty. Not `id` (SCH-6) or `body` (SCH-7). |
+| `name` | yes | Field name. Non-empty. Not `id` (SCH-6) or `body` (SCH-7); those two are free on a `values` entry, which names no key. |
 | `required` | no | Boolean. Default `false` (optional). |
 | `nullable` | no | Boolean. Default `false` (SCH-5). |
 | `exclude_find` | no | Boolean. Default `false`. `true` excludes the field from `find` (SCH-8). |
@@ -154,11 +154,11 @@ Spec (exactly one):
 | `number` | Finite JSON/YAML number. Empty mapping. |
 | `boolean` | `true` / `false`. Empty mapping. |
 | `string_list` | Array of strings. Same search mapping as `string`. |
-| `object` | Map. Nested `fields` (this same table). Omitted / empty `fields`: open map of `string` values. |
-| `object_list` | Array of maps. Same nested `fields` as `object`. |
+| `object` | Map. Nested `fields` **xor** `values` (this same field table). Omitting both / empty `fields`: open map of `string` values. `values.name` labels one entry in error messages and is never a key on disk, so `id` and `body` are free for it. `required`, `default`, and `exclude_find` on that entry are `invalid`, and so is an `edge` anywhere beneath `values`. |
+| `object_list` | Array of maps. Same nested `fields` **xor** `values` as `object`. |
 | `edge` | SCH-11. Mapping: `collection` (required), `one` **xor** `many` (empty mapping), optional `dangling` (`lax` \| `strict`), optional `exclude_fts` / `exclude_vector`. |
 
-Nested `fields` exist only under `object` / `object_list`. They cannot appear on an edge or a scalar.
+Nested `fields` and `values` exist only under `object` / `object_list`. They cannot appear on an edge or a scalar. The two are mutually exclusive.
 
 ---
 
