@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -617,7 +617,9 @@ impl SearchEngine {
 
 impl Drop for SearchEngine {
     fn drop(&mut self) {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let Ok(mut inner) = self.inner.lock() else {
+            return;
+        };
         let can_write = inner.can_write;
         let _ = inner.commit(&self.index_dir, can_write);
         if let Some(lexical) = inner.lexical.as_mut()

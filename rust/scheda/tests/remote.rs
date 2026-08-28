@@ -235,6 +235,19 @@ fn auto_sync_on_fast_forwards_head() {
 }
 
 #[test]
+fn auto_sync_open_is_locked_while_writer_holds_lock() {
+    let scratch = Scratch::new();
+    let (_source, bare) = pair_with_bare(&scratch);
+    let remote = as_url(&bare);
+    let a = scratch.dir("a");
+    let writer = Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap();
+    writer.begin().unwrap();
+    let err = Vault::open(&a, OpenOptions::new().auto_sync(true), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Locked));
+    drop(writer);
+}
+
+#[test]
 fn auto_sync_on_diverged_is_not_fast_forward() {
     let scratch = Scratch::new();
     let (_source, bare) = pair_with_bare(&scratch);

@@ -28,7 +28,7 @@ const SCHEMA_FILENAMES: [&str; 3] = [SCHEMA_YAML, SCHEMA_YML, SCHEMA_JSON];
 pub enum Kind {
     /// One file per Record; `replace` is allowed.
     Document,
-    /// Append-only JSONL segments; `replace` is `unsupported`.
+    /// Append-only JSONL segments; `replace` and `remove` are `unsupported`.
     Journal,
     /// One file for the collection; replace as a whole.
     Singleton,

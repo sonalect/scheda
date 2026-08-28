@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.35, 27 August 2026.
+Document 6 of the Scheda package. Version 0.36, 27 August 2026.
 
 Normative rules for the derived Index and `get`. **`find` and `search` (how they must work) are `13`.** Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`. Phase **core** or **search** as marked.
 
@@ -12,7 +12,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 **IDX-1. Rebuild from files.** The Index directory is `{vault}/.scheda/` (gitignored; GIT-13). It is not part of a Vault commit or backup. `reindex` reads Schema and Records and rebuilds it. *Check (**core**):* delete `.scheda/`, `get` and `history` of a fixture `document` still return that file; `lines` of a fixture `journal` still yields every line; `find` / `replace` of that id fail until `reindex` (IDX-10). After `reindex`, a fixture `find` matches the files.
 
-**IDX-2. Versioned format.** The Index carries its own format version. **Core** writes `{vault}/.scheda/index/format`: one decimal integer (currently `3`) and a newline. An incompatible or corrupt file is not read “as best effort”: `reindex` or `index_unusable`. `get`, `history`, and `lines` still read Vault / git files. Methods that resolve `id` through the Index (`find`, `search`, `replace`) fail `index_unusable` or empty, never another Vault's ids. *Check (**core**):* corrupt or unknown version → `search` / `find` return no hits or a failure, never another Vault's ids (QRY-4); `get` and `lines` still match the files.
+**IDX-2. Versioned format.** The Index carries its own format version. **Core** writes `{vault}/.scheda/index/format`: one decimal integer (currently `3`) and a newline. An incompatible or corrupt file is not read “as best effort”: `reindex` or an Index code (`index_version`, `index_corrupt`, `index_lexical`, `index_missing`). `get`, `history`, and `lines` still read Vault / git files. Methods that resolve `id` through the Index (`find`, `search`, `replace`, `remove`) fail with that Index code or empty, never another Vault's ids. *Check (**core**):* corrupt or unknown version → `search` / `find` return no hits or a failure, never another Vault's ids (QRY-4); `get` and `lines` still match the files.
 
 **IDX-3. Invalid Records stay out of search.** Files that fail current Schema (SCH-12) are omitted from lexical, vector, and edge indexes until they validate. `get` still returns them with a validity flag (`07`). *Check (**search**):* tightened Schema; old file is absent from `search` and present in `get`.
 

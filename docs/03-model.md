@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.20, 27 August 2026.
+Document 3 of the Scheda package. Version 0.21, 27 August 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -50,7 +50,7 @@ A rare immutable note can still be a `document` the consumer never replaces. `jo
 | `journal` | `{name}/*.jsonl` (library names segments) |
 | `singleton` | `{name}/record.yaml` |
 
-The caller never passes a Record path. `get` / `add` / `history` / `remove` validate `id` then open, create, git, or unlink that file. `find` / `replace` / `search` take `id`s from the Index, then open those files (IDX-10). *Check:* `create_collection` with a `layout` key → `invalid`; a collection named `a/b` is `invalid`; `get("alpha")` reads `{name}/alpha.md` for a `document`.
+The caller never passes a Record path. `get` / `add` / `history` validate `id` then open, create, or git that file. `find` / `replace` / `remove` / `search` take `id`s from the Index when `find` is on, then open or unlink those files (IDX-10). When `find` is off, and on an isolated collection, `replace` / `remove` use the Record file (same path as `get`). *Check:* `create_collection` with a `layout` key → `invalid`; a collection named `a/b` is `invalid`; `get("alpha")` reads `{name}/alpha.md` for a `document`.
 
 **MOD-9. Journal path is the segment, not the `id`.** The Record still lives at `(collection, id)`. The file path is the open or closed segment that contains the line. Callers must not treat the segment name as `id`. *Check:* `get` does not require the caller to pass a segment name.
 

@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.25, 27 August 2026.
+Document 4 of the Scheda package. Version 0.27, 28 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -18,7 +18,7 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **STO-3. Journal lines are not rewritten.** Same as MOD-16: no update/delete API (`replace` and `remove` are `unsupported`). On read/`check`, a line that is not a single JSON object, or a final line without `\n`, is an error. Scheda does not silently truncate or rewrite the segment to “fix” it. *Check:* flip bytes in the middle of a closed segment → `check` fails; `replace` / `remove` on the collection → error.
 
-**STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5).
+**STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. `open` with `auto_sync` off does not take the lock. `open` with `auto_sync` on and a Remote exists takes the lock for the auto-pull, then releases it (GIT-10, LIB-4). *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5). *Check:* `open` with `auto_sync` on while another handle holds the write lock → `locked`.
 
 The lock is an OS file lock on `{vault}/.scheda/write.lock` (not a pid-file,
 not under `index/`). It is released when the process dies because the kernel
@@ -35,7 +35,7 @@ relied on; Vaults on those shares are outside **core**.
 
 **GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. `init` and `clone` write `core.longpaths` in the Vault's local git config (`commit` and `discard` set it on an older tree that lacks it) so Windows can stage a 255-byte filename component when the absolute path is longer than MAX_PATH. Unix ignores the key. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s. *Check:* after `open` of a new Vault, local `core.longpaths` is true. *Check:* `add` of a 252-character `id` (on-disk `{id}.md` = 255 bytes) commits.
 
-**GIT-2. Autocommit unless a transaction is open.** Outside a transaction, each mutating call (`add`, `replace`, `remove`, `create_collection`) writes the working tree and then creates one git commit. The default message is `scheda`. Isolated Record paths commit in `{vault}/.isolated/` nested git; Schema stubs and non-isolated files commit in the main repository. If that commit fails, those writes are discarded: only paths Scheda recorded are restored to HEAD (new files are deleted). This is not `git reset --hard` of the whole tree.
+**GIT-2. Autocommit unless a transaction is open.** Outside a transaction, each mutating call (`add`, `replace`, `remove`, `create_collection`) writes the working tree and then creates one git commit. The default message is `scheda`. Isolated Record paths commit in `{vault}/.isolated/` nested git; Schema stubs and non-isolated files commit in the main repository. If that commit fails, those writes are discarded: only paths Scheda recorded are restored to HEAD (new files are deleted). Isolated and main commits are two git operations; if the main commit fails after the nested one succeeded, Scheda resets the nested repository to the HEAD it had before that nested commit. This is not `git reset --hard` of the whole main tree.
 
 A transaction is the only supported batch. There is no `OpenOptions` field that turns autocommit off for the handle. The caller chooses: each mutating call is its own commit (no `begin`), or many writes then one `commit`. A consumer that appends many journal lines must hold a transaction; otherwise each line is one commit.
 
@@ -45,7 +45,7 @@ The CLI does not expose `begin` / `commit` / `discard`. Each mutating CLI comman
 
 `begin` takes this handle into a transaction: leftover Scheda writes are discarded first; `invalid` if a transaction is already open on this handle. Inside a transaction, mutating calls do not commit. `commit(message)` ends the transaction and creates one git commit per repository that has recorded paths (main tree and/or `{vault}/.isolated/`), with that message; a side with no recorded paths is skipped. Those two commits are not one atomic unit. It is `invalid` if no transaction is open, or if there is nothing to commit on either side. `discard` restores those paths to HEAD in the repository that owns each path, reloads Schema, and rebuilds the Index (including the nested Index when `.isolated/` exists); it is allowed without an open transaction to clear crash leftovers. Staging is only those recorded paths. It must not `git add` the whole tree in a way that stages junk at the Vault root, and must not stage isolated paths into the parent git.
 
-*Check:* several inserts after `begin` without `commit` → `git log` unchanged; one `commit` → one new commit whose paths are those writes. *Check:* `add` without `begin` → one new commit with message `scheda`. *Check:* 10⁴ journal `add` after `begin`, one `commit` → `git log` grows by one. *Check:* drop the handle mid-transaction after complete journal lines plus a truncated tail; reopen without `begin` / `discard`; `get` returns the complete Records and not the truncated line (STO-5). *Check:* drop the handle mid-transaction; reopen; `commit` is `invalid`; the next `add` without `begin` discards the leftover and the abandoned `id` is gone.
+*Check:* several inserts after `begin` without `commit` → `git log` unchanged; one `commit` → one new commit whose paths are those writes. *Check:* `add` without `begin` → one new commit with message `scheda`. *Check:* 10³ journal `add` after `begin`, one `commit` → `git log` grows by one. *Check:* drop the handle mid-transaction after complete journal lines plus a truncated tail; reopen without `begin` / `discard`; `get` returns the complete Records and not the truncated line (STO-5). *Check:* drop the handle mid-transaction; reopen; `commit` is `invalid`; the next `add` without `begin` discards the leftover and the abandoned `id` is gone.
 
 Who owns untracked files the human created in the Vault is the caller's problem; Scheda does not auto-add them.
 
@@ -82,12 +82,12 @@ Isolated nested git (**later** phase, implemented) is created by Scheda under `{
 
 **GIT-10. `auto_sync`.** Option at `open` (default **off**). When on **and** a Remote exists:
 
-1. **Auto-pull on `open`:** fetch, then update `HEAD` only if the incoming commits are a **fast-forward**. If not fast-forward (diverged branches, would need merge or rebase), `open` fails with code `not_fast_forward`. Scheda does not merge on open. The working tree is not left in a conflicted state as a successful open.
+1. **Auto-pull on `open`:** takes `{vault}/.scheda/write.lock` for that step (STO-4), then fetch, then update `HEAD` only if the incoming commits are a **fast-forward**. Releases the lock before `open` returns. A writer already holding the lock → `locked`. If not fast-forward (diverged branches, would need merge or rebase), `open` fails with code `not_fast_forward`. Scheda does not merge on open. The working tree is not left in a conflicted state as a successful open.
 2. **Auto-push after a local commit:** same as an explicit `push` after a successful `commit` or autocommit (GIT-12).
 
 If `auto_sync` is on and there is no Remote, `open` and `commit` still succeed locally; remote steps are skipped (GIT-8). Mutating calls inside a transaction never pull or push.
 
-*Check:* `auto_sync` off, Remote has new commits → `open` does not change `HEAD`. `auto_sync` on, Remote is a fast-forward → `HEAD` matches the Remote after `open`. `auto_sync` on, histories diverged → `open` fails, working tree has no conflict markers from Scheda. `auto_sync` on, `commit`, Remote reachable → commit is on the Remote.
+*Check:* `auto_sync` off, Remote has new commits → `open` does not change `HEAD`. `auto_sync` on, Remote is a fast-forward → `HEAD` matches the Remote after `open`. `auto_sync` on, histories diverged → `open` fails, working tree has no conflict markers from Scheda. `auto_sync` on, another handle holds the write lock → `locked`. `auto_sync` on, `commit`, Remote reachable → commit is on the Remote.
 
 **GIT-11. Explicit remote operations.** Always available when a Remote exists, independent of `auto_sync`:
 

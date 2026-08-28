@@ -56,6 +56,10 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- CI OPS volume on every OS is 10³ journal and 10² document Records
+  (the size Windows already used). Linux and macOS no longer load
+  10⁴ / 10³. Each `add` fsyncs, so the full OPS-1 fixture is minutes
+  on a real disk.
 - README and `10`/`11`/`12` close consumer readiness P0–P10. P0–P5, P8,
   P9, and P10 are in, including the unencrypted isolated nested git
   (`10` §1), the slug as the only `id` rule, `find` / `search` as
@@ -99,6 +103,16 @@ API or on-disk format changes bump the minor.
   `{index}/txn` file. `open` does not resume another process's
   transaction. CLI does not expose `begin` / `commit` / `discard`;
   each mutating CLI command autocommits with message `scheda`.
+- LIB-5 documents the real `api.v1.Error.Code` values: `duplicate_id` /
+  `conflict_markers` instead of coarse `conflict`; `io_*` / `git_*`
+  families instead of coarse `io` / `git`; Index `index_missing` /
+  `index_version` / `index_lexical` / `index_vector` / `index_corrupt`
+  instead of coarse `index_unusable`. Same `id` on `add` is
+  `duplicate_id`. Docs `03`/`04`/`06`/`07`/`08`/`09`/`10`/`11`/`12`/`13`/`14`
+  match. ISO-2 owner-only mode is `0600` on Unix; other systems leave
+  ACLs unchanged. Isolated `collection(name)` / CLI `collection NAME` is
+  the Record handle; `unsupported` is only `find` / `search` that name an
+  isolated collection (main Index), not get/add/replace/remove/history.
 
 ### Removed
 
@@ -109,6 +123,14 @@ API or on-disk format changes bump the minor.
 
 ### Fixed
 
+- Mixed isolated+main `commit`: if the main-tree commit fails after the
+  nested git commit succeeded, nested `HEAD` is reset to the commit it
+  had before that nested commit (working tree included).
+- `open` with `auto_sync` on takes `write.lock` for the auto-pull, then
+  releases it. A writer already holding the lock is `locked` (STO-4).
+- Mutex poison on Vault/Collection state fails closed (`Result`) instead
+  of continuing with `into_inner`. `holds_write_lock` treats poison as
+  held. `SearchEngine` drop skips commit if the inner mutex is poisoned.
 - On Windows, `add` of a Record whose absolute path is longer than MAX_PATH
   no longer fails with git `path too long`. `init`, `clone`, `commit`, and
   `discard` set `core.longpaths` in the Vault's local git config so libgit2

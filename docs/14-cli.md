@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.54, 27 August 2026.
+Document 14 of the Scheda package. Version 0.55, 28 August 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -48,12 +48,14 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 
 `find` / `search` are Vault methods (`07` LIB-10, LIB-11). `--collections`
 is a set of names. Unset or empty → every non-isolated collection on this
-Vault. Unknown name → `not_found`. Isolated name → `unsupported` (same as
-`collection NAME`). Collection `find` / `search` below call the same
-methods with that `NAME` (no `--collections`). Stdout JSON includes
-`collection` on each `Record` / `Hit`. `--include-raw` sets
-`FindQuery.include_raw` / `SearchQuery.include_raw` (default off: omit
-`raw`). `--filter` is `FindQuery.filter` JSON.
+Vault. Unknown name → `not_found`. Isolated name → `unsupported` (isolated
+Records are `collection NAME` and the nested Index, not `find` / `search`
+on the main Index). Collection `find` / `search` below call the same
+methods with that `NAME` (no `--collections`), so an isolated `NAME` there
+is also `unsupported`. Stdout JSON includes `collection` on each `Record`
+/ `Hit`. `--include-raw` sets `FindQuery.include_raw` /
+`SearchQuery.include_raw` (default off: omit `raw`). `--filter` is
+`FindQuery.filter` JSON.
 
 The CLI does not encode `begin` / `commit` / `discard`. Each mutating
 command (`create-collection`, `collection … add` / `replace` / `remove`) autocommits
@@ -109,6 +111,11 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `remove` | `--id ID` |
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
+
+Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
+`history`, `replace`, `remove` (and `lines` on the library, not this CLI).
+`find` / `search` on that `NAME` are `unsupported`, same as Vault
+`--collections` with an isolated name.
 
 ---
 

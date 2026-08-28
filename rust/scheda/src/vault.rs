@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "search")]
 use crate::Reranker;
@@ -140,7 +140,7 @@ impl Vault {
         let index_dir = fs::canonicalize(&index_dir).context("[Vault::open] canonicalize index")?;
         let remotes = git::remotes(&path)?;
         if auto_sync && !remotes.is_empty() {
-            git::pull(&path)?;
+            pull_under_write_lock(&path)?;
         }
         let schema = Arc::new(schema::load(&path)?);
         let journal_ids = Arc::new(Mutex::new(index::load_all_journal_ids(
@@ -186,10 +186,10 @@ impl Vault {
     /// Whether this handle currently holds `{vault}/.scheda/write.lock`.
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
-        self.write_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .is_some()
+        match self.write_lock.lock() {
+            Ok(slot) => slot.is_some(),
+            Err(_) => true,
+        }
     }
 
     /// Whether git reports at least one Remote (usually `origin`).
@@ -213,11 +213,17 @@ impl Vault {
     /// Schema `version` values present in this Vault.
     #[must_use]
     pub fn versions(&self) -> Vec<u32> {
-        self.schema_arc().versions()
+        match self.schema_arc() {
+            Ok(schema) => schema.versions(),
+            Err(_) => Vec::new(),
+        }
     }
 
-    fn schema_arc(&self) -> Arc<LoadedSchema> {
-        Arc::clone(&self.schema.lock().unwrap_or_else(PoisonError::into_inner))
+    fn schema_arc(&self) -> Result<Arc<LoadedSchema>, Error> {
+        Ok(Arc::clone(&*crate::error::mutex(
+            &self.schema,
+            "[Vault] lock schema",
+        )?))
     }
 
     /// Handle for one collection.
@@ -225,7 +231,7 @@ impl Vault {
     /// Unknown name → `not_found`. Isolated collections live under
     /// `{vault}/.isolated/{name}/` on this same handle.
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
-        let schema = self.schema_arc();
+        let schema = self.schema_arc()?;
         let Some(decl) = schema.get(name) else {
             bail!(Error::not_found(format!(
                 "collection {name} is not in Schema"
@@ -258,7 +264,7 @@ impl Vault {
         offset: u32,
         count: u32,
     ) -> Result<FindResult, Error> {
-        let schema = self.schema_arc();
+        let schema = self.schema_arc()?;
         QueryCtx {
             engine: &self.search,
             schema: &schema,
@@ -278,7 +284,7 @@ impl Vault {
         query: &SearchQuery,
         reranker: Option<&dyn Reranker>,
     ) -> Result<SearchHits, Error> {
-        let schema = self.schema_arc();
+        let schema = self.schema_arc()?;
         QueryCtx {
             engine: &self.search,
             schema: &schema,
@@ -290,16 +296,18 @@ impl Vault {
 
     /// End the transaction on this handle and create one git commit per
     /// repository that has recorded paths (main tree and/or
-    /// `{vault}/.isolated/`). The transaction flag is only in this process:
+    /// `{vault}/.isolated/`). Nested is committed first; if the main commit
+    /// then fails, nested `HEAD` is reset to the commit it had before that
+    /// nested commit. The transaction flag is only in this process:
     /// a new `open` does not resume it. `invalid` if none is open, the
     /// message is empty, or there is nothing to commit.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
-        if !flag(&self.in_txn) {
+        if !flag(&self.in_txn)? {
             bail!(Error::invalid("commit requires an open transaction"));
         }
         self.commit_recorded(message)?;
-        set_in_txn(&self.in_txn, false);
+        set_in_txn(&self.in_txn, false)?;
         self.push_if_auto_sync()
     }
 
@@ -313,11 +321,11 @@ impl Vault {
     /// already open on this handle.
     pub fn begin(&self) -> Result<(), Error> {
         self.require_write_lock("begin")?;
-        if flag(&self.in_txn) {
+        if flag(&self.in_txn)? {
             bail!(Error::invalid("already in a transaction"));
         }
         self.restore_recorded()?;
-        set_in_txn(&self.in_txn, true);
+        set_in_txn(&self.in_txn, true)?;
         Ok(())
     }
 
@@ -329,24 +337,24 @@ impl Vault {
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.restore_recorded()?;
-        set_in_txn(&self.in_txn, false);
+        set_in_txn(&self.in_txn, false)?;
         Ok(())
     }
 
     fn commit_recorded(&self, message: &str) -> Result<(), Error> {
         let paths: Vec<String> = {
-            let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            let set = crate::error::mutex(&self.written, "[Vault] lock written")?;
             set.iter().cloned().collect()
         };
         isolated::commit_recorded(&self.path, message, &paths)?;
-        let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
         set.clear();
         persist_written(&self.path, &set)
     }
 
     fn restore_recorded(&self) -> Result<(), Error> {
         let paths: Vec<String> = {
-            let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
             let paths: Vec<String> = set.iter().cloned().collect();
             set.clear();
             persist_written(&self.path, &set)?;
@@ -361,10 +369,7 @@ impl Vault {
 
     fn reload_after_restore(&self) -> Result<(), Error> {
         let loaded = schema::load(&self.path)?;
-        *self
-            .journal_ids
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) =
+        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
             index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
         #[cfg(feature = "find")]
         {
@@ -372,19 +377,19 @@ impl Vault {
             self.search
                 .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
         }
-        *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
+        *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
         Ok(())
     }
 
     fn drain_abandoned(&self) -> Result<(), Error> {
-        if flag(&self.in_txn) {
+        if flag(&self.in_txn)? {
             return Ok(());
         }
         self.restore_recorded()
     }
 
     fn finish_mutation(&self) -> Result<(), Error> {
-        if flag(&self.in_txn) {
+        if flag(&self.in_txn)? {
             return Ok(());
         }
         match self.commit_recorded(AUTO_COMMIT_MESSAGE) {
@@ -404,7 +409,7 @@ impl Vault {
     }
 
     fn note_write(&self, rel: String) -> Result<(), Error> {
-        let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
         set.insert(rel);
         persist_written(&self.path, &set)
     }
@@ -490,7 +495,7 @@ impl Vault {
             &self.index_dir,
             &remote,
             self.auto_sync,
-            &self.schema_arc(),
+            &*self.schema_arc()?,
         )?;
         Ok(info)
     }
@@ -510,12 +515,9 @@ impl Vault {
         let rel = schema::put_collection(&self.path, name, &schema)?;
         self.note_write(rel)?;
         let loaded = schema::load(&self.path)?;
-        *self
-            .journal_ids
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) =
+        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
             index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
-        *self.schema.lock().unwrap_or_else(PoisonError::into_inner) = Arc::new(loaded);
+        *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
         self.finish_mutation()?;
         self.collection(name)
     }
@@ -529,10 +531,7 @@ impl Vault {
         self.search.close_for_rebuild();
         let schema = schema::load(&self.path)?;
         let (counts, maps) = index::rebuild(&self.path, &schema, &self.index_dir)?;
-        *self
-            .journal_ids
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = maps;
+        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
         #[cfg(feature = "find")]
         self.search
             .rebuild(&self.path, &schema, self.embedder.as_deref())?;
@@ -718,10 +717,7 @@ impl Collection {
     }
 
     fn require_write(&self) -> Result<(), Error> {
-        let mut slot = self
-            .write_lock
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
+        let mut slot = crate::error::mutex(&self.write_lock, "[Collection] lock write lock")?;
         if slot.is_none() {
             *slot = Some(acquire_write_lock(&self.vault)?);
             #[cfg(feature = "find")]
@@ -731,17 +727,17 @@ impl Collection {
     }
 
     fn note_write(&self, rel: String) -> Result<(), Error> {
-        let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
         set.insert(rel);
         persist_written(&self.vault, &set)
     }
 
     fn drain_abandoned(&self) -> Result<(), Error> {
-        if flag(&self.in_txn) {
+        if flag(&self.in_txn)? {
             return Ok(());
         }
         let paths: Vec<String> = {
-            let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
             let paths: Vec<String> = set.iter().cloned().collect();
             set.clear();
             persist_written(&self.vault, &set)?;
@@ -776,16 +772,16 @@ impl Collection {
     }
 
     fn finish_mutation(&self) -> Result<(), Error> {
-        if flag(&self.in_txn) {
+        if flag(&self.in_txn)? {
             return Ok(());
         }
         let paths: Vec<String> = {
-            let set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+            let set = crate::error::mutex(&self.written, "[Collection] lock written")?;
             set.iter().cloned().collect()
         };
         match isolated::commit_recorded(&self.vault, AUTO_COMMIT_MESSAGE, &paths) {
             Ok(()) => {
-                let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+                let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
                 set.clear();
                 persist_written(&self.vault, &set)?;
                 if self.auto_sync && !self.remotes.is_empty() {
@@ -795,7 +791,7 @@ impl Collection {
             }
             Err(err) => {
                 let paths: Vec<String> = {
-                    let mut set = self.written.lock().unwrap_or_else(PoisonError::into_inner);
+                    let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
                     let paths: Vec<String> = set.iter().cloned().collect();
                     set.clear();
                     persist_written(&self.vault, &set)?;
@@ -872,10 +868,8 @@ impl Collection {
         crate::id::require_slug("id", id)?;
         match self.decl.kind {
             Kind::Journal => {
-                let maps = self
-                    .journal_ids
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
+                let maps =
+                    crate::error::mutex(&self.journal_ids, "[Collection::get] lock journal ids")?;
                 journal::find_journal(&self.vault, &self.decl, id, &maps)
             }
             Kind::Document | Kind::Singleton => store::find_document(&self.vault, &self.decl, id),
@@ -1082,10 +1076,7 @@ impl Collection {
     fn lookup_decl(&self, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
         match decl.kind {
             Kind::Journal => {
-                let maps = self
-                    .journal_ids
-                    .lock()
-                    .unwrap_or_else(PoisonError::into_inner);
+                let maps = crate::error::mutex(&self.journal_ids, "[Collection] lock journal ids")?;
                 journal::find_journal(&self.vault, decl, id, &maps)
             }
             Kind::Document | Kind::Singleton => store::find_document(&self.vault, decl, id),
@@ -1178,7 +1169,7 @@ fn read_record(
     };
     match decl.kind {
         Kind::Journal => {
-            let maps = journal_ids.lock().unwrap_or_else(PoisonError::into_inner);
+            let maps = crate::error::mutex(journal_ids, "[Vault] lock journal ids")?;
             journal::find_journal(vault, decl, id, &maps)
         }
         Kind::Document | Kind::Singleton => store::find_document(vault, decl, id),
@@ -1465,12 +1456,13 @@ fn tx_log(vault: &Path) -> PathBuf {
     vault.join(".scheda").join("tx.log")
 }
 
-fn flag(slot: &Mutex<bool>) -> bool {
-    *slot.lock().unwrap_or_else(PoisonError::into_inner)
+fn flag(slot: &Mutex<bool>) -> Result<bool, Error> {
+    Ok(*crate::error::mutex(slot, "[Vault] lock transaction flag")?)
 }
 
-fn set_in_txn(slot: &Mutex<bool>, on: bool) {
-    *slot.lock().unwrap_or_else(PoisonError::into_inner) = on;
+fn set_in_txn(slot: &Mutex<bool>, on: bool) -> Result<(), Error> {
+    *crate::error::mutex(slot, "[Vault] lock transaction flag")? = on;
+    Ok(())
 }
 
 fn remove_if_exists(path: &Path) -> Result<(), Error> {
@@ -1489,7 +1481,7 @@ fn repair_index_after_discard(
     embedder: Option<&dyn Embedder>,
 ) -> Result<(), Error> {
     let loaded = schema::load(vault)?;
-    *journal_ids.lock().unwrap_or_else(PoisonError::into_inner) =
+    *crate::error::mutex(journal_ids, "[Vault] lock journal ids")? =
         index::load_all_journal_ids(vault, index_dir, &loaded)?;
     #[cfg(feature = "find")]
     {
@@ -1553,6 +1545,19 @@ fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
             Err(Error::new(io_code(&err), err.to_string()).context("[Vault] lock write lock"))
         }
     }
+}
+
+/// `auto_sync` pull on `open`: take `write.lock` for the fetch/checkout, then
+/// release it so `open` does not keep the writer.
+fn pull_under_write_lock(path: &Path) -> Result<(), Error> {
+    let file = acquire_write_lock(path)?;
+    let result = git::pull(path);
+    if let Err(err) = file.unlock()
+        && result.is_ok()
+    {
+        return Err(err).context("[Vault::open] unlock write lock after auto_sync pull");
+    }
+    result
 }
 
 fn drain_legacy_index_lock(scheda: &Path) -> Result<(), Error> {

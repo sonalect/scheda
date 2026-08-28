@@ -90,12 +90,13 @@ const FIXTURE_NAMES: [&str; 11] = [
     "alias_bindings",
 ];
 
-// Unix CI loads 10⁴ journal / 10³ document. Windows is one tenth so the
-// same get / extra add checks finish under Bazel `large` (900s) on NTFS.
+// CI loads 10³ journal / 10² document on every OS so get / extra add
+// finish under Bazel `large` (900s) when the Vault is on a real disk:
+// each add fsyncs.
 #[cfg(feature = "find")]
-const OPS_JOURNAL: u64 = if cfg!(windows) { 1_000 } else { 10_000 };
+const OPS_JOURNAL: u64 = 1_000;
 #[cfg(feature = "find")]
-const OPS_DOCS: u64 = if cfg!(windows) { 100 } else { 1_000 };
+const OPS_DOCS: u64 = 100;
 #[cfg(feature = "find")]
 const OPS_BUDGET: Duration = Duration::from_millis(100);
 

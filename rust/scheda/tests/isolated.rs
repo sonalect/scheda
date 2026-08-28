@@ -128,6 +128,55 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
 }
 
 #[test]
+fn nested_commit_rolls_back_when_main_commit_fails() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    write_schema(&scratch, WEST);
+    let vault = scratch.reopen();
+    let decl: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "journal": {"segment_max_bytes": 1024},
+        "isolated": true,
+        "fields": [{"name": "msg", "string": {}}]
+    }))
+    .unwrap();
+    vault.create_collection("sealed_log", decl).unwrap();
+    vault
+        .collection("sealed_log")
+        .unwrap()
+        .add("e1", rec(json!({"msg": "one"})))
+        .unwrap();
+    let nested = scratch.vault().join(".isolated");
+    let before = log_len(&nested);
+    vault.begin().unwrap();
+    vault
+        .collection("sealed_log")
+        .unwrap()
+        .add("e2", rec(json!({"msg": "two"})))
+        .unwrap();
+    vault
+        .collection("west_docs")
+        .unwrap()
+        .add("n1", rec(json!({"title": "main"})))
+        .unwrap();
+    let git_dir = scratch.vault().join(".git");
+    let bak = scratch.root.join("git.bak");
+    fs::rename(&git_dir, &bak).unwrap();
+    let err = vault.commit("mixed").unwrap_err();
+    fs::rename(&bak, &git_dir).unwrap();
+    assert!(err.known_code().is_some(), "{err}");
+    assert_eq!(log_len(&nested), before);
+    let ids: Vec<_> = vault
+        .collection("sealed_log")
+        .unwrap()
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["e1"]);
+}
+
+#[test]
 fn isolated_journal_rotates_and_ids_map_stays_nested() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());

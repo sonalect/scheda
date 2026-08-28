@@ -89,7 +89,9 @@ pub(crate) fn ensure(vault: &Path) -> Result<Option<String>, Error> {
 
 /// Commit recorded paths: isolated paths in the nested git, the rest in the
 /// main repository. Empty on both sides is `invalid`. Nested git is created
-/// when isolated paths are present. The two commits are not one atomic unit.
+/// when isolated paths are present. Nested is committed first; if the main
+/// commit then fails, nested `HEAD` is reset to the OID captured before that
+/// nested commit.
 pub(crate) fn commit_recorded(vault: &Path, message: &str, paths: &[String]) -> Result<(), Error> {
     let (main, nested) = split_paths(paths);
     if main.is_empty() && nested.is_empty() {
@@ -97,12 +99,19 @@ pub(crate) fn commit_recorded(vault: &Path, message: &str, paths: &[String]) -> 
     }
     if !nested.is_empty() {
         ensure(vault)?;
-        git::commit(&root(vault), message, &nested)?;
+        let nested_root = root(vault);
+        let previous = git::peel_head_oid(&nested_root)?;
+        git::commit(&nested_root, message, &nested)?;
+        if !main.is_empty()
+            && let Err(err) = git::commit(vault, message, &main)
+        {
+            git::reset_head_to(&nested_root, previous)
+                .map_err(|reset_err| reset_err.context("[Isolated] rollback nested git"))?;
+            return Err(err);
+        }
+        return Ok(());
     }
-    if !main.is_empty() {
-        git::commit(vault, message, &main)?;
-    }
-    Ok(())
+    git::commit(vault, message, &main)
 }
 
 /// Restore recorded paths in each repo that owns them.

@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.35, 27 August 2026.
+Document 10 of the Scheda package. Version 0.37, 28 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -83,7 +83,7 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
 6. Hybrid `search` on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
-**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is Tantivy BM25; ANN is in-process USearch HNSW; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt lexical Index → `index_unusable`; `get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
+**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is Tantivy BM25; ANN is in-process USearch HNSW; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt lexical Index → `index_lexical`; `get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
 
 ---
 
@@ -158,7 +158,7 @@ These are orders of magnitude for an interactive caller on one machine, not SLAs
 
 **OPS-4. Offline embed.** After embedder weights are already on disk, **search** does not need the network. Download of weights is the consumer's install, not the library hot path. *Check (**search**):* a full cycle with the network disabled.
 
-`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9). Linux and macOS CI load those sizes. Windows CI runs the same C8 checks on 10³ journal and 10² document Records (one tenth) so every commit still measures NTFS I/O inside Bazel `large` (900s).
+`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9). CI on every OS loads 10³ journal and 10² document Records (one tenth of OPS-1) so the same C8 checks finish under Bazel `large` (900s) when the Vault is on a real disk: each `add` fsyncs.
 
 Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A future Index backend (`§5`) is how huge Vaults stay on the same API.
 

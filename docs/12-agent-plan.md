@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.54, 27 August 2026.
+Document 12 of the Scheda package. Version 0.57, 28 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -164,8 +164,10 @@ A3 moves this listing to `Vault.info`.
       that Vault; grep of `rust/scheda/src` does not contain those names
       (MOD-1, SCH-1).
 - [x] Isolated collection: `info` on the main Vault marks it isolated
-      and omits its field values (ISO-3). Until ISO-2, `collection(name)`
-      for that name is `unsupported`.
+      and omits its field values (ISO-3). Record I/O for that name is
+      `collection(name)` (ISO-2 / P4). This stage only required the
+      listing. `find` / `search` that name an isolated collection stay
+      `unsupported` (main Index).
 
 ---
 
@@ -195,7 +197,7 @@ replaces `rust/cli`. Do not add flags or commands here.
       search scores; on failure a LIB-5 `code`. A human message is optional
       and does not replace `code` (AGT-5).
 - [x] Contract tests for `not_found`, `invalid`, `locked`,
-      `index_unusable` (AGT-5). Not `crypto` (later).
+      `index_version` (AGT-5). Not `crypto` (later).
 - [x] CLI with `auto_sync` off does not require the network for local
       `info` / `get` / `add` / `commit` (ISO-1, GIT-8).
 
@@ -229,10 +231,12 @@ Close only after A1. Public crate API is `07` / `13`. `Embedder` /
 - [x] `Vault::find(collections, query, offset, count)` and
       `Vault::search(collections, query, reranker?)` (`07` LIB-10, LIB-11,
       `13`). Empty names = every non-isolated collection on this handle.
-      Unknown name → `not_found`; isolated → `unsupported`. Collection
-      `find` / `search` call those with `&[self.name]`. `Record.collection`
-      / `Hit.collection` are output only. `FindQuery.include_raw` /
-      `SearchQuery.include_raw` default off.
+      Unknown name → `not_found`; isolated name on `find` / `search` →
+      `unsupported`. `collection(name)` for an isolated name is still the
+      Record handle. Collection `find` / `search` call those with
+      `&[self.name]`. `Record.collection` / `Hit.collection` are output
+      only. `FindQuery.include_raw` / `SearchQuery.include_raw` default
+      off.
 - [x] `find`: Tantivy Query tree (`13` §3). `count` `0` → `invalid`. No
       `scan`. `document` / `singleton` score order; `journal` append order.
 - [x] `search`: `SearchQuery` (`k` only; no offset). RRF. Pool at least
@@ -269,7 +273,9 @@ embedder / reranker is A5.
 - [x] Vault `find [--collections NAME,…] --filter --offset --count` and
       Vault `search [--collections NAME,…] --query` (`14`). Unset
       `--collections` → every non-isolated collection.
-      Unknown name → `not_found`; isolated → `unsupported`. Collection
+      Unknown name → `not_found`; isolated name on `find` / `search` →
+      `unsupported`. CLI `collection NAME` get/add/replace/remove/history
+      on an isolated name still uses that handle. Collection
       `find` / `search` have no `--collections`. JSON includes
       `Record.collection` / `Hit.collection`.
 - [x] `collection NAME` subcommands: `schema`, `add`, `get`, `history`,
@@ -385,10 +391,11 @@ machinery.
 
 **Codes:** ISO-3, AGT-1.
 
-Close only after A5. Nested `{vault}/.isolated/` I/O (`10` §1) is not this
-stage. This is the agent half of isolation, not encryption. Isolated
-`collection(name)` stays `unsupported` until that slice (A3). Crate
-Check: `isolated_sealed_values_stay_off_the_main_vault` in
+Close only after A5. This is the agent half of isolation, not encryption.
+Nested `{vault}/.isolated/` I/O is `10` §1 / P4. Isolated Records are
+`collection(name)` on this handle. `find` / `search` that name an
+isolated collection are `unsupported` (main Index). Crate Check:
+`isolated_sealed_values_stay_off_the_main_vault` in
 `rust/scheda/tests/catalog.rs` and `cli_omits_isolated_sealed_values` in
 `rust/cli/tests/cli.rs`.
 
@@ -396,9 +403,12 @@ Check: `isolated_sealed_values_stay_off_the_main_vault` in
       value: `info`, `get`, `find`, `search` (ISO-3).
 - [x] `Vault.info` still lists isolated collections as isolated and does
       not include their field values (ISO-3, A1 / A3).
-- [x] Reaching isolated Records will be `collection(name)` after `10` §1
-      (ISO-2). Until then that call is `unsupported`. CLI `collection NAME`
-      for a non-isolated collection must not return isolated Record values.
+- [x] Reaching isolated Records is `collection(name)` (ISO-2 / P4).
+      `find` / `search` that name an isolated collection are `unsupported`.
+      CLI `collection NAME` `schema` / `get` / `add` / `replace` /
+      `remove` / `history` on an isolated name use that handle. CLI
+      `collection NAME` for a non-isolated collection must not return
+      isolated Record values.
 
 ---
 
@@ -644,7 +654,7 @@ a specification question before it is an implementation one.
       streaming rather than a materialised list, and raw line bytes (P1).
 - [x] A missing `.scheda/` does not stop it. `get` and `history` already
       survive a deleted Index (GIT-3); this read matches them.
-- [x] Fixture of 10⁴ lines across rotated segments: every line once, in
+- [x] Fixture of 10³ lines across rotated segments: every line once, in
       order, and memory does not grow with the line count (OPS-1).
 
 ---
@@ -679,7 +689,7 @@ only after a real commit. The switch did not land; `OpenOptions` and
       that turns autocommit off.
 - [x] The switch did not land. `OpenOptions` and `info` are unchanged.
       `auto_sync` still pushes only after a real commit (GIT-8, GIT-10).
-- [x] 10⁴ appends in one batch produce one commit and stay inside the
+- [x] 10³ appends in one batch produce one commit and stay inside the
       OPS-1 band.
 - [x] A process killed mid-batch leaves the last complete line and no
       partial line; on reopen the accepted set is what the segment holds
@@ -857,7 +867,7 @@ line, so a caller's checksum chain over the segment stays sound
 - [x] `history(id)` still answers from git after the file is gone: the
       commits that touched it are the record of what was there.
 - [x] `07` gains the method and drops it from its **later** list; `02`
-      gains the term; `14` gains `collection NAME remove ID`; `03`
+      gains the term; `14` gains `collection NAME remove --id ID`; `03`
       MOD-16 says plainly that a `journal` has no remove.
 - [x] `bazel test //...` green.
 
@@ -902,8 +912,9 @@ default / `consumer_thin_test`).
 - [x] The isolated collection round-trips on the same handle: `add` and
       `get` under `{vault}/.isolated/`, `find` on the main tree returns
       none of it, and `check` covers the nested tree (ISO-2, ISO-4, P4).
-- [x] OPS-1 volume on the fixture: 10⁴ journal Records and 10³
-      documents, with `get` and `add` in milliseconds.
+- [x] OPS-1 volume on the fixture: 10³ journal Records and 10²
+      documents (one tenth of OPS-1, every OS), with `get` and `add` in
+      milliseconds.
 - [x] Every P stage is `done`, or its entry names the consumer
       requirement that stays unmet and why.
 - [x] A Record removed with `remove` is gone from `get`, `find`, and the

@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.40, 27 August 2026.
+Document 11 of the Scheda package. Version 0.42, 28 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -94,9 +94,11 @@ envelope rules), LIB-5 (typed codes exist), `07` §5.
 - [x] Library path has no `panic!` / `unwrap` / `expect` / `assert!` (`07` §5).
 - [x] Every LIB-2 required name exists on the public surface (`search` may be
       `unsupported`).
-- [x] `Error` carries LIB-5 **core** codes: `not_found`, `invalid`, `conflict`,
-      `not_fast_forward`, `locked`, `io`, `git`, `index_unusable`,
-      `unsupported`. Negative tests assert **codes**, not only message text.
+- [x] `Error` carries LIB-5 **core** codes: `not_found`, `invalid`,
+      `duplicate_id`, `conflict_markers`, `not_fast_forward`, `locked`,
+      `io_*` / `git_*` families, Index `index_missing` / `index_version` /
+      `index_lexical` / `index_vector` / `index_corrupt`, `unsupported`.
+      Negative tests assert **codes**, not only message text.
 - [x] `search` (LIB-11) is `unsupported` or an empty stub that does not write.
 - [x] `open` rejects `OpenOptions` that fail `api/v1` field
       rules (`invalid`) before creating a tree or taking the lock (`07` LIB-4).
@@ -173,8 +175,8 @@ QRY-1.
 - [x] `document` Markdown+YAML and YAML-only; empty body allowed (MOD-11,
       MOD-14, STO-2). Body is stored; no search Index yet (SCH-7).
 - [x] Header `id` matches path-derived `id` (MOD-13, SCH-6).
-- [x] Path template with extra slots; `find` path-prefix is C5, but
-      `add` must write the derived path (MOD-8).
+- [x] Record path is `{name}/{id}.md` for `document` (MOD-8); `find`
+      path-prefix is C5, but `add` must write that file.
 - [x] Rename of a `document` file so path ≠ `id` → `check` fails; `get`
       does not follow the rename (MOD-5). May land with C5 `check`.
 - [x] Missing optional field is absent on read-back (MOD-12). Stored `null`
@@ -235,7 +237,8 @@ SCH-12.
 - [x] `reindex` rebuilds the Index from files; returns Records read, skipped
       invalid, segments seen (IDX-1, LIB-16).
 - [x] Delete the Index, `reindex`; Records match the files (STO-1, IDX-1).
-- [x] Index format version: unknown/corrupt → `reindex` or `index_unusable`;
+- [x] Index format version: unknown/corrupt → `reindex` or an Index code
+      (`index_version` / `index_corrupt` / `index_lexical`);
       never another Vault's ids (IDX-2). `get` still reads files.
 - [x] Invalid old files stay readable via `get` with `valid: false` (SCH-12).
 
@@ -249,9 +252,8 @@ SCH-12.
 
 - [x] Several `add` after `begin` without `commit` → `git log` unchanged (GIT-2).
 - [x] `add` without `begin` → one new commit with message `scheda` (GIT-2).
-- [x] A transaction is the only supported batch: 10⁴ (OPS-1 volume)
-      journal `add` after `begin`, one `commit` → `git log` grows by one
-      (GIT-2).
+- [x] A transaction is the only supported batch: 10³ journal `add` after
+      `begin`, one `commit` → `git log` grows by one (GIT-2).
 - [x] Drop the handle mid-transaction after complete journal lines plus
       a truncated tail; reopen without `begin` / `discard`; `get` returns
       the complete Records and not the truncated line (STO-5, GIT-2).
@@ -297,10 +299,10 @@ SCH-12.
 - [x] `get` on `journal` does not scan every unrelated segment (IDX-5).
       Writer updates the map under the lock; human editor edits still need
       `reindex`.
-- [x] Fixture ≥ 10⁴ journal Records and ≥ 10³ `document` Records: sampled
-      `get` / journal `add` stay in milliseconds, not hundreds
-      (OPS-1). Linux and macOS CI load those sizes. Windows CI uses 10³
-      journal and 10² document so the same checks fit NTFS under Bazel
+- [x] Fixture 10³ journal Records and 10² `document` Records (one tenth
+      of OPS-1) on every OS: sampled `get` / journal `add` stay in
+      milliseconds, not hundreds (OPS-1). The full OPS-1 size is minutes
+      on a real disk because each `add` fsyncs; CI stays under Bazel
       `large`.
 - [x] Full `reindex` on that fixture completes; counts match a hand tally
       (OPS-3, LIB-16).
@@ -343,9 +345,8 @@ this stage.
 - [x] SCH-8 filters apply before ranking (QRY-6).
 - [x] One-step and inverse walks match fixtures (REL-1–3). Multi-step is
       **later**.
-- [x] OPS-2: hybrid `search` on the OPS-1 fixture finishes in tens of
-      milliseconds (Windows CI: same check on the one-tenth volume in
-      C8).
+- [x] OPS-2: hybrid `search` on the C8 CI fixture (one tenth of OPS-1)
+      finishes in tens of milliseconds.
 - [x] OPS-4: with embedder weights already on disk, `search` needs no
       network.
 

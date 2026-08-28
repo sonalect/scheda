@@ -9,8 +9,8 @@ use git2::ConfigLevel;
 use git2::build::{CheckoutBuilder, RepoBuilder};
 use git2::{
     AnnotatedCommit, Commit as GitCommit, Cred, CredentialType, DiffOptions, ErrorCode,
-    FetchOptions, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
-    RepositoryOpenFlags, Signature, Sort, Status, StatusOptions,
+    FetchOptions, ObjectType, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
+    RepositoryOpenFlags, ResetType, Signature, Sort, Status, StatusOptions,
 };
 
 use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code};
@@ -356,6 +356,49 @@ pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), 
     let parents: Vec<&GitCommit<'_>> = parent.as_ref().into_iter().collect();
     repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
         .context("[Git::commit] create commit")?;
+    Ok(())
+}
+
+/// Current `HEAD` commit, or `None` when the branch is unborn.
+pub(crate) fn peel_head_oid(dir: &Path) -> Result<Option<git2::Oid>, Error> {
+    let repo = open_work_tree(dir)?;
+    match repo.head() {
+        Ok(head) => {
+            let commit = head.peel_to_commit().context("[Git] peel HEAD")?;
+            Ok(Some(commit.id()))
+        }
+        Err(err) if is_unborn(&err) => Ok(None),
+        Err(err) => bail!(git_fail(err, "[Git] read HEAD")),
+    }
+}
+
+/// Move `HEAD` (and the work tree) to `oid`. `None` returns the repo to
+/// an unborn branch after a first commit that must be undone.
+pub(crate) fn reset_head_to(dir: &Path, oid: Option<git2::Oid>) -> Result<(), Error> {
+    let repo = open_work_tree(dir)?;
+    enable_long_paths(&repo)?;
+    match oid {
+        Some(oid) => {
+            let obj = repo
+                .find_object(oid, Some(ObjectType::Commit))
+                .context("[Git] find reset target")?;
+            repo.reset(&obj, ResetType::Hard, None)
+                .context("[Git] reset HEAD")?;
+        }
+        None => match repo.head() {
+            Ok(head) => {
+                let name = head.name().context("[Git] HEAD name")?;
+                let mut reference = repo
+                    .find_reference(name)
+                    .context("[Git] find branch to unborn")?;
+                reference
+                    .delete()
+                    .context("[Git] delete branch to unborn")?;
+            }
+            Err(err) if is_unborn(&err) => {}
+            Err(err) => bail!(git_fail(err, "[Git] read HEAD for unborn reset")),
+        },
+    }
     Ok(())
 }
 

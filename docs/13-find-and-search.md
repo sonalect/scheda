@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.19, 27 August 2026.
+Document 13 of the Scheda package. Version 0.20, 27 August 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -20,7 +20,7 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 
 Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → `unsupported`.
 
-`get` / `add` / `history` / `lines` do not wait on the Index. `find` / `search` take `id`s from the Index, then open files. `replace` does the same when `find` is on; when `find` is off (and on isolated collections) it uses the Record file. Orphan file: `get` works; `find` / `search` skip it until indexed. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
+`get` / `add` / `history` / `lines` do not wait on the Index. `find` / `search` take `id`s from the Index, then open files. `replace` / `remove` do the same when `find` is on; when `find` is off (and on isolated collections) they use the Record file. Orphan file: `get` works; `find` / `search` skip it until indexed. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
 
 ---
 
@@ -30,7 +30,7 @@ The **library** calls the engine APIs. The caller never writes Tantivy or USearc
 
 - **Tantivy** creates and owns `{vault}/.scheda/index/lexical/` (`Index::create_in_dir` / open). Scheda only names fields and adds documents. On-disk layout is Tantivy’s (crate pin), not a Scheda spec.
 - **USearch** creates and owns the vector dump under `{vault}/.scheda/`. Scheda only passes dimensions, keys, and `f32` arrays. On-disk layout is USearch’s.
-- Scheda writes `{vault}/.scheda/index/format` (decimal version). Wrong version → `index_unusable` / empty `find`/`search`, not foreign ids.
+- Scheda writes `{vault}/.scheda/index/format` (decimal version). Wrong version → `index_version` / empty `find`/`search`, not foreign ids.
 
 First write or `reindex` creates the engines if missing. `add` / `replace` update them. No LLM is used to create either index.
 
@@ -102,7 +102,7 @@ Steps:
 5. If a **reranker** is passed to `search`: `get` each pooled Record; call `score(query.text, record)` once per candidate; sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
 
-Invalid / missing Index → no hits or `index_unusable`, never another Vault’s ids.
+Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids.
 
 ### Reranker
 

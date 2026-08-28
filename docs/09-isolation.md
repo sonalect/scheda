@@ -1,6 +1,6 @@
 # 09. Isolation and perimeter
 
-Document 9 of the Scheda package. Version 0.10, 27 August 2026.
+Document 9 of the Scheda package. Version 0.11, 27 August 2026.
 
 What must not leak: network by default (**core**); isolated collections under `{vault}/.isolated/` (gitignored nested git, never the main Remote), sealed fields, and optional encryption of that nested tree (**later**). Terms are in `02`. Schema marks are in SCH-15. Remote traffic is in `04`. Codes: `ISO`. Phase **later** unless marked **core** or **agent**.
 
@@ -24,7 +24,7 @@ This section is implemented in `scheda` without encryption: nested git, `0600`, 
 
 **ISO-2. Nested git under `{vault}/.isolated/`, not a sibling Vault.** Schema `isolated: true` (SCH-15) means Record files live at `{vault}/.isolated/{name}/`. Isolated Records use the same fixed names under that directory (`{id}.md`, journal segments, `record.yaml`). The Schema file stays in the main tree at `{vault}/{name}/.schema.yaml` (also `.yml` / `.json`) so `open` of a clone of the main Vault still lists the collection (ISO-3). First `open` that creates a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/` (GIT-13).
 
-`{vault}/.isolated/` is a git working tree Scheda creates on the first isolated write (`create_collection` with `isolated`, or `add` on that collection). Local `commit` and `history` of isolated Record paths use that nested repository. File mode: owner-only (`0600` on Unix; equivalent ACL on other systems). It is not required to exist for the main Vault to `open`, or for `find` / `search` on non-isolated collections. Deleting `{vault}/.scheda/` does not delete `.isolated/` (Index is disposable; isolated Records are not).
+`{vault}/.isolated/` is a git working tree Scheda creates on the first isolated write (`create_collection` with `isolated`, or `add` on that collection). Local `commit` and `history` of isolated Record paths use that nested repository. File mode: owner-only (`0600` on Unix). On other systems Scheda does not change ACLs; the nested git and gitignore remain the perimeter. It is not required to exist for the main Vault to `open`, or for `find` / `search` on non-isolated collections. Deleting `{vault}/.scheda/` does not delete `.isolated/` (Index is disposable; isolated Records are not).
 
 `check` fails if the **parent** git index tracks any path under `.isolated/` (`git add -f` is not a perimeter). *Check (**later**):* fixture Vault with `.isolated/` gitignored; `find` / `search` on a non-isolated collection return no isolated Records; `open` succeeds if `.isolated/` is missing; `git log` in `.isolated/` grows after `add` on an isolated collection; a tracked `.isolated/` path fails `check`.
 
@@ -60,7 +60,7 @@ Encryption is optional. Unencrypted `.isolated/` remains valid (`0600` + no Remo
 
 Which collections a given consumer marks isolated — that consumer's Schema.
 
-How an OS other than Unix spells `0600` — the binding, with the same “owner only” intent.
+How an OS other than Unix spells `0600` — Unix is `0600`; other systems leave ACLs unchanged (the nested git and gitignore are the perimeter).
 
 Backup of `.isolated/` — local git history of that nested tree on this machine; it is not published with the main Vault Remote.
 
