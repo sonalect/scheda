@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.4.3] - 2026-08-29
+
 ### Changed
 
 - Bazel `aspect_rules_py` 1.12.1 and `rules_python` 2.3.2. The Windows
@@ -622,6 +624,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.4.3]
 - [0.4.2]
 - [0.4.1]
 - [0.4.0]
@@ -630,7 +633,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/amsokol/scheda/releases/tag/v0.4.3
 [0.4.2]: https://github.com/amsokol/scheda/releases/tag/v0.4.2
 [0.4.1]: https://github.com/amsokol/scheda/releases/tag/v0.4.1
 [0.4.0]: https://github.com/amsokol/scheda/releases/tag/v0.4.0
