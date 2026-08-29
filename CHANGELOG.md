@@ -8,6 +8,11 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Bazel `aspect_rules_py` 1.12.1 and `rules_python` 2.3.2. The Windows
+  uv-host stub patch stays: `host_platform_repo` still `fail()`s on Windows.
+
 ## [0.4.2] - 2026-08-29
 
 ### Changed

@@ -1,4 +1,4 @@
-aspect_rules_py 1.11.7 fail()s in host_platform_repo on Windows. The
+aspect_rules_py 1.12.1 fail()s in host_platform_repo on Windows. The
 platform_libc string_flag default is loaded for every configured target,
 so rust/proto analysis dies even when python/ packages are deleted.
 
