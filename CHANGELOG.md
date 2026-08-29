@@ -8,6 +8,31 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- protovalidate-buffa 0.7.0 (runtime crate and the `protoc-gen-protovalidate-buffa`
+  pin). Generated `Validate` impls cover Buffa borrowed views; the plugin
+  stack matches Buffa 0.9.1.
+- vLLM sidecar 0.28.0 and huggingface-hub 1.29.0. Extra top-level pins that
+  only froze uv's latest of those transitives are gone; the lockfile still
+  pins the graph.
+
+### Fixed
+
+- markdownlint ignores `<workspace>/.cache/**` so Hub weights from the
+  vLLM sidecars do not fail `//bazel:markdown`.
+
+- USearch / cxx-build writes `rust/cxx.h` into the crate `OUT_DIR` first
+  and treats the shared `scratch` cxxbridge dir as best-effort. Bazel
+  linux-sandbox on WSL remounts that scratch path read-only (`EROFS`);
+  native Linux, macOS, and Windows still compile from `OUT_DIR`.
+
+- vLLM sidecars pin `HF_HOME` before importing Hugging Face Hub or vLLM
+  (those libraries freeze the cache path at import) and pass the
+  prefetched snapshot directory to `vllm serve`, keeping the Hub id as
+  `--served-model-name`. EngineCore no longer downloads a second
+  incomplete copy and fails on the tokenizer.
+
 ## [0.4.1] - 2026-08-28
 
 ### Added

@@ -26,8 +26,9 @@ cargo = use_extension(
 # Apple CXXFLAGS with __BAZEL_XCODE_SDKROOT__, which only Bazel's clang wrapper
 # expands; a raw /usr/bin/c++ then fails to find <algorithm>. Windows uses MSVC
 # (no CXX override). Patches: drop dangling OUT_DIR symlinks after the C++
-# compile; write rust/cxx.h when DEP_CXXBRIDGE1_HEADER is outside the sandbox
-# (and always write a regular file on Windows — MSVC cannot follow the symlink);
+# compile; write rust/cxx.h into OUT_DIR when DEP_CXXBRIDGE1_HEADER is outside
+# the sandbox (shared scratch dir is best-effort — WSL linux-sandbox remounts
+# it EROFS; always a regular file on Windows — MSVC cannot follow the symlink);
 # cxx must run build.rs (not cc_library cxx_cc) so libstdc++ TLS still links.
 # numkong SIMD: copy headers into OUT_DIR so DEP_NUMKONG_INCLUDE is visible to
 # usearch's sandboxed C++ compile.

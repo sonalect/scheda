@@ -1,15 +1,23 @@
 Bazel sandboxes hide the cxx crate's HEADER path from usearch's build
 script. Treat a missing DEP_CXXBRIDGE1_HEADER target like the env var
-being unset so cxx-build writes rust/cxx.h into OUT_DIR.
+being unset so cxx-build writes rust/cxx.h into this crate's OUT_DIR.
+
+shared_dir (Cargo target/cxxbridge, or the scratch crate) is only a
+debugging convenience — not on the include path. generate_bridge already
+best-effort copies into it. make_include_dir must do the same: WSL
+linux-sandbox remounts the scratch crate OUT_DIR read-only (EROFS).
+Writing cxx.h into OUT_DIR first keeps native Linux, macOS, and Windows
+builds on the path the C++ compile actually uses.
 
 On Windows, also skip a *present* HEADER path. cxx-build would symlink it
 (Developer Mode makes symlink(2) succeed, so the copy fallback never
 runs) and MSVC cl.exe then fails with C1083 on #include "rust/cxx.h".
-Write regular files instead of a relative symlink for the same reason.
+Write a regular file in OUT_DIR instead of a relative symlink through
+shared_dir.
 
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -384,12 +384,23 @@
+@@ -384,12 +384,20 @@
      let include_dir = prj.out_dir.join("cxxbridge").join("include");
      let cxx_h = include_dir.join("rust").join("cxx.h");
      let ref shared_cxx_h = prj.shared_dir.join("rust").join("cxx.h");
@@ -17,21 +25,20 @@ Write regular files instead of a relative symlink for the same reason.
 +    // Bazel sandboxes hide the cxx crate's HEADER path, so treat a missing
 +    // DEP_CXXBRIDGE1_HEADER target like the env var being unset. On Windows
 +    // skip a visible path too: MSVC does not follow the symlink cxx-build
-+    // would create.
++    // would create. shared_dir is not on the include path; ignore EROFS
++    // when the sandbox remounts the scratch crate read-only.
 +    let header_from_dep = env::var_os("DEP_CXXBRIDGE1_HEADER")
 +        .filter(|p| Path::new(p).is_file())
 +        .filter(|_| !cfg!(windows));
 +    if let Some(ref original) = header_from_dep {
          out::absolute_symlink_file(original, cxx_h)?;
-         out::absolute_symlink_file(original, shared_cxx_h)?;
+-        out::absolute_symlink_file(original, shared_cxx_h)?;
++        let _ = out::absolute_symlink_file(original, shared_cxx_h);
      } else {
-         out::write(shared_cxx_h, bridge::include::HEADER.as_bytes())?;
+-        out::write(shared_cxx_h, bridge::include::HEADER.as_bytes())?;
 -        out::relative_symlink_file(shared_cxx_h, cxx_h)?;
-+        if cfg!(windows) {
-+            out::write(cxx_h, bridge::include::HEADER.as_bytes())?;
-+        } else {
-+            out::relative_symlink_file(shared_cxx_h, cxx_h)?;
-+        }
++        out::write(cxx_h, bridge::include::HEADER.as_bytes())?;
++        let _ = out::write(shared_cxx_h, bridge::include::HEADER.as_bytes());
      }
      Ok(include_dir)
  }

@@ -213,23 +213,6 @@ checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
 
 [[package]]
 name = "buffa"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33f29a40702df4b86ccd84211bfde8cee0bce6d0811450ade4a86a7d0958a23a"
-dependencies = [
- "bytes",
- "foldhash 0.1.5",
- "hashbrown 0.15.5",
- "once_cell",
- "rustversion",
- "serde",
- "serde_json",
- "smoothutf8 0.1.1",
- "thiserror",
-]
-
-[[package]]
-name = "buffa"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf9e6224bc4ee1f189ad257120c156fb05f95b826f5369d620b24984476c200a"
@@ -242,7 +225,7 @@ dependencies = [
  "rustversion",
  "serde",
  "serde_json",
- "smoothutf8 0.2.3",
+ "smoothutf8",
  "thiserror",
 ]
 
@@ -252,7 +235,7 @@ version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1c7d518783cc611d9f144a71cf7dbc7b5588c5d16ff96ca43e74ac105ea3cb05"
 dependencies = [
- "buffa 0.9.1",
+ "buffa",
  "bytes",
  "jiff",
  "serde",
@@ -1740,11 +1723,11 @@ dependencies = [
 
 [[package]]
 name = "protovalidate-buffa"
-version = "0.6.0"
+version = "0.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86a3b605aaef87834f61c5b79cd650f17a0b3e81d1486b80d8c23e60b2588180"
+checksum = "5d26bc12857510730f6985cd5e8a2863e691e2fd007fb4075794c8742b26a1dd"
 dependencies = [
- "buffa 0.8.1",
+ "buffa",
  "chrono",
  "fluent-uri",
  "http",
@@ -2024,7 +2007,7 @@ dependencies = [
 name = "scheda"
 version = "0.4.1"
 dependencies = [
- "buffa 0.9.1",
+ "buffa",
  "buffa-types",
  "cxx",
  "git2",
@@ -2054,7 +2037,7 @@ dependencies = [
 name = "scheda-generated"
 version = "0.4.1"
 dependencies = [
- "buffa 0.9.1",
+ "buffa",
  "buffa-types",
  "protovalidate-buffa",
  "serde",
@@ -2148,15 +2131,6 @@ name = "smallvec"
 version = "1.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ed6a63f02c8539c91a8685a86f4099661ba3da017932f6ebbea6de3f0fa7c90"
-
-[[package]]
-name = "smoothutf8"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "36358427d32ecdb1624616deed99eccfef0a167fe5bf40ddb51efe6980bc1ec8"
-dependencies = [
- "simdutf8",
-]
 
 [[package]]
 name = "smoothutf8"

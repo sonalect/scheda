@@ -18,6 +18,7 @@ ignores:
   - "**/node_modules/**"
   - ".bazel/**"
   - ".venv/**"
+  - ".cache/**"
   - "**/testdata/**"
   - "target/**"
   - "**/target/**"

@@ -9,10 +9,12 @@ use protovalidate_buffa::Validate;
 
 #[path = "api/v1/mod.rs"]
 mod generated;
-// protovalidate-buffa emits `__buffa::oneof::more_like_this` for nested
+// protovalidate-buffa emits `__buffa::oneof::more_like_this` (and
+// `__buffa::view::oneof::more_like_this`) for nested
 // `Filter.MoreLikeThis.source`. Buffa places that oneof at
-// `__buffa::oneof::filter::more_like_this`. Alias here so generate output
-// is not edited (generate wipes `api/v1/`).
+// `__buffa::oneof::filter::more_like_this` (and
+// `__buffa::view::oneof::filter::more_like_this`). Alias here so generate
+// output is not edited (generate wipes `api/v1/`).
 mod validate {
     pub mod api {
         pub mod v1 {
@@ -35,8 +37,34 @@ mod validate {
             };
 
             pub mod __buffa {
-                #[allow(unused_imports, reason = "generated validators may not touch view")]
-                pub use crate::generated::api::v1::__buffa::view;
+                pub mod view {
+                    #[allow(
+                        unused_imports,
+                        reason = "generated validators may not touch every view"
+                    )]
+                    pub use crate::generated::api::v1::__buffa::view::{
+                        filter, history, search_hits, BodyOwnedView, BodyView,
+                        CollectionInfoOwnedView, CollectionInfoView, EdgeOwnedView, EdgeView,
+                        ErrorOwnedView, ErrorView, FieldOwnedView, FieldView, FilterOwnedView,
+                        FilterView, FindQueryOwnedView, FindQueryView, FindResultOwnedView,
+                        FindResultView, HistoryOwnedView, HistoryView, JournalOwnedView,
+                        JournalView, ObjectOwnedView, ObjectView, OpenOptionsOwnedView,
+                        OpenOptionsView, RecordAddOwnedView, RecordAddView, RecordOwnedView,
+                        RecordReplaceOwnedView, RecordReplaceView, RecordView,
+                        ReindexResultOwnedView, ReindexResultView, SchemaOwnedView, SchemaView,
+                        SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView, SearchQueryView,
+                        SingletonOwnedView, SingletonView, TextOwnedView, TextView, UnitOwnedView,
+                        UnitView, VaultInfoOwnedView, VaultInfoView,
+                    };
+                    pub mod oneof {
+                        pub use crate::generated::api::v1::__buffa::view::oneof::filter::more_like_this;
+                        #[allow(
+                            clippy::wildcard_imports,
+                            reason = "re-export generated oneof modules"
+                        )]
+                        pub use crate::generated::api::v1::__buffa::view::oneof::*;
+                    }
+                }
                 pub mod oneof {
                     pub use crate::generated::api::v1::__buffa::oneof::filter::more_like_this;
                     #[allow(

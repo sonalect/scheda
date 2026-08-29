@@ -14,7 +14,10 @@ _COLLISIONS = "warning"
 
 py_library(
     name = "vllm_pkg",
-    srcs = ["__init__.py"],
+    srcs = [
+        "__init__.py",
+        "hf_home.py",
+    ],
     imports = _IMPORTS,
     tags = _TAGS,
     target_compatible_with = _LINUX,
