@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.46, 27 August 2026.
+Document 2 of the Scheda package. Version 0.49, 30 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `remove`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `push`, `pull`, `sync`, `encrypt`, `secret`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `remove`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `author`, `push`, `pull`, `sync`, `isolated_encryption`, `passphrase`, `identity`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
@@ -154,17 +154,19 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. `SearchQuery.include_raw` fills `Hit.raw`. Not the same as `find`.
 
-**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. `schema.isolated` writes Record files under `{vault}/.isolated/` and creates the nested git if needed.
+**`create_collection`** — write one collection declaration (`name` plus `api/v1` `Schema`) as `{name}/.schema.yaml`. Not a raw path write. Autocommits unless a transaction is open. Optional commit message on the call; omitted → `scheda`. `schema.isolated` writes Record files under `{vault}/.isolated/` and creates the nested git if needed.
 
 **`begin`** — start a transaction on a library handle. Later writes on that handle do not create a git commit until `commit` or `discard`. A transaction is the only supported batch of mutating calls. There is no option that turns autocommit off. The CLI does not expose this name.
 
-**`commit`** — end a transaction on this handle and create one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Message comes from the caller. Outside a transaction, mutating calls autocommit with message `scheda`. The CLI does not expose this name.
+**`commit`** — end a transaction on this handle and create one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Message comes from the caller. Outside a transaction, mutating calls autocommit with an optional message (default `scheda`). The CLI does not expose this name.
 
 **`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload Schema, rebuild the Index. The CLI does not expose this name.
 
 **Remote** — the one optional git remote Scheda uses on the Vault repository, named `origin`. Empty `VaultInfo.remote` means none. Extra remotes in git config are ignored. Detected on `open` from git config (no fetch). GitHub is one host, not a Scheda type.
 
 **`auto_sync`** — option on `open`, default off. When on and a Remote exists: fast-forward `pull` on open, and `push` after a local commit (including autocommit). Not a merge. Details in `04`.
+
+**`author`** — option on `open` (`api.v1.Author`). Git author and committer for every commit on this handle (main tree and `{vault}/.isolated/`). Required `name` and `email` when the message is set. Unset: local git config, then `Scheda <scheda@invalid>`.
 
 **`pull`** — fetch and fast-forward only. Uses the network.
 
@@ -182,15 +184,17 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 ## 7. Isolation (**later**)
 
-**Isolated collection** — a collection whose Record files live under `{vault}/.isolated/{name}/`: a gitignored nested git working tree, never the main Remote. Schema stays `{vault}/{name}/.schema.yaml` in the main tree. Search over non-isolated collections does not read it and must not require `.isolated/` to exist. `push` does not publish it. Optional `encrypt` (`09`).
+**Isolated collection** — a collection whose Record files live under `{vault}/.isolated/{name}/`: a gitignored nested git working tree, never the main Remote. Schema stays `{vault}/{name}/.schema.yaml` in the main tree. Search over non-isolated collections does not read it and must not require `.isolated/` to exist. `push` does not publish it. Optional `isolated_encryption` (`09`).
 
-**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only. Optional `encrypt`: Record files are age armor. The main Index must not copy its sealed field values.
+**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only. Optional `isolated_encryption`: Record files are age armor. The main Index must not copy its sealed field values.
 
-**`encrypt`** — `OpenOptions` flag used when Scheda first creates `{vault}/.isolated/`. Default false. When true, isolated Record I/O needs `secret` (`09`). Main `open` does not.
+**`isolated_encryption`** — `OpenOptions` field (`api.v1.Encryption`) used when Scheda first creates `{vault}/.isolated/`. Unset: isolated collections are not encrypted. When set, `passphrase` or `identity` is required; isolated Record I/O needs that secret (`09`). Main `open` does not.
 
-**`secret`** — passphrase or age identity for encrypted `.isolated/`. Never stored in that nested git or the main tree.
+**`passphrase`** — symmetric arm of `Encryption`. Age scrypt wrapping.
 
-**Sealed field** — a field that must not appear in the main Index. Isolated encryption (`encrypt`, age armor) is `09`; the name here only marks the Index rule.
+**`identity`** — age X25519 identity arm of `Encryption` (`AGE-SECRET-KEY-…` file).
+
+**Sealed field** — a field that must not appear in the main Index. Isolated encryption (`isolated_encryption`, age armor) is `09`; the name here only marks the Index rule.
 
 ---
 

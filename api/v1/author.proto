@@ -1,0 +1,32 @@
+// Git author (and committer) identity. Bindings and the CLI encode these
+// messages as Protobuf JSON, not binary protobuf. Vault files stay YAML /
+// JSONL.
+
+edition = "2024";
+
+package api.v1;
+
+import "buf/validate/validate.proto";
+
+message Author {
+  // Display name. Git cannot store `<`, `>`, or a newline in an identity.
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {
+      min_len: 1
+      pattern: "^[^<>\\n]+$"
+    }
+  }];
+  // Address. HTML email (protovalidate `string.email`), not RFC 5322.
+  string email = 2 [(buf.validate.field) = {
+    required: true
+    string: {email: true}
+    cel: [
+      {
+        id: "author.email.format"
+        message: "must be a valid email address"
+        expression: "this.isEmail()"
+      }
+    ]
+  }];
+}

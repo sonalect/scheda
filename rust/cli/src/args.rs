@@ -81,6 +81,14 @@ pub struct Cli {
     )]
     pub model2vec_embedder: Option<PathBuf>,
 
+    /// Git author and committer name. With `--author-email`, or neither.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub author_name: Option<String>,
+
+    /// Git author and committer address. With `--author-name`, or neither.
+    #[arg(long, global = true, value_name = "EMAIL")]
+    pub author_email: Option<String>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -100,6 +108,9 @@ pub enum Command {
         name: String,
         #[arg(long)]
         schema: Option<String>,
+        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
+        #[arg(long)]
+        message: Option<String>,
     },
     /// Collection handle.
     Collection {
@@ -150,6 +161,9 @@ pub enum CollectionCommand {
         id: String,
         #[arg(long)]
         record: Option<String>,
+        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
+        #[arg(long)]
+        message: Option<String>,
     },
     /// Read one Record by id.
     Get {
@@ -171,11 +185,17 @@ pub enum CollectionCommand {
         id: String,
         #[arg(long)]
         record: Option<String>,
+        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
+        #[arg(long)]
+        message: Option<String>,
     },
     /// Delete a `document` or `singleton`. `journal` → `unsupported`.
     Remove {
         #[arg(long)]
         id: String,
+        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
+        #[arg(long)]
+        message: Option<String>,
     },
     /// Tantivy Query on this collection, then files.
     Find {

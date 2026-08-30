@@ -9,8 +9,8 @@ use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::{ObjectType, Repository};
-use scheda::{Code, OpenOptions, RecordAdd, RecordReplace, Vault};
-use serde_json::{Value, json};
+use scheda::{Author, Code, OpenOptions, RecordAdd, RecordReplace, Vault};
+use serde_json::{json, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -162,10 +162,10 @@ fn inserts_without_commit_leave_git_log_unchanged() {
     let before = log_len(vault.path());
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     collection
-        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
     assert_eq!(log_len(vault.path()), before);
 }
@@ -180,10 +180,11 @@ fn commit_stages_written_paths_not_vault_root_junk() {
         .add(
             "alpha",
             rec_body(json!({"title": "A", "count": 1}), "hello"),
+            None,
         )
         .unwrap();
     collection
-        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
     let alpha = collection.get("alpha").unwrap();
     let beta = collection.get("beta").unwrap();
@@ -203,7 +204,7 @@ fn abandoned_writes_are_discarded_on_next_autocommit() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     let rel = collection.get("alpha").unwrap().path.unwrap();
     let journal = scratch.vault().join(".scheda").join("tx.log");
@@ -222,7 +223,7 @@ fn abandoned_writes_are_discarded_on_next_autocommit() {
     );
     let before = log_len(vault.path());
     collection
-        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
     assert_eq!(
         collection.get("alpha").unwrap_err().known_code(),
@@ -242,6 +243,7 @@ fn history_matches_git_show_after_two_document_commits() {
         .add(
             "alpha",
             rec_body(json!({"title": "one", "count": 1}), "first"),
+            None,
         )
         .unwrap();
     vault.commit("first edit").unwrap();
@@ -250,6 +252,7 @@ fn history_matches_git_show_after_two_document_commits() {
         .replace(
             "alpha",
             rec_rep_body(json!({"title": "two", "count": 2}), "second"),
+            None,
         )
         .unwrap();
     vault.commit("second edit").unwrap();
@@ -288,12 +291,12 @@ fn history_of_singleton_and_journal_segment() {
     vault
         .collection("north_inbox")
         .unwrap()
-        .add("inbox", rec(json!({"title": "hi"})))
+        .add("inbox", rec(json!({"title": "hi"})), None)
         .unwrap();
     vault
         .collection("north_log")
         .unwrap()
-        .add("e1", rec(json!({})))
+        .add("e1", rec(json!({})), None)
         .unwrap();
     vault.commit("singleton and journal").unwrap();
     let page = vault
@@ -341,7 +344,7 @@ fn commit_on_writer_holds_lock() {
     writer
         .collection("north_notes")
         .unwrap()
-        .add("alpha", rec(json!({"title": "A"})))
+        .add("alpha", rec(json!({"title": "A"})), None)
         .unwrap();
     let reader = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
     assert!(writer.holds_write_lock());
@@ -356,7 +359,7 @@ fn empty_commit_message_is_invalid() {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     let err = vault.commit("  ").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -372,7 +375,7 @@ fn insert_one_without_begin_autocommits() {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     assert_eq!(log_len(vault.path()), before + 1);
     let err = vault.commit("no txn").unwrap_err();
@@ -393,7 +396,7 @@ fn discard_removes_uncommitted_insert() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     let rel = collection.get("alpha").unwrap().path.unwrap();
     vault.discard().unwrap();
@@ -406,7 +409,7 @@ fn discard_removes_uncommitted_insert() {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
     vault.commit("after discard").unwrap();
     assert!(vault.collection("north_notes").unwrap().get("beta").is_ok());
@@ -443,6 +446,7 @@ fn history_after_remove_still_answers_from_git() {
         .add(
             "alpha",
             rec_body(json!({"title": "one", "count": 1}), "first"),
+            None,
         )
         .unwrap();
     vault.commit("first edit").unwrap();
@@ -451,6 +455,7 @@ fn history_after_remove_still_answers_from_git() {
         .replace(
             "alpha",
             rec_rep_body(json!({"title": "two", "count": 2}), "second"),
+            None,
         )
         .unwrap();
     vault.commit("second edit").unwrap();
@@ -458,7 +463,7 @@ fn history_after_remove_still_answers_from_git() {
     let before = collection.history("alpha", 0, 100).unwrap();
     assert_eq!(before.entries.len(), 2);
     vault.begin().unwrap();
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     vault.commit("gone").unwrap();
     assert_eq!(
         collection.get("alpha").unwrap_err().known_code(),
@@ -503,22 +508,20 @@ fn remove_autocommits_outside_a_transaction() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     let before = log_len(vault.path());
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     assert_eq!(log_len(vault.path()), before + 1);
     assert_eq!(
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(
-        !scratch
-            .vault()
-            .join("north_notes")
-            .join("alpha.md")
-            .is_file()
-    );
+    assert!(!scratch
+        .vault()
+        .join("north_notes")
+        .join("alpha.md")
+        .is_file());
     assert!(!head_paths(vault.path()).contains("north_notes/alpha.md"));
 }
 
@@ -528,15 +531,15 @@ fn remove_inside_transaction_is_one_commit() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     collection
-        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
     vault.commit("keep both").unwrap();
     let before = log_len(vault.path());
     vault.begin().unwrap();
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     assert_eq!(log_len(vault.path()), before);
     vault.commit("drop alpha").unwrap();
     assert_eq!(log_len(vault.path()), before + 1);
@@ -553,24 +556,22 @@ fn abandoned_remove_is_restored_on_next_autocommit() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "count": 1})))
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
     vault.commit("keep").unwrap();
     vault.begin().unwrap();
-    collection.remove("alpha").unwrap();
-    assert!(
-        !scratch
-            .vault()
-            .join("north_notes")
-            .join("alpha.md")
-            .is_file()
-    );
+    collection.remove("alpha", None).unwrap();
+    assert!(!scratch
+        .vault()
+        .join("north_notes")
+        .join("alpha.md")
+        .is_file());
     drop(collection);
     drop(vault);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("beta", rec(json!({"title": "B", "count": 2})))
+        .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
     assert_eq!(
         collection.get("alpha").unwrap().id.as_deref(),
@@ -588,8 +589,8 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
     vault.begin().unwrap();
     let before = log_len(vault.path());
     let collection = vault.collection("north_log").unwrap();
-    collection.add("e1", rec(json!({}))).unwrap();
-    collection.add("e2", rec(json!({}))).unwrap();
+    collection.add("e1", rec(json!({})), None).unwrap();
+    collection.add("e2", rec(json!({})), None).unwrap();
     let path = scratch.vault().join("north_log").join("00000001.jsonl");
     let mut text = fs::read_to_string(&path).unwrap();
     text.push_str(r#"{"id":"partial"}"#);
@@ -605,12 +606,236 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
         collection.get("partial").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(
-        fs::read_to_string(&path)
-            .unwrap()
-            .ends_with(r#"{"id":"partial"}"#)
-    );
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .ends_with(r#"{"id":"partial"}"#));
     assert_eq!(log_len(vault.path()), before);
+}
+
+fn head_identity(dir: &Path) -> (String, String, String, String) {
+    let repo = Repository::open(dir).unwrap();
+    let commit = repo.head().unwrap().peel_to_commit().unwrap();
+    let author = commit.author();
+    let committer = commit.committer();
+    (
+        author.name().unwrap_or("").to_owned(),
+        author.email().unwrap_or("").to_owned(),
+        committer.name().unwrap_or("").to_owned(),
+        committer.email().unwrap_or("").to_owned(),
+    )
+}
+
+fn set_local_identity(dir: &Path, name: &str, email: &str) {
+    let repo = Repository::open(dir).unwrap();
+    let mut cfg = repo.config().unwrap();
+    cfg.set_str("user.name", name).unwrap();
+    cfg.set_str("user.email", email).unwrap();
+}
+
+#[test]
+fn autocommit_uses_caller_message() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    scratch.write_schema("notes.yaml", NOTES);
+    let vault = scratch.reopen();
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add(
+            "alpha",
+            rec(json!({"title": "A", "count": 1})),
+            Some("note alpha"),
+        )
+        .unwrap();
+    let hist = vault
+        .collection("north_notes")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    assert!(
+        hist.entries[0]
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("note alpha"),
+        "{hist:?}"
+    );
+}
+
+#[test]
+fn omitted_autocommit_message_is_scheda() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    scratch.write_schema("notes.yaml", NOTES);
+    let vault = scratch.reopen();
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
+        .unwrap();
+    let hist = vault
+        .collection("north_notes")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    assert!(
+        hist.entries[0]
+            .message
+            .as_deref()
+            .unwrap()
+            .contains("scheda"),
+        "{hist:?}"
+    );
+}
+
+#[test]
+fn empty_override_message_is_invalid_before_write() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    scratch.write_schema("notes.yaml", NOTES);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_notes").unwrap();
+    for message in [Some(""), Some("  ")] {
+        let err = collection
+            .add("alpha", rec(json!({"title": "A", "count": 1})), message)
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "{err}");
+        assert_eq!(
+            collection.get("alpha").unwrap_err().known_code(),
+            Some(Code::NotFound)
+        );
+    }
+}
+
+#[test]
+fn message_inside_transaction_is_ignored() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add(
+            "alpha",
+            rec(json!({"title": "A", "count": 1})),
+            Some("ignored"),
+        )
+        .unwrap();
+    vault.commit("txn subject").unwrap();
+    let hist = vault
+        .collection("north_notes")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    let message = hist.entries[0].message.as_deref().unwrap();
+    assert!(message.contains("txn subject"), "{message}");
+    assert!(!message.contains("ignored"), "{message}");
+}
+
+#[test]
+fn open_options_identity_is_author_and_committer() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    set_local_identity(scratch.vault().as_path(), "Config", "config@invalid");
+    scratch.write_schema("notes.yaml", NOTES);
+    let options = OpenOptions::new().author(Author::new().name("Ada").email("ada@invalid"));
+    let vault = Vault::open(scratch.vault(), options, None).unwrap();
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
+        .unwrap();
+    let hist = vault
+        .collection("north_notes")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    assert_eq!(hist.entries[0].author.as_deref(), Some("Ada <ada@invalid>"));
+    let (an, ae, cn, ce) = head_identity(vault.path());
+    assert_eq!((an, ae), ("Ada".into(), "ada@invalid".into()));
+    assert_eq!((cn, ce), ("Ada".into(), "ada@invalid".into()));
+}
+
+#[test]
+fn git_config_identity_when_open_options_unset() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    set_local_identity(scratch.vault().as_path(), "Config", "config@invalid");
+    scratch.write_schema("notes.yaml", NOTES);
+    let vault = scratch.reopen();
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "A", "count": 1})), None)
+        .unwrap();
+    let hist = vault
+        .collection("north_notes")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    assert_eq!(
+        hist.entries[0].author.as_deref(),
+        Some("Config <config@invalid>")
+    );
+}
+
+#[test]
+fn open_options_only_name_is_invalid() {
+    let scratch = Scratch::new();
+    let err = Vault::open(
+        scratch.vault(),
+        OpenOptions::new().author(Author::new().name("Ada")),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(!scratch.vault().exists() || !scratch.vault().join(".git").exists());
+}
+
+#[test]
+fn open_options_identity_chars_are_invalid() {
+    let scratch = Scratch::new();
+    for options in [
+        OpenOptions::new().author(Author::new().name("Ada<").email("ada@invalid")),
+        OpenOptions::new().author(Author::new().name("Ada>").email("ada@invalid")),
+        OpenOptions::new().author(Author::new().name("Ada\n").email("ada@invalid")),
+        OpenOptions::new().author(Author::new().name("Ada").email("ada invalid")),
+    ] {
+        let err = Vault::open(scratch.vault(), options, None).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "{err}");
+    }
+}
+
+#[test]
+fn isolated_commit_uses_open_options_identity() {
+    let scratch = Scratch::new();
+    let options = OpenOptions::new().author(Author::new().name("Ada").email("ada@invalid"));
+    let vault = Vault::open(scratch.vault(), options, None).unwrap();
+    let decl: scheda::Schema = serde_json::from_value(json!({
+        "version": 1,
+        "document": {},
+        "isolated": true,
+        "fields": [{"name": "title", "string": {}}]
+    }))
+    .unwrap();
+    vault.create_collection("north_sealed", decl, None).unwrap();
+    vault
+        .collection("north_sealed")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "secret"})), None)
+        .unwrap();
+    let hist = vault
+        .collection("north_sealed")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    assert_eq!(hist.entries[0].author.as_deref(), Some("Ada <ada@invalid>"));
+    let nested = scratch.vault().join(".isolated");
+    let (an, ae, cn, ce) = head_identity(&nested);
+    assert_eq!((an, ae), ("Ada".into(), "ada@invalid".into()));
+    assert_eq!((cn, ce), ("Ada".into(), "ada@invalid".into()));
+    let (man, mae, mcn, mce) = head_identity(vault.path());
+    assert_eq!((man, mae), ("Ada".into(), "ada@invalid".into()));
+    assert_eq!((mcn, mce), ("Ada".into(), "ada@invalid".into()));
 }
 
 fn peek_schema_name(body: &str) -> String {

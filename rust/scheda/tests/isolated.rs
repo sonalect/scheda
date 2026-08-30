@@ -95,13 +95,17 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
         "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
-    vault.create_collection("sealed_log", decl).unwrap();
+    vault.create_collection("sealed_log", decl, None).unwrap();
     let main_before = log_len(vault.path());
     let nested = scratch.vault().join(".isolated");
     assert!(Repository::open(&nested).is_ok());
     let collection = vault.collection("sealed_log").unwrap();
-    collection.add("a", rec(json!({"msg": "one"}))).unwrap();
-    collection.add("b", rec(json!({"msg": "two"}))).unwrap();
+    collection
+        .add("a", rec(json!({"msg": "one"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"msg": "two"})), None)
+        .unwrap();
     assert_eq!(log_len(vault.path()), main_before);
     vault.commit("isolated batch").unwrap();
     assert_eq!(log_len(vault.path()), main_before + 1);
@@ -140,11 +144,11 @@ fn nested_commit_rolls_back_when_main_commit_fails() {
         "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
-    vault.create_collection("sealed_log", decl).unwrap();
+    vault.create_collection("sealed_log", decl, None).unwrap();
     vault
         .collection("sealed_log")
         .unwrap()
-        .add("e1", rec(json!({"msg": "one"})))
+        .add("e1", rec(json!({"msg": "one"})), None)
         .unwrap();
     let nested = scratch.vault().join(".isolated");
     let before = log_len(&nested);
@@ -152,12 +156,12 @@ fn nested_commit_rolls_back_when_main_commit_fails() {
     vault
         .collection("sealed_log")
         .unwrap()
-        .add("e2", rec(json!({"msg": "two"})))
+        .add("e2", rec(json!({"msg": "two"})), None)
         .unwrap();
     vault
         .collection("west_docs")
         .unwrap()
-        .add("n1", rec(json!({"title": "main"})))
+        .add("n1", rec(json!({"title": "main"})), None)
         .unwrap();
     let git_dir = scratch.vault().join(".git");
     let bak = scratch.root.join("git.bak");
@@ -189,10 +193,14 @@ fn isolated_journal_rotates_and_ids_map_stays_nested() {
         "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
-    vault.create_collection("sealed_log", decl).unwrap();
+    vault.create_collection("sealed_log", decl, None).unwrap();
     let collection = vault.collection("sealed_log").unwrap();
-    collection.add("a", rec(json!({"msg": "one"}))).unwrap();
-    collection.add("b", rec(json!({"msg": "two"}))).unwrap();
+    collection
+        .add("a", rec(json!({"msg": "one"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"msg": "two"})), None)
+        .unwrap();
     vault.commit("rotate").unwrap();
     let nested = scratch.vault().join(".isolated").join("sealed_log");
     assert!(nested.join("00000001.jsonl").is_file());
@@ -232,7 +240,7 @@ fn isolated_add_without_begin_is_one_nested_commit() {
     vault
         .collection("sealed_log")
         .unwrap()
-        .add("e1", rec(json!({"msg": "x"})))
+        .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
     assert_eq!(log_len(&nested), 1);
     assert_eq!(log_len(vault.path()), 1);
@@ -248,12 +256,12 @@ fn isolated_document_round_trip_and_main_find_skips_it() {
     vault
         .collection("west_docs")
         .unwrap()
-        .add("alpha", rec(json!({"title": "public"})))
+        .add("alpha", rec(json!({"title": "public"})), None)
         .unwrap();
     vault
         .collection("west_isolated")
         .unwrap()
-        .add("secret", rec(json!({"west_pass": "nested-secret"})))
+        .add("secret", rec(json!({"west_pass": "nested-secret"})), None)
         .unwrap();
     let got = vault
         .collection("west_isolated")
@@ -293,11 +301,11 @@ fn isolated_replace_and_history_use_nested_git() {
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     collection
-        .add("secret", rec(json!({"west_pass": "one"})))
+        .add("secret", rec(json!({"west_pass": "one"})), None)
         .unwrap();
     vault.begin().unwrap();
     collection
-        .replace("secret", rec_rep(json!({"west_pass": "two"})))
+        .replace("secret", rec_rep(json!({"west_pass": "two"})), None)
         .unwrap();
     vault.commit("second").unwrap();
     let got = collection.get("secret").unwrap();
@@ -316,18 +324,18 @@ fn isolated_remove_uses_nested_git() {
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     collection
-        .add("secret", rec(json!({"west_pass": "one"})))
+        .add("secret", rec(json!({"west_pass": "one"})), None)
         .unwrap();
     vault.begin().unwrap();
     collection
-        .replace("secret", rec_rep(json!({"west_pass": "two"})))
+        .replace("secret", rec_rep(json!({"west_pass": "two"})), None)
         .unwrap();
     vault.commit("second").unwrap();
     let nested = scratch.vault().join(".isolated");
     let before = log_len(&nested);
     let hist_before = collection.history("secret", 0, 10).unwrap();
     assert!(hist_before.entries.len() >= 2);
-    collection.remove("secret").unwrap();
+    collection.remove("secret", None).unwrap();
     assert_eq!(
         collection.get("secret").unwrap_err().known_code(),
         Some(Code::NotFound)
@@ -354,7 +362,7 @@ fn check_fails_when_nested_git_has_a_remote() {
     vault
         .collection("sealed_log")
         .unwrap()
-        .add("e1", rec(json!({"msg": "x"})))
+        .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
     vault.check().unwrap();
     let nested = scratch.vault().join(".isolated");
@@ -374,7 +382,7 @@ fn check_fails_when_parent_tracks_isolated() {
     vault
         .collection("sealed_log")
         .unwrap()
-        .add("e1", rec(json!({"msg": "x"})))
+        .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
     let rel = ".isolated/sealed_log/00000001.jsonl";
     let bytes = fs::read(vault.path().join(rel)).unwrap();
@@ -411,7 +419,7 @@ fn isolated_record_files_are_owner_only() {
     vault
         .collection("sealed_log")
         .unwrap()
-        .add("e1", rec(json!({"msg": "x"})))
+        .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
     let path = scratch
         .vault()

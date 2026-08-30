@@ -41,6 +41,7 @@ pub struct Vault {
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
+    identity: Arc<git::CommitIdentity>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
@@ -58,6 +59,7 @@ pub struct Collection {
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
+    identity: Arc<git::CommitIdentity>,
 }
 
 impl Vault {
@@ -70,6 +72,12 @@ impl Vault {
     /// Without the `search` crate feature, a `Some` value fails
     /// (`index_vector`): that leg is absent. The signature is the same in
     /// every build.
+    ///
+    /// `OpenOptions.author` is the git author and committer for every commit
+    /// on this handle (main tree and `{vault}/.isolated/`). Unset `name` or
+    /// `email` on a set Author, or characters git cannot carry, fail here
+    /// before the first commit. Unset Author → local git config, then
+    /// `Scheda <scheda@invalid>`.
     pub fn open(
         path: impl AsRef<Path>,
         options: OpenOptions,
@@ -84,7 +92,8 @@ impl Vault {
                     path.display()
                 )));
             }
-            return Self::open_existing(path, options, embedder);
+            let identity = git::identity_from_open(&options, path)?;
+            return Self::open_existing(path, options, embedder, identity);
         }
         let remote = remote_repo_url(&options).map(str::to_owned);
         if let Some(url) = remote {
@@ -100,8 +109,9 @@ impl Vault {
     ) -> Result<Self, Error> {
         prepare_new_work_tree(path)?;
         git::init(path)?;
-        commit_gitignore_if_needed(path)?;
-        Self::open_existing(path, options, embedder)
+        let identity = git::identity_from_open(&options, path)?;
+        commit_gitignore_if_needed(path, &identity)?;
+        Self::open_existing(path, options, embedder, identity)
     }
 
     fn clone_into(
@@ -116,14 +126,16 @@ impl Vault {
         }
         prepare_new_work_tree(path)?;
         git::clone(url, path)?;
-        commit_gitignore_if_needed(path)?;
-        Self::open_existing(path, without_remote_repo(options), embedder)
+        let identity = git::identity_from_open(&options, path)?;
+        commit_gitignore_if_needed(path, &identity)?;
+        Self::open_existing(path, without_remote_repo(options), embedder, identity)
     }
 
     fn open_existing(
         path: &Path,
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
+        identity: git::CommitIdentity,
     ) -> Result<Self, Error> {
         #[cfg(not(feature = "search"))]
         if embedder.is_some() {
@@ -164,6 +176,7 @@ impl Vault {
             #[cfg(feature = "find")]
             search,
             embedder,
+            identity: Arc::new(identity),
         };
         if gitignore_pending {
             vault.write_gitignore_under_lock()?;
@@ -251,6 +264,7 @@ impl Vault {
             #[cfg(feature = "find")]
             search: Arc::clone(&self.search),
             embedder: self.embedder.clone(),
+            identity: Arc::clone(&self.identity),
         })
     }
 
@@ -346,7 +360,7 @@ impl Vault {
             let set = crate::error::mutex(&self.written, "[Vault] lock written")?;
             set.iter().cloned().collect()
         };
-        isolated::commit_recorded(&self.path, message, &paths)?;
+        isolated::commit_recorded(&self.path, message, &paths, &self.identity)?;
         let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
         set.clear();
         persist_written(&self.path, &set)
@@ -388,11 +402,11 @@ impl Vault {
         self.restore_recorded()
     }
 
-    fn finish_mutation(&self) -> Result<(), Error> {
+    fn finish_mutation(&self, message: Option<&str>) -> Result<(), Error> {
         if flag(&self.in_txn)? {
             return Ok(());
         }
-        match self.commit_recorded(AUTO_COMMIT_MESSAGE) {
+        match self.commit_recorded(autocommit_subject(message)) {
             Ok(()) => self.push_if_auto_sync(),
             Err(err) => {
                 let _ = self.restore_recorded();
@@ -458,7 +472,7 @@ impl Vault {
         let result = (|| {
             if ensure_gitignore(&self.path)? {
                 self.note_write(String::from(".gitignore"))?;
-                self.finish_mutation()?;
+                self.finish_mutation(None)?;
             }
             Ok(())
         })();
@@ -507,8 +521,19 @@ impl Vault {
     /// Write one collection declaration as `{name}/.schema.yaml`. Reloads Schema
     /// on this handle. `isolated: true` stores Records under `{vault}/.isolated/`
     /// and creates the nested git if needed.
-    pub fn create_collection(&self, name: &str, schema: Schema) -> Result<Collection, Error> {
+    ///
+    /// `message` is the git commit subject outside a transaction. Omitted →
+    /// `scheda`. Present but empty → `invalid` before any file is written.
+    /// Inside a transaction the argument is ignored; `commit` supplies the
+    /// subject.
+    pub fn create_collection(
+        &self,
+        name: &str,
+        schema: Schema,
+        message: Option<&str>,
+    ) -> Result<Collection, Error> {
         schema.require_valid()?;
+        let message = require_commit_message(message)?;
         self.require_write_lock("create_collection")?;
         self.drain_abandoned()?;
         if schema.isolated == Some(true)
@@ -522,7 +547,7 @@ impl Vault {
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
             index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
         *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
-        self.finish_mutation()?;
+        self.finish_mutation(message)?;
         self.collection(name)
     }
 
@@ -591,6 +616,7 @@ impl Collection {
             #[cfg(feature = "find")]
             search: Arc::new(SearchEngine::empty()),
             embedder: None,
+            identity: Arc::new(git::CommitIdentity::fallback()),
         }
     }
 
@@ -775,7 +801,7 @@ impl Collection {
         isolated::ids_index_dir(&self.vault, &self.index_dir, self.decl.isolated)
     }
 
-    fn finish_mutation(&self) -> Result<(), Error> {
+    fn finish_mutation(&self, message: Option<&str>) -> Result<(), Error> {
         if flag(&self.in_txn)? {
             return Ok(());
         }
@@ -783,7 +809,12 @@ impl Collection {
             let set = crate::error::mutex(&self.written, "[Collection] lock written")?;
             set.iter().cloned().collect()
         };
-        match isolated::commit_recorded(&self.vault, AUTO_COMMIT_MESSAGE, &paths) {
+        match isolated::commit_recorded(
+            &self.vault,
+            autocommit_subject(message),
+            &paths,
+            &self.identity,
+        ) {
             Ok(()) => {
                 let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
                 set.clear();
@@ -818,9 +849,15 @@ impl Collection {
     }
 
     /// Create a Record. Same `id` already present → `duplicate_id`.
-    pub fn add(&self, id: &str, record: RecordAdd) -> Result<(), Error> {
+    ///
+    /// `message` is the git commit subject outside a transaction. Omitted →
+    /// `scheda`. Present but empty → `invalid` before any file is written.
+    /// Inside a transaction the argument is ignored; `commit` supplies the
+    /// subject.
+    pub fn add(&self, id: &str, record: RecordAdd, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
+        let message = require_commit_message(message)?;
         let mut record = record_from_add(id, &self.decl.name, record);
         self.require_write()?;
         self.drain_abandoned()?;
@@ -848,7 +885,7 @@ impl Collection {
                     self.rollback_journal_insert(&id, &rel, &rollback);
                     return Err(err);
                 }
-                self.finish_mutation()?;
+                self.finish_mutation(message)?;
                 Ok(())
             }
             Kind::Document | Kind::Singleton => {
@@ -861,7 +898,7 @@ impl Collection {
                     let _ = self.unnote_write(&rel);
                     return Err(err);
                 }
-                self.finish_mutation()?;
+                self.finish_mutation(message)?;
                 Ok(())
             }
         }
@@ -892,9 +929,20 @@ impl Collection {
     }
 
     /// Replace a whole `document` or `singleton`. `journal` → `unsupported`.
-    pub fn replace(&self, id: &str, record: RecordReplace) -> Result<(), Error> {
+    ///
+    /// `message` is the git commit subject outside a transaction. Omitted →
+    /// `scheda`. Present but empty → `invalid` before any file is written.
+    /// Inside a transaction the argument is ignored; `commit` supplies the
+    /// subject.
+    pub fn replace(
+        &self,
+        id: &str,
+        record: RecordReplace,
+        message: Option<&str>,
+    ) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
+        let message = require_commit_message(message)?;
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("replace is not offered for journal"));
         }
@@ -921,7 +969,7 @@ impl Collection {
             let _ = self.unnote_write(&rel);
             return Err(err);
         }
-        self.finish_mutation()?;
+        self.finish_mutation(message)?;
         Ok(())
     }
 
@@ -933,8 +981,14 @@ impl Collection {
     /// batch inside one. Isolated collections use the nested git. When
     /// `find` is on, the Record leaves the Index; when `find` is off, the
     /// Index is marked stale.
-    pub fn remove(&self, id: &str) -> Result<(), Error> {
+    ///
+    /// `message` is the git commit subject outside a transaction. Omitted →
+    /// `scheda`. Present but empty → `invalid` before any file is written.
+    /// Inside a transaction the argument is ignored; `commit` supplies the
+    /// subject.
+    pub fn remove(&self, id: &str, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
+        let message = require_commit_message(message)?;
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("remove is not offered for journal"));
         }
@@ -956,7 +1010,7 @@ impl Collection {
             let _ = self.unnote_write(&rel);
             return Err(err);
         }
-        self.finish_mutation()?;
+        self.finish_mutation(message)?;
         Ok(())
     }
 
@@ -1351,6 +1405,20 @@ fn hit_collection(hit: &search_hits::Hit) -> &str {
         .unwrap_or_else(|| collection_from_record_path(hit.path.as_deref().unwrap_or("")))
 }
 
+fn autocommit_subject(message: Option<&str>) -> &str {
+    message.unwrap_or(AUTO_COMMIT_MESSAGE)
+}
+
+fn require_commit_message(message: Option<&str>) -> Result<Option<&str>, Error> {
+    match message {
+        None => Ok(None),
+        Some(text) if text.trim().is_empty() => {
+            bail!(Error::invalid("commit message is empty"))
+        }
+        Some(text) => Ok(Some(text)),
+    }
+}
+
 fn remote_repo_url(options: &OpenOptions) -> Option<&str> {
     options
         .remote_repo
@@ -1447,9 +1515,14 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
 /// Write `.scheda/` and `.isolated/` into `.gitignore` and commit when this
 /// tree is new (init or clone). No writer exists yet, so this does not take
 /// `write.lock`. A later mutating call is then the first `try_lock`.
-fn commit_gitignore_if_needed(vault: &Path) -> Result<(), Error> {
+fn commit_gitignore_if_needed(vault: &Path, identity: &git::CommitIdentity) -> Result<(), Error> {
     if ensure_gitignore(vault)? {
-        git::commit(vault, AUTO_COMMIT_MESSAGE, &[String::from(".gitignore")])?;
+        git::commit(
+            vault,
+            AUTO_COMMIT_MESSAGE,
+            &[String::from(".gitignore")],
+            identity,
+        )?;
     }
     Ok(())
 }
@@ -1649,17 +1722,19 @@ mod tests {
     }
 
     #[test]
-    fn empty_remote_repo_option_is_local_init() {
+    fn empty_remote_repo_option_is_invalid() {
         let scratch = Scratch::new();
-        let vault = Vault::open(scratch.vault(), OpenOptions::new().remote_repo(""), None).unwrap();
-        assert!(!vault.has_remote());
+        let err =
+            Vault::open(scratch.vault(), OpenOptions::new().remote_repo(""), None).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(!scratch.vault().exists() || !scratch.vault().join(".git").exists());
     }
 
     #[test]
     fn insert_one_rejects_empty_record_envelope() {
         let collection = Collection::stub();
         let err = collection
-            .add("", RecordAdd::default())
+            .add("", RecordAdd::default(), None)
             .expect_err("empty id must fail slug rules");
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
@@ -1668,7 +1743,7 @@ mod tests {
     fn replace_one_rejects_empty_record_envelope() {
         let collection = Collection::stub();
         let err = collection
-            .replace("", RecordReplace::default())
+            .replace("", RecordReplace::default(), None)
             .expect_err("empty id must fail slug rules");
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
@@ -1828,7 +1903,8 @@ mod tests {
     #[test]
     fn info_is_on_the_vault_surface() {
         let _: fn(&Vault) -> Result<VaultInfo, Error> = Vault::info;
-        let _: fn(&Vault, &str, Schema) -> Result<Collection, Error> = Vault::create_collection;
+        let _: fn(&Vault, &str, Schema, Option<&str>) -> Result<Collection, Error> =
+            Vault::create_collection;
         let _: fn(&Vault) -> Result<(), Error> = Vault::begin;
         let _: fn(&Vault) -> Result<(), Error> = Vault::discard;
     }

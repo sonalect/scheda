@@ -8,6 +8,37 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- Optional commit message on `add`, `replace`, `remove`, and
+  `create_collection`. Outside a transaction that text is the git
+  subject; omitted, the subject is still `scheda`. A present but empty
+  message is `invalid` before any file is written. Inside a transaction
+  the argument is ignored and `commit` supplies the subject.
+- `OpenOptions.author` (`api.v1.Author`): git author and committer for
+  every commit on the handle, in the main tree and in
+  `{vault}/.isolated/`. Required `name` and `email` when set. Unset:
+  local git config, then `Scheda <scheda@invalid>`. CLI `--message` on
+  mutating commands and `--author-name` / `--author-email` on `open`.
+- `OpenOptions.remote_repo` must be an absolute URI when set. An empty
+  string, a filesystem path, or SCP `git@host:path` is `invalid`. Unset
+  still means local `git init`.
+- `OpenOptions.isolated_encryption` (`api.v1.Encryption`): age secret
+  for `{vault}/.isolated/`. Unset: isolated collections are not
+  encrypted. When set, required `passphrase` or `identity`. First
+  create of that tree encrypts; later isolated Record I/O uses it.
+  Vault `open` and main collections do not require it.
+
+### Changed
+
+- Isolated encryption is no longer `OpenOptions.encrypt` plus
+  `OpenOptions.secret`. Presence of `isolated_encryption` is the
+  encrypt choice at first create of `{vault}/.isolated/`.
+
+### Removed
+
+- `OpenOptions.encrypt` and `OpenOptions.secret`.
+
 ## [0.4.4] - 2026-08-30
 
 ### Fixed

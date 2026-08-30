@@ -127,9 +127,9 @@ fn find_one_does_not_read_unrelated_segments() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.add("early", rec_log("x")).unwrap();
-    collection.add("mid", rec_log("x")).unwrap();
-    collection.add("late", rec_log("x")).unwrap();
+    collection.add("early", rec_log("x"), None).unwrap();
+    collection.add("mid", rec_log("x"), None).unwrap();
+    collection.add("late", rec_log("x"), None).unwrap();
     let log_dir = scratch.vault().join("south_log");
     assert!(log_dir.join("00000001.jsonl").is_file());
     fs::write(log_dir.join("ffffffff.jsonl"), vec![0u8; 2 * 1024 * 1024]).unwrap();
@@ -144,7 +144,7 @@ fn writer_updates_map_human_edit_needs_reindex() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.add("a", rec_log("x")).unwrap();
+    collection.add("a", rec_log("x"), None).unwrap();
     let ids = vault
         .index_dir()
         .join("journal")
@@ -168,7 +168,7 @@ fn missing_map_falls_back_to_scan() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
-    collection.add("kept", rec_log("x")).unwrap();
+    collection.add("kept", rec_log("x"), None).unwrap();
     let journal_index = vault.index_dir().join("journal");
     fs::remove_dir_all(&journal_index).unwrap();
     drop(vault);
@@ -195,12 +195,12 @@ fn ops_fixture_find_and_insert_and_reindex() {
     vault.begin().unwrap();
     let log = vault.collection("ops_log").unwrap();
     for i in 0..OPS_JOURNAL {
-        log.add(&format!("j{i:05}"), rec_log("x")).unwrap();
+        log.add(&format!("j{i:05}"), rec_log("x"), None).unwrap();
     }
     let notes = vault.collection("north_notes").unwrap();
     for i in 0..OPS_DOCS {
         notes
-            .add(&format!("d{i:04}"), rec_note(&format!("t{i}")))
+            .add(&format!("d{i:04}"), rec_note(&format!("t{i}")), None)
             .unwrap();
     }
     assert_eq!(log_len(vault.path()), commits_before);
@@ -246,7 +246,7 @@ fn ops_fixture_find_and_insert_and_reindex() {
     notes.get(&first_doc).unwrap();
     notes.get(&last_doc).unwrap();
     let extra = format!("j{OPS_JOURNAL:05}");
-    log.add(&extra, rec_log("x")).unwrap();
+    log.add(&extra, rec_log("x"), None).unwrap();
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(OPS_JOURNAL + OPS_DOCS + 1));
     assert_eq!(counts.skipped_invalid, Some(0));

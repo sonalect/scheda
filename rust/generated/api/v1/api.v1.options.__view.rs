@@ -7,22 +7,27 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 1: `auto_sync`
     pub auto_sync: ::core::option::Option<bool>,
-    /// Empty means unset. Used only when `path` does not exist: then `open`
-    /// clones this URL. Ignored when `path` is already a Vault.
+    /// Clone URL when `path` does not exist. Unset means local `git init`.
+    /// Ignored when `path` is already a Vault. A set value must be an absolute
+    /// URI (RFC 3986): `https://…`, `ssh://…`, `file:///…`.
     ///
     /// Field 2: `remote_repo`
     pub remote_repo: ::core::option::Option<&'a str>,
-    /// Later. When Scheda first creates `{vault}/.isolated/`, encrypt
-    /// that nested tree. Ignored if `.isolated/` already exists. Default false.
+    /// Later. Age secret for `{vault}/.isolated/`. Unset: isolated
+    /// collections are not encrypted. When set, first create of that tree
+    /// is encrypted; later, isolated Record I/O uses it. Vault `open` and
+    /// main collections do not require it.
     ///
-    /// Field 3: `encrypt`
-    pub encrypt: ::core::option::Option<bool>,
-    /// Later. Isolated Record I/O when `.isolated/` is encrypted.
-    /// Empty means unset. `open` of the Vault and main collections do not
-    /// require it.
+    /// Field 3: `isolated_encryption`
+    pub isolated_encryption: ::buffa::MessageFieldView<
+        super::super::__buffa::view::EncryptionView<'a>,
+    >,
+    /// Git author and committer for every commit on this handle (main tree
+    /// and `{vault}/.isolated/`). Unset: local git config, then
+    /// `Scheda <scheda@invalid>`.
     ///
-    /// Field 4: `secret`
-    pub secret: ::core::option::Option<&'a str>,
+    /// Field 4: `author`
+    pub author: ::buffa::MessageFieldView<super::super::__buffa::view::AuthorView<'a>>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -70,16 +75,44 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
             3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::Varint,
+                    ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                view.encrypt = Some(::buffa::types::decode_bool(&mut cur)?);
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                match view.isolated_encryption.as_mut() {
+                    Some(existing) => {
+                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
+                    }
+                    None => {
+                        view.isolated_encryption = ::buffa::MessageFieldView::set(
+                            <super::super::__buffa::view::EncryptionView as ::buffa::MessageView>::decode_view_ctx(
+                                sub,
+                                __sub_ctx,
+                            )?,
+                        );
+                    }
+                }
             }
             4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                view.secret = Some(::buffa::types::borrow_str(&mut cur)?);
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                match view.author.as_mut() {
+                    Some(existing) => {
+                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
+                    }
+                    None => {
+                        view.author = ::buffa::MessageFieldView::set(
+                            <super::super::__buffa::view::AuthorView as ::buffa::MessageView>::decode_view_ctx(
+                                sub,
+                                __sub_ctx,
+                            )?,
+                        );
+                    }
+                }
             }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
@@ -105,8 +138,24 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
         ::core::result::Result::Ok(super::super::OpenOptions {
             auto_sync: self.auto_sync,
             remote_repo: self.remote_repo.map(|s| s.to_string()),
-            encrypt: self.encrypt,
-            secret: self.secret.map(|s| s.to_string()),
+            isolated_encryption: match self.isolated_encryption.as_option() {
+                Some(v) => {
+                    ::buffa::MessageField::<
+                        super::super::Encryption,
+                        ::buffa::Inline<super::super::Encryption>,
+                    >::some(v.to_owned_from_source(__buffa_src)?)
+                }
+                None => ::buffa::MessageField::none(),
+            },
+            author: match self.author.as_option() {
+                Some(v) => {
+                    ::buffa::MessageField::<
+                        super::super::Author,
+                        ::buffa::Inline<super::super::Author>,
+                    >::some(v.to_owned_from_source(__buffa_src)?)
+                }
+                None => ::buffa::MessageField::none(),
+            },
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -114,7 +163,7 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
 }
 impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
     #[allow(clippy::needless_borrow, clippy::let_and_return)]
-    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
@@ -124,11 +173,21 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(ref v) = self.remote_repo {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.encrypt.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        if self.isolated_encryption.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.isolated_encryption.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
         }
-        if let Some(ref v) = self.secret {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        if self.author.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.author.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
@@ -136,7 +195,7 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
     #[allow(clippy::needless_borrow)]
     fn write_to(
         &self,
-        _cache: &mut ::buffa::SizeCache,
+        __cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
@@ -147,11 +206,21 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(ref v) = self.remote_repo {
             ::buffa::types::put_string_field(2u32, v, buf);
         }
-        if let Some(v) = self.encrypt {
-            ::buffa::types::put_bool_field(3u32, v, buf);
+        if self.isolated_encryption.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                3u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.isolated_encryption.write_to(__cache, buf);
         }
-        if let Some(ref v) = self.secret {
-            ::buffa::types::put_string_field(4u32, v, buf);
+        if self.author.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                4u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.author.write_to(__cache, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -180,11 +249,18 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
         if let ::core::option::Option::Some(__v) = self.remote_repo {
             __map.serialize_entry("remoteRepo", __v)?;
         }
-        if let ::core::option::Option::Some(__v) = self.encrypt {
-            __map.serialize_entry("encrypt", &__v)?;
+        {
+            if let ::core::option::Option::Some(__v) = self
+                .isolated_encryption
+                .as_option()
+            {
+                __map.serialize_entry("isolatedEncryption", __v)?;
+            }
         }
-        if let ::core::option::Option::Some(__v) = self.secret {
-            __map.serialize_entry("secret", __v)?;
+        {
+            if let ::core::option::Option::Some(__v) = self.author.as_option() {
+                __map.serialize_entry("author", __v)?;
+            }
         }
         __map.end()
     }
@@ -284,30 +360,37 @@ impl OpenOptionsOwnedView {
     pub fn auto_sync(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().auto_sync
     }
-    /// Empty means unset. Used only when `path` does not exist: then `open`
-    /// clones this URL. Ignored when `path` is already a Vault.
+    /// Clone URL when `path` does not exist. Unset means local `git init`.
+    /// Ignored when `path` is already a Vault. A set value must be an absolute
+    /// URI (RFC 3986): `https://…`, `ssh://…`, `file:///…`.
     ///
     /// Field 2: `remote_repo`
     #[must_use]
     pub fn remote_repo(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().remote_repo
     }
-    /// Later. When Scheda first creates `{vault}/.isolated/`, encrypt
-    /// that nested tree. Ignored if `.isolated/` already exists. Default false.
+    /// Later. Age secret for `{vault}/.isolated/`. Unset: isolated
+    /// collections are not encrypted. When set, first create of that tree
+    /// is encrypted; later, isolated Record I/O uses it. Vault `open` and
+    /// main collections do not require it.
     ///
-    /// Field 3: `encrypt`
+    /// Field 3: `isolated_encryption`
     #[must_use]
-    pub fn encrypt(&self) -> ::core::option::Option<bool> {
-        self.0.reborrow().encrypt
+    pub fn isolated_encryption(
+        &self,
+    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::EncryptionView<'_>> {
+        &self.0.reborrow().isolated_encryption
     }
-    /// Later. Isolated Record I/O when `.isolated/` is encrypted.
-    /// Empty means unset. `open` of the Vault and main collections do not
-    /// require it.
+    /// Git author and committer for every commit on this handle (main tree
+    /// and `{vault}/.isolated/`). Unset: local git config, then
+    /// `Scheda <scheda@invalid>`.
     ///
-    /// Field 4: `secret`
+    /// Field 4: `author`
     #[must_use]
-    pub fn secret(&self) -> ::core::option::Option<&'_ str> {
-        self.0.reborrow().secret
+    pub fn author(
+        &self,
+    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::AuthorView<'_>> {
+        &self.0.reborrow().author
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

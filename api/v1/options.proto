@@ -7,17 +7,33 @@ edition = "2024";
 
 package api.v1;
 
+import "api/v1/author.proto";
+import "api/v1/encryption.proto";
+import "buf/validate/validate.proto";
+
 message OpenOptions {
   // Unset means off.
   bool auto_sync = 1;
-  // Empty means unset. Used only when `path` does not exist: then `open`
-  // clones this URL. Ignored when `path` is already a Vault.
-  string remote_repo = 2;
-  // Later. When Scheda first creates `{vault}/.isolated/`, encrypt
-  // that nested tree. Ignored if `.isolated/` already exists. Default false.
-  bool encrypt = 3;
-  // Later. Isolated Record I/O when `.isolated/` is encrypted.
-  // Empty means unset. `open` of the Vault and main collections do not
-  // require it.
-  string secret = 4;
+  // Clone URL when `path` does not exist. Unset means local `git init`.
+  // Ignored when `path` is already a Vault. A set value must be an absolute
+  // URI (RFC 3986): `https://…`, `ssh://…`, `file:///…`.
+  string remote_repo = 2 [(buf.validate.field) = {
+    string: {uri: true}
+    cel: [
+      {
+        id: "open_options.remote_repo.uri"
+        message: "must be a valid URI"
+        expression: "this.isUri()"
+      }
+    ]
+  }];
+  // Later. Age secret for `{vault}/.isolated/`. Unset: isolated
+  // collections are not encrypted. When set, first create of that tree
+  // is encrypted; later, isolated Record I/O uses it. Vault `open` and
+  // main collections do not require it.
+  Encryption isolated_encryption = 3;
+  // Git author and committer for every commit on this handle (main tree
+  // and `{vault}/.isolated/`). Unset: local git config, then
+  // `Scheda <scheda@invalid>`.
+  Author author = 4;
 }

@@ -14,8 +14,9 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub auto_sync: ::core::option::Option<bool>,
-    /// Empty means unset. Used only when `path` does not exist: then `open`
-    /// clones this URL. Ignored when `path` is already a Vault.
+    /// Clone URL when `path` does not exist. Unset means local `git init`.
+    /// Ignored when `path` is already a Vault. A set value must be an absolute
+    /// URI (RFC 3986): `https://…`, `ssh://…`, `file:///…`.
     ///
     /// Field 2: `remote_repo`
     #[serde(
@@ -24,19 +25,31 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub remote_repo: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Later. When Scheda first creates `{vault}/.isolated/`, encrypt
-    /// that nested tree. Ignored if `.isolated/` already exists. Default false.
+    /// Later. Age secret for `{vault}/.isolated/`. Unset: isolated
+    /// collections are not encrypted. When set, first create of that tree
+    /// is encrypted; later, isolated Record I/O uses it. Vault `open` and
+    /// main collections do not require it.
     ///
-    /// Field 3: `encrypt`
-    #[serde(rename = "encrypt", skip_serializing_if = "::core::option::Option::is_none")]
-    pub encrypt: ::core::option::Option<bool>,
-    /// Later. Isolated Record I/O when `.isolated/` is encrypted.
-    /// Empty means unset. `open` of the Vault and main collections do not
-    /// require it.
+    /// Field 3: `isolated_encryption`
+    #[serde(
+        rename = "isolatedEncryption",
+        alias = "isolated_encryption",
+        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+    )]
+    pub isolated_encryption: ::buffa::MessageField<
+        Encryption,
+        ::buffa::Inline<Encryption>,
+    >,
+    /// Git author and committer for every commit on this handle (main tree
+    /// and `{vault}/.isolated/`). Unset: local git config, then
+    /// `Scheda <scheda@invalid>`.
     ///
-    /// Field 4: `secret`
-    #[serde(rename = "secret", skip_serializing_if = "::core::option::Option::is_none")]
-    pub secret: ::core::option::Option<::buffa::alloc::string::String>,
+    /// Field 4: `author`
+    #[serde(
+        rename = "author",
+        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+    )]
+    pub author: ::buffa::MessageField<Author, ::buffa::Inline<Author>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -46,8 +59,8 @@ impl ::core::fmt::Debug for OpenOptions {
         f.debug_struct("OpenOptions")
             .field("auto_sync", &self.auto_sync)
             .field("remote_repo", &self.remote_repo)
-            .field("encrypt", &self.encrypt)
-            .field("secret", &self.secret)
+            .field("isolated_encryption", &self.isolated_encryption)
+            .field("author", &self.author)
             .finish()
     }
 }
@@ -76,23 +89,6 @@ impl OpenOptions {
         self.remote_repo = Some(value.into());
         self
     }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::encrypt`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_encrypt(mut self, value: bool) -> Self {
-        self.encrypt = Some(value);
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::secret`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_secret(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.secret = Some(value.into());
-        self
-    }
 }
 ::buffa::impl_default_instance!(OpenOptions);
 impl ::buffa::MessageName for OpenOptions {
@@ -110,7 +106,7 @@ impl ::buffa::Message for OpenOptions {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
@@ -120,18 +116,28 @@ impl ::buffa::Message for OpenOptions {
         if let Some(ref v) = self.remote_repo {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.encrypt.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        if self.isolated_encryption.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.isolated_encryption.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
         }
-        if let Some(ref v) = self.secret {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        if self.author.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.author.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
     fn write_to(
         &self,
-        _cache: &mut ::buffa::SizeCache,
+        __cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
@@ -142,11 +148,21 @@ impl ::buffa::Message for OpenOptions {
         if let Some(ref v) = self.remote_repo {
             ::buffa::types::put_string_field(2u32, v, buf);
         }
-        if let Some(v) = self.encrypt {
-            ::buffa::types::put_bool_field(3u32, v, buf);
+        if self.isolated_encryption.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                3u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.isolated_encryption.write_to(__cache, buf);
         }
-        if let Some(ref v) = self.secret {
-            ::buffa::types::put_string_field(4u32, v, buf);
+        if self.author.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                4u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.author.write_to(__cache, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -185,20 +201,23 @@ impl ::buffa::Message for OpenOptions {
             3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::Varint,
+                    ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                self.encrypt = ::core::option::Option::Some(
-                    ::buffa::types::decode_bool(buf)?,
-                );
+                ::buffa::Message::merge_length_delimited(
+                    self.isolated_encryption.get_or_insert_default(),
+                    buf,
+                    ctx,
+                )?;
             }
             4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::types::merge_string(
-                    self.secret.get_or_insert_with(::buffa::alloc::string::String::new),
+                ::buffa::Message::merge_length_delimited(
+                    self.author.get_or_insert_default(),
                     buf,
+                    ctx,
                 )?;
             }
             _ => {
@@ -211,8 +230,8 @@ impl ::buffa::Message for OpenOptions {
     fn clear(&mut self) {
         self.auto_sync = ::core::option::Option::None;
         self.remote_repo = ::core::option::Option::None;
-        self.encrypt = ::core::option::Option::None;
-        self.secret = ::core::option::Option::None;
+        self.isolated_encryption = ::buffa::MessageField::none();
+        self.author = ::buffa::MessageField::none();
         self.__buffa_unknown_fields.clear();
     }
 }

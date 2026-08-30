@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.61, 28 August 2026.
+Document 12 of the Scheda package. Version 0.65, 30 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -16,7 +16,7 @@ A0–A7 are done. **agent** is accepted for this binding. A2 was the
 names. Schema already parses `isolated`. Age encryption (ISO-5,
 ISO-7–11) stays out.
 
-Stages P0–P11 in §4 are the second half of this file: what the **first
+Stages P0–P12 in §4 are the second half of this file: what the **first
 consumer** needs before it can move its primary layer onto the crate.
 They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
@@ -26,7 +26,7 @@ never waited on a P stage and still does not.
 
 §6 lists what a *second* consumer will want and Scheda does not have.
 Those are open questions, not stages: nothing there blocks A0–A7 or
-P0–P11.
+P0–P12.
 
 ---
 
@@ -75,7 +75,7 @@ P order is in §4. It starts after A7 and does not interleave with it.
 `catalog` command.
 
 Consumer readiness has its own dashboard in §4. A green A0–A7 does not
-imply a green P0–P11, and the reverse is also true.
+imply a green P0–P12, and the reverse is also true.
 
 ---
 
@@ -433,8 +433,7 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** all stages done. P0–P5, P8, P9, P10, and P11
-are done.
+**Status of the part:** P0–P5, P8, P9, P10, P11, and P12 are done.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -478,6 +477,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P9](#p9-remove-a-record)                                | done        | A Record can leave, on `document` and `singleton`                   |
 | [P10](#p10-consumer-acceptance)                          | done        | The consumer's acceptance list on the P0 fixture                    |
 | [P11](#p11-open-maps-with-a-typed-value)                 | done        | A map whose keys the author invents and whose values are not strings |
+| [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -501,6 +501,11 @@ written stops working without it, and it blocks only the part of a
 primary layer that is configuration rather than content. It needs no
 other stage and overlaps none of them, so it can run whenever there is
 room.
+
+P12 is in: a mutating call may name the commit, and `open` may name who
+it is by. It came after enough autocommits existed to read: the history
+was already written, just unreadable, and an identity nobody chose was
+already in it.
 
 Each stage carries **Needs** (stages that must be `done` first) and
 **Decide first** (a question `03`–`10` leaves open, which has to be
@@ -543,7 +548,8 @@ not decide, that is a gap in the specification, and a silent default in
 
 P1, P2, and P3 all touch the journal write path and the commit rule; run
 them one at a time. P5 removed dead `CollectionDecl` fields. P8 touches
-the build graph and overlaps nothing.
+the build graph and overlaps nothing. P12 touches the same commit rule
+P3 settled; both are done.
 
 ---
 
@@ -1030,6 +1036,92 @@ rebuild.
 
 ---
 
+## P12. Commit message and author
+
+**Status:** done
+
+**Codes:** GIT-2, GIT-3, LIB-7, LIB-9, LIB-13, LIB-17, LIB-21, LIB-22.
+
+**Needs:** nothing.
+
+**Decide first:** nothing. Both questions this stage exists for are
+answered below: an optional message per mutating call, and the commit
+identity at `open`.
+
+Today every autocommit is signed `scheda` and nothing else is possible.
+GIT-2 calls that "the default message", but no override exists, so a
+consumer that writes through autocommit gets a history where every entry
+reads the same word. The count makes it worse than dull: one appended
+line plus the Record that tracks it is two commits, so a few thousand
+writes bury whatever a person wanted to find. A history that cannot be
+read is not a history, and GIT-3 and LIB-17 hand both the message and the
+author to callers through `history`, so this is not only `git log` — it
+reaches whatever a consumer builds on top.
+
+The identity has the same shape of problem from the other side. There is
+no way to say who a commit is by: `signature` reads the local git config
+and otherwise falls back to `Scheda <scheda@invalid>`. A consumer that
+keeps the people in its Records pseudonymous gets the opposite of what it
+asked for, because the config holds a real name and address, and a commit
+author cannot be redacted later without rewriting history. Such a
+consumer needs to pass its own pseudonym and never touch the config.
+
+Two rules stay untouched. Autocommit itself is not up for negotiation:
+LIB-7 says there is no `OpenOptions` switch that turns it off, and a
+consumer writing many lines must `begin`. This stage adds a name for the
+commit, not a way to avoid it. And a message is still required to say
+something: `commit` rejects an empty one, and an explicitly empty
+override is the same mistake.
+
+A per-call message and a transaction have to agree on who wins. Inside a
+transaction the mutating calls do not commit at all, so a message passed
+there has nowhere to go. It is ignored, and every method that takes one
+says so in its own rustdoc. Failing instead would be worse: code that
+wraps arbitrary writes in `begin` … `commit` cannot know whether a
+callee passed a message, and would start breaking on someone else's
+argument.
+
+The identity belongs at `open` rather than on each call. It does not vary
+between two writes in one process, and threading it through every
+mutation would repeat it everywhere for nothing. `OpenOptions` is an
+`api/v1` message, so its constraints are protovalidate rules on the proto
+and not checks in `src/`; after editing it, generate before the tests.
+
+- [x] Each mutating call (`add`, `replace`, `remove`,
+      `create_collection`) takes an optional commit message. Outside a
+      transaction that text is the commit subject; omitted, the subject
+      is `scheda` as before. `04` GIT-2 and the `07` entries say so.
+- [x] A message passed inside a transaction is ignored, and `commit`'s
+      own message is what lands. The rustdoc of each of those methods
+      states it, and `07` states it once.
+- [x] A message that is present but empty is `invalid`, before any file
+      is written, matching `commit`.
+- [x] `OpenOptions` carries `author` (`api.v1.Author`): required `name`
+      and `email`. Unset `author` is the fallback. A partial Author is
+      `invalid` at `open`, from protovalidate on `api/v1`, and the
+      generated `Validate` contains it.
+- [x] Characters git cannot carry in a name (`<`, `>`, a newline) and an
+      address that is not an HTML email are `invalid` at `open`, not at
+      the first commit.
+- [x] The identity falls back in one order: `OpenOptions`, then the local
+      git config, then `Scheda <scheda@invalid>`. An existing caller that
+      sets nothing sees exactly today's behaviour.
+- [x] The identity is the git author and the git committer, in the main
+      repository and in the `{vault}/.isolated/` nested one. A Vault does
+      not end up with two identities across its two trees.
+- [x] `history(id, …)` reports the message and the author that were set,
+      for both an autocommit and a transaction commit (GIT-3, LIB-17).
+- [x] No switch to disable autocommit appears anywhere: LIB-7 stands, and
+      `grep` over `rust/scheda/src` and `api/v1` finds no such option.
+- [x] Documents amended: `04` GIT-2 (override and identity) and GIT-9
+      (`remote_repo` URI), `07` LIB-7, LIB-9, LIB-13, LIB-21 and the
+      `remove` entry, `08` where the agent surface encodes a mutating
+      call, `14` where a mutating command gains the message and `open`
+      takes `--author-name` / `--author-email`.
+- [x] `bazel test //...` green; CHANGELOG under `[Unreleased]`.
+
+---
+
 ## 5. What this document does not decide
 
 Calendar dates or crate version numbers (`10` §8).
@@ -1047,7 +1139,7 @@ Whether `open` refuses a dirty Index or only warns via `check` (`10` §7).
 Vault hooks: already the consumer's (`04`). A CLI note must not recurse
 into the same write lock (`10` §7); this plan does not design hooks.
 
-ISO-5 `encrypt` / `secret` / `crypto`.
+ISO-5 `isolated_encryption` / `crypto`.
 
 The consumer's schemas, field names, and identifier formats. §4 says what
 the engine must be able to express; the shapes themselves stay in the

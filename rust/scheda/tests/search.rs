@@ -125,12 +125,14 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
         .add(
             "hit",
             rec(json!({"title": "kryptonite mineral", "aside": "plain", "tag": "red"})),
+            None,
         )
         .unwrap();
     collection
         .add(
             "aside_only",
             rec(json!({"title": "ordinary rock", "aside": "kryptonite mention", "tag": "blue"})),
+            None,
         )
         .unwrap();
     for i in 0..8 {
@@ -138,6 +140,7 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
             .add(
                 &format!("d{i}"),
                 rec(json!({"title": format!("distractor {i}"), "tag": "blue"})),
+                None,
             )
             .unwrap();
     }
@@ -161,15 +164,17 @@ fn remove_leaves_search() {
         .add(
             "hit",
             rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+            None,
         )
         .unwrap();
     collection
         .add(
             "keep",
             rec(json!({"title": "kryptonite also", "tag": "red"})),
+            None,
         )
         .unwrap();
-    collection.remove("hit").unwrap();
+    collection.remove("hit", None).unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(!ids.contains(&"hit"), "removed id still a hit: {ids:?}");
@@ -189,12 +194,13 @@ fn vault_search_scopes_collections() {
         .add(
             "keep",
             rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+            None,
         )
         .unwrap();
     vault
         .collection("token_extra")
         .unwrap()
-        .add("other", rec(json!({"title": "kryptonite extra"})))
+        .add("other", rec(json!({"title": "kryptonite extra"})), None)
         .unwrap();
     let all = vault.search(&[], &q("kryptonite", 10), None).unwrap();
     let mut all_ids = hit_ids(&all);
@@ -231,10 +237,11 @@ fn body_fts_is_indexed_when_marked() {
         .add(
             "bodyhit",
             rec_body(json!({"title": "quiet"}), "kryptonite in the body"),
+            None,
         )
         .unwrap();
     collection
-        .add("other", rec(json!({"title": "quiet too"})))
+        .add("other", rec(json!({"title": "quiet too"})), None)
         .unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
@@ -253,10 +260,10 @@ fn synonym_with_no_shared_tokens_hits_vector_leg() {
     let vault = open_tokens(&scratch, Some(embedder));
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("vehicle", rec(json!({"title": "car"})))
+        .add("vehicle", rec(json!({"title": "car"})), None)
         .unwrap();
     collection
-        .add("other", rec(json!({"title": "banana"})))
+        .add("other", rec(json!({"title": "banana"})), None)
         .unwrap();
     let hits = collection
         .search(&q("automobile", 5).with_lexical_weight(0.0), None)
@@ -295,13 +302,13 @@ fn hybrid_hit_carries_both_scores() {
     let vault = open_tokens(&scratch, Some(embedder));
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("both", rec(json!({"title": "kryptonite mineral"})))
+        .add("both", rec(json!({"title": "kryptonite mineral"})), None)
         .unwrap();
     collection
-        .add("vector_only", rec(json!({"title": "car"})))
+        .add("vector_only", rec(json!({"title": "car"})), None)
         .unwrap();
     collection
-        .add("noise", rec(json!({"title": "unrelated prose"})))
+        .add("noise", rec(json!({"title": "unrelated prose"})), None)
         .unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
@@ -335,10 +342,14 @@ fn reranker_reorders_and_sets_score() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("first", rec(json!({"title": "kryptonite mineral"})))
+        .add("first", rec(json!({"title": "kryptonite mineral"})), None)
         .unwrap();
     collection
-        .add("second", rec(json!({"title": "kryptonite extra mention"})))
+        .add(
+            "second",
+            rec(json!({"title": "kryptonite extra mention"})),
+            None,
+        )
         .unwrap();
     let fused = collection.search(&q("kryptonite", 2), None).unwrap();
     assert!(fused.hits.iter().all(|hit| hit.rerank_score.is_none()));
@@ -359,12 +370,14 @@ fn filter_applies_before_ranking() {
         .add(
             "keep",
             rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+            None,
         )
         .unwrap();
     collection
         .add(
             "drop",
             rec(json!({"title": "kryptonite mineral extra", "tag": "blue"})),
+            None,
         )
         .unwrap();
     let query: SearchQuery = serde_json::from_value(json!({
@@ -387,6 +400,7 @@ fn search_omits_raw_unless_include_raw() {
         .add(
             "keep",
             rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+            None,
         )
         .unwrap();
     let omitted = collection.search(&q("kryptonite", 5), None).unwrap();
@@ -409,7 +423,7 @@ fn invalid_record_is_omitted_from_search() {
     vault
         .collection("token_notes")
         .unwrap()
-        .add("old", rec(json!({"title": "kryptonite"})))
+        .add("old", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
     drop(vault);
     scratch.write_schema(
@@ -432,7 +446,7 @@ fn insert_is_searchable_without_reindex() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("fresh", rec(json!({"title": "kryptonite"})))
+        .add("fresh", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
@@ -461,7 +475,7 @@ fn failed_embed_rolls_back_the_new_record() {
     let vault = open_tokens(&scratch, Some(Arc::new(FailingEmbedder)));
     let collection = vault.collection("token_notes").unwrap();
     let err = collection
-        .add("fresh", rec(json!({"title": "kryptonite"})))
+        .add("fresh", rec(json!({"title": "kryptonite"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let missing = collection.get("fresh").unwrap_err();
@@ -474,7 +488,7 @@ fn missing_format_fails_closed() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("a", rec(json!({"title": "kryptonite"})))
+        .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
     fs::remove_file(vault.index_dir().join("format")).unwrap();
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
@@ -487,7 +501,7 @@ fn corrupt_lexical_index_fails_closed() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("a", rec(json!({"title": "kryptonite"})))
+        .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
     drop(vault);
     fs::write(
@@ -512,17 +526,26 @@ fn edge_field_read_matches_hand_list() {
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_src").unwrap();
     let dst = vault.collection("walk_dst").unwrap();
-    dst.add("alpha", rec(json!({"title": "A"}))).unwrap();
-    dst.add("beta", rec(json!({"title": "B"}))).unwrap();
-    src.add("one", rec(json!({"title": "keep", "target": "alpha"})))
+    dst.add("alpha", rec(json!({"title": "A"})), None).unwrap();
+    dst.add("beta", rec(json!({"title": "B"})), None).unwrap();
+    src.add(
+        "one",
+        rec(json!({"title": "keep", "target": "alpha"})),
+        None,
+    )
+    .unwrap();
+    src.add("two", rec(json!({"title": "keep", "target": "beta"})), None)
         .unwrap();
-    src.add("two", rec(json!({"title": "keep", "target": "beta"})))
-        .unwrap();
-    src.add("skip", rec(json!({"title": "other", "target": "alpha"})))
-        .unwrap();
+    src.add(
+        "skip",
+        rec(json!({"title": "other", "target": "alpha"})),
+        None,
+    )
+    .unwrap();
     src.add(
         "dangling",
         rec(json!({"title": "keep", "target": "missing"})),
+        None,
     )
     .unwrap();
     let found = src
@@ -554,14 +577,16 @@ fn strict_edge_rejects_missing_target() {
     scratch.write_schema("dst.yaml", WALK_DST);
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_strict").unwrap();
-    let err = src.add("bad", rec(json!({"target": "nope"}))).unwrap_err();
+    let err = src
+        .add("bad", rec(json!({"target": "nope"})), None)
+        .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     vault
         .collection("walk_dst")
         .unwrap()
-        .add("ok", rec(json!({"title": "t"})))
+        .add("ok", rec(json!({"title": "t"})), None)
         .unwrap();
-    src.add("good", rec(json!({"target": "ok"}))).unwrap();
+    src.add("good", rec(json!({"target": "ok"})), None).unwrap();
 }
 
 #[test]
@@ -573,13 +598,14 @@ fn find_by_edge_target_does_not_scan_unrelated() {
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_src").unwrap();
     let dst = vault.collection("walk_dst").unwrap();
-    dst.add("t", rec(json!({"title": "T"}))).unwrap();
-    src.add("link", rec(json!({"title": "keep", "target": "t"})))
+    dst.add("t", rec(json!({"title": "T"})), None).unwrap();
+    src.add("link", rec(json!({"title": "keep", "target": "t"})), None)
         .unwrap();
     for i in 0..400 {
         src.add(
             &format!("u{i}"),
             rec(json!({"title": "other", "target": "nowhere"})),
+            None,
         )
         .unwrap();
     }
@@ -601,7 +627,7 @@ fn stale_index_fails_closed_until_reindex() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("a", rec(json!({"title": "kryptonite"})))
+        .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
     fs::write(vault.index_dir().join("stale"), []).unwrap();
     let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();

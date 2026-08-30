@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.39, 28 August 2026.
+Document 10 of the Scheda package. Version 0.41, 30 August 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -29,9 +29,9 @@ The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` mu
 
 Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness P0–P11 is in (`12` §4). Do not start other language bindings or the rest of §5 until those are decided.
+**Next in `scheda`.** Age encryption of `{vault}/.isolated/` stays deferred (ISO-5, ISO-7–11). Consumer readiness P0–P12 is in (`12` §4). Do not start other language bindings or the rest of §5 until those are decided.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, P9, P10, and P11 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4. `find` and `search` are opt-in crate features (P8); Cargo default is `remote-git` only. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave. P10 is acceptance on that fixture. P11 is an `object` that takes listed keys, a typed open map (`values`), or an open map of `string` values when both arms are omitted.
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, P9, P10, P11, and P12 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git, no Remote) is P4. `find` and `search` are opt-in crate features (P8); Cargo default is `remote-git` only. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave. P10 is acceptance on that fixture. P11 is an `object` that takes listed keys, a typed open map (`values`), or an open map of `string` values when both arms are omitted. P12 is an optional commit message on each mutating call and a commit identity at `open`.
 
 **Still deferred:** ISO-5, ISO-7–11; file watcher; journal line delete; REL-4; extra language bindings.
 
@@ -46,7 +46,7 @@ Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collec
 - Schema: SCH-1–8, SCH-12–14 (SCH-7 stores the body in **core**; indexing the body is **search**; SCH-15 is **later**)
 - Index needed for truth and lookup: IDX-1, IDX-2, IDX-5
 - Point read and filter: QRY-1, QRY-2, QRY-7
-- Library: LIB-1–10, LIB-12–19, LIB-24 (`search` itself is LIB-11; isolated/`encrypt` clauses on those ops are **later**)
+- Library: LIB-1–10, LIB-12–19, LIB-24 (`search` itself is LIB-11; isolated/`isolated_encryption` clauses on those ops are **later**)
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
@@ -108,21 +108,21 @@ is in (`12` P4). Age encryption stays `§5`.
 
 ### Isolated collections
 
-**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`encrypt`/`secret`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`.
+**In:** SCH-15, IDX-4, ISO-2–11 (including age encryption of `{vault}/.isolated/`). Library clauses that mention isolated/`isolated_encryption`/`crypto` (LIB-4, LIB-5, LIB-8, LIB-9, LIB-13–15). Isolated Records are `collection(name)` on the same Vault handle, not a second `open`.
 
 ISO-1 stays **core**. The main Vault is never encrypted.
 
-Unencrypted isolated (`encrypt: false`, `0600`, no Remote) is valid; encryption is optional on top.
+Unencrypted isolated (`isolated_encryption` unset, `0600`, no Remote) is valid; encryption is optional on top.
 
 **Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-4 nested Index; ISO-6 no Remote; IDX-4 (main Index has no sealed bytes). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`. `check` covers the nested tree.
 
-**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.encrypt` and `secret` wait.
+**Still later — encryption:** ISO-5, ISO-7–11. `OpenOptions.isolated_encryption` waits.
 
 **Isolated is accepted** when:
 
 1. A fixture with gitignored `{vault}/.isolated/`: queries on non-isolated collections return no isolated Records and do not require `.isolated/` (ISO-2, SCH-15).
 2. Nested git: local `commit` / `history` of isolated paths; `push` does not upload `.isolated/`; `check` fails if the nested repo has a Remote or the parent tracks `.isolated/` (ISO-6).
-3. `encrypt=true` on first creation of `.isolated/` round-trips with `secret`; isolated I/O without `secret` is `crypto`; main `open` still succeeds; files decrypt with `age -d` (ISO-5–9, ISO-11).
+3. `isolated_encryption` on first creation of `.isolated/` round-trips; isolated I/O without it is `crypto`; main `open` still succeeds; files decrypt with `age -d` (ISO-5–9, ISO-11).
 4. Main Index contains no fixture sealed string (ISO-4, IDX-4).
 5. If **agent** is on: default tools never return that sealed value (ISO-3).
 
@@ -170,7 +170,7 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 
 **Exact Schema YAML key names.** Closed in `05` §8. Pretty-print is still free.
 
-**Marker path for `encrypt` (**later**).** ISO-11 allows a binding path (example `.scheda/encrypted`). A shared path across languages would ease mixed-binding Vaults; not fixed yet.
+**Marker path for isolated encryption (**later**).** ISO-11 allows a binding path (example `.scheda/encrypted`). A shared path across languages would ease mixed-binding Vaults; not fixed yet.
 
 **Passphrase vs identity in fixtures (**later**).** Both are required by ISO-7. Tests should cover each; not decided which the README example leads with.
 
@@ -188,4 +188,4 @@ Which FTS or vector crate a binding pins — `06` requires BM25-class lexical an
 
 Which age library a binding vendors — ISO-8.
 
-A consumer's collection names and whether that consumer enables `encrypt`.
+A consumer's collection names and whether that consumer sets `isolated_encryption`.

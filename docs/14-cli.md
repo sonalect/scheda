@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.55, 28 August 2026.
+Document 14 of the Scheda package. Version 0.57, 30 August 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -16,6 +16,8 @@ Unset reranker → RRF order.
 |---|---|
 | `--vault PATH` | Vault root. Required. Only Vault filesystem path the user supplies. |
 | `--auto-sync` | `OpenOptions.auto_sync` (default off). |
+| `--author-name NAME` | `OpenOptions.author.name`. With `--author-email`, or neither. Git author and committer on this process. |
+| `--author-email EMAIL` | `OpenOptions.author.email`. With `--author-name`, or neither. HTML email. |
 | `--embedder-openai-url URL` | OpenAI-compatible API root (`http`/`https`). CLI `POST`s `{URL}embeddings`. With `--embedder-model` and `--embedder-dimensions`, or none of the three. Partial set → `invalid`. Implements `Embedder`, passed to `open`. Unset (and no `--model2vec-embedder`) → vector leg off. Not with `--model2vec-embedder`. |
 | `--embedder-model NAME` | JSON `model` on the embeddings body. With the other two HTTP embedder flags, or none. |
 | `--embedder-dimensions N` | Positive integer. `Embedder.dimensions` (no probe). Response length must match. With the other two HTTP embedder flags, or none. |
@@ -34,9 +36,9 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 
 | Command | Args |
 |---|---|
-| `open` | [`--remote-repo URL`] |
+| `open` | [`--remote-repo URL`] (absolute URI when set) |
 | `info` | |
-| `create-collection` | `NAME --schema JSON` (or stdin) |
+| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`] |
 | `collection` | `NAME <subcommand>` |
 | `check` | |
 | `reindex` | |
@@ -59,7 +61,8 @@ is also `unsupported`. Stdout JSON includes `collection` on each `Record`
 
 The CLI does not encode `begin` / `commit` / `discard`. Each mutating
 command (`create-collection`, `collection … add` / `replace` / `remove`) autocommits
-with message `scheda`. Batch writes are a library-handle concern (`07`
+with `--message` when set, otherwise `scheda`. An empty `--message` is
+`invalid`. Batch writes are a library-handle concern (`07`
 LIB-12, LIB-22, LIB-23).
 
 `--reranker-cohere-url URL`: Cohere/Jina API root (`http`/`https`). CLI
@@ -104,11 +107,11 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | Subcommand | Args |
 |---|---|
 | `schema` | |
-| `add` | `--id ID --record JSON` (or stdin) |
+| `add` | `--id ID --record JSON` (or stdin) [`--message TEXT`] |
 | `get` | `--id ID` |
 | `history` | `--id ID --offset N --count N` |
-| `replace` | `--id ID --record JSON` (or stdin) |
-| `remove` | `--id ID` |
+| `replace` | `--id ID --record JSON` (or stdin) [`--message TEXT`] |
+| `remove` | `--id ID` [`--message TEXT`] |
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 

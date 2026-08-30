@@ -30,10 +30,10 @@ mod validate {
                 reason = "module exists to include protovalidate output"
             )]
             use crate::generated::api::v1::{
-                Body, CollectionInfo, Edge, Error, Field, Filter, FindQuery, FindResult, History,
-                Journal, Object, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult,
-                Schema, SearchHits, SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history,
-                search_hits,
+                Author, Body, CollectionInfo, Edge, Encryption, Error, Field, Filter, FindQuery,
+                FindResult, History, Journal, Object, OpenOptions, Record, RecordAdd,
+                RecordReplace, ReindexResult, Schema, SearchHits, SearchQuery, Singleton, Text,
+                Unit, VaultInfo, filter, history, search_hits,
             };
 
             pub mod __buffa {
@@ -43,18 +43,18 @@ mod validate {
                         reason = "generated validators may not touch every view"
                     )]
                     pub use crate::generated::api::v1::__buffa::view::{
-                        filter, history, search_hits, BodyOwnedView, BodyView,
+                        AuthorOwnedView, AuthorView, BodyOwnedView, BodyView,
                         CollectionInfoOwnedView, CollectionInfoView, EdgeOwnedView, EdgeView,
-                        ErrorOwnedView, ErrorView, FieldOwnedView, FieldView, FilterOwnedView,
-                        FilterView, FindQueryOwnedView, FindQueryView, FindResultOwnedView,
-                        FindResultView, HistoryOwnedView, HistoryView, JournalOwnedView,
-                        JournalView, ObjectOwnedView, ObjectView, OpenOptionsOwnedView,
-                        OpenOptionsView, RecordAddOwnedView, RecordAddView, RecordOwnedView,
-                        RecordReplaceOwnedView, RecordReplaceView, RecordView,
+                        EncryptionOwnedView, EncryptionView, ErrorOwnedView, ErrorView,
+                        FieldOwnedView, FieldView, FilterOwnedView, FilterView, FindQueryOwnedView,
+                        FindQueryView, FindResultOwnedView, FindResultView, HistoryOwnedView,
+                        HistoryView, JournalOwnedView, JournalView, ObjectOwnedView, ObjectView,
+                        OpenOptionsOwnedView, OpenOptionsView, RecordAddOwnedView, RecordAddView,
+                        RecordOwnedView, RecordReplaceOwnedView, RecordReplaceView, RecordView,
                         ReindexResultOwnedView, ReindexResultView, SchemaOwnedView, SchemaView,
                         SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView, SearchQueryView,
                         SingletonOwnedView, SingletonView, TextOwnedView, TextView, UnitOwnedView,
-                        UnitView, VaultInfoOwnedView, VaultInfoView,
+                        UnitView, VaultInfoOwnedView, VaultInfoView, filter, history, search_hits,
                     };
                     pub mod oneof {
                         pub use crate::generated::api::v1::__buffa::view::oneof::filter::more_like_this;
@@ -359,11 +359,81 @@ impl api::v1::OpenOptions {
         self.with_auto_sync(auto_sync)
     }
 
-    /// Clone URL when `open` path does not exist. Empty string is unset
-    /// (`open` of an existing Vault ignores it).
+    /// Clone URL when `open` path does not exist. Unset means local `git init`.
+    /// A set value must be an absolute URI (`https://…`, `ssh://…`, `file:///…`).
     #[must_use]
     pub fn remote_repo(self, remote_repo: impl Into<String>) -> Self {
         self.with_remote_repo(remote_repo)
+    }
+
+    /// Age secret for `{vault}/.isolated/`. Unset: isolated collections
+    /// are not encrypted.
+    #[must_use]
+    pub fn isolated_encryption(mut self, encryption: api::v1::Encryption) -> Self {
+        self.isolated_encryption = ::buffa::MessageField::some(encryption);
+        self
+    }
+
+    /// Git author and committer. Unset: local git config, then
+    /// `Scheda <scheda@invalid>`.
+    #[must_use]
+    pub fn author(mut self, author: api::v1::Author) -> Self {
+        self.author = ::buffa::MessageField::some(author);
+        self
+    }
+
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::Author {
+    /// Empty identity. `name` and `email` are required when this message is
+    /// validated.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Display name. Git cannot store `<`, `>`, or a newline.
+    #[must_use]
+    pub fn name(self, name: impl Into<String>) -> Self {
+        self.with_name(name)
+    }
+
+    /// Address. HTML email, not RFC 5322.
+    #[must_use]
+    pub fn email(self, email: impl Into<String>) -> Self {
+        self.with_email(email)
+    }
+
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::Encryption {
+    /// Empty secret. `passphrase` or `identity` is required when this
+    /// message is validated.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Symmetric secret. Age scrypt wrapping.
+    #[must_use]
+    pub fn passphrase(mut self, passphrase: impl Into<String>) -> Self {
+        self.secret = Some(api::v1::encryption::Secret::Passphrase(passphrase.into()));
+        self
+    }
+
+    /// Age X25519 identity (`AGE-SECRET-KEY-…` file).
+    #[must_use]
+    pub fn identity(mut self, identity: impl Into<String>) -> Self {
+        self.secret = Some(api::v1::encryption::Secret::Identity(identity.into()));
+        self
     }
 
     /// Fail if this message does not satisfy `api/v1` field rules.
@@ -466,7 +536,8 @@ mod tests {
     use protovalidate_buffa::Validate;
 
     use super::api::v1::{
-        Body, Error, Field, Filter, FindQuery, OpenOptions, Record, Schema, SearchQuery, history,
+        Author, Body, Encryption, Error, Field, Filter, FindQuery, OpenOptions, Record, Schema,
+        SearchQuery, history,
     };
 
     #[test]
@@ -491,6 +562,123 @@ mod tests {
         let cloned = OpenOptions::new().remote_repo("file:///tmp/scheda.git");
         let json = serde_json::to_value(&cloned).expect("json");
         assert_eq!(json["remoteRepo"], "file:///tmp/scheda.git");
+        let named = OpenOptions::new().author(Author::new().name("Ada").email("ada@invalid"));
+        let json = serde_json::to_value(&named).expect("json");
+        assert_eq!(json["author"]["name"], "Ada");
+        assert_eq!(json["author"]["email"], "ada@invalid");
+        let encrypted =
+            OpenOptions::new().isolated_encryption(Encryption::new().passphrase("test-passphrase"));
+        let json = serde_json::to_value(&encrypted).expect("json");
+        assert_eq!(json["isolatedEncryption"]["passphrase"], "test-passphrase");
+        assert!(json["isolatedEncryption"].get("identity").is_none());
+        assert!(json.get("encrypt").is_none());
+        assert!(json.get("secret").is_none());
+    }
+
+    #[test]
+    fn open_options_author_requires_name_and_email() {
+        assert!(
+            OpenOptions::new()
+                .author(Author::new().name("Ada"))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            OpenOptions::new()
+                .author(Author::new().email("ada@invalid"))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            OpenOptions::new()
+                .author(Author::new().name("Ada").email("ada@invalid"))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            OpenOptions::new()
+                .author(Author::new().name("Ada<").email("ada@invalid"))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            OpenOptions::new()
+                .author(Author::new().name("Ada").email("ada invalid"))
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn open_options_remote_repo_must_be_uri() {
+        assert!(OpenOptions::new().validate().is_ok());
+        assert!(
+            OpenOptions::new()
+                .remote_repo("file:///tmp/scheda.git")
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            OpenOptions::new()
+                .remote_repo("https://example.test/repo.git")
+                .validate()
+                .is_ok()
+        );
+        assert!(OpenOptions::new().remote_repo("").validate().is_err());
+        assert!(
+            OpenOptions::new()
+                .remote_repo("/tmp/repo")
+                .validate()
+                .is_err()
+        );
+        assert!(
+            OpenOptions::new()
+                .remote_repo("git@host:repo.git")
+                .validate()
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn open_options_isolated_encryption_requires_secret() {
+        assert!(OpenOptions::new().validate().is_ok());
+        assert!(
+            OpenOptions::new()
+                .isolated_encryption(Encryption::new())
+                .validate()
+                .is_err()
+        );
+        assert!(
+            OpenOptions::new()
+                .isolated_encryption(Encryption::new().passphrase("test-passphrase"))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            OpenOptions::new()
+                .isolated_encryption(Encryption::new().identity("AGE-SECRET-KEY-TEST"))
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            OpenOptions::new()
+                .isolated_encryption(Encryption::new().passphrase(""))
+                .validate()
+                .is_err()
+        );
+        assert!(
+            OpenOptions::new()
+                .isolated_encryption(Encryption::new().identity(""))
+                .validate()
+                .is_err()
+        );
+        assert!(Encryption::new().validate().is_err());
+        assert!(
+            Encryption::new()
+                .passphrase("test-passphrase")
+                .require_valid()
+                .is_ok()
+        );
     }
 
     #[test]

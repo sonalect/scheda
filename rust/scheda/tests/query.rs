@@ -97,12 +97,14 @@ fn empty_filter_and_scan_return_every_record() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
     collection
-        .add("a", rec(json!({"title": "A", "tag": "red"})))
+        .add("a", rec(json!({"title": "A", "tag": "red"})), None)
         .unwrap();
     collection
-        .add("b", rec(json!({"title": "B", "tag": "blue"})))
+        .add("b", rec(json!({"title": "B", "tag": "blue"})), None)
         .unwrap();
-    collection.add("c", rec(json!({"title": "C"}))).unwrap();
+    collection
+        .add("c", rec(json!({"title": "C"})), None)
+        .unwrap();
     let found = collection.find(&Filter::all().into(), 0, 100).unwrap();
     assert_eq!(found.records.len(), 3);
     assert_eq!(found.total, Some(3));
@@ -134,7 +136,7 @@ fn find_omits_raw_unless_include_raw() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
     collection
-        .add("a", rec(json!({"title": "A", "tag": "red"})))
+        .add("a", rec(json!({"title": "A", "tag": "red"})), None)
         .unwrap();
     let omitted = collection.find(&FindQuery::all(), 0, 10).unwrap();
     assert!(omitted.records[0].raw.is_none());
@@ -159,12 +161,12 @@ fn vault_find_empty_names_is_all_collections() {
     vault
         .collection("query_notes")
         .unwrap()
-        .add("red", rec(json!({"title": "R", "tag": "red"})))
+        .add("red", rec(json!({"title": "R", "tag": "red"})), None)
         .unwrap();
     vault
         .collection("query_pages")
         .unwrap()
-        .add("home", rec(json!({"title": "Home"})))
+        .add("home", rec(json!({"title": "Home"})), None)
         .unwrap();
     let all = vault.find(&[], &Filter::all().into(), 0, 100).unwrap();
     let mut all_ids = ids(&all);
@@ -226,15 +228,17 @@ fn equal_set_exists_and_null() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
     collection
-        .add("red", rec(json!({"title": "R", "tag": "red"})))
+        .add("red", rec(json!({"title": "R", "tag": "red"})), None)
         .unwrap();
     collection
-        .add("blue", rec(json!({"title": "B", "tag": "blue"})))
+        .add("blue", rec(json!({"title": "B", "tag": "blue"})), None)
         .unwrap();
     collection
-        .add("nil", rec(json!({"title": "N", "tag": null})))
+        .add("nil", rec(json!({"title": "N", "tag": null})), None)
         .unwrap();
-    collection.add("omit", rec(json!({"title": "O"}))).unwrap();
+    collection
+        .add("omit", rec(json!({"title": "O"})), None)
+        .unwrap();
 
     let red = collection
         .find(
@@ -296,10 +300,10 @@ fn document_filter_on_project_field() {
     let vault = scratch.reopen();
     let collection = vault.collection("query_pages").unwrap();
     collection
-        .add("home", rec(json!({"title": "Home"})))
+        .add("home", rec(json!({"title": "Home"})), None)
         .unwrap();
     collection
-        .add("alpha", rec(json!({"title": "A", "project": "one"})))
+        .add("alpha", rec(json!({"title": "A", "project": "one"})), None)
         .unwrap();
     let projects = collection
         .find(
@@ -322,8 +326,12 @@ fn journal_empty_find_keeps_append_order() {
     scratch.write_schema("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("query_log").unwrap();
-    collection.add("a", rec(json!({"tag": "one"}))).unwrap();
-    collection.add("b", rec(json!({"tag": "two"}))).unwrap();
+    collection
+        .add("a", rec(json!({"tag": "one"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"tag": "two"})), None)
+        .unwrap();
     let found = collection
         .find(
             &filter(json!({"term":{"field":"tag","value":"one"}})),
@@ -345,7 +353,7 @@ fn check_reports_schema_failure_with_path() {
     vault
         .collection("query_notes")
         .unwrap()
-        .add("a", rec(json!({"title": "A"})))
+        .add("a", rec(json!({"title": "A"})), None)
         .unwrap();
     drop(vault);
     scratch.write_schema(
@@ -365,8 +373,12 @@ fn reindex_rebuilds_format_and_counts() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
-    collection.add("a", rec(json!({"title": "A"}))).unwrap();
-    collection.add("b", rec(json!({"title": "B"}))).unwrap();
+    collection
+        .add("a", rec(json!({"title": "A"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"title": "B"})), None)
+        .unwrap();
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
     assert_eq!(counts.skipped_invalid, Some(0));
@@ -402,7 +414,9 @@ fn conflict_markers_fail_check() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
-    collection.add("a", rec(json!({"title": "A"}))).unwrap();
+    collection
+        .add("a", rec(json!({"title": "A"})), None)
+        .unwrap();
     let rel = collection.get("a").unwrap().path.unwrap();
     fs::write(vault.path().join(&rel), "<<<<<<< HEAD\nid: a\n>>>>>>>\n").unwrap();
     let got = collection.get("a").unwrap();
@@ -418,10 +432,10 @@ fn phrase_matches_tokens_in_title() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
     collection
-        .add("panda", rec(json!({"title": "Giant panda"})))
+        .add("panda", rec(json!({"title": "Giant panda"})), None)
         .unwrap();
     collection
-        .add("fox", rec(json!({"title": "Red fox"})))
+        .add("fox", rec(json!({"title": "Red fox"})), None)
         .unwrap();
     let found = collection
         .find(
@@ -447,16 +461,25 @@ fn phrase_prefix_fuzzy_regex_and_range() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
     collection
-        .add("job", rec(json!({"title": "part time job", "tag": "blue"})))
+        .add(
+            "job",
+            rec(json!({"title": "part time job", "tag": "blue"})),
+            None,
+        )
         .unwrap();
     collection
         .add(
             "hobby",
             rec(json!({"title": "part of the job", "tag": "red"})),
+            None,
         )
         .unwrap();
     collection
-        .add("panda", rec(json!({"title": "panda", "tag": "amber"})))
+        .add(
+            "panda",
+            rec(json!({"title": "panda", "tag": "amber"})),
+            None,
+        )
         .unwrap();
 
     let prefix = collection
@@ -537,16 +560,22 @@ fn more_like_this_from_id_ranks_similar_title() {
         .add(
             "a",
             rec(json!({"title": "the diary of a young girl about school"})),
+            None,
         )
         .unwrap();
     collection
         .add(
             "b",
             rec(json!({"title": "the diary of a young woman about school"})),
+            None,
         )
         .unwrap();
     collection
-        .add("c", rec(json!({"title": "komodo dragon of indonesia"})))
+        .add(
+            "c",
+            rec(json!({"title": "komodo dragon of indonesia"})),
+            None,
+        )
         .unwrap();
     let found = collection
         .find(
@@ -598,10 +627,11 @@ fields:
         .add(
             "paris",
             rec(json!({"title": "one", "meta": {"city": "Paris"}})),
+            None,
         )
         .unwrap();
     collection
-        .add("none", rec(json!({"title": "two"})))
+        .add("none", rec(json!({"title": "two"})), None)
         .unwrap();
     let nested = collection
         .find(&filter(json!({"exists":{"field":"city"}})), 0, 100)
@@ -626,12 +656,14 @@ fn find_regex_and_phrase_on_body() {
         .add(
             "panda",
             rec_body(json!({"title": "Red fox"}), "The giant panda eats bamboo."),
+            None,
         )
         .unwrap();
     collection
         .add(
             "fox",
             rec_body(json!({"title": "Giant panda"}), "A red fox in the woods."),
+            None,
         )
         .unwrap();
     let regex = collection
@@ -680,7 +712,11 @@ fields:
     let vault = scratch.reopen();
     let collection = vault.collection("query_notes").unwrap();
     collection
-        .add("panda", rec_body(json!({"title": "Panda"}), "eats bamboo"))
+        .add(
+            "panda",
+            rec_body(json!({"title": "Panda"}), "eats bamboo"),
+            None,
+        )
         .unwrap();
     let err = collection
         .find(
@@ -699,7 +735,9 @@ fn journal_rejects_body_filter() {
     scratch.write_schema("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("query_log").unwrap();
-    collection.add("a", rec(json!({"tag": "one"}))).unwrap();
+    collection
+        .add("a", rec(json!({"tag": "one"})), None)
+        .unwrap();
     let err = collection
         .find(&filter(json!({"exists":{"field":"body"}})), 0, 10)
         .unwrap_err();

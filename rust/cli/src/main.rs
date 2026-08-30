@@ -11,13 +11,13 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use clap::{Parser, error::ErrorKind as ClapErrorKind};
+use clap::{error::ErrorKind as ClapErrorKind, Parser};
 use scheda::{
-    Embedder, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Reranker, Schema,
-    SearchQuery, Vault,
+    Author, Embedder, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Reranker,
+    Schema, SearchQuery, Vault,
 };
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
 
@@ -64,6 +64,8 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         embedder_dimensions,
         embedder_api_key_env_var,
         model2vec_embedder,
+        author_name,
+        author_email,
         command,
     } = cli;
     let embedder = load_embedder(
@@ -75,25 +77,44 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
     )?;
     match command {
         Command::Open { remote_repo } => {
-            let _vault = open_vault(&vault, auto_sync, remote_repo, embedder)?;
+            let _vault = open_vault(
+                &vault,
+                auto_sync,
+                remote_repo,
+                author_name,
+                author_email,
+                embedder,
+            )?;
             Ok(())
         }
-        Command::Info => emit_json(&open_existing(&vault, auto_sync, embedder)?.info()?),
-        Command::CreateCollection { name, schema } => {
-            let vault = open_existing(&vault, auto_sync, embedder)?;
+        Command::Info => emit_json(
+            &open_existing(&vault, auto_sync, author_name, author_email, embedder)?.info()?,
+        ),
+        Command::CreateCollection {
+            name,
+            schema,
+            message,
+        } => {
+            let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
             let schema: Schema = parse_json(&json_input(
                 schema.as_deref(),
                 "missing schema JSON (pass --schema or stdin)",
             )?)?;
             schema.require_valid()?;
-            let collection = vault.create_collection(&name, schema)?;
+            let collection = vault.create_collection(&name, schema, message.as_deref())?;
             emit_json(&collection.schema()?)
         }
-        Command::Collection { name, command } => {
-            collection_dispatch(&open_existing(&vault, auto_sync, embedder)?, &name, command)
+        Command::Collection { name, command } => collection_dispatch(
+            &open_existing(&vault, auto_sync, author_name, author_email, embedder)?,
+            &name,
+            command,
+        ),
+        Command::Check => {
+            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.check()
         }
-        Command::Check => open_existing(&vault, auto_sync, embedder)?.check(),
-        Command::Reindex => emit_json(&open_existing(&vault, auto_sync, embedder)?.reindex()?),
+        Command::Reindex => emit_json(
+            &open_existing(&vault, auto_sync, author_name, author_email, embedder)?.reindex()?,
+        ),
         Command::Find {
             collections,
             filter,
@@ -101,7 +122,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             count,
             include_raw,
         } => {
-            let vault = open_existing(&vault, auto_sync, embedder)?;
+            let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
             let names = collection_names(&collections);
             let query = parse_find_query(filter.as_deref(), include_raw)?;
             emit_json(&vault.find(&names, &query, offset, count)?)
@@ -110,7 +131,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             collections,
             search,
         } => {
-            let vault = open_existing(&vault, auto_sync, embedder)?;
+            let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
             let names = collection_names(&collections);
             let query = parse_search_query(search.query.as_deref(), search.include_raw)?;
             let reranker = load_reranker(
@@ -120,9 +141,15 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             )?;
             emit_json(&vault.search(&names, &query, reranker.as_deref())?)
         }
-        Command::Push => open_existing(&vault, auto_sync, embedder)?.push(),
-        Command::Pull => open_existing(&vault, auto_sync, embedder)?.pull(),
-        Command::Sync => open_existing(&vault, auto_sync, embedder)?.sync(),
+        Command::Push => {
+            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.push()
+        }
+        Command::Pull => {
+            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.pull()
+        }
+        Command::Sync => {
+            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.sync()
+        }
     }
 }
 
@@ -130,15 +157,21 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
     let collection = vault.collection(name)?;
     match command {
         CollectionCommand::Schema => emit_json(&collection.schema()?),
-        CollectionCommand::Add { id, record } => collection.add(&id, parse_add(record.as_deref())?),
+        CollectionCommand::Add {
+            id,
+            record,
+            message,
+        } => collection.add(&id, parse_add(record.as_deref())?, message.as_deref()),
         CollectionCommand::Get { id } => emit_json(&collection.get(&id)?),
         CollectionCommand::History { id, offset, count } => {
             emit_json(&collection.history(&id, offset, count)?)
         }
-        CollectionCommand::Replace { id, record } => {
-            collection.replace(&id, parse_replace(record.as_deref())?)
-        }
-        CollectionCommand::Remove { id } => collection.remove(&id),
+        CollectionCommand::Replace {
+            id,
+            record,
+            message,
+        } => collection.replace(&id, parse_replace(record.as_deref())?, message.as_deref()),
+        CollectionCommand::Remove { id, message } => collection.remove(&id, message.as_deref()),
         CollectionCommand::Find {
             filter,
             offset,
@@ -169,29 +202,58 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
     }
 }
 
-fn open_options(auto_sync: bool, remote_repo: Option<String>) -> OpenOptions {
+fn open_options(
+    auto_sync: bool,
+    remote_repo: Option<String>,
+    author_name: Option<String>,
+    author_email: Option<String>,
+) -> OpenOptions {
     let mut options = OpenOptions::new().auto_sync(auto_sync);
     if let Some(url) = remote_repo {
         options = options.remote_repo(url);
     }
-    options
+    match (author_name, author_email) {
+        (None, None) => options,
+        (name, email) => {
+            let mut author = Author::new();
+            if let Some(name) = name {
+                author = author.name(name);
+            }
+            if let Some(email) = email {
+                author = author.email(email);
+            }
+            options.author(author)
+        }
+    }
 }
 
 fn open_vault(
     path: &Path,
     auto_sync: bool,
     remote_repo: Option<String>,
+    author_name: Option<String>,
+    author_email: Option<String>,
     embedder: Option<Arc<dyn Embedder>>,
 ) -> Result<Vault, Error> {
-    Vault::open(path, open_options(auto_sync, remote_repo), embedder)
+    Vault::open(
+        path,
+        open_options(auto_sync, remote_repo, author_name, author_email),
+        embedder,
+    )
 }
 
 fn open_existing(
     path: &Path,
     auto_sync: bool,
+    author_name: Option<String>,
+    author_email: Option<String>,
     embedder: Option<Arc<dyn Embedder>>,
 ) -> Result<Vault, Error> {
-    Vault::open(path, open_options(auto_sync, None), embedder)
+    Vault::open(
+        path,
+        open_options(auto_sync, None, author_name, author_email),
+        embedder,
+    )
 }
 
 fn collection_names(names: &[String]) -> Vec<&str> {

@@ -84,8 +84,9 @@ pub use error::{Code, Repeat};
 pub use journal::JournalLines;
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Body, CollectionInfo, Edge, Error, Field, History, Journal, Object, OpenOptions, Record,
-    RecordAdd, RecordReplace, ReindexResult, Schema, Singleton, Text, Unit, VaultInfo, history,
+    Author, Body, CollectionInfo, Edge, Encryption, Error, Field, History, Journal, Object,
+    OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema, Singleton, Text, Unit,
+    VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]

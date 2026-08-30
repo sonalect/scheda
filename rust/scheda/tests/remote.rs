@@ -46,7 +46,12 @@ fn rec(title: &str) -> RecordAdd {
 }
 
 fn as_url(path: &Path) -> String {
-    path.to_str().expect("utf-8 path").to_owned()
+    let path = path.to_str().expect("utf-8 path");
+    if let Some(rest) = path.strip_prefix('/') {
+        format!("file:///{rest}")
+    } else {
+        format!("file:///{}", path.replace('\\', "/"))
+    }
 }
 
 fn head_id(dir: &Path) -> Oid {
@@ -104,7 +109,7 @@ fn seed_source(path: &Path) {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("seed", rec("seed"))
+        .add("seed", rec("seed"), None)
         .unwrap();
     drop(vault);
     commit_all(path, "seed");
@@ -130,7 +135,7 @@ fn insert_and_commit(vault: &Vault, id: &str, title: &str, message: &str) {
     vault
         .collection("north_notes")
         .unwrap()
-        .add(id, rec(title))
+        .add(id, rec(title), None)
         .unwrap();
     vault.commit(message).unwrap();
 }
@@ -189,15 +194,12 @@ fn init_with_remote_repo_clones() {
 }
 
 #[test]
-fn empty_remote_repo_on_missing_path_inits() {
+fn empty_remote_repo_on_missing_path_is_invalid() {
     let scratch = Scratch::new();
-    let vault = Vault::open(
-        scratch.dir("empty"),
-        OpenOptions::new().remote_repo(""),
-        None,
-    )
-    .unwrap();
-    assert!(!vault.has_remote());
+    let dest = scratch.dir("empty");
+    let err = Vault::open(&dest, OpenOptions::new().remote_repo(""), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(!dest.exists() || !dest.join(".git").exists());
 }
 
 #[test]
@@ -321,7 +323,7 @@ fn unreachable_push_does_not_roll_back_commit() {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("offline", rec("offline"))
+        .add("offline", rec("offline"), None)
         .unwrap();
     vault.commit("offline").unwrap();
     let committed = head_id(vault.path());
@@ -368,7 +370,7 @@ fn writes_and_commit_do_not_need_the_network() {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("local", rec("local"))
+        .add("local", rec("local"), None)
         .unwrap();
     vault.commit("local only").unwrap();
     vault.reindex().unwrap();

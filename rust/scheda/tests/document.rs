@@ -141,6 +141,7 @@ fn insert_replace_find_one_round_trip() {
                 serde_json::json!({"title": "Hello", "count": 2}),
                 Some("Stored body.\n"),
             ),
+            None,
         )
         .unwrap();
     let got = collection.get("alpha").unwrap();
@@ -162,6 +163,7 @@ fn insert_replace_find_one_round_trip() {
         .replace(
             "alpha",
             rec_rep_body(serde_json::json!({"title": "Later"}), Some("New body.\n")),
+            None,
         )
         .unwrap();
     let got = collection.get("alpha").unwrap();
@@ -194,10 +196,11 @@ fn markdown_and_yaml_only_and_empty_body() {
         .add(
             "with-body",
             rec_body(serde_json::json!({"title": "Md"}), Some("Prose.\n")),
+            None,
         )
         .unwrap();
     collection
-        .add("empty", rec(serde_json::json!({"title": "None"})))
+        .add("empty", rec(serde_json::json!({"title": "None"})), None)
         .unwrap();
     let with_body = collection.get("with-body").unwrap();
     assert_eq!(with_body.body.as_deref(), Some("Prose.\n"));
@@ -219,12 +222,13 @@ fn document_writes_flat_id_md_path() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_pages").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Personal"})))
+        .add("alpha", rec(serde_json::json!({"title": "Personal"})), None)
         .unwrap();
     collection
         .add(
             "beta",
             rec(serde_json::json!({"title": "Work", "project": "one"})),
+            None,
         )
         .unwrap();
     let personal = collection.get("alpha").unwrap();
@@ -242,7 +246,7 @@ fn record_id_rejects_dot_prefix_and_windows_device_names() {
     let collection = vault.collection("north_notes").unwrap();
     for id in [".hidden", "CON", "con.txt", "foo.", "foo "] {
         let err = collection
-            .add(id, rec(serde_json::json!({"title": "Nope"})))
+            .add(id, rec(serde_json::json!({"title": "Nope"})), None)
             .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
     }
@@ -255,10 +259,18 @@ fn record_id_filename_respects_255_byte_component() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add(&"a".repeat(252), rec(serde_json::json!({"title": "Max"})))
+        .add(
+            &"a".repeat(252),
+            rec(serde_json::json!({"title": "Max"})),
+            None,
+        )
         .unwrap();
     let err = collection
-        .add(&"a".repeat(253), rec(serde_json::json!({"title": "Over"})))
+        .add(
+            &"a".repeat(253),
+            rec(serde_json::json!({"title": "Over"})),
+            None,
+        )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -270,7 +282,7 @@ fn rename_fails_check_and_find_one_does_not_follow() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     fs::rename(
         scratch.coll_file("north_notes", "alpha.md"),
@@ -289,12 +301,13 @@ fn optional_omit_versus_null() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("omit", rec(serde_json::json!({"title": "No tag"})))
+        .add("omit", rec(serde_json::json!({"title": "No tag"})), None)
         .unwrap();
     collection
         .add(
             "nil",
             rec(serde_json::json!({"title": "Nil tag", "tag": null})),
+            None,
         )
         .unwrap();
     let omit = fields_of(&collection.get("omit").unwrap());
@@ -311,11 +324,11 @@ fn slug_rejects_slash_in_id() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_slugs").unwrap();
     let err = collection
-        .add("a/b", rec(serde_json::json!({"title": "Bad"})))
+        .add("a/b", rec(serde_json::json!({"title": "Bad"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     collection
-        .add("ok-id", rec(serde_json::json!({"title": "Good"})))
+        .add("ok-id", rec(serde_json::json!({"title": "Good"})), None)
         .unwrap();
     let got = collection.get("ok-id").unwrap();
     assert_eq!(got.path, Some(coll_rel("north_slugs", "ok-id.md")));
@@ -330,14 +343,18 @@ fn singleton_second_insert_then_replace() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     collection
-        .add("inbox", rec(serde_json::json!({"title": "First"})))
+        .add("inbox", rec(serde_json::json!({"title": "First"})), None)
         .unwrap();
     let err = collection
-        .add("inbox", rec(serde_json::json!({"title": "Again"})))
+        .add("inbox", rec(serde_json::json!({"title": "Again"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::DuplicateId));
     collection
-        .replace("inbox", rec_rep(serde_json::json!({"title": "Second"})))
+        .replace(
+            "inbox",
+            rec_rep(serde_json::json!({"title": "Second"})),
+            None,
+        )
         .unwrap();
     let got = collection.get("inbox").unwrap();
     assert_eq!(fields_of(&got)["title"], "Second");
@@ -353,12 +370,12 @@ fn remove_deletes_file_and_get_is_not_found() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Keep"})))
+        .add("alpha", rec(serde_json::json!({"title": "Keep"})), None)
         .unwrap();
     collection
-        .add("beta", rec(serde_json::json!({"title": "Stay"})))
+        .add("beta", rec(serde_json::json!({"title": "Stay"})), None)
         .unwrap();
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     assert_eq!(
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
@@ -375,7 +392,7 @@ fn remove_unknown_id_is_not_found() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    let err = collection.remove("missing").unwrap_err();
+    let err = collection.remove("missing", None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
@@ -385,10 +402,10 @@ fn remove_illegal_slug_is_invalid_before_any_file() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Keep"})))
+        .add("alpha", rec(serde_json::json!({"title": "Keep"})), None)
         .unwrap();
     for id in ["", ".hidden", "CON", "foo.", "foo "] {
-        let err = collection.remove(id).unwrap_err();
+        let err = collection.remove(id, None).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
     }
     assert!(scratch.coll_file("north_notes", "alpha.md").is_file());
@@ -401,8 +418,10 @@ fn journal_remove_is_unsupported() {
     scratch.write_schema("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("north_log").unwrap();
-    collection.add("e1", rec(serde_json::json!({}))).unwrap();
-    let err = collection.remove("e1").unwrap_err();
+    collection
+        .add("e1", rec(serde_json::json!({})), None)
+        .unwrap();
+    let err = collection.remove("e1", None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert!(collection.get("e1").is_ok());
 }
@@ -415,16 +434,16 @@ fn singleton_remove_then_add_again() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     collection
-        .add("inbox", rec(serde_json::json!({"title": "First"})))
+        .add("inbox", rec(serde_json::json!({"title": "First"})), None)
         .unwrap();
-    collection.remove("inbox").unwrap();
+    collection.remove("inbox", None).unwrap();
     assert_eq!(
         collection.get("inbox").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
     assert!(!scratch.coll_file("north_inbox", "record.yaml").exists());
     collection
-        .add("inbox", rec(serde_json::json!({"title": "Again"})))
+        .add("inbox", rec(serde_json::json!({"title": "Again"})), None)
         .unwrap();
     assert_eq!(
         fields_of(&collection.get("inbox").unwrap())["title"],
@@ -439,12 +458,12 @@ fn remove_leaves_find() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Gone"})))
+        .add("alpha", rec(serde_json::json!({"title": "Gone"})), None)
         .unwrap();
     collection
-        .add("beta", rec(serde_json::json!({"title": "Stay"})))
+        .add("beta", rec(serde_json::json!({"title": "Stay"})), None)
         .unwrap();
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     let page = collection.find(&Filter::all().into(), 0, 10).unwrap();
     assert_eq!(page.total, Some(1));
     assert_eq!(page.records.len(), 1);
@@ -460,7 +479,7 @@ fn remove_of_unindexed_file_is_not_found() {
     let path = scratch.coll_file("north_notes", "orphan.md");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
     assert!(collection.get("orphan").is_ok());
-    let err = collection.remove("orphan").unwrap_err();
+    let err = collection.remove("orphan", None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     assert!(path.is_file());
 }
@@ -474,7 +493,7 @@ fn journal_replace_one_is_unsupported() {
     let err = vault
         .collection("north_log")
         .unwrap()
-        .replace("x", rec_rep(serde_json::json!({"title": "no"})))
+        .replace("x", rec_rep(serde_json::json!({"title": "no"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert_eq!(err.known_code(), Some(Code::Unsupported));
@@ -491,7 +510,7 @@ fn replace_of_unindexed_file_is_not_found() {
     let got = collection.get("orphan").unwrap();
     assert_eq!(got.valid, Some(true));
     let err = collection
-        .replace("orphan", rec_rep(serde_json::json!({"title": "New"})))
+        .replace("orphan", rec_rep(serde_json::json!({"title": "New"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
@@ -502,11 +521,11 @@ fn failed_write_does_not_become_the_file() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Keep"})))
+        .add("alpha", rec(serde_json::json!({"title": "Keep"})), None)
         .unwrap();
     let before = fs::read(scratch.coll_file("north_notes", "alpha.md")).unwrap();
     let err = collection
-        .replace("alpha", rec_rep(serde_json::json!({"count": 1})))
+        .replace("alpha", rec_rep(serde_json::json!({"count": 1})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(
@@ -531,12 +550,13 @@ fn invalid_record_rejected_old_file_stays_readable() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     let err = collection
         .add(
             "beta",
             rec(serde_json::json!({"title": "Hello", "unknown": "x"})),
+            None,
         )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -550,7 +570,7 @@ fn invalid_record_rejected_old_file_stays_readable() {
     assert!(got.raw.as_ref().is_some_and(|raw| !raw.is_empty()));
     assert_eq!(got.id.as_deref(), Some("alpha"));
     let err = collection
-        .add("gamma", rec(serde_json::json!({"title": "New"})))
+        .add("gamma", rec(serde_json::json!({"title": "New"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -562,7 +582,7 @@ fn schema_n_plus_one_optional_still_reads() {
     vault
         .collection("north_notes")
         .unwrap()
-        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     drop(vault);
     scratch.write_schema("notes.yaml", NOTES_PLUS);
@@ -607,7 +627,7 @@ fn reader_find_one_while_writer_holds_lock() {
     writer
         .collection("north_notes")
         .unwrap()
-        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     let reader = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
     assert!(writer.holds_write_lock());
@@ -631,11 +651,12 @@ fn header_id_must_match_record_id() {
         .add(
             "alpha",
             rec(serde_json::json!({"id": "beta", "title": "Hello"})),
+            None,
         )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     collection
-        .add("alpha", rec(serde_json::json!({"title": "Hello"})))
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     let mut text = fs::read_to_string(scratch.coll_file("north_notes", "alpha.md")).unwrap();
     text = text.replace("id: alpha", "id: beta");
@@ -650,8 +671,8 @@ fn duplicate_insert_is_conflict() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     let record = rec(serde_json::json!({"title": "Hello"}));
-    collection.add("alpha", record.clone()).unwrap();
-    let err = collection.add("alpha", record).unwrap_err();
+    collection.add("alpha", record.clone(), None).unwrap();
+    let err = collection.add("alpha", record, None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::DuplicateId));
 }
 

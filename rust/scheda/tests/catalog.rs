@@ -261,7 +261,7 @@ fn isolated_sealed_values_stay_off_the_main_vault() {
     vault
         .collection("west_docs")
         .unwrap()
-        .add("alpha", rec(json!({"title": "Alpha public"})))
+        .add("alpha", rec(json!({"title": "Alpha public"})), None)
         .unwrap();
     plant_isolated_sealed(&scratch);
     vault.reindex().unwrap();
@@ -353,7 +353,7 @@ fn create_collection_then_insert_one_without_reopen() {
     let scratch = Scratch::new();
     let vault = scratch.init();
     let written = vault
-        .create_collection("west_docs", west_docs_decl())
+        .create_collection("west_docs", west_docs_decl(), None)
         .unwrap();
     assert_eq!(written.name(), "west_docs");
     assert_eq!(written.kind(), scheda::Kind::Document);
@@ -367,7 +367,7 @@ fn create_collection_then_insert_one_without_reopen() {
     vault
         .collection("west_docs")
         .unwrap()
-        .add("alpha", rec(json!({"title": "Hello", "tag": "x"})))
+        .add("alpha", rec(json!({"title": "Hello", "tag": "x"})), None)
         .unwrap();
     let got = vault.collection("west_docs").unwrap().get("alpha").unwrap();
     assert_eq!(got.id.as_deref(), Some("alpha"));
@@ -399,7 +399,7 @@ fn create_collection_prints_object_values_in_catalog() {
         }]
     }))
     .unwrap();
-    vault.create_collection("west_docs", decl).unwrap();
+    vault.create_collection("west_docs", decl, None).unwrap();
     let yaml = fs::read_to_string(scratch.vault().join("west_docs/.schema.yaml")).unwrap();
     assert!(yaml.contains("values:"));
     assert!(yaml.contains("name: axis"));
@@ -437,7 +437,9 @@ fn create_collection_rejects_object_fields_and_values() {
         }]
     }))
     .unwrap();
-    let err = vault.create_collection("west_docs", decl).unwrap_err();
+    let err = vault
+        .create_collection("west_docs", decl, None)
+        .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert!(
         !scratch
@@ -471,7 +473,9 @@ fn create_collection_rejects_edge_nested_under_values() {
         }]
     }))
     .unwrap();
-    let err = vault.create_collection("west_docs", decl).unwrap_err();
+    let err = vault
+        .create_collection("west_docs", decl, None)
+        .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();
     assert!(message.contains("owner"), "{message}");
@@ -494,7 +498,9 @@ fn create_collection_missing_kind_writes_nothing() {
         "fields": [{"name": "title", "string": {}}]
     }))
     .unwrap();
-    let err = vault.create_collection("west_docs", decl).unwrap_err();
+    let err = vault
+        .create_collection("west_docs", decl, None)
+        .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert!(
         !scratch
@@ -516,7 +522,9 @@ fn create_collection_isolated_writes_schema_and_nested_git() {
         "fields": [{"name": "secret", "string": {}}]
     }))
     .unwrap();
-    let written = vault.create_collection("west_isolated", decl).unwrap();
+    let written = vault
+        .create_collection("west_isolated", decl, None)
+        .unwrap();
     assert_eq!(written.name(), "west_isolated");
     assert!(
         scratch
@@ -526,7 +534,9 @@ fn create_collection_isolated_writes_schema_and_nested_git() {
             .is_file()
     );
     assert!(scratch.vault().join(".isolated").join(".git").exists());
-    written.add("s1", rec(json!({"secret": "nested"}))).unwrap();
+    written
+        .add("s1", rec(json!({"secret": "nested"})), None)
+        .unwrap();
     let got = vault
         .collection("west_isolated")
         .unwrap()
@@ -548,7 +558,7 @@ fn create_collection_does_not_persist_layout_json_key() {
     });
     assert!(json.get("layout").is_some());
     let decl: Schema = serde_json::from_value(json).unwrap();
-    vault.create_collection("west_docs", decl).unwrap();
+    vault.create_collection("west_docs", decl, None).unwrap();
     let path = scratch.vault().join("west_docs").join(".schema.yaml");
     let yaml = fs::read_to_string(&path).unwrap();
     assert!(!yaml.contains("layout"), "{yaml}");
@@ -560,7 +570,7 @@ fn create_collection_on_reader_is_locked() {
     let _writer = scratch.init();
     let other = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let err = other
-        .create_collection("west_docs", west_docs_decl())
+        .create_collection("west_docs", west_docs_decl(), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Locked));
 }

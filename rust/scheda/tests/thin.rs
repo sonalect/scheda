@@ -94,7 +94,7 @@ fn add_get_round_trip_without_lexical_index() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "Keep"})))
+        .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(fields_of(&got)["title"], "Keep");
@@ -109,7 +109,7 @@ fn add_marks_index_stale_and_check_ignores_it() {
     vault.check().unwrap();
     let collection = vault.collection("thin_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "Keep"})))
+        .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     assert!(vault.index_dir().join("stale").is_file());
     vault.check().unwrap();
@@ -123,15 +123,15 @@ fn replace_uses_the_record_file() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "First"})))
+        .add("alpha", rec(json!({"title": "First"})), None)
         .unwrap();
     collection
-        .replace("alpha", rec_rep(json!({"title": "Second"})))
+        .replace("alpha", rec_rep(json!({"title": "Second"})), None)
         .unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(fields_of(&got)["title"], "Second");
     let err = collection
-        .replace("missing", rec_rep(json!({"title": "No"})))
+        .replace("missing", rec_rep(json!({"title": "No"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
@@ -142,9 +142,9 @@ fn remove_uses_the_record_file() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "First"})))
+        .add("alpha", rec(json!({"title": "First"})), None)
         .unwrap();
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     assert_eq!(
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
@@ -156,7 +156,7 @@ fn remove_uses_the_record_file() {
             .join("alpha.md")
             .is_file()
     );
-    let err = collection.remove("missing").unwrap_err();
+    let err = collection.remove("missing", None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
 
@@ -167,9 +167,9 @@ fn remove_marks_index_stale() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "Keep"})))
+        .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    collection.remove("alpha").unwrap();
+    collection.remove("alpha", None).unwrap();
     assert!(vault.index_dir().join("stale").is_file());
     vault.check().unwrap();
 }
@@ -183,7 +183,7 @@ fn replace_of_on_disk_file_does_not_need_the_index() {
     let path = scratch.vault().join("thin_notes").join("orphan.md");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
     collection
-        .replace("orphan", rec_rep(json!({"title": "New"})))
+        .replace("orphan", rec_rep(json!({"title": "New"})), None)
         .unwrap();
     let got = collection.get("orphan").unwrap();
     assert_eq!(fields_of(&got)["title"], "New");
@@ -210,7 +210,7 @@ fn reindex_without_find_marks_stale() {
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
     collection
-        .add("alpha", rec(json!({"title": "Keep"})))
+        .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     vault.reindex().unwrap();
     assert!(vault.index_dir().join("stale").is_file());

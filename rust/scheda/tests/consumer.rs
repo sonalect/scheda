@@ -219,7 +219,7 @@ fn add_isolated_journal(vault: &Vault) {
     vault
         .collection("alias_bindings")
         .unwrap()
-        .add("bound", rec(json!({"token": ISOLATED_TOKEN})))
+        .add("bound", rec(json!({"token": ISOLATED_TOKEN})), None)
         .unwrap();
 }
 
@@ -465,22 +465,23 @@ fn default_build_writes_every_kind_and_reads_without_index() {
         .add(
             "ticket-two",
             rec(json!({"title": "Second", "status": "open"})),
+            None,
         )
         .unwrap();
     vault
         .collection("episodes")
         .unwrap()
-        .add("beta", rec(json!({"note": "episode-two"})))
+        .add("beta", rec(json!({"note": "episode-two"})), None)
         .unwrap();
     vault
         .collection("run_heads")
         .unwrap()
-        .replace("cursor", rec_rep(json!({"title": "moved"})))
+        .replace("cursor", rec_rep(json!({"title": "moved"})), None)
         .unwrap();
     vault
         .collection("alias_bindings")
         .unwrap()
-        .add("second", rec(json!({"token": "another-binding"})))
+        .add("second", rec(json!({"token": "another-binding"})), None)
         .unwrap();
 
     assert_eq!(
@@ -627,9 +628,10 @@ fn remove_work_queue_entry_is_gone() {
         .replace(
             "ticket-one",
             rec_rep(json!({"title": "First ticket", "status": "done"})),
+            None,
         )
         .unwrap();
-    collection.remove("ticket-one").unwrap();
+    collection.remove("ticket-one", None).unwrap();
     let err = collection.get("ticket-one").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     assert!(
@@ -663,7 +665,7 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
     vault.begin().unwrap();
     let log = vault.collection("episodes").unwrap();
     for i in 0..OPS_JOURNAL {
-        log.add(&format!("j{i:05}"), rec(json!({"note": "vol"})))
+        log.add(&format!("j{i:05}"), rec(json!({"note": "vol"})), None)
             .unwrap();
     }
     let notes = vault.collection("lessons_personal").unwrap();
@@ -672,6 +674,7 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
             .add(
                 &format!("vol-{i:04}"),
                 rec(json!({"title": format!("t{i}"), "tag": "vol"})),
+                None,
             )
             .unwrap();
     }
@@ -693,7 +696,8 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
     let extra = format!("j{OPS_JOURNAL:05}");
     vault.begin().unwrap();
     let started = Instant::now();
-    log.add(&extra, rec(json!({"note": "extra"}))).unwrap();
+    log.add(&extra, rec(json!({"note": "extra"})), None)
+        .unwrap();
     let added = started.elapsed();
     vault.commit("extra").unwrap();
     assert!(
@@ -719,12 +723,12 @@ fn identical_document_schemas_accept_the_same_record_and_find_stays_in_one() {
     vault
         .collection("lessons_personal")
         .unwrap()
-        .add("twin", payload.clone())
+        .add("twin", payload.clone(), None)
         .unwrap();
     vault
         .collection("lessons_project")
         .unwrap()
-        .add("twin", payload)
+        .add("twin", payload, None)
         .unwrap();
 
     let personal = vault

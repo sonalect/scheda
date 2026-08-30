@@ -14,7 +14,7 @@ use std::time::Duration;
 use scheda::{
     Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery, Vault,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -148,13 +148,19 @@ fn fixture_with_note() -> Scratch {
     let scratch = Scratch::new();
     let vault = scratch.init();
     vault
-        .create_collection("agent_notes", notes_decl())
+        .create_collection("agent_notes", notes_decl(), None)
         .unwrap();
-    vault.create_collection("agent_log", log_decl()).unwrap();
+    vault
+        .create_collection("agent_log", log_decl(), None)
+        .unwrap();
     vault
         .collection("agent_notes")
         .unwrap()
-        .add("alpha", rec(json!({"title": "Alpha token", "tag": "blue"})))
+        .add(
+            "alpha",
+            rec(json!({"title": "Alpha token", "tag": "blue"})),
+            None,
+        )
         .unwrap();
     vault.commit("fixture").unwrap();
     scratch
@@ -194,6 +200,8 @@ fn help_lists_lib2_tools_not_collection_names() {
         "embedder-model",
         "embedder-dimensions",
         "embedder-api-key-env-var",
+        "author-name",
+        "author-email",
     ] {
         assert!(help.contains(name), "missing {name} in help:\n{help}");
     }
@@ -346,6 +354,52 @@ fn collection_remove_deletes_the_record() {
 }
 
 #[test]
+fn mutating_command_commit_message_and_identity() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let add = run(&[
+        "--vault",
+        &path,
+        "--author-name",
+        "Ada",
+        "--author-email",
+        "ada@invalid",
+        "collection",
+        "agent_notes",
+        "add",
+        "--id",
+        "beta",
+        "--record",
+        &json!({"fields":{"title":"Beta","tag":"blue"}}).to_string(),
+        "--message",
+        "note beta",
+    ]);
+    assert_eq!(add.status, 0, "stderr={}", add.stderr);
+    let hist = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "history",
+        "--id",
+        "beta",
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]);
+    let page = stdout_json(&hist);
+    assert!(
+        page["entries"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("note beta"),
+        "{page}"
+    );
+    assert_eq!(page["entries"][0]["author"], "Ada <ada@invalid>");
+}
+
+#[test]
 fn extra_field_is_invalid_and_write_nothing() {
     let scratch = Scratch::new();
     drop(scratch.init());
@@ -364,13 +418,11 @@ fn extra_field_is_invalid_and_write_nothing() {
         &json!({"fields":{"title":"x","unknown":"y"}}).to_string(),
     ]);
     assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-    assert!(
-        !scratch
-            .vault()
-            .join("agent_notes")
-            .join("rogue.md")
-            .exists()
-    );
+    assert!(!scratch
+        .vault()
+        .join("agent_notes")
+        .join("rogue.md")
+        .exists());
 
     let keep = run(&[
         "--vault",

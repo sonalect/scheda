@@ -107,7 +107,7 @@ fn deleting_index_does_not_lose_records() {
     vault
         .collection("west_docs")
         .unwrap()
-        .add("alpha", rec(json!({"title": "keep"})))
+        .add("alpha", rec(json!({"title": "keep"})), None)
         .unwrap();
     let rel = vault
         .collection("west_docs")
@@ -148,12 +148,12 @@ fn records_do_not_cross_vaults() {
     west_vault
         .collection("west_docs")
         .unwrap()
-        .add("alpha", rec(json!({"title": "west"})))
+        .add("alpha", rec(json!({"title": "west"})), None)
         .unwrap();
     east_vault
         .collection("east_docs")
         .unwrap()
-        .add("alpha", rec(json!({"title": "east"})))
+        .add("alpha", rec(json!({"title": "east"})), None)
         .unwrap();
     assert!(west_vault.collection("east_docs").is_err());
     assert!(east_vault.collection("west_docs").is_err());
@@ -227,7 +227,7 @@ fn writes_and_commit_do_not_need_the_network() {
     vault
         .collection("west_docs")
         .unwrap()
-        .add("local", rec(json!({"title": "local"})))
+        .add("local", rec(json!({"title": "local"})), None)
         .unwrap();
     vault.reindex().unwrap();
     let got = vault.collection("west_docs").unwrap().get("local").unwrap();
@@ -250,17 +250,19 @@ fn field_types_reject_unknown_and_round_trip() {
         "o": {"k": "v"},
         "ol": [{"a": "1"}, {"b": "2"}],
     });
-    collection.add("ok", rec(fields.clone())).unwrap();
+    collection.add("ok", rec(fields.clone()), None).unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got.get("n").unwrap(), 0.5);
     assert_eq!(got.get("ol").unwrap().as_array().unwrap().len(), 2);
 
     let err = collection
-        .add("extra", rec(json!({"s": "x", "nope": 1})))
+        .add("extra", rec(json!({"s": "x", "nope": 1})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 
-    let err = collection.add("frac", rec(json!({"i": 1.5}))).unwrap_err();
+    let err = collection
+        .add("frac", rec(json!({"i": 1.5})), None)
+        .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
@@ -288,7 +290,7 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     let fields = json!({"env": {"prod": {"significant": 1}, "staging": {"significant": 0}}});
-    collection.add("ok", rec(fields.clone())).unwrap();
+    collection.add("ok", rec(fields.clone()), None).unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(
         got.get("env").unwrap()["prod"]["significant"].as_f64(),
@@ -296,7 +298,7 @@ fields:
     );
 
     let err = collection
-        .add("bad", rec(json!({"env": {"prod": "yes"}})))
+        .add("bad", rec(json!({"env": {"prod": "yes"}})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();
@@ -348,13 +350,21 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     collection
-        .add("ok", rec(json!({"loose": {"prod": null}, "strict": {}})))
+        .add(
+            "ok",
+            rec(json!({"loose": {"prod": null}, "strict": {}})),
+            None,
+        )
         .unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert!(got["loose"]["prod"].is_null());
 
     let err = collection
-        .add("bad", rec(json!({"loose": {}, "strict": {"prod": null}})))
+        .add(
+            "bad",
+            rec(json!({"loose": {}, "strict": {"prod": null}})),
+            None,
+        )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();
@@ -384,13 +394,17 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     collection
-        .add("ok", rec(json!({"rows": [{"a": 1}, {"b": 2, "c": 3}]})))
+        .add(
+            "ok",
+            rec(json!({"rows": [{"a": 1}, {"b": 2, "c": 3}]})),
+            None,
+        )
         .unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["rows"][1]["c"].as_f64(), Some(3.0));
 
     let err = collection
-        .add("bad", rec(json!({"rows": [{"a": 1}, {"b": "2"}]})))
+        .add("bad", rec(json!({"rows": [{"a": 1}, {"b": "2"}]})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();
@@ -423,13 +437,13 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     collection
-        .add("ok", rec(json!({"grid": {"r1": {"x": 2, "y": 3}}})))
+        .add("ok", rec(json!({"grid": {"r1": {"x": 2, "y": 3}}})), None)
         .unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["grid"]["r1"]["x"].as_f64(), Some(2.0));
 
     let err = collection
-        .add("bad", rec(json!({"grid": {"r1": {"x": "2"}}})))
+        .add("bad", rec(json!({"grid": {"r1": {"x": "2"}}})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();
@@ -456,14 +470,14 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     collection
-        .add("ok", rec(json!({"meta": {"k": "v", "empty": ""}})))
+        .add("ok", rec(json!({"meta": {"k": "v", "empty": ""}})), None)
         .unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["meta"]["k"], "v");
     assert_eq!(got["meta"]["empty"], "");
 
     let err = collection
-        .add("bad", rec(json!({"meta": {"k": 1}})))
+        .add("bad", rec(json!({"meta": {"k": 1}})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();
@@ -495,14 +509,14 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     collection
-        .add("omit", rec(json!({"title": "none"})))
+        .add("omit", rec(json!({"title": "none"})), None)
         .unwrap();
     let omitted = fields_of(&collection.get("omit").unwrap());
     assert_eq!(omitted.get("title").unwrap(), "none");
     assert!(!omitted.contains_key("env"));
 
     collection
-        .add("empty", rec(json!({"title": "empty", "env": {}})))
+        .add("empty", rec(json!({"title": "empty", "env": {}})), None)
         .unwrap();
     let empty = fields_of(&collection.get("empty").unwrap());
     assert_eq!(empty["env"], json!({}));
@@ -529,7 +543,7 @@ fields:
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("c").unwrap();
     collection
-        .add("ok", rec(json!({"env": {"prod": 1, "staging": 0}})))
+        .add("ok", rec(json!({"env": {"prod": 1, "staging": 0}})), None)
         .unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["env"]["prod"].as_f64(), Some(1.0));
@@ -537,7 +551,7 @@ fields:
     assert_eq!(line, "{\"env\":{\"prod\":1,\"staging\":0},\"id\":\"ok\"}\n");
 
     let err = collection
-        .add("bad", rec(json!({"env": {"prod": "1"}})))
+        .add("bad", rec(json!({"env": {"prod": "1"}})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.to_string();

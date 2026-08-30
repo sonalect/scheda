@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.34, 28 August 2026.
+Document 5 of the Scheda package. Version 0.35, 30 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -88,7 +88,7 @@ order. With `segment_rotate: daily`, the open name is `YYYY-MM-DD.jsonl`, then
 
 ## 7. Isolated collections (**later**)
 
-**SCH-15. Isolation is declared (**later**).** Schema may mark a collection `isolated: true`. Record files then live at `{vault}/.isolated/{name}/` (ISO-2): a gitignored nested git with no Remote. The Schema file stays `{vault}/{name}/.schema.yaml` in the main tree. Encryption of isolated Record files is `OpenOptions.encrypt` when `.isolated/` is first created (`09`). `find` / `search` on non-isolated collections do not read it. Sealed fields must not be copied into the main Index. *Check (**later**):* fixture with gitignored `.isolated/`; `search`/`find` on a non-isolated collection return no isolated Records; `open` does not require `.isolated/` to exist.
+**SCH-15. Isolation is declared (**later**).** Schema may mark a collection `isolated: true`. Record files then live at `{vault}/.isolated/{name}/` (ISO-2): a gitignored nested git with no Remote. The Schema file stays `{vault}/{name}/.schema.yaml` in the main tree. Encryption of isolated Record files is `OpenOptions.isolated_encryption` when `.isolated/` is first created (`09`). `find` / `search` on non-isolated collections do not read it. Sealed fields must not be copied into the main Index. *Check (**later**):* fixture with gitignored `.isolated/`; `search`/`find` on a non-isolated collection return no isolated Records; `open` does not require `.isolated/` to exist.
 
 ---
 

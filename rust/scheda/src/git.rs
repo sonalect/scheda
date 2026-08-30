@@ -14,7 +14,62 @@ use git2::{
 };
 
 use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code};
-use crate::{Error, history};
+use crate::{Error, OpenOptions, history};
+
+/// Git author and committer for every commit on a Vault handle.
+#[derive(Clone, Debug)]
+pub(crate) struct CommitIdentity {
+    name: String,
+    email: String,
+}
+
+impl CommitIdentity {
+    pub(crate) fn fallback() -> Self {
+        Self {
+            name: String::from("Scheda"),
+            email: String::from("scheda@invalid"),
+        }
+    }
+
+    fn signature(&self) -> Result<Signature<'static>, Error> {
+        Signature::now(&self.name, &self.email).context("[Git::signature] commit identity")
+    }
+}
+
+/// Resolve in order: `OpenOptions`, then the repository's local git config,
+/// then `Scheda <scheda@invalid>`.
+pub(crate) fn identity_from_open(
+    options: &OpenOptions,
+    repo_dir: &Path,
+) -> Result<CommitIdentity, Error> {
+    if let Some(identity) = options_identity(options) {
+        return Ok(identity);
+    }
+    config_identity(repo_dir)
+}
+
+fn options_identity(options: &OpenOptions) -> Option<CommitIdentity> {
+    let author = options.author.as_option()?;
+    Some(CommitIdentity {
+        name: author.name.as_deref()?.to_owned(),
+        email: author.email.as_deref()?.to_owned(),
+    })
+}
+
+fn config_identity(repo_dir: &Path) -> Result<CommitIdentity, Error> {
+    let repo = open_work_tree(repo_dir)?;
+    if let Ok(sig) = repo.signature()
+        && let (Ok(name), Ok(email)) = (sig.name(), sig.email())
+        && !name.is_empty()
+        && !email.is_empty()
+    {
+        return Ok(CommitIdentity {
+            name: name.to_owned(),
+            email: email.to_owned(),
+        });
+    }
+    Ok(CommitIdentity::fallback())
+}
 
 fn git_fail(err: git2::Error, frame: &str) -> Error {
     Error::new(git_code(&err), err.message()).context(frame)
@@ -49,17 +104,6 @@ fn enable_long_paths(repo: &Repository) -> Result<(), Error> {
     }
     cfg.set_bool("core.longpaths", true)
         .context("[Git] set core.longpaths")
-}
-
-fn signature(repo: &Repository) -> Result<Signature<'static>, Error> {
-    if let Ok(sig) = repo.signature()
-        && let (Ok(name), Ok(email)) = (sig.name(), sig.email())
-        && !name.is_empty()
-        && !email.is_empty()
-    {
-        return Signature::now(name, email).context("[Git::signature] author from config");
-    }
-    Signature::now("Scheda", "scheda@invalid").context("[Git::signature] fallback author")
 }
 
 fn is_unborn(err: &git2::Error) -> bool {
@@ -307,7 +351,12 @@ pub(crate) fn index_has_prefix(dir: &Path, prefix: &str) -> Result<bool, Error> 
     Ok(false)
 }
 
-pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), Error> {
+pub(crate) fn commit(
+    dir: &Path,
+    message: &str,
+    paths: &[String],
+    identity: &CommitIdentity,
+) -> Result<(), Error> {
     if message.trim().is_empty() {
         bail!(Error::invalid("commit message is empty"));
     }
@@ -341,7 +390,7 @@ pub(crate) fn commit(dir: &Path, message: &str, paths: &[String]) -> Result<(), 
     index.write().context("[Git::commit] write index")?;
     let tree_id = index.write_tree().context("[Git::commit] write tree")?;
     let tree = repo.find_tree(tree_id).context("[Git::commit] read tree")?;
-    let sig = signature(&repo)?;
+    let sig = identity.signature()?;
     let parent = match repo.head() {
         Ok(head) => Some(head.peel_to_commit().context("[Git::commit] peel HEAD")?),
         Err(err) if is_unborn(&err) => None,
