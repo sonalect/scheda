@@ -15,8 +15,11 @@
 //! TLS (file remotes still work).
 //!
 //! - **`find`** — Tantivy `Vault::find` / `Collection::find`.
-//!   Writes without it mark the Index stale; `check` reports it, and
-//!   `reindex` under a build with `find` rebuilds the lexical segments.
+//!   Writes without it mark the Index stale, so a later build with
+//!   `find` knows its lexical segments are behind and `find` fails
+//!   closed until `reindex` rebuilds them. A build without `find`
+//!   does not report that marker from `check`: it has no lexical
+//!   segments and no way to rebuild them.
 //! - **`search`** — hybrid `Vault::search` / `Collection::search`
 //!   (BM25 + USearch). Pulls `find` in. `open` with an embedder without
 //!   this feature fails (`index_vector`): the vector leg is absent.

@@ -7,7 +7,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Code, Context, ContextAs, ContextIo};
+#[cfg(feature = "find")]
+use crate::error::Context;
+use crate::error::{Code, ContextAs, ContextIo};
 use crate::journal;
 use crate::schema::{self, Kind, Schema};
 use crate::store;
@@ -377,6 +379,7 @@ fn stale_path(index_dir: &Path) -> PathBuf {
 }
 
 /// Whether a build that cannot update Tantivy segments wrote Records here.
+#[cfg(feature = "find")]
 #[must_use]
 pub(crate) fn is_stale(index_dir: &Path) -> bool {
     stale_path(index_dir).is_file()
@@ -390,6 +393,7 @@ pub(crate) fn mark_stale(index_dir: &Path) -> Result<(), Error> {
 }
 
 /// Fail closed when lexical segments were aged without a Tantivy update.
+#[cfg(feature = "find")]
 pub(crate) fn require_fresh(index_dir: &Path) -> Result<(), Error> {
     if is_stale(index_dir) {
         return Err(Error::index_lexical("index is stale"))

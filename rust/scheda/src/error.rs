@@ -102,6 +102,10 @@ pub(crate) fn git_code(err: &git2::Error) -> Code {
 
 /// Prepend a `stack` frame while bubbling [`crate::Error`].
 pub(crate) trait Context<T> {
+    // A build without `find` has no call site of its own. An uncalled
+    // provided method is a denied warning, so this method is compiled
+    // only when a caller exists.
+    #[cfg(any(test, feature = "find"))]
     fn context(self, frame: impl fmt::Display) -> Result<T, crate::Error>
     where
         Self: Sized,

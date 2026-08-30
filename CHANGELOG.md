@@ -8,6 +8,22 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-08-30
+
+### Fixed
+
+- `check` validates lexical Index freshness only in a build with `find`.
+  A build without it marks the Index stale on every write, holds no
+  lexical segments, and cannot rebuild them, so the old behaviour left
+  `check` failing `index_lexical` from the first write onward with
+  nothing in that build able to clear it. Such a build now passes
+  `check` while the marker sits on disk, and a consumer that keeps its
+  primary layer on the Cargo default feature set gets Schema, encoding,
+  journal-line, `id`-uniqueness, and conflict-marker validation back.
+  Nothing is served from an aged Index: writes still set the marker for
+  the next build with `find`, whose `check` reports it and whose `find`
+  fails closed on it until `reindex`.
+
 ## [0.4.3] - 2026-08-29
 
 ### Changed
@@ -624,6 +640,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.4.4]
 - [0.4.3]
 - [0.4.2]
 - [0.4.1]
@@ -633,7 +650,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/amsokol/scheda/releases/tag/v0.4.4
 [0.4.3]: https://github.com/amsokol/scheda/releases/tag/v0.4.3
 [0.4.2]: https://github.com/amsokol/scheda/releases/tag/v0.4.2
 [0.4.1]: https://github.com/amsokol/scheda/releases/tag/v0.4.1

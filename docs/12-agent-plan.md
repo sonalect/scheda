@@ -820,11 +820,15 @@ simd   = ["search", "usearch/numkong"]
       Index. Isolated collections already do exactly that; the same path
       serves every collection when `find` is off.
 - [x] A build without `find` writes Records and cannot update the Tantivy
-      segments, so it marks the Index stale; `check` reports it and
-      `reindex` under a full build is the cure. A full build never
-      answers `find` from an Index a thin build silently aged (STO-1: the
-      Index is derived, so a stale one is a reported state, not a wrong
-      result).
+      segments, so it marks the Index stale. A build with `find` reports
+      that marker, from `find` and from `check`, and `reindex` under a
+      full build is the cure. A build without `find` does not report it:
+      it holds no lexical segments and its `reindex` cannot rebuild them,
+      so a `check` that reported it would stay red from the first write
+      on. Narrowed after this stage shipped; the contract now lives in
+      `07` LIB-15. A full build never answers `find` from an Index a thin
+      build silently aged (STO-1: the Index is derived, so a stale one is
+      a reported state, not a wrong result).
 - [x] `open` with an embedder in a build without `search` fails with the
       `code` for the absent leg (IDX-8, QRY-4). Not ignored, and not a
       second `code` that tells the caller how the crate was compiled.

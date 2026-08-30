@@ -478,9 +478,13 @@ impl Vault {
     /// Validate Schema, encodings, journal lines, `id` uniqueness, and conflict
     /// markers. Isolated Record files are scanned when `{vault}/.isolated/`
     /// exists. Parent git must not track `.isolated/`; nested git must have no
-    /// Remote. Does not write Records.
+    /// Remote. Does not write Records. Lexical Index freshness is validated
+    /// only when the crate is built with `find`; a build without `find` has no
+    /// lexical segments and no way to rebuild them, so it ignores the stale
+    /// marker even though its own writes keep setting it.
     pub fn check(&self) -> Result<(), Error> {
         isolated::check_perimeter(&self.path)?;
+        #[cfg(feature = "find")]
         index::require_fresh(&self.index_dir)?;
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema)?;

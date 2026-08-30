@@ -103,7 +103,7 @@ fn add_get_round_trip_without_lexical_index() {
 
 #[cfg(not(feature = "find"))]
 #[test]
-fn add_marks_index_stale_and_check_reports_it() {
+fn add_marks_index_stale_and_check_ignores_it() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     vault.check().unwrap();
@@ -112,8 +112,7 @@ fn add_marks_index_stale_and_check_reports_it() {
         .add("alpha", rec(json!({"title": "Keep"})))
         .unwrap();
     assert!(vault.index_dir().join("stale").is_file());
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+    vault.check().unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(got.valid, Some(true));
 }
@@ -172,8 +171,7 @@ fn remove_marks_index_stale() {
         .unwrap();
     collection.remove("alpha").unwrap();
     assert!(vault.index_dir().join("stale").is_file());
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+    vault.check().unwrap();
 }
 
 #[cfg(not(feature = "find"))]
@@ -216,6 +214,5 @@ fn reindex_without_find_marks_stale() {
         .unwrap();
     vault.reindex().unwrap();
     assert!(vault.index_dir().join("stale").is_file());
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexLexical));
+    vault.check().unwrap();
 }
