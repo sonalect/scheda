@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.67, 31 August 2026.
+Document 12 of the Scheda package. Version 0.68, 31 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -14,9 +14,10 @@ out of this plan (`10` §1). MCP is an example transport, not a stage here
 A0–A7 are done. **agent** is accepted for this binding. A2 was the
 **legacy** CLI; A4 replaced `rust/cli` with argv `14`. Do not revive A2
 names. Schema already parses `isolated`. Age encryption (ISO-5,
-ISO-7–11) stays out.
+ISO-7–11) is not required for **agent** and stays out of A0–A7; P14 is
+where it arrives.
 
-Stages P0–P13 in §4 are the second half of this file: what the **first
+Stages P0–P14 in §4 are the second half of this file: what the **first
 consumer** needs before it can move its primary layer onto the crate.
 They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
@@ -26,7 +27,7 @@ never waited on a P stage and still does not.
 
 §6 lists what a *second* consumer will want and Scheda does not have.
 Those are open questions, not stages: nothing there blocks A0–A7 or
-P0–P13.
+P0–P14.
 
 ---
 
@@ -75,7 +76,7 @@ P order is in §4. It starts after A7 and does not interleave with it.
 `catalog` command.
 
 Consumer readiness has its own dashboard in §4. A green A0–A7 does not
-imply a green P0–P13, and the reverse is also true.
+imply a green P0–P14, and the reverse is also true.
 
 ---
 
@@ -434,8 +435,11 @@ of `{vault}/.isolated/` stays `10` §5.
 ## 4. First-consumer readiness
 
 **Status of the part:** P0–P5 and P8–P13 are done. P13 closed the last
-thing the consumer hit: a `document` collection could not be listed at all
-in a build without `find`. Nothing in this part is open.
+thing the consumer hit while reading: a `document` collection could not be
+listed at all in a build without `find`. P14 is open, and it is the first
+stage here that is not a gap the consumer tripped over but a promise the
+crate has been making without keeping — an encryption option that nothing
+reads.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -481,6 +485,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P11](#p11-open-maps-with-a-typed-value)                 | done        | A map whose keys the author invents and whose values are not strings |
 | [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
 | [P13](#p13-listing-a-collection-without-the-index)       | done        | Asking a `document` collection what it holds, with `find` off       |
+| [P14](#p14-encryption-as-a-property-of-a-collection)     | not started | Ciphertext on disk for any one collection, and an option that works |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -1218,6 +1223,201 @@ and a listing command is a separate decision about those surfaces.
 - [x] `bazel test //...` green (30 of 30). The CHANGELOG note did not
       wait under `[Unreleased]`: this stage shipped as `0.5.1`, so it is
       filed there.
+
+---
+
+## P14. Encryption as a property of a collection
+
+**Status:** not started
+
+**Codes:** ISO-4, ISO-5, ISO-6, ISO-7, ISO-8, ISO-9, ISO-10, ISO-11,
+SCH-15 and a new Schema key, IDX-4, `07` LIB-2, LIB-4, LIB-5, LIB-10,
+LIB-15, LIB-25, `04` STO-2 and GIT-9, `10` §2, `14`.
+
+**Needs:** an age implementation as an optional external dependency
+behind the `encrypt` feature. The exact version must be at least two days
+old before it is pinned.
+
+**Decide first:** nothing. The five decisions this stage rests on are
+recorded below: encryption becomes its own axis, it is an opt-in feature,
+it is offered for `document` and `singleton` only, an encrypted
+collection is in no Index, and the nested tree may have a Remote of its
+own.
+
+There is a hole open today, and closing it is what this stage is for.
+`OpenOptions.isolated_encryption` is declared in `api/v1`, validated by
+protovalidate, and read by nothing: nothing under `rust/scheda/src`
+encrypts anything, and the word occurs there only in a list of
+re-exported type names and in the header of `isolated.rs`, which states
+that the tree is unencrypted. A caller who passes a passphrase today gets
+plaintext files and no error at all. That is the
+worst shape a security option can have — it is not "not implemented yet",
+it is a promise that silently does nothing. The CHANGELOG entry for
+`0.5.0` overstates the same thing: it says the first create of that tree
+encrypts and later I/O uses the secret. The released section stays as it
+was written; the next release says what is actually true.
+
+Isolation, as `09` §2 has it, welds four separate properties into one
+Schema flag: Records do not leave the machine, the tree has no Remote,
+files are owner-only, and nothing of theirs reaches the main Index. A
+fifth was parked next to them as `09` §3: the files are ciphertext. Those
+are not the same question. A consumer can want ciphertext on disk for
+something it fully intends to publish — precisely so that a `push` is the
+backup and no directory has to be copied by hand — and can want a plain
+nested tree for something merely local. This stage takes encryption out
+of the isolation flag and makes it a property a Schema declares for any
+one collection, isolated or not.
+
+The capability is opt-in, named `encrypt`, and it sits beside `find` and
+`search` for the reason P8 gave when it moved the search stack out: age
+brings scrypt, ChaCha20-Poly1305, and X25519, and a consumer that
+encrypts nothing should not compile them. Those two features are verbs
+naming what the caller gets, not the machinery behind them, and this one
+follows. But the degradation is deeper than theirs, and the contract has
+to say so. With `find` off a Vault is entirely usable and only search is
+gone; with `encrypt` off part of the data cannot be read at all, so a
+thin build must refuse those collections by code and must never hand a
+caller armor bytes dressed as a Record, or report them healthy from
+`check`.
+
+Encryption is offered for `document` and `singleton`. An encrypted
+`journal` is refused when the Schema is read, and the reason is not
+taste. An age file cannot be appended to: the header wraps the key and
+the payload is a chunked AEAD stream, so adding one line means
+decrypting the whole segment and writing it again. Every appended line
+would therefore replace a whole segment blob in git — with segments
+running to megabytes, a synced repository would grow by a full segment
+per line. On top of that, none of what makes a journal a journal survives
+the transformation: `04` STO-2 and STO-3 read lines, RFC 8785 canonical
+form is a property of a line, and `lines()` walks lines. Ciphertext has
+none. A consumer that wants an encrypted append-only record keeps one
+Record per entry in a `document` collection, where git merges two
+machines' new entries as two new files and history keeps one small
+revision per change instead of one large one per line.
+
+An encrypted collection is in no Index. This is the rule `09` ISO-4 and
+IDX-4 already state, attached to the wrong property: today it follows
+isolation, and this stage moves it onto encryption, where it belongs.
+The Index under `{vault}/.scheda/` is plaintext on disk, gitignored but
+readable, so indexing an encrypted collection would hand back exactly
+what the encryption was for. The consequence must be stated rather than
+discovered: `find` and `search` that name an encrypted collection fail
+with `unsupported`. They must not return an empty result, because an
+empty result is a lie a caller cannot tell from "nothing matched".
+
+That makes P13 load-bearing for this stage. With no Index and no `find`,
+the only ways into an encrypted collection are `get` by an `id` the
+caller already has and the `documents()` / `ids()` walk. `ids()` reads
+file names and needs no secret; `documents()` decrypts one file at a
+time and stops where the caller stops, so a lookup by a field the Index
+cannot hold costs, on average, half the collection rather than all of it.
+
+Because the Schema declares it, the Schema is the marker, and `09` ISO-11
+loses its purpose for a main-tree collection: `{vault}/.isolated/.encrypted`
+existed only because nothing else recorded the choice. Flipping the key
+on a collection that already holds Records is `invalid`: it would mean
+rewriting every file, and the caller may not even hold the secret needed
+to read them first. Encrypting an existing collection is an explicit
+migration by the consumer, not a Schema edit.
+
+`check` must not pretend. Without the secret it cannot parse a single
+encrypted Record, and a `check` that passes over files it never read
+reports health it did not verify. It reports those collections as not
+checked, and says so per collection; with the secret it validates them
+like any other.
+
+The rename is part of this stage: `OpenOptions.isolated_encryption`
+becomes `encryption`, keeping field number 3. Compatibility is broken on
+purpose — nothing has been released against it that matters, and the
+option never worked. The number staying put keeps binary protobuf
+readable while the JSON key changes, and JSON is where `08` and `14`
+callers live. The old key must be **rejected**, not ignored: a caller
+whose `isolated_encryption` is silently dropped gets an unencrypted tree
+and no error, which is the hole this stage exists to close, reopened by
+a rename. Breaking the option bumps the minor: this ships as `0.6.0`.
+
+Last, `09` ISO-6 is relaxed. The nested isolated tree may have a Remote
+of its own, and `push` / `pull` / `sync` on the Vault still publish only
+the main tree; reaching the nested Remote is a separate call. The point
+is two audiences, not one: a consumer can put shared material on a
+shared Remote and its own encrypted private state on a personal one,
+without either riding the other. What the consumer must weigh, and record
+in its own documents, is that ciphertext in a pushed history is
+permanent. A guarantee of the form "after this row is retired the
+identity behind it cannot be recovered" holds physically while the file
+is on one disk that can be destroyed; once pushed, it holds only while a
+key stays secret, and git history does not forget. Scheda's job here is
+to make both audiences expressible and to say plainly which one a
+collection is in.
+
+Scope is the Rust library, plus the one CLI rule a secret forces. The
+secret must not arrive as a command-line argument: argv is visible to
+every process on the machine. `14` takes it from a file path or the
+environment.
+
+- [ ] `encrypt` is an opt-in Cargo feature beside `find` and `search`,
+      and the Cargo default set does not include it (`10` §2, `07`
+      LIB-2). A build without it does not pretend: `encryption` set at
+      `open` fails with a clear code, and a collection whose Schema marks
+      it encrypted fails on `collection(name)` rather than handing back
+      ciphertext as a Record. `open` of the Vault still succeeds and the
+      other collections work, as they do when `find` is off. *Check:* in
+      the thin build, `open` with a passphrase fails and creates nothing;
+      a fixture Vault with an encrypted collection opens, its plain
+      collections round-trip, and the encrypted one refuses by code, not
+      by returning armor bytes.
+- [ ] A Schema key marks one collection encrypted, independent of
+      `isolated` (SCH-15). All four combinations are expressible, and
+      `info` reports the mark (`07` LIB-4). *Check:* an encrypted
+      non-isolated collection and a plain isolated one both round-trip.
+- [ ] `journal` with that key is `invalid` when the Schema is read, with
+      a message that says why. *Check:* the negative, and that the code
+      is `invalid` rather than `unsupported` — the Schema is wrong, not
+      the operation.
+- [ ] Every Record file of an encrypted collection is age v1 armor on
+      disk, whole-file, written by the STO-5 temp-and-rename path
+      (ISO-8, ISO-9). `age -d` recovers exactly what `get` returns.
+      *Check:* `git show` of the blob is armor, not YAML; the `age` CLI
+      decrypts it; a hand-made Base64 blob is refused.
+- [ ] No Index holds anything from an encrypted collection, main or
+      nested (ISO-4, IDX-4). `find` and `search` that name one fail with
+      `unsupported`. *Check:* grep of `{vault}/.scheda/` for a fixture
+      secret string finds nothing; `find` on that collection is
+      `unsupported`, not empty.
+- [ ] `get`, `add`, `replace`, `remove`, `history`, and `documents()`
+      work on an encrypted collection when the secret is present and
+      fail with `crypto` when it is not. `ids()` works without the
+      secret. *Check:* each of those, both ways.
+- [ ] Flipping the Schema key on a collection that already holds Records
+      is `invalid`, and the existing files are untouched. *Check:* the
+      negative, then the files still read with the old setting.
+- [ ] `check` reports an encrypted collection as not checked when the
+      secret is absent, and validates it fully when present. It never
+      reports a clean collection it could not read. *Check:* both, and
+      that the two outcomes are distinguishable by a caller.
+- [ ] `OpenOptions.encryption` replaces `isolated_encryption` at field 3.
+      The old JSON key is rejected, not ignored. *Check:* JSON with the
+      old key fails at `open`, and no Vault directory is created.
+- [ ] The secret never reaches disk: not in a Record, not in the Schema,
+      not in either git tree, not in an Index (ISO-7). *Check:* grep of
+      the whole Vault for the fixture passphrase and identity bytes.
+- [ ] The nested isolated tree accepts its own Remote, and Vault-level
+      `push` / `pull` / `sync` still touch only the main tree (ISO-6
+      amended, `04` GIT-9). `check` no longer fails on a nested remote it
+      configured. *Check:* a nested push uploads only nested files; a
+      Vault push after an isolated write uploads nothing of theirs.
+- [ ] The CLI takes the secret from a file or the environment and never
+      from argv (`14`). *Check:* the flag that would put it on the
+      command line does not exist.
+- [ ] Documents amended: `09` ISO-4 through ISO-11 and the section
+      titles, `05` SCH-15 and the key list, `06`/`07` where `find` and
+      `check` gain the refusal, `07` LIB-2 and `10` §2 for the third
+      opt-in feature, `04` STO-2 and GIT-9, `08` and `14` for the secret
+      and the renamed option.
+- [ ] `bazel test //...` green; the age dependency pinned to a version at
+      least two days old; CHANGELOG under `[Unreleased]`, including the
+      correction that `0.5.0`'s encryption note described behaviour that
+      did not exist.
 
 ---
 
