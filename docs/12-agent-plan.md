@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.66, 31 August 2026.
+Document 12 of the Scheda package. Version 0.67, 31 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -433,9 +433,9 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** P0–P5, P8, P9, P10, P11, and P12 are done. P13 is
-open: the consumer found that a `document` collection cannot be listed at
-all in a build without `find`.
+**Status of the part:** P0–P5 and P8–P13 are done. P13 closed the last
+thing the consumer hit: a `document` collection could not be listed at all
+in a build without `find`. Nothing in this part is open.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -480,7 +480,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P10](#p10-consumer-acceptance)                          | done        | The consumer's acceptance list on the P0 fixture                    |
 | [P11](#p11-open-maps-with-a-typed-value)                 | done        | A map whose keys the author invents and whose values are not strings |
 | [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
-| [P13](#p13-listing-a-collection-without-the-index)       | not started | Asking a `document` collection what it holds, with `find` off       |
+| [P13](#p13-listing-a-collection-without-the-index)       | done        | Asking a `document` collection what it holds, with `find` off       |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -552,8 +552,8 @@ not decide, that is a gap in the specification, and a silent default in
 P1, P2, and P3 all touch the journal write path and the commit rule; run
 them one at a time. P5 removed dead `CollectionDecl` fields. P8 touches
 the build graph and overlaps nothing. P12 touches the same commit rule
-P3 settled; both are done. P13 touches only the read path and no commit
-rule at all, so it can run at any time and conflicts with nothing above.
+P3 settled; both are done. P13 touched only the read path and no commit
+rule at all, so it conflicted with nothing above.
 
 ---
 
@@ -1128,7 +1128,7 @@ and not checks in `src/`; after editing it, generate before the tests.
 
 ## P13. Listing a collection without the Index
 
-**Status:** not started
+**Status:** done (`v0.5.1`)
 
 **Codes:** LIB-2, LIB-25, LIB-26.
 
@@ -1173,28 +1173,51 @@ Scope is the Rust library. The agent envelope (`08`) and the CLI (`14`)
 are not extended here: the consumer that needs this calls the Rust API,
 and a listing command is a separate decision about those surfaces.
 
-- [ ] `documents()` on the collection handle yields every Record of a
+- [x] `documents()` on the collection handle yields every Record of a
       `document` collection in `id` order, one at a time (`07` LIB-25).
-- [ ] `ids()` gives the same order without opening a single Record file
-      (`07` LIB-26).
-- [ ] Both refuse `journal` with `unsupported`, and both accept
+      *Proof:* `documents_and_ids_are_id_order`.
+- [x] `ids()` gives the same order without opening a single Record file
+      (`07` LIB-26). *Proof:* the same test asserts both lists.
+- [x] Both refuse `journal` with `unsupported`, and both accept
       `singleton`: nothing before the first write, one Record after.
-- [ ] Neither sits behind `find`. The Cargo default build has both, and a
+      *Proof:* `documents_and_ids_on_journal_are_unsupported`,
+      `singleton_documents_and_ids_empty_then_one`.
+- [x] Neither sits behind `find`. The Cargo default build has both, and a
       deleted or deliberately stale `{vault}/.scheda/` changes neither
-      answer.
-- [ ] `.schema.yaml`, any dotfile, a name not ending in `.md`, and a
-      subdirectory are skipped, and none of them is an error.
-- [ ] A Record that fails current Schema and a `.md` file that is not a
+      answer. *Proof:* `documents_and_ids_without_find` in the thin
+      build, `documents_and_ids_survive_deleted_index`, and
+      `ids_matches_files_when_index_is_stale`.
+- [x] `.schema.yaml`, any dotfile, a name not ending in `.md`, and a
+      subdirectory are skipped, and none of them is an error. *Proof:*
+      `documents_skips_non_record_names`.
+- [x] A Record that fails current Schema and a `.md` file that is not a
       Record at all are both yielded with `valid: false`, as `get` does,
       and the walk continues past them. Unlike LIB-19 it does not stop:
       separate files, so one bad file must not hide the rest, and `find`
       rebuild must not start failing closed because of this stage.
-- [ ] An isolated collection walks `{vault}/.isolated/{name}/`.
-- [ ] On a 10³ document fixture the walk holds no Record contents but the
+      *Proof:* `documents_schema_fail_is_valid_false` and
+      `documents_unparseable_file_is_valid_false_and_walk_continues`,
+      whose bad file sorts before a good one. The walk calls the same
+      `store::read_file` as `get`, so the two agree by construction
+      rather than by a second rule; `find` rebuild skips `valid: false`
+      itself, so `reindex` behaviour did not change.
+- [x] An isolated collection walks `{vault}/.isolated/{name}/`. *Proof:*
+      `documents_isolated_walks_nested_dir`.
+- [x] On a 10³ document fixture the walk holds no Record contents but the
       current one, and `scan_documents` either becomes this iterator or
       is deleted — two ways to read a collection is one too many.
-- [ ] Documents amended: `07` LIB-2 name list, LIB-25, LIB-26, and §4.
-- [ ] `bazel test //...` green; CHANGELOG under `[Unreleased]`.
+      *Proof:* `documents_thousand_in_id_order`; `scan_documents` is now
+      `collection_documents(…)?.collect()`. Held memory is not asserted
+      by a test and cannot be: what the fixture shows is one `read_file`
+      per step and the promised order. The iterator does hold the file
+      **names** for the length of the walk, which LIB-25 allows and
+      states.
+- [x] Documents amended: `07` LIB-2 name list, LIB-25, LIB-26, and §4.
+      LIB-5 also gained `documents` / `ids` on `journal` in its
+      `unsupported` list.
+- [x] `bazel test //...` green (30 of 30). The CHANGELOG note did not
+      wait under `[Unreleased]`: this stage shipped as `0.5.1`, so it is
+      filed there.
 
 ---
 
