@@ -2919,7 +2919,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "age",
  "buffa",
@@ -2937,7 +2937,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "clap",
  "mimalloc",
@@ -2950,7 +2950,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-generated"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "buffa",
  "buffa-types",

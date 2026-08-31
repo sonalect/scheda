@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 While the major version is 0, compatible additions bump the patch; breaking
 API or on-disk format changes bump the minor.
 
-## [Unreleased]
+## [0.7.0] - 2026-08-31
 
 ### Added
 
@@ -872,6 +872,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.7.0]
 - [0.6.0]
 - [0.5.1]
 - [0.5.0]
@@ -885,7 +886,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/amsokol/scheda/releases/tag/v0.7.0
 [0.6.0]: https://github.com/amsokol/scheda/releases/tag/v0.6.0
 [0.5.1]: https://github.com/amsokol/scheda/releases/tag/v0.5.1
 [0.5.0]: https://github.com/amsokol/scheda/releases/tag/v0.5.0
