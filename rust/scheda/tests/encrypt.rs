@@ -310,6 +310,43 @@ fn find_on_encrypted_collection_is_unsupported() {
 }
 
 #[test]
+fn encrypted_plaintext_is_absent_from_the_index() {
+    let scratch = Scratch::new();
+    let vault = open_encrypted(&scratch, passphrase());
+    vault.begin().unwrap();
+    vault
+        .create_collection("sealed_notes", document_schema(true, false), None)
+        .unwrap();
+    vault
+        .collection("sealed_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    vault.commit("encrypted").unwrap();
+    drop(vault);
+    let scheda = scratch.vault().join(".scheda");
+    assert!(
+        !tree_contains(&scheda, PLAIN),
+        "encrypted plaintext leaked into .scheda"
+    );
+    assert!(
+        !tree_contains(&scheda, "Keep"),
+        "encrypted field leaked into .scheda"
+    );
+    let vault = open_encrypted(&scratch, passphrase());
+    vault.reindex().unwrap();
+    drop(vault);
+    assert!(
+        !tree_contains(&scheda, PLAIN),
+        "encrypted plaintext leaked into .scheda after reindex"
+    );
+    assert!(
+        !tree_contains(&scheda, "Keep"),
+        "encrypted field leaked into .scheda after reindex"
+    );
+}
+
+#[test]
 fn flipping_encrypted_on_nonempty_is_invalid_files_unchanged() {
     let scratch = Scratch::new();
     let vault = open_encrypted(&scratch, passphrase());

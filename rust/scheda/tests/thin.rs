@@ -8,7 +8,7 @@ use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, OpenOptions, Record, RecordAdd, RecordReplace, Vault};
+use scheda::{Code, OpenOptions, Record, RecordAdd, RecordReplace, Schema, Vault};
 #[cfg(not(feature = "search"))]
 use scheda::{Embedder, Error};
 use serde_json::{Map, Value, json};
@@ -99,6 +99,33 @@ fn add_get_round_trip_without_lexical_index() {
     let got = collection.get("alpha").unwrap();
     assert_eq!(fields_of(&got)["title"], "Keep");
     assert_eq!(got.valid, Some(true));
+}
+
+#[test]
+fn isolated_round_trip_and_documents_without_find() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let mut schema = Schema::default().with_version(1).with_isolated(true);
+    schema.kind = scheda::Body::default().into();
+    schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
+    vault
+        .create_collection("thin_sealed", schema, None)
+        .unwrap();
+    let collection = vault.collection("thin_sealed").unwrap();
+    collection
+        .add("secret", rec(json!({"title": "nested"})), None)
+        .unwrap();
+    let got = collection.get("secret").unwrap();
+    assert_eq!(fields_of(&got)["title"], "nested");
+    assert_eq!(got.path.as_deref(), Some(".isolated/thin_sealed/secret.md"));
+    let ids: Vec<_> = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["secret"]);
+    assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
 }
 
 #[test]

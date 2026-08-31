@@ -14,7 +14,7 @@ use crate::journal;
 use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 #[cfg(feature = "find")]
-use crate::search::SearchEngine;
+use crate::search::{SearchEngine, marked_text};
 use crate::store;
 use crate::{
     Embedder, Encryption, Error, History, OpenOptions, Record, RecordAdd, RecordReplace,
@@ -164,15 +164,15 @@ impl Vault {
         let gitignore_pending = gitignore_needs_write(&path)?;
         let index_dir = path.join(".scheda").join("index");
         fs::create_dir_all(&index_dir).context("[Vault::open] create index dir")?;
+        store::restrict_dir(&path.join(".scheda"))?;
+        store::restrict_dir(&index_dir)?;
         let index_dir = fs::canonicalize(&index_dir).context("[Vault::open] canonicalize index")?;
         let remotes = git::remotes(&path)?;
         if auto_sync && !remotes.is_empty() {
             pull_under_write_lock(&path)?;
         }
         let schema = Arc::new(schema::load(&path)?);
-        let journal_ids = Arc::new(Mutex::new(index::load_all_journal_ids(
-            &path, &index_dir, &schema,
-        )?));
+        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&index_dir, &schema)?));
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
         let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
@@ -299,7 +299,14 @@ impl Vault {
 
     /// Run a Tantivy Query on the Index, then open matching Record files.
     /// Empty `collections` is every non-isolated, non-encrypted collection
-    /// on this handle. Naming an encrypted collection is `unsupported`.
+    /// on this handle. Naming an isolated collection is an ordinary query.
+    /// Naming an encrypted collection is `unsupported`.
+    ///
+    /// Page order is score descending. Equal scores break by the Index `ord`
+    /// fast field, ascending (earlier indexed first). `ord` is unique within
+    /// a collection; two Records in different collections that share both
+    /// score and `ord` stay unordered relative to each other. One `journal`
+    /// collection uses append order instead.
     #[cfg(feature = "find")]
     pub fn find(
         &self,
@@ -320,8 +327,9 @@ impl Vault {
 
     /// Hybrid retrieval: BM25 and ANN when both are on, then RRF, then an
     /// optional reranker. Empty `collections` is every non-isolated,
-    /// non-encrypted collection on this handle. Naming an encrypted
-    /// collection is `unsupported`.
+    /// non-encrypted collection on this handle. Naming an isolated
+    /// collection is an ordinary query. Naming an encrypted collection
+    /// is `unsupported`.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -376,8 +384,7 @@ impl Vault {
 
     /// Restore Scheda-recorded paths to HEAD in the repository that owns
     /// each path, end the transaction if any on this handle, reload Schema,
-    /// and rebuild the Index (including `{vault}/.isolated/.scheda/` when
-    /// that tree exists). Allowed without an open transaction so a later
+    /// and rebuild the Index. Allowed without an open transaction so a later
     /// process can clear crash leftovers.
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
@@ -394,7 +401,10 @@ impl Vault {
         isolated::commit_recorded(&self.path, message, &paths, &self.identity)?;
         let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
         set.clear();
-        persist_written(&self.path, &set)
+        persist_written(&self.path, &set)?;
+        #[cfg(feature = "find")]
+        self.search.flush()?;
+        Ok(())
     }
 
     fn restore_recorded(&self) -> Result<(), Error> {
@@ -415,7 +425,7 @@ impl Vault {
     fn reload_after_restore(&self) -> Result<(), Error> {
         let loaded = schema::load(&self.path)?;
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
-            index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
+            index::load_journal_ids(&self.index_dir, &loaded)?;
         #[cfg(feature = "find")]
         {
             self.search.close_for_rebuild();
@@ -523,7 +533,9 @@ impl Vault {
     /// Validate Schema, encodings, journal lines, `id` uniqueness, and conflict
     /// markers. Isolated Record files are scanned when `{vault}/.isolated/`
     /// exists. Parent git must not track `.isolated/`; nested git must have no
-    /// Remote. Does not write Records. Lexical Index freshness is validated
+    /// Remote. On Unix, `{vault}/.scheda/` must be owner-only (`0700`
+    /// directories, `0600` files); a wider mode is reported with that path.
+    /// Does not write Records. Lexical Index freshness is validated
     /// only when the crate is built with `find`; a build without `find` has no
     /// lexical segments and no way to rebuild them, so it ignores the stale
     /// marker even though its own writes keep setting it. An encrypted
@@ -534,6 +546,7 @@ impl Vault {
         isolated::check_perimeter(&self.path)?;
         #[cfg(feature = "find")]
         index::require_fresh(&self.index_dir)?;
+        store::check_scheda_owner_only(&self.path)?;
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema, self.encryption.as_ref())?;
         journal::check_journals(&self.path, &schema)
@@ -590,15 +603,17 @@ impl Vault {
         self.note_write(rel)?;
         let loaded = schema::load(&self.path)?;
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
-            index::load_all_journal_ids(&self.path, &self.index_dir, &loaded)?;
+            index::load_journal_ids(&self.index_dir, &loaded)?;
         *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
         self.finish_mutation(message)?;
         self.collection(name)
     }
 
     /// Rebuild the Index from Vault files. Writes format version `3` and the
-    /// journal `id` map. Isolated collections rebuild `{vault}/.isolated/.scheda/`
-    /// when that tree exists. Needs the write lock.
+    /// journal `id` map for every non-encrypted collection, isolated included,
+    /// into `{vault}/.scheda/index`. Removes a leftover
+    /// `{vault}/.isolated/.scheda/` directory when one is present. Needs the
+    /// write lock.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
         #[cfg(feature = "find")]
@@ -751,7 +766,7 @@ impl Collection {
     }
 
     fn upsert_lexical(&self, record: &Record) -> Result<(), Error> {
-        if self.decl.isolated || self.decl.encrypted {
+        if self.decl.encrypted {
             return Ok(());
         }
         #[cfg(feature = "find")]
@@ -767,7 +782,7 @@ impl Collection {
     }
 
     fn forget_lexical(&self, id: &str) -> Result<(), Error> {
-        if self.decl.isolated || self.decl.encrypted {
+        if self.decl.encrypted {
             return Ok(());
         }
         #[cfg(feature = "find")]
@@ -782,7 +797,7 @@ impl Collection {
     }
 
     fn record_exists(&self, id: &str) -> Result<bool, Error> {
-        if self.decl.isolated || self.decl.encrypted {
+        if self.decl.encrypted {
             return Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some());
         }
         #[cfg(feature = "find")]
@@ -844,10 +859,6 @@ impl Collection {
         Ok(())
     }
 
-    fn ids_index_dir(&self) -> PathBuf {
-        isolated::ids_index_dir(&self.vault, &self.index_dir, self.decl.isolated)
-    }
-
     fn finish_mutation(&self, message: Option<&str>) -> Result<(), Error> {
         if flag(&self.in_txn)? {
             return Ok(());
@@ -866,6 +877,8 @@ impl Collection {
                 let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
                 set.clear();
                 persist_written(&self.vault, &set)?;
+                #[cfg(feature = "find")]
+                self.search.flush()?;
                 if self.auto_sync && !self.remotes.is_empty() {
                     git::push(&self.vault)?;
                 }
@@ -948,12 +961,11 @@ impl Collection {
             Kind::Journal => {
                 let mut maps =
                     crate::error::mutex(&self.journal_ids, "[Collection::add] lock journal ids")?;
-                let index_dir = self.ids_index_dir();
                 let (id, rel, rollback) = journal::insert_journal(
                     &self.vault,
                     &self.decl,
                     record.clone(),
-                    &index_dir,
+                    &self.index_dir,
                     &mut maps,
                 )?;
                 drop(maps);
@@ -1144,7 +1156,14 @@ impl Collection {
 
     /// Run a Tantivy Query on this collection's Index, then open matching files.
     ///
-    /// An encrypted collection is `unsupported`: no Index holds its Records.
+    /// Isolated collections are in the Vault Index. An encrypted collection is
+    /// `unsupported`: no Index holds its Records.
+    ///
+    /// Page order is score descending. Equal scores break by the Index `ord`
+    /// fast field, ascending (earlier indexed first). `ord` is unique within
+    /// a collection; two Records in different collections that share both
+    /// score and `ord` stay unordered relative to each other. One `journal`
+    /// collection uses append order instead.
     #[cfg(feature = "find")]
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
         if self.decl.encrypted {
@@ -1166,7 +1185,8 @@ impl Collection {
     /// Hybrid retrieval on this collection: BM25 and ANN when both are on,
     /// then RRF, then an optional reranker.
     ///
-    /// An encrypted collection is `unsupported`: no Index holds its Records.
+    /// Isolated collections are in the Vault Index. An encrypted collection is
+    /// `unsupported`: no Index holds its Records.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -1276,7 +1296,7 @@ impl Collection {
         if let Ok(mut maps) =
             crate::error::mutex(&self.journal_ids, "[Collection::add] rollback maps")
         {
-            let _ = index::forget_remembered(&self.ids_index_dir(), &mut maps, &self.decl.name, id);
+            let _ = index::forget_remembered(&self.index_dir, &mut maps, &self.decl.name, id);
             maps.forget_segment_line(&rollback.path);
         }
         if rollback.previous_len == 0 {
@@ -1348,11 +1368,6 @@ fn resolve_collections(
                 "collection {name} is not in Schema"
             )));
         };
-        if decl.isolated {
-            bail!(Error::unsupported(format!(
-                "isolated collection {name} is not on this Vault handle"
-            )));
-        }
         if decl.encrypted {
             bail!(Error::unsupported(format!(
                 "encrypted collection {name} cannot be found"
@@ -1403,6 +1418,42 @@ fn read_record(
     }
 }
 
+/// Full-text blob of a `moreLikeThis` source `id`, same text the Index holds.
+///
+/// Missing `id` is `not_found`. An encrypted collection never reaches `find`
+/// (`unsupported` at the collection set); if this path still sees one, it
+/// returns `unsupported` rather than `crypto`.
+#[cfg(feature = "find")]
+fn more_like_this_source_text(
+    ctx: &QueryCtx<'_>,
+    decl: &CollectionDecl,
+    id: &str,
+) -> Result<String, Error> {
+    if decl.encrypted {
+        bail!(Error::unsupported(format!(
+            "encrypted collection {} cannot be found",
+            decl.name
+        )));
+    }
+    let record = match read_record(ctx.vault, ctx.schema, ctx.journal_ids, &decl.name, id) {
+        Ok(record) => record,
+        Err(err)
+            if matches!(
+                err.known_code(),
+                Some(Code::Crypto | Code::UnsupportedEncryption)
+            ) =>
+        {
+            bail!(Error::unsupported(format!(
+                "encrypted collection {} cannot be found",
+                decl.name
+            )));
+        }
+        Err(err) => return Err(err),
+    };
+    let (fts, _) = marked_text(decl, &record)?;
+    Ok(fts)
+}
+
 #[cfg(feature = "find")]
 struct QueryCtx<'a> {
     engine: &'a SearchEngine,
@@ -1437,9 +1488,14 @@ impl QueryCtx<'_> {
         }
         let journal_ord = decls.len() == 1 && decls[0].kind == Kind::Journal;
         let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
-        let page = self
-            .engine
-            .find(&collections, journal_ord, &decls, filter, offset, count)?;
+        let page = self.engine.find(
+            &collections,
+            journal_ord,
+            &decls,
+            filter,
+            (offset, count),
+            |decl, id| more_like_this_source_text(self, decl, id),
+        )?;
         let mut records = Vec::new();
         for (collection, id) in page.ids {
             match read_record(self.vault, self.schema, self.journal_ids, &collection, &id) {
@@ -1481,7 +1537,12 @@ impl QueryCtx<'_> {
         let allowed = if filter.kind.is_none() || query::is_unconstrained(filter) {
             None
         } else {
-            Some(self.engine.find_ids(&collections, &decls, filter)?)
+            Some(
+                self.engine
+                    .find_ids(&collections, &decls, filter, |decl, id| {
+                        more_like_this_source_text(self, decl, id)
+                    })?,
+            )
         };
         let mut hits = self
             .engine
@@ -1728,7 +1789,7 @@ fn repair_index_after_discard(
 ) -> Result<(), Error> {
     let loaded = schema::load(vault)?;
     *crate::error::mutex(journal_ids, "[Vault] lock journal ids")? =
-        index::load_all_journal_ids(vault, index_dir, &loaded)?;
+        index::load_journal_ids(index_dir, &loaded)?;
     #[cfg(feature = "find")]
     {
         search.close_for_rebuild();
@@ -1759,20 +1820,27 @@ fn load_written(vault: &Path) -> Result<BTreeSet<String>, Error> {
 fn persist_written(vault: &Path, set: &BTreeSet<String>) -> Result<(), Error> {
     let path = tx_log(vault);
     if set.is_empty() {
-        remove_if_exists(&path)
+        remove_if_exists(&path)?;
     } else {
         let mut bytes = Vec::new();
         for rel in set {
             bytes.extend_from_slice(rel.as_bytes());
             bytes.push(b'\n');
         }
-        store::atomic_write(&path, &bytes)
+        store::atomic_write(&path, &bytes)?;
+        store::restrict_file(&path)?;
     }
+    let scheda = vault.join(".scheda");
+    if scheda.is_dir() {
+        store::restrict_dir(&scheda)?;
+    }
+    Ok(())
 }
 
 fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Vault] create .scheda for write lock")?;
+    store::restrict_dir(&scheda)?;
     drain_legacy_index_lock(&scheda)?;
     let lock_path = scheda.join("write.lock");
     let file = File::options()
@@ -1782,6 +1850,7 @@ fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
         .truncate(false)
         .open(&lock_path)
         .context("[Vault] open write lock")?;
+    store::restrict_file(&lock_path)?;
     match file.try_lock() {
         Ok(()) => Ok(file),
         Err(TryLockError::WouldBlock) => {

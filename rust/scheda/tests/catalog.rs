@@ -319,8 +319,15 @@ fn isolated_sealed_values_stay_off_the_main_vault() {
     let sealed_dump = serde_json::to_string(&sealed).unwrap();
     assert!(sealed_dump.contains(NESTED_SEALED));
     assert!(!sealed_dump.contains(TREE_SEALED));
-    let named = vault.find(&["west_isolated"], &FindQuery::all(), 0, 10);
-    assert_eq!(named.unwrap_err().known_code(), Some(Code::Unsupported));
+    let named = vault
+        .find(&["west_isolated"], &FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(named.records.len(), 1);
+    assert_eq!(named.records[0].id.as_deref(), Some("sealed"));
+    assert_eq!(
+        named.records[0].collection.as_deref(),
+        Some("west_isolated")
+    );
 }
 
 #[test]

@@ -82,6 +82,53 @@ fn peek_schema_name(body: &str) -> String {
     panic!("schema fixture name");
 }
 
+fn term(field: &str, value: &str) -> scheda::FindQuery {
+    serde_json::from_value::<Filter>(json!({"term": {"field": field, "value": value}}))
+        .unwrap()
+        .into()
+}
+
+fn title_schema(isolated: bool) -> Schema {
+    let mut value = json!({
+        "version": 1,
+        "document": {},
+        "fields": [{"name": "title", "string": {}}]
+    });
+    if isolated {
+        value["isolated"] = json!(true);
+    }
+    serde_json::from_value(value).unwrap()
+}
+
+#[cfg(unix)]
+fn assert_owner_only_tree(root: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = fs::symlink_metadata(root).unwrap();
+    if meta.file_type().is_symlink() {
+        return;
+    }
+    if meta.is_dir() {
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o700,
+            "{}",
+            root.display()
+        );
+        for entry in fs::read_dir(root).unwrap() {
+            assert_owner_only_tree(&entry.unwrap().path());
+        }
+        return;
+    }
+    if meta.is_file() {
+        assert_eq!(
+            meta.permissions().mode() & 0o777,
+            0o600,
+            "{}",
+            root.display()
+        );
+    }
+}
+
 #[test]
 fn create_isolated_journal_writes_nested_git_not_main_log() {
     let scratch = Scratch::new();
@@ -181,7 +228,7 @@ fn nested_commit_rolls_back_when_main_commit_fails() {
 }
 
 #[test]
-fn isolated_journal_rotates_and_ids_map_stays_nested() {
+fn isolated_journal_rotates_and_ids_map_is_in_main_index() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
@@ -205,9 +252,9 @@ fn isolated_journal_rotates_and_ids_map_stays_nested() {
     let nested = scratch.vault().join(".isolated").join("sealed_log");
     assert!(nested.join("00000001.jsonl").is_file());
     assert!(nested.join("00000002.jsonl").is_file());
+    assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
     let ids = scratch
         .vault()
-        .join(".isolated")
         .join(".scheda")
         .join("index")
         .join("journal")
@@ -217,15 +264,6 @@ fn isolated_journal_rotates_and_ids_map_stays_nested() {
     let haystack = fs::read_to_string(&ids).unwrap();
     assert!(haystack.contains("\"a\""));
     assert!(haystack.contains("\"b\""));
-    assert!(
-        !scratch
-            .vault()
-            .join(".scheda")
-            .join("index")
-            .join("journal")
-            .join("sealed_log")
-            .exists()
-    );
     assert_eq!(collection.get("a").unwrap().id.as_deref(), Some("a"));
     assert_eq!(collection.get("b").unwrap().id.as_deref(), Some("b"));
 }
@@ -272,25 +310,23 @@ fn isolated_document_round_trip_and_main_find_skips_it() {
     let page = vault.find(&[], &Filter::all().into(), 0, 10).unwrap();
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.records[0].id.as_deref(), Some("alpha"));
-    let named = vault.find(&["west_isolated"], &Filter::all().into(), 0, 10);
-    assert_eq!(named.unwrap_err().known_code(), Some(Code::Unsupported));
-    let index_dir = vault.index_dir().to_path_buf();
-    let haystack = fs::read_to_string(index_dir.join("format")).unwrap();
-    assert!(!haystack.contains("nested-secret"));
-    // Windows: Tantivy/USearch keep mmap locks until the handle is dropped.
-    drop(vault);
-    let mut leaked = false;
-    for entry in walkdir_files(&index_dir) {
-        if fs::read(&entry)
-            .unwrap()
-            .windows(b"nested-secret".len())
-            .any(|w| w == b"nested-secret")
-        {
-            leaked = true;
-            break;
-        }
-    }
-    assert!(!leaked, "main Index copied an isolated field");
+    let named = vault
+        .find(&["west_isolated"], &Filter::all().into(), 0, 10)
+        .unwrap();
+    assert_eq!(named.records.len(), 1);
+    assert_eq!(named.records[0].id.as_deref(), Some("secret"));
+    let scoped = vault
+        .collection("west_isolated")
+        .unwrap()
+        .find(&Filter::all().into(), 0, 10)
+        .unwrap();
+    assert_eq!(scoped.records.len(), 1);
+    assert_eq!(scoped.records[0].id.as_deref(), Some("secret"));
+    let repo = git2::Repository::open(scratch.vault()).unwrap();
+    assert!(repo.is_path_ignored(Path::new(".scheda")).unwrap());
+    assert!(repo.is_path_ignored(Path::new(".scheda/index")).unwrap());
+    #[cfg(unix)]
+    assert_owner_only_tree(&scratch.vault().join(".scheda"));
 }
 
 #[test]
@@ -443,18 +479,240 @@ fn open_succeeds_when_isolated_tree_is_missing() {
     vault.collection("west_isolated").unwrap();
 }
 
-fn walkdir_files(dir: &Path) -> Vec<PathBuf> {
-    let mut out = Vec::new();
-    let Ok(entries) = fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.is_dir() {
-            out.extend(walkdir_files(&path));
-        } else if path.is_file() {
-            out.push(path);
-        }
-    }
-    out
+#[cfg(unix)]
+#[test]
+fn scheda_index_is_owner_only_and_wide_mode_fails_check() {
+    use std::fs::Permissions;
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    let vault = scratch.reopen();
+    vault
+        .create_collection("plain_notes", title_schema(false), None)
+        .unwrap();
+    vault
+        .collection("plain_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "public"})), None)
+        .unwrap();
+    assert_owner_only_tree(&scratch.vault().join(".scheda"));
+    vault.reindex().unwrap();
+    assert_owner_only_tree(&scratch.vault().join(".scheda"));
+    fs::set_permissions(vault.index_dir(), Permissions::from_mode(0o755)).unwrap();
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let text = format!("{err}");
+    assert!(
+        text.contains(".scheda/index"),
+        "check must name the Index directory: {text}"
+    );
+}
+
+#[test]
+fn isolated_write_has_no_nested_scheda_and_reindex_counts_it() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    let vault = scratch.reopen();
+    vault
+        .create_collection("plain_notes", title_schema(false), None)
+        .unwrap();
+    vault
+        .create_collection("sealed_notes", title_schema(true), None)
+        .unwrap();
+    vault
+        .collection("plain_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "public"})), None)
+        .unwrap();
+    vault
+        .collection("sealed_notes")
+        .unwrap()
+        .add("secret", rec(json!({"title": "sealed"})), None)
+        .unwrap();
+    assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
+    let counts = vault.reindex().unwrap();
+    assert_eq!(counts.records_read, Some(2));
+    assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
+}
+
+#[test]
+fn term_query_over_isolated_and_plain_returns_both() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    let vault = scratch.reopen();
+    vault
+        .create_collection("plain_notes", title_schema(false), None)
+        .unwrap();
+    vault
+        .create_collection("sealed_notes", title_schema(true), None)
+        .unwrap();
+    vault
+        .collection("plain_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "shared"})), None)
+        .unwrap();
+    vault
+        .collection("sealed_notes")
+        .unwrap()
+        .add("secret", rec(json!({"title": "shared"})), None)
+        .unwrap();
+    let query = term("title", "shared");
+    let page = vault
+        .find(&["plain_notes", "sealed_notes"], &query, 0, 10)
+        .unwrap();
+    assert_eq!(page.total, Some(2));
+    let mut names: Vec<_> = page
+        .records
+        .iter()
+        .map(|record| record.collection.as_deref().unwrap())
+        .collect();
+    names.sort_unstable();
+    assert_eq!(names, ["plain_notes", "sealed_notes"]);
+    let isolated = vault
+        .collection("sealed_notes")
+        .unwrap()
+        .find(&query, 0, 10)
+        .unwrap();
+    assert_eq!(isolated.total, Some(1));
+    assert_eq!(isolated.records[0].id.as_deref(), Some("secret"));
+    let plain = vault
+        .collection("plain_notes")
+        .unwrap()
+        .find(&query, 0, 10)
+        .unwrap();
+    assert_eq!(plain.total, Some(1));
+    assert_eq!(plain.records[0].id.as_deref(), Some("alpha"));
+}
+
+#[test]
+fn same_id_in_isolated_and_plain_is_distinct() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    let vault = scratch.reopen();
+    vault
+        .create_collection("plain_notes", title_schema(false), None)
+        .unwrap();
+    vault
+        .create_collection("sealed_notes", title_schema(true), None)
+        .unwrap();
+    vault
+        .collection("plain_notes")
+        .unwrap()
+        .add("shared", rec(json!({"title": "plain"})), None)
+        .unwrap();
+    vault
+        .collection("sealed_notes")
+        .unwrap()
+        .add("shared", rec(json!({"title": "sealed"})), None)
+        .unwrap();
+    let page = vault
+        .find(
+            &["plain_notes", "sealed_notes"],
+            &term("id", "shared"),
+            0,
+            10,
+        )
+        .unwrap();
+    assert_eq!(page.total, Some(2));
+    let mut pairs: Vec<_> = page
+        .records
+        .iter()
+        .map(|record| {
+            (
+                record.collection.as_deref().unwrap(),
+                record.id.as_deref().unwrap(),
+            )
+        })
+        .collect();
+    pairs.sort_unstable();
+    assert_eq!(
+        pairs,
+        [("plain_notes", "shared"), ("sealed_notes", "shared")]
+    );
+    let empty = vault.find(&[], &term("id", "shared"), 0, 10).unwrap();
+    assert_eq!(empty.total, Some(1));
+    assert_eq!(empty.records[0].collection.as_deref(), Some("plain_notes"));
+}
+
+#[test]
+fn old_nested_isolated_index_is_removed_by_reindex() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    let vault = scratch.reopen();
+    vault.begin().unwrap();
+    let decl: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "journal": {"segment_max_bytes": 1024},
+        "isolated": true,
+        "fields": [{"name": "msg", "string": {}}]
+    }))
+    .unwrap();
+    vault.create_collection("sealed_log", decl, None).unwrap();
+    vault
+        .collection("sealed_log")
+        .unwrap()
+        .add("e1", rec(json!({"msg": "one"})), None)
+        .unwrap();
+    vault.commit("nested map").unwrap();
+    let nested_index = scratch
+        .vault()
+        .join(".isolated")
+        .join(".scheda")
+        .join("index");
+    let nested_ids = nested_index.join("journal").join("sealed_log");
+    fs::create_dir_all(&nested_ids).unwrap();
+    fs::write(nested_index.join("format"), "3\n").unwrap();
+    fs::write(
+        nested_ids.join("ids"),
+        "{\"id\":\"e1\",\"path\":\".isolated/sealed_log/00000001.jsonl\"}\n",
+    )
+    .unwrap();
+    assert_eq!(
+        vault
+            .collection("sealed_log")
+            .unwrap()
+            .get("e1")
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("e1")
+    );
+    vault.reindex().unwrap();
+    assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
+    let main_ids = scratch
+        .vault()
+        .join(".scheda")
+        .join("index")
+        .join("journal")
+        .join("sealed_log")
+        .join("ids");
+    assert!(main_ids.is_file());
+    let haystack = fs::read_to_string(&main_ids).unwrap();
+    assert!(haystack.contains("\"e1\""));
+    assert_eq!(
+        vault
+            .collection("sealed_log")
+            .unwrap()
+            .get("e1")
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("e1")
+    );
+}
+
+#[test]
+fn second_schema_claiming_isolated_name_is_invalid() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    write_schema(&scratch, WEST_ISOLATED);
+    let other = scratch.vault().join("other_docs");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(
+        other.join(".schema.yaml"),
+        "name: west_isolated\nkind: document\nversion: 1\nfields:\n  - name: title\n    string: {}\n",
+    )
+    .unwrap();
+    let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }

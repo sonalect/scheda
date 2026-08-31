@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.32, 31 August 2026.
+Document 4 of the Scheda package. Version 0.33, 31 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -107,7 +107,7 @@ Hooks on the Vault repository are the consumer's. They must not assume they may 
 
 ## 4. Index location (git)
 
-**GIT-13. Index is in the Vault tree and gitignored.** Creating a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/`. The main Index lives under `{vault}/.scheda/`. Isolated Index (**later** phase, implemented) lives under `{vault}/.isolated/.scheda/`, gitignored in the nested repo. Callers do not choose an Index directory. `{vault}/.scheda/tx.log` is the crash journal of uncommitted Scheda paths (GIT-2), not Index; `reindex` does not delete it. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1), including `{vault}/.isolated/` Records.
+**GIT-13. Index is in the Vault tree and gitignored.** Creating a Vault writes `.gitignore` entries for `.scheda/` and `.isolated/`. There is one Index per Vault, under `{vault}/.scheda/`, and on Unix it is owner-only (`0700` directories, `0600` files) because it holds field values from isolated collections (IDX-4, ISO-4). There is no nested Index (ISO-10 retired). Callers do not choose an Index directory. `{vault}/.scheda/tx.log` is the crash journal of uncommitted Scheda paths (GIT-2), not Index; `reindex` does not delete it. If a consumer puts another cache inside the working tree, it must also be gitignored. *Check:* `git check-ignore` / `git status` after writes does not show Index files; deleting `.scheda/` does not delete Records (STO-1), including `{vault}/.isolated/` Records.
 
 Format and rebuild semantics: `06`.
 

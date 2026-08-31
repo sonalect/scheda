@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.20, 27 August 2026.
+Document 13 of the Scheda package. Version 0.21, 31 August 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -20,7 +20,7 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 
 Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → `unsupported`.
 
-`get` / `add` / `history` / `lines` do not wait on the Index. `find` / `search` take `id`s from the Index, then open files. `replace` / `remove` do the same when `find` is on; when `find` is off (and on isolated collections) they use the Record file. Orphan file: `get` works; `find` / `search` skip it until indexed. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
+`get` / `add` / `history` / `lines` do not wait on the Index. `find` / `search` take `id`s from the Index, then open files. `replace` / `remove` do the same when `find` is on, isolated collections included; when `find` is off, and on encrypted collections either way, they use the Record file. Orphan file: `get` works; `find` / `search` skip it until indexed. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
 
 ---
 
@@ -41,10 +41,12 @@ First write or `reindex` creates the engines if missing. `add` / `replace` updat
 1. Validate `FindQuery` (`Filter.kind` required). `count == 0` → `invalid`. Resolve `collections` (empty → non-isolated on this handle). Explicit name whose Schema rejects the `Filter` → `invalid`. Empty set: omit collections that reject it.
 2. Run that Query on the vault Tantivy index with `MUST` collection in the resolved names.
 3. Collector: `(Count, TopDocs::with_limit(count).and_offset(offset))` in one `search()`. `Count` is indexed hits (`FindResult.total`).
-4. Order: exactly one resolved collection and it is `journal` → append order (`order_by_fast_field` on segment+line ordinal). Otherwise `order_by_score()`. Rotation does not reorder old lines.
+4. Order: exactly one resolved collection and it is `journal` → append order (`order_by_fast_field` on segment+line ordinal). Otherwise score descending, equal scores broken by that same ordinal ascending (`tweak_score`), never by `DocAddress` — an address depends on segment layout, which varies between runs, so paging on it could repeat or skip a Record. Rotation does not reorder old lines.
 5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`; `total` is still the match count. A missing file is omitted from `records` and does not decrease `total`. Unset or false `include_raw` omits `Record.raw`; true fills it (`get` always returns `raw`).
 
 `Filter` is a Tantivy 0.26 Query tree (`all`, `empty`, `term`, `term_set`, `phrase`, `phrase_prefix`, `fuzzy`, `regex`, `regex_phrase`, `range`, `exists`, `boolean` with `must` / `should` / `must_not`, `boost`, `const_score`, `disjunction_max`, `more_like_this`). No QueryParser string. AND = `OCCUR_MUST`, OR = `OCCUR_SHOULD`. Field `id` is Record identity (`term`, `term_set`, `range` only). Field `body` is Markdown prose on `document` (unless `no_body` or `exclude_fts`). `exclude_find` fields cannot appear. `id` cannot be excluded.
+
+`more_like_this` has two source forms and they must produce comparable queries. With `fields`, the caller supplies the text. With `id`, Scheda reads that Record and builds the terms from the **same** full-text string the Index holds for it, then hands it to the `fields` path. It does not ask Tantivy to recover the source from the Index: Scheda's full-text field is indexed and not stored, so a stored-field extraction would find only Scheda's own bookkeeping — `key`, `path`, `collection` — and "similar" would collapse into "in the same collection", every Record of it tying on one score. An unknown source `id` is `not_found`. A Record that exists but yields no full-text (every field excluded from search) matches nothing, which is an empty page rather than an error.
 
 `find` does not call the embedder and does not use USearch.
 

@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.51, 31 August 2026.
+Document 2 of the Scheda package. Version 0.52, 31 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -150,7 +150,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **`history`** — git history of one Record by `id`, newest first. Same identity path as `get` (validate slug, then that file). Not an Index lookup. Not journal `find` append order. After `remove`, the commits that stored the file remain.
 
-**`find`** — select records with a Tantivy query tree (`api.v1.FindQuery`: required `Filter` — boolean must / should / must_not, term, phrase, range, `all`, … — plus `include_raw`; default omits `Record.raw`), including identity `id`. On Vault: a set of collection names (empty = this Vault, non-isolated). On Collection: that collection only. Query the Index, then open the files for the `(collection, id)`s it returns. Paged (`offset`, `count`); one page is `api.v1.FindResult` (`records` plus `total`: indexed hits, not page length). One `journal` collection: append order; otherwise score order. Every indexed Record in the selected collections is `all`. Not by meaning.
+**`find`** — select records with a Tantivy query tree (`api.v1.FindQuery`: required `Filter` — boolean must / should / must_not, term, phrase, range, `all`, … — plus `include_raw`; default omits `Record.raw`), including identity `id`. On Vault: a set of collection names (empty = this Vault, non-isolated; a named isolated collection is an ordinary query). On Collection: that collection only. Query the Index, then open the files for the `(collection, id)`s it returns. Paged (`offset`, `count`); one page is `api.v1.FindResult` (`records` plus `total`: indexed hits, not page length). One `journal` collection: append order; otherwise score order. Every indexed Record in the selected collections is `all`. Not by meaning.
 
 **`search`** — hybrid retrieval (BM25 + ANN, RRF). Same collection-name set as `find`. Optional `Filter` pre-cuts both legs. `SearchQuery.include_raw` fills `Hit.raw`. Not the same as `find`.
 
@@ -186,7 +186,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Isolated collection** — a collection whose Record files live under `{vault}/.isolated/{name}/`: a gitignored nested git working tree that the main Vault's `push` / `pull` / `sync` never touch. Schema stays `{vault}/{name}/.schema.yaml` in the main tree. Search over non-isolated collections does not read it and must not require `.isolated/` to exist. Whether its files are ciphertext is a separate question — see **Encrypted collection** (`09`).
 
-**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only; it may carry a Remote of its own, which the main Vault's `push` / `pull` / `sync` never use. The main Index must not copy its sealed field values.
+**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only; it may carry a Remote of its own, which the main Vault's `push` / `pull` / `sync` never use. Its field values are in the one Vault Index, which is owner-only for that reason; it has no Index of its own.
 
 **Encrypted collection** — a collection whose Schema sets `encrypted: true` (SCH-16). Every Record file of it is age v1 armor on disk, whole-file; I/O needs the handle secret (`encryption`) and fails with `crypto` without it, while `ids()` still works. Independent of **isolated**: all four combinations are valid. `document` and `singleton` only — an encrypted `journal` is `invalid`. No Index holds it, so `find` and `search` naming it are `unsupported` and the ways in are `get` and the `documents()` walk. In a build without the `encrypt` feature the collection is refused with `unsupported_encryption`, never returned as ciphertext dressed as a Record (`09`).
 

@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.73, 31 August 2026.
+Document 12 of the Scheda package. Version 0.74, 31 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -444,9 +444,9 @@ was not a gap the consumer tripped over but a promise the crate had been
 making without keeping — an encryption option nothing read. It shipped as
 `0.6.0`.
 
-P15 and P16 are behind it and neither is a consumer's blocker. P15
-replaces the nested Index, which nothing can query, with one Index for
-the Vault. P16 finishes the two things P14 designed and did not build:
+P15 and P16 are behind it and neither is a consumer's blocker. P15 gives
+the Vault one Index, so an isolated collection becomes searchable at all,
+and retires the nested directory that only ever held a journal `id` map. P16 finishes the two things P14 designed and did not build:
 the CLI cannot open an encrypted Vault at all, and the nested isolated
 tree still may not have a Remote of its own. They sit in their own stage
 so that P14's status keeps answering the question actually asked of it —
@@ -498,7 +498,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
 | [P13](#p13-listing-a-collection-without-the-index)       | done        | Asking a `document` collection what it holds, with `find` off       |
 | [P14](#p14-encryption-as-a-property-of-a-collection)     | done (`0.6.0`) | Ciphertext on disk for any one collection, and an option that works |
-| [P15](#p15-one-index-for-the-vault)                      | not started | One Index per Vault instead of a nested one nothing can query       |
+| [P15](#p15-one-index-for-the-vault)                      | code complete | One Index per Vault instead of a nested one nothing can query     |
 | [P16](#p16-a-secret-in-the-cli-and-a-remote-for-the-nested-tree) | not started | Reaching an encrypted Vault from argv-safe input; two audiences, two Remotes |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
@@ -761,10 +761,11 @@ Encryption stays out (ISO-5, ISO-7–11).
       `create_collection` / `add` on an isolated name write there →
       non-isolated `find` / `search` return nothing isolated and do not
       require `.isolated/` → the main Index holds no sealed fixture
-      string → `check` covers the nested tree.
+      string → `check` covers the nested tree. P15 changed the last two:
+      the one Index holds those values and is owner-only instead.
 - [x] `journal` works isolated, not only `document`: segments, rotation,
-      and the IDX-5 map inside `{vault}/.isolated/.scheda/` (ISO-4,
-      IDX-4).
+      and the IDX-5 map, which P15 moved from
+      `{vault}/.isolated/.scheda/` into the one Index (ISO-4, IDX-4).
 - [x] Files are `0600`; the parent repository does not track
       `.isolated/`; the nested repository has no Remote and `check` fails
       if one appears (ISO-6).
@@ -1597,42 +1598,56 @@ encryption work.
 
 ## P15. One Index for the Vault
 
-**Status:** not started
+**Status:** code complete, `bazel test //...` green; two ranking defects
+found on the way and fixed here (see the end of this stage)
 
 **Codes:** `06` IDX-4, IDX-9, QRY-2, `07` LIB-10, LIB-11, LIB-15,
 LIB-16, `09` ISO-2, ISO-3, ISO-4, ISO-10 (retired), `13` §1 and the
 `find` algorithm, `04` GIT-13.
 
-**Decide first:** that sealed field values may live inside
-`{vault}/.scheda/` provided that directory is owner-only. Everything
-else here follows from it. The owner is the only party who can accept
-that, because it is their threat model and not a library invariant.
+**Decided:** sealed field values may live inside `{vault}/.scheda/`
+provided that directory is owner-only. Everything else here follows from
+it. The owner is the only party who could accept that, because it is
+their threat model and not a library invariant, and the owner did.
 
 P14 settles that an **encrypted** collection is in no Index at all.
 Writing that down exposed a separate defect, and the two are opposite.
 
-An isolated collection **is** indexed today, and nothing can query it.
-LIB-16 rebuilds `{vault}/.isolated/.scheda/` whenever `.isolated/`
-exists, ISO-10 gives that Index a path, a mode, and a gitignore rule,
-and writes keep it fresh. Then LIB-10 and QRY-2 refuse every query that
-names an isolated collection, because a Vault-level `find` runs on the
-main Index and the main Index must hold no sealed bytes (ISO-4). Both
-halves are defensible alone. Together they mean Scheda builds a Tantivy
-Index on every isolated write, keeps it fresh, checks it — and ships no
-method that reads it. `13` never called isolated search out of scope, so
-this is a hole, not a deferral.
+An isolated collection is searchable by nothing, and the nested directory
+that exists is not what its name suggests. Both halves were checked in
+the code before this plan was trusted, because the first draft of it
+described a defect that does not exist.
 
-The fix is not a second query path into the nested Index. It is to stop
-having a nested Index. There is **one** Index per Vault,
-`{vault}/.scheda/`, with both legs (lexical and vector), covering every
-collection the build can read.
+What is actually true. Isolated collections are in **no** lexical or
+vector Index at all: `upsert_lexical` and `forget_lexical` return early
+on `decl.isolated`, and `SearchEngine::rebuild` filters those
+collections out — the same treatment encrypted collections get. So there
+are no isolated Tantivy segments anywhere, nested or main. What
+`{vault}/.isolated/.scheda/index` really holds is the journal `id` map
+and the format marker, nothing else. That map **is** read:
+`load_all_journal_ids` merges it on open, so it is a live cache and not a
+subsystem nobody touches. And the query surface refuses isolated names
+outright — `resolve_collections` answers `unsupported` for an isolated
+collection and drops them from the empty set.
 
-Ask what the nested Index actually buys, and the answer is one thing:
-sealed values stay out of a file that is not owner-only. The isolated
+So the hole is real but simpler than "an Index nobody reads": the owner's
+isolated Records cannot be searched by any call, on any build, and `13`
+never put isolated search out of scope. The nested directory is not the
+defect; it is a small cache that will have no reason to exist once there
+is one Index.
+
+The fix is one Index per Vault, `{vault}/.scheda/`, with both legs
+(lexical and vector), covering every collection the build can read — and
+the isolated journal `id` map moving into it.
+
+Ask what the nested directory buys, and today the answer is nothing that
+search needs: sealed values stay out of the main Index because isolated
+Records are indexed nowhere, not because their Index sits elsewhere. That
+changes here, and then the mode question becomes real. The isolated
 perimeter is three rules — the nested git that the main Remote never
 touches, `0600` on Record files, and nothing of theirs in the main Index
-— and only the third one needs the separate directory. The main Index has
-no mode rule at all; it is a plain cache. So the third rule is paid for
+— and only the third one stands in the way. The main Index has no mode
+rule at all; it is a plain cache. So the third rule is paid for
 with a **mode**, not with a subsystem: `{vault}/.scheda/` becomes
 owner-only (`0700` on the directory, `0600` on its files, Unix; other
 systems leave ACLs as ISO-2 already says). It is gitignored, and `check`
@@ -1641,11 +1656,13 @@ already fails when the parent git tracks an Index path (GIT-13), so the
 
 What that buys is large for its size. A Vault-level `find` over
 everything the owner has starts working, isolated collections included,
-because there is one searcher: no merged ranking across two Tantivy
-indexes, which is a research problem and not a slice, and no `total` that
-means two different things. `reindex`, the freshness state, and the
-`check` leg each collapse from two to one. ISO-10 retires, and LIB-16
-loses its nested rebuild.
+because there is one searcher. The alternative — build lexical segments
+for isolated collections inside the nested directory and add a second
+query path — costs a merged ranking across two Tantivy indexes, which is
+a research problem and not a slice, and a `total` that means two
+different things. `reindex`, the journal `id` map, and the `check` leg
+each collapse from two places to one. ISO-10 retires, and LIB-16 loses
+its nested rebuild.
 
 Two things must **not** change with it, and they are what makes this
 safe. First, encrypted collections stay out of the Index entirely (P14):
@@ -1680,6 +1697,16 @@ those values gone from the Index does.
       and ISO-10 is retired. LIB-16 has no nested rebuild. *Check:* after
       an isolated write, no `.scheda/` exists under `.isolated/`, and
       `reindex` reports the isolated Records among those read.
+- [ ] The isolated journal `id` map moves into `{vault}/.scheda/`, and a
+      Vault written by an older build needs no migration step: an absent
+      map is `MapLookup::MissingMap`, which `find_journal` answers with a
+      full segment scan — correct and slower, never a false `not_found`.
+      `reindex` writes the map into the one Index and removes the
+      leftover nested directory, which is derived, gitignored, and safe
+      to delete (IDX-1). *Check:* a fixture Vault carrying a nested
+      `.scheda/index` from the old layout answers `get(id)` on an
+      isolated journal before `reindex`, and after `reindex` the nested
+      directory is gone and the map is in the main Index.
 - [ ] `find` and `search` naming an isolated collection return its
       Records, on the Vault form and the collection form, and a set
       mixing isolated with non-isolated names is one page with one
@@ -1712,6 +1739,64 @@ those values gone from the Index does.
 - [ ] A build without `find` is unaffected: no lexical segments either
       way, `documents()` still walks an isolated collection (LIB-25).
       *Check:* the thin build round-trips an isolated collection.
+
+### Two ranking defects this stage uncovered
+
+Neither was caused by P15. Both were in `main`, and one green test was
+hiding them.
+
+A first attempt at the owner-only mode merged every Tantivy segment into
+one on each commit. That is quadratic on bulk ingest — each write reads
+and rewrites the whole index — so it came out. Removing it turned
+`more_like_this_from_id_ranks_similar_title` into a coin flip, which
+looked like test noise and was not.
+
+**`more_like_this` with a source `id` never read the Record's text.**
+Tantivy builds that query from the source document's **stored** fields.
+Scheda's full-text field is indexed and not stored, so the terms came
+from Scheda's own bookkeeping: `key`, `path`, `collection`. Measured on
+the three-Record fixture, the query was always `key:"query_notes\0a"`,
+`path:"query_notes/a.md"` and `collection:"query_notes"`, so the two
+candidates matched the collection term alone and scored exactly the same
+`0.018179154`. "Similar to this" meant "in the same collection". Fixed by
+reading the source Record and compiling the same full-text string the
+Index holds for it, through the `fields` source path that was always
+correct; `MoreLikeThisIdQuery` is gone. An unknown source `id` is now
+`not_found`, which no document had promised either way.
+
+**A score tie had no order.** `find` broke ties by `DocAddress`, and
+QRY-7 wrote that down as if it were an order. It is not: the address
+depends on the segment a document lands in, and segment assignment varies
+between runs of the same inserts. In 30 identical runs the two tied
+Records came back in one order 14 times and the other 16, with the
+segment count always three and the term set never varying. The
+consequence reached past this query — `offset` / `count` could repeat or
+skip a Record between two calls on unchanged content. Ties now break by
+the Index ordinal ascending.
+
+Why the test used to pass: with every segment merged into one, addresses
+were `0:0`, `0:1`, `0:2` in insertion order, the tie always broke the
+expected way, and the assertion went green while the query still ignored
+the text. A checkmark earned by segment layout, not by behaviour.
+
+- [x] `more_like_this` by `id` builds terms from the source Record's
+      indexed text, and an unknown `id` is `not_found`. *Check:*
+      `more_like_this_from_id_ranks_similar_title` carries a fourth,
+      unrelated Record that must be **absent** from the page — under the
+      old behaviour it matched, because it was in the collection — and
+      the test passed 20 runs in a row. *Check:*
+      `more_like_this_unknown_id_is_not_found`.
+- [x] A score tie is ordered by the Index ordinal, and a page is
+      reproducible. *Check:*
+      `find_score_ties_are_stable_across_reopen_and_pages` builds three
+      genuinely tied Records, queries ten freshly opened Vaults so the
+      segment layout can differ, requires one identical order, and pages
+      `offset 0 count 1` then `offset 1 count 1` without repeating or
+      skipping.
+- [x] Documents amended: `06` QRY-7 replaces the `DocAddress` tie and
+      names the two residual limits (per-collection ordinal, and
+      reassignment on `reindex`), `07` LIB-10, `13` §1 order and the
+      `more_like_this` source forms.
 
 ---
 

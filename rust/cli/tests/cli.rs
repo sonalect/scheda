@@ -812,7 +812,7 @@ fn cli_omits_isolated_sealed_values() {
     assert!(isolated_get.to_string().contains(NESTED_SEALED));
     assert!(!isolated_get.to_string().contains(TREE_SEALED));
 
-    let named = run(&[
+    let named = stdout_json(&run(&[
         "--vault",
         &path,
         "find",
@@ -824,10 +824,32 @@ fn cli_omits_isolated_sealed_values() {
         "0",
         "--count",
         "10",
-    ]);
-    assert_eq!(error_json(&named)["code"], "CODE_UNSUPPORTED");
-    assert_no_sealed(&named.stdout);
-    assert_no_sealed(&named.stderr);
+    ]));
+    assert_eq!(named["records"].as_array().unwrap().len(), 1);
+    assert_eq!(named["records"][0]["id"], "sealed");
+    assert_eq!(named["records"][0]["collection"], "agent_sealed");
+    assert!(named.to_string().contains(NESTED_SEALED));
+
+    let ignore = Command::new("git")
+        .args(["-C", &path, "check-ignore", "-q", ".scheda"])
+        .status()
+        .expect("git check-ignore");
+    assert!(ignore.success(), ".scheda must be gitignored");
+    let ignore_index = Command::new("git")
+        .args(["-C", &path, "check-ignore", "-q", ".scheda/index"])
+        .status()
+        .expect("git check-ignore index");
+    assert!(ignore_index.success(), ".scheda/index must be gitignored");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let scheda = scratch.vault().join(".scheda");
+        let mode = fs::metadata(&scheda).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        let index = scheda.join("index");
+        let mode = fs::metadata(&index).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
 }
 
 #[test]

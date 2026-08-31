@@ -577,6 +577,9 @@ fn more_like_this_from_id_ranks_similar_title() {
             None,
         )
         .unwrap();
+    collection
+        .add("d", rec(json!({"title": "zzzzzyx unique widget"})), None)
+        .unwrap();
     let found = collection
         .find(
             &filter(json!({
@@ -593,12 +596,130 @@ fn more_like_this_from_id_ranks_similar_title() {
         .unwrap();
     let got = ids(&found);
     assert!(got.contains(&"b"), "expected similar record b, got {got:?}");
-    if got.contains(&"c") {
+    assert!(
+        !got.contains(&"d"),
+        "unrelated record d must not match moreLikeThis from a, got {got:?}"
+    );
+    let b = got.iter().position(|id| *id == "b");
+    let c = got.iter().position(|id| *id == "c");
+    assert!(b.is_some(), "expected similar record b, got {got:?}");
+    if let (Some(bi), Some(ci)) = (b, c) {
         assert!(
-            got.iter().position(|id| *id == "b") < got.iter().position(|id| *id == "c"),
-            "b should rank before distractor c, got {got:?}"
+            bi < ci,
+            "b should rank before distractor c because their scores differ, got {got:?}"
         );
     }
+}
+
+#[test]
+fn more_like_this_unknown_id_is_not_found() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    collection
+        .add(
+            "a",
+            rec(json!({"title": "the diary of a young girl"})),
+            None,
+        )
+        .unwrap();
+    let err = collection
+        .find(
+            &filter(json!({
+                "moreLikeThis":{
+                    "id":"missing",
+                    "minDocFrequency":1,
+                    "minTermFrequency":1,
+                    "minWordLength":2
+                }
+            })),
+            0,
+            10,
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotFound));
+}
+
+#[test]
+fn find_score_ties_are_stable_across_reopen_and_pages() {
+    let mut orders = Vec::new();
+    for _ in 0..10 {
+        let scratch = Scratch::new();
+        let vault = open_notes(&scratch);
+        let collection = vault.collection("query_notes").unwrap();
+        collection
+            .add(
+                "z",
+                rec(json!({"title": "same title for a genuine score tie"})),
+                None,
+            )
+            .unwrap();
+        collection
+            .add(
+                "m",
+                rec(json!({"title": "same title for a genuine score tie"})),
+                None,
+            )
+            .unwrap();
+        collection
+            .add(
+                "a",
+                rec(json!({"title": "same title for a genuine score tie"})),
+                None,
+            )
+            .unwrap();
+        let found = collection.find(&Filter::all().into(), 0, 10).unwrap();
+        orders.push(
+            ids(&found)
+                .into_iter()
+                .map(str::to_owned)
+                .collect::<Vec<_>>(),
+        );
+    }
+    let first = &orders[0];
+    assert_eq!(first.len(), 3, "expected three tied hits, got {first:?}");
+    for (i, order) in orders.iter().enumerate() {
+        assert_eq!(
+            order, first,
+            "run {i} returned {order:?}, first run {first:?}"
+        );
+    }
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    collection
+        .add(
+            "z",
+            rec(json!({"title": "same title for a genuine score tie"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add(
+            "m",
+            rec(json!({"title": "same title for a genuine score tie"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add(
+            "a",
+            rec(json!({"title": "same title for a genuine score tie"})),
+            None,
+        )
+        .unwrap();
+    let page0_found = collection.find(&Filter::all().into(), 0, 1).unwrap();
+    let page1_found = collection.find(&Filter::all().into(), 1, 1).unwrap();
+    let page0 = ids(&page0_found);
+    let page1 = ids(&page1_found);
+    assert_eq!(page0.len(), 1);
+    assert_eq!(page1.len(), 1);
+    assert_ne!(
+        page0[0], page1[0],
+        "offset 0 and offset 1 must not repeat a Record"
+    );
+    assert_eq!(page0[0], first[0].as_str());
+    assert_eq!(page1[0], first[1].as_str());
 }
 
 #[test]

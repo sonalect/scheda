@@ -604,18 +604,23 @@ fn isolated_round_trip_skipped_by_main_find() {
         record.collection.as_deref() != Some("alias_bindings")
             && record.id.as_deref() != Some("bound")
     }));
-    let named = vault.find(&["alias_bindings"], &Filter::all().into(), 0, 10);
-    assert_eq!(named.unwrap_err().known_code(), Some(Code::Unsupported));
-    let index_dir = vault.index_dir().to_path_buf();
-    drop(vault);
-    let needle = ISOLATED_TOKEN.as_bytes();
-    for path in walk_files(&index_dir) {
-        let bytes = fs::read(&path).unwrap();
-        assert!(
-            !bytes.windows(needle.len()).any(|w| w == needle),
-            "main Index copied an isolated field: {}",
-            path.display()
-        );
+    let named = vault
+        .find(&["alias_bindings"], &Filter::all().into(), 0, 10)
+        .unwrap();
+    assert_eq!(named.records.len(), 1);
+    assert_eq!(named.records[0].id.as_deref(), Some("bound"));
+    let repo = Repository::open(scratch.vault()).unwrap();
+    assert!(repo.is_path_ignored(Path::new(".scheda")).unwrap());
+    assert!(repo.is_path_ignored(Path::new(".scheda/index")).unwrap());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let scheda = scratch.vault().join(".scheda");
+        let mode = fs::metadata(&scheda).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+        let index = scheda.join("index");
+        let mode = fs::metadata(&index).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 }
 

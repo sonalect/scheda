@@ -966,13 +966,14 @@ fn ids_matches_files_when_index_is_stale() {
     )
     .unwrap();
     assert_eq!(collection.ids().unwrap(), ["alpha", "bravo", "charlie"]);
-    let found: Vec<_> = collection
+    let mut found: Vec<_> = collection
         .find(&Filter::all().into(), 0, 100)
         .unwrap()
         .records
         .into_iter()
         .map(|record| record.id.unwrap())
         .collect();
+    found.sort();
     assert_eq!(found, ["alpha", "bravo"]);
 }
 

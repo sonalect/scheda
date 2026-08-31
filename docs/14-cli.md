@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.59, 31 August 2026.
+Document 14 of the Scheda package. Version 0.60, 31 August 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -54,13 +54,14 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 
 `find` / `search` are Vault methods (`07` LIB-10, LIB-11). `--collections`
 is a set of names. Unset or empty → every non-isolated, non-encrypted
-collection on this Vault. Unknown name → `not_found`. Isolated name →
-`unsupported` (isolated Records are `collection NAME` and the nested
-Index, not `find` / `search` on the main Index). Encrypted name →
-`unsupported` too, because no Index holds one (ISO-4). Collection `find` /
+collection on this Vault, so a broad query surfaces nothing sealed.
+Unknown name → `not_found`. Isolated name → an ordinary query: the one
+Vault Index holds those Records (ISO-4), and a set mixing isolated with
+plain names is one page with one `total`. Encrypted name →
+`unsupported`, because no Index holds one (ISO-4). Collection `find` /
 `search` below call the same methods with that `NAME` (no
-`--collections`), so an isolated or encrypted `NAME` there is also
-`unsupported`. Stdout JSON includes `collection` on each `Record`
+`--collections`), so an isolated `NAME` works there and an encrypted one
+is `unsupported`. Stdout JSON includes `collection` on each `Record`
 / `Hit`. `--include-raw` sets `FindQuery.include_raw` /
 `SearchQuery.include_raw` (default off: omit `raw`). `--filter` is
 `FindQuery.filter` JSON.

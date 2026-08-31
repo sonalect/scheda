@@ -72,11 +72,6 @@ impl JournalIdMaps {
         self.collections.insert(collection, ids);
     }
 
-    pub(crate) fn extend_maps(&mut self, other: Self) {
-        self.collections.extend(other.collections);
-        self.segment_lines.extend(other.segment_lines);
-    }
-
     pub(crate) fn forget_id(&mut self, collection: &str, id: &str) {
         if let Some(ids) = self.collections.get_mut(collection) {
             ids.remove(id);
@@ -110,30 +105,9 @@ impl JournalIdMaps {
 }
 
 pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<JournalIdMaps, Error> {
-    load_journal_ids_matching(index_dir, schema, false)
-}
-
-pub(crate) fn load_all_journal_ids(
-    vault: &Path,
-    main_index: &Path,
-    schema: &Schema,
-) -> Result<JournalIdMaps, Error> {
-    let mut maps = load_journal_ids(main_index, schema)?;
-    let nested = crate::isolated::index_dir(vault);
-    if nested.is_dir() {
-        maps.extend_maps(load_journal_ids_matching(&nested, schema, true)?);
-    }
-    Ok(maps)
-}
-
-fn load_journal_ids_matching(
-    index_dir: &Path,
-    schema: &Schema,
-    isolated: bool,
-) -> Result<JournalIdMaps, Error> {
     let mut maps = JournalIdMaps::default();
     for decl in schema.collections() {
-        if decl.isolated != isolated || decl.kind != Kind::Journal {
+        if decl.encrypted || decl.kind != Kind::Journal {
             continue;
         }
         let path = ids_path(index_dir, &decl.name);
@@ -152,40 +126,12 @@ pub(crate) fn rebuild(
     schema: &Schema,
     index_dir: &Path,
 ) -> Result<(ReindexResult, JournalIdMaps), Error> {
-    let (mut counts, mut maps) = rebuild_matching(vault, schema, index_dir, false)?;
-    if crate::isolated::root(vault).is_dir() {
-        let nested = crate::isolated::index_dir(vault);
-        fs::create_dir_all(&nested).context("[Index::rebuild] create isolated index")?;
-        let isolated_counts;
-        let isolated_maps;
-        (isolated_counts, isolated_maps) = rebuild_matching(vault, schema, &nested, true)?;
-        counts.records_read =
-            Some(counts.records_read.unwrap_or(0) + isolated_counts.records_read.unwrap_or(0));
-        counts.skipped_invalid = Some(
-            counts.skipped_invalid.unwrap_or(0) + isolated_counts.skipped_invalid.unwrap_or(0),
-        );
-        counts.segments_seen =
-            Some(counts.segments_seen.unwrap_or(0) + isolated_counts.segments_seen.unwrap_or(0));
-        maps.extend_maps(isolated_maps);
-    }
-    Ok((counts, maps))
-}
-
-fn rebuild_matching(
-    vault: &Path,
-    schema: &Schema,
-    index_dir: &Path,
-    isolated: bool,
-) -> Result<(ReindexResult, JournalIdMaps), Error> {
     clear_index_dir(index_dir)?;
     let mut records_read = 0u64;
     let mut skipped_invalid = 0u64;
     let mut segments_seen = 0u64;
     let mut maps = JournalIdMaps::default();
-    for decl in schema
-        .collections()
-        .filter(|decl| decl.isolated == isolated && !decl.encrypted)
-    {
+    for decl in schema.collections().filter(|decl| !decl.encrypted) {
         match decl.kind {
             Kind::Journal => {
                 let (records, invalid, segments, ids) = journal::reindex_map(vault, decl)?;
@@ -203,6 +149,8 @@ fn rebuild_matching(
         }
     }
     write_format(index_dir)?;
+    remove_legacy_isolated_index(vault)?;
+    restrict_index_tree(index_dir)?;
     Ok((
         ReindexResult::default()
             .with_records_read(records_read)
@@ -210,6 +158,24 @@ fn rebuild_matching(
             .with_segments_seen(segments_seen),
         maps,
     ))
+}
+
+fn remove_legacy_isolated_index(vault: &Path) -> Result<(), Error> {
+    let leftover = crate::isolated::root(vault).join(".scheda");
+    match fs::remove_dir_all(&leftover) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).context("[Index::rebuild] remove leftover isolated index"),
+    }
+}
+
+/// Owner-only modes on `{vault}/.scheda/` after Index writes, including files
+/// Tantivy created that this crate did not open.
+pub(crate) fn restrict_index_tree(index_dir: &Path) -> Result<(), Error> {
+    match index_dir.parent() {
+        Some(scheda) if !scheda.as_os_str().is_empty() => store::restrict_tree(scheda),
+        _ => Ok(()),
+    }
 }
 
 pub(crate) fn remember_id(
@@ -295,7 +261,8 @@ fn write_ids_file(
         encoded.push(b'\n');
         bytes.extend_from_slice(&encoded);
     }
-    store::atomic_write(&path, &bytes)
+    store::atomic_write(&path, &bytes)?;
+    restrict_index_tree(index_dir)
 }
 
 fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> Result<(), Error> {
@@ -319,7 +286,7 @@ fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> R
         .context("[Index::append_ids_line] write ids")?;
     file.sync_all()
         .context("[Index::append_ids_line] fsync ids")?;
-    Ok(())
+    restrict_index_tree(index_dir)
 }
 
 #[cfg(feature = "find")]
@@ -371,7 +338,9 @@ pub(crate) fn ensure_format(index_dir: &Path) -> Result<(), Error> {
 pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
     fs::create_dir_all(index_dir).context("[Index::write_format] create dir")?;
     let path = index_dir.join(FORMAT_FILE);
-    fs::write(&path, format!("{FORMAT_VERSION}\n")).context("[Index::write_format] write format")
+    fs::write(&path, format!("{FORMAT_VERSION}\n"))
+        .context("[Index::write_format] write format")?;
+    restrict_index_tree(index_dir)
 }
 
 fn stale_path(index_dir: &Path) -> PathBuf {
@@ -389,7 +358,8 @@ pub(crate) fn is_stale(index_dir: &Path) -> bool {
 #[cfg(not(feature = "find"))]
 pub(crate) fn mark_stale(index_dir: &Path) -> Result<(), Error> {
     fs::create_dir_all(index_dir).context("[Index::mark_stale] create dir")?;
-    fs::write(stale_path(index_dir), []).context("[Index::mark_stale] write stale")
+    fs::write(stale_path(index_dir), []).context("[Index::mark_stale] write stale")?;
+    restrict_index_tree(index_dir)
 }
 
 /// Fail closed when lexical segments were aged without a Tantivy update.

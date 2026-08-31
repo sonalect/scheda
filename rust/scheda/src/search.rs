@@ -1,5 +1,6 @@
 //! Hybrid lexical + vector search and one-step edges.
 
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 #[cfg(feature = "search")]
 use std::collections::BTreeSet;
@@ -21,7 +22,10 @@ use tantivy::schema::{
     FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema as TantivySchema, TEXT,
     Value as TantivyValue,
 };
-use tantivy::{Index, IndexReader, IndexWriter, Order, ReloadPolicy, TantivyDocument, Term};
+use tantivy::{
+    Index, IndexReader, IndexWriter, Order, ReloadPolicy, Score, SegmentReader, TantivyDocument,
+    Term,
+};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index;
@@ -232,10 +236,7 @@ impl SearchEngine {
         if can_write {
             index::ensure_format(&self.index_dir)?;
         }
-        for decl in schema
-            .collections()
-            .filter(|decl| !decl.isolated && !decl.encrypted)
-        {
+        for decl in schema.collections().filter(|decl| !decl.encrypted) {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
                 crate::schema::Kind::Document | crate::schema::Kind::Singleton => {
@@ -275,7 +276,7 @@ impl SearchEngine {
         record: &Record,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
-        if decl.isolated || decl.encrypted {
+        if decl.encrypted {
             return Ok(());
         }
         #[cfg(not(feature = "search"))]
@@ -309,11 +310,12 @@ impl SearchEngine {
             record,
             embedder,
             &vectors,
-        )
+        )?;
+        Ok(())
     }
 
     pub(crate) fn forget(&self, decl: &CollectionDecl, id: &str) -> Result<(), Error> {
-        if decl.isolated || decl.encrypted {
+        if decl.encrypted {
             return Ok(());
         }
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::forget] lock")?;
@@ -330,7 +332,8 @@ impl SearchEngine {
             }
             _ => index::ensure_format(&self.index_dir)?,
         }
-        forget_record(&mut inner, &decl.name, id)
+        forget_record(&mut inner, &decl.name, id)?;
+        Ok(())
     }
 
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
@@ -344,7 +347,17 @@ impl SearchEngine {
                 "[SearchEngine::enable_write] open writer",
             )?);
         }
-        Ok(())
+        drop(inner);
+        index::restrict_index_tree(&self.index_dir)
+    }
+
+    /// Persist buffered Tantivy / vector writes, then re-apply owner-only
+    /// modes under `{vault}/.scheda/` (Tantivy creates files this crate did
+    /// not open). A handle that is not open for write is a no-op.
+    pub(crate) fn flush(&self) -> Result<(), Error> {
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::flush] lock")?;
+        let can_write = inner.can_write;
+        inner.commit(&self.index_dir, can_write)
     }
 
     pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
@@ -402,11 +415,13 @@ impl SearchEngine {
         collections: &[&str],
         decls: &[CollectionDecl],
         filter: &Filter,
+        mlt_fts: impl Fn(&CollectionDecl, &str) -> Result<String, Error>,
     ) -> Result<BTreeMap<String, BTreeSet<String>>, Error> {
         self.with_find(
             collections,
             decls,
             filter,
+            mlt_fts,
             "[SearchEngine::find_ids] reload reader",
             |searcher, query, lexical| {
                 // `DocSetCollector` walks matches. `TopDocs::with_limit(u32::MAX)`
@@ -435,9 +450,10 @@ impl SearchEngine {
         journal_ord: bool,
         decls: &[CollectionDecl],
         filter: &Filter,
-        offset: u32,
-        count: u32,
+        offset_count: (u32, u32),
+        mlt_fts: impl Fn(&CollectionDecl, &str) -> Result<String, Error>,
     ) -> Result<FindPage, Error> {
+        let (offset, count) = offset_count;
         let limit = count as usize;
         if limit == 0 {
             return Ok(FindPage::default());
@@ -446,6 +462,7 @@ impl SearchEngine {
             collections,
             decls,
             filter,
+            mlt_fts,
             "[SearchEngine::find] reload reader",
             |searcher, query, lexical| {
                 let off = offset as usize;
@@ -464,13 +481,7 @@ impl SearchEngine {
                     (n, top.into_iter().map(|(_, addr)| addr).collect())
                 } else {
                     let (n, top) = searcher
-                        .search(
-                            query,
-                            &(
-                                Count,
-                                TopDocs::with_limit(limit).and_offset(off).order_by_score(),
-                            ),
-                        )
+                        .search(query, &(Count, top_by_score_then_ord(limit, off)))
                         .context(Code::IndexLexical, "[SearchEngine::find] search")?;
                     (n, top.into_iter().map(|(_, addr)| addr).collect())
                 };
@@ -493,6 +504,7 @@ impl SearchEngine {
         collections: &[&str],
         decls: &[CollectionDecl],
         filter: &Filter,
+        mlt_fts: impl Fn(&CollectionDecl, &str) -> Result<String, Error>,
         reload_frame: &'static str,
         f: impl FnOnce(&tantivy::Searcher, &BooleanQuery, &Lexical) -> Result<T, Error>,
     ) -> Result<Option<T>, Error> {
@@ -521,10 +533,11 @@ impl SearchEngine {
             null: lexical.f_null,
             tok: lexical.f_tok,
             text: lexical.f_text,
-            collection: lexical.f_collection,
         };
         let query = if decls.len() == 1 {
-            let compiled = query::compile(&decls[0], &fields, &lexical.index, filter)?;
+            let compiled = query::compile(&decls[0], &fields, &lexical.index, filter, &|id| {
+                mlt_fts(&decls[0], id)
+            })?;
             BooleanQuery::new(vec![
                 (
                     Occur::Must,
@@ -535,7 +548,9 @@ impl SearchEngine {
         } else {
             let mut clauses = Vec::with_capacity(decls.len());
             for decl in decls {
-                let compiled = query::compile(decl, &fields, &lexical.index, filter)?;
+                let compiled = query::compile(decl, &fields, &lexical.index, filter, &|id| {
+                    mlt_fts(decl, id)
+                })?;
                 clauses.push((
                     Occur::Should,
                     Box::new(BooleanQuery::new(vec![
@@ -688,6 +703,7 @@ impl Inner {
         save_edges(index_dir, &self.edges)?;
         save_next_ord(index_dir, &self.next_ord)?;
         self.dirty = false;
+        index::restrict_index_tree(index_dir)?;
         Ok(())
     }
 }
@@ -1068,10 +1084,10 @@ fn lexical_search(
         return Ok(Vec::new());
     }
     let top = searcher
-        .search(&query, &TopDocs::with_limit(pool).order_by_score())
+        .search(&query, &top_by_score_then_ord(pool, 0))
         .context(Code::IndexLexical, "[SearchEngine::lexical_search] search")?;
     let mut hits = Vec::new();
-    for (score, addr) in top {
+    for ((score, _), addr) in top {
         let doc: TantivyDocument = searcher.doc(addr).context(
             Code::IndexLexical,
             "[SearchEngine::lexical_search] fetch document",
@@ -1276,6 +1292,26 @@ fn parse_text_query(parser: &QueryParser, text: &str) -> Option<Box<dyn Query>> 
     parser.parse_query(trimmed).ok()
 }
 
+/// Score descending, then Index `ord` ascending. `ord` is unique within a
+/// collection; two Records in different collections that share both score and
+/// `ord` stay unordered relative to each other (Tantivy then uses `DocAddress`).
+fn top_by_score_then_ord(
+    limit: usize,
+    offset: usize,
+) -> impl tantivy::collector::Collector<Fruit = Vec<((Score, Reverse<u64>), tantivy::DocAddress)>> {
+    TopDocs::with_limit(limit)
+        .and_offset(offset)
+        .tweak_score(|segment_reader: &SegmentReader| {
+            let ords = segment_reader.fast_fields().u64("ord").ok();
+            move |doc, score| {
+                (
+                    score,
+                    Reverse(ords.as_ref().and_then(|col| col.first(doc)).unwrap_or(0)),
+                )
+            }
+        })
+}
+
 #[derive(Default)]
 pub(crate) struct FindPage {
     pub(crate) ids: Vec<(String, String)>,
@@ -1351,6 +1387,7 @@ fn create_lexical(index_dir: &Path, can_write: bool) -> Result<Lexical, Error> {
             "[SearchEngine::create_lexical] create index",
         )?
     };
+    index::restrict_index_tree(index_dir)?;
     bind_lexical(index, can_write)
 }
 

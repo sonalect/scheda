@@ -9,12 +9,11 @@ use scheda_generated::api::v1::__buffa::oneof::filter::more_like_this::Source;
 use scheda_generated::api::v1::filter::{self, Occur};
 use tantivy::Index;
 use tantivy::Term;
-use tantivy::collector::TopDocs;
 use tantivy::query::{
     AllQuery, BooleanQuery, BoostQuery, ConstScoreQuery, DisjunctionMaxQuery, EmptyQuery,
-    EnableScoring, FuzzyTermQuery, MoreLikeThisQuery, MoreLikeThisQueryBuilder,
-    Occur as TantivyOccur, PhrasePrefixQuery, PhraseQuery, Query, RangeQuery, RegexPhraseQuery,
-    RegexQuery, TermQuery, TermSetQuery, Weight,
+    FuzzyTermQuery, MoreLikeThisQuery, MoreLikeThisQueryBuilder, Occur as TantivyOccur,
+    PhrasePrefixQuery, PhraseQuery, Query, RangeQuery, RegexPhraseQuery, RegexQuery, TermQuery,
+    TermSetQuery,
 };
 use tantivy::schema::{Field, IndexRecordOption, OwnedValue};
 use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
@@ -30,7 +29,6 @@ pub(crate) struct FindFields {
     pub null: Field,
     pub tok: Field,
     pub text: Field,
-    pub collection: Field,
 }
 
 #[cfg(feature = "search")]
@@ -116,8 +114,9 @@ pub(crate) fn compile(
     fields: &FindFields,
     index: &Index,
     filter: &Filter,
+    mlt_fts: &dyn Fn(&str) -> Result<String, Error>,
 ) -> Result<Box<dyn Query>, Error> {
-    compile_kind(decl, fields, index, filter)
+    compile_kind(decl, fields, index, filter, mlt_fts)
 }
 
 fn compile_kind(
@@ -125,6 +124,7 @@ fn compile_kind(
     fields: &FindFields,
     index: &Index,
     filter: &Filter,
+    mlt_fts: &dyn Fn(&str) -> Result<String, Error>,
 ) -> Result<Box<dyn Query>, Error> {
     let Some(kind) = filter.kind.as_ref() else {
         bail!(Error::invalid("filter kind is required"));
@@ -141,16 +141,16 @@ fn compile_kind(
         Kind::RegexPhrase(phrase) => compile_regex_phrase(fields, phrase),
         Kind::Range(range) => compile_range(fields, range),
         Kind::Exists(exists) => compile_exists(decl, fields, exists),
-        Kind::Boolean(boolean) => compile_boolean(decl, fields, index, boolean),
+        Kind::Boolean(boolean) => compile_boolean(decl, fields, index, boolean, mlt_fts),
         Kind::Boost(boost) => {
-            let inner = compile_kind(decl, fields, index, &boost.query)?;
+            let inner = compile_kind(decl, fields, index, &boost.query, mlt_fts)?;
             Ok(Box::new(BoostQuery::new(
                 inner,
                 boost.factor.unwrap_or(1.0),
             )))
         }
         Kind::ConstScore(inner) => {
-            let query = compile_kind(decl, fields, index, &inner.query)?;
+            let query = compile_kind(decl, fields, index, &inner.query, mlt_fts)?;
             Ok(Box::new(ConstScoreQuery::new(
                 query,
                 inner.score.unwrap_or(1.0),
@@ -159,14 +159,14 @@ fn compile_kind(
         Kind::DisjunctionMax(inner) => {
             let mut queries = Vec::new();
             for nested in &inner.queries {
-                queries.push(compile_kind(decl, fields, index, nested)?);
+                queries.push(compile_kind(decl, fields, index, nested, mlt_fts)?);
             }
             Ok(Box::new(DisjunctionMaxQuery::with_tie_breaker(
                 queries,
                 inner.tie_breaker.unwrap_or(0.0),
             )))
         }
-        Kind::MoreLikeThis(mlt) => compile_more_like_this(decl, fields, mlt),
+        Kind::MoreLikeThis(mlt) => compile_more_like_this(fields, mlt, mlt_fts),
     }
 }
 
@@ -465,6 +465,7 @@ fn compile_boolean(
     fields: &FindFields,
     index: &Index,
     boolean: &filter::Boolean,
+    mlt_fts: &dyn Fn(&str) -> Result<String, Error>,
 ) -> Result<Box<dyn Query>, Error> {
     let mut clauses = Vec::new();
     for clause in &boolean.clauses {
@@ -480,7 +481,10 @@ fn compile_boolean(
             }
             _ => bail!(Error::invalid("boolean clause occur is required")),
         };
-        clauses.push((occur, compile_kind(decl, fields, index, &clause.query)?));
+        clauses.push((
+            occur,
+            compile_kind(decl, fields, index, &clause.query, mlt_fts)?,
+        ));
     }
     let mut query = BooleanQuery::new(clauses);
     if let Some(minimum) = boolean.minimum_should_match.filter(|n| *n > 0) {
@@ -490,19 +494,16 @@ fn compile_boolean(
 }
 
 fn compile_more_like_this(
-    decl: &CollectionDecl,
     fields: &FindFields,
     mlt: &filter::MoreLikeThis,
+    mlt_fts: &dyn Fn(&str) -> Result<String, Error>,
 ) -> Result<Box<dyn Query>, Error> {
     let builder = more_like_this_builder(mlt)?;
     match mlt.source.as_ref() {
-        Some(Source::Id(record_id)) => Ok(Box::new(MoreLikeThisIdQuery {
-            collection: decl.name.clone(),
-            record_id: record_id.clone(),
-            f_collection: fields.collection,
-            f_id: fields.id,
-            builder,
-        })),
+        Some(Source::Id(record_id)) => {
+            let fts = mlt_fts(record_id)?;
+            compile_more_like_this_fields(builder, fields.text, vec![OwnedValue::Str(fts)])
+        }
         Some(Source::Fields(source)) => {
             let mut values = Vec::new();
             for field in &source.fields {
@@ -513,15 +514,30 @@ fn compile_more_like_this(
                     values.push(OwnedValue::Str(proto_term_text(value)?));
                 }
             }
-            if values.is_empty() {
-                return Ok(Box::new(EmptyQuery));
-            }
-            Ok(Box::new(
-                builder.with_document_fields(vec![(fields.text, values)]),
-            ))
+            compile_more_like_this_fields(builder, fields.text, values)
         }
         None => Ok(Box::new(EmptyQuery)),
     }
+}
+
+fn compile_more_like_this_fields(
+    builder: MoreLikeThisQueryBuilder,
+    text_field: Field,
+    values: Vec<OwnedValue>,
+) -> Result<Box<dyn Query>, Error> {
+    let values: Vec<OwnedValue> = values
+        .into_iter()
+        .filter(|value| match value {
+            OwnedValue::Str(text) => !text.is_empty(),
+            _ => true,
+        })
+        .collect();
+    if values.is_empty() {
+        return Ok(Box::new(EmptyQuery));
+    }
+    Ok(Box::new(
+        builder.with_document_fields(vec![(text_field, values)]),
+    ))
 }
 
 fn more_like_this_builder(mlt: &filter::MoreLikeThis) -> Result<MoreLikeThisQueryBuilder, Error> {
@@ -555,52 +571,6 @@ fn more_like_this_builder(mlt: &filter::MoreLikeThis) -> Result<MoreLikeThisQuer
 
 fn usize_cap(value: u64, name: &str) -> Result<usize, Error> {
     usize::try_from(value).map_err(|_| Error::invalid(format!("MoreLikeThis {name} is too large")))
-}
-
-#[derive(Debug, Clone)]
-struct MoreLikeThisIdQuery {
-    collection: String,
-    record_id: String,
-    f_collection: Field,
-    f_id: Field,
-    builder: MoreLikeThisQueryBuilder,
-}
-
-impl Query for MoreLikeThisIdQuery {
-    fn weight(&self, enable_scoring: EnableScoring<'_>) -> tantivy::Result<Box<dyn Weight>> {
-        let searcher = match enable_scoring {
-            EnableScoring::Enabled { searcher, .. } => searcher,
-            EnableScoring::Disabled { .. } => {
-                return Err(tantivy::TantivyError::InvalidArgument(
-                    "MoreLikeThisQuery requires to enable scoring.".to_string(),
-                ));
-            }
-        };
-        let lookup = BooleanQuery::new(vec![
-            (
-                TantivyOccur::Must,
-                Box::new(TermQuery::new(
-                    Term::from_field_text(self.f_collection, &self.collection),
-                    IndexRecordOption::Basic,
-                )) as Box<dyn Query>,
-            ),
-            (
-                TantivyOccur::Must,
-                Box::new(TermQuery::new(
-                    Term::from_field_text(self.f_id, &self.record_id),
-                    IndexRecordOption::Basic,
-                )),
-            ),
-        ]);
-        let hits = searcher.search(&lookup, &TopDocs::with_limit(1).order_by_score())?;
-        let Some((_, addr)) = hits.into_iter().next() else {
-            return EmptyQuery.weight(enable_scoring);
-        };
-        self.builder
-            .clone()
-            .with_document(addr)
-            .weight(enable_scoring)
-    }
 }
 
 pub(crate) fn eq_term(field: &str, value: &str) -> Result<String, Error> {

@@ -8,6 +8,80 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- Isolated collections are searchable. Naming one in `find` or `search`
+  is now an ordinary query, on the Vault form and on the collection
+  form, and a set mixing isolated with plain names comes back as one page
+  with one `total`. Before this, an isolated collection was in no index
+  at all and naming it was refused, so the only ways to its Records were
+  `get` by a known `id` and the `documents()` walk.
+- A query with no collection named still means non-isolated, unchanged.
+  Broad scans, and the agent tools that use them, surface nothing sealed
+  unless a caller names the collection.
+
+### Changed
+
+- One Index per Vault. `{vault}/.scheda/` now covers every collection the
+  build can read, and `{vault}/.isolated/.scheda/` is gone: nothing
+  creates it, nothing reads it, and `reindex` deletes a leftover one. An
+  older Vault needs no migration — an absent journal `id` map falls back
+  to a segment scan, which is slower and never wrong.
+- **`{vault}/.scheda/` is owner-only on Unix**: `0700` on directories,
+  `0600` on files, applied when it is created and after every write,
+  including files Tantivy creates that Scheda never opens. `check`
+  reports a wider mode as a problem naming the path. This is the price of
+  the change above and the reason it is safe: field values from isolated
+  collections are now inside that directory.
+- Consequence to weigh if you relied on the opposite: a backup that
+  copies the Vault and deliberately skips `.isolated/` will carry those
+  field values anyway, in the Index. Deleting `{vault}/.scheda/` stays
+  safe and is what removes them.
+- Encrypted collections are unaffected and remain in no Index, isolated
+  or not. An owner-only mode protects a file from another account, not
+  from the account that holds it, which is the whole reason an encrypted
+  collection exists.
+
+### Fixed
+
+- **`more_like_this` with a source `id` now looks at the Record's text.**
+  It never did. Tantivy builds the term set of that query from the source
+  document's **stored** fields, and Scheda's full-text field is indexed
+  and not stored, so the query was assembled from Scheda's own
+  bookkeeping — `key`, `path`, `collection`. Every Record of the
+  collection matched the `collection` term and tied on one score, so
+  "similar to this" meant "in the same collection" and the ranking was
+  whatever the tie broke to. Scheda now reads the source Record and
+  builds the query from the same full-text string the Index holds for it,
+  which is what the `fields` source form already did. An unknown source
+  `id` is `not_found` instead of an empty page, so a caller can tell a
+  missing source from nothing being similar. The `fields` form is
+  unchanged.
+- **Equal scores no longer return a different page each run.** `find`
+  broke a score tie by Tantivy's `DocAddress`, which depends on the
+  segment a document happens to land in; segment assignment varies
+  between runs of the same inserts. Two identical queries on identical
+  content could therefore return different orders, and `offset` / `count`
+  could repeat or skip a Record between two calls. Ties now break by the
+  Index ordinal ascending, the same counter journal order uses. Two
+  limits, stated so they are not discovered later: the ordinal counts per
+  collection, so two Records in different collections may share both
+  score and ordinal; and it is assigned at index time, not derived from
+  content, so `reindex` can reorder within a tie. A page is reproducible
+  for a given Index, not a property of the data.
+
+### Documentation
+
+- The cost of the two secret forms is stated where callers will meet it.
+  A passphrase runs the age scrypt derivation on **every** Record
+  encrypted or decrypted — age tunes that work factor near a second on
+  purpose — so a `documents()` walk under a passphrase costs about that
+  per Record. An identity is X25519 with no derivation. A one-off command
+  may carry a passphrase; a long-running process on a latency budget
+  carries an identity. Scheda does not cache a derived key, because
+  holding the unwrapped key for the life of the handle is a different
+  security decision than the one a caller made by choosing a passphrase.
+
 ## [0.6.0] - 2026-08-31
 
 ### Added

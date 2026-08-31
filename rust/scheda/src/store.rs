@@ -1029,6 +1029,122 @@ pub(crate) fn has_conflict_markers(text: &str) -> bool {
     text.contains("<<<<<<<") || text.contains(">>>>>>>")
 }
 
+/// Owner-only file mode (`0600` on Unix). Other systems leave ACLs unchanged.
+pub(crate) fn restrict_file(path: &Path) -> Result<(), Error> {
+    set_mode(path, 0o600)
+}
+
+/// Owner-only directory mode (`0700` on Unix). Other systems leave ACLs unchanged.
+pub(crate) fn restrict_dir(path: &Path) -> Result<(), Error> {
+    set_mode(path, 0o700)
+}
+
+/// Walk `root` and apply owner-only modes to every directory and file.
+///
+/// Used after writes that create files the caller did not open (Tantivy
+/// segments under `{vault}/.scheda/`). Missing `root` is a no-op. Symlinks
+/// are not followed.
+pub(crate) fn restrict_tree(root: &Path) -> Result<(), Error> {
+    let meta = match fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err).context("[store] read owner-only path"),
+    };
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    if meta.is_dir() {
+        restrict_dir(root)?;
+        let entries = match fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                return Err(err).context("[store] read dir for owner-only mode");
+            }
+        };
+        for entry in entries {
+            let entry = entry.context("[store] read dir entry for owner-only mode")?;
+            restrict_tree(&entry.path())?;
+        }
+        return Ok(());
+    }
+    if meta.is_file() {
+        restrict_file(root)?;
+    }
+    Ok(())
+}
+
+/// `{vault}/.scheda/` must be owner-only on Unix (`0700` directories, `0600`
+/// files). Wider modes fail `check` with the vault-relative path in `message`.
+/// Other systems do not inspect ACLs.
+pub(crate) fn check_scheda_owner_only(vault: &Path) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        let scheda = vault.join(".scheda");
+        if !scheda.exists() {
+            return Ok(());
+        }
+        check_owner_only_tree(vault, &scheda)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = vault;
+    }
+    Ok(())
+}
+
+fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
+    #[cfg(unix)]
+    {
+        use std::fs::Permissions;
+        use std::os::unix::fs::PermissionsExt;
+        match fs::set_permissions(path, Permissions::from_mode(mode)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err).context("[store] set owner-only mode"),
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn check_owner_only_tree(vault: &Path, path: &Path) -> Result<(), Error> {
+    use std::os::unix::fs::PermissionsExt;
+    let meta = match fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err).context("[store::check] read mode"),
+    };
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    let rel = rel_posix(vault, path)?;
+    let mode = meta.permissions().mode() & 0o777;
+    if meta.is_dir() {
+        if mode != 0o700 {
+            bail!(Error::invalid(format!(
+                "{rel} mode is {mode:04o}; owner-only directory is 0700"
+            )));
+        }
+        let entries = fs::read_dir(path).context("[store::check] read dir")?;
+        for entry in entries {
+            let entry = entry.context("[store::check] read dir entry")?;
+            check_owner_only_tree(vault, &entry.path())?;
+        }
+        return Ok(());
+    }
+    if meta.is_file() && mode != 0o600 {
+        bail!(Error::invalid(format!(
+            "{rel} mode is {mode:04o}; owner-only file is 0600"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::record_file;

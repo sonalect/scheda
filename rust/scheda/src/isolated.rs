@@ -20,12 +20,6 @@ pub(crate) fn root(vault: &Path) -> PathBuf {
     vault.join(DIR)
 }
 
-/// Isolated Index directory: `{vault}/.isolated/.scheda/index`.
-#[must_use]
-pub(crate) fn index_dir(vault: &Path) -> PathBuf {
-    root(vault).join(".scheda").join("index")
-}
-
 /// Record directory for a collection (`{vault}/{name}/` or under `.isolated/`).
 pub(crate) fn records_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
     if decl.isolated {
@@ -45,16 +39,6 @@ pub(crate) fn vault_rel(decl: &CollectionDecl, file: &str) -> String {
         format!("{DIR}/{}/{file}", schema::collection_dir(&decl.name))
     } else {
         format!("{}/{file}", schema::collection_dir(&decl.name))
-    }
-}
-
-/// Index directory that holds the journal `id` map for `decl`.
-#[must_use]
-pub(crate) fn ids_index_dir(vault: &Path, main_index: &Path, isolated: bool) -> PathBuf {
-    if isolated {
-        index_dir(vault)
-    } else {
-        main_index.to_path_buf()
     }
 }
 
@@ -79,7 +63,7 @@ pub(crate) fn git_addr(vault: &Path, rel: &str) -> (PathBuf, String) {
 pub(crate) fn ensure(vault: &Path) -> Result<Option<String>, Error> {
     let root = root(vault);
     fs::create_dir_all(&root).context("[Isolated] create .isolated")?;
-    restrict_dir(&root)?;
+    crate::store::restrict_dir(&root)?;
     if !git::is_work_tree(&root) {
         git::init(&root)?;
     }
@@ -171,7 +155,7 @@ pub(crate) fn restrict_record(vault: &Path, path: &Path) -> Result<(), Error> {
     if !path.starts_with(&root) {
         return Ok(());
     }
-    restrict_dir(&root)?;
+    crate::store::restrict_dir(&root)?;
     let Ok(rest) = path.strip_prefix(&root) else {
         return Ok(());
     };
@@ -179,9 +163,9 @@ pub(crate) fn restrict_record(vault: &Path, path: &Path) -> Result<(), Error> {
     for component in rest.components() {
         cur.push(component);
         if cur.is_dir() {
-            restrict_dir(&cur)?;
+            crate::store::restrict_dir(&cur)?;
         } else if cur.is_file() {
-            restrict_file(&cur)?;
+            crate::store::restrict_file(&cur)?;
         }
     }
     Ok(())
@@ -211,12 +195,12 @@ fn ensure_nested_gitignore(root: &Path) -> Result<bool, Error> {
                 text.push_str(NESTED_GITIGNORE);
             }
             store_write(&path, text.as_bytes())?;
-            restrict_file(&path)?;
+            crate::store::restrict_file(&path)?;
             Ok(true)
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             store_write(&path, NESTED_GITIGNORE.as_bytes())?;
-            restrict_file(&path)?;
+            crate::store::restrict_file(&path)?;
             Ok(true)
         }
         Err(err) => Err(err).context("[Isolated] read nested .gitignore"),
@@ -225,27 +209,4 @@ fn ensure_nested_gitignore(root: &Path) -> Result<bool, Error> {
 
 fn store_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     crate::store::atomic_write(path, bytes)
-}
-
-fn restrict_file(path: &Path) -> Result<(), Error> {
-    set_mode(path, 0o600)
-}
-
-fn restrict_dir(path: &Path) -> Result<(), Error> {
-    set_mode(path, 0o700)
-}
-
-fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
-    #[cfg(unix)]
-    {
-        use std::fs::Permissions;
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, Permissions::from_mode(mode))
-            .context("[Isolated] set owner-only mode")?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = (path, mode);
-    }
-    Ok(())
 }
