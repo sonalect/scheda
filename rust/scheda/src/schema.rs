@@ -236,6 +236,8 @@ struct RawCollection {
     singleton: Option<RawSingleton>,
     #[serde(default)]
     isolated: bool,
+    #[serde(default)]
+    encrypted: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -286,6 +288,7 @@ pub(crate) struct CollectionDecl {
     pub body: Option<BodyDecl>,
     pub fields: Vec<FieldDecl>,
     pub isolated: bool,
+    pub encrypted: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -462,6 +465,11 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
             }
         }
     }
+    if raw.encrypted && raw.kind == Kind::Journal {
+        bail!(Error::invalid(format!(
+            "schema {loc}: journal collections cannot be encrypted: an age file cannot be appended to"
+        )));
+    }
     let (segment_max_bytes, segment_max_lines, segment_rotate) = if raw.kind == Kind::Journal {
         let cap = raw.segment_max_bytes.unwrap_or(DEFAULT_SEGMENT_MAX_BYTES);
         if cap == 0 {
@@ -517,6 +525,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         body,
         fields,
         isolated: raw.isolated,
+        encrypted: raw.encrypted,
     })
 }
 
@@ -757,6 +766,9 @@ pub(crate) fn to_proto_schema(
     if decl.isolated {
         out = out.with_isolated(true);
     }
+    if decl.encrypted {
+        out = out.with_encrypted(true);
+    }
     out.kind = match decl.kind {
         Kind::Document => body_to_proto(decl.body.as_ref()).into(),
         Kind::Journal => journal_to_proto(decl).into(),
@@ -787,7 +799,7 @@ pub(crate) fn to_vault_info(
     }
     for decl in schema.collections() {
         let mut item = CollectionInfo::default().with_name(decl.name.as_str());
-        item.schema = to_proto_schema(decl, decl.isolated)?.into();
+        item.schema = to_proto_schema(decl, decl.isolated || decl.encrypted)?.into();
         info.collections.push(item);
     }
     Ok(info)
@@ -948,6 +960,14 @@ pub(crate) fn put_collection(
                 existing.name
             )));
         }
+        if existing.encrypted != decl.encrypted
+            && matches!(existing.kind, Kind::Document | Kind::Singleton)
+            && !store::collection_ids(vault, &existing)?.is_empty()
+        {
+            bail!(Error::invalid(
+                "cannot set or clear encrypted on a collection that already holds Record files"
+            ));
+        }
     }
     let body = if rel.ends_with(".json") {
         json_from_decl(&decl)?
@@ -1004,7 +1024,7 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
     let mut filter_keys = BTreeSet::new();
     collect_filter_keys(&fields, &mut filter_keys);
     add_body_find_key(body.as_ref(), &mut filter_keys);
-    Ok(CollectionDecl {
+    let decl = CollectionDecl {
         name: name.to_owned(),
         kind,
         version,
@@ -1016,7 +1036,14 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
         body,
         fields,
         isolated: schema.isolated.unwrap_or(false),
-    })
+        encrypted: schema.encrypted.unwrap_or(false),
+    };
+    if decl.encrypted && decl.kind == Kind::Journal {
+        bail!(Error::invalid(
+            "journal collections cannot be encrypted: an age file cannot be appended to"
+        ));
+    }
+    Ok(decl)
 }
 
 fn body_from_proto(body: &Body) -> BodyDecl {
@@ -1203,6 +1230,8 @@ struct DiskCollection {
     body: Option<DiskBody>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     isolated: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    encrypted: bool,
 }
 
 #[derive(Serialize)]
@@ -1313,6 +1342,7 @@ impl From<&CollectionDecl> for DiskCollection {
             singleton: decl.singleton_id.clone().map(|id| DiskSingleton { id }),
             body,
             isolated: decl.isolated,
+            encrypted: decl.encrypted,
         }
     }
 }
@@ -1726,6 +1756,29 @@ mod tests {
         .unwrap();
         assert!(decl.isolated);
         assert_eq!(decl.fields[0].name, "secret");
+    }
+
+    #[test]
+    fn encrypted_mark_parses() {
+        let decl = parse(
+            "name: c\nkind: document\nversion: 1\nencrypted: true\nfields:\n  - name: title\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(decl.encrypted);
+        assert!(!decl.isolated);
+    }
+
+    #[test]
+    fn encrypted_journal_yaml_is_invalid() {
+        let err = parse(
+            "name: c\nkind: journal\nversion: 1\nencrypted: true\nfields:\n  - name: msg\n    string: {}\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(
+            err.to_string()
+                .contains("journal collections cannot be encrypted")
+        );
     }
 
     #[test]

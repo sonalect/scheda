@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use scheda::{Embedder, Error, Record, Reranker};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const EMBEDDINGS_LEAF: &str = "embeddings";
 const RERANK_LEAF: &str = "rerank";

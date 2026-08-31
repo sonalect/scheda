@@ -1,5 +1,6 @@
 //! On-disk `document` / `singleton` files. Journal segments are `journal`.
 
+use std::borrow::Cow;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::iter::FusedIterator;
@@ -15,7 +16,7 @@ use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::schema::{CollectionDecl, FieldDecl, FieldType, Kind, Schema};
-use crate::{Error, Record};
+use crate::{Encryption, Error, Record};
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
 
@@ -29,6 +30,7 @@ pub(crate) fn insert_document(
     vault: &Path,
     decl: &CollectionDecl,
     record: Record,
+    encryption: Option<&Encryption>,
 ) -> Result<(String, String), Error> {
     let prepared = prepare_write(vault, decl, record)?;
     if prepared.path.exists() {
@@ -37,7 +39,8 @@ pub(crate) fn insert_document(
             prepared.id, decl.name
         )));
     }
-    atomic_write(&prepared.path, &prepared.bytes)?;
+    let on_disk = encode_record_file(&prepared.bytes, decl, encryption)?;
+    atomic_write(&prepared.path, &on_disk)?;
     crate::isolated::restrict_record(vault, &prepared.path)?;
     let rel = rel_posix(vault, &prepared.path)?;
     Ok((prepared.id, rel))
@@ -48,6 +51,7 @@ pub(crate) fn replace_document(
     decl: &CollectionDecl,
     id: &str,
     record: Record,
+    encryption: Option<&Encryption>,
 ) -> Result<(String, String), Error> {
     let Some(existing) = locate_file(vault, decl, id)? else {
         bail!(Error::not_found(format!(
@@ -68,7 +72,8 @@ pub(crate) fn replace_document(
             decl.name
         )));
     }
-    atomic_write(&prepared.path, &prepared.bytes)?;
+    let on_disk = encode_record_file(&prepared.bytes, decl, encryption)?;
+    atomic_write(&prepared.path, &on_disk)?;
     crate::isolated::restrict_record(vault, &prepared.path)?;
     let rel = rel_posix(vault, &prepared.path)?;
     Ok((prepared.id, rel))
@@ -110,6 +115,7 @@ pub(crate) fn find_document(
     vault: &Path,
     decl: &CollectionDecl,
     id: &str,
+    encryption: Option<&Encryption>,
 ) -> Result<Record, Error> {
     if id.is_empty() {
         bail!(Error::invalid("id is empty"));
@@ -134,13 +140,34 @@ pub(crate) fn find_document(
             decl.name
         )));
     };
-    read_file(vault, decl, &path)
+    read_file(vault, decl, &path, encryption)
 }
 
-pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error> {
+pub(crate) fn check_documents(
+    vault: &Path,
+    schema: &Schema,
+    encryption: Option<&Encryption>,
+) -> Result<(), Error> {
     for decl in schema.collections() {
         if !matches!(decl.kind, Kind::Document | Kind::Singleton) {
             continue;
+        }
+        if decl.encrypted {
+            #[cfg(not(feature = "encrypt"))]
+            {
+                let _ = encryption;
+                bail!(Error::unsupported_encryption(format!(
+                    "encrypted collection {} was not checked: this build cannot decrypt it",
+                    decl.name
+                )));
+            }
+            #[cfg(feature = "encrypt")]
+            if encryption.is_none() {
+                bail!(Error::crypto(format!(
+                    "encrypted collection {} was not checked: secret is missing",
+                    decl.name
+                )));
+            }
         }
         let mut seen = std::collections::BTreeSet::new();
         for path in list_files(vault, decl)? {
@@ -148,6 +175,7 @@ pub(crate) fn check_documents(vault: &Path, schema: &Schema) -> Result<(), Error
             let raw = fs::read(&path)
                 .context("[store::check_documents] read record")
                 .map_err(|err| err.with_path(&rel))?;
+            let raw = decode_record_file(raw, decl, encryption, &rel)?;
             let text = str::from_utf8(&raw)
                 .context(Code::NotUtf8, "[store::check_documents] decode UTF-8")
                 .map_err(|err| err.with_path(&rel))?;
@@ -330,6 +358,7 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
 pub struct CollectionDocuments {
     vault: PathBuf,
     decl: CollectionDecl,
+    encryption: Option<Encryption>,
     files: Vec<PathBuf>,
     next: usize,
     done: bool,
@@ -338,6 +367,7 @@ pub struct CollectionDocuments {
 pub(crate) fn collection_documents(
     vault: &Path,
     decl: &CollectionDecl,
+    encryption: Option<&Encryption>,
 ) -> Result<CollectionDocuments, Error> {
     if decl.kind == Kind::Journal {
         bail!(Error::unsupported(
@@ -347,6 +377,7 @@ pub(crate) fn collection_documents(
     Ok(CollectionDocuments {
         vault: vault.to_path_buf(),
         decl: decl.clone(),
+        encryption: encryption.cloned(),
         files: list_files(vault, decl)?,
         next: 0,
         done: false,
@@ -359,7 +390,12 @@ impl CollectionDocuments {
             return Ok(None);
         };
         self.next += 1;
-        Ok(Some(read_file(&self.vault, &self.decl, &path)?))
+        Ok(Some(read_file(
+            &self.vault,
+            &self.decl,
+            &path,
+            self.encryption.as_ref(),
+        )?))
     }
 }
 
@@ -425,15 +461,22 @@ fn id_from_listed_file(decl: &CollectionDecl, path: &Path) -> Result<String, Err
 }
 
 #[cfg(feature = "find")]
-pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
-    collection_documents(vault, decl)?.collect()
+pub(crate) fn scan_documents(
+    vault: &Path,
+    decl: &CollectionDecl,
+    encryption: Option<&Encryption>,
+) -> Result<Vec<Record>, Error> {
+    collection_documents(vault, decl, encryption)?.collect()
 }
 
 pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64), Error> {
+    if decl.encrypted {
+        return Ok((0, 0));
+    }
     let mut records = 0u64;
     let mut invalid = 0u64;
     for path in list_files(vault, decl)? {
-        let record = read_file(vault, decl, &path)?;
+        let record = read_file(vault, decl, &path, None)?;
         records += 1;
         if record.valid != Some(true) {
             invalid += 1;
@@ -442,11 +485,17 @@ pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64,
     Ok((records, invalid))
 }
 
-pub(crate) fn read_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Result<Record, Error> {
+pub(crate) fn read_file(
+    vault: &Path,
+    decl: &CollectionDecl,
+    path: &Path,
+    encryption: Option<&Encryption>,
+) -> Result<Record, Error> {
     let rel = rel_posix(vault, path)?;
     let raw = fs::read(path)
         .context("[store::read_file] read record")
         .map_err(|err| err.with_path(&rel))?;
+    let raw = decode_record_file(raw, decl, encryption, &rel)?;
     let mut record = Record::default()
         .with_collection(decl.name.as_str())
         .with_path(rel.clone());
@@ -841,6 +890,51 @@ fn json_to_proto_value(value: &Value) -> Result<ProtoValue, Error> {
     })
 }
 
+fn encode_record_file<'a>(
+    plaintext: &'a [u8],
+    decl: &CollectionDecl,
+    encryption: Option<&Encryption>,
+) -> Result<Cow<'a, [u8]>, Error> {
+    if !decl.encrypted {
+        return Ok(Cow::Borrowed(plaintext));
+    }
+    #[cfg(feature = "encrypt")]
+    {
+        Ok(Cow::Owned(crate::crypto::encrypt(plaintext, encryption)?))
+    }
+    #[cfg(not(feature = "encrypt"))]
+    {
+        let _ = (plaintext, encryption);
+        bail!(Error::unsupported_encryption(
+            "this build cannot encrypt Record files"
+        ));
+    }
+}
+
+pub(crate) fn decode_record_file(
+    raw: Vec<u8>,
+    decl: &CollectionDecl,
+    encryption: Option<&Encryption>,
+    rel: &str,
+) -> Result<Vec<u8>, Error> {
+    if !decl.encrypted {
+        return Ok(raw);
+    }
+    #[cfg(not(feature = "encrypt"))]
+    {
+        let _ = encryption;
+        bail!(
+            Error::unsupported_encryption(format!(
+                "collection {} is encrypted; this build cannot read it",
+                decl.name
+            ))
+            .with_path(rel)
+        );
+    }
+    #[cfg(feature = "encrypt")]
+    crate::crypto::decrypt(&raw, encryption).map_err(|err| err.with_path(rel))
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context("[store::atomic_write] create dir")?;
@@ -953,6 +1047,7 @@ mod tests {
             body: None,
             fields: Vec::new(),
             isolated: false,
+            encrypted: false,
         }
     }
 

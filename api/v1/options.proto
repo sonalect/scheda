@@ -27,11 +27,10 @@ message OpenOptions {
       }
     ]
   }];
-  // Later. Age secret for `{vault}/.isolated/`. Unset: isolated
-  // collections are not encrypted. When set, first create of that tree
-  // is encrypted; later, isolated Record I/O uses it. Vault `open` and
-  // main collections do not require it.
-  Encryption isolated_encryption = 3;
+  // Age secret for this handle. Unset: encryption is not requested.
+  // When set, `passphrase` or `identity` is required. Applies to
+  // encryption generally, not only to `{vault}/.isolated/`.
+  Encryption encryption = 3;
   // Git author and committer for every commit on this handle (main tree
   // and `{vault}/.isolated/`). Unset: local git config, then
   // `Scheda <scheda@invalid>`.

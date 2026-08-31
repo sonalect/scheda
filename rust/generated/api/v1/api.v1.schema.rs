@@ -35,6 +35,16 @@ pub struct Schema {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub isolated: ::core::option::Option<bool>,
+    /// Record files of this collection are age armor on disk. Independent
+    /// of `isolated`. I/O requires the handle secret. `journal` may not
+    /// set it.
+    ///
+    /// Field 7: `encrypted`
+    #[serde(
+        rename = "encrypted",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub encrypted: ::core::option::Option<bool>,
     #[serde(flatten)]
     pub kind: ::core::option::Option<__buffa::oneof::schema::Kind>,
     #[serde(skip)]
@@ -47,6 +57,7 @@ impl ::core::fmt::Debug for Schema {
             .field("version", &self.version)
             .field("fields", &self.fields)
             .field("isolated", &self.isolated)
+            .field("encrypted", &self.encrypted)
             .field("kind", &self.kind)
             .finish()
     }
@@ -71,6 +82,13 @@ impl Schema {
     ///Sets [`Self::isolated`] to `Some(value)`, consuming and returning `self`.
     pub fn with_isolated(mut self, value: bool) -> Self {
         self.isolated = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::encrypted`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_encrypted(mut self, value: bool) -> Self {
+        self.encrypted = Some(value);
         self
     }
 }
@@ -136,6 +154,9 @@ impl ::buffa::Message for Schema {
         if self.isolated.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if self.encrypted.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -187,6 +208,9 @@ impl ::buffa::Message for Schema {
         }
         if let Some(v) = self.isolated {
             ::buffa::types::put_bool_field(6u32, v, buf);
+        }
+        if let Some(v) = self.encrypted {
+            ::buffa::types::put_bool_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -291,6 +315,15 @@ impl ::buffa::Message for Schema {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.encrypted = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -303,6 +336,7 @@ impl ::buffa::Message for Schema {
         self.fields.clear();
         self.kind = ::core::option::Option::None;
         self.isolated = ::core::option::Option::None;
+        self.encrypted = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -337,6 +371,9 @@ impl<'de> serde::Deserialize<'de> for Schema {
                     ::buffa::alloc::vec::Vec<Field>,
                 > = None;
                 let mut __f_isolated: ::core::option::Option<
+                    ::core::option::Option<bool>,
+                > = None;
+                let mut __f_encrypted: ::core::option::Option<
                     ::core::option::Option<bool>,
                 > = None;
                 let mut __oneof_kind: ::core::option::Option<
@@ -382,6 +419,11 @@ impl<'de> serde::Deserialize<'de> for Schema {
                         }
                         "isolated" => {
                             __f_isolated = Some(
+                                map.next_value::<::core::option::Option<bool>>()?,
+                            );
+                        }
+                        "encrypted" => {
+                            __f_encrypted = Some(
                                 map.next_value::<::core::option::Option<bool>>()?,
                             );
                         }
@@ -469,6 +511,9 @@ impl<'de> serde::Deserialize<'de> for Schema {
                 }
                 if let ::core::option::Option::Some(v) = __f_isolated {
                     __r.isolated = v;
+                }
+                if let ::core::option::Option::Some(v) = __f_encrypted {
+                    __r.encrypted = v;
                 }
                 __r.kind = __oneof_kind;
                 Ok(__r)

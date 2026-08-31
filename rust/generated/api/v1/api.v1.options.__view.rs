@@ -13,13 +13,12 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 2: `remote_repo`
     pub remote_repo: ::core::option::Option<&'a str>,
-    /// Later. Age secret for `{vault}/.isolated/`. Unset: isolated
-    /// collections are not encrypted. When set, first create of that tree
-    /// is encrypted; later, isolated Record I/O uses it. Vault `open` and
-    /// main collections do not require it.
+    /// Age secret for this handle. Unset: encryption is not requested.
+    /// When set, `passphrase` or `identity` is required. Applies to
+    /// encryption generally, not only to `{vault}/.isolated/`.
     ///
-    /// Field 3: `isolated_encryption`
-    pub isolated_encryption: ::buffa::MessageFieldView<
+    /// Field 3: `encryption`
+    pub encryption: ::buffa::MessageFieldView<
         super::super::__buffa::view::EncryptionView<'a>,
     >,
     /// Git author and committer for every commit on this handle (main tree
@@ -79,12 +78,12 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 )?;
                 let __sub_ctx = ctx.descend()?;
                 let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.isolated_encryption.as_mut() {
+                match view.encryption.as_mut() {
                     Some(existing) => {
                         ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
                     }
                     None => {
-                        view.isolated_encryption = ::buffa::MessageFieldView::set(
+                        view.encryption = ::buffa::MessageFieldView::set(
                             <super::super::__buffa::view::EncryptionView as ::buffa::MessageView>::decode_view_ctx(
                                 sub,
                                 __sub_ctx,
@@ -138,7 +137,7 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
         ::core::result::Result::Ok(super::super::OpenOptions {
             auto_sync: self.auto_sync,
             remote_repo: self.remote_repo.map(|s| s.to_string()),
-            isolated_encryption: match self.isolated_encryption.as_option() {
+            encryption: match self.encryption.as_option() {
                 Some(v) => {
                     ::buffa::MessageField::<
                         super::super::Encryption,
@@ -173,9 +172,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(ref v) = self.remote_repo {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.isolated_encryption.is_set() {
+        if self.encryption.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = self.isolated_encryption.compute_size(__cache);
+            let inner_size = self.encryption.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -206,13 +205,13 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(ref v) = self.remote_repo {
             ::buffa::types::put_string_field(2u32, v, buf);
         }
-        if self.isolated_encryption.is_set() {
+        if self.encryption.is_set() {
             ::buffa::types::put_len_delimited_header(
                 3u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            self.isolated_encryption.write_to(__cache, buf);
+            self.encryption.write_to(__cache, buf);
         }
         if self.author.is_set() {
             ::buffa::types::put_len_delimited_header(
@@ -250,11 +249,8 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
             __map.serialize_entry("remoteRepo", __v)?;
         }
         {
-            if let ::core::option::Option::Some(__v) = self
-                .isolated_encryption
-                .as_option()
-            {
-                __map.serialize_entry("isolatedEncryption", __v)?;
+            if let ::core::option::Option::Some(__v) = self.encryption.as_option() {
+                __map.serialize_entry("encryption", __v)?;
             }
         }
         {
@@ -369,17 +365,16 @@ impl OpenOptionsOwnedView {
     pub fn remote_repo(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().remote_repo
     }
-    /// Later. Age secret for `{vault}/.isolated/`. Unset: isolated
-    /// collections are not encrypted. When set, first create of that tree
-    /// is encrypted; later, isolated Record I/O uses it. Vault `open` and
-    /// main collections do not require it.
+    /// Age secret for this handle. Unset: encryption is not requested.
+    /// When set, `passphrase` or `identity` is required. Applies to
+    /// encryption generally, not only to `{vault}/.isolated/`.
     ///
-    /// Field 3: `isolated_encryption`
+    /// Field 3: `encryption`
     #[must_use]
-    pub fn isolated_encryption(
+    pub fn encryption(
         &self,
     ) -> &::buffa::MessageFieldView<super::super::__buffa::view::EncryptionView<'_>> {
-        &self.0.reborrow().isolated_encryption
+        &self.0.reborrow().encryption
     }
     /// Git author and committer for every commit on this handle (main tree
     /// and `{vault}/.isolated/`). Unset: local git config, then

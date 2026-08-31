@@ -11,8 +11,8 @@
 //!
 //! The default feature is `remote-git`. `cargo add scheda` does not pull
 //! Tantivy or USearch. `search` turns `find` on; `simd` turns `search`
-//! on; the reverse does not. `default-features = false` also drops git
-//! TLS (file remotes still work).
+//! on; the reverse does not. `encrypt` is also off by default.
+//! `default-features = false` also drops git TLS (file remotes still work).
 //!
 //! - **`find`** — Tantivy `Vault::find` / `Collection::find`.
 //!   Writes without it mark the Index stale, so a later build with
@@ -31,6 +31,11 @@
 //!   ANN.
 //! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
 //!   libomp (Linux `libomp-dev`). Not enabled in the Bazel CI build.
+//! - **`encrypt`** — age v1 ASCII-armor Record files for collections whose
+//!   Schema marks `encrypted`. Off by default. A build without it refuses
+//!   `OpenOptions.encryption` at `open` (`unsupported_encryption`) and
+//!   refuses `collection` of an encrypted name the same way; other
+//!   collections still work.
 //!
 //! # Tokio and other async runtimes
 //!
@@ -61,6 +66,8 @@
 
 #[cfg(feature = "search")]
 mod ann;
+#[cfg(feature = "encrypt")]
+mod crypto;
 mod embed;
 mod error;
 mod git;

@@ -168,6 +168,8 @@ impl api::v1::Error {
             | Code::NotUtf8
             | Code::Unsupported
             | Code::UnsupportedRemote
+            | Code::UnsupportedEncryption
+            | Code::Crypto
             | Code::IoAlreadyExists
             | Code::IoNotADirectory
             | Code::IoIsADirectory
@@ -220,6 +222,8 @@ impl api::v1::Error {
         not_utf8 => NotUtf8,
         unsupported => Unsupported,
         unsupported_remote => UnsupportedRemote,
+        unsupported_encryption => UnsupportedEncryption,
+        crypto => Crypto,
         locked => Locked,
         io_not_found => IoNotFound,
         io_permission => IoPermission,
@@ -366,11 +370,17 @@ impl api::v1::OpenOptions {
         self.with_remote_repo(remote_repo)
     }
 
-    /// Age secret for `{vault}/.isolated/`. Unset: isolated collections
-    /// are not encrypted.
+    /// Age secret for this handle. Unset: encryption is not requested.
+    /// When set, `passphrase` or `identity` is required. Applies to
+    /// encryption generally, not only to `{vault}/.isolated/`.
+    ///
+    /// A build without the `encrypt` crate feature refuses a set value
+    /// (`unsupported_encryption`) before any directory is created.
+    /// With that feature, `open` stores the secret on the handle for
+    /// I/O of collections whose Schema marks `encrypted`.
     #[must_use]
-    pub fn isolated_encryption(mut self, encryption: api::v1::Encryption) -> Self {
-        self.isolated_encryption = ::buffa::MessageField::some(encryption);
+    pub fn encryption(mut self, encryption: api::v1::Encryption) -> Self {
+        self.encryption = ::buffa::MessageField::some(encryption);
         self
     }
 
@@ -567,10 +577,10 @@ mod tests {
         assert_eq!(json["author"]["name"], "Ada");
         assert_eq!(json["author"]["email"], "ada@invalid");
         let encrypted =
-            OpenOptions::new().isolated_encryption(Encryption::new().passphrase("test-passphrase"));
+            OpenOptions::new().encryption(Encryption::new().passphrase("test-passphrase"));
         let json = serde_json::to_value(&encrypted).expect("json");
-        assert_eq!(json["isolatedEncryption"]["passphrase"], "test-passphrase");
-        assert!(json["isolatedEncryption"].get("identity").is_none());
+        assert_eq!(json["encryption"]["passphrase"], "test-passphrase");
+        assert!(json["encryption"].get("identity").is_none());
         assert!(json.get("encrypt").is_none());
         assert!(json.get("secret").is_none());
     }
@@ -640,35 +650,35 @@ mod tests {
     }
 
     #[test]
-    fn open_options_isolated_encryption_requires_secret() {
+    fn open_options_encryption_requires_secret() {
         assert!(OpenOptions::new().validate().is_ok());
         assert!(
             OpenOptions::new()
-                .isolated_encryption(Encryption::new())
+                .encryption(Encryption::new())
                 .validate()
                 .is_err()
         );
         assert!(
             OpenOptions::new()
-                .isolated_encryption(Encryption::new().passphrase("test-passphrase"))
+                .encryption(Encryption::new().passphrase("test-passphrase"))
                 .validate()
                 .is_ok()
         );
         assert!(
             OpenOptions::new()
-                .isolated_encryption(Encryption::new().identity("AGE-SECRET-KEY-TEST"))
+                .encryption(Encryption::new().identity("AGE-SECRET-KEY-TEST"))
                 .validate()
                 .is_ok()
         );
         assert!(
             OpenOptions::new()
-                .isolated_encryption(Encryption::new().passphrase(""))
+                .encryption(Encryption::new().passphrase(""))
                 .validate()
                 .is_err()
         );
         assert!(
             OpenOptions::new()
-                .isolated_encryption(Encryption::new().identity(""))
+                .encryption(Encryption::new().identity(""))
                 .validate()
                 .is_err()
         );

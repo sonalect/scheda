@@ -184,7 +184,7 @@ fn rebuild_matching(
     let mut maps = JournalIdMaps::default();
     for decl in schema
         .collections()
-        .filter(|decl| decl.isolated == isolated)
+        .filter(|decl| decl.isolated == isolated && !decl.encrypted)
     {
         match decl.kind {
             Kind::Journal => {

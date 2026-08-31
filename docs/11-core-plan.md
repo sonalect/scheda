@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.46, 30 August 2026.
+Document 11 of the Scheda package. Version 0.47, 31 August 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -385,4 +385,4 @@ Exact Schema YAML key names — `05` §8.
 
 Whether `open` refuses a dirty Index or only warns via `check` (`10` §7).
 
-**agent** — `12`. Isolated roots and `isolated_encryption` — order and slice are `10` §1 / §5.
+**agent** — `12`. Isolated roots and `encryption` — order and slice are `10` §1 / §5.

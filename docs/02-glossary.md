@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.49, 30 August 2026.
+Document 2 of the Scheda package. Version 0.51, 31 August 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -12,7 +12,7 @@ Each article is: the term, a short gloss, the definition, and — when it matter
 
 **Product nouns are capitalized:** Vault, Collection, Record, Schema, Index, Scheda.
 
-**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `remove`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `author`, `push`, `pull`, `sync`, `isolated_encryption`, `passphrase`, `identity`.
+**Collection kinds and API names are monospace literals:** `document`, `journal`, `singleton`, `add`, `get`, `replace`, `remove`, `history`, `lines`, `find`, `search`, `create_collection`, `begin`, `commit`, `discard`, `open`, `info`, `auto_sync`, `author`, `push`, `pull`, `sync`, `encryption`, `encrypted`, `passphrase`, `identity`.
 
 **Index in this package is never git's staging area.** Git's index, if mentioned, is written “git index” or “staging area”. Scheda's Index is the derived search layer.
 
@@ -184,17 +184,19 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 ## 7. Isolation (**later**)
 
-**Isolated collection** — a collection whose Record files live under `{vault}/.isolated/{name}/`: a gitignored nested git working tree, never the main Remote. Schema stays `{vault}/{name}/.schema.yaml` in the main tree. Search over non-isolated collections does not read it and must not require `.isolated/` to exist. `push` does not publish it. Optional `isolated_encryption` (`09`).
+**Isolated collection** — a collection whose Record files live under `{vault}/.isolated/{name}/`: a gitignored nested git working tree that the main Vault's `push` / `pull` / `sync` never touch. Schema stays `{vault}/{name}/.schema.yaml` in the main tree. Search over non-isolated collections does not read it and must not require `.isolated/` to exist. Whether its files are ciphertext is a separate question — see **Encrypted collection** (`09`).
 
-**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only. Optional `isolated_encryption`: Record files are age armor. The main Index must not copy its sealed field values.
+**Isolated tree** — `{vault}/.isolated/`. Local `commit` and `Collection.history` of isolated Records only; it may carry a Remote of its own, which the main Vault's `push` / `pull` / `sync` never use. The main Index must not copy its sealed field values.
 
-**`isolated_encryption`** — `OpenOptions` field (`api.v1.Encryption`) used when Scheda first creates `{vault}/.isolated/`. Unset: isolated collections are not encrypted. When set, `passphrase` or `identity` is required; isolated Record I/O needs that secret (`09`). Main `open` does not.
+**Encrypted collection** — a collection whose Schema sets `encrypted: true` (SCH-16). Every Record file of it is age v1 armor on disk, whole-file; I/O needs the handle secret (`encryption`) and fails with `crypto` without it, while `ids()` still works. Independent of **isolated**: all four combinations are valid. `document` and `singleton` only — an encrypted `journal` is `invalid`. No Index holds it, so `find` and `search` naming it are `unsupported` and the ways in are `get` and the `documents()` walk. In a build without the `encrypt` feature the collection is refused with `unsupported_encryption`, never returned as ciphertext dressed as a Record (`09`).
+
+**`encryption`** — `OpenOptions` field (`api.v1.Encryption`) carrying this handle's one secret, used for every encrypted collection it touches. When set, `passphrase` or `identity` is required. Setting it encrypts nothing by itself: what is ciphertext is each collection's Schema (SCH-16). `open` of the Vault never requires it, and plain collections work without it (`09`).
 
 **`passphrase`** — symmetric arm of `Encryption`. Age scrypt wrapping.
 
 **`identity`** — age X25519 identity arm of `Encryption` (`AGE-SECRET-KEY-…` file).
 
-**Sealed field** — a field that must not appear in the main Index. Isolated encryption (`isolated_encryption`, age armor) is `09`; the name here only marks the Index rule.
+**Sealed field** — a field that must not appear in the main Index. Encryption of a collection's files (`encrypted`, age armor) is `09`; the name here only marks the Index rule.
 
 ---
 

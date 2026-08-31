@@ -11,13 +11,13 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use clap::{error::ErrorKind as ClapErrorKind, Parser};
+use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
     Author, Embedder, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Reranker,
     Schema, SearchQuery, Vault,
 };
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
 

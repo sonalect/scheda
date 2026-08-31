@@ -239,3 +239,67 @@ fn reindex_without_find_marks_stale() {
     assert!(vault.index_dir().join("stale").is_file());
     vault.check().unwrap();
 }
+
+#[cfg(not(feature = "encrypt"))]
+#[test]
+fn open_with_secret_is_unsupported_encryption() {
+    use scheda::Encryption;
+    let scratch = Scratch::new();
+    let err = Vault::open(
+        scratch.vault(),
+        OpenOptions::new().encryption(Encryption::new().passphrase("thin-passphrase")),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::UnsupportedEncryption));
+    assert!(!scratch.vault().exists());
+}
+
+#[cfg(not(feature = "encrypt"))]
+#[test]
+fn vault_with_encrypted_collection_opens_plain_collections() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    drop(vault);
+    let dir = scratch.vault().join("sealed_thin");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join(".schema.yaml"),
+        "name: sealed_thin\nkind: document\nversion: 1\nencrypted: true\nfields:\n  - name: title\n    string: {}\n",
+    )
+    .unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let err = vault.collection("sealed_thin").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::UnsupportedEncryption));
+    let collection = vault.collection("thin_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    let got = collection.get("alpha").unwrap();
+    assert_eq!(fields_of(&got)["title"], "Keep");
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::UnsupportedEncryption));
+}
+
+#[cfg(not(feature = "encrypt"))]
+#[test]
+fn create_encrypted_collection_is_unsupported_encryption() {
+    use scheda::{Body, Schema};
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault.begin().unwrap();
+    let mut schema = Schema::default().with_version(1).with_encrypted(true);
+    schema.kind = Body::default().into();
+    schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
+    let err = vault
+        .create_collection("sealed_thin", schema, None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::UnsupportedEncryption));
+    assert!(
+        !scratch
+            .vault()
+            .join("sealed_thin")
+            .join(".schema.yaml")
+            .is_file()
+    );
+}

@@ -8,6 +8,104 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-08-31
+
+### Added
+
+- Encryption is a property of a collection. A Schema sets `encrypted:
+  true` and every Record file of that collection is age v1 in ASCII
+  armor on disk, whole-file. It is independent of `isolated`, so all four
+  combinations are expressible: ciphertext in a history you fully intend
+  to publish — which makes `push` the backup, with no directory to copy
+  by hand — or a plain nested tree for something merely local. Offered
+  for `document` and `singleton`; an encrypted `journal` is `invalid`,
+  because an age file cannot be appended to and every appended line
+  would rewrite a whole segment blob in git.
+- The `encrypt` Cargo feature, beside `find` and `search` and off by
+  default. age brings scrypt, ChaCha20-Poly1305, and X25519 through 24
+  crates, and a consumer that encrypts nothing should not compile them.
+  A build without the feature does not pretend: a secret at `open`,
+  creating an encrypted collection, opening one that already exists on
+  disk, and `check` over a Vault holding one each fail with
+  `CODE_UNSUPPORTED_ENCRYPTION`, and nothing is created or written. The
+  rest of the Vault keeps working, as it does when `find` is off.
+- The secret arrives on the handle as `OpenOptions.encryption`, a
+  passphrase or an age identity, and never reaches disk: not a Record,
+  not the Schema, neither git tree, no Index. Files written under the
+  existing temp-and-rename path, so a path holds a whole file or
+  nothing. The armor is what the `age` CLI reads: `age -d` recovers
+  exactly what `get` returns.
+- `CODE_CRYPTO` and `Error::crypto`: the build can decrypt but the
+  secret is absent or wrong, or the bytes will not decrypt. Distinct
+  from `CODE_UNSUPPORTED_ENCRYPTION` on purpose — a caller that cannot
+  tell "recompile" from "give me the passphrase" has to guess. No error
+  message carries the secret or any plaintext.
+- `CODE_UNSUPPORTED_ENCRYPTION` and `Error::unsupported_encryption`, a
+  specific refusal rather than a catch-all `CODE_UNSUPPORTED`, so a
+  caller can tell "this build cannot encrypt" from "this operation is
+  not offered for this collection kind". Retrying cannot help, so
+  `repeat` defaults to forbidden.
+
+### Changed
+
+- `OpenOptions.isolated_encryption` is renamed to `encryption`, because
+  encryption is now a property a Schema declares for any one collection
+  rather than a property of the isolated tree. Breaking, on purpose: the
+  field keeps number 3, so binary protobuf still reads, but the Protobuf
+  JSON key changes and a Rust caller gets a compile error. There is no
+  alias and no `reserved` entry. A caller still sending the old JSON key
+  is not warned, because nothing in this repository parses
+  `OpenOptions` from JSON; whoever writes the first such parser must
+  reject an unknown key rather than drop it, since a dropped secret key
+  means a plaintext Vault and no error.
+- No Index holds anything from an encrypted collection, main or nested.
+  The Index is plaintext on disk, so indexing one would hand back
+  exactly what the encryption was for. `find` and `search` that name an
+  encrypted collection fail with `CODE_UNSUPPORTED` rather than
+  returning an empty result, which a caller cannot tell from "nothing
+  matched". Enumeration is `ids()`, which needs no secret, and
+  `documents()`, which decrypts one file at a time.
+- `history` on an encrypted collection returns decrypted plaintext in
+  `Entry.raw` — the bytes a `get` of that revision would produce — not
+  the armor git stores. An entry whose `raw` is empty, a commit that
+  deleted the file, is returned as it is.
+- `check` never reports an encrypted collection it could not read as
+  healthy: with the secret it validates it like any other, without the
+  secret it fails with `CODE_CRYPTO`, and in a build without `encrypt`
+  with `CODE_UNSUPPORTED_ENCRYPTION`. Both mean "not verified" rather
+  than "broken". `check` returns success or one failure, so it cannot
+  report per collection; a caller wanting the plain collections verified
+  while the secret is absent needs a Vault without an encrypted one.
+- Setting or clearing `encrypted` on a collection that already holds
+  Records is `invalid` and touches no file: it would mean rewriting
+  every one, and the caller may not hold the secret needed to read them
+  first. Encrypting an existing collection is an explicit migration.
+- `{vault}/.isolated/.encrypted` is gone as a marker. The Schema records
+  the choice; the marker file existed only because nothing else did.
+
+### Fixed
+
+- An encryption secret is no longer accepted and ignored. The option was
+  declared and validated, and nothing in the library read it: a caller
+  who passed a passphrase received plaintext Record files and no error.
+  The `0.5.0` note below claimed that the first create of
+  `{vault}/.isolated/` encrypts and that later isolated I/O uses the
+  secret; that behaviour never existed. This release implements it, on
+  the collection instead of the tree.
+
+### Known limitations
+
+- The CLI cannot open a Vault holding an encrypted collection. It builds
+  its options from flags and has no flag that carries a secret, so there
+  is no command-line way into such a Vault; the library is the only way
+  in. The flags are specified — an environment variable name and an
+  identity file path, never the secret itself in argv, which every
+  process on the machine can read — and not yet built.
+- The nested isolated tree still may not have a Remote of its own:
+  `check` treats one as a defect. Encryption no longer requires that
+  tree, so a consumer wanting ciphertext in a published history does not
+  need this.
+
 ## [0.5.1] - 2026-08-31
 
 ### Added
@@ -700,6 +798,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.6.0]
 - [0.5.1]
 - [0.5.0]
 - [0.4.4]
@@ -712,7 +811,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/amsokol/scheda/releases/tag/v0.6.0
 [0.5.1]: https://github.com/amsokol/scheda/releases/tag/v0.5.1
 [0.5.0]: https://github.com/amsokol/scheda/releases/tag/v0.5.0
 [0.4.4]: https://github.com/amsokol/scheda/releases/tag/v0.4.4

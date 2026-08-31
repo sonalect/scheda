@@ -267,6 +267,11 @@ mod tests {
         assert_eq!(Error::default_repeat(Code::NotFound), Repeat::Forbidden);
         assert_eq!(Error::default_repeat(Code::Invalid), Repeat::Forbidden);
         assert_eq!(Error::default_repeat(Code::Unsupported), Repeat::Forbidden);
+        assert_eq!(
+            Error::default_repeat(Code::UnsupportedEncryption),
+            Repeat::Forbidden
+        );
+        assert_eq!(Error::default_repeat(Code::Crypto), Repeat::Forbidden);
         assert_eq!(Error::default_repeat(Code::DuplicateId), Repeat::Forbidden);
         assert_eq!(
             Error::default_repeat(Code::NotFastForward),

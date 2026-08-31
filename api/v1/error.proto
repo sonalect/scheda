@@ -25,10 +25,12 @@ message Error {
     CODE_INVALID = 201;
     CODE_NOT_UTF8 = 202;
 
-    // Writes / remotes this handle cannot do.
+    // Writes / remotes / encryption this handle cannot do.
     CODE_UNSUPPORTED = 301;
     CODE_UNSUPPORTED_REMOTE = 302;
     CODE_LOCKED = 303;
+    // This build cannot encrypt; encryption is not available.
+    CODE_UNSUPPORTED_ENCRYPTION = 304;
 
     // Filesystem / OS: one code per stable `std::io::ErrorKind`.
     // `CODE_IO_OTHER` is `ErrorKind::Other` and any future/unstable kind.
@@ -111,6 +113,10 @@ message Error {
     CODE_INDEX_LEXICAL = 603;
     CODE_INDEX_VECTOR = 604;
     CODE_INDEX_CORRUPT = 605;
+
+    // Cryptographic I/O: the secret is missing, wrong, or the file will
+    // not decrypt. Not a catch-all for other failures.
+    CODE_CRYPTO = 701;
   }
 
   // Whether the same call with the same arguments may succeed later.

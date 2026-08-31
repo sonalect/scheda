@@ -36,6 +36,10 @@ message Schema {
   // stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
   // collections does not read it.
   bool isolated = 6;
+  // Record files of this collection are age armor on disk. Independent
+  // of `isolated`. I/O requires the handle secret. `journal` may not
+  // set it.
+  bool encrypted = 7;
 }
 
 // `journal` segment cap. Size-first: a cap hit closes the segment even

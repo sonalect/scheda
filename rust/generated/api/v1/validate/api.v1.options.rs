@@ -13,7 +13,7 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
         &self,
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if let Some(inner) = self.isolated_encryption.as_option() {
+        if let Some(inner) = self.encryption.as_option() {
             if let Err(sub) = inner.validate() {
                 violations
                     .extend(
@@ -28,7 +28,7 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                                         ::protovalidate_buffa::FieldPathElement {
                                             field_number: Some(3i32),
                                             field_name: Some(
-                                                ::std::borrow::Cow::Borrowed("isolated_encryption"),
+                                                ::std::borrow::Cow::Borrowed("encryption"),
                                             ),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
@@ -133,7 +133,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
         &self,
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if let Some(inner) = self.isolated_encryption.as_option() {
+        if let Some(inner) = self.encryption.as_option() {
             if let Err(sub) = inner.validate() {
                 violations
                     .extend(
@@ -148,7 +148,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                                         ::protovalidate_buffa::FieldPathElement {
                                             field_number: Some(3i32),
                                             field_name: Some(
-                                                ::std::borrow::Cow::Borrowed("isolated_encryption"),
+                                                ::std::borrow::Cow::Borrowed("encryption"),
                                             ),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,

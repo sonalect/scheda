@@ -289,10 +289,12 @@ pub mod error {
         /// Caller or collection declaration. Detail is `message` (and `path` when a file).
         CODE_INVALID = 201i32,
         CODE_NOT_UTF8 = 202i32,
-        /// Writes / remotes this handle cannot do.
+        /// Writes / remotes / encryption this handle cannot do.
         CODE_UNSUPPORTED = 301i32,
         CODE_UNSUPPORTED_REMOTE = 302i32,
         CODE_LOCKED = 303i32,
+        /// This build cannot encrypt; encryption is not available.
+        CODE_UNSUPPORTED_ENCRYPTION = 304i32,
         /// Filesystem / OS: one code per stable `std::io::ErrorKind`.
         /// `CODE_IO_OTHER` is `ErrorKind::Other` and any future/unstable kind.
         CODE_IO_NOT_FOUND = 401i32,
@@ -372,6 +374,9 @@ pub mod error {
         CODE_INDEX_LEXICAL = 603i32,
         CODE_INDEX_VECTOR = 604i32,
         CODE_INDEX_CORRUPT = 605i32,
+        /// Cryptographic I/O: the secret is missing, wrong, or the file will
+        /// not decrypt. Not a catch-all for other failures.
+        CODE_CRYPTO = 701i32,
     }
     impl Code {
         ///Idiomatic alias for [`Self::CODE_UNSPECIFIED`]; `Debug` prints the variant name.
@@ -401,6 +406,9 @@ pub mod error {
         ///Idiomatic alias for [`Self::CODE_LOCKED`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const Locked: Self = Self::CODE_LOCKED;
+        ///Idiomatic alias for [`Self::CODE_UNSUPPORTED_ENCRYPTION`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const UnsupportedEncryption: Self = Self::CODE_UNSUPPORTED_ENCRYPTION;
         ///Idiomatic alias for [`Self::CODE_IO_NOT_FOUND`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const IoNotFound: Self = Self::CODE_IO_NOT_FOUND;
@@ -620,6 +628,9 @@ pub mod error {
         ///Idiomatic alias for [`Self::CODE_INDEX_CORRUPT`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const IndexCorrupt: Self = Self::CODE_INDEX_CORRUPT;
+        ///Idiomatic alias for [`Self::CODE_CRYPTO`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const Crypto: Self = Self::CODE_CRYPTO;
     }
     impl ::core::default::Default for Code {
         fn default() -> Self {
@@ -724,6 +735,7 @@ pub mod error {
                 301i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED),
                 302i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED_REMOTE),
                 303i32 => ::core::option::Option::Some(Self::CODE_LOCKED),
+                304i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED_ENCRYPTION),
                 401i32 => ::core::option::Option::Some(Self::CODE_IO_NOT_FOUND),
                 402i32 => ::core::option::Option::Some(Self::CODE_IO_PERMISSION),
                 403i32 => ::core::option::Option::Some(Self::CODE_IO_CONNECTION_REFUSED),
@@ -805,6 +817,7 @@ pub mod error {
                 603i32 => ::core::option::Option::Some(Self::CODE_INDEX_LEXICAL),
                 604i32 => ::core::option::Option::Some(Self::CODE_INDEX_VECTOR),
                 605i32 => ::core::option::Option::Some(Self::CODE_INDEX_CORRUPT),
+                701i32 => ::core::option::Option::Some(Self::CODE_CRYPTO),
                 _ => ::core::option::Option::None,
             }
         }
@@ -822,6 +835,7 @@ pub mod error {
                 Self::CODE_UNSUPPORTED => "CODE_UNSUPPORTED",
                 Self::CODE_UNSUPPORTED_REMOTE => "CODE_UNSUPPORTED_REMOTE",
                 Self::CODE_LOCKED => "CODE_LOCKED",
+                Self::CODE_UNSUPPORTED_ENCRYPTION => "CODE_UNSUPPORTED_ENCRYPTION",
                 Self::CODE_IO_NOT_FOUND => "CODE_IO_NOT_FOUND",
                 Self::CODE_IO_PERMISSION => "CODE_IO_PERMISSION",
                 Self::CODE_IO_CONNECTION_REFUSED => "CODE_IO_CONNECTION_REFUSED",
@@ -897,6 +911,7 @@ pub mod error {
                 Self::CODE_INDEX_LEXICAL => "CODE_INDEX_LEXICAL",
                 Self::CODE_INDEX_VECTOR => "CODE_INDEX_VECTOR",
                 Self::CODE_INDEX_CORRUPT => "CODE_INDEX_CORRUPT",
+                Self::CODE_CRYPTO => "CODE_CRYPTO",
             }
         }
         fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
@@ -920,6 +935,9 @@ pub mod error {
                     ::core::option::Option::Some(Self::CODE_UNSUPPORTED_REMOTE)
                 }
                 "CODE_LOCKED" => ::core::option::Option::Some(Self::CODE_LOCKED),
+                "CODE_UNSUPPORTED_ENCRYPTION" => {
+                    ::core::option::Option::Some(Self::CODE_UNSUPPORTED_ENCRYPTION)
+                }
                 "CODE_IO_NOT_FOUND" => {
                     ::core::option::Option::Some(Self::CODE_IO_NOT_FOUND)
                 }
@@ -1121,6 +1139,7 @@ pub mod error {
                 "CODE_INDEX_CORRUPT" => {
                     ::core::option::Option::Some(Self::CODE_INDEX_CORRUPT)
                 }
+                "CODE_CRYPTO" => ::core::option::Option::Some(Self::CODE_CRYPTO),
                 _ => ::core::option::Option::None,
             }
         }
@@ -1135,6 +1154,7 @@ pub mod error {
                 Self::CODE_UNSUPPORTED,
                 Self::CODE_UNSUPPORTED_REMOTE,
                 Self::CODE_LOCKED,
+                Self::CODE_UNSUPPORTED_ENCRYPTION,
                 Self::CODE_IO_NOT_FOUND,
                 Self::CODE_IO_PERMISSION,
                 Self::CODE_IO_CONNECTION_REFUSED,
@@ -1208,6 +1228,7 @@ pub mod error {
                 Self::CODE_INDEX_LEXICAL,
                 Self::CODE_INDEX_VECTOR,
                 Self::CODE_INDEX_CORRUPT,
+                Self::CODE_CRYPTO,
             ]
         }
     }

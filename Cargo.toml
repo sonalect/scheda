@@ -11,9 +11,10 @@ edition = "2024"
 rust-version = "1.98.0"
 license = "Apache-2.0"
 repository = "https://github.com/amsokol/scheda"
-version = "0.5.1"
+version = "0.6.0"
 
 [workspace.dependencies]
+age = { version = "=0.12.1", default-features = false, features = ["armor"] }
 buffa = { version = "=0.9.1", features = ["json"] }
 buffa-types = { version = "=0.9.1", default-features = false, features = [
     "json",

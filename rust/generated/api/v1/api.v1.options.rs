@@ -25,21 +25,16 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub remote_repo: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Later. Age secret for `{vault}/.isolated/`. Unset: isolated
-    /// collections are not encrypted. When set, first create of that tree
-    /// is encrypted; later, isolated Record I/O uses it. Vault `open` and
-    /// main collections do not require it.
+    /// Age secret for this handle. Unset: encryption is not requested.
+    /// When set, `passphrase` or `identity` is required. Applies to
+    /// encryption generally, not only to `{vault}/.isolated/`.
     ///
-    /// Field 3: `isolated_encryption`
+    /// Field 3: `encryption`
     #[serde(
-        rename = "isolatedEncryption",
-        alias = "isolated_encryption",
+        rename = "encryption",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
-    pub isolated_encryption: ::buffa::MessageField<
-        Encryption,
-        ::buffa::Inline<Encryption>,
-    >,
+    pub encryption: ::buffa::MessageField<Encryption, ::buffa::Inline<Encryption>>,
     /// Git author and committer for every commit on this handle (main tree
     /// and `{vault}/.isolated/`). Unset: local git config, then
     /// `Scheda <scheda@invalid>`.
@@ -59,7 +54,7 @@ impl ::core::fmt::Debug for OpenOptions {
         f.debug_struct("OpenOptions")
             .field("auto_sync", &self.auto_sync)
             .field("remote_repo", &self.remote_repo)
-            .field("isolated_encryption", &self.isolated_encryption)
+            .field("encryption", &self.encryption)
             .field("author", &self.author)
             .finish()
     }
@@ -116,9 +111,9 @@ impl ::buffa::Message for OpenOptions {
         if let Some(ref v) = self.remote_repo {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.isolated_encryption.is_set() {
+        if self.encryption.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = self.isolated_encryption.compute_size(__cache);
+            let inner_size = self.encryption.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -148,13 +143,13 @@ impl ::buffa::Message for OpenOptions {
         if let Some(ref v) = self.remote_repo {
             ::buffa::types::put_string_field(2u32, v, buf);
         }
-        if self.isolated_encryption.is_set() {
+        if self.encryption.is_set() {
             ::buffa::types::put_len_delimited_header(
                 3u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            self.isolated_encryption.write_to(__cache, buf);
+            self.encryption.write_to(__cache, buf);
         }
         if self.author.is_set() {
             ::buffa::types::put_len_delimited_header(
@@ -204,7 +199,7 @@ impl ::buffa::Message for OpenOptions {
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
                 ::buffa::Message::merge_length_delimited(
-                    self.isolated_encryption.get_or_insert_default(),
+                    self.encryption.get_or_insert_default(),
                     buf,
                     ctx,
                 )?;
@@ -230,7 +225,7 @@ impl ::buffa::Message for OpenOptions {
     fn clear(&mut self) {
         self.auto_sync = ::core::option::Option::None;
         self.remote_repo = ::core::option::Option::None;
-        self.isolated_encryption = ::buffa::MessageField::none();
+        self.encryption = ::buffa::MessageField::none();
         self.author = ::buffa::MessageField::none();
         self.__buffa_unknown_fields.clear();
     }

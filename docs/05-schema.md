@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.35, 30 August 2026.
+Document 5 of the Scheda package. Version 0.37, 31 August 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -86,9 +86,11 @@ order. With `segment_rotate: daily`, the open name is `YYYY-MM-DD.jsonl`, then
 
 ---
 
-## 7. Isolated collections (**later**)
+## 7. Isolated and encrypted collections (**later**)
 
-**SCH-15. Isolation is declared (**later**).** Schema may mark a collection `isolated: true`. Record files then live at `{vault}/.isolated/{name}/` (ISO-2): a gitignored nested git with no Remote. The Schema file stays `{vault}/{name}/.schema.yaml` in the main tree. Encryption of isolated Record files is `OpenOptions.isolated_encryption` when `.isolated/` is first created (`09`). `find` / `search` on non-isolated collections do not read it. Sealed fields must not be copied into the main Index. *Check (**later**):* fixture with gitignored `.isolated/`; `search`/`find` on a non-isolated collection return no isolated Records; `open` does not require `.isolated/` to exist.
+**SCH-15. Isolation is declared (**later**).** Schema may mark a collection `isolated: true`. Record files then live at `{vault}/.isolated/{name}/` (ISO-2): a gitignored nested git that the main Vault's `push` / `pull` / `sync` never touch (ISO-6). The Schema file stays `{vault}/{name}/.schema.yaml` in the main tree. `find` / `search` on non-isolated collections do not read it. Sealed fields must not be copied into the main Index. *Check (**later**):* fixture with gitignored `.isolated/`; `search`/`find` on a non-isolated collection return no isolated Records; `open` does not require `.isolated/` to exist.
+
+**SCH-16. Encryption is declared, and it is a different question (**later**).** Schema may mark a collection `encrypted: true`. Every Record file of that collection is then age v1 armor on disk (ISO-8), whole-file (ISO-9), and I/O on it needs the handle secret (ISO-5). The key is independent of `isolated`: all four combinations are valid, and neither implies the other. Three rules come with it, and each one is a refusal rather than a silent accommodation. A `journal` with the key is `invalid` when the Schema is read, because an age file cannot be appended to and a line is what a journal is made of (STO-2, STO-3); `document` and `singleton` are the kinds offered. No Index holds anything from the collection (ISO-4), so `find` and `search` that name it fail with `unsupported` and never with an empty result. Setting or clearing the key on a collection that already holds Record files is `invalid`, and those files are left untouched (ISO-11). A build without the `encrypt` feature refuses the collection by code instead of returning ciphertext as a Record (LIB-15). *Check (**later**):* an encrypted non-isolated collection and a plain isolated one both round-trip; an encrypted `journal` Schema is `invalid`; `find` naming an encrypted collection is `unsupported`, not empty; the key added to a non-empty collection is `invalid` and its files are byte-identical afterwards.
 
 ---
 
@@ -118,9 +120,10 @@ Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record files are th
 | `singleton` | `singleton` only | Mapping with `id` (MOD-7). Same slug as Record `id` (library). |
 | `body` / `document` | `document` only | Mapping (SCH-7). Omitted/empty: body allowed and indexed. |
 | `isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Records under `{vault}/.isolated/{name}/`. `info` lists the collection as isolated and omits `schema.fields` (ISO-3). |
+| `encrypted` | no | Boolean. Default `false`. `true` marks SCH-16: Record files are age v1 armor and I/O needs the handle secret. Independent of `isolated`. `true` on `journal` is `invalid`. `info` lists the collection as encrypted (ISO-3). |
 
 Journal-only keys on `document` / `singleton`, `singleton_id` on another
-kind, and `body` on `journal` / `singleton`, are rejected. Two files with
+kind, `body` on `journal` / `singleton`, and `encrypted` on `journal`, are rejected. Two files with
 the same `name` are rejected. Two `kind` values on one collection are
 rejected (one `kind` string).
 

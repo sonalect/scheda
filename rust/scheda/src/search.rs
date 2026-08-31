@@ -232,11 +232,14 @@ impl SearchEngine {
         if can_write {
             index::ensure_format(&self.index_dir)?;
         }
-        for decl in schema.collections().filter(|decl| !decl.isolated) {
+        for decl in schema
+            .collections()
+            .filter(|decl| !decl.isolated && !decl.encrypted)
+        {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
                 crate::schema::Kind::Document | crate::schema::Kind::Singleton => {
-                    store::scan_documents(vault, decl)?
+                    store::scan_documents(vault, decl, None)?
                 }
             };
             for record in records {
@@ -272,7 +275,7 @@ impl SearchEngine {
         record: &Record,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
-        if decl.isolated {
+        if decl.isolated || decl.encrypted {
             return Ok(());
         }
         #[cfg(not(feature = "search"))]
@@ -310,7 +313,7 @@ impl SearchEngine {
     }
 
     pub(crate) fn forget(&self, decl: &CollectionDecl, id: &str) -> Result<(), Error> {
-        if decl.isolated {
+        if decl.isolated || decl.encrypted {
             return Ok(());
         }
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::forget] lock")?;

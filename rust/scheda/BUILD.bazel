@@ -10,6 +10,7 @@ _SCHEDA_FEATURES = [
     "search",
     "simd",
     "remote-git",
+    "encrypt",
 ]
 
 # Matches Cargo.toml [features] default. No Tantivy, USearch, or C++.
@@ -37,6 +38,7 @@ rust_library(
     crate_name = "scheda",
     visibility = ["//visibility:public"],
     deps = _SCHEDA_DEPS + [
+        "@cargo//:age",
         "@cargo//:cxx",
         "@cargo//:tantivy",
         "@cargo//:usearch",
@@ -175,6 +177,19 @@ rust_test(
     srcs = ["tests/schema.rs"],
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/schema.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "encrypt_test",
+    srcs = ["tests/encrypt.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/encrypt.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",

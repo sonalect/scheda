@@ -14,7 +14,7 @@ use std::time::Duration;
 use scheda::{
     Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery, Vault,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -418,11 +418,13 @@ fn extra_field_is_invalid_and_write_nothing() {
         &json!({"fields":{"title":"x","unknown":"y"}}).to_string(),
     ]);
     assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-    assert!(!scratch
-        .vault()
-        .join("agent_notes")
-        .join("rogue.md")
-        .exists());
+    assert!(
+        !scratch
+            .vault()
+            .join("agent_notes")
+            .join("rogue.md")
+            .exists()
+    );
 
     let keep = run(&[
         "--vault",

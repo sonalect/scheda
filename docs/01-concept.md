@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.44, 30 August 2026.
+Document 1 of the Scheda package. Version 0.47, 31 August 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -76,7 +76,7 @@ A **Record** has a stable `id` in its collection. The library places the file (M
 
 **Scheda** is a library in the caller's process. The first implementation is the Rust crate `scheda`; others (Python, Java, Go, TypeScript, and more) may follow. Every implementation must speak the same Vault layout and the same operations. Shared message fields live in `api/v1` (Protobuf edition 2024); Vault files stay text. A Scheda daemon or HTTP server is not required to read and write. Opening a Vault, writing, and lexical search do not call the network unless `auto_sync` or an explicit remote operation is on. An embedder, if any, is supplied by the caller; without it, vector search is off and the rest still works.
 
-A collection may be **isolated** (**later**, `09`): Record files under `{vault}/.isolated/` (gitignored nested git, never a Remote). Schema stays in the main tree. `OpenOptions.isolated_encryption` (`api.v1.Encryption`; unset: not encrypted) applies when that nested tree is first created. Encrypted isolated files are [age](https://age-encryption.org/) ASCII armor; isolated I/O takes `passphrase` or `identity`. The main Vault is not encrypted.
+A collection may be **isolated** (**later**, `09`): Record files under `{vault}/.isolated/` (a gitignored nested git the main Vault's `push` never publishes). Schema stays in the main tree. Separately, a collection may be **encrypted**: its Schema sets `encrypted: true`, its Record files are [age](https://age-encryption.org/) ASCII armor, and I/O on it takes the handle's `passphrase` or `identity` (`OpenOptions.encryption`). The two marks are independent — ciphertext is worth having for material a consumer fully intends to publish, and a merely local collection has no need of it — so all four combinations are valid. Only the collections that declare it are encrypted; the rest of the Vault stays plaintext.
 
 An **AI agent** does not get a second, looser API. It gets the same operations, plus `info` taken from Schema so it does not guess paths, and `create_collection` so it does not write Schema YAML by hand. A person may still edit files in an editor; that path is not offered to the agent as “write any Markdown anywhere”.
 
@@ -102,13 +102,13 @@ Ready-made experiments that keep Markdown under git and hang a search index on t
 
 ## 5. What works on day one
 
-A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, autocommit or `begin`/`commit`/`discard`, `get` by id, `find` (`journal` in append order; other kinds by Tantivy score). Isolated collections under `{vault}/.isolated/` and `isolated_encryption` stay a **later** phase (`09`, `10`); they are not required to accept **core**, **search**, or **agent**.
+A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, autocommit or `begin`/`commit`/`discard`, `get` by id, `find` (`journal` in append order; other kinds by Tantivy score). Isolated collections under `{vault}/.isolated/` and encrypted collections stay a **later** phase (`09`, `10`); neither is required to accept **core**, **search**, or **agent**.
 
 Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
 
-Next in `scheda` is age encryption of `{vault}/.isolated/` (`09`, `10` §5). Consumer readiness P0–P12 is in (`12` §4). Unencrypted isolated I/O (`{vault}/.isolated/` nested git, owner-only files, no Remote) is in. The slug is the whole `id` rule. `find` and `search` are opt-in crate features; Cargo default is `remote-git` only. **agent** is accepted (`12`).
+Age encryption as a property of a collection, behind the opt-in `encrypt` feature, has its code in and its release not yet cut (`09`, `12` P14). Next after it: one Index for the Vault (`12` P15), and the two things encryption designed without building — a CLI that can carry a secret, and a Remote for the nested isolated tree (`12` P16). Consumer readiness P0–P13 is in (`12` §4). Unencrypted isolated I/O (`{vault}/.isolated/` nested git, owner-only files, no Remote) is in. The slug is the whole `id` rule. `find` and `search` are opt-in crate features; Cargo default is `remote-git` only. **agent** is accepted (`12`).
 
-What is deliberately later after those slices: optional age encryption of `{vault}/.isolated/` (`09`); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
+What is deliberately later after those slices: field-level encryption inside an otherwise plaintext Record, and an encrypted `journal` — both refused on purpose (`09`, SCH-16); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
 
 ---
 
@@ -136,6 +136,6 @@ Checkable requirements live in `03`–`09` and `13`, and are gathered with phase
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Unencrypted isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); Cargo default is `remote-git` only. Consumer readiness P0–P12 is in (`12` §4). Age encryption of `{vault}/.isolated/`, extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Unencrypted isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); Cargo default is `remote-git` only. Consumer readiness P0–P13 is in (`12` §4). Age encryption of a collection has its code in and its release open (`12` P14). A secret in the CLI and a Remote for the nested tree (`12` P16), one Index for the Vault (`12` P15), extra language bindings, and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.

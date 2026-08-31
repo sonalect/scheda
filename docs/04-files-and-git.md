@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.30, 30 August 2026.
+Document 4 of the Scheda package. Version 0.32, 31 August 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -14,7 +14,7 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **STO-2. Readable without the library.** Records are UTF-8 without BOM. `document`: Markdown with YAML 1.2 between `---`, or YAML 1.2 throughout. `journal`: JSONL, one RFC 8785 (JSON Canonicalization Scheme) object per line, `\n`, no comments. Object keys are sorted by UTF-16 code unit; numbers by ECMAScript `NumberToString`; strings escaped as the RFC states. An `integer` field is the decimal digits (`1`), not `1.0`. `singleton`: YAML 1.2 in the file `record.yaml` (SCH-6). There is no Schema key that picks a format: JSON is a subset of YAML 1.2, so an imported JSON file parses unchanged once it carries that name. *Check:* a fixture Vault opens in an editor and in `git` with no Scheda; `git diff` after changing a field shows that field's text, not a binary dump. *Check:* a journal line with an `integer` field holds `1`, not `1.0`.
 
-**Exception (**later**, ISO-5):** `{vault}/.isolated/` with `isolated_encryption` stores isolated Record files as age ASCII armor. Those files are still UTF-8 text and `git diff`able as armor, not as YAML/JSONL. Plaintext is recovered with the `passphrase` or `identity` (Scheda or `age -d`), not by opening the blob in an editor. The main Vault tree is never this exception.
+**Exception (**later**, SCH-16, ISO-5):** a collection whose Schema sets `encrypted: true` stores its Record files as age ASCII armor, wherever they live — the main tree or `{vault}/.isolated/`. Those files are still UTF-8 text and `git diff`able as armor, not as YAML/JSONL. Plaintext is recovered with the `passphrase` or `identity` (Scheda or `age -d`), not by opening the blob in an editor. Only the collections that declare it are this exception; everything else in the Vault, including every other collection and the Schema files themselves, stays plaintext.
 
 **STO-3. Journal lines are not rewritten.** Same as MOD-16: no update/delete API (`replace` and `remove` are `unsupported`). On read/`check`, a line that is not a single JSON object, or a final line without `\n`, is an error. Scheda does not silently truncate or rewrite the segment to “fix” it. *Check:* flip bytes in the middle of a closed segment → `check` fails; `replace` / `remove` on the collection → error.
 
@@ -121,6 +121,6 @@ How `get` finds a journal `id` without a full scan — `06`.
 
 The journal line form is STO-2 (RFC 8785). The library writes that form on `add` (`07` LIB-18).
 
-Optional age encryption of `{vault}/.isolated/` — `09` (**later**).
+Optional age encryption of a collection's Record files — `09` (**later**).
 
 Multi-master without STO-4, CRDT, custom YAML merge — deferred (`10`).

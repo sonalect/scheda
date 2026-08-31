@@ -190,7 +190,10 @@ pub mod history {
         )]
         pub message: ::core::option::Option<::buffa::alloc::string::String>,
         /// Bytes of that file at this commit (`git show`). Not a Record envelope.
-        /// For `journal`, the whole segment, not one line.
+        /// For `journal`, the whole segment, not one line. For an encrypted
+        /// collection these bytes are the decrypted plaintext of that revision,
+        /// not the age armor git stores; reading them requires the handle secret.
+        /// An empty value (a deletion revision) is returned as is, undecrypted.
         ///
         /// Field 5: `raw`
         #[serde(

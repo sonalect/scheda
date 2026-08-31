@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use git2::{ObjectType, Repository};
 use scheda::{Author, Code, OpenOptions, RecordAdd, RecordReplace, Vault};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -517,11 +517,13 @@ fn remove_autocommits_outside_a_transaction() {
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(!scratch
-        .vault()
-        .join("north_notes")
-        .join("alpha.md")
-        .is_file());
+    assert!(
+        !scratch
+            .vault()
+            .join("north_notes")
+            .join("alpha.md")
+            .is_file()
+    );
     assert!(!head_paths(vault.path()).contains("north_notes/alpha.md"));
 }
 
@@ -561,11 +563,13 @@ fn abandoned_remove_is_restored_on_next_autocommit() {
     vault.commit("keep").unwrap();
     vault.begin().unwrap();
     collection.remove("alpha", None).unwrap();
-    assert!(!scratch
-        .vault()
-        .join("north_notes")
-        .join("alpha.md")
-        .is_file());
+    assert!(
+        !scratch
+            .vault()
+            .join("north_notes")
+            .join("alpha.md")
+            .is_file()
+    );
     drop(collection);
     drop(vault);
     let vault = scratch.reopen();
@@ -606,9 +610,11 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
         collection.get("partial").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(fs::read_to_string(&path)
-        .unwrap()
-        .ends_with(r#"{"id":"partial"}"#));
+    assert!(
+        fs::read_to_string(&path)
+            .unwrap()
+            .ends_with(r#"{"id":"partial"}"#)
+    );
     assert_eq!(log_len(vault.path()), before);
 }
 

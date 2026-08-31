@@ -19,6 +19,12 @@ pub struct SchemaView<'a> {
     ///
     /// Field 6: `isolated`
     pub isolated: ::core::option::Option<bool>,
+    /// Record files of this collection are age armor on disk. Independent
+    /// of `isolated`. I/O requires the handle secret. `journal` may not
+    /// set it.
+    ///
+    /// Field 7: `encrypted`
+    pub encrypted: ::core::option::Option<bool>,
     pub kind: ::core::option::Option<
         super::super::__buffa::view::oneof::schema::Kind<'a>,
     >,
@@ -65,6 +71,13 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.isolated = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.encrypted = Some(::buffa::types::decode_bool(&mut cur)?);
             }
             2u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -206,6 +219,7 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                 .map(|v| v.to_owned_from_source(__buffa_src))
                 .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
             isolated: self.isolated,
+            encrypted: self.encrypted,
             kind: match self.kind.as_ref() {
                 ::core::option::Option::Some(v) => {
                     ::core::option::Option::Some(
@@ -295,6 +309,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         if self.isolated.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if self.encrypted.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -348,6 +365,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         if let Some(v) = self.isolated {
             ::buffa::types::put_bool_field(6u32, v, buf);
         }
+        if let Some(v) = self.encrypted {
+            ::buffa::types::put_bool_field(7u32, v, buf);
+        }
         self.__buffa_unknown_fields.write_to(buf);
     }
 }
@@ -377,6 +397,9 @@ impl<'__a> ::serde::Serialize for SchemaView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.isolated {
             __map.serialize_entry("isolated", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.encrypted {
+            __map.serialize_entry("encrypted", &__v)?;
         }
         if let ::core::option::Option::Some(ref __ov) = self.kind {
             match __ov {
@@ -504,6 +527,15 @@ impl SchemaOwnedView {
     #[must_use]
     pub fn isolated(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().isolated
+    }
+    /// Record files of this collection are age armor on disk. Independent
+    /// of `isolated`. I/O requires the handle secret. `journal` may not
+    /// set it.
+    ///
+    /// Field 7: `encrypted`
+    #[must_use]
+    pub fn encrypted(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().encrypted
     }
     /// Oneof `kind`.
     #[must_use]

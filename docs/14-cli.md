@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.57, 30 August 2026.
+Document 14 of the Scheda package. Version 0.59, 31 August 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -18,6 +18,8 @@ Unset reranker → RRF order.
 | `--auto-sync` | `OpenOptions.auto_sync` (default off). |
 | `--author-name NAME` | `OpenOptions.author.name`. With `--author-email`, or neither. Git author and committer on this process. |
 | `--author-email EMAIL` | `OpenOptions.author.email`. With `--author-name`, or neither. HTML email. |
+| `--encryption-passphrase-env-var NAME` | **Not implemented yet.** Read `NAME` and use it as `OpenOptions.encryption.passphrase`. Missing or empty var → `invalid`. Not with `--encryption-identity-file`. |
+| `--encryption-identity-file PATH` | **Not implemented yet.** Age identity file (`AGE-SECRET-KEY-…`) as `OpenOptions.encryption.identity`. Not with `--encryption-passphrase-env-var`. |
 | `--embedder-openai-url URL` | OpenAI-compatible API root (`http`/`https`). CLI `POST`s `{URL}embeddings`. With `--embedder-model` and `--embedder-dimensions`, or none of the three. Partial set → `invalid`. Implements `Embedder`, passed to `open`. Unset (and no `--model2vec-embedder`) → vector leg off. Not with `--model2vec-embedder`. |
 | `--embedder-model NAME` | JSON `model` on the embeddings body. With the other two HTTP embedder flags, or none. |
 | `--embedder-dimensions N` | Positive integer. `Embedder.dimensions` (no probe). Response length must match. With the other two HTTP embedder flags, or none. |
@@ -25,6 +27,8 @@ Unset reranker → RRF order.
 | `--model2vec-embedder DIR` | Directory with Model2Vec files (`config.json`, `tokenizer.json`, `model.safetensors`). CLI loads them (`model2vec-rs`, no Hub download), implements `Embedder`, passes it to `open`. Missing a required file → `invalid`. Extra files (README) are allowed. Hidden names are ignored. Not with the HTTP embedder flags. |
 
 HTTP embedder body is `{ "model": <embedder-model>, "input": "<text>" }`.
+
+Both flags are specification ahead of code: the CLI has no secret flag of any kind today, so it cannot open a Vault with an encrypted collection at all. What is decided is the shape they must take when they land, and the work is `12` P16. There is no flag that takes the encryption secret as its value, and adding one would be a defect: argv is readable by every process on the machine, so a passphrase on the command line is a passphrase published to the host and left in the shell history. The secret arrives by environment variable or by file path, the same way the embedder API key does. Both flags together → `invalid`. Neither: the handle has no secret, plain collections work, and an encrypted one fails with `crypto` (ISO-5). In a build without the `encrypt` feature either flag is `unsupported_encryption` and nothing is created (SCH-16).
 
 `--help` / `--version` stay. No Record path.
 
@@ -49,12 +53,14 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 | `sync` | |
 
 `find` / `search` are Vault methods (`07` LIB-10, LIB-11). `--collections`
-is a set of names. Unset or empty → every non-isolated collection on this
-Vault. Unknown name → `not_found`. Isolated name → `unsupported` (isolated
-Records are `collection NAME` and the nested Index, not `find` / `search`
-on the main Index). Collection `find` / `search` below call the same
-methods with that `NAME` (no `--collections`), so an isolated `NAME` there
-is also `unsupported`. Stdout JSON includes `collection` on each `Record`
+is a set of names. Unset or empty → every non-isolated, non-encrypted
+collection on this Vault. Unknown name → `not_found`. Isolated name →
+`unsupported` (isolated Records are `collection NAME` and the nested
+Index, not `find` / `search` on the main Index). Encrypted name →
+`unsupported` too, because no Index holds one (ISO-4). Collection `find` /
+`search` below call the same methods with that `NAME` (no
+`--collections`), so an isolated or encrypted `NAME` there is also
+`unsupported`. Stdout JSON includes `collection` on each `Record`
 / `Hit`. `--include-raw` sets `FindQuery.include_raw` /
 `SearchQuery.include_raw` (default off: omit `raw`). `--filter` is
 `FindQuery.filter` JSON.

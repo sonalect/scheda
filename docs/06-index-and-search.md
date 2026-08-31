@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.36, 27 August 2026.
+Document 6 of the Scheda package. Version 0.37, 31 August 2026.
 
 Normative rules for the derived Index and `get`. **`find` and `search` (how they must work) are `13`.** Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`. Phase **core** or **search** as marked.
 
@@ -16,7 +16,7 @@ An assertion without a check is not a requirement. The Index is never source of 
 
 **IDX-3. Invalid Records stay out of search.** Files that fail current Schema (SCH-12) are omitted from lexical, vector, and edge indexes until they validate. `get` still returns them with a validity flag (`07`). *Check (**search**):* tightened Schema; old file is absent from `search` and present in `get`.
 
-**IDX-4. Sealed fields stay out (**later**).** Isolated collections and sealed fields (SCH-15) are not copied into `{vault}/.scheda/` (ISO-4). Isolated Index is `{vault}/.isolated/.scheda/`. *Check (**later**):* grep of `{vault}/.scheda/` does not contain a fixture sealed value.
+**IDX-4. Sealed and encrypted stay out (**later**).** Isolated collections and sealed fields (SCH-15) are not copied into `{vault}/.scheda/` (ISO-4). Isolated Index is `{vault}/.isolated/.scheda/`. An **encrypted** collection (SCH-16) enters no Index at all, main or nested: the Index is plaintext on disk, so an entry for one would publish what the encryption was for. `reindex` skips those collections, no write updates an entry for them, and `find` / `search` naming one is `unsupported` rather than empty. *Check (**later**):* grep of `{vault}/.scheda/` does not contain a fixture sealed value; grep of both Index directories does not contain a fixture value written into an encrypted collection, before or after `reindex`.
 
 **IDX-5. Journal `id` lookup.** After **core** Index exists, `get` on a `journal` must not scan every segment. The Index maps `(collection, id)` → segment path. File: `{vault}/.scheda/index/journal/{name}/ids` (the collection name, same directory as the collection files, MOD-8). JSONL, one object per Record, keys `id` and `path` (vault-relative POSIX path of the segment). Format version stays `1` (IDX-2). `reindex` rewrites the files from Vault text. Missing or unreadable map: `get` scans segment files (IDX-2). Until that map exists, a correct full scan is allowed (MOD / `03` §6). *Check (**core**, once the map is implemented):* `get` cost does not grow linearly with unrelated segments.
 

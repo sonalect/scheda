@@ -17,8 +17,8 @@ use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 use crate::search::SearchEngine;
 use crate::store;
 use crate::{
-    Embedder, Error, History, OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema,
-    VaultInfo,
+    Embedder, Encryption, Error, History, OpenOptions, Record, RecordAdd, RecordReplace,
+    ReindexResult, Schema, VaultInfo,
 };
 #[cfg(feature = "find")]
 use crate::{Filter, FindQuery, FindResult};
@@ -42,6 +42,7 @@ pub struct Vault {
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
     identity: Arc<git::CommitIdentity>,
+    encryption: Option<Encryption>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
@@ -60,6 +61,7 @@ pub struct Collection {
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
     identity: Arc<git::CommitIdentity>,
+    encryption: Option<Encryption>,
 }
 
 impl Vault {
@@ -78,12 +80,25 @@ impl Vault {
     /// `email` on a set Author, or characters git cannot carry, fail here
     /// before the first commit. Unset Author → local git config, then
     /// `Scheda <scheda@invalid>`.
+    ///
+    /// `OpenOptions.encryption` is stored on this handle for I/O of collections
+    /// whose Schema marks `encrypted`. A build without the `encrypt` crate
+    /// feature refuses a set value (`unsupported_encryption`) before any
+    /// directory is created. Unset `encryption` is unchanged: `open` of the
+    /// Vault still succeeds.
     pub fn open(
         path: impl AsRef<Path>,
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
     ) -> Result<Self, Error> {
         options.require_valid()?;
+        #[cfg(not(feature = "encrypt"))]
+        if options.encryption.is_set() {
+            bail!(
+                Error::unsupported_encryption("encryption is not available in this build")
+                    .context("[Vault::open] encryption")
+            );
+        }
         let path = path.as_ref();
         if path.exists() {
             if !git::is_work_tree(path) {
@@ -163,6 +178,7 @@ impl Vault {
         let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
         #[cfg(feature = "find")]
         let search = Arc::new(SearchEngine::open(&index_dir, false)?);
+        let encryption = options.encryption.as_option().cloned();
         let vault = Self {
             path,
             index_dir,
@@ -177,6 +193,7 @@ impl Vault {
             search,
             embedder,
             identity: Arc::new(identity),
+            encryption,
         };
         if gitignore_pending {
             vault.write_gitignore_under_lock()?;
@@ -242,7 +259,9 @@ impl Vault {
     /// Handle for one collection.
     ///
     /// Unknown name → `not_found`. Isolated collections live under
-    /// `{vault}/.isolated/{name}/` on this same handle.
+    /// `{vault}/.isolated/{name}/` on this same handle. A build without the
+    /// `encrypt` crate feature refuses an encrypted collection
+    /// (`unsupported_encryption`); `open` of the Vault still succeeds.
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
         let schema = self.schema_arc()?;
         let Some(decl) = schema.get(name) else {
@@ -250,6 +269,15 @@ impl Vault {
                 "collection {name} is not in Schema"
             )));
         };
+        #[cfg(not(feature = "encrypt"))]
+        if decl.encrypted {
+            bail!(
+                Error::unsupported_encryption(format!(
+                    "collection {name} is encrypted; this build cannot open it"
+                ))
+                .context("[Vault::collection] encryption")
+            );
+        }
         Ok(Collection {
             vault: self.path.clone(),
             index_dir: self.index_dir.clone(),
@@ -265,11 +293,13 @@ impl Vault {
             search: Arc::clone(&self.search),
             embedder: self.embedder.clone(),
             identity: Arc::clone(&self.identity),
+            encryption: self.encryption.clone(),
         })
     }
 
     /// Run a Tantivy Query on the Index, then open matching Record files.
-    /// Empty `collections` is every non-isolated collection on this handle.
+    /// Empty `collections` is every non-isolated, non-encrypted collection
+    /// on this handle. Naming an encrypted collection is `unsupported`.
     #[cfg(feature = "find")]
     pub fn find(
         &self,
@@ -289,8 +319,9 @@ impl Vault {
     }
 
     /// Hybrid retrieval: BM25 and ANN when both are on, then RRF, then an
-    /// optional reranker. Empty `collections` is every non-isolated collection
-    /// on this handle.
+    /// optional reranker. Empty `collections` is every non-isolated,
+    /// non-encrypted collection on this handle. Naming an encrypted
+    /// collection is `unsupported`.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -495,13 +526,16 @@ impl Vault {
     /// Remote. Does not write Records. Lexical Index freshness is validated
     /// only when the crate is built with `find`; a build without `find` has no
     /// lexical segments and no way to rebuild them, so it ignores the stale
-    /// marker even though its own writes keep setting it.
+    /// marker even though its own writes keep setting it. An encrypted
+    /// collection whose secret is absent is not checked (`crypto`); a build
+    /// without `encrypt` reports `unsupported_encryption`. With the secret,
+    /// encrypted collections are validated like any other.
     pub fn check(&self) -> Result<(), Error> {
         isolated::check_perimeter(&self.path)?;
         #[cfg(feature = "find")]
         index::require_fresh(&self.index_dir)?;
         let schema = schema::load(&self.path)?;
-        store::check_documents(&self.path, &schema)?;
+        store::check_documents(&self.path, &schema, self.encryption.as_ref())?;
         journal::check_journals(&self.path, &schema)
     }
 
@@ -520,7 +554,11 @@ impl Vault {
 
     /// Write one collection declaration as `{name}/.schema.yaml`. Reloads Schema
     /// on this handle. `isolated: true` stores Records under `{vault}/.isolated/`
-    /// and creates the nested git if needed.
+    /// and creates the nested git if needed. Setting or clearing `encrypted`
+    /// on a collection that already holds Record files is `invalid`; existing
+    /// files are left untouched. A build without the `encrypt` crate feature
+    /// refuses a Schema that marks `encrypted` (`unsupported_encryption`) and
+    /// writes nothing.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
@@ -533,6 +571,13 @@ impl Vault {
         message: Option<&str>,
     ) -> Result<Collection, Error> {
         schema.require_valid()?;
+        #[cfg(not(feature = "encrypt"))]
+        if schema.encrypted == Some(true) {
+            bail!(
+                Error::unsupported_encryption("this build cannot create an encrypted collection")
+                    .context("[Vault::create_collection] encryption")
+            );
+        }
         let message = require_commit_message(message)?;
         self.require_write_lock("create_collection")?;
         self.drain_abandoned()?;
@@ -608,6 +653,7 @@ impl Collection {
                 body: None,
                 fields: Vec::new(),
                 isolated: false,
+                encrypted: false,
             },
             schema: Arc::new(LoadedSchema::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),
@@ -617,6 +663,7 @@ impl Collection {
             search: Arc::new(SearchEngine::empty()),
             embedder: None,
             identity: Arc::new(git::CommitIdentity::fallback()),
+            encryption: None,
         }
     }
 
@@ -704,7 +751,7 @@ impl Collection {
     }
 
     fn upsert_lexical(&self, record: &Record) -> Result<(), Error> {
-        if self.decl.isolated {
+        if self.decl.isolated || self.decl.encrypted {
             return Ok(());
         }
         #[cfg(feature = "find")]
@@ -720,7 +767,7 @@ impl Collection {
     }
 
     fn forget_lexical(&self, id: &str) -> Result<(), Error> {
-        if self.decl.isolated {
+        if self.decl.isolated || self.decl.encrypted {
             return Ok(());
         }
         #[cfg(feature = "find")]
@@ -735,7 +782,7 @@ impl Collection {
     }
 
     fn record_exists(&self, id: &str) -> Result<bool, Error> {
-        if self.decl.isolated {
+        if self.decl.isolated || self.decl.encrypted {
             return Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some());
         }
         #[cfg(feature = "find")]
@@ -848,7 +895,38 @@ impl Collection {
         }
     }
 
+    fn require_encryption_secret(&self) -> Result<(), Error> {
+        if !self.decl.encrypted {
+            return Ok(());
+        }
+        #[cfg(not(feature = "encrypt"))]
+        {
+            bail!(
+                Error::unsupported_encryption(format!(
+                    "collection {} is encrypted; this build cannot open it",
+                    self.decl.name
+                ))
+                .context("[Collection] encryption")
+            );
+        }
+        #[cfg(feature = "encrypt")]
+        match self.encryption.as_ref() {
+            Some(_) => Ok(()),
+            None => bail!(
+                Error::crypto(format!(
+                    "encrypted collection {} requires a secret on the handle",
+                    self.decl.name
+                ))
+                .context("[Collection] encryption")
+            ),
+        }
+    }
+
     /// Create a Record. Same `id` already present → `duplicate_id`.
+    ///
+    /// Encrypted collections write age armor after the canonical plaintext
+    /// is built. A missing secret is `crypto`. The temp file never holds
+    /// plaintext.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
@@ -857,6 +935,7 @@ impl Collection {
     pub fn add(&self, id: &str, record: RecordAdd, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
+        self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
         let mut record = record_from_add(id, &self.decl.name, record);
         self.require_write()?;
@@ -889,7 +968,12 @@ impl Collection {
                 Ok(())
             }
             Kind::Document | Kind::Singleton => {
-                let (_id, rel) = store::insert_document(&self.vault, &self.decl, record.clone())?;
+                let (_id, rel) = store::insert_document(
+                    &self.vault,
+                    &self.decl,
+                    record.clone(),
+                    self.encryption.as_ref(),
+                )?;
                 record.path = Some(rel.clone());
                 record.valid = Some(true);
                 self.note_write(rel.clone())?;
@@ -905,15 +989,22 @@ impl Collection {
     }
 
     /// Read one Record by `id`. Missing → `not_found`.
+    ///
+    /// Encrypted collections decrypt the file. A missing or wrong secret,
+    /// or bytes that will not decrypt, is `crypto`. After a successful
+    /// decrypt, a file that does not parse is a Record with `valid: false`.
     pub fn get(&self, id: &str) -> Result<Record, Error> {
         crate::id::require_slug("id", id)?;
+        self.require_encryption_secret()?;
         match self.decl.kind {
             Kind::Journal => {
                 let maps =
                     crate::error::mutex(&self.journal_ids, "[Collection::get] lock journal ids")?;
                 journal::find_journal(&self.vault, &self.decl, id, &maps)
             }
-            Kind::Document | Kind::Singleton => store::find_document(&self.vault, &self.decl, id),
+            Kind::Document | Kind::Singleton => {
+                store::find_document(&self.vault, &self.decl, id, self.encryption.as_ref())
+            }
         }
     }
 
@@ -938,9 +1029,12 @@ impl Collection {
     /// a bad file does not hide the next — each Record is its own file.
     /// Names that are not Record files (dotfiles, not `*.md`, not a regular
     /// file) and subdirectories are skipped. `journal` → `unsupported`. A
-    /// missing Index directory does not stop the walk.
+    /// missing Index directory does not stop the walk. Encrypted collections
+    /// decrypt each file; a file that decrypts but does not parse is
+    /// `valid: false`. A file that will not decrypt is `crypto`.
     pub fn documents(&self) -> Result<crate::CollectionDocuments, Error> {
-        store::collection_documents(&self.vault, &self.decl)
+        self.require_encryption_secret()?;
+        store::collection_documents(&self.vault, &self.decl, self.encryption.as_ref())
     }
 
     /// Ids of this `document` or `singleton` in the same order as `documents`.
@@ -948,7 +1042,8 @@ impl Collection {
     /// Derived from the file names; no Record file is opened. `journal` →
     /// `unsupported`. A `singleton` before the first write is empty; after,
     /// one id equal to the Schema `singleton_id`. A missing collection
-    /// directory is an empty list.
+    /// directory is an empty list. Encrypted collections do not need the
+    /// handle secret.
     pub fn ids(&self) -> Result<Vec<String>, Error> {
         store::collection_ids(&self.vault, &self.decl)
     }
@@ -967,6 +1062,7 @@ impl Collection {
     ) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
+        self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("replace is not offered for journal"));
@@ -985,7 +1081,13 @@ impl Collection {
         schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
             self.lookup(collection, id)
         })?;
-        let (_id, rel) = store::replace_document(&self.vault, &self.decl, id, record.clone())?;
+        let (_id, rel) = store::replace_document(
+            &self.vault,
+            &self.decl,
+            id,
+            record.clone(),
+            self.encryption.as_ref(),
+        )?;
         record.path = Some(rel.clone());
         record.valid = Some(true);
         self.note_write(rel.clone())?;
@@ -1013,6 +1115,7 @@ impl Collection {
     /// subject.
     pub fn remove(&self, id: &str, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
+        self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("remove is not offered for journal"));
@@ -1040,8 +1143,16 @@ impl Collection {
     }
 
     /// Run a Tantivy Query on this collection's Index, then open matching files.
+    ///
+    /// An encrypted collection is `unsupported`: no Index holds its Records.
     #[cfg(feature = "find")]
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
+        if self.decl.encrypted {
+            bail!(Error::unsupported(format!(
+                "encrypted collection {} cannot be found",
+                self.decl.name
+            )));
+        }
         let name = self.decl.name.as_str();
         QueryCtx {
             engine: &self.search,
@@ -1054,12 +1165,20 @@ impl Collection {
 
     /// Hybrid retrieval on this collection: BM25 and ANN when both are on,
     /// then RRF, then an optional reranker.
+    ///
+    /// An encrypted collection is `unsupported`: no Index holds its Records.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
         query: &SearchQuery,
         reranker: Option<&dyn Reranker>,
     ) -> Result<SearchHits, Error> {
+        if self.decl.encrypted {
+            bail!(Error::unsupported(format!(
+                "encrypted collection {} cannot be searched",
+                self.decl.name
+            )));
+        }
         let name = self.decl.name.as_str();
         QueryCtx {
             engine: &self.search,
@@ -1078,8 +1197,14 @@ impl Collection {
     /// that stored the file are still returned. An `id` that never had a
     /// commit and has no file → `not_found`. A missing Index directory
     /// does not stop this call.
+    ///
+    /// On an encrypted collection the returned `raw` is decrypted plaintext,
+    /// the same bytes a `get` of that revision would have produced. The
+    /// handle secret is required. An empty `raw` (a deletion revision) is
+    /// returned as is.
     pub fn history(&self, id: &str, offset: u32, count: u32) -> Result<History, Error> {
         crate::id::require_slug("id", id)?;
+        self.require_encryption_secret()?;
         if count == 0 {
             bail!(Error::invalid("history count must be > 0"));
         }
@@ -1121,7 +1246,19 @@ impl Collection {
                 ..History::default()
             });
         }
-        let entries = git::history(&repo, &git_path, offset, count)?;
+        let mut entries = git::history(&repo, &git_path, offset, count)?;
+        if self.decl.encrypted {
+            for entry in &mut entries {
+                if let Some(raw) = entry.raw.take_if(|raw| !raw.is_empty()) {
+                    entry.raw = Some(store::decode_record_file(
+                        raw,
+                        &self.decl,
+                        self.encryption.as_ref(),
+                        &rel,
+                    )?);
+                }
+            }
+        }
         Ok(History {
             entries,
             ..History::default()
@@ -1162,7 +1299,9 @@ impl Collection {
                 let maps = crate::error::mutex(&self.journal_ids, "[Collection] lock journal ids")?;
                 journal::find_journal(&self.vault, decl, id, &maps)
             }
-            Kind::Document | Kind::Singleton => store::find_document(&self.vault, decl, id),
+            Kind::Document | Kind::Singleton => {
+                store::find_document(&self.vault, decl, id, self.encryption.as_ref())
+            }
         }
     }
 }
@@ -1194,7 +1333,7 @@ fn resolve_collections(
     if names.is_empty() {
         return Ok(schema
             .collections()
-            .filter(|decl| !decl.isolated)
+            .filter(|decl| !decl.isolated && !decl.encrypted)
             .cloned()
             .collect());
     }
@@ -1212,6 +1351,11 @@ fn resolve_collections(
         if decl.isolated {
             bail!(Error::unsupported(format!(
                 "isolated collection {name} is not on this Vault handle"
+            )));
+        }
+        if decl.encrypted {
+            bail!(Error::unsupported(format!(
+                "encrypted collection {name} cannot be found"
             )));
         }
         out.push(decl.clone());
@@ -1255,7 +1399,7 @@ fn read_record(
             let maps = crate::error::mutex(journal_ids, "[Vault] lock journal ids")?;
             journal::find_journal(vault, decl, id, &maps)
         }
-        Kind::Document | Kind::Singleton => store::find_document(vault, decl, id),
+        Kind::Document | Kind::Singleton => store::find_document(vault, decl, id, None),
     }
 }
 
@@ -1701,7 +1845,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Code, Error, RecordAdd, RecordReplace, Schema, VaultInfo};
+    use crate::{Code, Encryption, Error, RecordAdd, RecordReplace, Schema, VaultInfo};
 
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -1753,6 +1897,130 @@ mod tests {
             Vault::open(scratch.vault(), OpenOptions::new().remote_repo(""), None).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(!scratch.vault().exists() || !scratch.vault().join(".git").exists());
+    }
+
+    #[cfg(not(feature = "encrypt"))]
+    #[test]
+    fn open_with_passphrase_fails_and_creates_nothing() {
+        let scratch = Scratch::new();
+        let err = Vault::open(
+            scratch.vault(),
+            OpenOptions::new().encryption(Encryption::new().passphrase("test-passphrase")),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::UnsupportedEncryption));
+        assert!(
+            err.message
+                .as_deref()
+                .is_some_and(|m| m.contains("not available in this build"))
+        );
+        assert!(!scratch.vault().exists());
+    }
+
+    #[cfg(not(feature = "encrypt"))]
+    #[test]
+    fn open_with_identity_fails_and_creates_nothing() {
+        let scratch = Scratch::new();
+        let err = Vault::open(
+            scratch.vault(),
+            OpenOptions::new().encryption(Encryption::new().identity("AGE-SECRET-KEY-TEST")),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::UnsupportedEncryption));
+        assert!(
+            err.message
+                .as_deref()
+                .is_some_and(|m| m.contains("not available in this build"))
+        );
+        assert!(!scratch.vault().exists());
+    }
+
+    #[cfg(feature = "encrypt")]
+    #[test]
+    fn open_with_passphrase_succeeds_when_encrypt_is_on() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(
+            scratch.vault(),
+            OpenOptions::new().encryption(Encryption::new().passphrase("test-passphrase")),
+            None,
+        )
+        .unwrap();
+        assert!(scratch.vault().join(".git").is_dir());
+        drop(vault);
+    }
+
+    #[cfg(feature = "encrypt")]
+    fn encrypted_document_schema() -> Schema {
+        use crate::Body;
+        let mut schema = Schema::default().with_version(1).with_encrypted(true);
+        schema.kind = Body::default().into();
+        schema
+    }
+
+    #[cfg(feature = "encrypt")]
+    #[test]
+    fn identity_add_get_round_trip() {
+        let scratch = Scratch::new();
+        let secret = crate::crypto::test_identity_secret();
+        let vault =
+            Vault::open(scratch.vault(), OpenOptions::new().encryption(secret), None).unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("c", encrypted_document_schema(), None)
+            .unwrap();
+        let add: RecordAdd = serde_json::from_value(serde_json::json!({"fields": {}})).unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("alpha", add, None)
+            .unwrap();
+        let got = vault.collection("c").unwrap().get("alpha").unwrap();
+        assert_eq!(got.id.as_deref(), Some("alpha"));
+        assert_eq!(got.valid, Some(true));
+    }
+
+    #[cfg(feature = "encrypt")]
+    #[test]
+    fn documents_file_that_decrypts_but_does_not_parse_is_valid_false() {
+        let scratch = Scratch::new();
+        let secret = Encryption::new().passphrase("unit-passphrase");
+        let vault = Vault::open(
+            scratch.vault(),
+            OpenOptions::new().encryption(secret.clone()),
+            None,
+        )
+        .unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("c", encrypted_document_schema(), None)
+            .unwrap();
+        let garbage = crate::crypto::encrypt(b"not-yaml", Some(&secret)).unwrap();
+        fs::write(scratch.vault().join("c").join("zulu.md"), garbage).unwrap();
+        let records: Vec<_> = vault
+            .collection("c")
+            .unwrap()
+            .documents()
+            .unwrap()
+            .map(|record| record.unwrap())
+            .collect();
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].valid, Some(false));
+        assert_eq!(records[0].raw.as_deref(), Some(b"not-yaml".as_slice()));
+    }
+
+    #[test]
+    fn open_with_encryption_unset_succeeds_on_new_and_existing_vault() {
+        let scratch = Scratch::new();
+        let created = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+        assert!(scratch.vault().join(".git").is_dir());
+        assert!(!created.holds_write_lock());
+        drop(created);
+        let opened = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+        assert!(scratch.vault().join(".git").is_dir());
+        assert!(!opened.holds_write_lock());
+        assert_eq!(opened.path(), scratch.vault().canonicalize().unwrap());
     }
 
     #[test]
