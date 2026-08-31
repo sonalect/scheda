@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.74, 31 August 2026.
+Document 12 of the Scheda package. Version 0.75, 31 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -21,8 +21,8 @@ Stages P0–P16 in §4 are the second half of this file: what the **first
 consumer** needs before it can move its primary layer onto the crate.
 P15 and P16 are the exception and say so in their own text — engine work
 past that consumer's list, kept here because they came out of P14 rather
-than out of a second consumer's requirements. They are not **agent**, and
-they do not reopen A0–A7. Their codes cross
+than out of a second consumer's requirements. P15 shipped as `0.7.0`.
+P16 remains. They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
 `{vault}/.isolated/` tree of `10` §1 (ISO-2 nested git, ISO-4, ISO-6,
 IDX-4) is P4 here instead of being out of scope. Accepting **agent**
@@ -437,21 +437,21 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** P0–P5 and P8–P13 are done. P13 closed the last
+**Status of the part:** P0–P5 and P8–P15 are done. P13 closed the last
 thing the consumer hit while reading: a `document` collection could not be
 listed at all in a build without `find`. P14 is the first stage here that
 was not a gap the consumer tripped over but a promise the crate had been
 making without keeping — an encryption option nothing read. It shipped as
-`0.6.0`.
+`0.6.0`. P15 shipped as `0.7.0`: one Index per Vault, so an isolated
+collection is searchable by name, and the nested directory that only
+ever held a journal `id` map is gone.
 
-P15 and P16 are behind it and neither is a consumer's blocker. P15 gives
-the Vault one Index, so an isolated collection becomes searchable at all,
-and retires the nested directory that only ever held a journal `id` map. P16 finishes the two things P14 designed and did not build:
-the CLI cannot open an encrypted Vault at all, and the nested isolated
-tree still may not have a Remote of its own. They sit in their own stage
-so that P14's status keeps answering the question actually asked of it —
-whether encryption works — instead of reporting open forever because a
-CLI flag is missing.
+P16 is behind them and is not a consumer's blocker. It finishes the two
+things P14 designed and did not build: the CLI cannot open an encrypted
+Vault at all, and the nested isolated tree still may not have a Remote of
+its own. It sits in its own stage so that P14's status keeps answering
+the question actually asked of it — whether encryption works — instead
+of reporting open forever because a CLI flag is missing.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -498,7 +498,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
 | [P13](#p13-listing-a-collection-without-the-index)       | done        | Asking a `document` collection what it holds, with `find` off       |
 | [P14](#p14-encryption-as-a-property-of-a-collection)     | done (`0.6.0`) | Ciphertext on disk for any one collection, and an option that works |
-| [P15](#p15-one-index-for-the-vault)                      | code complete | One Index per Vault instead of a nested one nothing can query     |
+| [P15](#p15-one-index-for-the-vault)                      | done (`0.7.0`) | One Index per Vault instead of a nested one nothing can query     |
 | [P16](#p16-a-secret-in-the-cli-and-a-remote-for-the-nested-tree) | not started | Reaching an encrypted Vault from argv-safe input; two audiences, two Remotes |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
@@ -1598,8 +1598,17 @@ encryption work.
 
 ## P15. One Index for the Vault
 
-**Status:** code complete, `bazel test //...` green; two ranking defects
-found on the way and fixed here (see the end of this stage)
+**Status:** done, shipped as `0.7.0` (commit `4752c8c`, signed tag
+`v0.7.0`). Isolated collections are in `{vault}/.scheda/` and naming
+one in `find` is an ordinary query; the nested Index is gone; that
+directory is owner-only on Unix because it now holds those field
+values. Encrypted collections stay out (P14). An empty collection set
+still means non-isolated (ISO-3). Two ranking defects found on the way
+are fixed in the same release (see the end of this stage). The tests
+the boxes name live in `isolated.rs`, plus
+`encrypt.rs::encrypted_plaintext_is_absent_from_the_index`,
+`thin.rs::isolated_round_trip_and_documents_without_find`, and
+`cli.rs::cli_omits_isolated_sealed_values`.
 
 **Codes:** `06` IDX-4, IDX-9, QRY-2, `07` LIB-10, LIB-11, LIB-15,
 LIB-16, `09` ISO-2, ISO-3, ISO-4, ISO-10 (retired), `13` §1 and the
@@ -1613,56 +1622,56 @@ their threat model and not a library invariant, and the owner did.
 P14 settles that an **encrypted** collection is in no Index at all.
 Writing that down exposed a separate defect, and the two are opposite.
 
-An isolated collection is searchable by nothing, and the nested directory
-that exists is not what its name suggests. Both halves were checked in
-the code before this plan was trusted, because the first draft of it
-described a defect that does not exist.
+Before this stage an isolated collection was searchable by nothing, and
+the nested directory that existed was not what its name suggested. Both
+halves were checked in the code before this plan was trusted, because
+the first draft of it described a defect that does not exist.
 
-What is actually true. Isolated collections are in **no** lexical or
-vector Index at all: `upsert_lexical` and `forget_lexical` return early
-on `decl.isolated`, and `SearchEngine::rebuild` filters those
+What the code did. Isolated collections were in **no** lexical or
+vector Index at all: `upsert_lexical` and `forget_lexical` returned early
+on `decl.isolated`, and `SearchEngine::rebuild` filtered those
 collections out — the same treatment encrypted collections get. So there
-are no isolated Tantivy segments anywhere, nested or main. What
-`{vault}/.isolated/.scheda/index` really holds is the journal `id` map
-and the format marker, nothing else. That map **is** read:
-`load_all_journal_ids` merges it on open, so it is a live cache and not a
-subsystem nobody touches. And the query surface refuses isolated names
-outright — `resolve_collections` answers `unsupported` for an isolated
-collection and drops them from the empty set.
+were no isolated Tantivy segments anywhere, nested or main. What
+`{vault}/.isolated/.scheda/index` really held is the journal `id` map
+and the format marker, nothing else. That map **was** read:
+`load_all_journal_ids` merged it on open, so it was a live cache and not
+a subsystem nobody touches. And the query surface refused isolated names
+outright — `resolve_collections` answered `unsupported` for an isolated
+collection and dropped them from the empty set.
 
-So the hole is real but simpler than "an Index nobody reads": the owner's
-isolated Records cannot be searched by any call, on any build, and `13`
-never put isolated search out of scope. The nested directory is not the
-defect; it is a small cache that will have no reason to exist once there
-is one Index.
+So the hole was real but simpler than "an Index nobody reads": the owner's
+isolated Records could not be searched by any call, on any build, and `13`
+never put isolated search out of scope. The nested directory was not the
+defect; it was a small cache that would have no reason to exist once there
+was one Index.
 
-The fix is one Index per Vault, `{vault}/.scheda/`, with both legs
+This stage shipped one Index per Vault, `{vault}/.scheda/`, with both legs
 (lexical and vector), covering every collection the build can read — and
-the isolated journal `id` map moving into it.
+the isolated journal `id` map moved into it.
 
-Ask what the nested directory buys, and today the answer is nothing that
-search needs: sealed values stay out of the main Index because isolated
-Records are indexed nowhere, not because their Index sits elsewhere. That
-changes here, and then the mode question becomes real. The isolated
-perimeter is three rules — the nested git that the main Remote never
-touches, `0600` on Record files, and nothing of theirs in the main Index
-— and only the third one stands in the way. The main Index has no mode
-rule at all; it is a plain cache. So the third rule is paid for
-with a **mode**, not with a subsystem: `{vault}/.scheda/` becomes
-owner-only (`0700` on the directory, `0600` on its files, Unix; other
-systems leave ACLs as ISO-2 already says). It is gitignored, and `check`
-already fails when the parent git tracks an Index path (GIT-13), so the
-"never leaves the machine" half was never the Index's problem.
+The nested directory bought nothing search needed: sealed values stayed
+out of the main Index because isolated Records were indexed nowhere, not
+because their Index sat elsewhere. That changed here, and then the mode
+question became real. The isolated perimeter is three rules — the nested
+git that the main Remote never touches, `0600` on Record files, and
+nothing of theirs in the main Index — and only the third one stood in
+the way. The main Index had no mode rule at all; it was a plain cache.
+So the third rule is paid for with a **mode**, not with a subsystem:
+`{vault}/.scheda/` is owner-only (`0700` on the directory, `0600` on its
+files, Unix; other systems leave ACLs as ISO-2 already says). It is
+gitignored, and `check` already fails when the parent git tracks an
+Index path (GIT-13), so the "never leaves the machine" half was never
+the Index's problem.
 
-What that buys is large for its size. A Vault-level `find` over
-everything the owner has starts working, isolated collections included,
-because there is one searcher. The alternative — build lexical segments
-for isolated collections inside the nested directory and add a second
-query path — costs a merged ranking across two Tantivy indexes, which is
-a research problem and not a slice, and a `total` that means two
-different things. `reindex`, the journal `id` map, and the `check` leg
-each collapse from two places to one. ISO-10 retires, and LIB-16 loses
-its nested rebuild.
+What that bought is large for its size. A Vault-level `find` over
+everything the owner has works, isolated collections included, because
+there is one searcher. The alternative — build lexical segments for
+isolated collections inside the nested directory and add a second query
+path — would have cost a merged ranking across two Tantivy indexes,
+which is a research problem and not a slice, and a `total` that means
+two different things. `reindex`, the journal `id` map, and the `check`
+leg each collapsed from two places to one. ISO-10 retires, and LIB-16
+lost its nested rebuild.
 
 Two things must **not** change with it, and they are what makes this
 safe. First, encrypted collections stay out of the Index entirely (P14):
@@ -1678,67 +1687,81 @@ isolated collection now works, on the Vault form and the collection form
 alike, and a mixed set is an ordinary query rather than `invalid`.
 
 The cost to state plainly, because a consumer may be relying on the
-opposite: after this, field values from isolated collections are inside
+opposite: field values from isolated collections are inside
 `{vault}/.scheda/`. A backup that copies the Vault but deliberately skips
-`.isolated/` — reasonable today, since that tree is the only place those
-values live — would carry them anyway in the Index. The shipped ISO-4
-check that greps `{vault}/.scheda/` for a fixture sealed string inverts:
-it is replaced by a mode check and the existing untracked check. Deleting
-`.scheda/` stays safe (IDX-1), and that is what a consumer who wants
-those values gone from the Index does.
+`.isolated/` — reasonable before this stage, since that tree was the
+only place those values lived — carries them anyway in the Index. The
+old ISO-4 check that grepped `{vault}/.scheda/` for a fixture sealed
+string inverted: it is a mode check and the existing untracked check.
+Deleting `.scheda/` stays safe (IDX-1), and that is what a consumer who
+wants those values gone from the Index does.
 
-- [ ] `{vault}/.scheda/` is owner-only on Unix: `0700` directory, `0600`
+- [x] `{vault}/.scheda/` is owner-only on Unix: `0700` directory, `0600`
       files, on create and after every write. `check` reports a wider
-      mode as a problem with a path. *Check:* a fixture Vault after a
-      write and after `reindex` has those modes; `chmod 0755` on the
-      Index directory fails `check`.
-- [ ] One Index holds every collection the build can read, isolated
+      mode as a problem with a path. *Check:*
+      `scheda_index_is_owner_only_and_wide_mode_fails_check` (Unix): a
+      fixture Vault after a write and after `reindex` has those modes;
+      `chmod 0755` on the Index directory fails `check`.
+- [x] One Index holds every collection the build can read, isolated
       included; `{vault}/.isolated/.scheda/` is not created, not read,
-      and ISO-10 is retired. LIB-16 has no nested rebuild. *Check:* after
+      and ISO-10 is retired. LIB-16 has no nested rebuild. *Check:*
+      `isolated_write_has_no_nested_scheda_and_reindex_counts_it`: after
       an isolated write, no `.scheda/` exists under `.isolated/`, and
       `reindex` reports the isolated Records among those read.
-- [ ] The isolated journal `id` map moves into `{vault}/.scheda/`, and a
+- [x] The isolated journal `id` map moves into `{vault}/.scheda/`, and a
       Vault written by an older build needs no migration step: an absent
       map is `MapLookup::MissingMap`, which `find_journal` answers with a
       full segment scan — correct and slower, never a false `not_found`.
       `reindex` writes the map into the one Index and removes the
       leftover nested directory, which is derived, gitignored, and safe
-      to delete (IDX-1). *Check:* a fixture Vault carrying a nested
-      `.scheda/index` from the old layout answers `get(id)` on an
-      isolated journal before `reindex`, and after `reindex` the nested
-      directory is gone and the map is in the main Index.
-- [ ] `find` and `search` naming an isolated collection return its
+      to delete (IDX-1). *Check:*
+      `old_nested_isolated_index_is_removed_by_reindex`: a fixture Vault
+      carrying a nested `.scheda/index` from the old layout answers
+      `get(id)` on an isolated journal before `reindex`, and after
+      `reindex` the nested directory is gone and the map is in the main
+      Index.
+- [x] `find` and `search` naming an isolated collection return its
       Records, on the Vault form and the collection form, and a set
       mixing isolated with non-isolated names is one page with one
-      `total`. *Check:* a `term` query over one isolated and one plain
-      collection returns both Records with `total` 2.
-- [ ] The Index document key is `(collection, id)` and one Index makes
+      `total`. *Check:* `term_query_over_isolated_and_plain_returns_both`
+      — a `term` query over one isolated and one plain collection
+      returns both Records with `total` 2, on the Vault form and each
+      collection form. `find` and `search` share `resolve_collections`;
+      an empty `search` not leaking sealed values is
+      `cli_omits_isolated_sealed_values`.
+- [x] The Index document key is `(collection, id)` and one Index makes
       the existing uniqueness rule load-bearing: a collection `name` is
       unique across the Vault, isolated and plain alike, which ISO-2
       already forces by keeping every Schema in the main tree at
       `{vault}/{name}/.schema.yaml` (`05`, the `name` key). Two Records
       with the same `id` in different collections stay legal and stay
-      distinct. *Check:* the same `id` in one isolated and one plain
-      collection, a `term` query on it returns both with the right
-      `collection` on each; a second Schema claiming a name already taken
-      by an isolated collection is `invalid`.
-- [ ] An empty collection set still means non-isolated, so a broad query
+      distinct. *Check:* `same_id_in_isolated_and_plain_is_distinct`:
+      the same `id` in one isolated and one plain collection, a `term`
+      query on it returns both with the right `collection` on each;
+      `second_schema_claiming_isolated_name_is_invalid`: a second Schema
+      claiming a name already taken by an isolated collection is
+      `invalid`.
+- [x] An empty collection set still means non-isolated, so a broad query
       and the agent's default tools surface nothing sealed (ISO-3).
-      *Check:* the empty-set query on the same fixture returns only the
-      plain Record; an agent tool not bound to that collection returns no
-      sealed value.
-- [ ] Encrypted collections remain in no Index and `unsupported` for
-      `find` / `search`, isolated or not (P14). *Check:* grep of
+      *Check:* `same_id_in_isolated_and_plain_is_distinct` and
+      `isolated_document_round_trip_and_main_find_skips_it`: the
+      empty-set query returns only the plain Record;
+      `cli_omits_isolated_sealed_values`: an agent tool not bound to
+      that collection returns no sealed value.
+- [x] Encrypted collections remain in no Index and `unsupported` for
+      `find` / `search`, isolated or not (P14). *Check:*
+      `encrypted_plaintext_is_absent_from_the_index`: grep of
       `{vault}/.scheda/` for a fixture value written into an encrypted
       collection finds nothing, before and after `reindex`.
-- [ ] Documents amended: `09` ISO-4 and ISO-10, `06` IDX-4 and QRY-2,
+- [x] Documents amended: `09` ISO-4 and ISO-10, `06` IDX-4 and QRY-2,
       `07` LIB-10, LIB-11, LIB-15, LIB-16, `13` §1, and `04` GIT-13 for
       the Index mode. The inverted ISO-4 check is removed rather than
       left contradicting the new one. *Check:* `rg` finds no surviving
       claim that the main Index must not contain isolated values.
-- [ ] A build without `find` is unaffected: no lexical segments either
+- [x] A build without `find` is unaffected: no lexical segments either
       way, `documents()` still walks an isolated collection (LIB-25).
-      *Check:* the thin build round-trips an isolated collection.
+      *Check:* `isolated_round_trip_and_documents_without_find`: the
+      thin build round-trips an isolated collection.
 
 ### Two ranking defects this stage uncovered
 
