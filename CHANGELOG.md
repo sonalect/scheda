@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 While the major version is 0, compatible additions bump the patch; breaking
 API or on-disk format changes bump the minor.
 
+## [Unreleased]
+
+### Fixed
+
+- **Windows writes encrypted Record files as LF-only age armor.** The
+  `age` crate emits PEM with `\r\n` on Windows. Scheda's format is `\n`
+  only, and decrypt refuses any `\r`, so a file Scheda had just encrypted
+  would not open: `get`, `check`, and `documents()` failed with `crypto`
+  ("file is not age armor"). CR is stripped on write; a file that still
+  contains `\r` is still refused.
+
 ## [0.7.0] - 2026-08-31
 
 ### Added

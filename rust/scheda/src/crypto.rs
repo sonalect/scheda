@@ -18,6 +18,9 @@ const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
 /// Passphrase wrapping is age scrypt. Identity wrapping is X25519
 /// (`AGE-SECRET-KEY-…`). Missing or unusable secret → `crypto`. The error
 /// does not include plaintext, the secret, or key material.
+///
+/// The `age` crate emits `\r\n` on Windows. CR is dropped here so the
+/// bytes on disk are LF-only on every OS.
 pub(crate) fn encrypt(plaintext: &[u8], encryption: Option<&Encryption>) -> Result<Vec<u8>, Error> {
     let Some(secret) = encryption.and_then(|enc| enc.secret.as_ref()) else {
         bail!(
@@ -40,7 +43,7 @@ pub(crate) fn encrypt(plaintext: &[u8], encryption: Option<&Encryption>) -> Resu
             })?
         }
     };
-    Ok(armored.into_bytes())
+    Ok(lf_only(armored))
 }
 
 /// Decrypt age v1 ASCII armor to plaintext bytes.
@@ -94,6 +97,13 @@ fn require_armor(raw: &[u8]) -> Result<(), Error> {
     Ok(())
 }
 
+/// Drop CR so armor is LF-only. The `age` crate uses `\r\n` on Windows.
+fn lf_only(armor: String) -> Vec<u8> {
+    let mut bytes = armor.into_bytes();
+    bytes.retain(|&b| b != b'\r');
+    bytes
+}
+
 fn parse_x25519(identity: &str) -> Result<age::x25519::Identity, Error> {
     match identity.trim().parse::<age::x25519::Identity>() {
         Ok(identity) => Ok(identity),
@@ -124,7 +134,7 @@ fn finish_decrypt<R: Read>(
 
 #[cfg(test)]
 mod tests {
-    use super::{ARMOR_BEGIN, decrypt, encrypt};
+    use super::{ARMOR_BEGIN, decrypt, encrypt, lf_only};
     use crate::error::Code;
     use crate::{Encryption, Error};
 
@@ -151,8 +161,30 @@ mod tests {
         let secret = super::test_identity_secret();
         let cipher = encrypt(b"id-body", Some(&secret)).unwrap();
         assert!(cipher.starts_with(ARMOR_BEGIN));
+        assert!(!cipher.contains(&b'\r'));
         let plain = decrypt(&cipher, Some(&secret)).unwrap();
         assert_eq!(plain, b"id-body");
+    }
+
+    #[test]
+    fn lf_only_drops_cr_and_keeps_lf() {
+        let out = lf_only(
+            "-----BEGIN AGE ENCRYPTED FILE-----\r\nabc\r\n-----END AGE ENCRYPTED FILE-----\r\n"
+                .to_owned(),
+        );
+        assert_eq!(
+            out,
+            b"-----BEGIN AGE ENCRYPTED FILE-----\nabc\n-----END AGE ENCRYPTED FILE-----\n"
+        );
+    }
+
+    #[test]
+    fn crlf_armor_is_crypto() {
+        let secret = passphrase();
+        let lf = encrypt(b"hello\n", Some(&secret)).unwrap();
+        let crlf = String::from_utf8(lf).unwrap().replace('\n', "\r\n");
+        let err = decrypt(crlf.as_bytes(), Some(&secret)).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Crypto));
     }
 
     #[test]
