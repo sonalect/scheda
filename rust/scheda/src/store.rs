@@ -2,6 +2,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::iter::FusedIterator;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -320,13 +321,112 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
     }
 }
 
+/// Id-order walk of one `document` or `singleton` collection.
+///
+/// Yields one Record at a time from the files the library names. Does not
+/// open the Index. Order is the byte order of the file name (`{id}.md`).
+/// A `singleton` yields its one Record, or nothing before the first write.
+/// `journal` is refused when the walk is created.
+pub struct CollectionDocuments {
+    vault: PathBuf,
+    decl: CollectionDecl,
+    files: Vec<PathBuf>,
+    next: usize,
+    done: bool,
+}
+
+pub(crate) fn collection_documents(
+    vault: &Path,
+    decl: &CollectionDecl,
+) -> Result<CollectionDocuments, Error> {
+    if decl.kind == Kind::Journal {
+        bail!(Error::unsupported(
+            "documents is offered for document and singleton only"
+        ));
+    }
+    Ok(CollectionDocuments {
+        vault: vault.to_path_buf(),
+        decl: decl.clone(),
+        files: list_files(vault, decl)?,
+        next: 0,
+        done: false,
+    })
+}
+
+impl CollectionDocuments {
+    fn next_record(&mut self) -> Result<Option<Record>, Error> {
+        let Some(path) = self.files.get(self.next).cloned() else {
+            return Ok(None);
+        };
+        self.next += 1;
+        Ok(Some(read_file(&self.vault, &self.decl, &path)?))
+    }
+}
+
+impl Iterator for CollectionDocuments {
+    type Item = Result<Record, Error>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        match self.next_record() {
+            Ok(Some(record)) => Some(Ok(record)),
+            Ok(None) => {
+                self.done = true;
+                None
+            }
+            Err(err) => {
+                self.done = true;
+                Some(Err(err))
+            }
+        }
+    }
+}
+
+impl FusedIterator for CollectionDocuments {}
+
+/// Ids of the Record files `list_files` named, in the same order. Does not
+/// open a Record file. `journal` → `unsupported`.
+pub(crate) fn collection_ids(vault: &Path, decl: &CollectionDecl) -> Result<Vec<String>, Error> {
+    if decl.kind == Kind::Journal {
+        bail!(Error::unsupported(
+            "ids is offered for document and singleton only"
+        ));
+    }
+    list_files(vault, decl)?
+        .iter()
+        .map(|path| id_from_listed_file(decl, path))
+        .collect()
+}
+
+fn id_from_listed_file(decl: &CollectionDecl, path: &Path) -> Result<String, Error> {
+    match decl.kind {
+        Kind::Singleton => match decl.singleton_id.clone() {
+            Some(id) => Ok(id),
+            None => {
+                bail!(Error::invalid(format!(
+                    "collection {} is missing singleton_id",
+                    decl.name
+                )));
+            }
+        },
+        Kind::Document => {
+            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+                bail!(Error::invalid("record file name is not UTF-8"));
+            };
+            let Some(id) = name.strip_suffix(".md") else {
+                unreachable!("list_files only yields .md names for document");
+            };
+            Ok(id.to_owned())
+        }
+        Kind::Journal => unreachable!("journal is refused before listing"),
+    }
+}
+
 #[cfg(feature = "find")]
 pub(crate) fn scan_documents(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
-    let mut out = Vec::new();
-    for path in list_files(vault, decl)? {
-        out.push(read_file(vault, decl, &path)?);
-    }
-    Ok(out)
+    collection_documents(vault, decl)?.collect()
 }
 
 pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64), Error> {

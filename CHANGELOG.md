@@ -8,6 +8,33 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-08-31
+
+### Added
+
+- `documents()` and `ids()` on the collection handle, for `document` and
+  `singleton`; `journal` is `unsupported`, where the ordered read stays
+  `lines()`. Both walk the Record files the library named, in `id` order
+  (the byte order of `{id}.md`), and neither opens the Index: the answer
+  is the same in a build without `find` and is unaffected by a stale
+  Index, which makes it the way to enumerate a collection when the Index
+  is gone. Until now a caller without `find` could reach a `document`
+  Record only by an `id` it already knew.
+- `documents()` yields whole Records one at a time, holding no contents
+  but the current one, so memory grows with the number of Records rather
+  than their size; in Rust it is `CollectionDocuments`, an `Iterator` of
+  `Result<Record, Error>`, so a search that stops early stops reading.
+  `ids()` opens no Record file and answers in one list.
+- A bad file does not end a `documents()` walk. A file that does not
+  parse and a Record that parses but fails current Schema are both
+  yielded with `valid: false`, exactly as `get` returns them, and the
+  next Record still arrives. This is unlike `lines()`, which stops: a
+  malformed journal line hides where the next line begins, while
+  documents are separate files and stopping would hide every Record
+  after the bad one. Names that are not Record files (a leading `.`, no
+  `.md` suffix, not a regular file) and subdirectories are skipped
+  without error. Reporting bad files remains `check`.
+
 ## [0.5.0] - 2026-08-30
 
 ### Added
@@ -673,6 +700,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.5.1]
 - [0.5.0]
 - [0.4.4]
 - [0.4.3]
@@ -684,7 +712,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/amsokol/scheda/releases/tag/v0.5.1
 [0.5.0]: https://github.com/amsokol/scheda/releases/tag/v0.5.0
 [0.4.4]: https://github.com/amsokol/scheda/releases/tag/v0.4.4
 [0.4.3]: https://github.com/amsokol/scheda/releases/tag/v0.4.3

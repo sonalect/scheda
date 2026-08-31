@@ -95,4 +95,5 @@ pub use scheda_generated::api::v1::{Filter, FindQuery, FindResult, filter};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{SearchHits, SearchQuery, search_hits};
 pub use schema::Kind;
+pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};

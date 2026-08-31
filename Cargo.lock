@@ -2005,7 +2005,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -2022,7 +2022,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "clap",
  "mimalloc",
@@ -2035,7 +2035,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-generated"
-version = "0.5.0"
+version = "0.5.1"
 dependencies = [
  "buffa",
  "buffa-types",

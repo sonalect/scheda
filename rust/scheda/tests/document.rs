@@ -80,6 +80,7 @@ const INBOX: &str = include_str!("../testdata/document/inbox.yaml");
 const LOG: &str = include_str!("../testdata/document/log.yaml");
 const ALPHA_MD: &str = include_str!("../testdata/document/alpha.md");
 const PLAIN_YAML: &str = include_str!("../testdata/document/plain.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
 
 fn rec(fields: Value) -> RecordAdd {
     rec_body(fields, None)
@@ -689,6 +690,290 @@ fn collection_name_with_slash_is_invalid() {
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn walked_ids(collection: &scheda::Collection) -> Vec<String> {
+    collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect()
+}
+
+#[test]
+fn documents_and_ids_are_id_order() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("charlie", rec(serde_json::json!({"title": "c"})), None)
+        .unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "a"})), None)
+        .unwrap();
+    collection
+        .add("bravo", rec(serde_json::json!({"title": "b"})), None)
+        .unwrap();
+    assert_eq!(collection.ids().unwrap(), ["alpha", "bravo", "charlie"]);
+    let mut walked = Vec::new();
+    for record in collection.documents().unwrap() {
+        let record = record.unwrap();
+        let id = record.id.clone().unwrap();
+        let got = collection.get(&id).unwrap();
+        assert_eq!(record.raw, got.raw);
+        assert_eq!(record.valid, got.valid);
+        walked.push(id);
+    }
+    assert_eq!(walked, ["alpha", "bravo", "charlie"]);
+}
+
+#[test]
+fn documents_skips_non_record_names() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "a"})), None)
+        .unwrap();
+    let dir = scratch.vault().join("north_notes");
+    fs::write(dir.join("notes.txt"), "not a record").unwrap();
+    fs::create_dir_all(dir.join("nested")).unwrap();
+    fs::write(
+        dir.join("nested").join("hidden.md"),
+        "---\nid: hidden\ntitle: Nested\n---\n",
+    )
+    .unwrap();
+    assert_eq!(collection.ids().unwrap(), ["alpha"]);
+    assert_eq!(walked_ids(&collection), ["alpha"]);
+}
+
+#[test]
+fn documents_and_ids_on_journal_are_unsupported() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("log.yaml", LOG);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_log").unwrap();
+    let err = match collection.documents() {
+        Ok(_) => panic!("journal documents must be unsupported"),
+        Err(err) => err,
+    };
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    let err = match collection.ids() {
+        Ok(_) => panic!("journal ids must be unsupported"),
+        Err(err) => err,
+    };
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn documents_and_ids_survive_deleted_index() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("charlie", rec(serde_json::json!({"title": "c"})), None)
+        .unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "a"})), None)
+        .unwrap();
+    drop(collection);
+    drop(vault);
+
+    fs::remove_dir_all(scratch.vault().join(".scheda")).unwrap();
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_notes").unwrap();
+    assert_eq!(collection.ids().unwrap(), ["alpha", "charlie"]);
+    assert_eq!(walked_ids(&collection), ["alpha", "charlie"]);
+}
+
+#[test]
+fn documents_schema_fail_is_valid_false() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
+        .unwrap();
+    drop(vault);
+    scratch.write_schema("notes.yaml", NOTES_REQUIRED);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_notes").unwrap();
+    let got = collection.get("alpha").unwrap();
+    assert_eq!(got.valid, Some(false));
+    let walked: Vec<_> = collection.documents().unwrap().collect();
+    assert_eq!(walked.len(), 1);
+    let record = walked[0].as_ref().unwrap();
+    assert_eq!(record.id.as_deref(), Some("alpha"));
+    assert_eq!(record.valid, Some(false));
+    assert_eq!(record.raw, got.raw);
+}
+
+#[test]
+fn documents_unparseable_file_is_valid_false_and_walk_continues() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "a"})), None)
+        .unwrap();
+    fs::write(
+        scratch.coll_file("north_notes", "aaa.md"),
+        "this is not a Record\n",
+    )
+    .unwrap();
+    let walked: Vec<_> = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap())
+        .collect();
+    assert_eq!(walked.len(), 2);
+    assert_eq!(walked[0].valid, Some(false));
+    assert_eq!(
+        walked[0].raw.as_deref(),
+        Some(b"this is not a Record\n".as_slice())
+    );
+    assert_eq!(walked[1].id.as_deref(), Some("alpha"));
+    assert_eq!(walked[1].valid, Some(true));
+    let got = collection.get("alpha").unwrap();
+    assert_eq!(walked[1].raw, got.raw);
+    #[cfg(feature = "find")]
+    vault.reindex().unwrap();
+}
+
+#[test]
+fn singleton_documents_and_ids_empty_then_one() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("inbox.yaml", INBOX);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_inbox").unwrap();
+    assert!(collection.ids().unwrap().is_empty());
+    assert!(walked_ids(&collection).is_empty());
+    collection
+        .add("inbox", rec(serde_json::json!({"title": "First"})), None)
+        .unwrap();
+    assert_eq!(collection.ids().unwrap(), ["inbox"]);
+    let walked: Vec<_> = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap())
+        .collect();
+    assert_eq!(walked.len(), 1);
+    assert_eq!(walked[0].id.as_deref(), Some("inbox"));
+    assert_eq!(walked[0].valid, Some(true));
+}
+
+#[test]
+fn documents_and_ids_empty_and_missing_are_empty() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    assert!(collection.ids().unwrap().is_empty());
+    assert!(walked_ids(&collection).is_empty());
+
+    drop(collection);
+    drop(vault);
+    scratch.write_schema("west.yaml", WEST_ISOLATED);
+    let vault = scratch.reopen();
+    let collection = vault.collection("west_isolated").unwrap();
+    assert!(collection.ids().unwrap().is_empty());
+    assert!(walked_ids(&collection).is_empty());
+    assert!(
+        !scratch
+            .vault()
+            .join(".isolated")
+            .join("west_isolated")
+            .is_dir()
+    );
+}
+
+#[test]
+fn documents_isolated_walks_nested_dir() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_ISOLATED);
+    let vault = scratch.reopen();
+    let collection = vault.collection("west_isolated").unwrap();
+    collection
+        .add(
+            "secret",
+            rec(serde_json::json!({"west_pass": "nested-secret"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(collection.ids().unwrap(), ["secret"]);
+    let walked: Vec<_> = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap())
+        .collect();
+    assert_eq!(walked.len(), 1);
+    assert_eq!(walked[0].id.as_deref(), Some("secret"));
+    assert_eq!(
+        walked[0].path.as_deref(),
+        Some(".isolated/west_isolated/secret.md")
+    );
+    assert!(
+        scratch
+            .vault()
+            .join(".isolated")
+            .join("west_isolated")
+            .join("secret.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn documents_thousand_in_id_order() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    vault.begin().unwrap();
+    for i in 0..1000 {
+        collection
+            .add(
+                &format!("d-{i:04}"),
+                rec(serde_json::json!({"title": "n"})),
+                None,
+            )
+            .unwrap();
+    }
+    vault.commit("bulk").unwrap();
+    let expected: Vec<String> = (0..1000).map(|i| format!("d-{i:04}")).collect();
+    assert_eq!(collection.ids().unwrap(), expected);
+    let walked = walked_ids(&collection);
+    assert_eq!(walked.len(), 1000);
+    assert_eq!(walked, expected);
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn ids_matches_files_when_index_is_stale() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "a"})), None)
+        .unwrap();
+    collection
+        .add("bravo", rec(serde_json::json!({"title": "b"})), None)
+        .unwrap();
+    fs::write(
+        scratch.coll_file("north_notes", "charlie.md"),
+        "---\nid: charlie\ntitle: c\n---\n",
+    )
+    .unwrap();
+    assert_eq!(collection.ids().unwrap(), ["alpha", "bravo", "charlie"]);
+    let found: Vec<_> = collection
+        .find(&Filter::all().into(), 0, 100)
+        .unwrap()
+        .records
+        .into_iter()
+        .map(|record| record.id.unwrap())
+        .collect();
+    assert_eq!(found, ["alpha", "bravo"]);
 }
 
 fn peek_schema_name(body: &str) -> String {

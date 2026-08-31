@@ -101,6 +101,29 @@ fn add_get_round_trip_without_lexical_index() {
     assert_eq!(got.valid, Some(true));
 }
 
+#[test]
+fn documents_and_ids_without_find() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("thin_notes").unwrap();
+    collection
+        .add("charlie", rec(json!({"title": "c"})), None)
+        .unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "a"})), None)
+        .unwrap();
+    collection
+        .add("bravo", rec(json!({"title": "b"})), None)
+        .unwrap();
+    assert_eq!(collection.ids().unwrap(), ["alpha", "bravo", "charlie"]);
+    let ids: Vec<_> = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["alpha", "bravo", "charlie"]);
+}
+
 #[cfg(not(feature = "find"))]
 #[test]
 fn add_marks_index_stale_and_check_ignores_it() {

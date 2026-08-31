@@ -928,6 +928,31 @@ impl Collection {
         journal::journal_lines(&self.vault, &self.decl)
     }
 
+    /// Walk this `document` or `singleton` in `id` order without opening the Index.
+    ///
+    /// Files the library names, in the byte order of the file name (`{id}.md`).
+    /// A `singleton` yields its one Record, or nothing before the first write.
+    /// Each item is what `get` returns for that `id`, `raw` included: a file
+    /// that does not parse and a Record that fails current Schema are both
+    /// yielded with `valid: false`, and the walk continues. Unlike `lines()`,
+    /// a bad file does not hide the next — each Record is its own file.
+    /// Names that are not Record files (dotfiles, not `*.md`, not a regular
+    /// file) and subdirectories are skipped. `journal` → `unsupported`. A
+    /// missing Index directory does not stop the walk.
+    pub fn documents(&self) -> Result<crate::CollectionDocuments, Error> {
+        store::collection_documents(&self.vault, &self.decl)
+    }
+
+    /// Ids of this `document` or `singleton` in the same order as `documents`.
+    ///
+    /// Derived from the file names; no Record file is opened. `journal` →
+    /// `unsupported`. A `singleton` before the first write is empty; after,
+    /// one id equal to the Schema `singleton_id`. A missing collection
+    /// directory is an empty list.
+    pub fn ids(&self) -> Result<Vec<String>, Error> {
+        store::collection_ids(&self.vault, &self.decl)
+    }
+
     /// Replace a whole `document` or `singleton`. `journal` → `unsupported`.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →

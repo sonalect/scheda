@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.65, 30 August 2026.
+Document 12 of the Scheda package. Version 0.66, 31 August 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -16,7 +16,7 @@ A0–A7 are done. **agent** is accepted for this binding. A2 was the
 names. Schema already parses `isolated`. Age encryption (ISO-5,
 ISO-7–11) stays out.
 
-Stages P0–P12 in §4 are the second half of this file: what the **first
+Stages P0–P13 in §4 are the second half of this file: what the **first
 consumer** needs before it can move its primary layer onto the crate.
 They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
@@ -26,7 +26,7 @@ never waited on a P stage and still does not.
 
 §6 lists what a *second* consumer will want and Scheda does not have.
 Those are open questions, not stages: nothing there blocks A0–A7 or
-P0–P12.
+P0–P13.
 
 ---
 
@@ -75,7 +75,7 @@ P order is in §4. It starts after A7 and does not interleave with it.
 `catalog` command.
 
 Consumer readiness has its own dashboard in §4. A green A0–A7 does not
-imply a green P0–P12, and the reverse is also true.
+imply a green P0–P13, and the reverse is also true.
 
 ---
 
@@ -433,7 +433,9 @@ of `{vault}/.isolated/` stays `10` §5.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** P0–P5, P8, P9, P10, P11, and P12 are done.
+**Status of the part:** P0–P5, P8, P9, P10, P11, and P12 are done. P13 is
+open: the consumer found that a `document` collection cannot be listed at
+all in a build without `find`.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -478,6 +480,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P10](#p10-consumer-acceptance)                          | done        | The consumer's acceptance list on the P0 fixture                    |
 | [P11](#p11-open-maps-with-a-typed-value)                 | done        | A map whose keys the author invents and whose values are not strings |
 | [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
+| [P13](#p13-listing-a-collection-without-the-index)       | not started | Asking a `document` collection what it holds, with `find` off       |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -549,7 +552,8 @@ not decide, that is a gap in the specification, and a silent default in
 P1, P2, and P3 all touch the journal write path and the commit rule; run
 them one at a time. P5 removed dead `CollectionDecl` fields. P8 touches
 the build graph and overlaps nothing. P12 touches the same commit rule
-P3 settled; both are done.
+P3 settled; both are done. P13 touches only the read path and no commit
+rule at all, so it can run at any time and conflicts with nothing above.
 
 ---
 
@@ -1119,6 +1123,78 @@ and not checks in `src/`; after editing it, generate before the tests.
       call, `14` where a mutating command gains the message and `open`
       takes `--author-name` / `--author-email`.
 - [x] `bazel test //...` green; CHANGELOG under `[Unreleased]`.
+
+---
+
+## P13. Listing a collection without the Index
+
+**Status:** not started
+
+**Codes:** LIB-2, LIB-25, LIB-26.
+
+**Needs:** nothing.
+
+**Decide first:** nothing. The two questions this stage could have opened
+are answered below: paging is out, and naming is separate from reading.
+
+A consumer can ask for one Record by `id`, and can walk a `journal` in
+append order. It cannot ask a `document` collection what it holds. LIB-19
+says `document` / `singleton` → `unsupported`, so the only listing in the
+library is `find` — and `find` is an opt-in crate feature whose Cargo
+default leaves it out. A consumer built without it cannot answer "which
+Records exist" through the library at all. The one way left is to read the
+collection directory behind the library's back, which is exactly what
+MOD-8 and `07` §4 forbid: the caller never handles a Record path, because
+the layout belongs to the library and may change. Today that promise
+cannot be kept for a document collection, and the first real consumer hit
+it immediately.
+
+The machinery is already written and merely private. `store::list_files`
+names the Record files of a collection and sorts them, skipping dotfiles,
+non-`.md` names, and anything that is not a regular file;
+`store::scan_documents` reads them into a `Vec<Record>` behind
+`#[cfg(feature = "find")]`. This stage turns that into a contract: usable
+without `find`, streaming instead of a `Vec`, and split in two so a caller
+who wants names does not pay for bodies.
+
+Order is `id` order — the byte order of the file name — and it is a
+promise, not a side effect of `read_dir`. A caller that walks a collection
+twice, or walks two of them together, needs the same sequence both times.
+
+Paging is deliberately out of scope. An iterator already bounds memory:
+`lines` yields one Record at a time and stops wherever the caller stops.
+What a page would add is a cursor that outlives the call, and no consumer
+needs to resume a walk yet. A cursor also cannot have one shape for both
+kinds — append position for a journal, last `id` for documents — so
+designing it now would fix the wrong shape before a caller exists to
+judge it. When one needs to resume, that is its own stage.
+
+Scope is the Rust library. The agent envelope (`08`) and the CLI (`14`)
+are not extended here: the consumer that needs this calls the Rust API,
+and a listing command is a separate decision about those surfaces.
+
+- [ ] `documents()` on the collection handle yields every Record of a
+      `document` collection in `id` order, one at a time (`07` LIB-25).
+- [ ] `ids()` gives the same order without opening a single Record file
+      (`07` LIB-26).
+- [ ] Both refuse `journal` with `unsupported`, and both accept
+      `singleton`: nothing before the first write, one Record after.
+- [ ] Neither sits behind `find`. The Cargo default build has both, and a
+      deleted or deliberately stale `{vault}/.scheda/` changes neither
+      answer.
+- [ ] `.schema.yaml`, any dotfile, a name not ending in `.md`, and a
+      subdirectory are skipped, and none of them is an error.
+- [ ] A Record that fails current Schema and a `.md` file that is not a
+      Record at all are both yielded with `valid: false`, as `get` does,
+      and the walk continues past them. Unlike LIB-19 it does not stop:
+      separate files, so one bad file must not hide the rest, and `find`
+      rebuild must not start failing closed because of this stage.
+- [ ] An isolated collection walks `{vault}/.isolated/{name}/`.
+- [ ] On a 10³ document fixture the walk holds no Record contents but the
+      current one, and `scan_documents` either becomes this iterator or
+      is deleted — two ways to read a collection is one too many.
+- [ ] Documents amended: `07` LIB-2 name list, LIB-25, LIB-26, and §4.
+- [ ] `bazel test //...` green; CHANGELOG under `[Unreleased]`.
 
 ---
 
