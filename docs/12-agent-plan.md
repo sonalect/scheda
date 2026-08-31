@@ -440,9 +440,9 @@ of `{vault}/.isolated/` stays `10` §5.
 **Status of the part:** P0–P5 and P8–P13 are done. P13 closed the last
 thing the consumer hit while reading: a `document` collection could not be
 listed at all in a build without `find`. P14 is the first stage here that
-is not a gap the consumer tripped over but a promise the crate had been
-making without keeping — an encryption option nothing read. Its code is
-in and its release is not cut.
+was not a gap the consumer tripped over but a promise the crate had been
+making without keeping — an encryption option nothing read. It shipped as
+`0.6.0`.
 
 P15 and P16 are behind it and neither is a consumer's blocker. P15
 replaces the nested Index, which nothing can query, with one Index for
@@ -497,7 +497,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P11](#p11-open-maps-with-a-typed-value)                 | done        | A map whose keys the author invents and whose values are not strings |
 | [P12](#p12-commit-message-and-author)                    | done        | A readable commit subject, and an identity the caller chooses        |
 | [P13](#p13-listing-a-collection-without-the-index)       | done        | Asking a `document` collection what it holds, with `find` off       |
-| [P14](#p14-encryption-as-a-property-of-a-collection)     | code in, release open | Ciphertext on disk for any one collection, and an option that works |
+| [P14](#p14-encryption-as-a-property-of-a-collection)     | done (`0.6.0`) | Ciphertext on disk for any one collection, and an option that works |
 | [P15](#p15-one-index-for-the-vault)                      | not started | One Index per Vault instead of a nested one nothing can query       |
 | [P16](#p16-a-secret-in-the-cli-and-a-remote-for-the-nested-tree) | not started | Reaching an encrypted Vault from argv-safe input; two audiences, two Remotes |
 
@@ -1242,9 +1242,10 @@ and a listing command is a separate decision about those surfaces.
 
 ## P14. Encryption as a property of a collection
 
-**Status:** code complete; the release is the last box. Every functional
-box is ticked, including `history`, which reading the code turned from a
-missing test into a real defect and which now decrypts. The hole is
+**Status:** done, shipped as `0.6.0` (commit `28c04d1`, signed tag
+`v0.6.0`). `history` is worth naming among the boxes: it went in as a
+missing test and reading the code turned it into a real defect — the
+secret was demanded and never used — so it now decrypts. The hole is
 closed: `age` armor
 is written and read for `document` and `singleton`, the four codes are
 distinct, no Index holds an encrypted collection, and a build without
@@ -1562,10 +1563,14 @@ encryption work.
       contract the method can keep and names the missing report as a
       limitation, `09` ISO-6 and `14`'s two secret flags are marked
       specification ahead of code.
-- [ ] `bazel test //...` green — done, 31/31, after `bazel run
-      //bazel:format` fixed buildifier on `rust.MODULE.bazel`; the age
-      pin is `=0.12.1`, published 14 July 2026, far outside the two-day
-      quarantine.       Crate-universe does not pick this crate up from `Cargo.toml` and
+- [x] `bazel test //...` green — 31/31, after `bazel run //bazel:format`
+      fixed buildifier on `rust.MODULE.bazel`; the age pin is `=0.12.1`,
+      published 14 July 2026, far outside the two-day quarantine.
+      CHANGELOG carries the `0.6.0` section, including the correction
+      that `0.5.0`'s encryption note described behaviour that did not
+      exist, and a *Known limitations* group naming both P16 items so a
+      reader meets them before the CLI does. Version bumped in lockstep
+      in `Cargo.toml` and `MODULE.bazel`, tagged `v0.6.0`, pushed.       Crate-universe does not pick this crate up from `Cargo.toml` and
       `Cargo.lock` alone, and the reason is worth writing down because
       the obvious cleanup fails on it. `age` is optional behind
       `encrypt`, which is not a default feature, so `from_cargo` never
@@ -1588,9 +1593,7 @@ encryption work.
       a reviewer would read as a real resolution. Every other tag here
       already passed `repositories = ["cargo"]`, which is exactly why the
       omission is easy to miss: the argument reads as boilerplate until
-      it isn't. Open: CHANGELOG under
-      `[Unreleased]` and the `0.6.0` bump, including the correction that
-      `0.5.0`'s encryption note described behaviour that did not exist.
+      it isn't. That scoping shipped in the release commit.
 
 ## P15. One Index for the Vault
 
