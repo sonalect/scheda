@@ -57,7 +57,7 @@ const RRF_K: f64 = 60.0;
 const DEFAULT_K: usize = 10;
 
 pub(crate) struct SearchEngine {
-    index_dir: PathBuf,
+    index_dir: Mutex<PathBuf>,
     inner: Mutex<Inner>,
 }
 
@@ -171,15 +171,26 @@ impl SearchEngine {
             next_ord: load_next_ord(index_dir).unwrap_or_default(),
         };
         Ok(Self {
-            index_dir: index_dir.to_path_buf(),
+            index_dir: Mutex::new(index_dir.to_path_buf()),
             inner: Mutex::new(inner),
         })
+    }
+
+    fn dir(&self) -> Result<PathBuf, Error> {
+        Ok(crate::error::mutex(&self.index_dir, "[SearchEngine] lock index dir")?.clone())
+    }
+
+    /// Point this engine at a different generation directory.
+    pub(crate) fn set_index_dir(&self, index_dir: &Path) -> Result<(), Error> {
+        *crate::error::mutex(&self.index_dir, "[SearchEngine] lock index dir")? =
+            index_dir.to_path_buf();
+        Ok(())
     }
 
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
-            index_dir: PathBuf::new(),
+            index_dir: Mutex::new(PathBuf::new()),
             inner: Mutex::new(Inner {
                 lexical: None,
                 #[cfg(feature = "search")]
@@ -210,6 +221,19 @@ impl SearchEngine {
         shutdown_lexical(lexical);
     }
 
+    /// Rebuild lexical / vector / edges into `index_dir`, then remember it
+    /// as this handle's generation.
+    pub(crate) fn rebuild_into(
+        &self,
+        index_dir: &Path,
+        vault: &Path,
+        schema: &Schema,
+        embedder: Option<&dyn Embedder>,
+    ) -> Result<(), Error> {
+        self.set_index_dir(index_dir)?;
+        self.rebuild(vault, schema, embedder)
+    }
+
     pub(crate) fn rebuild(
         &self,
         vault: &Path,
@@ -233,8 +257,9 @@ impl SearchEngine {
             shutdown_lexical(lexical);
             can_write
         };
+        let index_dir = self.dir()?;
         if can_write {
-            index::ensure_format(&self.index_dir)?;
+            index::ensure_format(&index_dir)?;
         }
         for decl in schema.collections().filter(|decl| !decl.encrypted) {
             let records = match decl.kind {
@@ -256,18 +281,12 @@ impl SearchEngine {
                 let vectors: Vec<(String, Vec<f32>)> = Vec::new();
                 let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
                 upsert_record(
-                    &mut inner,
-                    &self.index_dir,
-                    can_write,
-                    decl,
-                    &record,
-                    embedder,
-                    &vectors,
+                    &mut inner, &index_dir, can_write, decl, &record, embedder, &vectors,
                 )?;
             }
         }
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] commit")?;
-        inner.commit(&self.index_dir, can_write)
+        inner.commit(&index_dir, can_write)
     }
 
     pub(crate) fn upsert(
@@ -288,11 +307,12 @@ impl SearchEngine {
         };
         #[cfg(not(feature = "search"))]
         let vectors: Vec<(String, Vec<f32>)> = Vec::new();
+        let index_dir = self.dir()?;
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::upsert] lock")?;
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
-        match index::format_version(&self.index_dir)? {
+        match index::format_version(&index_dir)? {
             Some(v) if v != index::FORMAT_VERSION => {
                 return Err(Error::index_version(format!(
                     "index format {v} is not {}",
@@ -300,16 +320,10 @@ impl SearchEngine {
                 ))
                 .context("[SearchEngine::upsert] check version"));
             }
-            _ => index::ensure_format(&self.index_dir)?,
+            _ => index::ensure_format(&index_dir)?,
         }
         upsert_record(
-            &mut inner,
-            &self.index_dir,
-            true,
-            decl,
-            record,
-            embedder,
-            &vectors,
+            &mut inner, &index_dir, true, decl, record, embedder, &vectors,
         )?;
         Ok(())
     }
@@ -318,11 +332,12 @@ impl SearchEngine {
         if decl.encrypted {
             return Ok(());
         }
+        let index_dir = self.dir()?;
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::forget] lock")?;
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
-        match index::format_version(&self.index_dir)? {
+        match index::format_version(&index_dir)? {
             Some(v) if v != index::FORMAT_VERSION => {
                 return Err(Error::index_version(format!(
                     "index format {v} is not {}",
@@ -330,7 +345,7 @@ impl SearchEngine {
                 ))
                 .context("[SearchEngine::forget] check version"));
             }
-            _ => index::ensure_format(&self.index_dir)?,
+            _ => index::ensure_format(&index_dir)?,
         }
         forget_record(&mut inner, &decl.name, id)?;
         Ok(())
@@ -348,7 +363,8 @@ impl SearchEngine {
             )?);
         }
         drop(inner);
-        index::restrict_index_tree(&self.index_dir)
+        let index_dir = self.dir()?;
+        index::restrict_index_tree(&index_dir)
     }
 
     /// Persist buffered Tantivy / vector writes, then re-apply owner-only
@@ -357,12 +373,14 @@ impl SearchEngine {
     pub(crate) fn flush(&self) -> Result<(), Error> {
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::flush] lock")?;
         let can_write = inner.can_write;
-        inner.commit(&self.index_dir, can_write)
+        let index_dir = self.dir()?;
+        inner.commit(&index_dir, can_write)
     }
 
     pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
-        index::require_fresh(&self.index_dir)?;
-        match index::format_version(&self.index_dir)? {
+        let index_dir = self.dir()?;
+        index::require_fresh(&index_dir)?;
+        match index::format_version(&index_dir)? {
             Some(v) if v != index::FORMAT_VERSION => {
                 return Err(Error::index_version(format!(
                     "index format {v} is not {}",
@@ -375,9 +393,9 @@ impl SearchEngine {
         }
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::has_id] lock")?;
         let can_write = inner.can_write;
-        inner.commit(&self.index_dir, can_write)?;
+        inner.commit(&index_dir, can_write)?;
         if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&self.index_dir, can_write)?;
+            inner.lexical = open_lexical(&index_dir, can_write)?;
         }
         let Some(lexical) = inner.lexical.as_mut() else {
             return Ok(false);
@@ -511,13 +529,14 @@ impl SearchEngine {
         if collections.is_empty() || decls.is_empty() {
             return Ok(None);
         }
-        index::require_fresh(&self.index_dir)?;
-        index::require_current_format(&self.index_dir)?;
+        let index_dir = self.dir()?;
+        index::require_fresh(&index_dir)?;
+        index::require_current_format(&index_dir)?;
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::with_find] lock")?;
         let can_write = inner.can_write;
-        inner.commit(&self.index_dir, can_write)?;
+        inner.commit(&index_dir, can_write)?;
         if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&self.index_dir, can_write)?;
+            inner.lexical = open_lexical(&index_dir, can_write)?;
         }
         let Some(lexical) = inner.lexical.as_mut() else {
             return Ok(None);
@@ -582,8 +601,9 @@ impl SearchEngine {
         if collections.is_empty() {
             return Ok(SearchHits::default());
         }
-        index::require_fresh(&self.index_dir)?;
-        index::require_current_format(&self.index_dir)?;
+        let index_dir = self.dir()?;
+        index::require_fresh(&index_dir)?;
+        index::require_current_format(&index_dir)?;
         let Some(text) = query.text.as_deref() else {
             unreachable!("SearchQuery text is required");
         };
@@ -607,9 +627,9 @@ impl SearchEngine {
         };
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::search] lock")?;
         let can_write = inner.can_write;
-        inner.commit(&self.index_dir, can_write)?;
+        inner.commit(&index_dir, can_write)?;
         if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&self.index_dir, can_write)?;
+            inner.lexical = open_lexical(&index_dir, can_write)?;
         }
         let lexical_hits = if lexical_weight > 0.0 {
             lexical_search(&mut inner, collections, text, pool, allowed)?
@@ -672,13 +692,17 @@ fn open_lexical_writer(index: &Index, frame: &'static str) -> Result<IndexWriter
 
 impl Drop for SearchEngine {
     fn drop(&mut self) {
+        let Ok(index_dir) = self.index_dir.lock() else {
+            return;
+        };
         let Ok(mut inner) = self.inner.lock() else {
             return;
         };
         let can_write = inner.can_write;
-        let _ = inner.commit(&self.index_dir, can_write);
+        let _ = inner.commit(&index_dir, can_write);
         let lexical = inner.lexical.take();
         drop(inner);
+        drop(index_dir);
         shutdown_lexical(lexical);
     }
 }

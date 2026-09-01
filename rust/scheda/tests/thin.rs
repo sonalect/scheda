@@ -81,6 +81,15 @@ fn rec_rep(fields: Value) -> RecordReplace {
     serde_json::from_value(json!({ "fields": fields })).unwrap()
 }
 
+#[cfg(not(feature = "find"))]
+fn live_index(vault: &Vault) -> PathBuf {
+    let root = vault.index_dir();
+    match fs::read_to_string(root.join("current")) {
+        Ok(name) => root.join(name.trim()),
+        Err(_) => root.to_path_buf(),
+    }
+}
+
 fn fields_of(record: &Record) -> Map<String, Value> {
     match serde_json::to_value(record).unwrap().get("fields") {
         Some(Value::Object(map)) => map.clone(),
@@ -169,7 +178,7 @@ fn add_marks_index_stale_and_check_ignores_it() {
     collection
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    assert!(vault.index_dir().join("stale").is_file());
+    assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(got.valid, Some(true));
@@ -228,7 +237,7 @@ fn remove_marks_index_stale() {
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     collection.remove("alpha", None).unwrap();
-    assert!(vault.index_dir().join("stale").is_file());
+    assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
 }
 
@@ -271,7 +280,7 @@ fn reindex_without_find_marks_stale() {
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     vault.reindex().unwrap();
-    assert!(vault.index_dir().join("stale").is_file());
+    assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
 }
 

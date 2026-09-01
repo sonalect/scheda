@@ -56,6 +56,14 @@ fn rec_rep(fields: Value) -> RecordReplace {
     serde_json::from_value(json!({ "fields": fields })).unwrap()
 }
 
+fn live_index_at(vault: &Path) -> PathBuf {
+    let root = vault.join(".scheda").join("index");
+    match fs::read_to_string(root.join("current")) {
+        Ok(name) => root.join(name.trim()),
+        Err(_) => root,
+    }
+}
+
 fn write_schema(scratch: &Scratch, body: &str) {
     let name = peek_schema_name(body);
     let dir = scratch.vault().join(name);
@@ -253,10 +261,7 @@ fn isolated_journal_rotates_and_ids_map_is_in_main_index() {
     assert!(nested.join("00000001.jsonl").is_file());
     assert!(nested.join("00000002.jsonl").is_file());
     assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
-    let ids = scratch
-        .vault()
-        .join(".scheda")
-        .join("index")
+    let ids = live_index_at(&scratch.vault())
         .join("journal")
         .join("sealed_log")
         .join("ids");
@@ -679,10 +684,7 @@ fn old_nested_isolated_index_is_removed_by_reindex() {
     );
     vault.reindex().unwrap();
     assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
-    let main_ids = scratch
-        .vault()
-        .join(".scheda")
-        .join("index")
+    let main_ids = live_index_at(&scratch.vault())
         .join("journal")
         .join("sealed_log")
         .join("ids");

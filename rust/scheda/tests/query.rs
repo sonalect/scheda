@@ -382,10 +382,11 @@ fn reindex_rebuilds_format_and_counts() {
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
     assert_eq!(counts.skipped_invalid, Some(0));
-    let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
-    assert_eq!(format.trim(), "3");
-    fs::write(vault.index_dir().join("format"), "999\n").unwrap();
-    fs::write(vault.index_dir().join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
+    let live = live_index(&vault);
+    let format = fs::read_to_string(live.join("format")).unwrap();
+    assert_eq!(format.trim(), "4");
+    fs::write(live.join("format"), "999\n").unwrap();
+    fs::write(live.join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
     #[cfg(feature = "search")]
     {
         let err = collection
@@ -402,9 +403,10 @@ fn reindex_rebuilds_format_and_counts() {
     }
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
-    let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
-    assert_eq!(format.trim(), "3");
-    assert!(!vault.index_dir().join("stolen.json").exists());
+    let live = live_index(&vault);
+    let format = fs::read_to_string(live.join("format")).unwrap();
+    assert_eq!(format.trim(), "4");
+    assert!(!live.join("stolen.json").exists());
     let got = collection.get("a").unwrap();
     assert_eq!(got.valid, Some(true));
 }
@@ -863,6 +865,254 @@ fn journal_rejects_body_filter() {
         .find(&filter(json!({"exists":{"field":"body"}})), 0, 10)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn live_index(vault: &Vault) -> PathBuf {
+    let root = vault.index_dir();
+    match fs::read_to_string(root.join("current")) {
+        Ok(name) => root.join(name.trim()),
+        Err(_) => root.to_path_buf(),
+    }
+}
+
+fn generation_dirs(vault: &Vault) -> Vec<String> {
+    let mut names = Vec::new();
+    let Ok(entries) = fs::read_dir(vault.index_dir()) else {
+        return names;
+    };
+    for entry in entries {
+        let entry = entry.unwrap();
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+            names.push(name.into_owned());
+        }
+    }
+    names.sort();
+    names
+}
+
+#[test]
+fn reader_opened_before_reindex_keeps_find_results() {
+    let scratch = Scratch::new();
+    let writer = open_notes(&scratch);
+    let collection = writer.collection("query_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"title": "Other"})), None)
+        .unwrap();
+    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let before = reader
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&before), ["a", "b"]);
+    writer.reindex().unwrap();
+    let after = reader
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&after), ids(&before));
+}
+
+#[test]
+fn reader_opened_after_reindex_uses_new_generation() {
+    let scratch = Scratch::new();
+    let writer = open_notes(&scratch);
+    writer
+        .collection("query_notes")
+        .unwrap()
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    let first = live_index(&writer);
+    writer.reindex().unwrap();
+    let second = live_index(&writer);
+    assert_ne!(first, second);
+    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    assert_eq!(live_index(&reader), second);
+    let page = reader
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&page), ["a"]);
+}
+
+#[test]
+fn crashed_reindex_leaves_old_generation_and_open_drops_orphan() {
+    let scratch = Scratch::new();
+    let writer = open_notes(&scratch);
+    writer
+        .collection("query_notes")
+        .unwrap()
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    writer.reindex().unwrap();
+    let live = fs::read_to_string(writer.index_dir().join("current")).unwrap();
+    let live = live.trim().to_owned();
+    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let orphan = writer.index_dir().join("99");
+    fs::create_dir_all(orphan.join("lexical")).unwrap();
+    fs::write(orphan.join("format"), "4\n").unwrap();
+    fs::write(orphan.join("sentinel"), b"orphan").unwrap();
+    let page = reader
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&page), ["a"]);
+    assert_eq!(
+        fs::read_to_string(writer.index_dir().join("current"))
+            .unwrap()
+            .trim(),
+        live
+    );
+    drop(writer);
+    drop(reader);
+    let reopened = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    assert!(
+        !orphan.exists(),
+        "orphan generation must be removed on open"
+    );
+    let page = reopened
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&page), ["a"]);
+}
+
+#[test]
+fn two_reindexes_keep_only_one_previous_generation() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault
+        .collection("query_notes")
+        .unwrap()
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    vault.reindex().unwrap();
+    let after_first = generation_dirs(&vault);
+    vault.reindex().unwrap();
+    let after_second = generation_dirs(&vault);
+    assert_eq!(after_second.len(), 2, "{after_second:?}");
+    for name in &after_first {
+        if !after_second.contains(name) {
+            assert!(!vault.index_dir().join(name).exists());
+        }
+    }
+    let oldest = after_first
+        .iter()
+        .min_by_key(|name| name.parse::<u64>().unwrap())
+        .unwrap();
+    if after_first.len() >= 2 {
+        assert!(
+            !after_second.contains(oldest),
+            "oldest generation must be gone"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn reindex_generation_dirs_are_owner_only() {
+    use std::os::unix::fs::PermissionsExt;
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault
+        .collection("query_notes")
+        .unwrap()
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    vault.reindex().unwrap();
+    fn walk(path: &std::path::Path) {
+        let meta = fs::symlink_metadata(path).unwrap();
+        if meta.file_type().is_symlink() {
+            return;
+        }
+        if meta.is_dir() {
+            assert_eq!(
+                meta.permissions().mode() & 0o777,
+                0o700,
+                "{}",
+                path.display()
+            );
+            for entry in fs::read_dir(path).unwrap() {
+                walk(&entry.unwrap().path());
+            }
+            return;
+        }
+        if meta.is_file() {
+            assert_eq!(
+                meta.permissions().mode() & 0o777,
+                0o600,
+                "{}",
+                path.display()
+            );
+        }
+    }
+    walk(&scratch.vault().join(".scheda"));
+}
+
+#[test]
+fn incremental_write_is_visible_to_handle_opened_afterwards() {
+    let scratch = Scratch::new();
+    let writer = open_notes(&scratch);
+    writer
+        .collection("query_notes")
+        .unwrap()
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let page = reader
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&page), ["a"]);
+    assert_eq!(live_index(&reader), live_index(&writer));
+}
+
+#[test]
+fn legacy_format_3_is_index_version_until_reindex() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault
+        .collection("query_notes")
+        .unwrap()
+        .add("a", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    drop(vault);
+    let root = scratch.vault().join(".scheda").join("index");
+    let _ = fs::remove_file(root.join("current"));
+    fs::write(root.join("format"), "3\n").unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let err = vault
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IndexVersion));
+    vault.reindex().unwrap();
+    let page = vault
+        .collection("query_notes")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap();
+    assert_eq!(ids(&page), ["a"]);
+    assert_eq!(
+        fs::read_to_string(live_index(&vault).join("format"))
+            .unwrap()
+            .trim(),
+        "4"
+    );
 }
 
 fn peek_schema_name(body: &str) -> String {

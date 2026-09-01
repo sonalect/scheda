@@ -1,9 +1,18 @@
 //! Disposable Index under `{vault}/.scheda/index`.
+//!
+//! Live layout is generational: `{vault}/.scheda/index/current` names the live
+//! generation directory, and `{vault}/.scheda/index/<generation>/` holds the
+//! `format` file, `lexical/`, `vector/`, edges, ord, and `journal/`. A handle
+//! resolves `current` once at open and keeps that generation. A reader older
+//! than one `reindex` cycle may find its files gone; `find` / `search` then
+//! fail with `index_missing` (no `format` file) or `index_lexical` (Tantivy
+//! directory gone). Incremental writes stay in the live generation.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,11 +24,46 @@ use crate::schema::{self, Kind, Schema};
 use crate::store;
 use crate::{Error, ReindexResult};
 
-pub(crate) const FORMAT_VERSION: u32 = 3;
+/// On-disk Index format. Bumped to 4 when the Index became generational.
+/// An older `format` file (version 3, files directly in `index/`) is
+/// `index_version`; the caller runs `reindex`.
+pub(crate) const FORMAT_VERSION: u32 = 4;
 const FORMAT_FILE: &str = "format";
+const CURRENT_FILE: &str = "current";
 const STALE_FILE: &str = "stale";
 const JOURNAL_DIR: &str = "journal";
 const IDS_FILE: &str = "ids";
+const LEGACY_FILES: &[&str] = &["format", "stale", "edges.jsonl", "ord.json", "txn"];
+const LEGACY_DIRS: &[&str] = &["lexical", "vector", "journal"];
+
+/// `{vault}/.scheda/index` plus the generation this handle is bound to.
+pub(crate) struct IndexHandle {
+    /// `{vault}/.scheda/index` (the pointer directory).
+    pub(crate) root: PathBuf,
+    dir: Mutex<PathBuf>,
+}
+
+impl IndexHandle {
+    /// Empty handle for unit stubs.
+    #[cfg(test)]
+    pub(crate) fn empty() -> Self {
+        Self {
+            root: PathBuf::new(),
+            dir: Mutex::new(PathBuf::new()),
+        }
+    }
+
+    /// Generation directory this handle uses.
+    pub(crate) fn dir(&self) -> Result<PathBuf, Error> {
+        Ok(crate::error::mutex(&self.dir, "[IndexHandle] lock generation")?.clone())
+    }
+
+    /// Bind this handle to `dir` after a `reindex` swap.
+    pub(crate) fn set_dir(&self, dir: PathBuf) -> Result<(), Error> {
+        *crate::error::mutex(&self.dir, "[IndexHandle] lock generation")? = dir;
+        Ok(())
+    }
+}
 
 /// In-memory journal `(id → segment path)` maps, keyed by collection name.
 ///
@@ -104,6 +148,179 @@ impl JournalIdMaps {
     }
 }
 
+/// Resolve or create this Vault's Index generation and bind a handle to it.
+pub(crate) fn bind(root: &Path) -> Result<IndexHandle, Error> {
+    let dir = bind_generation(root)?;
+    Ok(IndexHandle {
+        root: root.to_path_buf(),
+        dir: Mutex::new(dir),
+    })
+}
+
+fn bind_generation(root: &Path) -> Result<PathBuf, Error> {
+    if is_legacy_layout(root) {
+        return Ok(root.to_path_buf());
+    }
+    match read_current(root)? {
+        Some(n) => Ok(root.join(n.to_string())),
+        None => {
+            let dir = create_generation(root, 1)?;
+            write_current(root, 1)?;
+            Ok(dir)
+        }
+    }
+}
+
+fn is_legacy_layout(root: &Path) -> bool {
+    if root.join(CURRENT_FILE).is_file() {
+        return false;
+    }
+    root.join(FORMAT_FILE).is_file()
+        || root.join("lexical").is_dir()
+        || root.join(JOURNAL_DIR).is_dir()
+        || root.join("vector").is_dir()
+}
+
+fn read_current(root: &Path) -> Result<Option<u64>, Error> {
+    let path = root.join(CURRENT_FILE);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let text = fs::read_to_string(&path).context("[Index] read current")?;
+    match parse_generation(text.trim()) {
+        Some(n) => Ok(Some(n)),
+        None => Ok(None),
+    }
+}
+
+fn parse_generation(name: &str) -> Option<u64> {
+    if name.is_empty() || !name.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if name.len() > 1 && name.starts_with('0') {
+        return None;
+    }
+    let n: u64 = name.parse().ok()?;
+    (n >= 1).then_some(n)
+}
+
+fn write_current(root: &Path, n: u64) -> Result<(), Error> {
+    let path = root.join(CURRENT_FILE);
+    store::atomic_write(&path, format!("{n}\n").as_bytes())?;
+    store::restrict_file(&path)
+}
+
+fn create_generation(root: &Path, n: u64) -> Result<PathBuf, Error> {
+    let dir = root.join(n.to_string());
+    fs::create_dir_all(&dir).context("[Index] create generation")?;
+    store::restrict_dir(&dir)?;
+    Ok(dir)
+}
+
+fn next_generation(root: &Path) -> Result<u64, Error> {
+    Ok(read_current(root)?.unwrap_or(0).saturating_add(1).max(1))
+}
+
+fn generation_number(dir: &Path) -> Result<u64, Error> {
+    let name = dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .and_then(parse_generation);
+    match name {
+        Some(n) => Ok(n),
+        None => Err(
+            Error::index_corrupt("index generation name is not a decimal integer")
+                .context("[Index] generation name"),
+        ),
+    }
+}
+
+/// Build a new generation directory without publishing `current`.
+///
+/// Used by `reindex`. A caller that stops before [`publish_generation`]
+/// leaves the previous generation live; the unfinished directory is an
+/// orphan removed by the next `reindex` or by `open` when the write lock
+/// is free.
+pub(crate) fn prepare_generation(
+    vault: &Path,
+    schema: &Schema,
+    root: &Path,
+) -> Result<(ReindexResult, JournalIdMaps, PathBuf), Error> {
+    prune_generations(root)?;
+    let n = next_generation(root)?;
+    let dir = create_generation(root, n)?;
+    let (counts, maps) = rebuild(vault, schema, &dir)?;
+    Ok((counts, maps, dir))
+}
+
+/// Atomically point `current` at `dir`, keep one previous generation, and
+/// drop anything older plus leftover files of a pre-generational Index.
+pub(crate) fn publish_generation(root: &Path, dir: &Path) -> Result<(), Error> {
+    let n = generation_number(dir)?;
+    write_current(root, n)?;
+    prune_generations(root)?;
+    remove_legacy_layout_files(root)?;
+    restrict_index_tree(dir)
+}
+
+/// Delete generation directories other than the live one and, when it
+/// exists, the immediately previous one.
+pub(crate) fn prune_generations(root: &Path) -> Result<(), Error> {
+    let live = read_current(root)?;
+    let mut keep = BTreeSet::new();
+    if let Some(n) = live {
+        keep.insert(n);
+        if n > 1 {
+            keep.insert(n - 1);
+        }
+    }
+    let entries = match fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err).context("[Index] read generations"),
+    };
+    for entry in entries {
+        let entry = entry.context("[Index] read generation entry")?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let Some(n) = parse_generation(name) else {
+            continue;
+        };
+        if keep.contains(&n) {
+            continue;
+        }
+        let result = if path.is_dir() {
+            fs::remove_dir_all(&path)
+        } else {
+            fs::remove_file(&path)
+        };
+        result.context("[Index] remove orphan generation")?;
+    }
+    Ok(())
+}
+
+fn remove_legacy_layout_files(root: &Path) -> Result<(), Error> {
+    for name in LEGACY_FILES {
+        let path = root.join(name);
+        match fs::remove_file(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).context("[Index] remove legacy index file"),
+        }
+    }
+    for name in LEGACY_DIRS {
+        let path = root.join(name);
+        match fs::remove_dir_all(&path) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).context("[Index] remove legacy index dir"),
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<JournalIdMaps, Error> {
     let mut maps = JournalIdMaps::default();
     for decl in schema.collections() {
@@ -121,6 +338,8 @@ pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<Jour
     Ok(maps)
 }
 
+/// Fill `index_dir` with journal maps and the format file. Does not swap
+/// `current`; the caller publishes after the search engines are rebuilt.
 pub(crate) fn rebuild(
     vault: &Path,
     schema: &Schema,
@@ -170,11 +389,21 @@ fn remove_legacy_isolated_index(vault: &Path) -> Result<(), Error> {
 }
 
 /// Owner-only modes on `{vault}/.scheda/` after Index writes, including files
-/// Tantivy created that this crate did not open.
+/// Tantivy created that this crate did not open. `index_dir` may be the Index
+/// root or a generation subdirectory; the walk always starts at `.scheda/`.
 pub(crate) fn restrict_index_tree(index_dir: &Path) -> Result<(), Error> {
-    match index_dir.parent() {
+    match scheda_dir(index_dir) {
         Some(scheda) if !scheda.as_os_str().is_empty() => store::restrict_tree(scheda),
         _ => Ok(()),
+    }
+}
+
+fn scheda_dir(index_dir: &Path) -> Option<&Path> {
+    let parent = index_dir.parent()?;
+    if parent.file_name().is_some_and(|name| name == "index") {
+        parent.parent()
+    } else {
+        Some(parent)
     }
 }
 

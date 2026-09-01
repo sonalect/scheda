@@ -3,7 +3,7 @@
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -761,7 +761,7 @@ fn missing_format_fails_closed() {
     collection
         .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
-    fs::remove_file(vault.index_dir().join("format")).unwrap();
+    fs::remove_file(live_index(&vault).join("format")).unwrap();
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexMissing));
 }
@@ -776,7 +776,9 @@ fn corrupt_lexical_index_fails_closed() {
         .unwrap();
     drop(vault);
     fs::write(
-        scratch.vault().join(".scheda/index/lexical/meta.json"),
+        live_index_at(&scratch.vault().join(".scheda").join("index"))
+            .join("lexical")
+            .join("meta.json"),
         "not-tantivy",
     )
     .unwrap();
@@ -900,7 +902,7 @@ fn stale_index_fails_closed_until_reindex() {
     collection
         .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
-    fs::write(vault.index_dir().join("stale"), []).unwrap();
+    fs::write(live_index(&vault).join("stale"), []).unwrap();
     let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexLexical));
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
@@ -910,10 +912,21 @@ fn stale_index_fails_closed_until_reindex() {
     let got = collection.get("a").unwrap();
     assert_eq!(got.valid, Some(true));
     vault.reindex().unwrap();
-    assert!(!vault.index_dir().join("stale").is_file());
+    assert!(!live_index(&vault).join("stale").is_file());
     let found = collection.find(&FindQuery::all(), 0, 10).unwrap();
     assert_eq!(found.total, Some(1));
     vault.check().unwrap();
+}
+
+fn live_index(vault: &Vault) -> PathBuf {
+    live_index_at(vault.index_dir())
+}
+
+fn live_index_at(root: &Path) -> PathBuf {
+    match fs::read_to_string(root.join("current")) {
+        Ok(name) => root.join(name.trim()),
+        Err(_) => root.to_path_buf(),
+    }
 }
 
 fn peek_schema_name(body: &str) -> String {

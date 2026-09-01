@@ -30,7 +30,7 @@ const AUTO_COMMIT_MESSAGE: &str = "scheda";
 /// A git working tree that holds collections of records.
 pub struct Vault {
     path: PathBuf,
-    index_dir: PathBuf,
+    index: Arc<index::IndexHandle>,
     remotes: Vec<String>,
     auto_sync: bool,
     write_lock: Arc<Mutex<Option<File>>>,
@@ -48,7 +48,7 @@ pub struct Vault {
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
 pub struct Collection {
     vault: PathBuf,
-    index_dir: PathBuf,
+    index: Arc<index::IndexHandle>,
     write_lock: Arc<Mutex<Option<File>>>,
     auto_sync: bool,
     remotes: Vec<String>,
@@ -162,26 +162,31 @@ impl Vault {
         let auto_sync = options.auto_sync.unwrap_or(false);
         let path = fs::canonicalize(path).context("[Vault::open] canonicalize vault")?;
         let gitignore_pending = gitignore_needs_write(&path)?;
-        let index_dir = path.join(".scheda").join("index");
-        fs::create_dir_all(&index_dir).context("[Vault::open] create index dir")?;
+        let index_root = path.join(".scheda").join("index");
+        fs::create_dir_all(&index_root).context("[Vault::open] create index dir")?;
         store::restrict_dir(&path.join(".scheda"))?;
-        store::restrict_dir(&index_dir)?;
-        let index_dir = fs::canonicalize(&index_dir).context("[Vault::open] canonicalize index")?;
+        store::restrict_dir(&index_root)?;
+        let index_root =
+            fs::canonicalize(&index_root).context("[Vault::open] canonicalize index")?;
         let remotes = git::remotes(&path)?;
         if auto_sync && !remotes.is_empty() {
             pull_under_write_lock(&path)?;
         }
+        try_prune_orphans(&path, &index_root)?;
+        let index = Arc::new(index::bind(&index_root)?);
+        let generation = index.dir()?;
+        index::restrict_index_tree(&generation)?;
         let schema = Arc::new(schema::load(&path)?);
-        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&index_dir, &schema)?));
+        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&generation, &schema)?));
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
         let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
         #[cfg(feature = "find")]
-        let search = Arc::new(SearchEngine::open(&index_dir, false)?);
+        let search = Arc::new(SearchEngine::open(&generation, false)?);
         let encryption = options.encryption.as_option().cloned();
         let vault = Self {
             path,
-            index_dir,
+            index,
             remotes,
             auto_sync,
             write_lock: Arc::new(Mutex::new(None)),
@@ -207,10 +212,20 @@ impl Vault {
         &self.path
     }
 
-    /// Index directory: `{vault}/.scheda/index`.
+    /// Index directory `{vault}/.scheda/index`.
+    ///
+    /// Holds the `current` pointer and generation subdirectories. This handle
+    /// binds one generation at `open` and keeps using it. A reader that opened
+    /// before `reindex` keeps answering `find` / `search` from that snapshot.
+    /// A reader older than one `reindex` cycle may lose its files; those
+    /// methods then fail with `index_missing` or `index_lexical`.
     #[must_use]
     pub fn index_dir(&self) -> &Path {
-        &self.index_dir
+        &self.index.root
+    }
+
+    fn generation_dir(&self) -> Result<PathBuf, Error> {
+        self.index.dir()
     }
 
     /// Whether this handle currently holds `{vault}/.scheda/write.lock`.
@@ -280,7 +295,7 @@ impl Vault {
         }
         Ok(Collection {
             vault: self.path.clone(),
-            index_dir: self.index_dir.clone(),
+            index: Arc::clone(&self.index),
             write_lock: Arc::clone(&self.write_lock),
             auto_sync: self.auto_sync,
             remotes: self.remotes.clone(),
@@ -424,8 +439,9 @@ impl Vault {
 
     fn reload_after_restore(&self) -> Result<(), Error> {
         let loaded = schema::load(&self.path)?;
+        let dir = self.generation_dir()?;
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
-            index::load_journal_ids(&self.index_dir, &loaded)?;
+            index::load_journal_ids(&dir, &loaded)?;
         #[cfg(feature = "find")]
         {
             self.search.close_for_rebuild();
@@ -545,7 +561,10 @@ impl Vault {
     pub fn check(&self) -> Result<(), Error> {
         isolated::check_perimeter(&self.path)?;
         #[cfg(feature = "find")]
-        index::require_fresh(&self.index_dir)?;
+        {
+            let dir = self.generation_dir()?;
+            index::require_fresh(&dir)?;
+        }
         store::check_scheda_owner_only(&self.path)?;
         let schema = schema::load(&self.path)?;
         store::check_documents(&self.path, &schema, self.encryption.as_ref())?;
@@ -557,7 +576,7 @@ impl Vault {
         let remote = self.remotes.first().cloned().unwrap_or_default();
         let info = schema::to_vault_info(
             &self.path,
-            &self.index_dir,
+            &self.index.root,
             &remote,
             self.auto_sync,
             &*self.schema_arc()?,
@@ -602,31 +621,72 @@ impl Vault {
         let rel = schema::put_collection(&self.path, name, &schema)?;
         self.note_write(rel)?;
         let loaded = schema::load(&self.path)?;
+        let dir = self.generation_dir()?;
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
-            index::load_journal_ids(&self.index_dir, &loaded)?;
+            index::load_journal_ids(&dir, &loaded)?;
         *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
         self.finish_mutation(message)?;
         self.collection(name)
     }
 
-    /// Rebuild the Index from Vault files. Writes format version `3` and the
-    /// journal `id` map for every non-encrypted collection, isolated included,
-    /// into `{vault}/.scheda/index`. Removes a leftover
-    /// `{vault}/.isolated/.scheda/` directory when one is present. Needs the
-    /// write lock.
+    /// Rebuild the Index from Vault files into a new generation directory,
+    /// then point `{vault}/.scheda/index/current` at it with one atomic write.
+    /// Writes format version `4` and the journal `id` map for every
+    /// non-encrypted collection, isolated included. Incremental writes keep
+    /// going into the live generation; only this method swaps. A reader that
+    /// opened before the swap keeps its generation. A reader older than one
+    /// `reindex` cycle may lose those files (`index_missing` or
+    /// `index_lexical`). Removes a leftover `{vault}/.isolated/.scheda/`
+    /// directory when one is present. Needs the write lock, so there is no
+    /// concurrent writer during the swap.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
         #[cfg(feature = "find")]
         self.search.close_for_rebuild();
         let schema = schema::load(&self.path)?;
-        let (counts, maps) = index::rebuild(&self.path, &schema, &self.index_dir)?;
-        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
         #[cfg(feature = "find")]
-        self.search
-            .rebuild(&self.path, &schema, self.embedder.as_deref())?;
+        let previous = self.generation_dir()?;
+        let (counts, maps, new_dir) =
+            index::prepare_generation(&self.path, &schema, &self.index.root)?;
+        #[cfg(feature = "find")]
+        if let Err(err) =
+            self.search
+                .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
+        {
+            let _ = self.search.set_index_dir(&previous);
+            return Err(err);
+        }
         #[cfg(not(feature = "find"))]
-        index::mark_stale(&self.index_dir)?;
+        index::mark_stale(&new_dir)?;
+        #[cfg(feature = "find")]
+        if let Err(err) = index::publish_generation(&self.index.root, &new_dir) {
+            let _ = self.search.set_index_dir(&previous);
+            return Err(err);
+        }
+        #[cfg(not(feature = "find"))]
+        index::publish_generation(&self.index.root, &new_dir)?;
+        self.index.set_dir(new_dir)?;
+        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
         Ok(counts)
+    }
+
+    /// Fill a new generation without swapping `current`. Test seam for a
+    /// crash between rebuild and the pointer write.
+    #[cfg(all(test, feature = "find"))]
+    pub(crate) fn reindex_without_publish(&self) -> Result<PathBuf, Error> {
+        self.require_write_lock("reindex")?;
+        self.search.close_for_rebuild();
+        let schema = schema::load(&self.path)?;
+        let previous = self.generation_dir()?;
+        let (_, _, new_dir) = index::prepare_generation(&self.path, &schema, &self.index.root)?;
+        if let Err(err) =
+            self.search
+                .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
+        {
+            let _ = self.search.set_index_dir(&previous);
+            return Err(err);
+        }
+        Ok(new_dir)
     }
 }
 
@@ -634,7 +694,7 @@ impl std::fmt::Debug for Vault {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Vault")
             .field("path", &self.path)
-            .field("index_dir", &self.index_dir)
+            .field("index_dir", &self.index.root)
             .finish_non_exhaustive()
     }
 }
@@ -652,7 +712,7 @@ impl Collection {
     fn stub() -> Self {
         Self {
             vault: PathBuf::new(),
-            index_dir: PathBuf::new(),
+            index: Arc::new(index::IndexHandle::empty()),
             write_lock: Arc::new(Mutex::new(None)),
             auto_sync: false,
             remotes: Vec::new(),
@@ -765,6 +825,10 @@ impl Collection {
         walk(&self.decl.fields, name)
     }
 
+    fn generation_dir(&self) -> Result<PathBuf, Error> {
+        self.index.dir()
+    }
+
     fn upsert_lexical(&self, record: &Record) -> Result<(), Error> {
         if self.decl.encrypted {
             return Ok(());
@@ -777,7 +841,8 @@ impl Collection {
         #[cfg(not(feature = "find"))]
         {
             let _ = record;
-            index::mark_stale(&self.index_dir)
+            let dir = self.generation_dir()?;
+            index::mark_stale(&dir)
         }
     }
 
@@ -792,7 +857,8 @@ impl Collection {
         #[cfg(not(feature = "find"))]
         {
             let _ = id;
-            index::mark_stale(&self.index_dir)
+            let dir = self.generation_dir()?;
+            index::mark_stale(&dir)
         }
     }
 
@@ -839,9 +905,10 @@ impl Collection {
             return Ok(());
         }
         isolated::discard_recorded(&self.vault, &paths)?;
+        let dir = self.generation_dir()?;
         repair_index_after_discard(
             &self.vault,
-            &self.index_dir,
+            &dir,
             &self.journal_ids,
             #[cfg(feature = "find")]
             &self.search,
@@ -894,9 +961,10 @@ impl Collection {
                 };
                 let _ = isolated::discard_recorded(&self.vault, &paths);
                 if !paths.is_empty() {
+                    let dir = self.generation_dir()?;
                     let _ = repair_index_after_discard(
                         &self.vault,
-                        &self.index_dir,
+                        &dir,
                         &self.journal_ids,
                         #[cfg(feature = "find")]
                         &self.search,
@@ -961,11 +1029,12 @@ impl Collection {
             Kind::Journal => {
                 let mut maps =
                     crate::error::mutex(&self.journal_ids, "[Collection::add] lock journal ids")?;
+                let dir = self.generation_dir()?;
                 let (id, rel, rollback) = journal::insert_journal(
                     &self.vault,
                     &self.decl,
                     record.clone(),
-                    &self.index_dir,
+                    &dir,
                     &mut maps,
                 )?;
                 drop(maps);
@@ -1296,7 +1365,9 @@ impl Collection {
         if let Ok(mut maps) =
             crate::error::mutex(&self.journal_ids, "[Collection::add] rollback maps")
         {
-            let _ = index::forget_remembered(&self.index_dir, &mut maps, &self.decl.name, id);
+            if let Ok(dir) = self.generation_dir() {
+                let _ = index::forget_remembered(&dir, &mut maps, &self.decl.name, id);
+            }
             maps.forget_segment_line(&rollback.path);
         }
         if rollback.previous_len == 0 {
@@ -1838,6 +1909,37 @@ fn persist_written(vault: &Path, set: &BTreeSet<String>) -> Result<(), Error> {
     Ok(())
 }
 
+/// Prune orphan generations when no writer holds the lock. Skip if a writer
+/// is in the middle of `reindex` (its new generation is not yet `current`).
+fn try_prune_orphans(vault: &Path, root: &Path) -> Result<(), Error> {
+    let scheda = vault.join(".scheda");
+    fs::create_dir_all(&scheda).context("[Vault::open] create .scheda for prune")?;
+    store::restrict_dir(&scheda)?;
+    let lock_path = scheda.join("write.lock");
+    let file = File::options()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .context("[Vault::open] open write lock for prune")?;
+    store::restrict_file(&lock_path)?;
+    match file.try_lock() {
+        Ok(()) => {
+            let result = index::prune_generations(root);
+            if let Err(err) = file.unlock()
+                && result.is_ok()
+            {
+                return Err(err).context("[Vault::open] unlock write lock after prune");
+            }
+            result
+        }
+        Err(TryLockError::WouldBlock) => Ok(()),
+        Err(TryLockError::Error(err)) => Err(Error::new(io_code(&err), err.to_string())
+            .context("[Vault::open] lock write lock for prune")),
+    }
+}
+
 fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Vault] create .scheda for write lock")?;
@@ -2270,5 +2372,57 @@ mod tests {
             Vault::create_collection;
         let _: fn(&Vault) -> Result<(), Error> = Vault::begin;
         let _: fn(&Vault) -> Result<(), Error> = Vault::discard;
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn reindex_without_publish_keeps_old_generation_live() {
+        use crate::{FindQuery, RecordAdd};
+
+        let scratch = Scratch::new();
+        let writer = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+        writer.begin().unwrap();
+        let mut schema = Schema::default().with_version(1);
+        schema.kind = crate::Body::default().into();
+        writer.create_collection("c", schema, None).unwrap();
+        writer.commit("schema").unwrap();
+        let add: RecordAdd = serde_json::from_value(serde_json::json!({"fields": {}})).unwrap();
+        writer
+            .collection("c")
+            .unwrap()
+            .add("alpha", add, None)
+            .unwrap();
+        writer.reindex().unwrap();
+        let current = fs::read_to_string(writer.index_dir().join("current")).unwrap();
+        let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+        let before = reader
+            .collection("c")
+            .unwrap()
+            .find(&FindQuery::all(), 0, 10)
+            .unwrap();
+        assert_eq!(before.records.len(), 1);
+        let orphan = writer.reindex_without_publish().unwrap();
+        assert!(orphan.is_dir());
+        assert_eq!(
+            fs::read_to_string(writer.index_dir().join("current")).unwrap(),
+            current
+        );
+        let after = reader
+            .collection("c")
+            .unwrap()
+            .find(&FindQuery::all(), 0, 10)
+            .unwrap();
+        assert_eq!(after.records.len(), 1);
+        assert_eq!(
+            after.records[0].id.as_deref(),
+            before.records[0].id.as_deref()
+        );
+        drop(writer);
+        drop(reader);
+        let _ = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+        assert!(
+            !orphan.exists(),
+            "unpublished generation must be removed on the next open"
+        );
     }
 }

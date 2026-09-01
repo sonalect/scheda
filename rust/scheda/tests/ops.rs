@@ -153,8 +153,7 @@ fn writer_updates_map_human_edit_needs_reindex() {
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec_log("x"), None).unwrap();
-    let ids = vault
-        .index_dir()
+    let ids = live_index(&vault)
         .join("journal")
         .join("south_log")
         .join("ids");
@@ -177,7 +176,7 @@ fn missing_map_falls_back_to_scan() {
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
     collection.add("kept", rec_log("x"), None).unwrap();
-    let journal_index = vault.index_dir().join("journal");
+    let journal_index = live_index(&vault).join("journal");
     fs::remove_dir_all(&journal_index).unwrap();
     drop(vault);
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
@@ -259,8 +258,8 @@ fn ops_fixture_find_and_insert_and_reindex() {
     assert_eq!(counts.records_read, Some(OPS_JOURNAL + OPS_DOCS + 1));
     assert_eq!(counts.skipped_invalid, Some(0));
     assert_eq!(counts.segments_seen, Some(OPS_JOURNAL / 100 + 1));
-    let format = fs::read_to_string(vault.index_dir().join("format")).unwrap();
-    assert_eq!(format.trim(), "3");
+    let format = fs::read_to_string(live_index(&vault).join("format")).unwrap();
+    assert_eq!(format.trim(), "4");
     let mid_doc = OPS_DOCS / 2;
     let mid_title = format!("t{mid_doc}");
     let mid_id = format!("d{mid_doc:04}");
@@ -276,6 +275,14 @@ fn ops_fixture_find_and_insert_and_reindex() {
             .any(|hit| hit.id.as_deref() == Some(mid_id.as_str())),
         "hybrid search expected {mid_id} in k"
     );
+}
+
+fn live_index(vault: &Vault) -> PathBuf {
+    let root = vault.index_dir();
+    match fs::read_to_string(root.join("current")) {
+        Ok(name) => root.join(name.trim()),
+        Err(_) => root.to_path_buf(),
+    }
 }
 
 fn log_len(dir: &Path) -> usize {

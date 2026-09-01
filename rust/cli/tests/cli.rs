@@ -541,7 +541,12 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
     ]);
     assert_eq!(error_json(&invalid)["code"], "CODE_INVALID");
 
-    fs::write(scratch.vault().join(".scheda/index/format"), "999\n").unwrap();
+    let index = scratch.vault().join(".scheda").join("index");
+    let generation = match fs::read_to_string(index.join("current")) {
+        Ok(name) => index.join(name.trim()),
+        Err(_) => index,
+    };
+    fs::write(generation.join("format"), "999\n").unwrap();
     let unusable = run(&["--vault", &path, "search", "--query", &text_query("Alpha")]);
     assert_eq!(error_json(&unusable)["code"], "CODE_INDEX_VERSION");
 }

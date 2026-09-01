@@ -28,9 +28,9 @@ Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Reco
 
 The **library** calls the engine APIs. The caller never writes Tantivy or USearch files.
 
-- **Tantivy** creates and owns `{vault}/.scheda/index/lexical/` (`Index::create_in_dir` / open). Scheda only names fields and adds documents. On-disk layout is Tantivy’s (crate pin), not a Scheda spec.
+- **Tantivy** creates and owns `{vault}/.scheda/index/<generation>/lexical/` (`Index::create_in_dir` / open). Scheda only names fields and adds documents. On-disk layout is Tantivy’s (crate pin), not a Scheda spec.
 - **USearch** creates and owns the vector dump under `{vault}/.scheda/`. Scheda only passes dimensions, keys, and `f32` arrays. On-disk layout is USearch’s.
-- Scheda writes `{vault}/.scheda/index/format` (decimal version). Wrong version → `index_version` / empty `find`/`search`, not foreign ids.
+- Scheda writes `{vault}/.scheda/index/<generation>/format` (decimal version) and `{vault}/.scheda/index/current` (live generation name). Wrong version → `index_version` / empty `find`/`search`, not foreign ids.
 
 First write or `reindex` creates the engines if missing. `add` / `replace` update them. No LLM is used to create either index.
 

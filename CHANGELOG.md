@@ -8,6 +8,17 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **Breaking: generational Index.** `{vault}/.scheda/index/current` names the
+  live generation; `format`, `lexical/`, `vector/`, edges, ord, and `journal/`
+  live under `{vault}/.scheda/index/<generation>/`. `reindex` builds a new
+  generation and swaps `current` with one atomic write, so a reader that
+  opened before the rebuild keeps answering `find` and `search`. One previous
+  generation is kept; a reader older than that may see `index_missing` or
+  `index_lexical`. Format version is now `4`. An existing Vault with format
+  `3` (files directly in `index/`) is `index_version` until you run `reindex`.
+
 ## [0.8.0] - 2026-09-01
 
 ### Added
