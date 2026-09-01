@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-09-01
+
 ### Added
 
 - **`Embedder` / `Reranker` batch methods.** Traits now require
@@ -896,6 +898,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.8.0]
 - [0.7.1]
 - [0.7.0]
 - [0.6.0]
@@ -911,7 +914,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/amsokol/scheda/releases/tag/v0.8.0
 [0.7.1]: https://github.com/amsokol/scheda/releases/tag/v0.7.1
 [0.7.0]: https://github.com/amsokol/scheda/releases/tag/v0.7.0
 [0.6.0]: https://github.com/amsokol/scheda/releases/tag/v0.6.0
