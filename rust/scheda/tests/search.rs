@@ -557,6 +557,25 @@ fn rerank_limit_below_k_is_invalid() {
 }
 
 #[test]
+fn rerank_limit_below_k_is_invalid_when_search_would_return_nothing() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 20);
+    let empty = collection
+        .search(&q("zzzz-no-such-token", 3), None)
+        .unwrap();
+    assert!(empty.hits.is_empty());
+    let err = collection
+        .search(
+            &q("zzzz-no-such-token", 3).with_rerank_limit(2),
+            Some(&ScoreByIdReranker::new()),
+        )
+        .unwrap_err();
+    assert_invalid_rerank_limit(&err, 2, 3);
+}
+
+#[test]
 fn rerank_limit_larger_than_the_pool_matches_unset() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);

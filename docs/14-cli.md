@@ -47,7 +47,7 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 | `check` | |
 | `reindex` | |
 | `find` | [`--collections NAME,…`] `--filter JSON --offset N --count N` [`--include-raw`] |
-| `search` | [`--collections NAME,…`] `--query JSON` (or stdin) [`--include-raw`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`] |
+| `search` | [`--collections NAME,…`] `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`] |
 | `push` | |
 | `pull` | |
 | `sync` | |
@@ -78,6 +78,10 @@ LIB-12, LIB-22, LIB-23).
 `--reranker-api-key-env-var NAME`: read `NAME` and send
 `Authorization: Bearer`. Only with those two flags. Unset → no auth.
 Missing or empty var → `invalid`. Only on `search`. Unset → RRF.
+
+`--rerank-limit N`: `SearchQuery.rerank_limit`. Caps how many fused
+candidates reach the reranker. Unset → every fused hit is scored. `0`, or a
+value below `k`, is `invalid`. Ignored without a reranker.
 
 ```text
 scheda --vault ./vault \
@@ -120,7 +124,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `replace` | `--id ID --record JSON` (or stdin) [`--message TEXT`] |
 | `remove` | `--id ID` [`--message TEXT`] |
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. |
-| `search` | `--query JSON` (or stdin) [`--include-raw`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
+| `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 
 Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
 `history`, `replace`, `remove` (and `lines` on the library, not this CLI).

@@ -126,7 +126,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Hybrid search** — one `search` call that runs the lexical and vector legs when both are available, then fuses ranks with Reciprocal Rank Fusion (default) or caller merge weights. Optional reranker callback then reorders. The result is ordered ids and scores, not a model-written answer.
 
-**Reranker** — optional caller function on `search`: `score_many(query text, Records) →` numbers for a batch of at most `many_limit`, with `score` provided as that call with one Record. The library sorts by it and returns `k` hits. No model in Scheda. Without it, order is RRF. `many_limit` is a non-zero size.
+**Reranker** — optional caller function on `search`: `score_many(query text, Records) →` numbers for a batch of at most `many_limit`, with `score` provided as that call with one Record. The library sorts by it and returns `k` hits. No model in Scheda. Without it, order is RRF. `many_limit` is a non-zero size. How many fused candidates reach it is the caller's choice (`SearchQuery.rerank_limit`); unset means all of them.
 
 ---
 

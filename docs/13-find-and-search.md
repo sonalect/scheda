@@ -107,7 +107,7 @@ Steps:
 2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on `text` (`Must(filter)` if filtered). Top pool by score.
 3. Vector (weight > 0 and embedder set): `embed(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
 4. Fuse ranks with RRF. Candidate pool is **larger than `k`**: at least `max(k, 50)` from the fused list (or all fused hits if fewer).
-5. If a **reranker** is passed to `search`: `get` each pooled Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. The whole pool is scored, so the cross-encoder runs at least 50 times even for a small `k`; on a CPU that is seconds, not milliseconds. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
+5. If a **reranker** is passed to `search`: cut the fused list to `rerank_limit` when it is set, then `get` each remaining Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
 
 Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids.
@@ -123,6 +123,8 @@ many_limit → non-zero size
 ```
 
 `None` → order is RRF. Network inside that function is the program’s problem. The library does not load a ranking model (QRY-5).
+
+**How many candidates it sees is the caller’s choice.** Fusion depth and rerank depth answer two different questions: fusing is cheap and wants to be wide, while a cross-encoder costs tens of milliseconds per pair on a CPU and wants to be as narrow as the caller can accept. `SearchQuery.rerank_limit` keeps the pool at `max(k, 50)` and cuts only the list the reranker scores, before the library opens those Records, so it saves file reads as well as model calls. Unset scores every fused hit. `0` is `invalid`, because scoring nothing is what passing no reranker already means. A value below `k` is `invalid`, because a page where some hits carry `rerank_score` and some do not cannot be told from a truncated one.
 
 CLI hook on `search` (`14`): `--reranker-cohere-url` plus
 `--reranker-model` (Cohere/Jina `POST` `{URL}rerank`). Both HTTP flags

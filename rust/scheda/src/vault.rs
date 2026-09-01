@@ -1619,6 +1619,19 @@ impl QueryCtx<'_> {
         if decls.is_empty() {
             return Ok(SearchHits::default());
         }
+        let k = match query.k {
+            None | Some(0) => 10,
+            Some(n) => n as usize,
+        };
+        if reranker.is_some()
+            && let Some(limit) = query.rerank_limit
+        {
+            let limit = limit as usize;
+            ensure!(
+                limit >= k,
+                Error::invalid(format!("rerank_limit {limit} is below k {k}"))
+            );
+        }
         let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
         let allowed = if filter.kind.is_none() || query::is_unconstrained(filter) {
             None
@@ -1633,10 +1646,6 @@ impl QueryCtx<'_> {
         let mut hits = self
             .engine
             .search(&collections, query, embedder, allowed.as_ref())?;
-        let k = match query.k {
-            None | Some(0) => 10,
-            Some(n) => n as usize,
-        };
         let include_raw = query.include_raw == Some(true);
         let Some(reranker) = reranker else {
             hits.hits.truncate(k);
@@ -1646,12 +1655,7 @@ impl QueryCtx<'_> {
             return Ok(hits);
         };
         if let Some(limit) = query.rerank_limit {
-            let limit = limit as usize;
-            ensure!(
-                limit >= k,
-                Error::invalid(format!("rerank_limit {limit} is below k {k}"))
-            );
-            hits.hits.truncate(limit);
+            hits.hits.truncate(limit as usize);
         }
         let text = query.text.as_deref().unwrap_or("");
         let mut records = Vec::with_capacity(hits.hits.len());
