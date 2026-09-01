@@ -3,6 +3,7 @@
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -89,12 +90,12 @@ impl Embedder for OpsEmbedder {
         "ops-stub"
     }
 
-    fn dimensions(&self) -> usize {
-        8
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(8).unwrap()
     }
 
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {

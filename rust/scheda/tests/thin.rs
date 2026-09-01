@@ -2,6 +2,8 @@
 //! marked stale. Collection names here must not appear in `rust/scheda/src`.
 
 use std::fs;
+#[cfg(not(feature = "search"))]
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process;
 #[cfg(not(feature = "search"))]
@@ -56,12 +58,12 @@ impl Embedder for StubEmbedder {
         "stub"
     }
 
-    fn dimensions(&self) -> usize {
-        4
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
     }
 
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {

@@ -1643,18 +1643,13 @@ impl QueryCtx<'_> {
         }
         let refs: Vec<&Record> = records.iter().collect();
         let scores = crate::embed::score_all(reranker, text, &refs)?;
-        if scores.len() != records.len() || scores.len() != hits.hits.len() {
-            bail!(Error::invalid(
-                "reranker score_many must return one score per record"
-            ));
-        }
         let mut scored: Vec<_> = scores
             .into_iter()
             .zip(hits.hits)
             .zip(records)
             .map(|((score, mut hit), record)| {
                 if include_raw {
-                    hit.raw.clone_from(&record.raw);
+                    hit.raw = record.raw;
                 }
                 (score, hit)
             })

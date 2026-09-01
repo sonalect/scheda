@@ -3,6 +3,7 @@
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
 use std::fs;
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
@@ -73,12 +74,12 @@ impl Embedder for MapEmbedder {
         "c9-stub"
     }
 
-    fn dimensions(&self) -> usize {
-        4
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
     }
 
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
@@ -335,8 +336,8 @@ fn hybrid_hit_carries_both_scores() {
 struct PreferIdReranker(String);
 
 impl Reranker for PreferIdReranker {
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn score(&self, _query: &str, record: &Record) -> Result<f64, scheda::Error> {
@@ -479,12 +480,12 @@ impl Embedder for FailingEmbedder {
         "fail-stub"
     }
 
-    fn dimensions(&self) -> usize {
-        4
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
     }
 
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn embed(&self, _: &str) -> Result<Vec<f32>, scheda::Error> {
@@ -510,7 +511,7 @@ fn failed_embed_rolls_back_the_new_record() {
 }
 
 struct ProbeEmbedder {
-    many_limit: usize,
+    many_limit: NonZeroUsize,
     embed_calls: AtomicU64,
     many_calls: AtomicU64,
 }
@@ -518,7 +519,7 @@ struct ProbeEmbedder {
 impl ProbeEmbedder {
     fn new(many_limit: usize) -> Arc<Self> {
         Arc::new(Self {
-            many_limit,
+            many_limit: NonZeroUsize::new(many_limit).unwrap(),
             embed_calls: AtomicU64::new(0),
             many_calls: AtomicU64::new(0),
         })
@@ -537,11 +538,11 @@ impl Embedder for ProbeEmbedder {
         "probe"
     }
 
-    fn dimensions(&self) -> usize {
-        4
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
     }
 
-    fn many_limit(&self) -> usize {
+    fn many_limit(&self) -> NonZeroUsize {
         self.many_limit
     }
 
@@ -556,32 +557,8 @@ impl Embedder for ProbeEmbedder {
     }
 }
 
-struct ZeroLimitEmbedder;
-
-impl Embedder for ZeroLimitEmbedder {
-    fn model_id(&self) -> &str {
-        "zero"
-    }
-
-    fn dimensions(&self) -> usize {
-        4
-    }
-
-    fn many_limit(&self) -> usize {
-        0
-    }
-
-    fn embed(&self, _: &str) -> Result<Vec<f32>, scheda::Error> {
-        Ok(vec![0.0; 4])
-    }
-
-    fn embed_many(&self, _: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
-        Ok(Vec::new())
-    }
-}
-
 struct ProbeReranker {
-    many_limit: usize,
+    many_limit: NonZeroUsize,
     score_calls: AtomicU64,
     many_calls: AtomicU64,
 }
@@ -589,7 +566,7 @@ struct ProbeReranker {
 impl ProbeReranker {
     fn new(many_limit: usize) -> Self {
         Self {
-            many_limit,
+            many_limit: NonZeroUsize::new(many_limit).unwrap(),
             score_calls: AtomicU64::new(0),
             many_calls: AtomicU64::new(0),
         }
@@ -604,7 +581,7 @@ impl ProbeReranker {
 }
 
 impl Reranker for ProbeReranker {
-    fn many_limit(&self) -> usize {
+    fn many_limit(&self) -> NonZeroUsize {
         self.many_limit
     }
 
@@ -617,39 +594,6 @@ impl Reranker for ProbeReranker {
         self.many_calls.fetch_add(1, Ordering::Relaxed);
         Ok(vec![1.0; records.len()])
     }
-}
-
-struct ZeroLimitReranker;
-
-impl Reranker for ZeroLimitReranker {
-    fn many_limit(&self) -> usize {
-        0
-    }
-
-    fn score(&self, _: &str, _: &Record) -> Result<f64, scheda::Error> {
-        Ok(1.0)
-    }
-
-    fn score_many(&self, _: &str, _: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
-        Ok(Vec::new())
-    }
-}
-
-#[test]
-fn zero_many_limit_is_invalid() {
-    let scratch = Scratch::new();
-    let vault = open_tokens(&scratch, Some(Arc::new(ZeroLimitEmbedder)));
-    let collection = vault.collection("token_notes").unwrap();
-    let err = collection
-        .add("fresh", rec(json!({"title": "kryptonite"})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    assert!(
-        err.message
-            .as_deref()
-            .is_some_and(|message| message.contains("many_limit")),
-        "{err:?}"
-    );
 }
 
 #[test]
@@ -740,17 +684,6 @@ fn score_uses_single_or_many_by_limit() {
     let one = ProbeReranker::new(1);
     collection.search(&q("kryptonite", 2), Some(&one)).unwrap();
     assert_eq!(one.counts(), (2, 0));
-
-    let err = collection
-        .search(&q("kryptonite", 2), Some(&ZeroLimitReranker))
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    assert!(
-        err.message
-            .as_deref()
-            .is_some_and(|message| message.contains("many_limit")),
-        "{err:?}"
-    );
 }
 
 #[test]

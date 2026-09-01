@@ -1,6 +1,7 @@
 //! HTTP embedder / reranker: OpenAI embeddings and Cohere/Jina rerank.
 
 use std::env;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -17,11 +18,8 @@ pub fn load_embedder(
     key_env: Option<&str>,
 ) -> Result<Arc<dyn Embedder>, Error> {
     let model = require_model(model)?;
-    if dimensions == 0 {
-        return Err(Error::invalid(
-            "--embedder-dimensions must be a positive integer",
-        ));
-    }
+    let dimensions = NonZeroUsize::new(dimensions)
+        .ok_or_else(|| Error::invalid("--embedder-dimensions must be a positive integer"))?;
     let url = join_url(url, EMBEDDINGS_LEAF)?;
     let model_id = format!("{url} {model}");
     Ok(Arc::new(OpenAiEmbedder {
@@ -96,7 +94,7 @@ struct OpenAiEmbedder {
     model: String,
     model_id: String,
     key: Option<String>,
-    dimensions: usize,
+    dimensions: NonZeroUsize,
 }
 
 impl Embedder for OpenAiEmbedder {
@@ -104,12 +102,16 @@ impl Embedder for OpenAiEmbedder {
         &self.model_id
     }
 
-    fn dimensions(&self) -> usize {
+    fn dimensions(&self) -> NonZeroUsize {
         self.dimensions
     }
 
-    fn many_limit(&self) -> usize {
-        2048
+    fn many_limit(&self) -> NonZeroUsize {
+        const LIMIT: NonZeroUsize = match NonZeroUsize::new(2048) {
+            Some(n) => n,
+            None => unreachable!(),
+        };
+        LIMIT
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
@@ -124,7 +126,7 @@ impl Embedder for OpenAiEmbedder {
             body,
             "[OpenAiEmbedder::embed] POST embeddings",
         )?;
-        parse_embeddings(&value, 1, self.dimensions)?
+        parse_embeddings(&value, 1, self.dimensions.get())?
             .into_iter()
             .next()
             .ok_or_else(|| Error::invalid("embeddings response has no data"))
@@ -145,7 +147,7 @@ impl Embedder for OpenAiEmbedder {
             body,
             "[OpenAiEmbedder::embed_many] POST embeddings",
         )?;
-        parse_embeddings(&value, texts.len(), self.dimensions)
+        parse_embeddings(&value, texts.len(), self.dimensions.get())
     }
 }
 
@@ -157,8 +159,12 @@ struct CohereReranker {
 }
 
 impl Reranker for CohereReranker {
-    fn many_limit(&self) -> usize {
-        1000
+    fn many_limit(&self) -> NonZeroUsize {
+        const LIMIT: NonZeroUsize = match NonZeroUsize::new(1000) {
+            Some(n) => n,
+            None => unreachable!(),
+        };
+        LIMIT
     }
 
     fn score(&self, query: &str, record: &Record) -> Result<f64, Error> {

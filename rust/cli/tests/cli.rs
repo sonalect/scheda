@@ -4,6 +4,7 @@
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::{self, Command};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -1405,12 +1406,12 @@ impl Embedder for HttpEmbedder {
         &self.model_id
     }
 
-    fn dimensions(&self) -> usize {
-        4
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
     }
 
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
@@ -1492,8 +1493,8 @@ impl HttpReranker {
 }
 
 impl Reranker for HttpReranker {
-    fn many_limit(&self) -> usize {
-        32
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
     }
 
     fn score(&self, query: &str, record: &Record) -> Result<f64, scheda::Error> {

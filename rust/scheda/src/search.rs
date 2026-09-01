@@ -616,10 +616,7 @@ impl SearchEngine {
         let pool = k.max(50);
         let query_vec = if vector_weight > 0.0 {
             match embedder {
-                Some(embedder) => {
-                    crate::embed::require_many_limit(embedder.many_limit(), "embedder")?;
-                    Some(embedder.embed(text)?)
-                }
+                Some(embedder) => Some(embedder.embed(text)?),
                 None => None,
             }
         } else {
@@ -929,10 +926,7 @@ fn upsert_vector(
         return Ok(());
     };
     let path = record.path.clone().unwrap_or_default();
-    let dimensions = embedder.dimensions();
-    if dimensions == 0 {
-        return Ok(());
-    }
+    let dimensions = embedder.dimensions().get();
     let model_id = embedder.model_id();
     let slots = vector_slots(decl);
     if inner.vector.is_none() {
@@ -995,9 +989,6 @@ fn embed_field_vectors(
     let Some(embedder) = embedder else {
         return Ok(Vec::new());
     };
-    if embedder.dimensions() == 0 {
-        return Ok(Vec::new());
-    }
     let mut fields = Vec::new();
     let mut texts = Vec::new();
     for (field, text) in pieces {
@@ -1160,7 +1151,7 @@ fn vector_search(
     let Some(store) = inner.vector.as_ref() else {
         return Ok(Vec::new());
     };
-    if store.model_id != embedder.model_id() || store.dimensions != embedder.dimensions() {
+    if store.model_id != embedder.model_id() || store.dimensions != embedder.dimensions().get() {
         return Ok(Vec::new());
     }
     if store.ann.is_empty() {

@@ -5,6 +5,7 @@
 //! `tokenizer.json`, `model.safetensors`). Hidden names are ignored.
 //! Extra files (README) are allowed. Missing required files is `invalid`.
 
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -19,10 +20,8 @@ pub fn load_embedder(dir: &Path) -> Result<Arc<dyn Embedder>, Error> {
     require_model_dir(dir)?;
     let model = StaticModel::from_pretrained(dir, None, None, None)
         .map_err(|err| Error::invalid(err.to_string()))?;
-    let dimensions = model.encode_single("x").len();
-    if dimensions == 0 {
-        return Err(Error::invalid("model2vec embeddings have no dimensions"));
-    }
+    let dimensions = NonZeroUsize::new(model.encode_single("x").len())
+        .ok_or_else(|| Error::invalid("model2vec embeddings have no dimensions"))?;
     Ok(Arc::new(Model2VecEmbedder {
         model_id: canonical_id(dir),
         dimensions,
@@ -56,7 +55,7 @@ fn canonical_id(dir: &Path) -> String {
 
 struct Model2VecEmbedder {
     model_id: String,
-    dimensions: usize,
+    dimensions: NonZeroUsize,
     model: StaticModel,
 }
 
@@ -65,12 +64,16 @@ impl Embedder for Model2VecEmbedder {
         &self.model_id
     }
 
-    fn dimensions(&self) -> usize {
+    fn dimensions(&self) -> NonZeroUsize {
         self.dimensions
     }
 
-    fn many_limit(&self) -> usize {
-        1024
+    fn many_limit(&self) -> NonZeroUsize {
+        const LIMIT: NonZeroUsize = match NonZeroUsize::new(1024) {
+            Some(n) => n,
+            None => unreachable!(),
+        };
+        LIMIT
     }
 
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {

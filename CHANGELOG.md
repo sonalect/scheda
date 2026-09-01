@@ -10,6 +10,8 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- **Breaking: `Embedder` / `Reranker` require only the batch method.** Implement `embed_many` / `score_many`. `embed` / `score` have default bodies that call the batch method with one element and fail with `invalid` if the result is not exactly one value. An override of the single-item method must stay consistent with the batch path: the same text must yield the same vector whether it travelled alone or in a padded batch, or the vector space splits with no error. `many_limit` and `Embedder::dimensions` are `NonZeroUsize`. A zero dimension no longer silently turns the vector leg off; absence stays `None` for the embedder.
+
 - **Breaking: generational Index.** `{vault}/.scheda/index/current` names the
   live generation; `format`, `lexical/`, `vector/`, edges, ord, and `journal/`
   live under `{vault}/.scheda/index/<generation>/`. `reindex` builds a new
