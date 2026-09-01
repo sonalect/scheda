@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.60, 31 August 2026.
+Document 14 of the Scheda package. Version 0.61, 1 September 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -26,7 +26,7 @@ Unset reranker → RRF order.
 | `--embedder-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP embedder flags. Unset → no auth. Missing or empty var → `invalid`. Not with `--model2vec-embedder`. |
 | `--model2vec-embedder DIR` | Directory with Model2Vec files (`config.json`, `tokenizer.json`, `model.safetensors`). CLI loads them (`model2vec-rs`, no Hub download), implements `Embedder`, passes it to `open`. Missing a required file → `invalid`. Extra files (README) are allowed. Hidden names are ignored. Not with the HTTP embedder flags. |
 
-HTTP embedder body is `{ "model": <embedder-model>, "input": "<text>" }`.
+HTTP embedder body is `{ "model": <embedder-model>, "input": "<text>" }` for one text, or `"input": ["…", …]` for a batch of at most 2048. Rerank body is `{ "model": <reranker-model>, "query": "…", "documents": ["…", …] }` for one Record or a batch of at most 1000.
 
 Both flags are specification ahead of code: the CLI has no secret flag of any kind today, so it cannot open a Vault with an encrypted collection at all. What is decided is the shape they must take when they land, and the work is `12` P16. There is no flag that takes the encryption secret as its value, and adding one would be a defect: argv is readable by every process on the machine, so a passphrase on the command line is a passphrase published to the host and left in the shell history. The secret arrives by environment variable or by file path, the same way the embedder API key does. Both flags together → `invalid`. Neither: the handle has no secret, plain collections work, and an encrypted one fails with `crypto` (ISO-5). In a build without the `encrypt` feature either flag is `unsupported_encryption` and nothing is created (SCH-16).
 

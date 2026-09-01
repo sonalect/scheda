@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.52, 31 August 2026.
+Document 2 of the Scheda package. Version 0.53, 1 September 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -122,11 +122,11 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Vector search** — in-process ANN nearest neighbours (HNSW or equivalent) over embeddings of fields and body that Schema marked for vectors. Embedding weights are not stored in the Vault. An external vector database is not the Index.
 
-**Embedder** — a caller-supplied function (or equivalent) that turns marked text into a vector. Optional. Without it, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network.
+**Embedder** — a caller-supplied function (or equivalent) that turns marked text into a vector. Optional. Without it, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network. One text uses `embed`; several use `embed_many` in chunks of `many_limit`. `many_limit` of 0 is invalid.
 
 **Hybrid search** — one `search` call that runs the lexical and vector legs when both are available, then fuses ranks with Reciprocal Rank Fusion (default) or caller merge weights. Optional reranker callback then reorders. The result is ordered ids and scores, not a model-written answer.
 
-**Reranker** — optional caller function on `search`: `score(query text, Record) →` number. The library sorts by it and returns `k` hits. No model in Scheda. Without it, order is RRF.
+**Reranker** — optional caller function on `search`: `score(query text, Record) →` number, or `score_many` for a batch of at most `many_limit`. The library sorts by it and returns `k` hits. No model in Scheda. Without it, order is RRF. `many_limit` of 0 is invalid.
 
 ---
 

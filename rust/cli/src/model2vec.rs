@@ -69,7 +69,19 @@ impl Embedder for Model2VecEmbedder {
         self.dimensions
     }
 
+    fn many_limit(&self) -> usize {
+        1024
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
         Ok(self.model.encode_single(text))
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let owned: Vec<String> = texts.iter().map(|text| (*text).to_owned()).collect();
+        Ok(self.model.encode(&owned))
     }
 }

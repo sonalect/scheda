@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.21, 31 August 2026.
+Document 13 of the Scheda package. Version 0.22, 1 September 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -60,9 +60,11 @@ The **program that links the library** passes a function at `open`:
 
 ```text
 embed(text) → []float32
+embed_many(texts) → [][]float32
+many_limit → integer > 0
 ```
 
-plus `model_id` and `dimensions`. No function → vector leg off; `find`, BM25, and writes still work. Network inside that function is the program’s problem.
+plus `model_id` and `dimensions`. No function → vector leg off; `find`, BM25, and writes still work. Network inside that function is the program’s problem. `many_limit` of 0 is `invalid`.
 
 CLI hook (`14`): `--embedder-openai-url` plus `--embedder-model` and
 `--embedder-dimensions` (OpenAI `POST` `{URL}embeddings`), or
@@ -78,7 +80,7 @@ Scheda does not ship weights or a chat LLM.
 For each Record, for **each** field (and body) that is vector-eligible (`string` / `string_list` / body / edge text; not `exclude_vector`):
 
 1. Take that field’s text (`string_list`: join values for that field).
-2. Call `embed` **once per field**.
+2. Call `embed` when that Record has one non-empty vector field, or when `many_limit` is 1. Otherwise call `embed_many` in chunks of `many_limit`. A leftover chunk of one text uses `embed`. `many_limit` of 0 is `invalid`.
 3. Store one vector in USearch. Key: Record `id` + field name (body → `body`).
 
 Do not glue title+body+other fields into one blob. One field, one vector.
@@ -99,9 +101,9 @@ Steps:
 
 1. Resolve `collections` as in `find`. If `filter` is set: Tantivy runs `Filter` → allow-set of `(collection, id)`s. Both legs search **only** that set. Unset `filter` → the selected collections, not other collections in the same Index.
 2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on `text` (`Must(filter)` if filtered). Top pool by score.
-3. Vector (weight > 0 and embedder set): `embed(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
+3. Vector (weight > 0 and embedder set): `embed(text)` once. `many_limit` of 0 is `invalid`. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
 4. Fuse ranks with RRF. Candidate pool is **larger than `k`**: at least `max(k, 50)` from the fused list (or all fused hits if fewer).
-5. If a **reranker** is passed to `search`: `get` each pooled Record; call `score(query.text, record)` once per candidate; sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
+5. If a **reranker** is passed to `search`: `get` each pooled Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. `many_limit` of 0 is `invalid`. If no reranker: return the fused list truncated to `k` (no `rerank_score`).
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
 
 Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids.
@@ -112,6 +114,8 @@ Not a model inside Scheda. Not a proto field. Same idea as the embedder: the **p
 
 ```text
 score(query_text, record) → float
+score_many(query_text, records) → []float
+many_limit → integer > 0
 ```
 
 `None` → order is RRF. Network inside that function is the program’s problem. The library does not load a ranking model (QRY-5).

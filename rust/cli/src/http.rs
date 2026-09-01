@@ -108,6 +108,10 @@ impl Embedder for OpenAiEmbedder {
         self.dimensions
     }
 
+    fn many_limit(&self) -> usize {
+        2048
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
         let body = json!({
             "model": self.model,
@@ -120,31 +124,28 @@ impl Embedder for OpenAiEmbedder {
             body,
             "[OpenAiEmbedder::embed] POST embeddings",
         )?;
-        let data = value
-            .get("data")
-            .and_then(Value::as_array)
-            .and_then(|rows| rows.first())
-            .ok_or_else(|| Error::invalid("embeddings response has no data"))?;
-        let embedding = data
-            .get("embedding")
-            .and_then(Value::as_array)
-            .ok_or_else(|| Error::invalid("embeddings response has no embedding"))?;
-        let mut vector = Vec::with_capacity(embedding.len());
-        for item in embedding {
-            let Some(n) = item.as_f64() else {
-                return Err(Error::invalid("embeddings response is not float32"));
-            };
-            vector.push(n as f32);
+        parse_embeddings(&value, 1, self.dimensions)?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid("embeddings response has no data"))
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
         }
-        if vector.is_empty() {
-            return Err(Error::invalid("embeddings response is empty"));
-        }
-        if vector.len() != self.dimensions {
-            return Err(Error::invalid(
-                "embedding length does not match --embedder-dimensions",
-            ));
-        }
-        Ok(vector)
+        let body = json!({
+            "model": self.model,
+            "input": texts,
+        });
+        let value = post_json(
+            &self.agent,
+            &self.url,
+            self.key.as_deref(),
+            body,
+            "[OpenAiEmbedder::embed_many] POST embeddings",
+        )?;
+        parse_embeddings(&value, texts.len(), self.dimensions)
     }
 }
 
@@ -156,20 +157,25 @@ struct CohereReranker {
 }
 
 impl Reranker for CohereReranker {
+    fn many_limit(&self) -> usize {
+        1000
+    }
+
     fn score(&self, query: &str, record: &Record) -> Result<f64, Error> {
-        let scores = self.score_many(query, std::slice::from_ref(record))?;
+        let scores = self.score_many(query, &[record])?;
         scores
             .into_iter()
             .next()
             .ok_or_else(|| Error::invalid("rerank response has no relevance_score"))
     }
 
-    fn score_many(&self, query: &str, records: &[Record]) -> Result<Vec<f64>, Error> {
+    fn score_many(&self, query: &str, records: &[&Record]) -> Result<Vec<f64>, Error> {
         if records.is_empty() {
             return Ok(Vec::new());
         }
         let documents = records
             .iter()
+            .copied()
             .map(document_text)
             .collect::<Result<Vec<_>, _>>()?;
         let body = json!({
@@ -211,6 +217,52 @@ impl Reranker for CohereReranker {
             })
             .collect()
     }
+}
+
+fn parse_embeddings(
+    value: &Value,
+    count: usize,
+    dimensions: usize,
+) -> Result<Vec<Vec<f32>>, Error> {
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| Error::invalid("embeddings response has no data"))?;
+    let mut slots: Vec<Option<Vec<f32>>> = vec![None; count];
+    for (i, row) in data.iter().enumerate() {
+        let index = row
+            .get("index")
+            .and_then(Value::as_u64)
+            .map(|n| n as usize)
+            .unwrap_or(i);
+        let embedding = row
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(|| Error::invalid("embeddings response has no embedding"))?;
+        let mut vector = Vec::with_capacity(embedding.len());
+        for item in embedding {
+            let Some(n) = item.as_f64() else {
+                return Err(Error::invalid("embeddings response is not float32"));
+            };
+            vector.push(n as f32);
+        }
+        if vector.is_empty() {
+            return Err(Error::invalid("embeddings response is empty"));
+        }
+        if vector.len() != dimensions {
+            return Err(Error::invalid(
+                "embedding length does not match --embedder-dimensions",
+            ));
+        }
+        let Some(slot) = slots.get_mut(index) else {
+            return Err(Error::invalid("embeddings response index is out of range"));
+        };
+        *slot = Some(vector);
+    }
+    slots
+        .into_iter()
+        .map(|vector| vector.ok_or_else(|| Error::invalid("embeddings response is missing a text")))
+        .collect()
 }
 
 fn document_text(record: &Record) -> Result<String, Error> {

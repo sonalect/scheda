@@ -77,6 +77,10 @@ impl Embedder for MapEmbedder {
         4
     }
 
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
         for (key, vector) in &self.pairs {
             if text == key {
@@ -84,6 +88,10 @@ impl Embedder for MapEmbedder {
             }
         }
         Ok(vec![0.0, 1.0, 0.0, 0.0])
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        texts.iter().map(|text| self.embed(text)).collect()
     }
 }
 
@@ -327,12 +335,23 @@ fn hybrid_hit_carries_both_scores() {
 struct PreferIdReranker(String);
 
 impl Reranker for PreferIdReranker {
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn score(&self, _query: &str, record: &Record) -> Result<f64, scheda::Error> {
         Ok(if record.id.as_deref() == Some(self.0.as_str()) {
             10.0
         } else {
             0.0
         })
+    }
+
+    fn score_many(&self, query: &str, records: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
+        records
+            .iter()
+            .map(|record| self.score(query, record))
+            .collect()
     }
 }
 
@@ -464,7 +483,15 @@ impl Embedder for FailingEmbedder {
         4
     }
 
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn embed(&self, _: &str) -> Result<Vec<f32>, scheda::Error> {
+        Err(scheda::Error::invalid("embed failed"))
+    }
+
+    fn embed_many(&self, _: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
         Err(scheda::Error::invalid("embed failed"))
     }
 }
@@ -480,6 +507,250 @@ fn failed_embed_rolls_back_the_new_record() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let missing = collection.get("fresh").unwrap_err();
     assert_eq!(missing.known_code(), Some(Code::NotFound));
+}
+
+struct ProbeEmbedder {
+    many_limit: usize,
+    embed_calls: AtomicU64,
+    many_calls: AtomicU64,
+}
+
+impl ProbeEmbedder {
+    fn new(many_limit: usize) -> Arc<Self> {
+        Arc::new(Self {
+            many_limit,
+            embed_calls: AtomicU64::new(0),
+            many_calls: AtomicU64::new(0),
+        })
+    }
+
+    fn counts(&self) -> (u64, u64) {
+        (
+            self.embed_calls.load(Ordering::Relaxed),
+            self.many_calls.load(Ordering::Relaxed),
+        )
+    }
+}
+
+impl Embedder for ProbeEmbedder {
+    fn model_id(&self) -> &str {
+        "probe"
+    }
+
+    fn dimensions(&self) -> usize {
+        4
+    }
+
+    fn many_limit(&self) -> usize {
+        self.many_limit
+    }
+
+    fn embed(&self, _: &str) -> Result<Vec<f32>, scheda::Error> {
+        self.embed_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(vec![1.0, 0.0, 0.0, 0.0])
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        self.many_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(vec![vec![1.0, 0.0, 0.0, 0.0]; texts.len()])
+    }
+}
+
+struct ZeroLimitEmbedder;
+
+impl Embedder for ZeroLimitEmbedder {
+    fn model_id(&self) -> &str {
+        "zero"
+    }
+
+    fn dimensions(&self) -> usize {
+        4
+    }
+
+    fn many_limit(&self) -> usize {
+        0
+    }
+
+    fn embed(&self, _: &str) -> Result<Vec<f32>, scheda::Error> {
+        Ok(vec![0.0; 4])
+    }
+
+    fn embed_many(&self, _: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        Ok(Vec::new())
+    }
+}
+
+struct ProbeReranker {
+    many_limit: usize,
+    score_calls: AtomicU64,
+    many_calls: AtomicU64,
+}
+
+impl ProbeReranker {
+    fn new(many_limit: usize) -> Self {
+        Self {
+            many_limit,
+            score_calls: AtomicU64::new(0),
+            many_calls: AtomicU64::new(0),
+        }
+    }
+
+    fn counts(&self) -> (u64, u64) {
+        (
+            self.score_calls.load(Ordering::Relaxed),
+            self.many_calls.load(Ordering::Relaxed),
+        )
+    }
+}
+
+impl Reranker for ProbeReranker {
+    fn many_limit(&self) -> usize {
+        self.many_limit
+    }
+
+    fn score(&self, _: &str, _: &Record) -> Result<f64, scheda::Error> {
+        self.score_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(1.0)
+    }
+
+    fn score_many(&self, _: &str, records: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
+        self.many_calls.fetch_add(1, Ordering::Relaxed);
+        Ok(vec![1.0; records.len()])
+    }
+}
+
+struct ZeroLimitReranker;
+
+impl Reranker for ZeroLimitReranker {
+    fn many_limit(&self) -> usize {
+        0
+    }
+
+    fn score(&self, _: &str, _: &Record) -> Result<f64, scheda::Error> {
+        Ok(1.0)
+    }
+
+    fn score_many(&self, _: &str, _: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
+        Ok(Vec::new())
+    }
+}
+
+#[test]
+fn zero_many_limit_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, Some(Arc::new(ZeroLimitEmbedder)));
+    let collection = vault.collection("token_notes").unwrap();
+    let err = collection
+        .add("fresh", rec(json!({"title": "kryptonite"})), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(
+        err.message
+            .as_deref()
+            .is_some_and(|message| message.contains("many_limit")),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn embed_uses_single_or_many_by_limit() {
+    let one = ProbeEmbedder::new(32);
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, Some(Arc::clone(&one) as Arc<dyn Embedder>));
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add("one", rec(json!({"title": "kryptonite"})), None)
+        .unwrap();
+    assert_eq!(one.counts(), (1, 0));
+
+    let many = ProbeEmbedder::new(32);
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, Some(Arc::clone(&many) as Arc<dyn Embedder>));
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add(
+            "two",
+            rec(json!({"title": "kryptonite", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(many.counts(), (0, 1));
+
+    let limit_one = ProbeEmbedder::new(1);
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, Some(Arc::clone(&limit_one) as Arc<dyn Embedder>));
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add(
+            "loop",
+            rec(json!({"title": "kryptonite", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(limit_one.counts(), (2, 0));
+
+    let leftover = ProbeEmbedder::new(2);
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema(
+        "tokens.yaml",
+        "name: token_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n  - name: extra\n    string: {}\n",
+    );
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&leftover) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add(
+            "three",
+            rec(json!({"title": "kryptonite", "tag": "red", "extra": "x"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(leftover.counts(), (1, 1));
+}
+
+#[test]
+fn score_uses_single_or_many_by_limit() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add("first", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    collection
+        .add(
+            "second",
+            rec(json!({"title": "kryptonite extra mention"})),
+            None,
+        )
+        .unwrap();
+
+    let many = ProbeReranker::new(32);
+    collection.search(&q("kryptonite", 2), Some(&many)).unwrap();
+    assert_eq!(many.counts(), (0, 1));
+
+    let one = ProbeReranker::new(1);
+    collection.search(&q("kryptonite", 2), Some(&one)).unwrap();
+    assert_eq!(one.counts(), (2, 0));
+
+    let err = collection
+        .search(&q("kryptonite", 2), Some(&ZeroLimitReranker))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(
+        err.message
+            .as_deref()
+            .is_some_and(|message| message.contains("many_limit")),
+        "{err:?}"
+    );
 }
 
 #[test]

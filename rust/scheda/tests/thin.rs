@@ -60,8 +60,16 @@ impl Embedder for StubEmbedder {
         4
     }
 
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn embed(&self, _text: &str) -> Result<Vec<f32>, Error> {
         Ok(vec![0.0; 4])
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+        texts.iter().map(|text| self.embed(text)).collect()
     }
 }
 

@@ -1570,7 +1570,8 @@ impl QueryCtx<'_> {
                 hit.id.as_deref().unwrap_or(""),
             )?);
         }
-        let scores = reranker.score_many(text, &records)?;
+        let refs: Vec<&Record> = records.iter().collect();
+        let scores = crate::embed::score_all(reranker, text, &refs)?;
         if scores.len() != records.len() || scores.len() != hits.hits.len() {
             bail!(Error::invalid(
                 "reranker score_many must return one score per record"

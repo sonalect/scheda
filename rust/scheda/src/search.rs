@@ -596,7 +596,10 @@ impl SearchEngine {
         let pool = k.max(50);
         let query_vec = if vector_weight > 0.0 {
             match embedder {
-                Some(embedder) => Some(embedder.embed(text)?),
+                Some(embedder) => {
+                    crate::embed::require_many_limit(embedder.many_limit(), "embedder")?;
+                    Some(embedder.embed(text)?)
+                }
                 None => None,
             }
         } else {
@@ -971,14 +974,18 @@ fn embed_field_vectors(
     if embedder.dimensions() == 0 {
         return Ok(Vec::new());
     }
-    let mut out = Vec::new();
+    let mut fields = Vec::new();
+    let mut texts = Vec::new();
     for (field, text) in pieces {
         if text.is_empty() {
             continue;
         }
-        out.push((field, embedder.embed(&text)?));
+        fields.push(field);
+        texts.push(text);
     }
-    Ok(out)
+    let refs: Vec<&str> = texts.iter().map(String::as_str).collect();
+    let vectors = crate::embed::embed_all(embedder, &refs)?;
+    Ok(fields.into_iter().zip(vectors).collect())
 }
 
 #[cfg(feature = "search")]

@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 While the major version is 0, compatible additions bump the patch; breaking
 API or on-disk format changes bump the minor.
 
+## [Unreleased]
+
+### Added
+
+- **`Embedder` / `Reranker` batch methods.** Traits now require
+  `many_limit`, `embed_many`, and `score_many`. The library embeds
+  several vector fields and scores several rerank candidates in chunks
+  of `many_limit`. One text, one Record, or `many_limit` of 1 still
+  uses `embed` / `score`. `many_limit` of 0 is `invalid`. CLI OpenAI
+  embeddings send an `input` array (up to 2048); Cohere/Jina rerank
+  still batches documents (up to 1000); Model2Vec uses `encode` for a
+  batch.
+
 ## [0.7.1] - 2026-08-31
 
 ### Fixed

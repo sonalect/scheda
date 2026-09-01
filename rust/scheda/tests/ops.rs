@@ -93,12 +93,20 @@ impl Embedder for OpsEmbedder {
         8
     }
 
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
         let mut vector = vec![0.0; 8];
         for (i, byte) in text.bytes().enumerate() {
             vector[i % 8] += f32::from(byte) / 255.0;
         }
         Ok(vector)
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        texts.iter().map(|text| self.embed(text)).collect()
     }
 }
 

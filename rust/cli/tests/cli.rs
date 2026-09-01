@@ -1252,12 +1252,25 @@ fn handle_conn(stream: TcpStream, seen: &Mutex<Vec<String>>) {
     if let Ok(Some((path, body))) = read_request(&mut reader) {
         let stream = reader.get_mut();
         if path.contains("embeddings") {
-            let input = body.get("input").and_then(Value::as_str).unwrap_or("");
-            seen.lock().unwrap().push(input.to_owned());
-            write_json(
-                stream,
-                &json!({ "data": [{ "embedding": embed_vector(input) }] }),
-            );
+            let inputs: Vec<String> = match body.get("input") {
+                Some(Value::Array(items)) => items
+                    .iter()
+                    .map(|item| item.as_str().unwrap_or("").to_owned())
+                    .collect(),
+                Some(Value::String(text)) => vec![text.clone()],
+                _ => vec![String::new()],
+            };
+            let mut seen = seen.lock().unwrap();
+            let data: Vec<Value> = inputs
+                .iter()
+                .enumerate()
+                .map(|(index, input)| {
+                    seen.push(input.clone());
+                    json!({ "index": index, "embedding": embed_vector(input) })
+                })
+                .collect();
+            drop(seen);
+            write_json(stream, &json!({ "data": data }));
         } else if path.contains("rerank") {
             let results = body
                 .get("documents")
@@ -1391,6 +1404,10 @@ impl Embedder for HttpEmbedder {
         4
     }
 
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn embed(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
         let value = post_json(&self.url, &json!({ "model": self.model, "input": text }))?;
         let embedding = value
@@ -1406,6 +1423,50 @@ impl Embedder for HttpEmbedder {
                 item.as_f64()
                     .map(|n| n as f32)
                     .ok_or_else(|| scheda::Error::invalid("embeddings response is not float32"))
+            })
+            .collect()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        let value = post_json(&self.url, &json!({ "model": self.model, "input": texts }))?;
+        let data = value
+            .get("data")
+            .and_then(Value::as_array)
+            .ok_or_else(|| scheda::Error::invalid("embeddings response has no data"))?;
+        let mut slots: Vec<Option<Vec<f32>>> = vec![None; texts.len()];
+        for (i, row) in data.iter().enumerate() {
+            let index = row
+                .get("index")
+                .and_then(Value::as_u64)
+                .map(|n| n as usize)
+                .unwrap_or(i);
+            let embedding = row
+                .get("embedding")
+                .and_then(Value::as_array)
+                .ok_or_else(|| scheda::Error::invalid("embeddings response has no embedding"))?;
+            let vector = embedding
+                .iter()
+                .map(|item| {
+                    item.as_f64()
+                        .map(|n| n as f32)
+                        .ok_or_else(|| scheda::Error::invalid("embeddings response is not float32"))
+                })
+                .collect::<Result<Vec<f32>, _>>()?;
+            let Some(slot) = slots.get_mut(index) else {
+                return Err(scheda::Error::invalid(
+                    "embeddings response index is out of range",
+                ));
+            };
+            *slot = Some(vector);
+        }
+        slots
+            .into_iter()
+            .map(|vector| {
+                vector
+                    .ok_or_else(|| scheda::Error::invalid("embeddings response is missing a text"))
             })
             .collect()
     }
@@ -1426,15 +1487,19 @@ impl HttpReranker {
 }
 
 impl Reranker for HttpReranker {
+    fn many_limit(&self) -> usize {
+        32
+    }
+
     fn score(&self, query: &str, record: &Record) -> Result<f64, scheda::Error> {
-        let scores = self.score_many(query, std::slice::from_ref(record))?;
+        let scores = self.score_many(query, &[record])?;
         scores
             .into_iter()
             .next()
             .ok_or_else(|| scheda::Error::invalid("rerank response has no relevance_score"))
     }
 
-    fn score_many(&self, query: &str, records: &[Record]) -> Result<Vec<f64>, scheda::Error> {
+    fn score_many(&self, query: &str, records: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
         if records.is_empty() {
             return Ok(Vec::new());
         }
