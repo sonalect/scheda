@@ -21,6 +21,12 @@ pub struct SearchQueryView<'a> {
     ///
     /// Field 6: `include_raw`
     pub include_raw: ::core::option::Option<bool>,
+    /// When set, the reranker scores only the top N fused hits (RRF order).
+    /// Unset → score every fused hit. Ignored when no reranker is passed.
+    /// Zero is invalid.
+    ///
+    /// Field 7: `rerank_limit`
+    pub rerank_limit: ::core::option::Option<u32>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for SearchQueryView<'a> {
@@ -107,6 +113,13 @@ impl<'a> ::buffa::MessageView<'a> for SearchQueryView<'a> {
                 )?;
                 view.include_raw = Some(::buffa::types::decode_bool(&mut cur)?);
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.rerank_limit = Some(::buffa::types::decode_uint32(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -143,6 +156,7 @@ impl<'a> ::buffa::MessageView<'a> for SearchQueryView<'a> {
             lexical_weight: self.lexical_weight,
             vector_weight: self.vector_weight,
             include_raw: self.include_raw,
+            rerank_limit: self.rerank_limit,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -177,6 +191,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SearchQueryView<'a> {
         if self.include_raw.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if let Some(v) = self.rerank_limit {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -210,6 +227,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SearchQueryView<'a> {
         }
         if let Some(v) = self.include_raw {
             ::buffa::types::put_bool_field(6u32, v, buf);
+        }
+        if let Some(v) = self.rerank_limit {
+            ::buffa::types::put_uint32_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -259,6 +279,13 @@ impl<'__a> ::serde::Serialize for SearchQueryView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.include_raw {
             __map.serialize_entry("includeRaw", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.rerank_limit {
+            __map
+                .serialize_entry(
+                    "rerankLimit",
+                    &::buffa::json_helpers::ProtoJson(&__v),
+                )?;
         }
         __map.end()
     }
@@ -388,6 +415,15 @@ impl SearchQueryOwnedView {
     #[must_use]
     pub fn include_raw(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().include_raw
+    }
+    /// When set, the reranker scores only the top N fused hits (RRF order).
+    /// Unset → score every fused hit. Ignored when no reranker is passed.
+    /// Zero is invalid.
+    ///
+    /// Field 7: `rerank_limit`
+    #[must_use]
+    pub fn rerank_limit(&self) -> ::core::option::Option<u32> {
+        self.0.reborrow().rerank_limit
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<SearchQueryView<'static>>>

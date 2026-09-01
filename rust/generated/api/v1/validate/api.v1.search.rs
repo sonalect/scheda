@@ -166,6 +166,39 @@ impl ::protovalidate_buffa::Validate for SearchQuery {
                     });
             }
         }
+        if let Some(v) = self.rerank_limit {
+            if v < 1u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(7i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("rerank_limit")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("gte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.lexical_weight.as_ref() {
             let __cel_this = ((*__cel_inner) as f64);
             if !(((!(((__cel_this))).is_nan()) && (!(((__cel_this))).is_infinite()))) {
@@ -412,6 +445,39 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SearchQueryView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("double.gte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+        }
+        if let Some(v) = self.rerank_limit {
+            if v < 1u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(7i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("rerank_limit")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("gte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
                         message: ::std::borrow::Cow::Borrowed(""),
                         for_key: false,
                     });

@@ -791,6 +791,17 @@ mod tests {
     }
 
     #[test]
+    fn search_query_rerank_limit_rejects_zero() {
+        let ok = SearchQuery::default().with_text("token");
+        assert!(ok.clone().with_rerank_limit(1).require_valid().is_ok());
+        let err = ok
+            .with_rerank_limit(0)
+            .require_valid()
+            .expect_err("zero rerank_limit");
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
+    }
+
+    #[test]
     fn search_hit_has_no_field_validators() {
         let hit = super::api::v1::search_hits::Hit::default().with_id("alpha");
         assert!(hit.validate().is_ok());

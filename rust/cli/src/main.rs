@@ -11,13 +11,13 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use clap::{Parser, error::ErrorKind as ClapErrorKind};
+use clap::{error::ErrorKind as ClapErrorKind, Parser};
 use scheda::{
     Author, Embedder, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Reranker,
     Schema, SearchQuery, Vault,
 };
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
 
@@ -133,7 +133,11 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         } => {
             let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
             let names = collection_names(&collections);
-            let query = parse_search_query(search.query.as_deref(), search.include_raw)?;
+            let query = parse_search_query(
+                search.query.as_deref(),
+                search.include_raw,
+                search.rerank_limit,
+            )?;
             let reranker = load_reranker(
                 search.reranker_cohere_url.as_deref(),
                 search.reranker_model.as_deref(),
@@ -188,10 +192,11 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
                     reranker_cohere_url,
                     reranker_model,
                     reranker_api_key_env_var,
+                    rerank_limit,
                     include_raw,
                 },
         } => {
-            let query = parse_search_query(query.as_deref(), include_raw)?;
+            let query = parse_search_query(query.as_deref(), include_raw, rerank_limit)?;
             let reranker = load_reranker(
                 reranker_cohere_url.as_deref(),
                 reranker_model.as_deref(),
@@ -342,13 +347,20 @@ fn parse_find_query(json: Option<&str>, include_raw: bool) -> Result<FindQuery, 
     Ok(query)
 }
 
-fn parse_search_query(json: Option<&str>, include_raw: bool) -> Result<SearchQuery, Error> {
+fn parse_search_query(
+    json: Option<&str>,
+    include_raw: bool,
+    rerank_limit: Option<u32>,
+) -> Result<SearchQuery, Error> {
     let mut query: SearchQuery = parse_json(&json_input(
         json,
         "missing query JSON (pass --query or stdin)",
     )?)?;
     if include_raw {
         query = query.with_include_raw(true);
+    }
+    if let Some(limit) = rerank_limit {
+        query = query.with_rerank_limit(limit);
     }
     query.require_valid()?;
     Ok(query)

@@ -5,6 +5,8 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "search")]
 use crate::Reranker;
+#[cfg(feature = "search")]
+use crate::error::ensure;
 use crate::error::{Code, ContextAs, ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
@@ -345,6 +347,14 @@ impl Vault {
     /// non-encrypted collection on this handle. Naming an isolated
     /// collection is an ordinary query. Naming an encrypted collection
     /// is `unsupported`.
+    ///
+    /// `SearchQuery.rerank_limit` bounds how many fused hits the reranker
+    /// scores. Unset scores every fused hit. Set to N, the library keeps the
+    /// top N of the fused list by RRF score, reads and scores only those, and
+    /// drops the rest. The fusion pool stays `max(k, 50)`; N larger than the
+    /// pool scores the whole pool. Zero is `invalid`. N below the effective
+    /// `k` (unset or 0 means 10) is `invalid` and names both numbers.
+    /// `rerank_limit` is ignored, not rejected, when no reranker is passed.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -1256,6 +1266,11 @@ impl Collection {
     ///
     /// Isolated collections are in the Vault Index. An encrypted collection is
     /// `unsupported`: no Index holds its Records.
+    ///
+    /// `SearchQuery.rerank_limit` is the same as on [`Vault::search`]: unset
+    /// scores every fused hit; set to N scores only the top N by RRF; zero
+    /// and a value below `k` are `invalid`. Ignored when no reranker is
+    /// passed.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -1630,6 +1645,14 @@ impl QueryCtx<'_> {
             }
             return Ok(hits);
         };
+        if let Some(limit) = query.rerank_limit {
+            let limit = limit as usize;
+            ensure!(
+                limit >= k,
+                Error::invalid(format!("rerank_limit {limit} is below k {k}"))
+            );
+            hits.hits.truncate(limit);
+        }
         let text = query.text.as_deref().unwrap_or("");
         let mut records = Vec::with_capacity(hits.hits.len());
         for hit in &hits.hits {

@@ -50,6 +50,18 @@ pub struct SearchQuery {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub include_raw: ::core::option::Option<bool>,
+    /// When set, the reranker scores only the top N fused hits (RRF order).
+    /// Unset → score every fused hit. Ignored when no reranker is passed.
+    /// Zero is invalid.
+    ///
+    /// Field 7: `rerank_limit`
+    #[serde(
+        rename = "rerankLimit",
+        alias = "rerank_limit",
+        with = "::buffa::json_helpers::opt_uint32",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub rerank_limit: ::core::option::Option<u32>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -63,6 +75,7 @@ impl ::core::fmt::Debug for SearchQuery {
             .field("lexical_weight", &self.lexical_weight)
             .field("vector_weight", &self.vector_weight)
             .field("include_raw", &self.include_raw)
+            .field("rerank_limit", &self.rerank_limit)
             .finish()
     }
 }
@@ -112,6 +125,13 @@ impl SearchQuery {
         self.include_raw = Some(value);
         self
     }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::rerank_limit`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_rerank_limit(mut self, value: u32) -> Self {
+        self.rerank_limit = Some(value);
+        self
+    }
 }
 ::buffa::impl_default_instance!(SearchQuery);
 impl ::buffa::MessageName for SearchQuery {
@@ -156,6 +176,9 @@ impl ::buffa::Message for SearchQuery {
         if self.include_raw.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if let Some(v) = self.rerank_limit {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -188,6 +211,9 @@ impl ::buffa::Message for SearchQuery {
         }
         if let Some(v) = self.include_raw {
             ::buffa::types::put_bool_field(6u32, v, buf);
+        }
+        if let Some(v) = self.rerank_limit {
+            ::buffa::types::put_uint32_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -259,6 +285,15 @@ impl ::buffa::Message for SearchQuery {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.rerank_limit = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint32(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -273,6 +308,7 @@ impl ::buffa::Message for SearchQuery {
         self.lexical_weight = ::core::option::Option::None;
         self.vector_weight = ::core::option::Option::None;
         self.include_raw = ::core::option::Option::None;
+        self.rerank_limit = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

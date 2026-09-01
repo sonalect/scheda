@@ -8,6 +8,14 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **`SearchQuery.rerank_limit` bounds how many fused candidates the reranker
+  scores.** Unset still scores the whole fused pool, so existing callers are
+  unchanged. Zero and a value below `k` are `invalid`. Truncation happens
+  before the library reads the Records, so it saves file reads as well as
+  model calls. The CLI flag is `--rerank-limit`.
+
 ### Changed
 
 - **Breaking: `Embedder` / `Reranker` require only the batch method.** Implement `embed_many` / `score_many`. `embed` / `score` have default bodies that call the batch method with one element and fail with `invalid` if the result is not exactly one value. An override of the single-item method must stay consistent with the batch path: the same text must yield the same vector whether it travelled alone or in a padded batch, or the vector space splits with no error. `many_limit` and `Embedder::dimensions` are `NonZeroUsize`. A zero dimension no longer silently turns the vector leg off; absence stays `None` for the embedder.

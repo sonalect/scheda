@@ -6,13 +6,13 @@ use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use scheda::{
     Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, Reranker, SearchQuery, Vault,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -356,6 +356,71 @@ impl Reranker for PreferIdReranker {
     }
 }
 
+struct ScoreByIdReranker {
+    scored: AtomicU64,
+}
+
+impl ScoreByIdReranker {
+    fn new() -> Self {
+        Self {
+            scored: AtomicU64::new(0),
+        }
+    }
+
+    fn scored(&self) -> u64 {
+        self.scored.load(Ordering::Relaxed)
+    }
+}
+
+fn id_rank(id: &str) -> f64 {
+    id.strip_prefix('d')
+        .and_then(|n| n.parse::<f64>().ok())
+        .unwrap_or(0.0)
+}
+
+impl Reranker for ScoreByIdReranker {
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
+    }
+
+    fn score(&self, _query: &str, record: &Record) -> Result<f64, scheda::Error> {
+        self.scored.fetch_add(1, Ordering::Relaxed);
+        Ok(record.id.as_deref().map(id_rank).unwrap_or(0.0))
+    }
+
+    fn score_many(&self, query: &str, records: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
+        records
+            .iter()
+            .map(|record| self.score(query, record))
+            .collect()
+    }
+}
+
+fn add_numbered_kryptonite(collection: &scheda::Collection, n: usize) {
+    for i in 0..n {
+        collection
+            .add(
+                &format!("d{i:02}"),
+                rec(json!({"title": "kryptonite mineral"})),
+                None,
+            )
+            .unwrap();
+    }
+}
+
+fn assert_invalid_rerank_limit(err: &scheda::Error, limit: u32, k: usize) {
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let message = err.message.as_deref().unwrap_or("");
+    assert!(
+        message.contains(&limit.to_string()),
+        "message should name rerank_limit {limit}: {message}"
+    );
+    assert!(
+        message.contains(&k.to_string()),
+        "message should name k {k}: {message}"
+    );
+}
+
 #[test]
 fn reranker_reorders_and_sets_score() {
     let scratch = Scratch::new();
@@ -379,6 +444,160 @@ fn reranker_reorders_and_sets_score() {
         .unwrap();
     assert_eq!(hit_ids(&reranked)[0], last.as_str());
     assert!(reranked.hits.iter().all(|hit| hit.rerank_score.is_some()));
+}
+
+#[test]
+fn unset_rerank_limit_scores_the_whole_fused_pool() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 20);
+    let fused = collection.search(&q("kryptonite", 20), None).unwrap();
+    assert_eq!(fused.hits.len(), 20);
+    let reranker = ScoreByIdReranker::new();
+    let page = collection
+        .search(&q("kryptonite", 3), Some(&reranker))
+        .unwrap();
+    assert_eq!(reranker.scored(), fused.hits.len() as u64);
+    assert_eq!(page.hits.len(), 3);
+    assert!(page.hits.iter().all(|hit| hit.rerank_score.is_some()));
+}
+
+#[test]
+fn rerank_limit_scores_only_the_truncated_fused_prefix() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 20);
+    let fused = collection.search(&q("kryptonite", 20), None).unwrap();
+    assert_eq!(fused.hits.len(), 20);
+    let window = 5;
+    let mut expected: Vec<&str> = fused
+        .hits
+        .iter()
+        .take(window)
+        .filter_map(|hit| hit.id.as_deref())
+        .collect();
+    expected.sort_by(|a, b| {
+        id_rank(b)
+            .partial_cmp(&id_rank(a))
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| a.cmp(b))
+    });
+    expected.truncate(3);
+    let reranker = ScoreByIdReranker::new();
+    let page = collection
+        .search(
+            &q("kryptonite", 3).with_rerank_limit(window as u32),
+            Some(&reranker),
+        )
+        .unwrap();
+    assert_eq!(reranker.scored(), window as u64);
+    assert_eq!(page.hits.len(), 3);
+    assert!(page.hits.iter().all(|hit| hit.rerank_score.is_some()));
+    assert_eq!(hit_ids(&page), expected);
+    let outside = fused.hits[10].id.as_deref().unwrap();
+    assert!(
+        !hit_ids(&page).contains(&outside),
+        "id outside the rerank window should be dropped: {outside}"
+    );
+}
+
+#[test]
+fn rerank_limit_zero_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 3);
+    let err = collection
+        .search(&q("kryptonite", 3).with_rerank_limit(0), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = collection
+        .search(
+            &q("kryptonite", 3).with_rerank_limit(0),
+            Some(&ScoreByIdReranker::new()),
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn rerank_limit_below_k_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 20);
+    let err = collection
+        .search(
+            &q("kryptonite", 3).with_rerank_limit(2),
+            Some(&ScoreByIdReranker::new()),
+        )
+        .unwrap_err();
+    assert_invalid_rerank_limit(&err, 2, 3);
+    let err = collection
+        .search(
+            &SearchQuery::default()
+                .with_text("kryptonite")
+                .with_rerank_limit(9),
+            Some(&ScoreByIdReranker::new()),
+        )
+        .unwrap_err();
+    assert_invalid_rerank_limit(&err, 9, 10);
+    let err = collection
+        .search(
+            &SearchQuery::default()
+                .with_text("kryptonite")
+                .with_k(0)
+                .with_rerank_limit(9),
+            Some(&ScoreByIdReranker::new()),
+        )
+        .unwrap_err();
+    assert_invalid_rerank_limit(&err, 9, 10);
+}
+
+#[test]
+fn rerank_limit_larger_than_the_pool_matches_unset() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 20);
+    let unset = ScoreByIdReranker::new();
+    let full = collection
+        .search(&q("kryptonite", 3), Some(&unset))
+        .unwrap();
+    let over = ScoreByIdReranker::new();
+    let capped = collection
+        .search(&q("kryptonite", 3).with_rerank_limit(100), Some(&over))
+        .unwrap();
+    assert_eq!(unset.scored(), over.scored());
+    assert_eq!(hit_ids(&full), hit_ids(&capped));
+    assert_eq!(
+        full.hits
+            .iter()
+            .map(|hit| hit.rerank_score)
+            .collect::<Vec<_>>(),
+        capped
+            .hits
+            .iter()
+            .map(|hit| hit.rerank_score)
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn rerank_limit_without_reranker_is_ignored() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    add_numbered_kryptonite(&collection, 20);
+    let plain = collection.search(&q("kryptonite", 3), None).unwrap();
+    let ignored = collection
+        .search(&q("kryptonite", 3).with_rerank_limit(2), None)
+        .unwrap();
+    assert_eq!(hit_ids(&plain), hit_ids(&ignored));
+    assert!(ignored.hits.iter().all(|hit| hit.rerank_score.is_none()));
+    assert_eq!(ignored.hits.len(), 3);
 }
 
 #[test]
@@ -428,12 +647,10 @@ fn search_omits_raw_unless_include_raw() {
     let included = collection
         .search(&q("kryptonite", 5).with_include_raw(true), None)
         .unwrap();
-    assert!(
-        included.hits[0]
-            .raw
-            .as_ref()
-            .is_some_and(|raw| !raw.is_empty())
-    );
+    assert!(included.hits[0]
+        .raw
+        .as_ref()
+        .is_some_and(|raw| !raw.is_empty()));
 }
 
 #[test]

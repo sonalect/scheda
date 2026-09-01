@@ -232,6 +232,10 @@ pub struct SearchArgs {
     /// Only with the HTTP reranker flags. Missing/empty var → `invalid`.
     #[arg(long, value_name = "NAME")]
     pub reranker_api_key_env_var: Option<String>,
+    /// `SearchQuery.rerank_limit`. Unset → score every fused hit. Ignored
+    /// when no reranker is passed. Zero and a value below `k` are `invalid`.
+    #[arg(long, value_name = "N")]
+    pub rerank_limit: Option<u32>,
     /// `SearchQuery.include_raw`. Default false: omit `Hit.raw`.
     #[arg(long, default_value_t = false)]
     pub include_raw: bool,

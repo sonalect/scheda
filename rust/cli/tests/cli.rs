@@ -15,7 +15,7 @@ use std::time::Duration;
 use scheda::{
     Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery, Vault,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -419,13 +419,11 @@ fn extra_field_is_invalid_and_write_nothing() {
         &json!({"fields":{"title":"x","unknown":"y"}}).to_string(),
     ]);
     assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-    assert!(
-        !scratch
-            .vault()
-            .join("agent_notes")
-            .join("rogue.md")
-            .exists()
-    );
+    assert!(!scratch
+        .vault()
+        .join("agent_notes")
+        .join("rogue.md")
+        .exists());
 
     let keep = run(&[
         "--vault",
@@ -1127,6 +1125,74 @@ fn reranker_cohere_only_on_search_and_rejects_partial_or_non_http() {
         "SCHEDA_TEST_RERANKER_KEY",
     );
     assert_eq!(error_json(&missing_key)["code"], "CODE_INVALID");
+}
+
+#[test]
+fn rerank_limit_flag_on_search_and_rejects_zero_or_below_k() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let search_help = run(&["search", "--help"]);
+    assert_eq!(search_help.status, 0, "stderr={}", search_help.stderr);
+    let help = format!("{}{}", search_help.stdout, search_help.stderr);
+    assert!(
+        help.contains("rerank-limit"),
+        "missing rerank-limit:\n{help}"
+    );
+
+    let zero = run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query("Alpha"),
+        "--rerank-limit",
+        "0",
+    ]);
+    assert_eq!(error_json(&zero)["code"], "CODE_INVALID");
+
+    let json_zero = serde_json::to_string(
+        &SearchQuery::default()
+            .with_text("Alpha")
+            .with_rerank_limit(0),
+    )
+    .unwrap();
+    let from_json = run(&["--vault", &path, "search", "--query", &json_zero]);
+    assert_eq!(error_json(&from_json)["code"], "CODE_INVALID");
+
+    let ignored = run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query("Alpha"),
+        "--rerank-limit",
+        "2",
+    ]);
+    assert_eq!(ignored.status, 0, "stderr={}", ignored.stderr);
+    let hits = stdout_json(&ignored);
+    assert_eq!(hits["hits"][0]["id"], "alpha");
+    assert!(hits["hits"][0].get("rerankScore").is_none());
+
+    let below_k = run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query("Alpha"),
+        "--reranker-cohere-url",
+        "http://127.0.0.1:1/",
+        "--reranker-model",
+        "scheda-test-rerank",
+        "--rerank-limit",
+        "2",
+    ]);
+    let err = error_json(&below_k);
+    assert_eq!(err["code"], "CODE_INVALID");
+    let message = err["message"].as_str().unwrap_or("");
+    assert!(
+        message.contains('2') && message.contains("10"),
+        "below-k message should name both numbers: {message}"
+    );
 }
 
 fn peek_schema_name(body: &str) -> String {
