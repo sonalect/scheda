@@ -8,6 +8,11 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Update `mimalloc` to `v3.5.1` with the `override` feature enabled.
+- Update Bazel `rules_rust` to `0.74.0`.
+
 ## [0.9.0] - 2026-09-01
 
 ### Added

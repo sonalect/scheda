@@ -1001,6 +1001,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "direct-cargo-bazel-deps"
+version = "0.0.1"
+dependencies = [
+ "age",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2085,8 +2092,8 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "3.5.0"
-source = "git+https://github.com/amsokol/mimalloc?tag=v3.5.0#5407006cdbac41ea9afd4457c281c08ab108538e"
+version = "3.5.1"
+source = "git+https://github.com/amsokol/mimalloc?tag=v3.5.1#1ea5e861e9e08207e176919584f4a78099f33957"
 dependencies = [
  "cc",
 ]

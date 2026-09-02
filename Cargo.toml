@@ -25,7 +25,7 @@ cxx = "=1.0.199"
 git2 = { version = "=0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
-mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.0" }
+mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.1", features = ["override"] }
 model2vec-rs = { version = "=0.2.1", default-features = false, features = [
     "fancy-regex",
     "local-only",
