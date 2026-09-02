@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-09-01
+
 ### Added
 
 - **`SearchQuery.rerank_limit` bounds how many fused candidates the reranker
@@ -919,6 +921,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.0]
 - [0.8.0]
 - [0.7.1]
 - [0.7.0]
@@ -935,7 +938,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/amsokol/scheda/releases/tag/v0.9.0
 [0.8.0]: https://github.com/amsokol/scheda/releases/tag/v0.8.0
 [0.7.1]: https://github.com/amsokol/scheda/releases/tag/v0.7.1
 [0.7.0]: https://github.com/amsokol/scheda/releases/tag/v0.7.0
