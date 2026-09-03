@@ -1,7 +1,8 @@
 ---
 description: >-
-  Lockstep crate/module version, CHANGELOG, and git tags. Use when releasing,
-  tagging, or editing MODULE.bazel / workspace package version / CHANGELOG.
+  Lockstep crate/module version, CHANGELOG, git tags, and GitHub Releases.
+  Use when releasing, tagging, publishing a GitHub release, or editing
+  MODULE.bazel / workspace package version / CHANGELOG.
 alwaysApply: false
 ---
 
@@ -15,6 +16,9 @@ Bazel/Cargo.
 
 While major is 0: breaking API or on-disk format → minor; compatible work →
 patch. Do not tag or bump unless the user asked to release.
+
+A new tag is not done until `gh release create` has published it. Notes come
+from that version's `CHANGELOG.md` section. Not a draft.
 
 `docs/` document versions (`Document 11 … Version 0.1`) are not the crate
 version.

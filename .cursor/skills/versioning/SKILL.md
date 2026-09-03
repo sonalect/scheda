@@ -2,9 +2,10 @@
 name: versioning
 description: >-
   Bump Scheda crate and Bazel module versions in lockstep (Rust-style 0.x or
-  SemVer after 1.0.0), update CHANGELOG.md, and create the matching GitHub tag.
-  Use when releasing, tagging, bumping version, editing MODULE.bazel or
-  workspace package version, or adding a CHANGELOG section.
+  SemVer after 1.0.0), update CHANGELOG.md, create the matching GitHub tag,
+  and publish the GitHub Release. Use when releasing, tagging, publishing a
+  GitHub release, bumping version, editing MODULE.bazel or workspace package
+  version, or adding a CHANGELOG section.
 ---
 
 # Versioning
@@ -55,12 +56,39 @@ Refresh `MODULE.bazel.lock` if it changes.
 
 ## Release
 
-After the version commit is on the default branch, create an annotated tag and
-push it (only when the user asked to release):
+After the version commit is on the default branch, create an annotated tag,
+push it, and **publish a GitHub Release for that tag** (only when the user
+asked to release). A tag without a published Release is incomplete. Do not
+leave the Release as a draft. Do not mark it prerelease unless the user
+asked. Do not backfill older tags.
 
 ```bash
 git tag -a "vMAJOR.MINOR.PATCH" -m "vMAJOR.MINOR.PATCH"
 git push origin "vMAJOR.MINOR.PATCH"
 ```
+
+Release notes are the Keep a Changelog body for `## [MAJOR.MINOR.PATCH]` in
+`CHANGELOG.md` (after that heading, until the next `## [`). Fail if that
+heading is missing. Do not use `--generate-notes` or `--notes-from-tag`.
+
+```bash
+notes="$(mktemp)"
+awk -v ver="MAJOR.MINOR.PATCH" '
+  $0 ~ "^## \\[" ver "\\]" {p=1; next}
+  p && /^## \[/ {exit}
+  p && !started && /^$/ {next}
+  p {started=1; print}
+' CHANGELOG.md > "$notes"
+test -s "$notes"
+
+gh release create "vMAJOR.MINOR.PATCH" \
+  --title "vMAJOR.MINOR.PATCH" \
+  --notes-file "$notes" \
+  --verify-tag
+rm -f "$notes"
+```
+
+Run `git` / `gh` from the clone root with unrestricted permissions. Return
+the Release URL when it succeeds.
 
 Examples: `v0.0.1`, `v0.0.2`, `v0.1.0`.
