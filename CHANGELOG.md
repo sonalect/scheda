@@ -12,6 +12,7 @@ API or on-disk format changes bump the minor.
 
 - Update `mimalloc` to `v3.5.1` with the `override` feature enabled.
 - Update Bazel `rules_rust` to `0.74.0`.
+- Update `usearch` to `2.26.2`.
 
 ## [0.9.0] - 2026-09-01
 

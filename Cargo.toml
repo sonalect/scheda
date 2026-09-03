@@ -25,7 +25,9 @@ cxx = "=1.0.199"
 git2 = { version = "=0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
-mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.1", features = ["override"] }
+mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.1", features = [
+    "override",
+] }
 model2vec-rs = { version = "=0.2.1", default-features = false, features = [
     "fancy-regex",
     "local-only",
@@ -38,7 +40,7 @@ serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 ureq = { version = "=3.4.0", features = ["json"] }
 tantivy = "=0.26.1"
-usearch = { version = "=2.26.1", default-features = false }
+usearch = { version = "=2.26.2", default-features = false }
 yaml_serde = "=0.10.7"
 
 [workspace.lints.rust]
