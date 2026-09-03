@@ -8,19 +8,20 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.3] - 2026-09-04
+
 ### Added
 
-- **A collection can stay out of either Index leg.** Schema
-  `exclude_lexical_index` keeps Records out of Tantivy (`find`, filters,
-  BM25). `exclude_vector_index` skips the embedder on write and keeps
-  Records out of the vector Index. Two flags, not one: embedding runs on
-  every eligible `add` / `replace`, so a collection that only wants word
-  search must be able to refuse inference without leaving Tantivy.
-  `find` that names a lexically excluded collection is `unsupported`,
-  not an empty page. `search` runs the legs the collection still has
-  (`lexical_score` / `vector_score` say which); both legs excluded is
-  `unsupported`. A `journal` may set either flag: keyed `get` uses the
-  journal id map (JSONL under the generation directory), not Tantivy.
+- **A collection can stay out of either Index.** Schema
+  `exclude_lexical_index` keeps Records out of the Tantivy Index (`find`,
+  filters, BM25). `exclude_vector_index` skips the embedder on `add` and
+  `replace` and keeps Records out of the vector Index. Either flag, or
+  both: a collection that only wants word search can refuse inference
+  without leaving Tantivy. `find` that names a lexically excluded
+  collection is `unsupported`, not an empty hit list. `search` runs the
+  legs the collection still has (`lexical_score` / `vector_score` say
+  which) and is `unsupported` only when both are excluded. A `journal`
+  may set either flag: keyed `get` uses the journal id map, not Tantivy.
 
 ## [0.9.2] - 2026-09-03
 
@@ -958,6 +959,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.3]
 - [0.9.2]
 - [0.9.1]
 - [0.9.0]
@@ -977,7 +979,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.2...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.3...HEAD
+[0.9.3]: https://github.com/amsokol/scheda/releases/tag/v0.9.3
 [0.9.2]: https://github.com/amsokol/scheda/releases/tag/v0.9.2
 [0.9.1]: https://github.com/amsokol/scheda/releases/tag/v0.9.1
 [0.9.0]: https://github.com/amsokol/scheda/releases/tag/v0.9.0
