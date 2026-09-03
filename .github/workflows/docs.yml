@@ -22,6 +22,9 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:13
+      # Runner root, so free-host-disk.sh can delete unused host toolchains.
+      volumes:
+        - /:/host
     timeout-minutes: 90
     env:
       BAZELISK_VERSION: 1.29.0
@@ -60,6 +63,11 @@ jobs:
 
       - name: Check out repository
         uses: actions/checkout@v7.0.1
+
+      # ubuntu-latest guarantees 14 GB free. Restoring bazel-debian13-cas-*
+      # (several GiB compressed) extracts on top of that and fills the disk.
+      - name: Free host disk space
+        run: bash .github/scripts/free-host-disk.sh
 
       - name: Restore Bazel cache
         uses: actions/cache/restore@v6.1.0

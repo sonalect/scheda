@@ -8,6 +8,14 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Linux CI and Docs restore the Bazel cache without filling the runner.**
+  The debian:13 jobs delete unused GitHub-hosted toolchains (Android,
+  .NET, Haskell, and the rest) before extracting `bazel-debian13-cas-*`.
+  That archive had grown large enough that restore died with no space
+  left on the device.
+
 ## [0.9.3] - 2026-09-04
 
 ### Added
