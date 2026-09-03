@@ -119,9 +119,10 @@ bazel run //python/vllm:embedder   # 127.0.0.1:8080  OpenAI /v1/embeddings
 bazel run //python/vllm:reranker   # 127.0.0.1:8081  Cohere /v1/rerank
 ```
 
-Rust API HTML (rustdoc) is built with rules_rust `rust_doc` and published to
-[GitHub Pages](https://amsokol.github.io/scheda/) on push to `main` (no
-crates.io). Enable **Settings → Pages → Source: GitHub Actions** once.
+Rust API HTML (rustdoc) is built with rules_rust `rust_doc` on push to `main`
+(no crates.io). When [GitHub Pages](https://amsokol.github.io/scheda/) is
+enabled (**Settings → Pages → Source: GitHub Actions**), that HTML is
+published; otherwise the workflow still builds rustdoc and skips deploy.
 
 ```bash
 bazel build //rust/scheda:scheda_doc   # rustdoc HTML

@@ -21,9 +21,25 @@ jobs:
     runs-on: ubuntu-latest
     container:
       image: debian:13
-      # Runner root, so free-host-disk.sh can delete unused host toolchains.
+      # Individual host toolchains, not `/`: a full-root mount can change
+      # ownership of the runner disk.
       volumes:
-        - /:/host
+        - /usr/local/lib/android:/mnt/drop/android
+        - /usr/share/dotnet:/mnt/drop/dotnet
+        - /opt/ghc:/mnt/drop/ghc
+        - /usr/local/.ghcup:/mnt/drop/ghcup
+        - /usr/share/swift:/mnt/drop/swift
+        - /usr/local/share/powershell:/mnt/drop/powershell
+        - /opt/hostedtoolcache:/mnt/drop/hostedtoolcache
+        - /usr/lib/jvm:/mnt/drop/jvm
+        - /opt/az:/mnt/drop/az
+        - /usr/share/miniconda:/mnt/drop/miniconda
+        - /usr/local/share/boost:/mnt/drop/boost
+        - /opt/microsoft:/mnt/drop/microsoft
+        - /usr/share/codeql:/mnt/drop/codeql
+        - /usr/local/graalvm:/mnt/drop/graalvm
+        - /usr/share/sbt:/mnt/drop/sbt
+        - /opt/pipx:/mnt/drop/pipx
     timeout-minutes: 90
     env:
       BAZELISK_SHA256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992

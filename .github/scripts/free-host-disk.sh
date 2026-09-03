@@ -1,42 +1,22 @@
 #!/usr/bin/env bash
 # Drop preinstalled GitHub-hosted toolchains that the debian:13 job does not
-# use. The job container bind-mounts the runner root at /host.
+# use. Each directory is a bind mount under /mnt/drop (not the runner root:
+# mounting / into the container can change host file ownership).
 set -euo pipefail
 
-if [[ ! -d /host/usr ]]; then
-  echo "expected the runner root at /host (container volumes: - /:/host)" >&2
+if [[ ! -d /mnt/drop ]]; then
+  echo "expected host toolchains at /mnt/drop (container volumes)" >&2
   exit 1
 fi
 
-df -h /host
+df -h /
 
-# Paths relative to the runner root. Skip anything missing so a newer image
-# that dropped a toolchain does not fail the job.
-dirs=(
-  /usr/local/lib/android
-  /usr/share/dotnet
-  /opt/ghc
-  /usr/local/.ghcup
-  /usr/share/swift
-  /usr/local/share/powershell
-  /opt/hostedtoolcache
-  /usr/lib/jvm
-  /opt/az
-  /usr/share/miniconda
-  /usr/local/share/boost
-  /opt/microsoft
-  /usr/share/codeql
-  /usr/local/graalvm
-  /usr/share/sbt
-  /opt/pipx
-)
-
-for rel in "${dirs[@]}"; do
-  path="/host${rel}"
-  if [[ -e "${path}" ]]; then
+shopt -s nullglob
+for path in /mnt/drop/*; do
+  if [[ -d "${path}" ]]; then
     du -sh "${path}" || true
-    rm -rf "${path}" || true
+    find "${path}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
   fi
 done
 
-df -h /host
+df -h /

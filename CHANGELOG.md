@@ -15,6 +15,9 @@ API or on-disk format changes bump the minor.
   .NET, Haskell, and the rest) before extracting `bazel-debian13-cas-*`.
   That archive had grown large enough that restore died with no space
   left on the device.
+- **Docs skips GitHub Pages deploy when Pages is not enabled.** rustdoc
+  still builds. A private repository without Pages was failing the
+  deploy step with 404 after rustdoc succeeded.
 
 ## [0.9.3] - 2026-09-04
 
