@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-09-03
+
 ### Changed
 
 - Update `mimalloc` to `v3.5.1` with the `override` feature enabled.
@@ -927,6 +929,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.1]
 - [0.9.0]
 - [0.8.0]
 - [0.7.1]
@@ -944,7 +947,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/amsokol/scheda/releases/tag/v0.9.1
 [0.9.0]: https://github.com/amsokol/scheda/releases/tag/v0.9.0
 [0.8.0]: https://github.com/amsokol/scheda/releases/tag/v0.8.0
 [0.7.1]: https://github.com/amsokol/scheda/releases/tag/v0.7.1
