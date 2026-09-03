@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use crate::Reranker;
 #[cfg(feature = "search")]
 use crate::error::ensure;
-use crate::error::{Code, ContextAs, ContextIo, bail, io_code};
+use crate::error::{Code, Context, ContextAs, ContextIo, bail, io_code};
 use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::isolated;
@@ -231,6 +231,11 @@ impl Vault {
     }
 
     /// Whether this handle currently holds `{vault}/.scheda/write.lock`.
+    ///
+    /// True during an open transaction and while a mutating call is in
+    /// progress. False after `commit`, `discard`, a mutating call that
+    /// autocommits, and `open`. Dropping the handle releases the lock
+    /// before Index teardown waits on merge threads.
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
         match self.write_lock.lock() {
@@ -379,14 +384,19 @@ impl Vault {
     /// nested commit. The transaction flag is only in this process:
     /// a new `open` does not resume it. `invalid` if none is open, the
     /// message is empty, or there is nothing to commit.
+    ///
+    /// Holds the write lock through `auto_sync` push, then releases it
+    /// before returning. A later `open` on this path can write immediately.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
-        if !flag(&self.in_txn)? {
-            bail!(Error::invalid("commit requires an open transaction"));
-        }
-        self.commit_recorded(message)?;
-        set_in_txn(&self.in_txn, false)?;
-        self.push_if_auto_sync()
+        self.conclude_write((|| {
+            if !flag(&self.in_txn)? {
+                bail!(Error::invalid("commit requires an open transaction"));
+            }
+            self.commit_recorded(message)?;
+            set_in_txn(&self.in_txn, false)?;
+            self.push_if_auto_sync()
+        })())
     }
 
     /// Start a transaction on this handle. Later writes on this handle do
@@ -395,27 +405,34 @@ impl Vault {
     /// `{vault}/.scheda/tx.log` until `begin`, `discard`, or a mutating
     /// call outside a transaction restores them.
     ///
+    /// Takes the write lock and holds it until `commit`, `discard`, or drop.
     /// Discards leftover Scheda writes first. `invalid` if a transaction is
     /// already open on this handle.
     pub fn begin(&self) -> Result<(), Error> {
         self.require_write_lock("begin")?;
-        if flag(&self.in_txn)? {
-            bail!(Error::invalid("already in a transaction"));
-        }
-        self.restore_recorded()?;
-        set_in_txn(&self.in_txn, true)?;
-        Ok(())
+        self.conclude_write((|| {
+            if flag(&self.in_txn)? {
+                bail!(Error::invalid("already in a transaction"));
+            }
+            self.restore_recorded()?;
+            set_in_txn(&self.in_txn, true)?;
+            Ok(())
+        })())
     }
 
     /// Restore Scheda-recorded paths to HEAD in the repository that owns
     /// each path, end the transaction if any on this handle, reload Schema,
     /// and rebuild the Index. Allowed without an open transaction so a later
     /// process can clear crash leftovers.
+    ///
+    /// Releases the write lock before returning.
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
-        self.restore_recorded()?;
-        set_in_txn(&self.in_txn, false)?;
-        Ok(())
+        self.conclude_write((|| {
+            self.restore_recorded()?;
+            set_in_txn(&self.in_txn, false)?;
+            Ok(())
+        })())
     }
 
     fn commit_recorded(&self, message: &str) -> Result<(), Error> {
@@ -495,36 +512,54 @@ impl Vault {
         persist_written(&self.path, &set)
     }
 
-    /// `git push` to `origin`. Needs the write lock.
+    /// `git push` to `origin`. Takes the write lock for this call. Outside
+    /// a transaction the lock is released before return.
     pub fn push(&self) -> Result<(), Error> {
         self.require_write_lock("push")?;
-        git::push(&self.path)
+        self.conclude_write(git::push(&self.path))
     }
 
     /// `git pull` from `origin`, then reload Schema and rebuild the Index.
+    /// Takes the write lock for this call. Outside a transaction the lock
+    /// is released before return.
     pub fn pull(&self) -> Result<(), Error> {
         self.require_write_lock("pull")?;
-        git::pull(&self.path)?;
-        self.reload_after_restore()
+        self.conclude_write((|| {
+            git::pull(&self.path)?;
+            self.reload_after_restore()
+        })())
     }
 
-    /// `pull` then `push`. Needs the write lock.
+    /// `pull` then `push`. Takes the write lock for this call. Outside a
+    /// transaction the lock is released before return.
     pub fn sync(&self) -> Result<(), Error> {
         self.require_write_lock("sync")?;
-        git::pull(&self.path)?;
-        self.reload_after_restore()?;
-        git::push(&self.path)
+        self.conclude_write((|| {
+            git::pull(&self.path)?;
+            self.reload_after_restore()?;
+            git::push(&self.path)
+        })())
     }
 
     fn require_write_lock(&self, op: &str) -> Result<(), Error> {
-        let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")?;
-        if slot.is_none() {
-            *slot = Some(acquire_write_lock(&self.path)?);
-            #[cfg(feature = "find")]
-            self.search.enable_write()?;
+        let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")
+            .with_context(|| format!("[Vault::{op}] take write lock"))?;
+        if slot.is_some() {
+            return Ok(());
         }
-        let _ = op;
+        let file = acquire_write_lock(&self.path)
+            .with_context(|| format!("[Vault::{op}] take write lock"))?;
+        #[cfg(feature = "find")]
+        if let Err(err) = self.search.enable_write() {
+            let _ = file.unlock();
+            return Err(err).with_context(|| format!("[Vault::{op}] take write lock"));
+        }
+        *slot = Some(file);
         Ok(())
+    }
+
+    fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
+        release_lock_unless_in_transaction(&self.write_lock, &self.in_txn, result)
     }
 
     /// Patch `.gitignore` on an existing Vault. Takes `write.lock` for that
@@ -605,7 +640,8 @@ impl Vault {
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
-    /// subject.
+    /// subject. Takes the write lock for this call; outside a transaction
+    /// the lock is released before return.
     pub fn create_collection(
         &self,
         name: &str,
@@ -622,20 +658,23 @@ impl Vault {
         }
         let message = require_commit_message(message)?;
         self.require_write_lock("create_collection")?;
-        self.drain_abandoned()?;
-        if schema.isolated == Some(true)
-            && let Some(rel) = isolated::ensure(&self.path)?
-        {
+        self.conclude_write((|| {
+            self.drain_abandoned()?;
+            if schema.isolated == Some(true)
+                && let Some(rel) = isolated::ensure(&self.path)?
+            {
+                self.note_write(rel)?;
+            }
+            let rel = schema::put_collection(&self.path, name, &schema)?;
             self.note_write(rel)?;
-        }
-        let rel = schema::put_collection(&self.path, name, &schema)?;
-        self.note_write(rel)?;
-        let loaded = schema::load(&self.path)?;
-        let dir = self.generation_dir()?;
-        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
-            index::load_journal_ids(&dir, &loaded)?;
-        *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
-        self.finish_mutation(message)?;
+            let loaded = schema::load(&self.path)?;
+            let dir = self.generation_dir()?;
+            *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
+                index::load_journal_ids(&dir, &loaded)?;
+            *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
+            self.finish_mutation(message)?;
+            Ok(())
+        })())?;
         self.collection(name)
     }
 
@@ -647,37 +686,40 @@ impl Vault {
     /// opened before the swap keeps its generation. A reader older than one
     /// `reindex` cycle may lose those files (`index_missing` or
     /// `index_lexical`). Removes a leftover `{vault}/.isolated/.scheda/`
-    /// directory when one is present. Needs the write lock, so there is no
-    /// concurrent writer during the swap.
+    /// directory when one is present. Takes the write lock for this call.
+    /// Outside a transaction the lock is released before return, so there
+    /// is no concurrent writer during the swap.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
-        #[cfg(feature = "find")]
-        self.search.close_for_rebuild();
-        let schema = schema::load(&self.path)?;
-        #[cfg(feature = "find")]
-        let previous = self.generation_dir()?;
-        let (counts, maps, new_dir) =
-            index::prepare_generation(&self.path, &schema, &self.index.root)?;
-        #[cfg(feature = "find")]
-        if let Err(err) =
-            self.search
-                .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
-        {
-            let _ = self.search.set_index_dir(&previous);
-            return Err(err);
-        }
-        #[cfg(not(feature = "find"))]
-        index::mark_stale(&new_dir)?;
-        #[cfg(feature = "find")]
-        if let Err(err) = index::publish_generation(&self.index.root, &new_dir) {
-            let _ = self.search.set_index_dir(&previous);
-            return Err(err);
-        }
-        #[cfg(not(feature = "find"))]
-        index::publish_generation(&self.index.root, &new_dir)?;
-        self.index.set_dir(new_dir)?;
-        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
-        Ok(counts)
+        self.conclude_write((|| {
+            #[cfg(feature = "find")]
+            self.search.close_for_rebuild();
+            let schema = schema::load(&self.path)?;
+            #[cfg(feature = "find")]
+            let previous = self.generation_dir()?;
+            let (counts, maps, new_dir) =
+                index::prepare_generation(&self.path, &schema, &self.index.root)?;
+            #[cfg(feature = "find")]
+            if let Err(err) =
+                self.search
+                    .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
+            {
+                let _ = self.search.set_index_dir(&previous);
+                return Err(err);
+            }
+            #[cfg(not(feature = "find"))]
+            index::mark_stale(&new_dir)?;
+            #[cfg(feature = "find")]
+            if let Err(err) = index::publish_generation(&self.index.root, &new_dir) {
+                let _ = self.search.set_index_dir(&previous);
+                return Err(err);
+            }
+            #[cfg(not(feature = "find"))]
+            index::publish_generation(&self.index.root, &new_dir)?;
+            self.index.set_dir(new_dir)?;
+            *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
+            Ok(counts)
+        })())
     }
 
     /// Fill a new generation without swapping `current`. Test seam for a
@@ -685,18 +727,20 @@ impl Vault {
     #[cfg(all(test, feature = "find"))]
     pub(crate) fn reindex_without_publish(&self) -> Result<PathBuf, Error> {
         self.require_write_lock("reindex")?;
-        self.search.close_for_rebuild();
-        let schema = schema::load(&self.path)?;
-        let previous = self.generation_dir()?;
-        let (_, _, new_dir) = index::prepare_generation(&self.path, &schema, &self.index.root)?;
-        if let Err(err) =
-            self.search
-                .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
-        {
-            let _ = self.search.set_index_dir(&previous);
-            return Err(err);
-        }
-        Ok(new_dir)
+        self.conclude_write((|| {
+            self.search.close_for_rebuild();
+            let schema = schema::load(&self.path)?;
+            let previous = self.generation_dir()?;
+            let (_, _, new_dir) = index::prepare_generation(&self.path, &schema, &self.index.root)?;
+            if let Err(err) =
+                self.search
+                    .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
+            {
+                let _ = self.search.set_index_dir(&previous);
+                return Err(err);
+            }
+            Ok(new_dir)
+        })())
     }
 }
 
@@ -714,6 +758,25 @@ impl std::fmt::Debug for Collection {
         f.debug_struct("Collection")
             .field("name", &self.decl.name)
             .finish_non_exhaustive()
+    }
+}
+
+/// Releases `{vault}/.scheda/write.lock` before Index teardown waits on
+/// merge threads. An open transaction ends without a git commit.
+impl Drop for Vault {
+    fn drop(&mut self) {
+        release_write_lock_on_drop(&self.write_lock);
+    }
+}
+
+/// Releases `{vault}/.scheda/write.lock` when this is the last handle that
+/// shares it, before Index teardown waits on merge threads.
+impl Drop for Collection {
+    fn drop(&mut self) {
+        if Arc::strong_count(&self.write_lock) > 1 {
+            return;
+        }
+        release_write_lock_on_drop(&self.write_lock);
     }
 }
 
@@ -884,14 +947,25 @@ impl Collection {
         Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some())
     }
 
-    fn require_write(&self) -> Result<(), Error> {
-        let mut slot = crate::error::mutex(&self.write_lock, "[Collection] lock write lock")?;
-        if slot.is_none() {
-            *slot = Some(acquire_write_lock(&self.vault)?);
-            #[cfg(feature = "find")]
-            self.search.enable_write()?;
+    fn require_write(&self, op: &str) -> Result<(), Error> {
+        let mut slot = crate::error::mutex(&self.write_lock, "[Collection] lock write lock")
+            .with_context(|| format!("[Collection::{op}] take write lock"))?;
+        if slot.is_some() {
+            return Ok(());
         }
+        let file = acquire_write_lock(&self.vault)
+            .with_context(|| format!("[Collection::{op}] take write lock"))?;
+        #[cfg(feature = "find")]
+        if let Err(err) = self.search.enable_write() {
+            let _ = file.unlock();
+            return Err(err).with_context(|| format!("[Collection::{op}] take write lock"));
+        }
+        *slot = Some(file);
         Ok(())
+    }
+
+    fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
+        release_lock_unless_in_transaction(&self.write_lock, &self.in_txn, result)
     }
 
     fn note_write(&self, rel: String) -> Result<(), Error> {
@@ -1022,61 +1096,66 @@ impl Collection {
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
-    /// subject.
+    /// subject. Outside a transaction the write lock is held only for this
+    /// call.
     pub fn add(&self, id: &str, record: RecordAdd, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
         self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
         let mut record = record_from_add(id, &self.decl.name, record);
-        self.require_write()?;
-        self.drain_abandoned()?;
-        self.prepare_isolated_write()?;
-        schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
-            self.lookup(collection, id)
-        })?;
-        match self.decl.kind {
-            Kind::Journal => {
-                let mut maps =
-                    crate::error::mutex(&self.journal_ids, "[Collection::add] lock journal ids")?;
-                let dir = self.generation_dir()?;
-                let (id, rel, rollback) = journal::insert_journal(
-                    &self.vault,
-                    &self.decl,
-                    record.clone(),
-                    &dir,
-                    &mut maps,
-                )?;
-                drop(maps);
-                record.path = Some(rel.clone());
-                record.valid = Some(true);
-                self.note_write(rel.clone())?;
-                if let Err(err) = self.upsert_lexical(&record) {
-                    self.rollback_journal_insert(&id, &rel, &rollback);
-                    return Err(err);
+        self.require_write("add")?;
+        self.conclude_write((|| {
+            self.drain_abandoned()?;
+            self.prepare_isolated_write()?;
+            schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+                self.lookup(collection, id)
+            })?;
+            match self.decl.kind {
+                Kind::Journal => {
+                    let mut maps = crate::error::mutex(
+                        &self.journal_ids,
+                        "[Collection::add] lock journal ids",
+                    )?;
+                    let dir = self.generation_dir()?;
+                    let (id, rel, rollback) = journal::insert_journal(
+                        &self.vault,
+                        &self.decl,
+                        record.clone(),
+                        &dir,
+                        &mut maps,
+                    )?;
+                    drop(maps);
+                    record.path = Some(rel.clone());
+                    record.valid = Some(true);
+                    self.note_write(rel.clone())?;
+                    if let Err(err) = self.upsert_lexical(&record) {
+                        self.rollback_journal_insert(&id, &rel, &rollback);
+                        return Err(err);
+                    }
+                    self.finish_mutation(message)?;
+                    Ok(())
                 }
-                self.finish_mutation(message)?;
-                Ok(())
-            }
-            Kind::Document | Kind::Singleton => {
-                let (_id, rel) = store::insert_document(
-                    &self.vault,
-                    &self.decl,
-                    record.clone(),
-                    self.encryption.as_ref(),
-                )?;
-                record.path = Some(rel.clone());
-                record.valid = Some(true);
-                self.note_write(rel.clone())?;
-                if let Err(err) = self.upsert_lexical(&record) {
-                    let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
-                    let _ = self.unnote_write(&rel);
-                    return Err(err);
+                Kind::Document | Kind::Singleton => {
+                    let (_id, rel) = store::insert_document(
+                        &self.vault,
+                        &self.decl,
+                        record.clone(),
+                        self.encryption.as_ref(),
+                    )?;
+                    record.path = Some(rel.clone());
+                    record.valid = Some(true);
+                    self.note_write(rel.clone())?;
+                    if let Err(err) = self.upsert_lexical(&record) {
+                        let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+                        let _ = self.unnote_write(&rel);
+                        return Err(err);
+                    }
+                    self.finish_mutation(message)?;
+                    Ok(())
                 }
-                self.finish_mutation(message)?;
-                Ok(())
             }
-        }
+        })())
     }
 
     /// Read one Record by `id`. Missing → `not_found`.
@@ -1144,7 +1223,8 @@ impl Collection {
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
-    /// subject.
+    /// subject. Outside a transaction the write lock is held only for this
+    /// call.
     pub fn replace(
         &self,
         id: &str,
@@ -1159,36 +1239,38 @@ impl Collection {
             bail!(Error::unsupported("replace is not offered for journal"));
         }
         let mut record = record_from_replace(id, &self.decl.name, record);
-        self.require_write()?;
-        self.drain_abandoned()?;
-        let known = self.record_exists(id)?;
-        if !known {
-            bail!(Error::not_found(format!(
-                "record {id} is not in {}",
-                self.decl.name
-            )));
-        }
-        self.prepare_isolated_write()?;
-        schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
-            self.lookup(collection, id)
-        })?;
-        let (_id, rel) = store::replace_document(
-            &self.vault,
-            &self.decl,
-            id,
-            record.clone(),
-            self.encryption.as_ref(),
-        )?;
-        record.path = Some(rel.clone());
-        record.valid = Some(true);
-        self.note_write(rel.clone())?;
-        if let Err(err) = self.upsert_lexical(&record) {
-            let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
-            let _ = self.unnote_write(&rel);
-            return Err(err);
-        }
-        self.finish_mutation(message)?;
-        Ok(())
+        self.require_write("replace")?;
+        self.conclude_write((|| {
+            self.drain_abandoned()?;
+            let known = self.record_exists(id)?;
+            if !known {
+                bail!(Error::not_found(format!(
+                    "record {id} is not in {}",
+                    self.decl.name
+                )));
+            }
+            self.prepare_isolated_write()?;
+            schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+                self.lookup(collection, id)
+            })?;
+            let (_id, rel) = store::replace_document(
+                &self.vault,
+                &self.decl,
+                id,
+                record.clone(),
+                self.encryption.as_ref(),
+            )?;
+            record.path = Some(rel.clone());
+            record.valid = Some(true);
+            self.note_write(rel.clone())?;
+            if let Err(err) = self.upsert_lexical(&record) {
+                let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+                let _ = self.unnote_write(&rel);
+                return Err(err);
+            }
+            self.finish_mutation(message)?;
+            Ok(())
+        })())
     }
 
     /// Delete a `document` or `singleton` Record. `journal` → `unsupported`.
@@ -1203,7 +1285,8 @@ impl Collection {
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
-    /// subject.
+    /// subject. Outside a transaction the write lock is held only for this
+    /// call.
     pub fn remove(&self, id: &str, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         self.require_encryption_secret()?;
@@ -1211,26 +1294,28 @@ impl Collection {
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("remove is not offered for journal"));
         }
-        self.require_write()?;
-        self.drain_abandoned()?;
-        let known = self.record_exists(id)?;
-        if !known {
-            bail!(Error::not_found(format!(
-                "record {id} is not in {}",
-                self.decl.name
-            )));
-        }
-        self.prepare_isolated_write()?;
-        let rel = store::record_rel(&self.decl, id)?;
-        self.note_write(rel.clone())?;
-        store::remove_document(&self.vault, &self.decl, id)?;
-        if let Err(err) = self.forget_lexical(id) {
-            let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
-            let _ = self.unnote_write(&rel);
-            return Err(err);
-        }
-        self.finish_mutation(message)?;
-        Ok(())
+        self.require_write("remove")?;
+        self.conclude_write((|| {
+            self.drain_abandoned()?;
+            let known = self.record_exists(id)?;
+            if !known {
+                bail!(Error::not_found(format!(
+                    "record {id} is not in {}",
+                    self.decl.name
+                )));
+            }
+            self.prepare_isolated_write()?;
+            let rel = store::record_rel(&self.decl, id)?;
+            self.note_write(rel.clone())?;
+            store::remove_document(&self.vault, &self.decl, id)?;
+            if let Err(err) = self.forget_lexical(id) {
+                let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+                let _ = self.unnote_write(&rel);
+                return Err(err);
+            }
+            self.finish_mutation(message)?;
+            Ok(())
+        })())
     }
 
     /// Run a Tantivy Query on this collection's Index, then open matching files.
@@ -1962,6 +2047,48 @@ fn try_prune_orphans(vault: &Path, root: &Path) -> Result<(), Error> {
     }
 }
 
+fn release_held_write_lock(slot: &Mutex<Option<File>>) -> Result<(), Error> {
+    let mut guard = crate::error::mutex(slot, "[Vault] release write lock")?;
+    release_held_write_lock_in(&mut guard)
+}
+
+fn release_held_write_lock_in(slot: &mut Option<File>) -> Result<(), Error> {
+    if let Some(file) = slot.take()
+        && let Err(err) = file.unlock()
+    {
+        return Err(err).context("[Vault] unlock write lock");
+    }
+    Ok(())
+}
+
+fn release_write_lock_on_drop(slot: &Mutex<Option<File>>) {
+    let Ok(mut guard) = slot.lock() else {
+        return;
+    };
+    let _ = release_held_write_lock_in(&mut guard);
+}
+
+fn release_lock_unless_in_transaction<T>(
+    write_lock: &Mutex<Option<File>>,
+    in_txn: &Mutex<bool>,
+    result: Result<T, Error>,
+) -> Result<T, Error> {
+    let in_txn = match flag(in_txn) {
+        Ok(v) => v,
+        Err(err) => {
+            let _ = release_held_write_lock(write_lock);
+            return result.and(Err(err));
+        }
+    };
+    if in_txn {
+        return result;
+    }
+    match release_held_write_lock(write_lock) {
+        Ok(()) => result,
+        Err(err) => result.and(Err(err)),
+    }
+}
+
 fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Vault] create .scheda for write lock")?;
@@ -2311,6 +2438,45 @@ mod tests {
         assert!(gitignore.lines().any(|line| line.trim() == "other"));
     }
 
+    fn document_schema() -> Schema {
+        let mut schema = Schema::default().with_version(1);
+        schema.kind = crate::Body::default().into();
+        schema
+    }
+
+    fn empty_add() -> RecordAdd {
+        serde_json::from_value(serde_json::json!({"fields": {}})).unwrap()
+    }
+
+    #[test]
+    fn write_commit_drop_then_write_again_is_not_locked() {
+        let scratch = Scratch::new();
+        let path = scratch.vault();
+        {
+            let vault = Vault::open(&path, scratch.options(), None).unwrap();
+            vault.begin().unwrap();
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            vault.commit("schema").unwrap();
+        }
+        for i in 0..32 {
+            let vault = Vault::open(&path, scratch.options(), None).unwrap();
+            let collection = vault.collection("c").unwrap();
+            vault.begin().unwrap();
+            collection
+                .add(&format!("row-{i}"), empty_add(), None)
+                .unwrap();
+            vault.commit("row").unwrap();
+            assert!(
+                !vault.holds_write_lock(),
+                "iteration {i}: write lock still held after commit"
+            );
+            drop(collection);
+            drop(vault);
+        }
+    }
+
     #[test]
     fn two_opens_do_not_take_the_write_lock() {
         let scratch = Scratch::new();
@@ -2322,6 +2488,82 @@ mod tests {
         assert!(a.holds_write_lock());
         let err = b.begin().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack.iter().any(|frame| frame.contains("[Vault::begin]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+    }
+
+    #[test]
+    fn second_handle_mutating_call_is_locked() {
+        let scratch = Scratch::new();
+        let writer = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        writer.begin().unwrap();
+        writer
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        assert!(writer.holds_write_lock());
+        let reader = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let err = reader
+            .create_collection("other", document_schema(), None)
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::create_collection]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+        let err = reader.commit("no").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::commit]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+        let err = reader.discard().unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::discard]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+        let err = reader.push().unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack.iter().any(|frame| frame.contains("[Vault::push]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+        let err = reader.pull().unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack.iter().any(|frame| frame.contains("[Vault::pull]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+        let err = reader.sync().unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack.iter().any(|frame| frame.contains("[Vault::sync]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
+        let err = reader.reindex().unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::reindex]")),
+            "operation missing from stack: {:?}",
+            err.stack
+        );
     }
 
     #[test]

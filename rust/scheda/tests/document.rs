@@ -625,6 +625,7 @@ fn fixture_files_are_utf8_text() {
 fn reader_find_one_while_writer_holds_lock() {
     let scratch = Scratch::new();
     let writer = open_notes(&scratch);
+    writer.begin().unwrap();
     writer
         .collection("north_notes")
         .unwrap()

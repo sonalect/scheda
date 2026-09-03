@@ -8,6 +8,19 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Vault write lock is released when the work ends.** `commit` and
+  `discard` unlock before they return, a mutating call outside a
+  transaction unlocks when that call finishes, and dropping the handle
+  unlocks before Index teardown waits on merge threads. A caller that
+  wrote, finished, and immediately wrote again on the same path could
+  get `locked` ("vault write lock is held") because the lock lived until
+  the last handle dropped. A second writer still gets `locked` while
+  the first holds it. The error stack names the operation that took the
+  lock (`begin`, `commit`, `discard`, `push`, `pull`, `sync`,
+  `reindex`, `create_collection`).
+
 ## [0.9.1] - 2026-09-03
 
 ### Changed

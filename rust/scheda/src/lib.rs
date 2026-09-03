@@ -45,8 +45,9 @@
 //! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is
 //! `Send + Sync`. Remote git (`push` / `pull` / `sync`) and `reindex` /
 //! `search` are the calls that must not sit on a worker thread. The Vault
-//! write lock is taken by mutating calls only: one writer, `locked` if a
-//! second writer races it.
+//! write lock is held for an open transaction and for one mutating call
+//! outside a transaction, then released: one writer, `locked` if a second
+//! writer races it.
 //!
 //! ```rust,ignore (tokio is not a crate dependency)
 //! use std::sync::Arc;
