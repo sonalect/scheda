@@ -320,9 +320,10 @@ impl Vault {
     }
 
     /// Run a Tantivy Query on the Index, then open matching Record files.
-    /// Empty `collections` is every non-isolated, non-encrypted collection
-    /// on this handle. Naming an isolated collection is an ordinary query.
-    /// Naming an encrypted collection is `unsupported`.
+    /// Empty `collections` is every non-isolated collection that is in the
+    /// Tantivy Index. Naming an isolated collection is an ordinary query.
+    /// Naming an encrypted collection or one marked `exclude_lexical_index`
+    /// is `unsupported`.
     ///
     /// Page order is score descending. Equal scores break by the Index `ord`
     /// fast field, ascending (earlier indexed first). `ord` is unique within
@@ -348,10 +349,12 @@ impl Vault {
     }
 
     /// Hybrid retrieval: BM25 and ANN when both are on, then RRF, then an
-    /// optional reranker. Empty `collections` is every non-isolated,
-    /// non-encrypted collection on this handle. Naming an isolated
-    /// collection is an ordinary query. Naming an encrypted collection
-    /// is `unsupported`.
+    /// optional reranker. Empty `collections` is every non-isolated
+    /// collection that has at least one Index leg. Naming an isolated
+    /// collection is an ordinary query. A collection with only one leg
+    /// runs that leg; hits set `lexical_score` and/or `vector_score` for
+    /// the legs that ran. Naming an encrypted collection or one with both
+    /// `exclude_lexical_index` and `exclude_vector_index` is `unsupported`.
     ///
     /// `SearchQuery.rerank_limit` bounds how many fused hits the reranker
     /// scores. Unset scores every fused hit. Set to N, the library keeps the
@@ -681,14 +684,17 @@ impl Vault {
     /// Rebuild the Index from Vault files into a new generation directory,
     /// then point `{vault}/.scheda/index/current` at it with one atomic write.
     /// Writes format version `4` and the journal `id` map for every
-    /// non-encrypted collection, isolated included. Incremental writes keep
-    /// going into the live generation; only this method swaps. A reader that
-    /// opened before the swap keeps its generation. A reader older than one
-    /// `reindex` cycle may lose those files (`index_missing` or
-    /// `index_lexical`). Removes a leftover `{vault}/.isolated/.scheda/`
-    /// directory when one is present. Takes the write lock for this call.
-    /// Outside a transaction the lock is released before return, so there
-    /// is no concurrent writer during the swap.
+    /// non-encrypted `journal`, isolated included. Encrypted collections
+    /// are skipped. A collection with both Index legs excluded is not
+    /// walked for Tantivy or vectors; its journal id map is still rebuilt.
+    /// Incremental writes keep going into the live generation; only this
+    /// method swaps. A reader that opened before the swap keeps its
+    /// generation. A reader older than one `reindex` cycle may lose those
+    /// files (`index_missing` or `index_lexical`). Removes a leftover
+    /// `{vault}/.isolated/.scheda/` directory when one is present. Takes
+    /// the write lock for this call. Outside a transaction the lock is
+    /// released before return, so there is no concurrent writer during the
+    /// swap.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
         self.conclude_write((|| {
@@ -802,6 +808,8 @@ impl Collection {
                 fields: Vec::new(),
                 isolated: false,
                 encrypted: false,
+                exclude_lexical_index: false,
+                exclude_vector_index: false,
             },
             schema: Arc::new(LoadedSchema::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),
@@ -903,7 +911,7 @@ impl Collection {
     }
 
     fn upsert_lexical(&self, record: &Record) -> Result<(), Error> {
-        if self.decl.encrypted {
+        if !self.decl.any_indexed() {
             return Ok(());
         }
         #[cfg(feature = "find")]
@@ -920,7 +928,7 @@ impl Collection {
     }
 
     fn forget_lexical(&self, id: &str) -> Result<(), Error> {
-        if self.decl.encrypted {
+        if !self.decl.any_indexed() {
             return Ok(());
         }
         #[cfg(feature = "find")]
@@ -936,7 +944,7 @@ impl Collection {
     }
 
     fn record_exists(&self, id: &str) -> Result<bool, Error> {
-        if self.decl.encrypted {
+        if !self.decl.lexical_indexed() {
             return Ok(store::locate_file(&self.vault, &self.decl, id)?.is_some());
         }
         #[cfg(feature = "find")]
@@ -1091,7 +1099,8 @@ impl Collection {
     ///
     /// Encrypted collections write age armor after the canonical plaintext
     /// is built. A missing secret is `crypto`. The temp file never holds
-    /// plaintext.
+    /// plaintext. `exclude_lexical_index` skips the Tantivy write;
+    /// `exclude_vector_index` skips the embedder and the vector Index.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
@@ -1220,6 +1229,9 @@ impl Collection {
 
     /// Replace a whole `document` or `singleton`. `journal` → `unsupported`.
     ///
+    /// `exclude_lexical_index` skips the Tantivy write; `exclude_vector_index`
+    /// skips the embedder and the vector Index.
+    ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
@@ -1320,8 +1332,9 @@ impl Collection {
 
     /// Run a Tantivy Query on this collection's Index, then open matching files.
     ///
-    /// Isolated collections are in the Vault Index. An encrypted collection is
-    /// `unsupported`: no Index holds its Records.
+    /// Isolated collections are in the Vault Index. An encrypted collection
+    /// or one marked `exclude_lexical_index` is `unsupported`: Tantivy does
+    /// not hold its Records.
     ///
     /// Page order is score descending. Equal scores break by the Index `ord`
     /// fast field, ascending (earlier indexed first). `ord` is unique within
@@ -1333,6 +1346,12 @@ impl Collection {
         if self.decl.encrypted {
             bail!(Error::unsupported(format!(
                 "encrypted collection {} cannot be found",
+                self.decl.name
+            )));
+        }
+        if self.decl.exclude_lexical_index {
+            bail!(Error::unsupported(format!(
+                "collection {} cannot be found: exclude_lexical_index",
                 self.decl.name
             )));
         }
@@ -1349,8 +1368,10 @@ impl Collection {
     /// Hybrid retrieval on this collection: BM25 and ANN when both are on,
     /// then RRF, then an optional reranker.
     ///
-    /// Isolated collections are in the Vault Index. An encrypted collection is
-    /// `unsupported`: no Index holds its Records.
+    /// Isolated collections are in the Vault Index. A collection with only
+    /// one Index leg runs that leg; hits set `lexical_score` and/or
+    /// `vector_score` for the legs that ran. An encrypted collection or one
+    /// with both legs excluded is `unsupported`.
     ///
     /// `SearchQuery.rerank_limit` is the same as on [`Vault::search`]: unset
     /// scores every fused hit; set to N scores only the top N by RRF; zero
@@ -1365,6 +1386,12 @@ impl Collection {
         if self.decl.encrypted {
             bail!(Error::unsupported(format!(
                 "encrypted collection {} cannot be searched",
+                self.decl.name
+            )));
+        }
+        if !self.decl.any_indexed() {
+            bail!(Error::unsupported(format!(
+                "collection {} cannot be searched: both Index legs are excluded",
                 self.decl.name
             )));
         }
@@ -1524,7 +1551,7 @@ fn resolve_collections(
     if names.is_empty() {
         return Ok(schema
             .collections()
-            .filter(|decl| !decl.isolated && !decl.encrypted)
+            .filter(|decl| !decl.isolated && decl.lexical_indexed())
             .cloned()
             .collect());
     }
@@ -1542,6 +1569,49 @@ fn resolve_collections(
         if decl.encrypted {
             bail!(Error::unsupported(format!(
                 "encrypted collection {name} cannot be found"
+            )));
+        }
+        if decl.exclude_lexical_index {
+            bail!(Error::unsupported(format!(
+                "collection {name} cannot be found: exclude_lexical_index"
+            )));
+        }
+        out.push(decl.clone());
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "search")]
+fn resolve_search_collections(
+    schema: &LoadedSchema,
+    names: &[&str],
+) -> Result<Vec<schema::CollectionDecl>, Error> {
+    if names.is_empty() {
+        return Ok(schema
+            .collections()
+            .filter(|decl| !decl.isolated && decl.any_indexed())
+            .cloned()
+            .collect());
+    }
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for name in names {
+        if !seen.insert(*name) {
+            continue;
+        }
+        let Some(decl) = schema.get(name) else {
+            bail!(Error::not_found(format!(
+                "collection {name} is not in Schema"
+            )));
+        };
+        if decl.encrypted {
+            bail!(Error::unsupported(format!(
+                "encrypted collection {name} cannot be searched"
+            )));
+        }
+        if !decl.any_indexed() {
+            bail!(Error::unsupported(format!(
+                "collection {name} cannot be searched: both Index legs are excluded"
             )));
         }
         out.push(decl.clone());
@@ -1591,9 +1661,10 @@ fn read_record(
 
 /// Full-text blob of a `moreLikeThis` source `id`, same text the Index holds.
 ///
-/// Missing `id` is `not_found`. An encrypted collection never reaches `find`
-/// (`unsupported` at the collection set); if this path still sees one, it
-/// returns `unsupported` rather than `crypto`.
+/// Missing `id` is `not_found`. An encrypted or lexically excluded
+/// collection never reaches `find` (`unsupported` at the collection set);
+/// if this path still sees one, it returns `unsupported` rather than
+/// `crypto`.
 #[cfg(feature = "find")]
 fn more_like_this_source_text(
     ctx: &QueryCtx<'_>,
@@ -1603,6 +1674,12 @@ fn more_like_this_source_text(
     if decl.encrypted {
         bail!(Error::unsupported(format!(
             "encrypted collection {} cannot be found",
+            decl.name
+        )));
+    }
+    if !decl.lexical_indexed() {
+        bail!(Error::unsupported(format!(
+            "collection {} cannot be found: exclude_lexical_index",
             decl.name
         )));
     }
@@ -1697,12 +1774,29 @@ impl QueryCtx<'_> {
         query.require_valid()?;
         let explicit = !names.is_empty();
         let filter = &*query.filter;
-        let mut decls = resolve_collections(self.schema, names)?;
+        let mut decls = resolve_search_collections(self.schema, names)?;
         if filter.kind.is_some() {
             decls = apply_filter_schema(decls, filter, explicit)?;
         }
         if decls.is_empty() {
             return Ok(SearchHits::default());
+        }
+        let constrained = filter.kind.is_some() && !query::is_unconstrained(filter);
+        if explicit && constrained {
+            for decl in &decls {
+                if !decl.lexical_indexed() {
+                    bail!(Error::unsupported(format!(
+                        "collection {} cannot apply a Filter: exclude_lexical_index",
+                        decl.name
+                    )));
+                }
+            }
+        }
+        if !explicit && constrained {
+            decls.retain(|decl| decl.lexical_indexed());
+            if decls.is_empty() {
+                return Ok(SearchHits::default());
+            }
         }
         let k = match query.k {
             None | Some(0) => 10,
@@ -1730,7 +1824,7 @@ impl QueryCtx<'_> {
         };
         let mut hits = self
             .engine
-            .search(&collections, query, embedder, allowed.as_ref())?;
+            .search(&decls, query, embedder, allowed.as_ref())?;
         let include_raw = query.include_raw == Some(true);
         let Some(reranker) = reranker else {
             hits.hits.truncate(k);
@@ -2489,7 +2583,9 @@ mod tests {
         let err = b.begin().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Locked));
         assert!(
-            err.stack.iter().any(|frame| frame.contains("[Vault::begin]")),
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::begin]")),
             "operation missing from stack: {:?}",
             err.stack
         );
@@ -2537,21 +2633,27 @@ mod tests {
         let err = reader.push().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Locked));
         assert!(
-            err.stack.iter().any(|frame| frame.contains("[Vault::push]")),
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::push]")),
             "operation missing from stack: {:?}",
             err.stack
         );
         let err = reader.pull().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Locked));
         assert!(
-            err.stack.iter().any(|frame| frame.contains("[Vault::pull]")),
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::pull]")),
             "operation missing from stack: {:?}",
             err.stack
         );
         let err = reader.sync().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Locked));
         assert!(
-            err.stack.iter().any(|frame| frame.contains("[Vault::sync]")),
+            err.stack
+                .iter()
+                .any(|frame| frame.contains("[Vault::sync]")),
             "operation missing from stack: {:?}",
             err.stack
         );

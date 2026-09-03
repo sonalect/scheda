@@ -3,7 +3,7 @@
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -1113,6 +1113,258 @@ fn legacy_format_3_is_index_version_until_reindex() {
             .trim(),
         "4"
     );
+}
+
+const FOLD_TOKEN: &str = "fold-secret-token-never-index";
+const FOLD_DOCS: &str = r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_lexical_index: true
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+"#;
+const FOLD_INBOX: &str = r#"
+name: fold_inbox
+kind: singleton
+version: 1
+exclude_lexical_index: true
+exclude_vector_index: true
+singleton:
+  id: inbox
+fields:
+  - name: title
+    string: {}
+"#;
+
+fn tree_contains(root: &Path, needle: &str) -> bool {
+    fn walk(path: &Path, needle: &str) -> bool {
+        let Ok(meta) = fs::metadata(path) else {
+            return false;
+        };
+        if meta.is_file() {
+            return fs::read(path)
+                .ok()
+                .is_some_and(|bytes| bytes.windows(needle.len()).any(|w| w == needle.as_bytes()));
+        }
+        if meta.is_dir() {
+            let Ok(entries) = fs::read_dir(path) else {
+                return false;
+            };
+            for entry in entries.flatten() {
+                if walk(&entry.path(), needle) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    walk(root, needle)
+}
+
+#[test]
+fn find_on_lexically_excluded_collection_is_unsupported() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("fold.yaml", FOLD_DOCS);
+    let vault = scratch.reopen();
+    let collection = vault.collection("fold_docs").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": FOLD_TOKEN})), None)
+        .unwrap();
+    let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert!(
+        err.message
+            .as_deref()
+            .is_some_and(|m| m.contains("fold_docs") && m.contains("exclude_lexical_index"))
+    );
+    let err = vault
+        .find(&["fold_docs"], &FindQuery::all(), 0, 10)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn excluded_records_are_absent_from_the_index_and_keyed_reads_work() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("fold.yaml", FOLD_DOCS);
+    scratch.write_schema("inbox.yaml", FOLD_INBOX);
+    let vault = scratch.reopen();
+    vault
+        .collection("fold_docs")
+        .unwrap()
+        .add("alpha", rec(json!({"title": FOLD_TOKEN})), None)
+        .unwrap();
+    vault
+        .collection("fold_inbox")
+        .unwrap()
+        .add("inbox", rec(json!({"title": "inbox-title"})), None)
+        .unwrap();
+    let scheda = scratch.vault().join(".scheda");
+    assert!(
+        !tree_contains(&scheda, FOLD_TOKEN),
+        "excluded title leaked into the Index"
+    );
+    let docs = vault.collection("fold_docs").unwrap();
+    let got = docs.get("alpha").unwrap();
+    assert_eq!(got.id.as_deref(), Some("alpha"));
+    let listed: Vec<_> = docs.documents().unwrap().map(|r| r.unwrap().id).collect();
+    assert_eq!(listed, [Some("alpha".into())]);
+    assert_eq!(docs.ids().unwrap(), ["alpha"]);
+    let inbox = vault.collection("fold_inbox").unwrap();
+    assert_eq!(inbox.get("inbox").unwrap().id.as_deref(), Some("inbox"));
+    assert_eq!(inbox.ids().unwrap(), ["inbox"]);
+    vault.reindex().unwrap();
+    assert!(
+        !tree_contains(&scheda, FOLD_TOKEN),
+        "excluded title leaked into the Index after reindex"
+    );
+    assert_eq!(
+        vault
+            .collection("fold_docs")
+            .unwrap()
+            .get("alpha")
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("alpha")
+    );
+}
+
+#[test]
+fn new_field_on_excluded_collection_is_not_indexed() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("fold.yaml", FOLD_DOCS);
+    let vault = scratch.reopen();
+    vault
+        .collection("fold_docs")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "keep"})), None)
+        .unwrap();
+    drop(vault);
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_lexical_index: true
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+  - name: secret
+    string: {}
+"#,
+    );
+    let vault = scratch.reopen();
+    vault
+        .collection("fold_docs")
+        .unwrap()
+        .add(
+            "beta",
+            rec(json!({"title": "keep", "secret": FOLD_TOKEN})),
+            None,
+        )
+        .unwrap();
+    let scheda = scratch.vault().join(".scheda");
+    assert!(
+        !tree_contains(&scheda, FOLD_TOKEN),
+        "new field on an excluded collection entered the Index"
+    );
+    let err = vault
+        .collection("fold_docs")
+        .unwrap()
+        .find(&FindQuery::all(), 0, 10)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn journal_with_both_legs_excluded_still_gets_by_id() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "log.yaml",
+        r#"
+name: fold_log
+kind: journal
+version: 1
+exclude_lexical_index: true
+exclude_vector_index: true
+fields:
+  - name: msg
+    string: {}
+"#,
+    );
+    let vault = scratch.reopen();
+    let collection = vault.collection("fold_log").unwrap();
+    collection
+        .add("line-one", rec(json!({"msg": "hello"})), None)
+        .unwrap();
+    let got = collection.get("line-one").unwrap();
+    assert_eq!(got.id.as_deref(), Some("line-one"));
+    let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn more_like_this_on_vector_excluded_collection_is_lexical() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+"#,
+    );
+    let vault = scratch.reopen();
+    let collection = vault.collection("fold_docs").unwrap();
+    collection
+        .add(
+            "a",
+            rec(json!({"title": "the diary of a young girl about school"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add(
+            "b",
+            rec(json!({"title": "the diary of a young woman about school"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add("d", rec(json!({"title": "zzzzzyx unique widget"})), None)
+        .unwrap();
+    let found = collection
+        .find(
+            &filter(json!({
+                "moreLikeThis":{
+                    "id":"a",
+                    "minDocFrequency":1,
+                    "minTermFrequency":1,
+                    "minWordLength":2
+                }
+            })),
+            0,
+            10,
+        )
+        .unwrap();
+    let got = ids(&found);
+    assert!(got.contains(&"b"), "similar title missing: {got:?}");
+    assert!(!got.contains(&"d"), "unrelated matched: {got:?}");
 }
 
 fn peek_schema_name(body: &str) -> String {

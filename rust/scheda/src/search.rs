@@ -261,7 +261,7 @@ impl SearchEngine {
         if can_write {
             index::ensure_format(&index_dir)?;
         }
-        for decl in schema.collections().filter(|decl| !decl.encrypted) {
+        for decl in schema.collections().filter(|decl| decl.any_indexed()) {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
                 crate::schema::Kind::Document | crate::schema::Kind::Singleton => {
@@ -273,9 +273,11 @@ impl SearchEngine {
                     continue;
                 }
                 #[cfg(feature = "search")]
-                let vectors = {
+                let vectors = if decl.vector_indexed() {
                     let pieces = field_vector_texts(decl, &record)?;
                     embed_field_vectors(embedder, pieces)?
+                } else {
+                    Vec::new()
                 };
                 #[cfg(not(feature = "search"))]
                 let vectors: Vec<(String, Vec<f32>)> = Vec::new();
@@ -295,15 +297,17 @@ impl SearchEngine {
         record: &Record,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
-        if decl.encrypted {
+        if !decl.any_indexed() {
             return Ok(());
         }
         #[cfg(not(feature = "search"))]
         let _ = embedder;
         #[cfg(feature = "search")]
-        let vectors = {
+        let vectors = if decl.vector_indexed() {
             let pieces = field_vector_texts(decl, record)?;
             embed_field_vectors(embedder, pieces)?
+        } else {
+            Vec::new()
         };
         #[cfg(not(feature = "search"))]
         let vectors: Vec<(String, Vec<f32>)> = Vec::new();
@@ -329,7 +333,7 @@ impl SearchEngine {
     }
 
     pub(crate) fn forget(&self, decl: &CollectionDecl, id: &str) -> Result<(), Error> {
-        if decl.encrypted {
+        if !decl.any_indexed() {
             return Ok(());
         }
         let index_dir = self.dir()?;
@@ -593,12 +597,22 @@ impl SearchEngine {
     #[cfg(feature = "search")]
     pub(crate) fn search(
         &self,
-        collections: &[&str],
+        decls: &[CollectionDecl],
         query: &SearchQuery,
         embedder: Option<&dyn Embedder>,
         allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
     ) -> Result<SearchHits, Error> {
-        if collections.is_empty() {
+        let lexical_names: Vec<&str> = decls
+            .iter()
+            .filter(|decl| decl.lexical_indexed())
+            .map(|decl| decl.name.as_str())
+            .collect();
+        let vector_names: Vec<&str> = decls
+            .iter()
+            .filter(|decl| decl.vector_indexed())
+            .map(|decl| decl.name.as_str())
+            .collect();
+        if lexical_names.is_empty() && vector_names.is_empty() {
             return Ok(SearchHits::default());
         }
         let index_dir = self.dir()?;
@@ -614,7 +628,7 @@ impl SearchEngine {
         let lexical_weight = query.lexical_weight.unwrap_or(1.0);
         let vector_weight = query.vector_weight.unwrap_or(1.0);
         let pool = k.max(50);
-        let query_vec = if vector_weight > 0.0 {
+        let query_vec = if vector_weight > 0.0 && !vector_names.is_empty() {
             match embedder {
                 Some(embedder) => Some(embedder.embed(text)?),
                 None => None,
@@ -628,15 +642,15 @@ impl SearchEngine {
         if inner.lexical.is_none() {
             inner.lexical = open_lexical(&index_dir, can_write)?;
         }
-        let lexical_hits = if lexical_weight > 0.0 {
-            lexical_search(&mut inner, collections, text, pool, allowed)?
+        let lexical_hits = if lexical_weight > 0.0 && !lexical_names.is_empty() {
+            lexical_search(&mut inner, &lexical_names, text, pool, allowed)?
         } else {
             Vec::new()
         };
-        let vector_hits = if vector_weight > 0.0 {
+        let vector_hits = if vector_weight > 0.0 && !vector_names.is_empty() {
             vector_search(
                 &inner,
-                collections,
+                &vector_names,
                 query_vec.as_deref(),
                 pool,
                 embedder,
@@ -745,22 +759,28 @@ fn upsert_record(
         return Ok(());
     };
     let (fts_text, _vector_text) = marked_text(decl, record)?;
-    forget_source(&mut inner.edges, &decl.name, id);
-    add_edges(&mut inner.edges, decl, record)?;
+    if decl.lexical_indexed() {
+        forget_source(&mut inner.edges, &decl.name, id);
+        add_edges(&mut inner.edges, decl, record)?;
+    }
     if can_write {
-        if inner.lexical.is_none() {
-            inner.lexical = Some(create_lexical(index_dir, true)?);
-        }
-        let ord = inner.next_ord.get(&decl.name).copied().unwrap_or(0);
-        inner
-            .next_ord
-            .insert(decl.name.clone(), ord.saturating_add(1));
-        if let Some(lexical) = inner.lexical.as_mut() {
-            index_lexical(lexical, decl, record, &fts_text, ord)?;
-            inner.dirty = true;
+        if decl.lexical_indexed() {
+            if inner.lexical.is_none() {
+                inner.lexical = Some(create_lexical(index_dir, true)?);
+            }
+            let ord = inner.next_ord.get(&decl.name).copied().unwrap_or(0);
+            inner
+                .next_ord
+                .insert(decl.name.clone(), ord.saturating_add(1));
+            if let Some(lexical) = inner.lexical.as_mut() {
+                index_lexical(lexical, decl, record, &fts_text, ord)?;
+                inner.dirty = true;
+            }
         }
         #[cfg(feature = "search")]
-        if let Some(embedder) = embedder {
+        if decl.vector_indexed()
+            && let Some(embedder) = embedder
+        {
             upsert_vector(inner, embedder, decl, record, vectors)?;
             inner.dirty = true;
         }

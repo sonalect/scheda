@@ -470,7 +470,7 @@ pub(crate) fn scan_documents(
 }
 
 pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64), Error> {
-    if decl.encrypted {
+    if !decl.any_indexed() {
         return Ok((0, 0));
     }
     let mut records = 0u64;
@@ -1164,6 +1164,8 @@ mod tests {
             fields: Vec::new(),
             isolated: false,
             encrypted: false,
+            exclude_lexical_index: false,
+            exclude_vector_index: false,
         }
     }
 

@@ -546,8 +546,8 @@ mod tests {
     use protovalidate_buffa::Validate;
 
     use super::api::v1::{
-        Author, Body, Encryption, Error, Field, Filter, FindQuery, OpenOptions, Record, Schema,
-        SearchQuery, history,
+        Author, Body, Encryption, Error, Field, Filter, FindQuery, Journal, OpenOptions, Record,
+        Schema, SearchQuery, history,
     };
 
     #[test]
@@ -827,6 +827,21 @@ mod tests {
             .require_valid()
             .expect_err("version 0");
         assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
+    }
+
+    #[test]
+    fn journal_may_exclude_either_index_leg() {
+        for (lexical, vector) in [(true, false), (false, true), (true, true)] {
+            let mut schema = Schema::default()
+                .with_version(1)
+                .with_exclude_lexical_index(lexical)
+                .with_exclude_vector_index(vector);
+            schema.kind = Journal::default().into();
+            assert!(
+                schema.require_valid().is_ok(),
+                "journal lexical={lexical} vector={vector}"
+            );
+        }
     }
 
     #[test]

@@ -361,6 +361,9 @@ pub(crate) fn rebuild(
                 maps.replace_collection(decl.name.clone(), ids);
             }
             Kind::Document | Kind::Singleton => {
+                if !decl.any_indexed() {
+                    continue;
+                }
                 let (records, invalid) = store::reindex_stats(vault, decl)?;
                 records_read += records;
                 skipped_invalid += invalid;

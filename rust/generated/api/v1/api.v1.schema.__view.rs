@@ -25,6 +25,23 @@ pub struct SchemaView<'a> {
     ///
     /// Field 7: `encrypted`
     pub encrypted: ::core::option::Option<bool>,
+    /// Default false: Records enter the Tantivy Index (`find`, filters,
+    /// BM25). `true`: no Record of this collection is written there.
+    /// `find` that names it is refused, not an empty hit list. The journal
+    /// id map is a separate JSONL file and is still written. Redundant on
+    /// `encrypted` (ciphertext is never indexed) and allowed. A `journal`
+    /// may set it.
+    ///
+    /// Field 8: `exclude_lexical_index`
+    pub exclude_lexical_index: ::core::option::Option<bool>,
+    /// Default false: eligible fields are embedded on write. `true`: no
+    /// Record of this collection is embedded or stored in the vector
+    /// Index; `add` / `replace` do not call the embedder. `search` then
+    /// uses the lexical leg only. Redundant on `encrypted` and allowed.
+    /// A `journal` may set it.
+    ///
+    /// Field 9: `exclude_vector_index`
+    pub exclude_vector_index: ::core::option::Option<bool>,
     pub kind: ::core::option::Option<
         super::super::__buffa::view::oneof::schema::Kind<'a>,
     >,
@@ -78,6 +95,22 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.encrypted = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
+            8u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.exclude_lexical_index = Some(
+                    ::buffa::types::decode_bool(&mut cur)?,
+                );
+            }
+            9u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.exclude_vector_index = Some(::buffa::types::decode_bool(&mut cur)?);
             }
             2u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -220,6 +253,8 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                 .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
             isolated: self.isolated,
             encrypted: self.encrypted,
+            exclude_lexical_index: self.exclude_lexical_index,
+            exclude_vector_index: self.exclude_vector_index,
             kind: match self.kind.as_ref() {
                 ::core::option::Option::Some(v) => {
                     ::core::option::Option::Some(
@@ -312,6 +347,12 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         if self.encrypted.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if self.exclude_lexical_index.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        if self.exclude_vector_index.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -368,6 +409,12 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         if let Some(v) = self.encrypted {
             ::buffa::types::put_bool_field(7u32, v, buf);
         }
+        if let Some(v) = self.exclude_lexical_index {
+            ::buffa::types::put_bool_field(8u32, v, buf);
+        }
+        if let Some(v) = self.exclude_vector_index {
+            ::buffa::types::put_bool_field(9u32, v, buf);
+        }
         self.__buffa_unknown_fields.write_to(buf);
     }
 }
@@ -400,6 +447,12 @@ impl<'__a> ::serde::Serialize for SchemaView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.encrypted {
             __map.serialize_entry("encrypted", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.exclude_lexical_index {
+            __map.serialize_entry("excludeLexicalIndex", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.exclude_vector_index {
+            __map.serialize_entry("excludeVectorIndex", &__v)?;
         }
         if let ::core::option::Option::Some(ref __ov) = self.kind {
             match __ov {
@@ -536,6 +589,29 @@ impl SchemaOwnedView {
     #[must_use]
     pub fn encrypted(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().encrypted
+    }
+    /// Default false: Records enter the Tantivy Index (`find`, filters,
+    /// BM25). `true`: no Record of this collection is written there.
+    /// `find` that names it is refused, not an empty hit list. The journal
+    /// id map is a separate JSONL file and is still written. Redundant on
+    /// `encrypted` (ciphertext is never indexed) and allowed. A `journal`
+    /// may set it.
+    ///
+    /// Field 8: `exclude_lexical_index`
+    #[must_use]
+    pub fn exclude_lexical_index(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().exclude_lexical_index
+    }
+    /// Default false: eligible fields are embedded on write. `true`: no
+    /// Record of this collection is embedded or stored in the vector
+    /// Index; `add` / `replace` do not call the embedder. `search` then
+    /// uses the lexical leg only. Redundant on `encrypted` and allowed.
+    /// A `journal` may set it.
+    ///
+    /// Field 9: `exclude_vector_index`
+    #[must_use]
+    pub fn exclude_vector_index(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().exclude_vector_index
     }
     /// Oneof `kind`.
     #[must_use]

@@ -238,6 +238,10 @@ struct RawCollection {
     isolated: bool,
     #[serde(default)]
     encrypted: bool,
+    #[serde(default)]
+    exclude_lexical_index: bool,
+    #[serde(default)]
+    exclude_vector_index: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -289,6 +293,25 @@ pub(crate) struct CollectionDecl {
     pub fields: Vec<FieldDecl>,
     pub isolated: bool,
     pub encrypted: bool,
+    pub exclude_lexical_index: bool,
+    pub exclude_vector_index: bool,
+}
+
+impl CollectionDecl {
+    /// Whether Records enter the Tantivy Index (`find`, filters, BM25).
+    pub(crate) const fn lexical_indexed(&self) -> bool {
+        !self.encrypted && !self.exclude_lexical_index
+    }
+
+    /// Whether Records are embedded and stored in the vector Index.
+    pub(crate) const fn vector_indexed(&self) -> bool {
+        !self.encrypted && !self.exclude_vector_index
+    }
+
+    /// Whether either Index leg is written for this collection.
+    pub(crate) const fn any_indexed(&self) -> bool {
+        self.lexical_indexed() || self.vector_indexed()
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -526,6 +549,8 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         fields,
         isolated: raw.isolated,
         encrypted: raw.encrypted,
+        exclude_lexical_index: raw.exclude_lexical_index,
+        exclude_vector_index: raw.exclude_vector_index,
     })
 }
 
@@ -768,6 +793,12 @@ pub(crate) fn to_proto_schema(
     }
     if decl.encrypted {
         out = out.with_encrypted(true);
+    }
+    if decl.exclude_lexical_index {
+        out = out.with_exclude_lexical_index(true);
+    }
+    if decl.exclude_vector_index {
+        out = out.with_exclude_vector_index(true);
     }
     out.kind = match decl.kind {
         Kind::Document => body_to_proto(decl.body.as_ref()).into(),
@@ -1037,6 +1068,8 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
         fields,
         isolated: schema.isolated.unwrap_or(false),
         encrypted: schema.encrypted.unwrap_or(false),
+        exclude_lexical_index: schema.exclude_lexical_index.unwrap_or(false),
+        exclude_vector_index: schema.exclude_vector_index.unwrap_or(false),
     };
     if decl.encrypted && decl.kind == Kind::Journal {
         bail!(Error::invalid(
@@ -1232,6 +1265,10 @@ struct DiskCollection {
     isolated: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     encrypted: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_lexical_index: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    exclude_vector_index: bool,
 }
 
 #[derive(Serialize)]
@@ -1343,6 +1380,8 @@ impl From<&CollectionDecl> for DiskCollection {
             body,
             isolated: decl.isolated,
             encrypted: decl.encrypted,
+            exclude_lexical_index: decl.exclude_lexical_index,
+            exclude_vector_index: decl.exclude_vector_index,
         }
     }
 }
@@ -1779,6 +1818,55 @@ mod tests {
             err.to_string()
                 .contains("journal collections cannot be encrypted")
         );
+    }
+
+    #[test]
+    fn exclude_index_marks_parse() {
+        let decl = parse(
+            "name: c\nkind: document\nversion: 1\nexclude_lexical_index: true\nexclude_vector_index: true\nfields:\n  - name: title\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(decl.exclude_lexical_index);
+        assert!(decl.exclude_vector_index);
+        assert!(!decl.lexical_indexed());
+        assert!(!decl.vector_indexed());
+        assert!(!decl.any_indexed());
+    }
+
+    #[test]
+    fn exclude_index_flags_on_encrypted_document_are_allowed() {
+        let decl = parse(
+            "name: c\nkind: document\nversion: 1\nencrypted: true\nexclude_lexical_index: true\nexclude_vector_index: true\nfields:\n  - name: title\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(decl.encrypted);
+        assert!(decl.exclude_lexical_index);
+        assert!(decl.exclude_vector_index);
+        assert!(!decl.any_indexed());
+    }
+
+    #[test]
+    fn journal_may_set_either_exclude_index_flag() {
+        let lexical = parse(
+            "name: c\nkind: journal\nversion: 1\nexclude_lexical_index: true\nfields:\n  - name: msg\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(lexical.exclude_lexical_index);
+        assert!(!lexical.exclude_vector_index);
+        assert!(!lexical.lexical_indexed());
+        assert!(lexical.vector_indexed());
+        let vector = parse(
+            "name: c\nkind: journal\nversion: 1\nexclude_vector_index: true\nfields:\n  - name: msg\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(vector.exclude_vector_index);
+        assert!(vector.lexical_indexed());
+        assert!(!vector.vector_indexed());
+        let both = parse(
+            "name: c\nkind: journal\nversion: 1\nexclude_lexical_index: true\nexclude_vector_index: true\nfields:\n  - name: msg\n    string: {}\n",
+        )
+        .unwrap();
+        assert!(!both.any_indexed());
     }
 
     #[test]

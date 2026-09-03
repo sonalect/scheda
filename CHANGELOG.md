@@ -8,6 +8,20 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **A collection can stay out of either Index leg.** Schema
+  `exclude_lexical_index` keeps Records out of Tantivy (`find`, filters,
+  BM25). `exclude_vector_index` skips the embedder on write and keeps
+  Records out of the vector Index. Two flags, not one: embedding runs on
+  every eligible `add` / `replace`, so a collection that only wants word
+  search must be able to refuse inference without leaving Tantivy.
+  `find` that names a lexically excluded collection is `unsupported`,
+  not an empty page. `search` runs the legs the collection still has
+  (`lexical_score` / `vector_score` say which); both legs excluded is
+  `unsupported`. A `journal` may set either flag: keyed `get` uses the
+  journal id map (JSONL under the generation directory), not Tantivy.
+
 ## [0.9.2] - 2026-09-03
 
 ### Fixed

@@ -45,6 +45,33 @@ pub struct Schema {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub encrypted: ::core::option::Option<bool>,
+    /// Default false: Records enter the Tantivy Index (`find`, filters,
+    /// BM25). `true`: no Record of this collection is written there.
+    /// `find` that names it is refused, not an empty hit list. The journal
+    /// id map is a separate JSONL file and is still written. Redundant on
+    /// `encrypted` (ciphertext is never indexed) and allowed. A `journal`
+    /// may set it.
+    ///
+    /// Field 8: `exclude_lexical_index`
+    #[serde(
+        rename = "excludeLexicalIndex",
+        alias = "exclude_lexical_index",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub exclude_lexical_index: ::core::option::Option<bool>,
+    /// Default false: eligible fields are embedded on write. `true`: no
+    /// Record of this collection is embedded or stored in the vector
+    /// Index; `add` / `replace` do not call the embedder. `search` then
+    /// uses the lexical leg only. Redundant on `encrypted` and allowed.
+    /// A `journal` may set it.
+    ///
+    /// Field 9: `exclude_vector_index`
+    #[serde(
+        rename = "excludeVectorIndex",
+        alias = "exclude_vector_index",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub exclude_vector_index: ::core::option::Option<bool>,
     #[serde(flatten)]
     pub kind: ::core::option::Option<__buffa::oneof::schema::Kind>,
     #[serde(skip)]
@@ -58,6 +85,8 @@ impl ::core::fmt::Debug for Schema {
             .field("fields", &self.fields)
             .field("isolated", &self.isolated)
             .field("encrypted", &self.encrypted)
+            .field("exclude_lexical_index", &self.exclude_lexical_index)
+            .field("exclude_vector_index", &self.exclude_vector_index)
             .field("kind", &self.kind)
             .finish()
     }
@@ -89,6 +118,20 @@ impl Schema {
     ///Sets [`Self::encrypted`] to `Some(value)`, consuming and returning `self`.
     pub fn with_encrypted(mut self, value: bool) -> Self {
         self.encrypted = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::exclude_lexical_index`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_exclude_lexical_index(mut self, value: bool) -> Self {
+        self.exclude_lexical_index = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::exclude_vector_index`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_exclude_vector_index(mut self, value: bool) -> Self {
+        self.exclude_vector_index = Some(value);
         self
     }
 }
@@ -157,6 +200,12 @@ impl ::buffa::Message for Schema {
         if self.encrypted.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
+        if self.exclude_lexical_index.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        if self.exclude_vector_index.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -211,6 +260,12 @@ impl ::buffa::Message for Schema {
         }
         if let Some(v) = self.encrypted {
             ::buffa::types::put_bool_field(7u32, v, buf);
+        }
+        if let Some(v) = self.exclude_lexical_index {
+            ::buffa::types::put_bool_field(8u32, v, buf);
+        }
+        if let Some(v) = self.exclude_vector_index {
+            ::buffa::types::put_bool_field(9u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -324,6 +379,24 @@ impl ::buffa::Message for Schema {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
+            8u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.exclude_lexical_index = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
+            }
+            9u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.exclude_vector_index = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -337,6 +410,8 @@ impl ::buffa::Message for Schema {
         self.kind = ::core::option::Option::None;
         self.isolated = ::core::option::Option::None;
         self.encrypted = ::core::option::Option::None;
+        self.exclude_lexical_index = ::core::option::Option::None;
+        self.exclude_vector_index = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -374,6 +449,12 @@ impl<'de> serde::Deserialize<'de> for Schema {
                     ::core::option::Option<bool>,
                 > = None;
                 let mut __f_encrypted: ::core::option::Option<
+                    ::core::option::Option<bool>,
+                > = None;
+                let mut __f_exclude_lexical_index: ::core::option::Option<
+                    ::core::option::Option<bool>,
+                > = None;
+                let mut __f_exclude_vector_index: ::core::option::Option<
                     ::core::option::Option<bool>,
                 > = None;
                 let mut __oneof_kind: ::core::option::Option<
@@ -424,6 +505,16 @@ impl<'de> serde::Deserialize<'de> for Schema {
                         }
                         "encrypted" => {
                             __f_encrypted = Some(
+                                map.next_value::<::core::option::Option<bool>>()?,
+                            );
+                        }
+                        "excludeLexicalIndex" | "exclude_lexical_index" => {
+                            __f_exclude_lexical_index = Some(
+                                map.next_value::<::core::option::Option<bool>>()?,
+                            );
+                        }
+                        "excludeVectorIndex" | "exclude_vector_index" => {
+                            __f_exclude_vector_index = Some(
                                 map.next_value::<::core::option::Option<bool>>()?,
                             );
                         }
@@ -514,6 +605,12 @@ impl<'de> serde::Deserialize<'de> for Schema {
                 }
                 if let ::core::option::Option::Some(v) = __f_encrypted {
                     __r.encrypted = v;
+                }
+                if let ::core::option::Option::Some(v) = __f_exclude_lexical_index {
+                    __r.exclude_lexical_index = v;
+                }
+                if let ::core::option::Option::Some(v) = __f_exclude_vector_index {
+                    __r.exclude_vector_index = v;
                 }
                 __r.kind = __oneof_kind;
                 Ok(__r)

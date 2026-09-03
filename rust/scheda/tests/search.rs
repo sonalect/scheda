@@ -6,13 +6,14 @@ use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda::{
-    Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, Reranker, SearchQuery, Vault,
+    Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, RecordReplace, Reranker,
+    SearchQuery, Vault,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -666,10 +667,12 @@ fn search_omits_raw_unless_include_raw() {
     let included = collection
         .search(&q("kryptonite", 5).with_include_raw(true), None)
         .unwrap();
-    assert!(included.hits[0]
-        .raw
-        .as_ref()
-        .is_some_and(|raw| !raw.is_empty()));
+    assert!(
+        included.hits[0]
+            .raw
+            .as_ref()
+            .is_some_and(|raw| !raw.is_empty())
+    );
 }
 
 #[test]
@@ -1096,6 +1099,198 @@ fn live_index_at(root: &Path) -> PathBuf {
         Ok(name) => root.join(name.trim()),
         Err(_) => root.to_path_buf(),
     }
+}
+
+fn rec_rep(fields: Value) -> RecordReplace {
+    serde_json::from_value(json!({ "fields": fields })).unwrap()
+}
+
+#[test]
+fn search_on_lexically_excluded_collection_uses_vector_leg() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_lexical_index: true
+fields:
+  - name: title
+    string: {}
+"#,
+    );
+    let embedder = Arc::new(MapEmbedder {
+        pairs: vec![
+            (String::from("fold-vector-alpha"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("fold-vector-other"), vec![0.0, 1.0, 0.0, 0.0]),
+        ],
+    });
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    let collection = vault.collection("fold_docs").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "fold-vector-alpha"})), None)
+        .unwrap();
+    collection
+        .add("other", rec(json!({"title": "fold-vector-other"})), None)
+        .unwrap();
+    let hits = collection.search(&q("fold-vector-alpha", 1), None).unwrap();
+    assert_eq!(hit_ids(&hits), ["alpha"]);
+    assert!(hits.hits[0].vector_score.is_some());
+    assert!(hits.hits[0].lexical_score.is_none());
+    let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn search_on_vector_excluded_collection_uses_lexical_leg() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+"#,
+    );
+    let probe = ProbeEmbedder::new(32);
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&probe) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    let collection = vault.collection("fold_docs").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    collection
+        .replace(
+            "alpha",
+            rec_rep(json!({"title": "kryptonite mineral"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        probe.counts(),
+        (0, 0),
+        "exclude_vector_index must not call the embedder on add or replace"
+    );
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
+    assert_eq!(hit_ids(&hits), ["alpha"]);
+    assert!(hits.hits[0].lexical_score.is_some());
+    assert!(hits.hits[0].vector_score.is_none());
+}
+
+#[test]
+fn search_with_both_index_legs_excluded_is_unsupported() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_lexical_index: true
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+"#,
+    );
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let collection = vault.collection("fold_docs").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "kryptonite"})), None)
+        .unwrap();
+    let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+    assert!(
+        err.message
+            .as_deref()
+            .is_some_and(|m| m.contains("fold_docs") && m.contains("both Index legs"))
+    );
+    let err = vault
+        .search(&["fold_docs"], &q("kryptonite", 5), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Unsupported));
+}
+
+#[test]
+fn new_field_on_vector_excluded_collection_is_not_embedded() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+"#,
+    );
+    let probe = ProbeEmbedder::new(32);
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&probe) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    vault
+        .collection("fold_docs")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "keep"})), None)
+        .unwrap();
+    drop(vault);
+    scratch.write_schema(
+        "fold.yaml",
+        r#"
+name: fold_docs
+kind: document
+version: 1
+exclude_vector_index: true
+fields:
+  - name: title
+    string: {}
+  - name: secret
+    string: {}
+"#,
+    );
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&probe) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    vault
+        .collection("fold_docs")
+        .unwrap()
+        .add(
+            "beta",
+            rec(json!({"title": "keep", "secret": "new-field-token"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        probe.counts(),
+        (0, 0),
+        "a new field on a vector-excluded collection must not be embedded"
+    );
 }
 
 fn peek_schema_name(body: &str) -> String {

@@ -40,6 +40,19 @@ message Schema {
   // of `isolated`. I/O requires the handle secret. `journal` may not
   // set it.
   bool encrypted = 7;
+  // Default false: Records enter the Tantivy Index (`find`, filters,
+  // BM25). `true`: no Record of this collection is written there.
+  // `find` that names it is refused, not an empty hit list. The journal
+  // id map is a separate JSONL file and is still written. Redundant on
+  // `encrypted` (ciphertext is never indexed) and allowed. A `journal`
+  // may set it.
+  bool exclude_lexical_index = 8;
+  // Default false: eligible fields are embedded on write. `true`: no
+  // Record of this collection is embedded or stored in the vector
+  // Index; `add` / `replace` do not call the embedder. `search` then
+  // uses the lexical leg only. Redundant on `encrypted` and allowed.
+  // A `journal` may set it.
+  bool exclude_vector_index = 9;
 }
 
 // `journal` segment cap. Size-first: a cap hit closes the segment even
