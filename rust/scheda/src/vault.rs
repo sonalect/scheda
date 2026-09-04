@@ -364,10 +364,13 @@ impl Vault {
     /// `exclude_lexical_index` and `exclude_vector_index` is `unsupported`.
     ///
     /// `SearchQuery.rerank_limit` bounds how many fused hits the reranker
-    /// scores. Unset scores every fused hit. Set to N, the library keeps the
-    /// top N of the fused list by RRF score, reads and scores only those, and
-    /// drops the rest. The fusion pool stays `max(k, 50)`; N larger than the
-    /// pool scores the whole pool. Zero is `invalid`. N below the effective
+    /// scores. Unset scores every fused hit; the fusion pool stays
+    /// `max(k, 50)`. Set to N, both Index legs retrieve `max(k, 50, N)` so a
+    /// candidate at fused rank N can actually be scored; the library then
+    /// keeps the top N of the fused list by RRF, reads and scores only those,
+    /// and drops the rest. N larger than the corpus scores every hit that
+    /// exists. A large N is more BM25 and ANN retrieval and more Record
+    /// reads before the model runs. Zero is `invalid`. N below the effective
     /// `k` (unset or 0 means 10) is `invalid` and names both numbers.
     /// `rerank_limit` is ignored, not rejected, when no reranker is passed.
     #[cfg(feature = "search")]
@@ -1403,9 +1406,9 @@ impl Collection {
     /// with both legs excluded is `unsupported`.
     ///
     /// `SearchQuery.rerank_limit` is the same as on [`Vault::search`]: unset
-    /// scores every fused hit; set to N scores only the top N by RRF; zero
-    /// and a value below `k` are `invalid`. Ignored when no reranker is
-    /// passed.
+    /// scores every fused hit at pool `max(k, 50)`; set to N deepens both
+    /// legs to `max(k, 50, N)` and scores the top N by RRF; zero and a value
+    /// below `k` are `invalid`. Ignored when no reranker is passed.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -1851,9 +1854,13 @@ impl QueryCtx<'_> {
                     })?,
             )
         };
-        let mut hits = self
-            .engine
-            .search(&decls, query, embedder, allowed.as_ref())?;
+        let mut hits = self.engine.search(
+            &decls,
+            query,
+            embedder,
+            allowed.as_ref(),
+            reranker.is_some(),
+        )?;
         let include_raw = query.include_raw == Some(true);
         let Some(reranker) = reranker else {
             hits.hits.truncate(k);

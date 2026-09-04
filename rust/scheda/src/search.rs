@@ -60,6 +60,11 @@ const WRITER_HEAP: usize = 16_000_000;
 const RRF_K: f64 = 60.0;
 #[cfg(feature = "search")]
 const DEFAULT_K: usize = 10;
+/// Minimum fused-candidate depth. Each Index leg retrieves this many hits
+/// (or `k` if larger) so RRF can promote a document that a single leg
+/// would have ranked below `k`.
+#[cfg(feature = "search")]
+const FUSION_POOL_FLOOR: usize = 50;
 
 pub(crate) struct SearchEngine {
     index_dir: Mutex<PathBuf>,
@@ -647,6 +652,7 @@ impl SearchEngine {
         query: &SearchQuery,
         embedder: Option<&dyn Embedder>,
         allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
+        has_reranker: bool,
     ) -> Result<SearchHits, Error> {
         let lexical_names: Vec<&str> = decls
             .iter()
@@ -673,7 +679,7 @@ impl SearchEngine {
         };
         let lexical_weight = query.lexical_weight.unwrap_or(1.0);
         let vector_weight = query.vector_weight.unwrap_or(1.0);
-        let pool = k.max(50);
+        let pool = fusion_pool(k, query.rerank_limit.filter(|_| has_reranker));
         let query_vec = if vector_weight > 0.0 && !vector_names.is_empty() {
             match embedder {
                 Some(embedder) => Some(embedder.embed(text)?),
@@ -1157,6 +1163,18 @@ fn collect_vector_slots(fields: &[FieldDecl], slots: &mut BTreeSet<String>) {
             slots.insert(id.clone());
         }
         collect_vector_slots(&field.fields, slots);
+    }
+}
+
+/// Depth each Index leg retrieves, and the fused list length, before any
+/// rerank truncation. Unset `rerank_limit` (or no reranker) keeps the
+/// floor. A limit above the floor is the caller's requested depth.
+#[cfg(feature = "search")]
+fn fusion_pool(k: usize, rerank_limit: Option<u32>) -> usize {
+    let floor = k.max(FUSION_POOL_FLOOR);
+    match rerank_limit {
+        Some(limit) => floor.max(limit as usize),
+        None => floor,
     }
 }
 

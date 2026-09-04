@@ -80,8 +80,10 @@ LIB-12, LIB-22, LIB-23).
 Missing or empty var → `invalid`. Only on `search`. Unset → RRF.
 
 `--rerank-limit N`: `SearchQuery.rerank_limit`. Caps how many fused
-candidates reach the reranker. Unset → every fused hit is scored. `0`, or a
-value below `k`, is `invalid`. Ignored without a reranker.
+candidates reach the reranker. Unset → pool `max(k, 50)`, every fused hit
+is scored. Set to N → both legs retrieve `max(k, 50, N)` and the reranker
+scores the top N. `0`, or a value below `k`, is `invalid`. Ignored without
+a reranker.
 
 ```text
 scheda --vault ./vault \

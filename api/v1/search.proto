@@ -54,9 +54,11 @@ message SearchQuery {
   }];
   // When true, fill `Hit.raw`. Unset or false → omit those bytes.
   bool include_raw = 6;
-  // When set, the reranker scores only the top N fused hits (RRF order).
-  // Unset → score every fused hit. Ignored when no reranker is passed.
-  // Zero is invalid.
+  // When set with a reranker, both Index legs retrieve max(k, 50, N) and
+  // the reranker scores the top N fused hits (RRF order). Unset → pool
+  // stays max(k, 50) and every fused hit is scored. Ignored when no
+  // reranker is passed. Zero is invalid. N larger than the corpus is not
+  // an error.
   uint32 rerank_limit = 7 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];

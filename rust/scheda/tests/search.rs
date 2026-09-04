@@ -409,6 +409,14 @@ fn add_numbered_kryptonite(collection: &scheda::Collection, n: usize) {
     }
 }
 
+fn fill_kryptonite(vault: &Vault, n: usize) -> scheda::Collection {
+    let collection = vault.collection("token_notes").unwrap();
+    vault.begin().unwrap();
+    add_numbered_kryptonite(&collection, n);
+    vault.commit("numbered kryptonite").unwrap();
+    collection
+}
+
 fn assert_invalid_rerank_limit(err: &scheda::Error, limit: u32, k: usize) {
     assert_eq!(err.known_code(), Some(Code::Invalid));
     let message = err.message.as_deref().unwrap_or("");
@@ -618,6 +626,118 @@ fn rerank_limit_without_reranker_is_ignored() {
     assert_eq!(hit_ids(&plain), hit_ids(&ignored));
     assert!(ignored.hits.iter().all(|hit| hit.rerank_score.is_none()));
     assert_eq!(ignored.hits.len(), 3);
+}
+
+#[test]
+fn unset_rerank_limit_on_a_large_corpus_scores_the_fusion_floor() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = fill_kryptonite(&vault, 80);
+    let reranker = ScoreByIdReranker::new();
+    let page = collection
+        .search(&q("kryptonite", 10), Some(&reranker))
+        .unwrap();
+    assert_eq!(reranker.scored(), 50);
+    assert_eq!(page.hits.len(), 10);
+    assert!(page.hits.iter().all(|hit| hit.rerank_score.is_some()));
+}
+
+#[test]
+fn rerank_limit_at_or_below_the_floor_does_not_deepen_the_pool() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = fill_kryptonite(&vault, 80);
+    let below = ScoreByIdReranker::new();
+    let below_page = collection
+        .search(&q("kryptonite", 10).with_rerank_limit(30), Some(&below))
+        .unwrap();
+    assert_eq!(below.scored(), 30);
+    assert_eq!(below_page.hits.len(), 10);
+
+    let at_floor = ScoreByIdReranker::new();
+    let at_floor_page = collection
+        .search(&q("kryptonite", 10).with_rerank_limit(50), Some(&at_floor))
+        .unwrap();
+    assert_eq!(at_floor.scored(), 50);
+    assert_eq!(at_floor_page.hits.len(), 10);
+
+    let unset = ScoreByIdReranker::new();
+    let unset_page = collection
+        .search(&q("kryptonite", 10), Some(&unset))
+        .unwrap();
+    assert_eq!(unset.scored(), 50);
+    assert_eq!(hit_ids(&at_floor_page), hit_ids(&unset_page));
+}
+
+#[test]
+fn rerank_limit_above_the_floor_hands_that_many_to_the_reranker() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = fill_kryptonite(&vault, 80);
+    let fused = collection.search(&q("kryptonite", 80), None).unwrap();
+    assert_eq!(fused.hits.len(), 80);
+    let deep_id = fused.hits[59].id.clone().unwrap();
+
+    let floor = ScoreByIdReranker::new();
+    let floor_page = collection
+        .search(&q("kryptonite", 10), Some(&floor))
+        .unwrap();
+    assert_eq!(floor.scored(), 50);
+    assert!(
+        !hit_ids(&floor_page).contains(&deep_id.as_str()),
+        "id at fused rank 60 must sit outside the default floor: {deep_id}"
+    );
+
+    let deep = ScoreByIdReranker::new();
+    let page = collection
+        .search(&q("kryptonite", 10).with_rerank_limit(80), Some(&deep))
+        .unwrap();
+    assert_eq!(
+        deep.scored(),
+        80,
+        "reranker must be handed 80 candidates, not the floor of 50"
+    );
+    assert_eq!(page.hits.len(), 10);
+    assert!(page.hits.iter().all(|hit| hit.rerank_score.is_some()));
+
+    let rescued = collection
+        .search(
+            &q("kryptonite", 10).with_rerank_limit(80),
+            Some(&PreferIdReranker(deep_id.clone())),
+        )
+        .unwrap();
+    assert_eq!(hit_ids(&rescued)[0], deep_id.as_str());
+}
+
+#[test]
+fn rerank_limit_beyond_the_corpus_scores_everything_without_error() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = fill_kryptonite(&vault, 20);
+    let reranker = ScoreByIdReranker::new();
+    let page = collection
+        .search(
+            &q("kryptonite", 10).with_rerank_limit(10_000),
+            Some(&reranker),
+        )
+        .unwrap();
+    assert_eq!(reranker.scored(), 20);
+    assert_eq!(page.hits.len(), 10);
+    assert!(page.hits.iter().all(|hit| hit.rerank_score.is_some()));
+}
+
+#[test]
+fn rerank_limit_without_reranker_does_not_change_a_large_page() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = fill_kryptonite(&vault, 80);
+    let plain = collection.search(&q("kryptonite", 10), None).unwrap();
+    let ignored = collection
+        .search(&q("kryptonite", 10).with_rerank_limit(80), None)
+        .unwrap();
+    assert_eq!(hit_ids(&plain), hit_ids(&ignored));
+    assert!(ignored.hits.iter().all(|hit| hit.rerank_score.is_none()));
+    assert_eq!(ignored.hits.len(), 10);
 }
 
 #[test]

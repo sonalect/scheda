@@ -8,6 +8,14 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`SearchQuery.rerank_limit` above 50 now deepens the fusion pool.** Both
+  Index legs retrieve `max(k, 50, N)` so the reranker can score a candidate
+  at fused rank N. Unset, or a value at or below the floor, still uses
+  `max(k, 50)`. Without a reranker the field is still ignored. A limit
+  larger than the corpus scores every hit that exists.
+
 ## [0.9.5] - 2026-09-04
 
 ### Fixed

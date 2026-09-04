@@ -21,9 +21,11 @@ pub struct SearchQueryView<'a> {
     ///
     /// Field 6: `include_raw`
     pub include_raw: ::core::option::Option<bool>,
-    /// When set, the reranker scores only the top N fused hits (RRF order).
-    /// Unset → score every fused hit. Ignored when no reranker is passed.
-    /// Zero is invalid.
+    /// When set with a reranker, both Index legs retrieve max(k, 50, N) and
+    /// the reranker scores the top N fused hits (RRF order). Unset → pool
+    /// stays max(k, 50) and every fused hit is scored. Ignored when no
+    /// reranker is passed. Zero is invalid. N larger than the corpus is not
+    /// an error.
     ///
     /// Field 7: `rerank_limit`
     pub rerank_limit: ::core::option::Option<u32>,
@@ -416,9 +418,11 @@ impl SearchQueryOwnedView {
     pub fn include_raw(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().include_raw
     }
-    /// When set, the reranker scores only the top N fused hits (RRF order).
-    /// Unset → score every fused hit. Ignored when no reranker is passed.
-    /// Zero is invalid.
+    /// When set with a reranker, both Index legs retrieve max(k, 50, N) and
+    /// the reranker scores the top N fused hits (RRF order). Unset → pool
+    /// stays max(k, 50) and every fused hit is scored. Ignored when no
+    /// reranker is passed. Zero is invalid. N larger than the corpus is not
+    /// an error.
     ///
     /// Field 7: `rerank_limit`
     #[must_use]
