@@ -2,7 +2,7 @@
 name = "protoc-gen-buffa-packaging-v0-9-1"
 version = "0.9.1"
 edition = "2024"
-rust-version = "1.98.0"
+rust-version = "1.98.1"
 publish = false
 description = "Pins protoc-gen-buffa-packaging v0.9.1 (not an application crate)."
 
