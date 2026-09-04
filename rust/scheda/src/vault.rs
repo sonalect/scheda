@@ -235,13 +235,20 @@ impl Vault {
     /// True during an open transaction and while a mutating call is in
     /// progress. False after `commit`, `discard`, a mutating call that
     /// autocommits, and `open`. Dropping the handle releases the lock
-    /// before Index teardown waits on merge threads.
+    /// before Index teardown waits on merge threads. The lexical Index
+    /// writer is released with the lock, so another handle can write
+    /// without waiting on Tantivy's directory lock.
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
         match self.write_lock.lock() {
             Ok(slot) => slot.is_some(),
             Err(_) => true,
         }
+    }
+
+    #[cfg(all(test, feature = "find"))]
+    fn lexical_writer_opens(&self) -> u64 {
+        self.search.lexical_writer_opens()
     }
 
     /// Whether git reports at least one Remote (usually `origin`).
@@ -389,7 +396,16 @@ impl Vault {
     /// message is empty, or there is nothing to commit.
     ///
     /// Holds the write lock through `auto_sync` push, then releases it
-    /// before returning. A later `open` on this path can write immediately.
+    /// and the lexical Index writer before returning. A later `open` on
+    /// this path can write immediately, including from a second handle
+    /// that is still concurrent with this one.
+    ///
+    /// Opening a Tantivy writer allocates a 16 MiB heap and starts a merge
+    /// thread. This handle keeps one writer for the whole transaction and
+    /// drops it here, not per Record. Autocommit does the same per call;
+    /// that cost sits next to a git commit. The vector Index is an
+    /// in-memory USearch dump with no directory lock, so it is not
+    /// released here.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
         self.conclude_write((|| {
@@ -409,8 +425,9 @@ impl Vault {
     /// call outside a transaction restores them.
     ///
     /// Takes the write lock and holds it until `commit`, `discard`, or drop.
-    /// Discards leftover Scheda writes first. `invalid` if a transaction is
-    /// already open on this handle.
+    /// The lexical Index writer is opened on the first indexed write and
+    /// kept until that point. Discards leftover Scheda writes first.
+    /// `invalid` if a transaction is already open on this handle.
     pub fn begin(&self) -> Result<(), Error> {
         self.require_write_lock("begin")?;
         self.conclude_write((|| {
@@ -428,7 +445,7 @@ impl Vault {
     /// and rebuild the Index. Allowed without an open transaction so a later
     /// process can clear crash leftovers.
     ///
-    /// Releases the write lock before returning.
+    /// Releases the write lock and the lexical Index writer before returning.
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.conclude_write((|| {
@@ -562,7 +579,13 @@ impl Vault {
     }
 
     fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
-        release_lock_unless_in_transaction(&self.write_lock, &self.in_txn, result)
+        release_lock_unless_in_transaction(
+            &self.write_lock,
+            &self.in_txn,
+            #[cfg(feature = "find")]
+            &self.search,
+            result,
+        )
     }
 
     /// Patch `.gitignore` on an existing Vault. Takes `write.lock` for that
@@ -973,7 +996,13 @@ impl Collection {
     }
 
     fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
-        release_lock_unless_in_transaction(&self.write_lock, &self.in_txn, result)
+        release_lock_unless_in_transaction(
+            &self.write_lock,
+            &self.in_txn,
+            #[cfg(feature = "find")]
+            &self.search,
+            result,
+        )
     }
 
     fn note_write(&self, rel: String) -> Result<(), Error> {
@@ -1106,7 +1135,7 @@ impl Collection {
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
-    /// call.
+    /// call, and the lexical Index writer is released with it.
     pub fn add(&self, id: &str, record: RecordAdd, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         record.require_valid()?;
@@ -1236,7 +1265,7 @@ impl Collection {
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
-    /// call.
+    /// call, and the lexical Index writer is released with it.
     pub fn replace(
         &self,
         id: &str,
@@ -1298,7 +1327,7 @@ impl Collection {
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
-    /// call.
+    /// call, and the lexical Index writer is released with it.
     pub fn remove(&self, id: &str, message: Option<&str>) -> Result<(), Error> {
         crate::id::require_slug("id", id)?;
         self.require_encryption_secret()?;
@@ -2165,11 +2194,14 @@ fn release_write_lock_on_drop(slot: &Mutex<Option<File>>) {
 fn release_lock_unless_in_transaction<T>(
     write_lock: &Mutex<Option<File>>,
     in_txn: &Mutex<bool>,
+    #[cfg(feature = "find")] search: &SearchEngine,
     result: Result<T, Error>,
 ) -> Result<T, Error> {
     let in_txn = match flag(in_txn) {
         Ok(v) => v,
         Err(err) => {
+            #[cfg(feature = "find")]
+            let _ = search.release_writer();
             let _ = release_held_write_lock(write_lock);
             return result.and(Err(err));
         }
@@ -2177,6 +2209,11 @@ fn release_lock_unless_in_transaction<T>(
     if in_txn {
         return result;
     }
+    #[cfg(feature = "find")]
+    let result = match search.release_writer() {
+        Ok(()) => result,
+        Err(err) => result.and(Err(err)),
+    };
     match release_held_write_lock(write_lock) {
         Ok(()) => result,
         Err(err) => result.and(Err(err)),
@@ -2569,6 +2606,69 @@ mod tests {
             drop(collection);
             drop(vault);
         }
+    }
+
+    /// After `commit` the first handle stays alive with no transaction.
+    /// A second handle must be able to write without waiting out Tantivy's
+    /// `LockBusy` backoff (~1.3s, then `index_lexical`).
+    #[cfg(feature = "find")]
+    #[test]
+    fn second_handle_writes_after_commit_without_lexical_lock_wait() {
+        let scratch = Scratch::new();
+        let writer = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        writer.begin().unwrap();
+        writer
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        writer.commit("schema").unwrap();
+
+        writer.begin().unwrap();
+        writer
+            .collection("c")
+            .unwrap()
+            .add("batch-a", empty_add(), None)
+            .unwrap();
+        writer.commit("batch").unwrap();
+        assert!(!writer.holds_write_lock());
+
+        let started = std::time::Instant::now();
+        let other = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        other.begin().unwrap();
+        other
+            .collection("c")
+            .unwrap()
+            .add("batch-b", empty_add(), None)
+            .unwrap();
+        other.commit("other").unwrap();
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "second handle waited out lexical LockBusy backoff: {elapsed:?}"
+        );
+        assert!(writer.collection("c").unwrap().get("batch-b").is_ok());
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn batch_inside_transaction_opens_lexical_writer_once() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        vault.commit("schema").unwrap();
+
+        vault.begin().unwrap();
+        let before = vault.lexical_writer_opens();
+        let collection = vault.collection("c").unwrap();
+        for i in 0..8 {
+            collection
+                .add(&format!("row-{i}"), empty_add(), None)
+                .unwrap();
+        }
+        vault.commit("batch").unwrap();
+        assert_eq!(vault.lexical_writer_opens().saturating_sub(before), 1);
     }
 
     #[test]

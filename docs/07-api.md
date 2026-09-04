@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 0.81, 1 September 2026.
+Document 7 of the Scheda package. Version 0.82, 4 September 2026.
 
 Language-neutral contract: operations, arguments, outcomes, and error codes.
 Message field names and constraints live in `api/v1` (Protobuf edition 2024,
@@ -56,11 +56,11 @@ How a language surfaces a code is that language's affair. Examples: Rust `Result
 
 ## 3. Git and maintenance
 
-**LIB-12. `commit(message)`.** GIT-2. Ends the transaction on this handle and releases the write lock before return (including after `auto_sync` push). A transaction is the only supported batch. `invalid` if none is open on this handle, or if the message is empty, or if there is nothing to commit. Creates one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Nested is committed first; if the main commit then fails, nested `HEAD` is reset to the commit it had before that nested commit (GIT-2). If `auto_sync` is on, then `push` of the main tree only (GIT-10, GIT-12, ISO-6). The CLI does not encode this name.
+**LIB-12. `commit(message)`.** GIT-2. Ends the transaction on this handle and releases the write lock and the lexical Index writer before return (including after `auto_sync` push), so a second handle can write immediately. A transaction is the only supported batch. `invalid` if none is open on this handle, or if the message is empty, or if there is nothing to commit. Creates one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Nested is committed first; if the main commit then fails, nested `HEAD` is reset to the commit it had before that nested commit (GIT-2). If `auto_sync` is on, then `push` of the main tree only (GIT-10, GIT-12, ISO-6). The CLI does not encode this name.
 
-**LIB-22. `begin()`.** GIT-2. Enter a transaction on this handle. Takes the write lock and holds it until `commit`, `discard`, or drop. Discards leftover Scheda writes first. `invalid` if a transaction is already open on this handle. The flag is in memory on this handle; `open` does not resume another process's transaction. Dropping the handle ends it without a git commit and releases the lock. The CLI does not encode this name.
+**LIB-22. `begin()`.** GIT-2. Enter a transaction on this handle. Takes the write lock and holds it until `commit`, `discard`, or drop. The lexical Index writer is opened on the first indexed write and kept until then. Discards leftover Scheda writes first. `invalid` if a transaction is already open on this handle. The flag is in memory on this handle; `open` does not resume another process's transaction. Dropping the handle ends it without a git commit and releases the lock (the Index writer is dropped with the handle). The CLI does not encode this name.
 
-**LIB-23. `discard()`.** GIT-2. Restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload Schema, and rebuild the Index. Needs the write lock and releases it before return. Allowed without an open transaction (crash leftovers). The CLI does not encode this name.
+**LIB-23. `discard()`.** GIT-2. Restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload Schema, and rebuild the Index. Needs the write lock and releases it and the lexical Index writer before return. Allowed without an open transaction (crash leftovers). The CLI does not encode this name.
 
 **LIB-13. `open(path)`.** GIT-9. One public call. Path exists as a Vault → open (`remote_repo` ignored). Path missing and `remote_repo` set → `git clone`. Path missing → `git init`, no Remote. Path exists but is not a Vault → `invalid`. A set `remote_repo` must be an absolute URI (RFC 3986); an empty string, a filesystem path, or SCP `git@host:path` is `invalid`. `OpenOptions.author` (`api.v1.Author`) is the git author and committer for every commit on this handle (main tree and `{vault}/.isolated/`): required `name` and `email` when set; a name git cannot carry (`<`, `>`, a newline) or an address that is not an HTML email is `invalid` here (GIT-2). Unset: local git config, then `Scheda <scheda@invalid>`. **Later:** `{vault}/.isolated/` is created by Scheda, never cloned (ISO-6). `OpenOptions.encryption` applies when that nested tree is first created; isolated Record I/O then requires it (ISO-5, ISO-7). `open` of the Vault does not require `encryption`.
 

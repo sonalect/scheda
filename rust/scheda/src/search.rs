@@ -50,6 +50,11 @@ const VECTOR_META: &str = "meta.json";
 const VECTOR_KEYS: &str = "keys.json";
 const EDGES_FILE: &str = "edges.jsonl";
 const ORD_FILE: &str = "ord.json";
+/// Heap budget for one Tantivy `IndexWriter`. Opening a writer allocates
+/// this and starts a merge thread, so the engine keeps a writer only while
+/// a transaction (or one autocommit) is in progress and drops it when that
+/// work ends. Holding it for the handle lifetime would block every other
+/// writer on the directory lock.
 const WRITER_HEAP: usize = 16_000_000;
 #[cfg(feature = "search")]
 const RRF_K: f64 = 60.0;
@@ -69,6 +74,8 @@ struct Inner {
     dirty: bool,
     can_write: bool,
     next_ord: BTreeMap<String, u64>,
+    #[cfg(test)]
+    writer_opens: u64,
 }
 
 struct Lexical {
@@ -162,13 +169,15 @@ fn allowed_has(allowed: &BTreeMap<String, BTreeSet<String>>, collection: &str, i
 impl SearchEngine {
     pub(crate) fn open(index_dir: &Path, can_write: bool) -> Result<Self, Error> {
         let inner = Inner {
-            lexical: open_lexical(index_dir, can_write).ok().flatten(),
+            lexical: open_lexical(index_dir).ok().flatten(),
             #[cfg(feature = "search")]
             vector: load_vector(index_dir).ok().flatten(),
             edges: load_edges(index_dir).unwrap_or_else(|_| EdgeIndex::default()),
             dirty: false,
             can_write,
             next_ord: load_next_ord(index_dir).unwrap_or_default(),
+            #[cfg(test)]
+            writer_opens: 0,
         };
         Ok(Self {
             index_dir: Mutex::new(index_dir.to_path_buf()),
@@ -199,6 +208,8 @@ impl SearchEngine {
                 dirty: false,
                 can_write: false,
                 next_ord: BTreeMap::new(),
+                #[cfg(test)]
+                writer_opens: 0,
             }),
         }
     }
@@ -355,17 +366,12 @@ impl SearchEngine {
         Ok(())
     }
 
+    /// Mark this engine as writable. The Tantivy writer is not opened
+    /// here: the first indexed write opens it, and [`release_writer`]
+    /// drops it when the Vault write lock is released.
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::enable_write] lock")?;
         inner.can_write = true;
-        if let Some(lexical) = inner.lexical.as_mut()
-            && lexical.writer.is_none()
-        {
-            lexical.writer = Some(open_lexical_writer(
-                &lexical.index,
-                "[SearchEngine::enable_write] open writer",
-            )?);
-        }
         drop(inner);
         let index_dir = self.dir()?;
         index::restrict_index_tree(&index_dir)
@@ -379,6 +385,46 @@ impl SearchEngine {
         let can_write = inner.can_write;
         let index_dir = self.dir()?;
         inner.commit(&index_dir, can_write)
+    }
+
+    /// Commit buffered index writes and drop the Tantivy `IndexWriter`.
+    ///
+    /// The writer holds a directory lock for as long as it lives. After a
+    /// transaction (or one autocommit) ends, this releases that lock so
+    /// another handle can open a writer without waiting out `LockBusy`
+    /// retries. The `Index` and reader stay; the next mutating call opens
+    /// a writer again.
+    ///
+    /// Opening a writer allocates a 16 MiB heap and starts a merge
+    /// thread, so this is not free. A batch of Record writes inside one
+    /// transaction still pays it once. Autocommit pays it per call; that
+    /// sits next to a git commit, which already dominates. Holding the
+    /// writer for the handle lifetime was cheaper per write and left a
+    /// consumer no way to free the lock without dropping the handle.
+    pub(crate) fn release_writer(&self) -> Result<(), Error> {
+        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::release_writer] lock")?;
+        let can_write = inner.can_write;
+        let index_dir = self.dir()?;
+        inner.commit(&index_dir, can_write)?;
+        let writer = inner
+            .lexical
+            .as_mut()
+            .and_then(|lexical| lexical.writer.take());
+        drop(inner);
+        if let Some(writer) = writer {
+            writer.wait_merging_threads().context(
+                Code::IndexLexical,
+                "[SearchEngine::release_writer] close writer",
+            )?;
+        }
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lexical_writer_opens(&self) -> u64 {
+        crate::error::mutex(&self.inner, "[SearchEngine::lexical_writer_opens] lock")
+            .map(|inner| inner.writer_opens)
+            .unwrap_or(0)
     }
 
     pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
@@ -399,7 +445,7 @@ impl SearchEngine {
         let can_write = inner.can_write;
         inner.commit(&index_dir, can_write)?;
         if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&index_dir, can_write)?;
+            inner.lexical = open_lexical(&index_dir)?;
         }
         let Some(lexical) = inner.lexical.as_mut() else {
             return Ok(false);
@@ -540,7 +586,7 @@ impl SearchEngine {
         let can_write = inner.can_write;
         inner.commit(&index_dir, can_write)?;
         if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&index_dir, can_write)?;
+            inner.lexical = open_lexical(&index_dir)?;
         }
         let Some(lexical) = inner.lexical.as_mut() else {
             return Ok(None);
@@ -640,7 +686,7 @@ impl SearchEngine {
         let can_write = inner.can_write;
         inner.commit(&index_dir, can_write)?;
         if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&index_dir, can_write)?;
+            inner.lexical = open_lexical(&index_dir)?;
         }
         let lexical_hits = if lexical_weight > 0.0 && !lexical_names.is_empty() {
             lexical_search(&mut inner, &lexical_names, text, pool, allowed)?
@@ -719,6 +765,24 @@ impl Drop for SearchEngine {
 }
 
 impl Inner {
+    fn ensure_writer(&mut self) -> Result<(), Error> {
+        let Some(lexical) = self.lexical.as_mut() else {
+            return Ok(());
+        };
+        if lexical.writer.is_some() {
+            return Ok(());
+        }
+        lexical.writer = Some(open_lexical_writer(
+            &lexical.index,
+            "[SearchEngine] open writer",
+        )?);
+        #[cfg(test)]
+        {
+            self.writer_opens = self.writer_opens.saturating_add(1);
+        }
+        Ok(())
+    }
+
     fn commit(&mut self, index_dir: &Path, can_write: bool) -> Result<(), Error> {
         if !self.dirty || !can_write {
             return Ok(());
@@ -766,8 +830,9 @@ fn upsert_record(
     if can_write {
         if decl.lexical_indexed() {
             if inner.lexical.is_none() {
-                inner.lexical = Some(create_lexical(index_dir, true)?);
+                inner.lexical = Some(create_lexical(index_dir)?);
             }
+            inner.ensure_writer()?;
             let ord = inner.next_ord.get(&decl.name).copied().unwrap_or(0);
             inner
                 .next_ord
@@ -793,6 +858,7 @@ fn upsert_record(
 fn forget_record(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Error> {
     forget_source(&mut inner.edges, collection, id);
     inner.dirty = true;
+    inner.ensure_writer()?;
     if let Some(lexical) = inner.lexical.as_mut()
         && let Some(writer) = &lexical.writer
     {
@@ -1402,7 +1468,7 @@ fn lexical_schema() -> TantivySchema {
     builder.build()
 }
 
-fn open_lexical(index_dir: &Path, can_write: bool) -> Result<Option<Lexical>, Error> {
+fn open_lexical(index_dir: &Path) -> Result<Option<Lexical>, Error> {
     let path = index_dir.join(LEXICAL_DIR);
     if !path.join("meta.json").is_file() {
         return Ok(None);
@@ -1411,10 +1477,10 @@ fn open_lexical(index_dir: &Path, can_write: bool) -> Result<Option<Lexical>, Er
         Code::IndexLexical,
         "[SearchEngine::open_lexical] open index",
     )?;
-    Ok(Some(bind_lexical(index, can_write)?))
+    Ok(Some(bind_lexical(index)?))
 }
 
-fn create_lexical(index_dir: &Path, can_write: bool) -> Result<Lexical, Error> {
+fn create_lexical(index_dir: &Path) -> Result<Lexical, Error> {
     let path = index_dir.join(LEXICAL_DIR);
     fs::create_dir_all(&path).context("[SearchEngine::create_lexical] create dir")?;
     let schema = lexical_schema();
@@ -1430,10 +1496,10 @@ fn create_lexical(index_dir: &Path, can_write: bool) -> Result<Lexical, Error> {
         )?
     };
     index::restrict_index_tree(index_dir)?;
-    bind_lexical(index, can_write)
+    bind_lexical(index)
 }
 
-fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
+fn bind_lexical(index: Index) -> Result<Lexical, Error> {
     let schema = index.schema();
     let f_key = schema
         .get_field("key")
@@ -1470,14 +1536,6 @@ fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
     let f_ord = schema
         .get_field("ord")
         .context(Code::IndexLexical, "[SearchEngine::bind_lexical] field ord")?;
-    let writer = if can_write {
-        Some(open_lexical_writer(
-            &index,
-            "[SearchEngine::bind_lexical] open writer",
-        )?)
-    } else {
-        None
-    };
     let reader = index
         .reader_builder()
         .reload_policy(ReloadPolicy::Manual)
@@ -1488,7 +1546,7 @@ fn bind_lexical(index: Index, can_write: bool) -> Result<Lexical, Error> {
         )?;
     Ok(Lexical {
         index,
-        writer,
+        writer: None,
         reader,
         f_key,
         f_collection,

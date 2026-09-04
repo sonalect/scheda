@@ -8,6 +8,15 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A second handle can write after `commit` without waiting on the
+  lexical Index.** The Tantivy writer is opened for a transaction (or
+  one autocommit) and dropped when that work ends, so its directory lock
+  is free while the first handle is still alive. A consumer that commits
+  in small batches can let another writer in between them. The vector
+  Index is an in-memory dump and does not hold a matching lock.
+
 ## [0.9.4] - 2026-09-04
 
 ### Changed
