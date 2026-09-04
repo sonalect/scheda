@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-09-04
+
 ### Fixed
 
 - **A second handle can write after `commit` without waiting on the
@@ -986,6 +988,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.5]
 - [0.9.4]
 - [0.9.3]
 - [0.9.2]
@@ -1007,7 +1010,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/amsokol/scheda/releases/tag/v0.9.5
 [0.9.4]: https://github.com/amsokol/scheda/releases/tag/v0.9.4
 [0.9.3]: https://github.com/amsokol/scheda/releases/tag/v0.9.3
 [0.9.2]: https://github.com/amsokol/scheda/releases/tag/v0.9.2
