@@ -100,8 +100,9 @@ false` also drops git TLS (file remotes still work). Add `features =
 ["search", "simd"]` for ANN + SIMD, or `features = ["find"]` for
 Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
 **clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
-build without `search` does not need C++. CI runs Bazel on Debian 13,
-macOS, and Windows amd64 (`find`, `search`, and `simd` on).
+build without `search` does not need C++. Bazel on Debian 13, macOS,
+and Windows amd64 links `find`, `search`, and `simd`. GitHub Actions
+CI for those jobs is currently disabled.
 
 ```bash
 bazel build //rust/scheda:scheda
@@ -119,10 +120,12 @@ bazel run //python/vllm:embedder   # 127.0.0.1:8080  OpenAI /v1/embeddings
 bazel run //python/vllm:reranker   # 127.0.0.1:8081  Cohere /v1/rerank
 ```
 
-Rust API HTML (rustdoc) is built with rules_rust `rust_doc` on push to `main`
-(no crates.io). When [GitHub Pages](https://amsokol.github.io/scheda/) is
-enabled (**Settings → Pages → Source: GitHub Actions**), that HTML is
-published; otherwise the workflow still builds rustdoc and skips deploy.
+Rust API HTML (rustdoc) is built with rules_rust `rust_doc` (no crates.io).
+The Docs workflow that published it to
+[GitHub Pages](https://amsokol.github.io/scheda/) is currently disabled.
+When it is on again and Pages is enabled (**Settings → Pages → Source:
+GitHub Actions**), that HTML is published; otherwise the workflow still
+builds rustdoc and skips deploy.
 
 ```bash
 bazel build //rust/scheda:scheda_doc   # rustdoc HTML
@@ -130,7 +133,8 @@ bazel build //rust/scheda:pages        # same HTML plus redirect and .nojekyll
 bazel test //rust/scheda:scheda_doc_test
 ```
 
-Generate Rust stubs from `api/v1` (writes `rust/generated/api/v1/`; CI checks they match):
+Generate Rust stubs from `api/v1` (writes `rust/generated/api/v1/`;
+`bazel test //api/v1:generate_tests` checks they match):
 
 ```bash
 bazel run //api/v1:generate
@@ -155,7 +159,8 @@ bazel run //bazel:format        # buildifier -mode=fix
 
 `cargo test` / `cargo clippy` still work for local iteration. `cargo test
 -p scheda` is Cargo default (`remote-git` only). For `find` / `search`
-tests: `cargo test -p scheda --features search,simd`. CI runs Bazel.
+tests: `cargo test -p scheda --features search,simd`. GitHub Actions
+CI (Bazel) is currently disabled.
 `cargo build --release` uses thin LTO, one codegen unit, and symbol strip.
 
 Optional Cargo-only **static CRT** CLI. Bazel and default Cargo stay

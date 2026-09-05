@@ -1,9 +1,8 @@
 name: CI
 
+# Automatic CI is disabled. Restore push/pull_request to re-enable.
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}

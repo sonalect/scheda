@@ -8,6 +8,12 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- GitHub Actions CI and Docs workflows no longer run on push or pull
+  request. They stay in the tree and can be started by hand
+  (`workflow_dispatch`) or re-enabled by restoring those triggers.
+
 ## [0.9.11] - 2026-09-05
 
 ### Changed

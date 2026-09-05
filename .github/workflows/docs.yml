@@ -3,9 +3,9 @@
 
 name: Docs
 
+# Automatic Docs workflow is disabled. Restore push to main to re-enable.
 on:
-  push:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: pages
