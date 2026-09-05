@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.38, 31 August 2026.
+Document 6 of the Scheda package. Version 0.39, 5 September 2026.
 
 Normative rules for the derived Index and `get`. **`find` and `search` (how they must work) are `13`.** Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`. Phase **core** or **search** as marked.
 
@@ -54,7 +54,7 @@ The Index is a **retrieval** engine an agent can recall from, not a substring de
 
 **IDX-8. Embedder is injected.** The caller passes an embedder (a function or interface; in Rust, typically a trait). The library does not require the network to embed. No embedder → vector leg off; lexical, `find`, and writes still work. An embedder that calls the network is the caller's; core git with `auto_sync` off still GIT-8. *Check:* build and query with no embedder; a stub that returns a fixed vector fills the vector table; those runs make no unexpected connections.
 
-**IDX-9. Incremental update.** After a successful write, the Index for that Record is updated (lexical, vector if embedder present, edges, journal map). `remove` drops that Record from the Index. `reindex` remains the way to repair or to pick up editor edits. *Check:* `add` then `search` without a full `reindex` finds the new Record when **search** is on. *Check:* `remove` then `find` / `search` do not return that `id`.
+**IDX-9. Incremental update.** After a successful write, the Index for that Record is updated (lexical, vector if embedder present, edges, journal map). `remove` drops that Record from the Index. `reindex` remains the way to repair or to pick up editor edits. Vector slots whose embedder text is unchanged are not sent to the embedder again: each slot stores a git blob hash of that text in `keys.json`, and a matching digest plus the same `model_id` and dimensions leaves the ANN entry untouched. A slot that disappears (Schema unmarked the field, or the Record no longer carries a value) is removed from the vector Index so `search` cannot return it. `reindex` copies the previous generation's vector dump into the new generation and applies the same skip/remove rules; the lexical Index is still rebuilt in full. A different `model_id` or dimensions starts the vector table empty and re-embeds every slot. *Check:* `add` then `search` without a full `reindex` finds the new Record when **search** is on. *Check:* `remove` then `find` / `search` do not return that `id`. *Check:* writing the same Records again does not call the embedder; changing one field re-embeds only that slot; a vanished slot is absent from vector `search`.
 
 ---
 

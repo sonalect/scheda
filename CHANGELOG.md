@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **Unchanged vector slots skip the embedder.** Each field (and body) slot
+  stores a git blob hash of the exact text that was embedded. `add`,
+  `replace`, and `reindex` reuse the stored vector when that digest still
+  matches and the embedder's `model_id` and dimensions are unchanged. A
+  field that leaves Schema or the Record is dropped from the vector Index
+  so `search` cannot return it. A different model still re-embeds every
+  slot. The lexical Index is still rebuilt in full on `reindex`.
+
 ## [0.9.10] - 2026-09-05
 
 ### Changed

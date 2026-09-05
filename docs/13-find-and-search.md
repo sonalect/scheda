@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.23, 5 September 2026.
+Document 13 of the Scheda package. Version 0.24, 5 September 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -84,14 +84,17 @@ Scheda does not ship weights or a chat LLM.
 For each Record, for **each** field (and body) that is vector-eligible (`string` / `string_list` / body / edge text; not `exclude_vector`):
 
 1. Take that field’s text (`string_list`: join values for that field).
-2. Call `embed` when that Record has one non-empty vector field, or when `many_limit` is 1. Otherwise call `embed_many` in chunks of `many_limit`. A leftover chunk of one text uses `embed`.
-3. Store one vector in USearch. Key: Record `id` + field name (body → `body`).
+2. Hash that exact string as a git blob (SHA-1 of `blob {len}\0{bytes}`, the same digest git stores for file content). Compare it to the digest already stored for that `(collection, id, field)` slot in `keys.json`.
+3. If the digest matches and the Index `model_id` and dimensions match the current embedder, leave the USearch entry untouched — do not call the embedder.
+4. Otherwise call `embed` when that Record has one non-empty vector field that needs a new vector, or when `many_limit` is 1. Otherwise call `embed_many` in chunks of `many_limit` for the slots that changed or are new. A leftover chunk of one text uses `embed`.
+5. Store one vector in USearch. Key: Record `id` + field name (body → `body`). Write the digest next to the slot in `keys.json`. An Index written before digests existed loads with an empty digest (`serde` default) and re-embeds each slot once.
+6. A slot that is gone — Schema unmarked the field, or this Record no longer has a value for it — is removed from USearch. `search` must not return that content. USearch `remove` leaves tombstones, so the dump can grow across many incremental cycles; this release does not compact it.
 
-Do not glue title+body+other fields into one blob. One field, one vector.
+Do not glue title+body+other fields into one blob. One field, one vector. Do not hash the Record file or a git tree: a hand edit that is not yet committed must still change the digest.
 
 If `embed` is missing, skip all vector writes. Tantivy still indexes lexical fields (`exclude_fts` stays out of BM25).
 
-Index remembers `model_id` and `dimensions`. Mismatch with the current function → rebuild vectors or error on the vector leg; lexical still works.
+Index remembers `model_id` and `dimensions`. Mismatch with the current function → rebuild vectors from an empty table (every slot is embedded) or skip mixing spaces on a live write; lexical still works. `reindex` copies the previous generation’s vector dump into the new generation when model and dimensions match, then applies the skip/remove rules above. The lexical Index is always rebuilt in full.
 
 ---
 
