@@ -8,15 +8,21 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.11] - 2026-09-05
+
 ### Changed
 
 - **Unchanged vector slots skip the embedder.** Each field (and body) slot
-  stores a git blob hash of the exact text that was embedded. `add`,
+  stores a digest of the exact text that was handed to the embedder. `add`,
   `replace`, and `reindex` reuse the stored vector when that digest still
   matches and the embedder's `model_id` and dimensions are unchanged. A
-  field that leaves Schema or the Record is dropped from the vector Index
+  slot that leaves Schema or the Record is dropped from the vector Index
   so `search` cannot return it. A different model still re-embeds every
-  slot. The lexical Index is still rebuilt in full on `reindex`.
+  slot. The lexical Index is still rebuilt in full on `reindex`. A rebuild
+  that used to re-embed every Record now pays only for what changed. An
+  existing Index still loads; the new on-disk digest field defaults to
+  empty, so the first rebuild after upgrade re-embeds once, then later
+  writes skip the model.
 
 ## [0.9.10] - 2026-09-05
 
@@ -1054,6 +1060,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.11]
 - [0.9.10]
 - [0.9.9]
 - [0.9.8]
@@ -1081,7 +1088,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.10...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.11...HEAD
+[0.9.11]: https://github.com/amsokol/scheda/releases/tag/v0.9.11
 [0.9.10]: https://github.com/amsokol/scheda/releases/tag/v0.9.10
 [0.9.9]: https://github.com/amsokol/scheda/releases/tag/v0.9.9
 [0.9.8]: https://github.com/amsokol/scheda/releases/tag/v0.9.8
