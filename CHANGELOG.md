@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.8] - 2026-09-05
+
 ### Changed
 
 - Update Bazel `protobuf` to `36.1.bcr.1`.
@@ -1014,6 +1016,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.8]
 - [0.9.7]
 - [0.9.6]
 - [0.9.5]
@@ -1038,7 +1041,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.7...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.8...HEAD
+[0.9.8]: https://github.com/amsokol/scheda/releases/tag/v0.9.8
 [0.9.7]: https://github.com/amsokol/scheda/releases/tag/v0.9.7
 [0.9.6]: https://github.com/amsokol/scheda/releases/tag/v0.9.6
 [0.9.5]: https://github.com/amsokol/scheda/releases/tag/v0.9.5
