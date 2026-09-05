@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.9] - 2026-09-05
+
 ### Fixed
 
 - **Isolated `find` / `search` docs match the crate.** Naming an isolated
@@ -1036,6 +1038,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.9]
 - [0.9.8]
 - [0.9.7]
 - [0.9.6]
@@ -1061,7 +1064,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.8...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.9...HEAD
+[0.9.9]: https://github.com/amsokol/scheda/releases/tag/v0.9.9
 [0.9.8]: https://github.com/amsokol/scheda/releases/tag/v0.9.8
 [0.9.7]: https://github.com/amsokol/scheda/releases/tag/v0.9.7
 [0.9.6]: https://github.com/amsokol/scheda/releases/tag/v0.9.6
