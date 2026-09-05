@@ -1413,6 +1413,318 @@ fields:
     );
 }
 
+struct CountingEmbedder {
+    model_id: &'static str,
+    slots: AtomicU64,
+}
+
+impl CountingEmbedder {
+    fn new(model_id: &'static str) -> Arc<Self> {
+        Arc::new(Self {
+            model_id,
+            slots: AtomicU64::new(0),
+        })
+    }
+
+    fn slots(&self) -> u64 {
+        self.slots.load(Ordering::Relaxed)
+    }
+}
+
+fn counting_vector(text: &str) -> Vec<f32> {
+    let mut acc = [0.0f32; 4];
+    for (i, b) in text.as_bytes().iter().enumerate() {
+        acc[i % 4] += f32::from(*b) / 255.0;
+    }
+    let norm = acc.iter().map(|x| x * x).sum::<f32>().sqrt();
+    if norm > 0.0 {
+        for x in &mut acc {
+            *x /= norm;
+        }
+    } else {
+        acc[0] = 1.0;
+    }
+    acc.to_vec()
+}
+
+impl Embedder for CountingEmbedder {
+    fn model_id(&self) -> &str {
+        self.model_id
+    }
+
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
+    }
+
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        self.slots.fetch_add(
+            u64::try_from(texts.len()).expect("embed batch fits u64"),
+            Ordering::Relaxed,
+        );
+        Ok(texts.iter().copied().map(counting_vector).collect())
+    }
+}
+
+fn open_tokens_counting(scratch: &Scratch, embedder: Arc<CountingEmbedder>) -> Vault {
+    open_tokens(scratch, Some(embedder as Arc<dyn Embedder>))
+}
+
+#[test]
+fn unchanged_record_write_does_not_embed_again() {
+    let scratch = Scratch::new();
+    let embedder = CountingEmbedder::new("count");
+    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "keep",
+            rec(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    let after_add = embedder.slots();
+    assert_eq!(after_add, 2);
+    collection
+        .replace(
+            "keep",
+            rec_rep(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        embedder.slots(),
+        after_add,
+        "identical replace must not call the embedder"
+    );
+}
+
+#[test]
+fn replacing_one_field_embeds_only_that_slot() {
+    let scratch = Scratch::new();
+    let embedder = CountingEmbedder::new("count");
+    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "a",
+            rec(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add(
+            "b",
+            rec(json!({"title": "beta mineral", "tag": "blue"})),
+            None,
+        )
+        .unwrap();
+    let after_add = embedder.slots();
+    assert_eq!(after_add, 4);
+    collection
+        .replace(
+            "a",
+            rec_rep(json!({"title": "alpha mineral", "tag": "green"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        embedder.slots(),
+        after_add + 1,
+        "only the changed field slot must be re-embedded"
+    );
+}
+
+#[test]
+fn vanished_vector_slot_is_absent_from_search() {
+    let scratch = Scratch::new();
+    let embedder = Arc::new(MapEmbedder {
+        pairs: vec![
+            (String::from("unique-slot-token"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("plain title"), vec![0.0, 1.0, 0.0, 0.0]),
+        ],
+    });
+    let vault = open_tokens(&scratch, Some(embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "hit",
+            rec(json!({"title": "plain title", "tag": "unique-slot-token"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add("keep", rec(json!({"title": "unique-slot-token"})), None)
+        .unwrap();
+    let before = collection
+        .search(&q("unique-slot-token", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    assert!(
+        hit_ids(&before).contains(&"hit"),
+        "tag slot must be searchable before it vanishes: {:?}",
+        hit_ids(&before)
+    );
+    collection
+        .replace("hit", rec_rep(json!({"title": "plain title"})), None)
+        .unwrap();
+    let after = collection
+        .search(&q("unique-slot-token", 1).with_lexical_weight(0.0), None)
+        .unwrap();
+    let ids = hit_ids(&after);
+    assert_eq!(
+        ids,
+        ["keep"],
+        "vanished tag vector must not outrank or replace the remaining exact match: {ids:?}"
+    );
+    let wide = collection
+        .search(&q("unique-slot-token", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    let keep_score = wide
+        .hits
+        .iter()
+        .find(|hit| hit.id.as_deref() == Some("keep"))
+        .and_then(|hit| hit.vector_score)
+        .expect("keep must still have a vector score");
+    if let Some(hit) = wide.hits.iter().find(|h| h.id.as_deref() == Some("hit")) {
+        let score = hit.vector_score.expect("hit leftover title still scored");
+        assert!(
+            score < keep_score,
+            "stale tag vector would tie keep; leftover title must be farther: hit={score} keep={keep_score}"
+        );
+    }
+}
+
+#[test]
+fn reindex_on_unchanged_content_does_not_embed_again() {
+    let scratch = Scratch::new();
+    let embedder = CountingEmbedder::new("count");
+    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "keep",
+            rec(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add("other", rec(json!({"title": "beta mineral"})), None)
+        .unwrap();
+    let after_add = embedder.slots();
+    assert_eq!(after_add, 3);
+    vault.reindex().unwrap();
+    assert_eq!(
+        embedder.slots(),
+        after_add,
+        "reindex of unchanged content must not call the embedder"
+    );
+}
+
+#[test]
+fn reindex_drops_vectors_for_records_that_are_gone() {
+    let scratch = Scratch::new();
+    let embedder = CountingEmbedder::new("count");
+    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add("gone", rec(json!({"title": "unique-gone-token"})), None)
+        .unwrap();
+    collection
+        .add("keep", rec(json!({"title": "unique-keep-token"})), None)
+        .unwrap();
+    let after_add = embedder.slots();
+    fs::remove_file(scratch.vault().join("token_notes").join("gone.md")).unwrap();
+    vault.reindex().unwrap();
+    assert_eq!(
+        embedder.slots(),
+        after_add,
+        "dropping a missing record must not re-embed the rest"
+    );
+    let hits = collection
+        .search(&q("unique-gone-token", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    assert!(
+        !hit_ids(&hits).contains(&"gone"),
+        "deleted record still returned: {:?}",
+        hit_ids(&hits)
+    );
+    let keep = collection
+        .search(&q("unique-keep-token", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    assert!(
+        hit_ids(&keep).contains(&"keep"),
+        "surviving record missing: {:?}",
+        hit_ids(&keep)
+    );
+}
+
+#[test]
+fn different_model_id_reembeds_every_slot() {
+    let scratch = Scratch::new();
+    let first = CountingEmbedder::new("model-a");
+    let vault = open_tokens_counting(&scratch, Arc::clone(&first));
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add(
+            "keep",
+            rec(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(first.slots(), 2);
+    drop(vault);
+    let second = CountingEmbedder::new("model-b");
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&second) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    vault.reindex().unwrap();
+    assert_eq!(
+        second.slots(),
+        2,
+        "a new model_id must re-embed every stored slot"
+    );
+}
+
+#[test]
+fn vector_digest_is_stable_across_runs() {
+    let scratch = Scratch::new();
+    let embedder = CountingEmbedder::new("count");
+    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add(
+            "keep",
+            rec(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    let after_add = embedder.slots();
+    vault.reindex().unwrap();
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .replace(
+            "keep",
+            rec_rep(json!({"title": "alpha mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    vault.reindex().unwrap();
+    assert_eq!(
+        embedder.slots(),
+        after_add,
+        "the same field text must keep the same digest across writes and reindex"
+    );
+}
+
 fn peek_schema_name(body: &str) -> String {
     for line in body.lines() {
         let line = line.trim();
