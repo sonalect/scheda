@@ -8,6 +8,10 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Update Bazel `protobuf` to `36.1.bcr.1`.
+
 ## [0.9.7] - 2026-09-05
 
 ### Changed
