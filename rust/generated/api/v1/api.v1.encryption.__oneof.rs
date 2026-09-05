@@ -11,12 +11,12 @@ pub mod encryption {
         Identity(::buffa::alloc::string::String),
     }
     impl ::buffa::Oneof for Secret {}
-    impl serde::Serialize for Secret {
-        fn serialize<S: serde::Serializer>(
+    impl ::serde::Serialize for Secret {
+        fn serialize<S: ::serde::Serializer>(
             &self,
             s: S,
         ) -> ::core::result::Result<S::Ok, S::Error> {
-            use serde::ser::SerializeMap;
+            use ::serde::ser::SerializeMap;
             let mut map = s.serialize_map(Some(1))?;
             match self {
                 Self::Passphrase(v) => {

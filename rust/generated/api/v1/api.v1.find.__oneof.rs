@@ -197,61 +197,61 @@ pub mod filter {
             Self::Some(Kind::from(v))
         }
     }
-    impl serde::Serialize for Kind {
-        fn serialize<S: serde::Serializer>(
+    impl ::serde::Serialize for Kind {
+        fn serialize<S: ::serde::Serializer>(
             &self,
             s: S,
         ) -> ::core::result::Result<S::Ok, S::Error> {
-            use serde::ser::SerializeMap;
+            use ::serde::ser::SerializeMap;
             let mut map = s.serialize_map(Some(1))?;
             match self {
                 Self::All(v) => {
-                    map.serialize_entry("all", v)?;
+                    map.serialize_entry("all", &**v)?;
                 }
                 Self::Empty(v) => {
-                    map.serialize_entry("empty", v)?;
+                    map.serialize_entry("empty", &**v)?;
                 }
                 Self::Term(v) => {
-                    map.serialize_entry("term", v)?;
+                    map.serialize_entry("term", &**v)?;
                 }
                 Self::TermSet(v) => {
-                    map.serialize_entry("termSet", v)?;
+                    map.serialize_entry("termSet", &**v)?;
                 }
                 Self::Phrase(v) => {
-                    map.serialize_entry("phrase", v)?;
+                    map.serialize_entry("phrase", &**v)?;
                 }
                 Self::PhrasePrefix(v) => {
-                    map.serialize_entry("phrasePrefix", v)?;
+                    map.serialize_entry("phrasePrefix", &**v)?;
                 }
                 Self::Fuzzy(v) => {
-                    map.serialize_entry("fuzzy", v)?;
+                    map.serialize_entry("fuzzy", &**v)?;
                 }
                 Self::Regex(v) => {
-                    map.serialize_entry("regex", v)?;
+                    map.serialize_entry("regex", &**v)?;
                 }
                 Self::RegexPhrase(v) => {
-                    map.serialize_entry("regexPhrase", v)?;
+                    map.serialize_entry("regexPhrase", &**v)?;
                 }
                 Self::Range(v) => {
-                    map.serialize_entry("range", v)?;
+                    map.serialize_entry("range", &**v)?;
                 }
                 Self::Exists(v) => {
-                    map.serialize_entry("exists", v)?;
+                    map.serialize_entry("exists", &**v)?;
                 }
                 Self::Boolean(v) => {
-                    map.serialize_entry("boolean", v)?;
+                    map.serialize_entry("boolean", &**v)?;
                 }
                 Self::Boost(v) => {
-                    map.serialize_entry("boost", v)?;
+                    map.serialize_entry("boost", &**v)?;
                 }
                 Self::ConstScore(v) => {
-                    map.serialize_entry("constScore", v)?;
+                    map.serialize_entry("constScore", &**v)?;
                 }
                 Self::DisjunctionMax(v) => {
-                    map.serialize_entry("disjunctionMax", v)?;
+                    map.serialize_entry("disjunctionMax", &**v)?;
                 }
                 Self::MoreLikeThis(v) => {
-                    map.serialize_entry("moreLikeThis", v)?;
+                    map.serialize_entry("moreLikeThis", &**v)?;
                 }
             }
             map.end()
@@ -267,19 +267,19 @@ pub mod filter {
             Excluded(::buffa::alloc::boxed::Box<::buffa_types::google::protobuf::Value>),
         }
         impl ::buffa::Oneof for Kind {}
-        impl serde::Serialize for Kind {
-            fn serialize<S: serde::Serializer>(
+        impl ::serde::Serialize for Kind {
+            fn serialize<S: ::serde::Serializer>(
                 &self,
                 s: S,
             ) -> ::core::result::Result<S::Ok, S::Error> {
-                use serde::ser::SerializeMap;
+                use ::serde::ser::SerializeMap;
                 let mut map = s.serialize_map(Some(1))?;
                 match self {
                     Self::Included(v) => {
-                        map.serialize_entry("included", v)?;
+                        map.serialize_entry("included", &**v)?;
                     }
                     Self::Excluded(v) => {
-                        map.serialize_entry("excluded", v)?;
+                        map.serialize_entry("excluded", &**v)?;
                     }
                 }
                 map.end()
@@ -316,19 +316,19 @@ pub mod filter {
                 Self::Some(Source::from(v))
             }
         }
-        impl serde::Serialize for Source {
-            fn serialize<S: serde::Serializer>(
+        impl ::serde::Serialize for Source {
+            fn serialize<S: ::serde::Serializer>(
                 &self,
                 s: S,
             ) -> ::core::result::Result<S::Ok, S::Error> {
-                use serde::ser::SerializeMap;
+                use ::serde::ser::SerializeMap;
                 let mut map = s.serialize_map(Some(1))?;
                 match self {
                     Self::Id(v) => {
                         map.serialize_entry("id", v)?;
                     }
                     Self::Fields(v) => {
-                        map.serialize_entry("fields", v)?;
+                        map.serialize_entry("fields", &**v)?;
                     }
                 }
                 map.end()

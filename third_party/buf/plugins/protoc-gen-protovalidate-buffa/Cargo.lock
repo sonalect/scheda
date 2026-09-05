@@ -466,8 +466,8 @@ dependencies = [
 
 [[package]]
 name = "protoc-gen-protovalidate-buffa"
-version = "0.7.0"
-source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=v0.7.0#58c90ea7d0f29790acf679a08d3260e7602640bf"
+version = "0.7.2"
+source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=v0.7.1#fdb4edb90caf84e1dc941c3ca222382bb1344835"
 dependencies = [
  "anyhow",
  "buffa",
@@ -482,8 +482,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "protoc-gen-protovalidate-buffa-v0-7-0"
-version = "0.7.0"
+name = "protoc-gen-protovalidate-buffa-v0-7-1"
+version = "0.7.1"
 dependencies = [
  "protoc-gen-protovalidate-buffa",
 ]
@@ -491,7 +491,7 @@ dependencies = [
 [[package]]
 name = "protovalidate-buffa-protos"
 version = "0.7.0"
-source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=v0.7.0#58c90ea7d0f29790acf679a08d3260e7602640bf"
+source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=v0.7.1#fdb4edb90caf84e1dc941c3ca222382bb1344835"
 dependencies = [
  "buffa",
  "buffa-build",

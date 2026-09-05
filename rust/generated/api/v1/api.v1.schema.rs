@@ -424,18 +424,21 @@ impl ::buffa::ExtensionSet for Schema {
         &mut self.__buffa_unknown_fields
     }
 }
-impl<'de> serde::Deserialize<'de> for Schema {
-    fn deserialize<D: serde::Deserializer<'de>>(
+impl<'de> ::serde::Deserialize<'de> for Schema {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
         d: D,
     ) -> ::core::result::Result<Self, D::Error> {
         struct _V;
-        impl<'de> serde::de::Visitor<'de> for _V {
+        impl<'de> ::serde::de::Visitor<'de> for _V {
             type Value = Schema;
-            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
                 f.write_str("struct Schema")
             }
             #[allow(clippy::field_reassign_with_default)]
-            fn visit_map<A: serde::de::MapAccess<'de>>(
+            fn visit_map<A: ::serde::de::MapAccess<'de>>(
                 self,
                 mut map: A,
             ) -> ::core::result::Result<Schema, A::Error> {
@@ -465,9 +468,9 @@ impl<'de> serde::Deserialize<'de> for Schema {
                         "version" => {
                             __f_version = Some({
                                 struct _S;
-                                impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                     type Value = ::core::option::Option<u32>;
-                                    fn deserialize<D: serde::Deserializer<'de>>(
+                                    fn deserialize<D: ::serde::Deserializer<'de>>(
                                         self,
                                         d: D,
                                     ) -> ::core::result::Result<
@@ -483,9 +486,9 @@ impl<'de> serde::Deserialize<'de> for Schema {
                         "fields" => {
                             __f_fields = Some({
                                 struct _S;
-                                impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                     type Value = ::buffa::alloc::vec::Vec<Field>;
-                                    fn deserialize<D: serde::Deserializer<'de>>(
+                                    fn deserialize<D: ::serde::Deserializer<'de>>(
                                         self,
                                         d: D,
                                     ) -> ::core::result::Result<
@@ -528,7 +531,7 @@ impl<'de> serde::Deserialize<'de> for Schema {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -552,7 +555,7 @@ impl<'de> serde::Deserialize<'de> for Schema {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -576,7 +579,7 @@ impl<'de> serde::Deserialize<'de> for Schema {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -589,7 +592,7 @@ impl<'de> serde::Deserialize<'de> for Schema {
                             }
                         }
                         _ => {
-                            map.next_value::<serde::de::IgnoredAny>()?;
+                            map.next_value::<::serde::de::IgnoredAny>()?;
                         }
                     }
                 }
@@ -1556,18 +1559,21 @@ impl ::buffa::ExtensionSet for Field {
         &mut self.__buffa_unknown_fields
     }
 }
-impl<'de> serde::Deserialize<'de> for Field {
-    fn deserialize<D: serde::Deserializer<'de>>(
+impl<'de> ::serde::Deserialize<'de> for Field {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
         d: D,
     ) -> ::core::result::Result<Self, D::Error> {
         struct _V;
-        impl<'de> serde::de::Visitor<'de> for _V {
+        impl<'de> ::serde::de::Visitor<'de> for _V {
             type Value = Field;
-            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
                 f.write_str("struct Field")
             }
             #[allow(clippy::field_reassign_with_default)]
-            fn visit_map<A: serde::de::MapAccess<'de>>(
+            fn visit_map<A: ::serde::de::MapAccess<'de>>(
                 self,
                 mut map: A,
             ) -> ::core::result::Result<Field, A::Error> {
@@ -1620,12 +1626,12 @@ impl<'de> serde::Deserialize<'de> for Field {
                         "default" => {
                             __f_default = Some({
                                 struct _S;
-                                impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                     type Value = ::buffa::MessageField<
                                         ::buffa_types::google::protobuf::Value,
                                         ::buffa::Inline<::buffa_types::google::protobuf::Value>,
                                     >;
-                                    fn deserialize<D: serde::Deserializer<'de>>(
+                                    fn deserialize<D: ::serde::Deserializer<'de>>(
                                         self,
                                         d: D,
                                     ) -> ::core::result::Result<
@@ -1651,7 +1657,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1673,7 +1679,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1695,7 +1701,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1717,7 +1723,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1739,7 +1745,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1763,7 +1769,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1787,7 +1793,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1809,7 +1815,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             if let Some(v) = v {
                                 if __oneof_spec.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'spec'",
                                         ),
                                     );
@@ -1822,7 +1828,7 @@ impl<'de> serde::Deserialize<'de> for Field {
                             }
                         }
                         _ => {
-                            map.next_value::<serde::de::IgnoredAny>()?;
+                            map.next_value::<::serde::de::IgnoredAny>()?;
                         }
                     }
                 }
@@ -2612,18 +2618,21 @@ impl ::buffa::ExtensionSet for Edge {
         &mut self.__buffa_unknown_fields
     }
 }
-impl<'de> serde::Deserialize<'de> for Edge {
-    fn deserialize<D: serde::Deserializer<'de>>(
+impl<'de> ::serde::Deserialize<'de> for Edge {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
         d: D,
     ) -> ::core::result::Result<Self, D::Error> {
         struct _V;
-        impl<'de> serde::de::Visitor<'de> for _V {
+        impl<'de> ::serde::de::Visitor<'de> for _V {
             type Value = Edge;
-            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
                 f.write_str("struct Edge")
             }
             #[allow(clippy::field_reassign_with_default)]
-            fn visit_map<A: serde::de::MapAccess<'de>>(
+            fn visit_map<A: ::serde::de::MapAccess<'de>>(
                 self,
                 mut map: A,
             ) -> ::core::result::Result<Edge, A::Error> {
@@ -2672,7 +2681,7 @@ impl<'de> serde::Deserialize<'de> for Edge {
                             if let Some(v) = v {
                                 if __oneof_arity.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'arity'",
                                         ),
                                     );
@@ -2694,7 +2703,7 @@ impl<'de> serde::Deserialize<'de> for Edge {
                             if let Some(v) = v {
                                 if __oneof_arity.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'arity'",
                                         ),
                                     );
@@ -2707,7 +2716,7 @@ impl<'de> serde::Deserialize<'de> for Edge {
                             }
                         }
                         _ => {
-                            map.next_value::<serde::de::IgnoredAny>()?;
+                            map.next_value::<::serde::de::IgnoredAny>()?;
                         }
                     }
                 }

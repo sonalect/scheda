@@ -673,18 +673,21 @@ impl ::buffa::ExtensionSet for Filter {
         &mut self.__buffa_unknown_fields
     }
 }
-impl<'de> serde::Deserialize<'de> for Filter {
-    fn deserialize<D: serde::Deserializer<'de>>(
+impl<'de> ::serde::Deserialize<'de> for Filter {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
         d: D,
     ) -> ::core::result::Result<Self, D::Error> {
         struct _V;
-        impl<'de> serde::de::Visitor<'de> for _V {
+        impl<'de> ::serde::de::Visitor<'de> for _V {
             type Value = Filter;
-            fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
                 f.write_str("struct Filter")
             }
             #[allow(clippy::field_reassign_with_default)]
-            fn visit_map<A: serde::de::MapAccess<'de>>(
+            fn visit_map<A: ::serde::de::MapAccess<'de>>(
                 self,
                 mut map: A,
             ) -> ::core::result::Result<Filter, A::Error> {
@@ -705,7 +708,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -729,7 +732,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -753,7 +756,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -777,7 +780,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -801,7 +804,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -825,7 +828,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -849,7 +852,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -873,7 +876,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -897,7 +900,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -921,7 +924,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -945,7 +948,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -969,7 +972,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -993,7 +996,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -1017,7 +1020,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -1041,7 +1044,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -1065,7 +1068,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             if let Some(v) = v {
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -1078,7 +1081,7 @@ impl<'de> serde::Deserialize<'de> for Filter {
                             }
                         }
                         _ => {
-                            map.next_value::<serde::de::IgnoredAny>()?;
+                            map.next_value::<::serde::de::IgnoredAny>()?;
                         }
                     }
                 }
@@ -1115,6 +1118,7 @@ pub mod filter {
     use super::*;
     /// `tantivy::query::Occur` on a boolean clause. There is no JSON `and` /
     /// `or` key: AND is `OCCUR_MUST`, OR is `OCCUR_SHOULD`.
+    #[allow(non_camel_case_types)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[repr(i32)]
     pub enum Occur {
@@ -3195,21 +3199,21 @@ pub mod filter {
             &mut self.__buffa_unknown_fields
         }
     }
-    impl<'de> serde::Deserialize<'de> for Bound {
-        fn deserialize<D: serde::Deserializer<'de>>(
+    impl<'de> ::serde::Deserialize<'de> for Bound {
+        fn deserialize<D: ::serde::Deserializer<'de>>(
             d: D,
         ) -> ::core::result::Result<Self, D::Error> {
             struct _V;
-            impl<'de> serde::de::Visitor<'de> for _V {
+            impl<'de> ::serde::de::Visitor<'de> for _V {
                 type Value = Bound;
                 fn expecting(
                     &self,
-                    f: &mut core::fmt::Formatter<'_>,
-                ) -> core::fmt::Result {
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
                     f.write_str("struct Bound")
                 }
                 #[allow(clippy::field_reassign_with_default)]
-                fn visit_map<A: serde::de::MapAccess<'de>>(
+                fn visit_map<A: ::serde::de::MapAccess<'de>>(
                     self,
                     mut map: A,
                 ) -> ::core::result::Result<Bound, A::Error> {
@@ -3229,7 +3233,7 @@ pub mod filter {
                                     )?;
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -3249,7 +3253,7 @@ pub mod filter {
                                     )?;
                                 if __oneof_kind.is_some() {
                                     return Err(
-                                        serde::de::Error::custom(
+                                        ::serde::de::Error::custom(
                                             "multiple oneof fields set for 'kind'",
                                         ),
                                     );
@@ -3261,7 +3265,7 @@ pub mod filter {
                                 );
                             }
                             _ => {
-                                map.next_value::<serde::de::IgnoredAny>()?;
+                                map.next_value::<::serde::de::IgnoredAny>()?;
                             }
                         }
                     }
@@ -5034,21 +5038,21 @@ pub mod filter {
             &mut self.__buffa_unknown_fields
         }
     }
-    impl<'de> serde::Deserialize<'de> for MoreLikeThis {
-        fn deserialize<D: serde::Deserializer<'de>>(
+    impl<'de> ::serde::Deserialize<'de> for MoreLikeThis {
+        fn deserialize<D: ::serde::Deserializer<'de>>(
             d: D,
         ) -> ::core::result::Result<Self, D::Error> {
             struct _V;
-            impl<'de> serde::de::Visitor<'de> for _V {
+            impl<'de> ::serde::de::Visitor<'de> for _V {
                 type Value = MoreLikeThis;
                 fn expecting(
                     &self,
-                    f: &mut core::fmt::Formatter<'_>,
-                ) -> core::fmt::Result {
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
                     f.write_str("struct MoreLikeThis")
                 }
                 #[allow(clippy::field_reassign_with_default)]
-                fn visit_map<A: serde::de::MapAccess<'de>>(
+                fn visit_map<A: ::serde::de::MapAccess<'de>>(
                     self,
                     mut map: A,
                 ) -> ::core::result::Result<MoreLikeThis, A::Error> {
@@ -5086,9 +5090,9 @@ pub mod filter {
                             "minDocFrequency" | "min_doc_frequency" => {
                                 __f_min_doc_frequency = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<u64>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5104,9 +5108,9 @@ pub mod filter {
                             "maxDocFrequency" | "max_doc_frequency" => {
                                 __f_max_doc_frequency = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<u64>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5122,9 +5126,9 @@ pub mod filter {
                             "minTermFrequency" | "min_term_frequency" => {
                                 __f_min_term_frequency = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<u64>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5140,9 +5144,9 @@ pub mod filter {
                             "maxQueryTerms" | "max_query_terms" => {
                                 __f_max_query_terms = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<u64>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5158,9 +5162,9 @@ pub mod filter {
                             "minWordLength" | "min_word_length" => {
                                 __f_min_word_length = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<u64>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5176,9 +5180,9 @@ pub mod filter {
                             "maxWordLength" | "max_word_length" => {
                                 __f_max_word_length = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<u64>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5194,9 +5198,9 @@ pub mod filter {
                             "boostFactor" | "boost_factor" => {
                                 __f_boost_factor = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::core::option::Option<f32>;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5212,11 +5216,11 @@ pub mod filter {
                             "stopWords" | "stop_words" => {
                                 __f_stop_words = Some({
                                     struct _S;
-                                    impl<'de> serde::de::DeserializeSeed<'de> for _S {
+                                    impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
                                         type Value = ::buffa::alloc::vec::Vec<
                                             ::buffa::alloc::string::String,
                                         >;
-                                        fn deserialize<D: serde::Deserializer<'de>>(
+                                        fn deserialize<D: ::serde::Deserializer<'de>>(
                                             self,
                                             d: D,
                                         ) -> ::core::result::Result<
@@ -5243,7 +5247,7 @@ pub mod filter {
                                 if let Some(v) = v {
                                     if __oneof_source.is_some() {
                                         return Err(
-                                            serde::de::Error::custom(
+                                            ::serde::de::Error::custom(
                                                 "multiple oneof fields set for 'source'",
                                             ),
                                         );
@@ -5267,7 +5271,7 @@ pub mod filter {
                                 if let Some(v) = v {
                                     if __oneof_source.is_some() {
                                         return Err(
-                                            serde::de::Error::custom(
+                                            ::serde::de::Error::custom(
                                                 "multiple oneof fields set for 'source'",
                                             ),
                                         );
@@ -5280,7 +5284,7 @@ pub mod filter {
                                 }
                             }
                             _ => {
-                                map.next_value::<serde::de::IgnoredAny>()?;
+                                map.next_value::<::serde::de::IgnoredAny>()?;
                             }
                         }
                     }

@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Buffa 0.9.2 and protovalidate-buffa 0.7.1 (runtime crates and the
+  `protoc-gen-buffa` / `protoc-gen-protovalidate-buffa` pins). Generated
+  stubs apply the element-memory decode budget; JSON mapping rejects a
+  nonempty `Any` without `@type` and serializes oneof message pointees.
+  The plugin stack stays matched.
+- Update `cxx` to `1.0.200`.
+- huggingface-hub 1.30.0 for the vLLM sidecars.
+
 ## [0.9.6] - 2026-09-04
 
 ### Fixed

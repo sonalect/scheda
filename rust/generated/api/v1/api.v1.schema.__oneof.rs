@@ -43,22 +43,22 @@ pub mod schema {
             Self::Some(Kind::from(v))
         }
     }
-    impl serde::Serialize for Kind {
-        fn serialize<S: serde::Serializer>(
+    impl ::serde::Serialize for Kind {
+        fn serialize<S: ::serde::Serializer>(
             &self,
             s: S,
         ) -> ::core::result::Result<S::Ok, S::Error> {
-            use serde::ser::SerializeMap;
+            use ::serde::ser::SerializeMap;
             let mut map = s.serialize_map(Some(1))?;
             match self {
                 Self::Document(v) => {
-                    map.serialize_entry("document", v)?;
+                    map.serialize_entry("document", &**v)?;
                 }
                 Self::Journal(v) => {
-                    map.serialize_entry("journal", v)?;
+                    map.serialize_entry("journal", &**v)?;
                 }
                 Self::Singleton(v) => {
-                    map.serialize_entry("singleton", v)?;
+                    map.serialize_entry("singleton", &**v)?;
                 }
             }
             map.end()
@@ -91,37 +91,37 @@ pub mod field {
             Self::Some(Spec::from(v))
         }
     }
-    impl serde::Serialize for Spec {
-        fn serialize<S: serde::Serializer>(
+    impl ::serde::Serialize for Spec {
+        fn serialize<S: ::serde::Serializer>(
             &self,
             s: S,
         ) -> ::core::result::Result<S::Ok, S::Error> {
-            use serde::ser::SerializeMap;
+            use ::serde::ser::SerializeMap;
             let mut map = s.serialize_map(Some(1))?;
             match self {
                 Self::String(v) => {
-                    map.serialize_entry("string", v)?;
+                    map.serialize_entry("string", &**v)?;
                 }
                 Self::Integer(v) => {
-                    map.serialize_entry("integer", v)?;
+                    map.serialize_entry("integer", &**v)?;
                 }
                 Self::Number(v) => {
-                    map.serialize_entry("number", v)?;
+                    map.serialize_entry("number", &**v)?;
                 }
                 Self::Boolean(v) => {
-                    map.serialize_entry("boolean", v)?;
+                    map.serialize_entry("boolean", &**v)?;
                 }
                 Self::StringList(v) => {
-                    map.serialize_entry("stringList", v)?;
+                    map.serialize_entry("stringList", &**v)?;
                 }
                 Self::Object(v) => {
-                    map.serialize_entry("object", v)?;
+                    map.serialize_entry("object", &**v)?;
                 }
                 Self::ObjectList(v) => {
-                    map.serialize_entry("objectList", v)?;
+                    map.serialize_entry("objectList", &**v)?;
                 }
                 Self::Edge(v) => {
-                    map.serialize_entry("edge", v)?;
+                    map.serialize_entry("edge", &**v)?;
                 }
             }
             map.end()
@@ -138,19 +138,19 @@ pub mod edge {
         Many(::buffa::alloc::boxed::Box<super::super::super::Unit>),
     }
     impl ::buffa::Oneof for Arity {}
-    impl serde::Serialize for Arity {
-        fn serialize<S: serde::Serializer>(
+    impl ::serde::Serialize for Arity {
+        fn serialize<S: ::serde::Serializer>(
             &self,
             s: S,
         ) -> ::core::result::Result<S::Ok, S::Error> {
-            use serde::ser::SerializeMap;
+            use ::serde::ser::SerializeMap;
             let mut map = s.serialize_map(Some(1))?;
             match self {
                 Self::One(v) => {
-                    map.serialize_entry("one", v)?;
+                    map.serialize_entry("one", &**v)?;
                 }
                 Self::Many(v) => {
-                    map.serialize_entry("many", v)?;
+                    map.serialize_entry("many", &**v)?;
                 }
             }
             map.end()

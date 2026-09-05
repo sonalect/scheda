@@ -278,6 +278,7 @@ pub mod error {
     /// One code per distinct failure class a caller can branch on.
     /// Collection/envelope rule text stays in `message` under `CODE_INVALID`.
     /// Zero is unset.
+    #[allow(non_camel_case_types)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[repr(i32)]
     pub enum Code {
@@ -1235,6 +1236,7 @@ pub mod error {
     /// Whether the same call with the same arguments may succeed later.
     /// Example: a network failure is `REPEAT_ALLOWED` once the connection is
     /// back. Bad input is `REPEAT_FORBIDDEN`.
+    #[allow(non_camel_case_types)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[repr(i32)]
     pub enum Repeat {

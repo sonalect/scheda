@@ -2,15 +2,15 @@
 
 http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
 
-# Checksum from https://crates.io/api/v1/crates/protoc-gen-buffa-packaging/0.9.1
+# Checksum from https://crates.io/api/v1/crates/protoc-gen-buffa-packaging/0.9.2
 http_archive(
     name = "protoc_gen_buffa_packaging_src",
     build_file = "//third_party/buf/plugins/protoc-gen-buffa-packaging:protoc-gen-buffa-packaging.BUILD.bazel",
-    sha256 = "3c7511e0e3c5d2aca80d4138b72b219c141cd6decb879c6a6fb697036c4f27f8",
-    strip_prefix = "protoc-gen-buffa-packaging-0.9.1",
+    sha256 = "4fb7570694ccde8570c6f8d7a07ffdf485dca7f498a8775c7aa51240a97aabd9",
+    strip_prefix = "protoc-gen-buffa-packaging-0.9.2",
     type = "tar.gz",
     urls = [
-        "https://static.crates.io/crates/protoc-gen-buffa-packaging/protoc-gen-buffa-packaging-0.9.1.crate",
+        "https://static.crates.io/crates/protoc-gen-buffa-packaging/protoc-gen-buffa-packaging-0.9.2.crate",
     ],
 )
 
