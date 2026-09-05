@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.75, 31 August 2026.
+Document 12 of the Scheda package. Version 0.76, 5 September 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -171,7 +171,8 @@ A3 moves this listing to `Vault.info`.
       and omits its field values (ISO-3). Record I/O for that name is
       `collection(name)` (ISO-2 / P4). This stage only required the
       listing. `find` / `search` that name an isolated collection stay
-      `unsupported` (main Index).
+      `unsupported` on the **main** Index as this stage shipped (A6). P15
+      superseded that: naming an isolated collection is an ordinary query.
 
 ---
 
@@ -236,7 +237,8 @@ Close only after A1. Public crate API is `07` / `13`. `Embedder` /
       `Vault::search(collections, query, reranker?)` (`07` LIB-10, LIB-11,
       `13`). Empty names = every non-isolated collection on this handle.
       Unknown name → `not_found`; isolated name on `find` / `search` →
-      `unsupported`. `collection(name)` for an isolated name is still the
+      an ordinary query (P15; this box shipped as `unsupported` before
+      that). `collection(name)` for an isolated name is still the
       Record handle. Collection `find` / `search` call those with
       `&[self.name]`. `Record.collection` / `Hit.collection` are output
       only. `FindQuery.include_raw` / `SearchQuery.include_raw` default
@@ -278,7 +280,8 @@ embedder / reranker is A5.
       Vault `search [--collections NAME,…] --query` (`14`). Unset
       `--collections` → every non-isolated collection.
       Unknown name → `not_found`; isolated name on `find` / `search` →
-      `unsupported`. CLI `collection NAME` get/add/replace/remove/history
+      an ordinary query (P15; this box shipped as `unsupported` before
+      that). CLI `collection NAME` get/add/replace/remove/history
       on an isolated name still uses that handle. Collection
       `find` / `search` have no `--collections`. JSON includes
       `Record.collection` / `Hit.collection`.
@@ -397,8 +400,9 @@ machinery.
 
 Close only after A5. This is the agent half of isolation, not encryption.
 Nested `{vault}/.isolated/` I/O is `10` §1 / P4. Isolated Records are
-`collection(name)` on this handle. `find` / `search` that name an
-isolated collection are `unsupported` (main Index). Crate Check:
+`collection(name)` on this handle. **P15 superseded the A6 query rule:**
+naming an isolated collection is an ordinary `find` / `search` on the
+one Vault Index. Empty collection set stays non-isolated (ISO-3). Crate Check:
 `isolated_sealed_values_stay_off_the_main_vault` in
 `rust/scheda/tests/catalog.rs` and `cli_omits_isolated_sealed_values` in
 `rust/cli/tests/cli.rs`.
@@ -408,9 +412,10 @@ isolated collection are `unsupported` (main Index). Crate Check:
 - [x] `Vault.info` still lists isolated collections as isolated and does
       not include their field values (ISO-3, A1 / A3).
 - [x] Reaching isolated Records is `collection(name)` (ISO-2 / P4).
-      `find` / `search` that name an isolated collection are `unsupported`.
+      `find` / `search` that name an isolated collection are an ordinary
+      query (P15). Encrypted names stay `unsupported`.
       CLI `collection NAME` `schema` / `get` / `add` / `replace` /
-      `remove` / `history` on an isolated name use that handle. CLI
+      `remove` / `history` / `find` / `search` on an isolated name use that handle. CLI
       `collection NAME` for a non-isolated collection must not return
       isolated Record values.
 
@@ -430,8 +435,8 @@ and `library_and_cli_json_and_code_match` (`info`, `get`, `find`, `search`,
 - [x] Tool writes cannot bypass SCH-12 (AGT-3).
 - [x] Library vs transport JSON (and `code`) match on one Vault (AGT-4).
 
-When A7 is `done`, **agent** is accepted for the Rust binding. Encryption
-of `{vault}/.isolated/` stays `10` §5.
+When A7 is `done`, **agent** is accepted for the Rust binding. Collection
+encryption shipped as P14. A CLI secret and a nested Remote stay P16.
 
 ---
 

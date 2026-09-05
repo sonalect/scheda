@@ -1159,13 +1159,8 @@ impl Collection {
                         "[Collection::add] lock journal ids",
                     )?;
                     let dir = self.generation_dir()?;
-                    let (id, rel, rollback) = journal::insert_journal(
-                        &self.vault,
-                        &self.decl,
-                        record.clone(),
-                        &dir,
-                        &mut maps,
-                    )?;
+                    let (id, rel, rollback) =
+                        journal::insert_journal(&self.vault, &self.decl, &record, &dir, &mut maps)?;
                     drop(maps);
                     record.path = Some(rel.clone());
                     record.valid = Some(true);
@@ -1181,7 +1176,7 @@ impl Collection {
                     let (_id, rel) = store::insert_document(
                         &self.vault,
                         &self.decl,
-                        record.clone(),
+                        &record,
                         self.encryption.as_ref(),
                     )?;
                     record.path = Some(rel.clone());
@@ -1301,7 +1296,7 @@ impl Collection {
                 &self.vault,
                 &self.decl,
                 id,
-                record.clone(),
+                &record,
                 self.encryption.as_ref(),
             )?;
             record.path = Some(rel.clone());
@@ -1572,7 +1567,8 @@ fn record_from_replace(id: &str, collection: &str, replace: RecordReplace) -> Re
 
 #[cfg(feature = "search")]
 fn collection_from_record_path(path: &str) -> &str {
-    path.split('/').next().unwrap_or("")
+    let rest = path.strip_prefix(".isolated/").unwrap_or(path);
+    rest.split('/').next().unwrap_or("")
 }
 
 #[cfg(feature = "find")]
@@ -2333,6 +2329,19 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn collection_from_record_path_skips_isolated_prefix() {
+        assert_eq!(
+            super::collection_from_record_path(".isolated/west/alpha.md"),
+            "west"
+        );
+        assert_eq!(
+            super::collection_from_record_path("notes/alpha.md"),
+            "notes"
+        );
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use scheda::{Embedder, Error, Record, Reranker};
+use scheda::{Embedder, Error, Record, Reranker, redact_remote_text};
 use serde_json::{Value, json};
 
 const EMBEDDINGS_LEAF: &str = "embeddings";
@@ -336,7 +336,7 @@ fn host_for_error(url: &str) -> String {
 }
 
 fn map_ureq(err: ureq::Error, frame: &str) -> Error {
-    let msg = err.to_string();
+    let msg = redact_remote_text(&err.to_string());
     let lowered = msg.to_ascii_lowercase();
     let error = if lowered.contains("connection refused") {
         Error::io_connection_refused(msg)

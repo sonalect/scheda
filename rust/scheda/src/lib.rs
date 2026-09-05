@@ -90,6 +90,8 @@ mod vault;
 #[doc(hidden)]
 pub use ann::AnnIndex;
 pub use embed::{Embedder, Reranker};
+#[doc(hidden)]
+pub use error::redact_remote_text;
 pub use error::{Code, Repeat};
 pub use journal::JournalLines;
 #[doc(inline)]

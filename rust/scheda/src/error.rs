@@ -100,6 +100,84 @@ pub(crate) fn git_code(err: &git2::Error) -> Code {
     }
 }
 
+/// Drop userinfo, path, and query from remote URLs in a foreign error string.
+///
+/// Git and HTTP libraries put the URL they tried into `Display`. Callers
+/// must not echo credentials or a full remote path in `Error.message`.
+#[doc(hidden)]
+#[must_use]
+pub fn redact_remote_text(message: &str) -> String {
+    let mut out = String::with_capacity(message.len());
+    let mut rest = message;
+    loop {
+        let uri = find_scheme_url(rest);
+        let git_at = rest.find("git@");
+        let (start, end, scp) = match (uri, git_at) {
+            (None, None) => {
+                out.push_str(rest);
+                break;
+            }
+            (Some((s, _)), Some(g)) if g < s => (g, scp_git_end(rest, g), true),
+            (Some((s, e)), _) => (s, e, false),
+            (None, Some(g)) => (g, scp_git_end(rest, g), true),
+        };
+        out.push_str(&rest[..start]);
+        out.push_str(&redact_span(&rest[start..end], scp));
+        rest = &rest[end..];
+    }
+    out
+}
+
+fn find_scheme_url(s: &str) -> Option<(usize, usize)> {
+    let mut from = 0;
+    while let Some(rel) = s[from..].find("://") {
+        let colon = from + rel;
+        let scheme_start = s[..colon]
+            .rfind(|c: char| !c.is_ascii_alphabetic())
+            .map_or(0, |i| i + 1);
+        if scheme_start < colon {
+            let scheme = &s[scheme_start..colon];
+            if scheme.eq_ignore_ascii_case("http")
+                || scheme.eq_ignore_ascii_case("https")
+                || scheme.eq_ignore_ascii_case("ssh")
+                || scheme.eq_ignore_ascii_case("git")
+                || scheme.eq_ignore_ascii_case("file")
+            {
+                let end = url_end(s, colon + 3);
+                return Some((scheme_start, end));
+            }
+        }
+        from = colon + 3;
+    }
+    None
+}
+
+fn url_end(s: &str, after_scheme: usize) -> usize {
+    s[after_scheme..]
+        .find(|c: char| {
+            c.is_ascii_whitespace() || matches!(c, '\'' | '"' | '<' | '>' | ')' | ']' | '`' | ',')
+        })
+        .map_or(s.len(), |i| after_scheme + i)
+}
+
+fn scp_git_end(s: &str, start: usize) -> usize {
+    url_end(s, start + 4)
+}
+
+fn redact_span(span: &str, scp: bool) -> String {
+    if scp {
+        let rest = span.strip_prefix("git@").unwrap_or(span);
+        let host = rest.split([':', '/', '?', '#']).next().unwrap_or(rest);
+        return format!("git@{host}");
+    }
+    let Some((scheme, rest)) = span.split_once("://") else {
+        return String::from("remote");
+    };
+    let hostport = rest.rsplit_once('@').map_or(rest, |(_, host)| host);
+    let host = hostport.split(['/', '?', '#']).next().unwrap_or(hostport);
+    format!("{scheme}://{host}")
+}
+
 /// Prepend a `stack` frame while bubbling [`crate::Error`].
 pub(crate) trait Context<T> {
     // A build without `find` has no call site of its own. An uncalled
@@ -203,7 +281,9 @@ impl<T> ContextGit<T> for Result<T, git2::Error> {
         F: FnOnce() -> C,
         C: fmt::Display,
     {
-        self.map_err(|err| crate::Error::new(git_code(&err), err.message()).context(f()))
+        self.map_err(|err| {
+            crate::Error::new(git_code(&err), redact_remote_text(err.message())).context(f())
+        })
     }
 }
 
@@ -381,5 +461,20 @@ mod tests {
         let err = give_up().unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Unsupported));
         assert_eq!(err.known_repeat(), Some(Repeat::Forbidden));
+    }
+
+    #[test]
+    fn redact_remote_text_drops_userinfo_path_and_query() {
+        use super::redact_remote_text;
+        let out = redact_remote_text(
+            "could not find repository from 'https://user:token@example.test/org/repo.git?token=leak'",
+        );
+        assert!(!out.contains("token"));
+        assert!(!out.contains("user:"));
+        assert!(!out.contains("/org/"));
+        assert!(out.contains("https://example.test"));
+        let scp = redact_remote_text("failed git@host.example:org/secret.git");
+        assert_eq!(scp, "failed git@host.example");
+        assert_eq!(redact_remote_text("no remotes here"), "no remotes here");
     }
 }

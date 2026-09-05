@@ -29,7 +29,7 @@ const BINARY64_EXACT_INT_MAGNITUDE: u64 = 1 << 53;
 pub(crate) fn insert_document(
     vault: &Path,
     decl: &CollectionDecl,
-    record: Record,
+    record: &Record,
     encryption: Option<&Encryption>,
 ) -> Result<(String, String), Error> {
     let prepared = prepare_write(vault, decl, record)?;
@@ -50,7 +50,7 @@ pub(crate) fn replace_document(
     vault: &Path,
     decl: &CollectionDecl,
     id: &str,
-    record: Record,
+    record: &Record,
     encryption: Option<&Encryption>,
 ) -> Result<(String, String), Error> {
     let Some(existing) = locate_file(vault, decl, id)? else {
@@ -218,11 +218,11 @@ struct ParsedFile {
     body: Option<String>,
 }
 
-fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<Prepared, Error> {
-    let Some(id) = record.id.clone() else {
-        unreachable!("Record id is required");
+fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result<Prepared, Error> {
+    let Some(id) = record.id.as_deref() else {
+        bail!(Error::invalid("record id is required"));
     };
-    crate::id::require_slug("id", &id)?;
+    crate::id::require_slug("id", id)?;
     if decl.kind == Kind::Journal {
         bail!(Error::invalid(
             "document write used on a journal collection",
@@ -256,12 +256,12 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
             decl.name
         )));
     }
-    let mut fields = fields_map(&record)?;
+    let mut fields = fields_map(record)?;
     apply_defaults(&mut fields, &decl.fields);
     match fields.get(crate::id::FIELD) {
-        Some(Value::String(existing)) if existing == &id => {}
+        Some(Value::String(existing)) if existing == id => {}
         Some(Value::Null) | None => {
-            fields.insert(String::from(crate::id::FIELD), Value::String(id.clone()));
+            fields.insert(String::from(crate::id::FIELD), Value::String(id.to_owned()));
         }
         Some(_) => {
             bail!(Error::invalid(format!(
@@ -271,12 +271,16 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: Record) -> Result<
         }
     }
     validate_fields(&fields, &decl.fields, true, false)?;
-    let rel = record_file(decl, &id)?;
+    let rel = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
     let path = dir.join(&rel);
-    let body = record.body.filter(|body| !body.is_empty());
-    let bytes = encode_file(decl, &fields, body.as_deref())?;
-    Ok(Prepared { id, path, bytes })
+    let body = record.body.as_deref().filter(|body| !body.is_empty());
+    let bytes = encode_file(decl, &fields, body)?;
+    Ok(Prepared {
+        id: id.to_owned(),
+        path,
+        bytes,
+    })
 }
 
 fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {

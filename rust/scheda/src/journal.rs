@@ -149,7 +149,7 @@ pub(crate) fn rollback_insert(write: &JournalRollback) -> Result<(), Error> {
 pub(crate) fn insert_journal(
     vault: &Path,
     decl: &CollectionDecl,
-    record: Record,
+    record: &Record,
     index_dir: &Path,
     maps: &mut JournalIdMaps,
 ) -> Result<(String, String, JournalRollback), Error> {
@@ -306,23 +306,23 @@ struct ParsedLine {
     raw: Vec<u8>,
 }
 
-fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8>), Error> {
-    let Some(id) = record.id.clone() else {
-        unreachable!("Record id is required");
+fn prepare_line(decl: &CollectionDecl, record: &Record) -> Result<(String, Vec<u8>), Error> {
+    let Some(id) = record.id.as_deref() else {
+        bail!(Error::invalid("record id is required"));
     };
-    crate::id::require_slug("id", &id)?;
+    crate::id::require_slug("id", id)?;
     if record.body.as_deref().is_some_and(|body| !body.is_empty()) {
         bail!(Error::invalid(format!(
             "journal {} does not allow a Markdown body",
             decl.name
         )));
     }
-    let mut fields = store::fields_map(&record)?;
+    let mut fields = store::fields_map(record)?;
     store::apply_defaults(&mut fields, &decl.fields);
     match fields.get(crate::id::FIELD) {
-        Some(Value::String(existing)) if existing == &id => {}
+        Some(Value::String(existing)) if existing == id => {}
         Some(Value::Null) | None => {
-            fields.insert(String::from(crate::id::FIELD), Value::String(id.clone()));
+            fields.insert(String::from(crate::id::FIELD), Value::String(id.to_owned()));
         }
         Some(_) => {
             bail!(Error::invalid(format!(
@@ -334,7 +334,7 @@ fn prepare_line(decl: &CollectionDecl, record: Record) -> Result<(String, Vec<u8
     store::validate_fields(&fields, &decl.fields, true, false)?;
     let mut line = canonical_json(&Value::Object(fields))?;
     line.push(b'\n');
-    Ok((id, line))
+    Ok((id.to_owned(), line))
 }
 
 fn canonical_json(value: &Value) -> Result<Vec<u8>, Error> {

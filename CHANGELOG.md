@@ -8,6 +8,26 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Isolated `find` / `search` docs match the crate.** Naming an isolated
+  collection is an ordinary query (`14` collection commands, `13`, A6).
+  `replace` / `remove` resolve `id` from the Index when `find` is on, for
+  isolated collections too (`07` LIB-9 / LIB-24, `03` MOD-8).
+- **Cargo CLI links `encrypt`, same as the Bazel binary.** A Vault that
+  holds an encrypted collection fails with `crypto` without a secret, not
+  `unsupported_encryption`, whether you built with Cargo or Bazel.
+- **Git and HTTP errors no longer echo URL userinfo or path.** `Error.message`
+  from libgit2 and from the CLI embedder/reranker keeps the host, not
+  `user:token` or a query string.
+- **Search `Hit` fallback collection name skips `.isolated/`.** A Record
+  path `.isolated/{name}/{id}.md` resolves to `{name}`, not `.isolated`.
+
+### Changed
+
+- README and `10` / `11` / `12` name **P16** as next crate work (CLI secret
+  flags and a nested isolated Remote). Collection encryption is not deferred.
+
 ## [0.9.8] - 2026-09-05
 
 ### Changed

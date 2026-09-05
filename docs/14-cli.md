@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.61, 1 September 2026.
+Document 14 of the Scheda package. Version 0.62, 5 September 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -102,7 +102,7 @@ bazel run //python/vllm:embedder
 bazel run //python/vllm:reranker
 ```
 
-Python is locked in `uv.lock` (`vllm==0.27.1`). Sidecars
+Python is locked in `uv.lock` (`vllm==0.28.0`). Sidecars
 `snapshot_download` the Qwen repo (tqdm on stderr) into
 `<workspace>/.cache/huggingface` (`HF_HOME`; an already-set `HF_HOME`
 wins) before `vllm serve`. `tags = ["manual"]` so `bazel build //...`
@@ -129,9 +129,12 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 
 Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
-`history`, `replace`, `remove` (and `lines` on the library, not this CLI).
-`find` / `search` on that `NAME` are `unsupported`, same as Vault
-`--collections` with an isolated name.
+`history`, `replace`, `remove`, `find`, `search` (and `lines` on the
+library, not this CLI). `find` / `search` on that `NAME` are ordinary
+queries, same as Vault `--collections` with an isolated name. Encrypted
+`NAME` is `unsupported` on `find` / `search`. A collection with both
+Index legs excluded is `unsupported` on `search`; `exclude_lexical_index`
+alone is `unsupported` on `find`.
 
 ---
 

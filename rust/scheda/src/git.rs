@@ -13,7 +13,7 @@ use git2::{
     RepositoryOpenFlags, ResetType, Signature, Sort, Status, StatusOptions,
 };
 
-use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code};
+use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code, redact_remote_text};
 use crate::{Error, OpenOptions, history};
 
 /// Git author and committer for every commit on a Vault handle.
@@ -72,7 +72,7 @@ fn config_identity(repo_dir: &Path) -> Result<CommitIdentity, Error> {
 }
 
 fn git_fail(err: git2::Error, frame: &str) -> Error {
-    Error::new(git_code(&err), err.message()).context(frame)
+    Error::new(git_code(&err), redact_remote_text(err.message())).context(frame)
 }
 
 fn open_at(dir: &Path) -> Result<Repository, git2::Error> {
@@ -693,6 +693,21 @@ mod transport_tests {
         assert!(url_needs_remote_git("http://example.test/a.git"));
         assert!(url_needs_remote_git("ssh://git@host/repo.git"));
         assert!(url_needs_remote_git("git@host:repo.git"));
+    }
+
+    #[test]
+    fn git_fail_redacts_userinfo_in_message() {
+        use super::git_fail;
+        let err = git_fail(
+            git2::Error::from_str(
+                "could not find repository from 'https://user:token@example.test/org/repo.git'",
+            ),
+            "[Git::clone] clone repository",
+        );
+        let msg = err.message.as_deref().unwrap_or("");
+        assert!(!msg.contains("token"), "{msg}");
+        assert!(!msg.contains("user:"), "{msg}");
+        assert!(msg.contains("https://example.test"), "{msg}");
     }
 
     #[test]
