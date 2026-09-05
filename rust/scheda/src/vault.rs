@@ -714,13 +714,16 @@ impl Vault {
     /// are skipped. A collection with both Index legs excluded is not
     /// walked for Tantivy or vectors; its journal id map is still rebuilt.
     /// Incremental writes keep going into the live generation; only this
-    /// method swaps. A reader that opened before the swap keeps its
-    /// generation. A reader older than one `reindex` cycle may lose those
-    /// files (`index_missing` or `index_lexical`). Removes a leftover
-    /// `{vault}/.isolated/.scheda/` directory when one is present. Takes
-    /// the write lock for this call. Outside a transaction the lock is
-    /// released before return, so there is no concurrent writer during the
-    /// swap.
+    /// method swaps. Vector slots whose embedder text is unchanged are
+    /// copied into the new generation; the lexical Index is rebuilt in
+    /// full. A different `model_id` or dimensions starts the vector table
+    /// empty and re-embeds every slot. A reader that opened before the
+    /// swap keeps its generation. A reader older than one `reindex` cycle
+    /// may lose those files (`index_missing` or `index_lexical`). Removes
+    /// a leftover `{vault}/.isolated/.scheda/` directory when one is
+    /// present. Takes the write lock for this call. Outside a transaction
+    /// the lock is released before return, so there is no concurrent
+    /// writer during the swap.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
         self.require_write_lock("reindex")?;
         self.conclude_write((|| {
@@ -732,10 +735,13 @@ impl Vault {
             let (counts, maps, new_dir) =
                 index::prepare_generation(&self.path, &schema, &self.index.root)?;
             #[cfg(feature = "find")]
-            if let Err(err) =
-                self.search
-                    .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
-            {
+            if let Err(err) = self.search.rebuild_into(
+                &new_dir,
+                &self.path,
+                &schema,
+                self.embedder.as_deref(),
+                Some(previous.as_path()),
+            ) {
                 let _ = self.search.set_index_dir(&previous);
                 return Err(err);
             }
@@ -764,10 +770,13 @@ impl Vault {
             let schema = schema::load(&self.path)?;
             let previous = self.generation_dir()?;
             let (_, _, new_dir) = index::prepare_generation(&self.path, &schema, &self.index.root)?;
-            if let Err(err) =
-                self.search
-                    .rebuild_into(&new_dir, &self.path, &schema, self.embedder.as_deref())
-            {
+            if let Err(err) = self.search.rebuild_into(
+                &new_dir,
+                &self.path,
+                &schema,
+                self.embedder.as_deref(),
+                Some(previous.as_path()),
+            ) {
                 let _ = self.search.set_index_dir(&previous);
                 return Err(err);
             }

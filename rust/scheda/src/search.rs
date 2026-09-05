@@ -27,7 +27,7 @@ use tantivy::{
     Term,
 };
 
-use crate::error::{Code, ContextAs, ContextIo, bail};
+use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail};
 use crate::index;
 use crate::query::{self, FindFields};
 use crate::schema::{self, CollectionDecl, FieldDecl, Schema};
@@ -109,6 +109,20 @@ struct VectorStore {
     next_key: u64,
 }
 
+struct VectorBatch {
+    pieces: Vec<(String, String)>,
+    vectors: Vec<(String, Vec<f32>)>,
+}
+
+impl VectorBatch {
+    fn empty() -> Self {
+        Self {
+            pieces: Vec::new(),
+            vectors: Vec::new(),
+        }
+    }
+}
+
 #[cfg(feature = "search")]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DocRef {
@@ -116,6 +130,12 @@ struct DocRef {
     id: String,
     path: String,
     field: String,
+    /// Git blob SHA-1 of the exact text handed to the embedder.
+    ///
+    /// Empty when loading an Index written before digests existed; that
+    /// slot is treated as changed and re-embedded once.
+    #[serde(default)]
+    digest: String,
 }
 
 #[cfg(feature = "search")]
@@ -239,15 +259,21 @@ impl SearchEngine {
 
     /// Rebuild lexical / vector / edges into `index_dir`, then remember it
     /// as this handle's generation.
+    ///
+    /// `previous` is the generation to inherit vectors from. When it is
+    /// `None`, this generation's own vector dump is the source (in-place
+    /// repair). Unchanged field slots keep their stored vectors; a
+    /// `model_id` or dimensions mismatch starts from an empty ANN table.
     pub(crate) fn rebuild_into(
         &self,
         index_dir: &Path,
         vault: &Path,
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
+        previous: Option<&Path>,
     ) -> Result<(), Error> {
         self.set_index_dir(index_dir)?;
-        self.rebuild(vault, schema, embedder)
+        self.rebuild_from(vault, schema, embedder, previous)
     }
 
     pub(crate) fn rebuild(
@@ -256,8 +282,18 @@ impl SearchEngine {
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
+        self.rebuild_from(vault, schema, embedder, None)
+    }
+
+    fn rebuild_from(
+        &self,
+        vault: &Path,
+        schema: &Schema,
+        embedder: Option<&dyn Embedder>,
+        previous: Option<&Path>,
+    ) -> Result<(), Error> {
         #[cfg(not(feature = "search"))]
-        let _ = embedder;
+        let _ = (embedder, previous);
         let can_write = {
             let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
             let lexical = inner.lexical.take();
@@ -277,6 +313,15 @@ impl SearchEngine {
         if can_write {
             index::ensure_format(&index_dir)?;
         }
+        #[cfg(feature = "search")]
+        {
+            let source = previous.unwrap_or(index_dir.as_path());
+            let inherited = inherit_vector(source, &index_dir, embedder)?;
+            let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] inherit")?;
+            inner.vector = inherited;
+        }
+        #[cfg(feature = "search")]
+        let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for decl in schema.collections().filter(|decl| decl.any_indexed()) {
             let records = match decl.kind {
                 crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
@@ -289,21 +334,26 @@ impl SearchEngine {
                     continue;
                 }
                 #[cfg(feature = "search")]
-                let vectors = if decl.vector_indexed() {
-                    let pieces = field_vector_texts(decl, &record)?;
-                    embed_field_vectors(embedder, pieces)?
-                } else {
-                    Vec::new()
-                };
+                let batch = embed_changed_slots(self, decl, &record, embedder)?;
                 #[cfg(not(feature = "search"))]
-                let vectors: Vec<(String, Vec<f32>)> = Vec::new();
+                let batch = VectorBatch::empty();
                 let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
                 upsert_record(
-                    &mut inner, &index_dir, can_write, decl, &record, embedder, &vectors,
+                    &mut inner, &index_dir, can_write, decl, &record, embedder, &batch,
                 )?;
+                #[cfg(feature = "search")]
+                if decl.vector_indexed()
+                    && let Some(id) = record.id.as_deref().filter(|id| !id.is_empty())
+                {
+                    seen.entry(decl.name.clone())
+                        .or_default()
+                        .insert(id.to_owned());
+                }
             }
         }
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] commit")?;
+        #[cfg(feature = "search")]
+        drop_unseen_vectors(&mut inner, &seen)?;
         inner.commit(&index_dir, can_write)
     }
 
@@ -319,14 +369,9 @@ impl SearchEngine {
         #[cfg(not(feature = "search"))]
         let _ = embedder;
         #[cfg(feature = "search")]
-        let vectors = if decl.vector_indexed() {
-            let pieces = field_vector_texts(decl, record)?;
-            embed_field_vectors(embedder, pieces)?
-        } else {
-            Vec::new()
-        };
+        let batch = embed_changed_slots(self, decl, record, embedder)?;
         #[cfg(not(feature = "search"))]
-        let vectors: Vec<(String, Vec<f32>)> = Vec::new();
+        let batch = VectorBatch::empty();
         let index_dir = self.dir()?;
         let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::upsert] lock")?;
         if !inner.can_write {
@@ -342,9 +387,7 @@ impl SearchEngine {
             }
             _ => index::ensure_format(&index_dir)?,
         }
-        upsert_record(
-            &mut inner, &index_dir, true, decl, record, embedder, &vectors,
-        )?;
+        upsert_record(&mut inner, &index_dir, true, decl, record, embedder, &batch)?;
         Ok(())
     }
 
@@ -816,6 +859,31 @@ impl Inner {
     }
 }
 
+#[cfg(feature = "search")]
+fn embed_changed_slots(
+    engine: &SearchEngine,
+    decl: &CollectionDecl,
+    record: &Record,
+    embedder: Option<&dyn Embedder>,
+) -> Result<VectorBatch, Error> {
+    if !decl.vector_indexed() {
+        return Ok(VectorBatch::empty());
+    }
+    let pieces = field_vector_texts(decl, record)?;
+    let to_embed = {
+        let inner = crate::error::mutex(&engine.inner, "[SearchEngine] lock vector store")?;
+        slots_needing_embed(
+            inner.vector.as_ref(),
+            embedder,
+            &decl.name,
+            record.id.as_deref(),
+            &pieces,
+        )?
+    };
+    let vectors = embed_field_vectors(embedder, to_embed)?;
+    Ok(VectorBatch { pieces, vectors })
+}
+
 fn upsert_record(
     inner: &mut Inner,
     index_dir: &Path,
@@ -823,7 +891,7 @@ fn upsert_record(
     decl: &CollectionDecl,
     record: &Record,
     embedder: Option<&dyn Embedder>,
-    vectors: &[(String, Vec<f32>)],
+    batch: &VectorBatch,
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref().filter(|id| !id.is_empty()) else {
         return Ok(());
@@ -852,12 +920,12 @@ fn upsert_record(
         if decl.vector_indexed()
             && let Some(embedder) = embedder
         {
-            upsert_vector(inner, embedder, decl, record, vectors)?;
+            upsert_vector(inner, embedder, decl, record, batch)?;
             inner.dirty = true;
         }
     }
     #[cfg(not(feature = "search"))]
-    let _ = (embedder, vectors);
+    let _ = (embedder, batch);
     Ok(())
 }
 
@@ -893,6 +961,7 @@ fn forget_vector(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Er
         }
         store.keys.remove(&key);
     }
+    refresh_field_ids(store);
     Ok(())
 }
 
@@ -1007,12 +1076,143 @@ fn eq_values(value: &Value) -> Vec<String> {
 }
 
 #[cfg(feature = "search")]
+fn vector_digest(text: &str) -> Result<String, Error> {
+    git2::Oid::hash_object(git2::ObjectType::Blob, text.as_bytes())
+        .context("[SearchEngine] hash vector text")
+        .map(|oid| oid.to_string())
+}
+
+#[cfg(feature = "search")]
+fn slots_needing_embed(
+    store: Option<&VectorStore>,
+    embedder: Option<&dyn Embedder>,
+    collection: &str,
+    id: Option<&str>,
+    pieces: &[(String, String)],
+) -> Result<Vec<(String, String)>, Error> {
+    let Some(embedder) = embedder else {
+        return Ok(Vec::new());
+    };
+    let Some(id) = id.filter(|id| !id.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let nonempty: Vec<(String, String)> = pieces
+        .iter()
+        .filter(|(_, text)| !text.is_empty())
+        .cloned()
+        .collect();
+    let Some(store) = store else {
+        return Ok(nonempty);
+    };
+    if store.model_id != embedder.model_id() || store.dimensions != embedder.dimensions().get() {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    for (field, text) in nonempty {
+        let digest = vector_digest(&text)?;
+        let unchanged = store.keys.values().any(|doc| {
+            doc.collection == collection
+                && doc.id == id
+                && doc.field == field
+                && doc.digest == digest
+        });
+        if !unchanged {
+            out.push((field, text));
+        }
+    }
+    Ok(out)
+}
+
+#[cfg(feature = "search")]
+fn refresh_field_ids(store: &mut VectorStore) {
+    store.field_ids = store.keys.values().map(|doc| doc.field.clone()).collect();
+}
+
+#[cfg(feature = "search")]
+fn drop_unseen_vectors(
+    inner: &mut Inner,
+    seen: &BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), Error> {
+    let Some(store) = inner.vector.as_mut() else {
+        return Ok(());
+    };
+    let stale: Vec<u64> = store
+        .keys
+        .iter()
+        .filter(|(_, doc)| !allowed_has(seen, &doc.collection, &doc.id))
+        .map(|(key, _)| *key)
+        .collect();
+    if stale.is_empty() {
+        return Ok(());
+    }
+    for key in stale {
+        if store.ann.contains(key) {
+            store.ann.remove(key)?;
+        }
+        store.keys.remove(&key);
+    }
+    refresh_field_ids(store);
+    inner.dirty = true;
+    Ok(())
+}
+
+#[cfg(feature = "search")]
+fn peek_vector_meta(index_dir: &Path) -> Result<Option<VectorMeta>, Error> {
+    let meta_path = index_dir.join(VECTOR_DIR).join(VECTOR_META);
+    let dump = index_dir.join(VECTOR_DIR).join(VECTOR_INDEX);
+    let keys = index_dir.join(VECTOR_DIR).join(VECTOR_KEYS);
+    if !meta_path.is_file() || !dump.is_file() || !keys.is_file() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&meta_path).context("[SearchEngine] read vector meta")?;
+    let meta: VectorMeta = serde_json::from_str(&raw)
+        .context(Code::IndexCorrupt, "[SearchEngine] decode vector meta")?;
+    Ok(Some(meta))
+}
+
+#[cfg(feature = "search")]
+fn copy_vector_dir(from: &Path, to: &Path) -> Result<(), Error> {
+    let src = from.join(VECTOR_DIR);
+    let dst = to.join(VECTOR_DIR);
+    fs::create_dir_all(&dst).context("[SearchEngine] create vector dir")?;
+    for name in [VECTOR_INDEX, VECTOR_META, VECTOR_KEYS] {
+        let from_file = src.join(name);
+        if !from_file.is_file() {
+            continue;
+        }
+        fs::copy(&from_file, dst.join(name)).context("[SearchEngine] copy vector file")?;
+    }
+    Ok(())
+}
+
+#[cfg(feature = "search")]
+fn inherit_vector(
+    source: &Path,
+    dest: &Path,
+    embedder: Option<&dyn Embedder>,
+) -> Result<Option<VectorStore>, Error> {
+    let Some(embedder) = embedder else {
+        return Ok(None);
+    };
+    let Some(meta) = peek_vector_meta(source)? else {
+        return Ok(None);
+    };
+    if meta.model_id != embedder.model_id() || meta.dimensions != embedder.dimensions().get() {
+        return Ok(None);
+    }
+    if source != dest {
+        copy_vector_dir(source, dest)?;
+    }
+    load_vector(dest)
+}
+
+#[cfg(feature = "search")]
 fn upsert_vector(
     inner: &mut Inner,
     embedder: &dyn Embedder,
     decl: &CollectionDecl,
     record: &Record,
-    vectors: &[(String, Vec<f32>)],
+    batch: &VectorBatch,
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref() else {
         return Ok(());
@@ -1020,14 +1220,13 @@ fn upsert_vector(
     let path = record.path.clone().unwrap_or_default();
     let dimensions = embedder.dimensions().get();
     let model_id = embedder.model_id();
-    let slots = vector_slots(decl);
     if inner.vector.is_none() {
         inner.vector = Some(VectorStore {
             ann: AnnIndex::new(dimensions)?,
             keys: BTreeMap::new(),
             model_id: model_id.to_owned(),
             dimensions,
-            field_ids: slots.clone(),
+            field_ids: BTreeSet::new(),
             next_key: 1,
         });
     }
@@ -1037,39 +1236,75 @@ fn upsert_vector(
     if store.model_id != model_id || store.dimensions != dimensions {
         return Ok(());
     }
-    store.field_ids.extend(slots.iter().cloned());
-    let stale: Vec<u64> = store
+    let current: BTreeSet<&str> = batch
+        .pieces
+        .iter()
+        .filter(|(_, text)| !text.is_empty())
+        .map(|(field, _)| field.as_str())
+        .collect();
+    let vanished: Vec<u64> = store
         .keys
         .iter()
-        .filter(|(_, doc)| doc.collection == decl.name && doc.id == id)
+        .filter(|(_, doc)| {
+            doc.collection == decl.name && doc.id == id && !current.contains(doc.field.as_str())
+        })
         .map(|(key, _)| *key)
         .collect();
-    for key in stale {
+    for key in vanished {
         if store.ann.contains(key) {
             store.ann.remove(key)?;
         }
         store.keys.remove(&key);
     }
-    for (field, vector) in vectors {
-        if vector.len() != dimensions {
-            bail!(Error::invalid(format!(
-                "embedder returned {} dimensions, expected {dimensions}",
-                vector.len()
-            )));
+    let new_vectors: BTreeMap<&str, &Vec<f32>> = batch
+        .vectors
+        .iter()
+        .map(|(field, vector)| (field.as_str(), vector))
+        .collect();
+    for (field, text) in &batch.pieces {
+        if text.is_empty() {
+            continue;
         }
-        let key = store.next_key.max(1);
-        store.next_key = key.saturating_add(1);
-        store.ann.add(key, vector)?;
-        store.keys.insert(
-            key,
-            DocRef {
-                collection: decl.name.clone(),
-                id: id.to_owned(),
-                path: path.clone(),
-                field: field.clone(),
-            },
-        );
+        if let Some(vector) = new_vectors.get(field.as_str()) {
+            if vector.len() != dimensions {
+                bail!(Error::invalid(format!(
+                    "embedder returned {} dimensions, expected {dimensions}",
+                    vector.len()
+                )));
+            }
+            let digest = vector_digest(text)?;
+            let existing = store.keys.iter().find_map(|(key, doc)| {
+                (doc.collection == decl.name && doc.id == id && doc.field == *field).then_some(*key)
+            });
+            if let Some(key) = existing {
+                if store.ann.contains(key) {
+                    store.ann.remove(key)?;
+                }
+                store.keys.remove(&key);
+            }
+            let key = store.next_key.max(1);
+            store.next_key = key.saturating_add(1);
+            store.ann.add(key, vector)?;
+            store.keys.insert(
+                key,
+                DocRef {
+                    collection: decl.name.clone(),
+                    id: id.to_owned(),
+                    path: path.clone(),
+                    field: field.clone(),
+                    digest,
+                },
+            );
+        } else if let Some(doc) = store
+            .keys
+            .values_mut()
+            .find(|doc| doc.collection == decl.name && doc.id == id && doc.field == *field)
+        {
+            doc.path.clone_from(&path);
+        }
     }
+    refresh_field_ids(store);
+    store.field_ids.extend(vector_slots(decl));
     Ok(())
 }
 
