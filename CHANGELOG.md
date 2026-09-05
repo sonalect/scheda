@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.9.10] - 2026-09-05
+
 ### Changed
 
 - Pin Buf `wellknowntypes` to `v36.1`, matching Bazel `protobuf` `36.1.bcr.1`.
@@ -1042,6 +1044,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.9.10]
 - [0.9.9]
 - [0.9.8]
 - [0.9.7]
@@ -1068,7 +1071,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.9...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.10...HEAD
+[0.9.10]: https://github.com/amsokol/scheda/releases/tag/v0.9.10
 [0.9.9]: https://github.com/amsokol/scheda/releases/tag/v0.9.9
 [0.9.8]: https://github.com/amsokol/scheda/releases/tag/v0.9.8
 [0.9.7]: https://github.com/amsokol/scheda/releases/tag/v0.9.7
