@@ -6,7 +6,7 @@ modules:
       - api
 deps:
   - buf.build/bufbuild/protovalidate:v1.2.2
-  - buf.build/protocolbuffers/wellknowntypes
+  - buf.build/protocolbuffers/wellknowntypes:v36.1
 lint:
   use:
     - STANDARD

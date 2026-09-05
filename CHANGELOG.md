@@ -8,6 +8,10 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Pin Buf `wellknowntypes` to `v36.1`, matching Bazel `protobuf` `36.1.bcr.1`.
+
 ## [0.9.9] - 2026-09-05
 
 ### Fixed
