@@ -2,13 +2,16 @@
 // messages as Protobuf JSON, not binary protobuf. Vault files stay YAML /
 // JSONL.
 //
-// Hybrid retrieval: BM25 (Tantivy) and ANN (USearch), fused with RRF.
-// Collection names are a method argument on `Vault.search`, not a field
-// here. No Record path on the request. When `filter` is set, Tantivy runs
-// it first; both legs search only that `(collection, id)` set (lexical:
-// `Must` + text; vector: `filtered_search`). Unset `filter` → both legs
-// on the selected collections. Optional reranker is a library callback on
-// `search`, not a field here. When set, hits are ordered by `rerank_score`.
+// Hybrid retrieval: BM25 (Tantivy) and ANN (USearch). Without a reranker,
+// ranks fuse with Reciprocal Rank Fusion. With a reranker, the pool is
+// filled by alternating the two legs' ranks; RRF scores are still
+// reported. Collection names are a method argument on `Vault.search`, not
+// a field here. No Record path on the request. When `filter` is set,
+// Tantivy runs it first; both legs search only that `(collection, id)`
+// set (lexical: `Must` + text; vector: `filtered_search`). Unset `filter`
+// → both legs on the selected collections. Optional reranker is a library
+// callback on `search`, not a field here. When set, hits are ordered by
+// `rerank_score`.
 
 edition = "2024";
 
@@ -26,6 +29,9 @@ message SearchQuery {
   uint32 k = 2;
   Filter filter = 3;
   // Unset → 1. Zero turns that leg off. When set: finite and >= 0.
+  // Without a reranker the weights also scale Reciprocal Rank Fusion
+  // (order and truncation). With a reranker they no longer decide pool
+  // membership: each running leg's ranks fill the pool by alternation.
   double lexical_weight = 4 [(buf.validate.field) = {
     double: {
       gte: 0
@@ -55,10 +61,10 @@ message SearchQuery {
   // When true, fill `Hit.raw`. Unset or false → omit those bytes.
   bool include_raw = 6;
   // When set with a reranker, both Index legs retrieve max(k, 50, N) and
-  // the reranker scores the top N fused hits (RRF order). Unset → pool
-  // stays max(k, 50) and every fused hit is scored. Ignored when no
-  // reranker is passed. Zero is invalid. N larger than the corpus is not
-  // an error.
+  // the reranker scores the first N fused candidates (alternating legs
+  // when both ran). Unset → pool stays max(k, 50) and every fused hit is
+  // scored. Ignored when no reranker is passed. Zero is invalid. N larger
+  // than the corpus is not an error.
   uint32 rerank_limit = 7 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];

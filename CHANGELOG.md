@@ -8,6 +8,20 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **With a reranker, each Index leg's top hits always reach the candidate
+  pool.** Fusion used Reciprocal Rank Fusion both to score hits and to
+  truncate the pool. RRF rewards agreement, so a document only one leg
+  ranked first could lose its slot to documents both legs ranked around
+  30. The fused order is discarded when a reranker is present, so
+  membership is now filled by alternating the vector and lexical ranks
+  (skipping duplicates; leftover slots go to the longer leg). RRF scores
+  are still reported. Without a reranker the fused page is unchanged:
+  weighted RRF still decides order and truncation. `lexical_weight` /
+  `vector_weight` still turn a leg off at zero; they no longer decide who
+  enters the pool when a reranker is supplied.
+
 ## [0.10.1] - 2026-09-06
 
 ### Fixed

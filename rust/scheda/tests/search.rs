@@ -6,8 +6,8 @@ use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 
 use scheda::{
@@ -435,6 +435,72 @@ impl Reranker for ScoreByIdReranker {
     }
 }
 
+struct CollectIdsReranker {
+    ids: Mutex<Vec<String>>,
+}
+
+impl CollectIdsReranker {
+    fn new() -> Self {
+        Self {
+            ids: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn ids(&self) -> Vec<String> {
+        self.ids.lock().unwrap().clone()
+    }
+}
+
+impl Reranker for CollectIdsReranker {
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
+    }
+
+    fn score(&self, _query: &str, record: &Record) -> Result<f64, scheda::Error> {
+        if let Some(id) = record.id.as_deref() {
+            self.ids.lock().unwrap().push(id.to_owned());
+        }
+        Ok(0.0)
+    }
+
+    fn score_many(&self, query: &str, records: &[&Record]) -> Result<Vec<f64>, scheda::Error> {
+        records
+            .iter()
+            .map(|record| self.score(query, record))
+            .collect()
+    }
+}
+
+fn open_disagreeing_legs(scratch: &Scratch) -> scheda::Collection {
+    let embedder = Arc::new(MapEmbedder {
+        pairs: vec![
+            (String::from("kryptonite"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("car"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("kryptonite mineral"), vec![0.5, 0.5, 0.0, 0.0]),
+            (
+                String::from("kryptonite exclusive"),
+                vec![0.0, 0.0, 1.0, 0.0],
+            ),
+        ],
+    });
+    let vault = open_tokens(scratch, Some(embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    vault.begin().unwrap();
+    collection
+        .add("aaa_vec", rec(json!({"title": "car"})), None)
+        .unwrap();
+    collection
+        .add(
+            "zzz_lex",
+            rec(json!({"title": "kryptonite exclusive"})),
+            None,
+        )
+        .unwrap();
+    add_numbered_kryptonite(&collection, 49);
+    vault.commit("disagreeing legs").unwrap();
+    collection
+}
+
 fn add_numbered_kryptonite(collection: &scheda::Collection, n: usize) {
     for i in 0..n {
         collection
@@ -776,6 +842,185 @@ fn rerank_limit_without_reranker_does_not_change_a_large_page() {
     assert_eq!(hit_ids(&plain), hit_ids(&ignored));
     assert!(ignored.hits.iter().all(|hit| hit.rerank_score.is_none()));
     assert_eq!(ignored.hits.len(), 10);
+}
+
+#[test]
+fn reranker_keeps_each_leg_rank1_that_rrf_drops() {
+    let scratch = Scratch::new();
+    let collection = open_disagreeing_legs(&scratch);
+
+    let lexical_top = collection
+        .search(&q("kryptonite", 1).with_vector_weight(0.0), None)
+        .unwrap();
+    assert_eq!(
+        hit_ids(&lexical_top),
+        ["zzz_lex"],
+        "zzz_lex must be lexical rank 1"
+    );
+    let vector_top = collection
+        .search(&q("kryptonite", 1).with_lexical_weight(0.0), None)
+        .unwrap();
+    assert_eq!(
+        hit_ids(&vector_top),
+        ["aaa_vec"],
+        "aaa_vec must be vector rank 1"
+    );
+
+    let rrf = collection.search(&q("kryptonite", 50), None).unwrap();
+    assert_eq!(rrf.hits.len(), 50);
+    let rrf_ids = hit_ids(&rrf);
+    assert!(
+        !rrf_ids.contains(&"aaa_vec") || !rrf_ids.contains(&"zzz_lex"),
+        "pure RRF must drop at least one exclusive rank-1 so this fails on old pool membership: {rrf_ids:?}"
+    );
+
+    let reranker = CollectIdsReranker::new();
+    collection
+        .search(&q("kryptonite", 10), Some(&reranker))
+        .unwrap();
+    let scored = reranker.ids();
+    assert!(
+        scored.iter().any(|id| id == "aaa_vec"),
+        "vector rank-1 must reach the reranker: {scored:?}"
+    );
+    assert!(
+        scored.iter().any(|id| id == "zzz_lex"),
+        "lexical rank-1 must reach the reranker: {scored:?}"
+    );
+}
+
+#[test]
+fn reranker_fills_the_pool_from_the_longer_leg() {
+    let scratch = Scratch::new();
+    let embedder = Arc::new(MapEmbedder { pairs: Vec::new() });
+    let vault = open_tokens(&scratch, Some(embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    vault.begin().unwrap();
+    collection
+        .add("lex_a", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    collection
+        .add("lex_b", rec(json!({"title": "kryptonite extra"})), None)
+        .unwrap();
+    collection
+        .add("lex_c", rec(json!({"title": "kryptonite mention"})), None)
+        .unwrap();
+    for i in 0..80 {
+        collection
+            .add(
+                &format!("vec{i:02}"),
+                rec(json!({"title": "unrelated prose"})),
+                None,
+            )
+            .unwrap();
+    }
+    vault.commit("short lexical leg").unwrap();
+
+    let lexical_only = collection
+        .search(&q("kryptonite", 10).with_vector_weight(0.0), None)
+        .unwrap();
+    assert_eq!(lexical_only.hits.len(), 3, "{:?}", hit_ids(&lexical_only));
+
+    let reranker = ScoreByIdReranker::new();
+    let page = collection
+        .search(&q("kryptonite", 10), Some(&reranker))
+        .unwrap();
+    assert_eq!(
+        reranker.scored(),
+        50,
+        "a 3-hit lexical leg must not shrink the pool while the vector leg still has candidates"
+    );
+    assert_eq!(page.hits.len(), 10);
+}
+
+#[test]
+fn without_reranker_fused_order_and_scores_stay_rrf() {
+    let scratch = Scratch::new();
+    let embedder = Arc::new(MapEmbedder {
+        pairs: vec![
+            (String::from("kryptonite mineral"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("kryptonite"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("car"), vec![0.9, 0.1, 0.0, 0.0]),
+        ],
+    });
+    let vault = open_tokens(&scratch, Some(embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add("both", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    collection
+        .add("vector_only", rec(json!({"title": "car"})), None)
+        .unwrap();
+    collection
+        .add("noise", rec(json!({"title": "unrelated prose"})), None)
+        .unwrap();
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
+    let got = serde_json::to_value(&hits).unwrap();
+    let expected = json!({
+        "hits": [
+            {
+                "collection": "token_notes",
+                "id": "both",
+                "lexicalScore": 1.0401802062988281,
+                "path": "token_notes/both.md",
+                "rrfScore": 0.03278688524590164,
+                "vectorScore": 1.0
+            },
+            {
+                "collection": "token_notes",
+                "id": "vector_only",
+                "path": "token_notes/vector_only.md",
+                "rrfScore": 0.016129032258064516,
+                "vectorScore": 0.9939209222793579
+            },
+            {
+                "collection": "token_notes",
+                "id": "noise",
+                "path": "token_notes/noise.md",
+                "rrfScore": 0.015873015873015872,
+                "vectorScore": 0.5
+            }
+        ]
+    });
+    assert_eq!(got, expected);
+}
+
+#[test]
+fn reranker_pool_is_deterministic() {
+    let scratch = Scratch::new();
+    let collection = open_disagreeing_legs(&scratch);
+    let first = CollectIdsReranker::new();
+    let page_a = collection
+        .search(&q("kryptonite", 10), Some(&first))
+        .unwrap();
+    let second = CollectIdsReranker::new();
+    let page_b = collection
+        .search(&q("kryptonite", 10), Some(&second))
+        .unwrap();
+    assert_eq!(first.ids(), second.ids());
+    assert_eq!(hit_ids(&page_a), hit_ids(&page_b));
+    assert_eq!(
+        page_a
+            .hits
+            .iter()
+            .map(|hit| (
+                hit.rrf_score,
+                hit.lexical_score,
+                hit.vector_score,
+                hit.rerank_score
+            ))
+            .collect::<Vec<_>>(),
+        page_b
+            .hits
+            .iter()
+            .map(|hit| (
+                hit.rrf_score,
+                hit.lexical_score,
+                hit.vector_score,
+                hit.rerank_score
+            ))
+            .collect::<Vec<_>>()
+    );
 }
 
 #[test]

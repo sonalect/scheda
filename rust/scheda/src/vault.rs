@@ -368,7 +368,7 @@ impl Vault {
         .find(collections, query, offset, count)
     }
 
-    /// Hybrid retrieval: BM25 and ANN when both are on, then RRF, then an
+    /// Hybrid retrieval: BM25 and ANN when both are on, then fusion, then an
     /// optional reranker. Empty `collections` is every non-isolated,
     /// non-encrypted collection that has at least one Index leg. Naming an
     /// isolated collection is an ordinary query. A collection with only one
@@ -376,11 +376,22 @@ impl Vault {
     /// the legs that ran. Naming an encrypted collection or one with both
     /// `exclude_lexical_index` and `exclude_vector_index` is `unsupported`.
     ///
+    /// `lexical_weight` / `vector_weight` unset → 1; **zero turns that leg
+    /// off**. Without a reranker the weights also scale Reciprocal Rank
+    /// Fusion, which both orders the page and truncates it to the pool.
+    /// With a reranker the fused order is discarded, so membership is
+    /// filled by alternating vector and lexical ranks (vector rank 1,
+    /// lexical rank 1, vector rank 2, …), skipping a document already
+    /// taken, until the pool is full or both legs are exhausted. A short
+    /// leg does not leave the pool short while the other still has hits.
+    /// Non-zero weights then no longer decide who enters the pool; they
+    /// still appear in the reported `rrf_score`.
+    ///
     /// `SearchQuery.rerank_limit` bounds how many fused hits the reranker
     /// scores. Unset scores every fused hit; the fusion pool stays
     /// `max(k, 50)`. Set to N, both Index legs retrieve `max(k, 50, N)` so a
-    /// candidate at fused rank N can actually be scored; the library then
-    /// keeps the top N of the fused list by RRF, reads and scores only those,
+    /// candidate in the fused prefix of length N can actually be scored; the
+    /// library then keeps that prefix, reads and scores only those,
     /// and drops the rest. N larger than the corpus scores every hit that
     /// exists. A large N is more BM25 and ANN retrieval and more Record
     /// reads before the model runs. Zero is `invalid`. N below the effective
@@ -1839,17 +1850,21 @@ impl Collection {
     }
 
     /// Hybrid retrieval on this collection: BM25 and ANN when both are on,
-    /// then RRF, then an optional reranker.
+    /// then fusion, then an optional reranker.
     ///
     /// Isolated collections are in the Vault Index. A collection with only
     /// one Index leg runs that leg; hits set `lexical_score` and/or
     /// `vector_score` for the legs that ran. An encrypted collection or one
     /// with both legs excluded is `unsupported`.
     ///
-    /// `SearchQuery.rerank_limit` is the same as on [`Vault::search`]: unset
-    /// scores every fused hit at pool `max(k, 50)`; set to N deepens both
-    /// legs to `max(k, 50, N)` and scores the top N by RRF; zero and a value
-    /// below `k` are `invalid`. Ignored when no reranker is passed.
+    /// Weights, pool membership, and `SearchQuery.rerank_limit` are the same
+    /// as on [`Vault::search`]: without a reranker, weighted Reciprocal Rank
+    /// Fusion orders and truncates the page; with a reranker, each leg's
+    /// ranks fill the pool by alternation and non-zero weights no longer
+    /// decide membership. Unset `rerank_limit` scores every fused hit at
+    /// pool `max(k, 50)`; set to N deepens both legs to `max(k, 50, N)` and
+    /// scores the fused prefix of length N; zero and a value below `k` are
+    /// `invalid`. Ignored when no reranker is passed.
     #[cfg(feature = "search")]
     pub fn search(
         &self,

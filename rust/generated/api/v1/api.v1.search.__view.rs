@@ -12,6 +12,9 @@ pub struct SearchQueryView<'a> {
     /// Field 3: `filter`
     pub filter: ::buffa::MessageFieldView<super::super::__buffa::view::FilterView<'a>>,
     /// Unset → 1. Zero turns that leg off. When set: finite and \>= 0.
+    /// Without a reranker the weights also scale Reciprocal Rank Fusion
+    /// (order and truncation). With a reranker they no longer decide pool
+    /// membership: each running leg's ranks fill the pool by alternation.
     ///
     /// Field 4: `lexical_weight`
     pub lexical_weight: ::core::option::Option<f64>,
@@ -22,10 +25,10 @@ pub struct SearchQueryView<'a> {
     /// Field 6: `include_raw`
     pub include_raw: ::core::option::Option<bool>,
     /// When set with a reranker, both Index legs retrieve max(k, 50, N) and
-    /// the reranker scores the top N fused hits (RRF order). Unset → pool
-    /// stays max(k, 50) and every fused hit is scored. Ignored when no
-    /// reranker is passed. Zero is invalid. N larger than the corpus is not
-    /// an error.
+    /// the reranker scores the first N fused candidates (alternating legs
+    /// when both ran). Unset → pool stays max(k, 50) and every fused hit is
+    /// scored. Ignored when no reranker is passed. Zero is invalid. N larger
+    /// than the corpus is not an error.
     ///
     /// Field 7: `rerank_limit`
     pub rerank_limit: ::core::option::Option<u32>,
@@ -402,6 +405,9 @@ impl SearchQueryOwnedView {
         &self.0.reborrow().filter
     }
     /// Unset → 1. Zero turns that leg off. When set: finite and \>= 0.
+    /// Without a reranker the weights also scale Reciprocal Rank Fusion
+    /// (order and truncation). With a reranker they no longer decide pool
+    /// membership: each running leg's ranks fill the pool by alternation.
     ///
     /// Field 4: `lexical_weight`
     #[must_use]
@@ -421,10 +427,10 @@ impl SearchQueryOwnedView {
         self.0.reborrow().include_raw
     }
     /// When set with a reranker, both Index legs retrieve max(k, 50, N) and
-    /// the reranker scores the top N fused hits (RRF order). Unset → pool
-    /// stays max(k, 50) and every fused hit is scored. Ignored when no
-    /// reranker is passed. Zero is invalid. N larger than the corpus is not
-    /// an error.
+    /// the reranker scores the first N fused candidates (alternating legs
+    /// when both ran). Unset → pool stays max(k, 50) and every fused hit is
+    /// scored. Ignored when no reranker is passed. Zero is invalid. N larger
+    /// than the corpus is not an error.
     ///
     /// Field 7: `rerank_limit`
     #[must_use]

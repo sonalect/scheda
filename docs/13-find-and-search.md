@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.26, 6 September 2026.
+Document 13 of the Scheda package. Version 0.27, 6 September 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -15,7 +15,7 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 | Call | Vault `find(collections, query, offset, count)`. Collection `find(query, offset, count)` calls that with its name. | Vault `search(collections, query, reranker?)`. Collection `search(query, reranker?)` calls that with its name. |
 | In | `api.v1.FindQuery` (`Filter` required; `include_raw` default false) plus a set of collection names (empty = this Vault, non-isolated) | `api.v1.SearchQuery` (`text` required; `include_raw` default false) plus the same name set |
 | Out | `api.v1.FindResult` (`records` plus `total`; `Record.collection` on each hit; `Record.raw` only if `include_raw`) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker; `raw` only if `include_raw`) |
-| Engine | Tantivy Query only | BM25 (Tantivy) **and** ANN (USearch), RRF, then optional rerank |
+| Engine | Tantivy Query only | BM25 (Tantivy) **and** ANN (USearch), fuse, then optional rerank |
 | Vectors | no | yes, if an embedder is set |
 
 Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → an ordinary query. Encrypted name → `unsupported`. Empty set stays non-isolated.
@@ -104,14 +104,16 @@ Catch-up of writes that finished while `reindex/active` exists copies that Recor
 
 `SearchQuery.text` is the query. Not a vector **instead of** text. The library embeds that text when the vector leg is on.
 
-`k` unset or `0` → 10. `lexical_weight` / `vector_weight` unset → 1; **0 turns that leg off**.
+`k` unset or `0` → 10. `lexical_weight` / `vector_weight` unset → 1; **0 turns that leg off**. Without a reranker those weights also scale Reciprocal Rank Fusion (order and truncation). With a reranker they no longer decide pool membership: each running leg's ranks fill the pool by alternation.
 
 Steps:
 
 1. Resolve `collections` as in `find`. If `filter` is set: Tantivy runs `Filter` → allow-set of `(collection, id)`s. Both legs search **only** that set. Unset `filter` → the selected collections, not other collections in the same Index.
 2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on `text` (`Must(filter)` if filtered). Top pool by score.
 3. Vector (weight > 0 and embedder set): `embed(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). The HNSW walk width is a binding floor (search expansion), not the caller's `k`; the engine retrieves at least that many slots, then truncates to the fusion pool, so asking for a deeper page does not reshuffle the head of a shallower one (IDX-7). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
-4. Fuse ranks with RRF. Candidate pool is **larger than `k`**: at least `max(k, 50)` from the fused list (or all fused hits if fewer). When a reranker is passed and `rerank_limit` is set above that floor, the pool is `max(k, 50, rerank_limit)` and both Index legs retrieve to that depth, so a candidate at fused rank N can actually be scored.
+4. Fuse. Candidate pool is **larger than `k`**: at least `max(k, 50)` (or all fused hits if fewer). When a reranker is passed and `rerank_limit` is set above that floor, the pool is `max(k, 50, rerank_limit)` and both Index legs retrieve to that depth. Reciprocal Rank Fusion scores are always computed and reported on each hit.
+   - **No reranker:** weighted RRF both orders the fused list and truncates it to the pool (ties: collection, then id). That order is the page.
+   - **Reranker present:** RRF does not decide membership. Fill the pool by alternating legs — vector rank 1, lexical rank 1, vector rank 2, lexical rank 2, and so on — skipping a document already taken, until the pool is full or both legs are exhausted. A short leg does not leave the pool short while the other still has hits. When both weights are non-zero the interleave is one-for-one; the weights no longer choose who enters the pool.
 5. If a **reranker** is passed to `search`: cut the fused list to `rerank_limit` when it is set, then `get` each remaining Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`); `rerank_limit` does not change the pool.
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
 
@@ -129,7 +131,7 @@ many_limit → non-zero size
 
 `None` → order is RRF. Network inside that function is the program’s problem. The library does not load a ranking model (QRY-5).
 
-**How many candidates it sees is the caller’s choice.** Fusion depth and rerank depth answer two different questions: fusing is cheap and wants to be wide, while a cross-encoder costs tens of milliseconds per pair on a CPU and wants to be as narrow as the caller can accept. Unset `SearchQuery.rerank_limit` keeps the pool at `max(k, 50)` and scores every fused hit. Set to N, both legs retrieve `max(k, 50, N)` and the reranker scores the top N of that fused list (or every hit that exists if the corpus is smaller), before the library opens those Records. A large N is more BM25 and ANN retrieval and more Record reads, not only more model calls. `0` is `invalid`, because scoring nothing is what passing no reranker already means. A value below `k` is `invalid`, because a page where some hits carry `rerank_score` and some do not cannot be told from a truncated one. Without a reranker the field is ignored and the pool stays `max(k, 50)`.
+**How many candidates it sees is the caller’s choice.** Fusion depth and rerank depth answer two different questions: fusing is cheap and wants to be wide, while a cross-encoder costs tens of milliseconds per pair on a CPU and wants to be as narrow as the caller can accept. Unset `SearchQuery.rerank_limit` keeps the pool at `max(k, 50)` and scores every fused hit. Set to N, both legs retrieve `max(k, 50, N)` and the reranker scores the first N of that fused list (or every hit that exists if the corpus is smaller), before the library opens those Records. With a reranker that fused list is the alternating-leg pool, not the RRF ranking: RRF rewards agreement between legs, which can bury a document only one leg ranked first, and the reranker never sees a document that missed the pool. A large N is more BM25 and ANN retrieval and more Record reads, not only more model calls. `0` is `invalid`, because scoring nothing is what passing no reranker already means. A value below `k` is `invalid`, because a page where some hits carry `rerank_score` and some do not cannot be told from a truncated one. Without a reranker the field is ignored and the pool stays `max(k, 50)`.
 
 CLI hook on `search` (`14`): `--reranker-cohere-url` plus
 `--reranker-model` (Cohere/Jina `POST` `{URL}rerank`). Both HTTP flags

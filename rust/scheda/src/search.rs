@@ -956,6 +956,7 @@ impl SearchEngine {
                 lexical_weight,
                 vector_weight,
                 pool,
+                has_reranker,
             ))
         })
     }
@@ -1787,6 +1788,10 @@ fn collect_vector_slots(fields: &[FieldDecl], slots: &mut BTreeSet<String>) {
 /// Depth each Index leg retrieves, and the fused list length, before any
 /// rerank truncation. Unset `rerank_limit` (or no reranker) keeps the
 /// floor. A limit above the floor is the caller's requested depth.
+///
+/// With a reranker the fused list is filled from each leg's ranks in
+/// alternation, not by Reciprocal Rank Fusion order. The depth is still
+/// this pool: it is how many candidates the reranker may see.
 #[cfg(feature = "search")]
 fn fusion_pool(k: usize, rerank_limit: Option<u32>) -> usize {
     let floor = k.max(FUSION_POOL_FLOOR);
@@ -1940,6 +1945,21 @@ struct FusedScores {
     path: String,
 }
 
+/// Fuse the two Index legs.
+///
+/// Reciprocal Rank Fusion scores are always computed (and reported). Without
+/// a reranker those scores also decide membership and order: the fused list
+/// is sorted by RRF, ties broken by `(collection, id)`, then truncated to
+/// `k`. That is the page the caller receives.
+///
+/// With a reranker the fused order is discarded, so RRF must not decide
+/// who enters the pool. Membership is filled by alternating the vector
+/// leg's ranks with the lexical leg's ranks (vector rank 1, lexical rank 1,
+/// vector rank 2, …), skipping a document already taken, until `k` is
+/// filled or both legs are exhausted. A shorter leg does not leave the
+/// pool short while the other still has hits. Zero weight still means that
+/// leg did not run; when both weights are non-zero the interleave is
+/// one-for-one and the weights no longer govern membership.
 #[cfg(feature = "search")]
 fn fuse(
     lexical: &[LegHit],
@@ -1947,6 +1967,7 @@ fn fuse(
     lexical_weight: f64,
     vector_weight: f64,
     k: usize,
+    has_reranker: bool,
 ) -> SearchHits {
     let mut scores: BTreeMap<(String, String), FusedScores> = BTreeMap::new();
     if lexical_weight > 0.0 {
@@ -1985,6 +2006,9 @@ fn fuse(
             }
         }
     }
+    if has_reranker {
+        return fuse_by_leg_rank(lexical, vector, scores, k);
+    }
     let mut ranked: Vec<_> = scores.into_iter().collect();
     ranked.sort_by(|a, b| {
         b.1.rrf
@@ -1994,20 +2018,65 @@ fn fuse(
     });
     let mut hits = SearchHits::default();
     for ((collection, id), fused) in ranked.into_iter().take(k) {
-        let mut hit = search_hits::Hit::default()
-            .with_id(id)
-            .with_collection(collection)
-            .with_path(fused.path)
-            .with_rrf_score(fused.rrf);
-        if let Some(score) = fused.lexical {
-            hit = hit.with_lexical_score(score);
-        }
-        if let Some(score) = fused.vector {
-            hit = hit.with_vector_score(score);
-        }
-        hits.hits.push(hit);
+        hits.hits.push(hit_from_fused(collection, id, fused));
     }
     hits
+}
+
+#[cfg(feature = "search")]
+fn fuse_by_leg_rank(
+    lexical: &[LegHit],
+    vector: &[LegHit],
+    mut scores: BTreeMap<(String, String), FusedScores>,
+    k: usize,
+) -> SearchHits {
+    let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
+    let mut chosen: Vec<&LegHit> = Vec::new();
+    let mut rank = 0;
+    while chosen.len() < k {
+        let mut progressed = false;
+        if let Some(hit) = vector.get(rank) {
+            progressed = true;
+            if chosen.len() < k && seen.insert((hit.collection.as_str(), hit.id.as_str())) {
+                chosen.push(hit);
+            }
+        }
+        if let Some(hit) = lexical.get(rank) {
+            progressed = true;
+            if chosen.len() < k && seen.insert((hit.collection.as_str(), hit.id.as_str())) {
+                chosen.push(hit);
+            }
+        }
+        if !progressed {
+            break;
+        }
+        rank += 1;
+    }
+    let mut hits = SearchHits::default();
+    for hit in chosen {
+        let key = (hit.collection.clone(), hit.id.clone());
+        let Some(fused) = scores.remove(&key) else {
+            continue;
+        };
+        hits.hits.push(hit_from_fused(key.0, key.1, fused));
+    }
+    hits
+}
+
+#[cfg(feature = "search")]
+fn hit_from_fused(collection: String, id: String, fused: FusedScores) -> search_hits::Hit {
+    let mut hit = search_hits::Hit::default()
+        .with_id(id)
+        .with_collection(collection)
+        .with_path(fused.path)
+        .with_rrf_score(fused.rrf);
+    if let Some(score) = fused.lexical {
+        hit = hit.with_lexical_score(score);
+    }
+    if let Some(score) = fused.vector {
+        hit = hit.with_vector_score(score);
+    }
+    hit
 }
 
 #[cfg(feature = "search")]
