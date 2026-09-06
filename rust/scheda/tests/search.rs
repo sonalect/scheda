@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
 use scheda::{
     Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, RecordReplace, Reranker,
@@ -163,6 +164,43 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
     );
     assert!(hits.hits[0].lexical_score.is_some());
     assert!(hits.hits[0].vector_score.is_none());
+}
+
+#[test]
+fn concurrent_search_on_one_handle() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "hit",
+            rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add(
+            "miss",
+            rec(json!({"title": "ordinary rock", "tag": "blue"})),
+            None,
+        )
+        .unwrap();
+    let vault = Arc::new(vault);
+    thread::scope(|scope| {
+        for _ in 0..8 {
+            let vault = Arc::clone(&vault);
+            scope.spawn(move || {
+                let collection = vault.collection("token_notes").unwrap();
+                let hits = collection.search(&q("kryptonite", 5), None).unwrap();
+                let ids = hit_ids(&hits);
+                assert!(ids.contains(&"hit"), "marked field must rank: {ids:?}");
+                assert!(
+                    !ids.contains(&"miss"),
+                    "unrelated title must not hit: {ids:?}"
+                );
+            });
+        }
+    });
 }
 
 #[test]

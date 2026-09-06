@@ -5,7 +5,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
 use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, Vault};
 use serde_json::{Value, json};
@@ -149,6 +151,36 @@ fn find_omits_raw_unless_include_raw() {
             .as_ref()
             .is_some_and(|raw| !raw.is_empty())
     );
+}
+
+#[test]
+fn concurrent_find_on_one_handle() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "A", "tag": "red"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"title": "B", "tag": "blue"})), None)
+        .unwrap();
+    collection
+        .add("c", rec(json!({"title": "C"})), None)
+        .unwrap();
+    let vault = Arc::new(vault);
+    let query = Filter::all().into();
+    thread::scope(|scope| {
+        for _ in 0..8 {
+            let vault = Arc::clone(&vault);
+            let query = &query;
+            scope.spawn(move || {
+                let collection = vault.collection("query_notes").unwrap();
+                let found = collection.find(query, 0, 100).unwrap();
+                assert_eq!(found.total, Some(3));
+                assert_eq!(found.records.len(), 3);
+            });
+        }
+    });
 }
 
 #[test]

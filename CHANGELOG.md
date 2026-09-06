@@ -10,6 +10,10 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- **Concurrent `find` / `search` on one Vault.** Index queries on one
+  handle no longer wait for each other. Writes still take an exclusive
+  Index lock; the Vault write lock is unchanged (one writer, `locked` if
+  a second writer races it). `get` was already concurrent.
 - GitHub Actions CI and Docs workflows no longer run on push or pull
   request. They stay in the tree and can be started by hand
   (`workflow_dispatch`) or re-enabled by restoring those triggers.

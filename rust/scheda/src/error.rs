@@ -6,6 +6,8 @@
 
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
+#[cfg(feature = "find")]
+use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 pub use scheda_generated::api::v1::error::{Code, Repeat};
 
@@ -17,6 +19,30 @@ pub(crate) fn mutex<'a, T>(
     mutex.lock().map_err(|_: PoisonError<MutexGuard<'a, T>>| {
         crate::Error::io_other("mutex poisoned").context(frame)
     })
+}
+
+/// Fail closed if a previous holder paniced with this `RwLock`.
+#[cfg(feature = "find")]
+pub(crate) fn rw_read<'a, T>(
+    lock: &'a RwLock<T>,
+    frame: &'static str,
+) -> Result<RwLockReadGuard<'a, T>, crate::Error> {
+    lock.read()
+        .map_err(|_: PoisonError<RwLockReadGuard<'a, T>>| {
+            crate::Error::io_other("rwlock poisoned").context(frame)
+        })
+}
+
+/// Fail closed if a previous holder paniced with this `RwLock`.
+#[cfg(feature = "find")]
+pub(crate) fn rw_write<'a, T>(
+    lock: &'a RwLock<T>,
+    frame: &'static str,
+) -> Result<RwLockWriteGuard<'a, T>, crate::Error> {
+    lock.write()
+        .map_err(|_: PoisonError<RwLockWriteGuard<'a, T>>| {
+            crate::Error::io_other("rwlock poisoned").context(frame)
+        })
 }
 
 #[must_use]

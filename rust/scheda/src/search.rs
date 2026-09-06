@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -67,8 +67,8 @@ const DEFAULT_K: usize = 10;
 const FUSION_POOL_FLOOR: usize = 50;
 
 pub(crate) struct SearchEngine {
-    index_dir: Mutex<PathBuf>,
-    inner: Mutex<Inner>,
+    index_dir: RwLock<PathBuf>,
+    inner: RwLock<Inner>,
 }
 
 struct Inner {
@@ -85,7 +85,10 @@ struct Inner {
 
 struct Lexical {
     index: Index,
-    writer: Option<IndexWriter>,
+    /// Tantivy `IndexWriter` is `Send` and not `Sync` (`JoinHandle`). It
+    /// sits behind a `Mutex` so `Inner` can live in an `RwLock` and
+    /// concurrent `find` / `search` can share the reader.
+    writer: Mutex<Option<IndexWriter>>,
     reader: IndexReader,
     f_key: Field,
     f_collection: Field,
@@ -205,18 +208,18 @@ impl SearchEngine {
             writer_opens: 0,
         };
         Ok(Self {
-            index_dir: Mutex::new(index_dir.to_path_buf()),
-            inner: Mutex::new(inner),
+            index_dir: RwLock::new(index_dir.to_path_buf()),
+            inner: RwLock::new(inner),
         })
     }
 
     fn dir(&self) -> Result<PathBuf, Error> {
-        Ok(crate::error::mutex(&self.index_dir, "[SearchEngine] lock index dir")?.clone())
+        Ok(crate::error::rw_read(&self.index_dir, "[SearchEngine] lock index dir")?.clone())
     }
 
     /// Point this engine at a different generation directory.
     pub(crate) fn set_index_dir(&self, index_dir: &Path) -> Result<(), Error> {
-        *crate::error::mutex(&self.index_dir, "[SearchEngine] lock index dir")? =
+        *crate::error::rw_write(&self.index_dir, "[SearchEngine] lock index dir")? =
             index_dir.to_path_buf();
         Ok(())
     }
@@ -224,8 +227,8 @@ impl SearchEngine {
     #[cfg(test)]
     pub(crate) fn empty() -> Self {
         Self {
-            index_dir: Mutex::new(PathBuf::new()),
-            inner: Mutex::new(Inner {
+            index_dir: RwLock::new(PathBuf::new()),
+            inner: RwLock::new(Inner {
                 lexical: None,
                 #[cfg(feature = "search")]
                 vector: None,
@@ -241,7 +244,7 @@ impl SearchEngine {
 
     pub(crate) fn close_for_rebuild(&self) {
         let Ok(mut inner) =
-            crate::error::mutex(&self.inner, "[SearchEngine::close_for_rebuild] lock")
+            crate::error::rw_write(&self.inner, "[SearchEngine::close_for_rebuild] lock")
         else {
             return;
         };
@@ -295,7 +298,7 @@ impl SearchEngine {
         #[cfg(not(feature = "search"))]
         let _ = (embedder, previous);
         let can_write = {
-            let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
+            let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] lock")?;
             let lexical = inner.lexical.take();
             #[cfg(feature = "search")]
             {
@@ -317,7 +320,7 @@ impl SearchEngine {
         {
             let source = previous.unwrap_or(index_dir.as_path());
             let inherited = inherit_vector(source, &index_dir, embedder)?;
-            let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] inherit")?;
+            let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] inherit")?;
             inner.vector = inherited;
         }
         #[cfg(feature = "search")]
@@ -337,7 +340,8 @@ impl SearchEngine {
                 let batch = embed_changed_slots(self, decl, &record, embedder)?;
                 #[cfg(not(feature = "search"))]
                 let batch = VectorBatch::empty();
-                let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] lock")?;
+                let mut inner =
+                    crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] lock")?;
                 upsert_record(
                     &mut inner, &index_dir, can_write, decl, &record, embedder, &batch,
                 )?;
@@ -351,7 +355,7 @@ impl SearchEngine {
                 }
             }
         }
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::rebuild] commit")?;
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] commit")?;
         #[cfg(feature = "search")]
         drop_unseen_vectors(&mut inner, &seen)?;
         inner.commit(&index_dir, can_write)
@@ -373,7 +377,7 @@ impl SearchEngine {
         #[cfg(not(feature = "search"))]
         let batch = VectorBatch::empty();
         let index_dir = self.dir()?;
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::upsert] lock")?;
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::upsert] lock")?;
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
@@ -396,7 +400,7 @@ impl SearchEngine {
             return Ok(());
         }
         let index_dir = self.dir()?;
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::forget] lock")?;
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::forget] lock")?;
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
@@ -418,7 +422,7 @@ impl SearchEngine {
     /// here: the first indexed write opens it, and [`release_writer`]
     /// drops it when the Vault write lock is released.
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::enable_write] lock")?;
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::enable_write] lock")?;
         inner.can_write = true;
         drop(inner);
         let index_dir = self.dir()?;
@@ -429,7 +433,7 @@ impl SearchEngine {
     /// modes under `{vault}/.scheda/` (Tantivy creates files this crate did
     /// not open). A handle that is not open for write is a no-op.
     pub(crate) fn flush(&self) -> Result<(), Error> {
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::flush] lock")?;
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::flush] lock")?;
         let can_write = inner.can_write;
         let index_dir = self.dir()?;
         inner.commit(&index_dir, can_write)
@@ -450,14 +454,11 @@ impl SearchEngine {
     /// writer for the handle lifetime was cheaper per write and left a
     /// consumer no way to free the lock without dropping the handle.
     pub(crate) fn release_writer(&self) -> Result<(), Error> {
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::release_writer] lock")?;
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::release_writer] lock")?;
         let can_write = inner.can_write;
         let index_dir = self.dir()?;
         inner.commit(&index_dir, can_write)?;
-        let writer = inner
-            .lexical
-            .as_mut()
-            .and_then(|lexical| lexical.writer.take());
+        let writer = take_lexical_writer(inner.lexical.as_ref())?;
         drop(inner);
         if let Some(writer) = writer {
             writer.wait_merging_threads().context(
@@ -470,9 +471,31 @@ impl SearchEngine {
 
     #[cfg(test)]
     pub(crate) fn lexical_writer_opens(&self) -> u64 {
-        crate::error::mutex(&self.inner, "[SearchEngine::lexical_writer_opens] lock")
+        crate::error::rw_read(&self.inner, "[SearchEngine::lexical_writer_opens] lock")
             .map(|inner| inner.writer_opens)
             .unwrap_or(0)
+    }
+
+    /// Run `f` on a consistent Index snapshot.
+    ///
+    /// Concurrent readers share the lock. A handle with buffered writes
+    /// (`can_write` and `dirty`) takes the exclusive side first so `find`
+    /// on that writer sees the Records it just added.
+    fn with_query<T>(
+        &self,
+        index_dir: &Path,
+        frame: &'static str,
+        f: impl FnOnce(&Inner) -> Result<T, Error>,
+    ) -> Result<T, Error> {
+        {
+            let inner = crate::error::rw_read(&self.inner, frame)?;
+            if inner.query_ready() {
+                return f(&inner);
+            }
+        }
+        let mut inner = crate::error::rw_write(&self.inner, frame)?;
+        inner.prepare_query(index_dir)?;
+        f(&inner)
     }
 
     pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
@@ -489,40 +512,36 @@ impl SearchEngine {
             None => return Ok(false),
             _ => {}
         }
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::has_id] lock")?;
-        let can_write = inner.can_write;
-        inner.commit(&index_dir, can_write)?;
-        if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&index_dir)?;
-        }
-        let Some(lexical) = inner.lexical.as_mut() else {
-            return Ok(false);
-        };
-        lexical
-            .reader
-            .reload()
-            .context(Code::IndexLexical, "[SearchEngine::has_id] reload reader")?;
-        let searcher = lexical.reader.searcher();
-        let query = BooleanQuery::new(vec![
-            (
-                Occur::Must,
-                Box::new(TermQuery::new(
-                    Term::from_field_text(lexical.f_collection, collection),
-                    IndexRecordOption::Basic,
-                )),
-            ),
-            (
-                Occur::Must,
-                Box::new(TermQuery::new(
-                    Term::from_field_text(lexical.f_id, id),
-                    IndexRecordOption::Basic,
-                )),
-            ),
-        ]);
-        let top = searcher
-            .search(&query, &TopDocs::with_limit(1).order_by_score())
-            .context(Code::IndexLexical, "[SearchEngine::has_id] search")?;
-        Ok(!top.is_empty())
+        self.with_query(&index_dir, "[SearchEngine::has_id] lock", |inner| {
+            let Some(lexical) = inner.lexical.as_ref() else {
+                return Ok(false);
+            };
+            lexical
+                .reader
+                .reload()
+                .context(Code::IndexLexical, "[SearchEngine::has_id] reload reader")?;
+            let searcher = lexical.reader.searcher();
+            let query = BooleanQuery::new(vec![
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(lexical.f_collection, collection),
+                        IndexRecordOption::Basic,
+                    )),
+                ),
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(lexical.f_id, id),
+                        IndexRecordOption::Basic,
+                    )),
+                ),
+            ]);
+            let top = searcher
+                .search(&query, &TopDocs::with_limit(1).order_by_score())
+                .context(Code::IndexLexical, "[SearchEngine::has_id] search")?;
+            Ok(!top.is_empty())
+        })
     }
 
     #[cfg(feature = "search")]
@@ -630,62 +649,58 @@ impl SearchEngine {
         let index_dir = self.dir()?;
         index::require_fresh(&index_dir)?;
         index::require_current_format(&index_dir)?;
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::with_find] lock")?;
-        let can_write = inner.can_write;
-        inner.commit(&index_dir, can_write)?;
-        if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&index_dir)?;
-        }
-        let Some(lexical) = inner.lexical.as_mut() else {
-            return Ok(None);
-        };
-        lexical
-            .reader
-            .reload()
-            .context(Code::IndexLexical, reload_frame)?;
-        let fields = FindFields {
-            id: lexical.f_id,
-            eq: lexical.f_eq,
-            exists: lexical.f_exists,
-            null: lexical.f_null,
-            tok: lexical.f_tok,
-            text: lexical.f_text,
-        };
-        let query = if decls.len() == 1 {
-            let compiled = query::compile(&decls[0], &fields, &lexical.index, filter, &|id| {
-                mlt_fts(&decls[0], id)
-            })?;
-            BooleanQuery::new(vec![
-                (
-                    Occur::Must,
-                    collection_query(lexical.f_collection, collections),
-                ),
-                (Occur::Must, compiled),
-            ])
-        } else {
-            let mut clauses = Vec::with_capacity(decls.len());
-            for decl in decls {
-                let compiled = query::compile(decl, &fields, &lexical.index, filter, &|id| {
-                    mlt_fts(decl, id)
+        self.with_query(&index_dir, "[SearchEngine::with_find] lock", |inner| {
+            let Some(lexical) = inner.lexical.as_ref() else {
+                return Ok(None);
+            };
+            lexical
+                .reader
+                .reload()
+                .context(Code::IndexLexical, reload_frame)?;
+            let fields = FindFields {
+                id: lexical.f_id,
+                eq: lexical.f_eq,
+                exists: lexical.f_exists,
+                null: lexical.f_null,
+                tok: lexical.f_tok,
+                text: lexical.f_text,
+            };
+            let query = if decls.len() == 1 {
+                let compiled = query::compile(&decls[0], &fields, &lexical.index, filter, &|id| {
+                    mlt_fts(&decls[0], id)
                 })?;
-                clauses.push((
-                    Occur::Should,
-                    Box::new(BooleanQuery::new(vec![
-                        (
-                            Occur::Must,
-                            Box::new(TermQuery::new(
-                                Term::from_field_text(lexical.f_collection, &decl.name),
-                                IndexRecordOption::Basic,
-                            )),
-                        ),
-                        (Occur::Must, compiled),
-                    ])) as Box<dyn Query>,
-                ));
-            }
-            BooleanQuery::new(clauses)
-        };
-        let searcher = lexical.reader.searcher();
-        Ok(Some(f(&searcher, &query, lexical)?))
+                BooleanQuery::new(vec![
+                    (
+                        Occur::Must,
+                        collection_query(lexical.f_collection, collections),
+                    ),
+                    (Occur::Must, compiled),
+                ])
+            } else {
+                let mut clauses = Vec::with_capacity(decls.len());
+                for decl in decls {
+                    let compiled = query::compile(decl, &fields, &lexical.index, filter, &|id| {
+                        mlt_fts(decl, id)
+                    })?;
+                    clauses.push((
+                        Occur::Should,
+                        Box::new(BooleanQuery::new(vec![
+                            (
+                                Occur::Must,
+                                Box::new(TermQuery::new(
+                                    Term::from_field_text(lexical.f_collection, &decl.name),
+                                    IndexRecordOption::Basic,
+                                )),
+                            ),
+                            (Occur::Must, compiled),
+                        ])) as Box<dyn Query>,
+                    ));
+                }
+                BooleanQuery::new(clauses)
+            };
+            let searcher = lexical.reader.searcher();
+            Ok(Some(f(&searcher, &query, lexical)?))
+        })
     }
 
     #[cfg(feature = "search")]
@@ -731,44 +746,51 @@ impl SearchEngine {
         } else {
             None
         };
-        let mut inner = crate::error::mutex(&self.inner, "[SearchEngine::search] lock")?;
-        let can_write = inner.can_write;
-        inner.commit(&index_dir, can_write)?;
-        if inner.lexical.is_none() {
-            inner.lexical = open_lexical(&index_dir)?;
-        }
-        let lexical_hits = if lexical_weight > 0.0 && !lexical_names.is_empty() {
-            lexical_search(&mut inner, &lexical_names, text, pool, allowed)?
-        } else {
-            Vec::new()
-        };
-        let vector_hits = if vector_weight > 0.0 && !vector_names.is_empty() {
-            vector_search(
-                &inner,
-                &vector_names,
-                query_vec.as_deref(),
+        self.with_query(&index_dir, "[SearchEngine::search] lock", |inner| {
+            let lexical_hits = if lexical_weight > 0.0 && !lexical_names.is_empty() {
+                lexical_search(inner, &lexical_names, text, pool, allowed)?
+            } else {
+                Vec::new()
+            };
+            let vector_hits = if vector_weight > 0.0 && !vector_names.is_empty() {
+                vector_search(
+                    inner,
+                    &vector_names,
+                    query_vec.as_deref(),
+                    pool,
+                    embedder,
+                    allowed,
+                )?
+            } else {
+                Vec::new()
+            };
+            Ok(fuse(
+                &lexical_hits,
+                &vector_hits,
+                lexical_weight,
+                vector_weight,
                 pool,
-                embedder,
-                allowed,
-            )?
-        } else {
-            Vec::new()
-        };
-        Ok(fuse(
-            &lexical_hits,
-            &vector_hits,
-            lexical_weight,
-            vector_weight,
-            pool,
-        ))
+            ))
+        })
     }
 }
 
+fn take_lexical_writer(lexical: Option<&Lexical>) -> Result<Option<IndexWriter>, Error> {
+    let Some(lexical) = lexical else {
+        return Ok(None);
+    };
+    Ok(crate::error::mutex(&lexical.writer, "[SearchEngine] take writer")?.take())
+}
+
 fn shutdown_lexical(lexical: Option<Lexical>) {
-    let Some(mut lexical) = lexical else {
+    let Some(lexical) = lexical else {
         return;
     };
-    if let Some(writer) = lexical.writer.take() {
+    let writer = match lexical.writer.into_inner() {
+        Ok(writer) => writer,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(writer) = writer {
         let _ = writer.wait_merging_threads();
     }
 }
@@ -798,30 +820,43 @@ fn open_lexical_writer(index: &Index, frame: &'static str) -> Result<IndexWriter
 
 impl Drop for SearchEngine {
     fn drop(&mut self) {
-        let Ok(index_dir) = self.index_dir.lock() else {
+        let Ok(index_dir) = self.index_dir.get_mut() else {
             return;
         };
-        let Ok(mut inner) = self.inner.lock() else {
+        let index_dir = index_dir.clone();
+        let Ok(inner) = self.inner.get_mut() else {
             return;
         };
         let can_write = inner.can_write;
         let _ = inner.commit(&index_dir, can_write);
         let lexical = inner.lexical.take();
-        drop(inner);
-        drop(index_dir);
         shutdown_lexical(lexical);
     }
 }
 
 impl Inner {
+    fn query_ready(&self) -> bool {
+        self.lexical.is_some() && !(self.can_write && self.dirty)
+    }
+
+    fn prepare_query(&mut self, index_dir: &Path) -> Result<(), Error> {
+        let can_write = self.can_write;
+        self.commit(index_dir, can_write)?;
+        if self.lexical.is_none() {
+            self.lexical = open_lexical(index_dir)?;
+        }
+        Ok(())
+    }
+
     fn ensure_writer(&mut self) -> Result<(), Error> {
-        let Some(lexical) = self.lexical.as_mut() else {
+        let Some(lexical) = self.lexical.as_ref() else {
             return Ok(());
         };
-        if lexical.writer.is_some() {
+        let mut slot = crate::error::mutex(&lexical.writer, "[SearchEngine] open writer")?;
+        if slot.is_some() {
             return Ok(());
         }
-        lexical.writer = Some(open_lexical_writer(
+        *slot = Some(open_lexical_writer(
             &lexical.index,
             "[SearchEngine] open writer",
         )?);
@@ -836,12 +871,16 @@ impl Inner {
         if !self.dirty || !can_write {
             return Ok(());
         }
-        if let Some(lexical) = &mut self.lexical
-            && let Some(writer) = &mut lexical.writer
-        {
-            writer
-                .commit()
-                .context(Code::IndexLexical, "[SearchEngine::commit] lexical commit")?;
+        if let Some(lexical) = &self.lexical {
+            {
+                let mut slot =
+                    crate::error::mutex(&lexical.writer, "[SearchEngine::commit] writer")?;
+                if let Some(writer) = slot.as_mut() {
+                    writer
+                        .commit()
+                        .context(Code::IndexLexical, "[SearchEngine::commit] lexical commit")?;
+                }
+            }
             lexical
                 .reader
                 .reload()
@@ -871,7 +910,7 @@ fn embed_changed_slots(
     }
     let pieces = field_vector_texts(decl, record)?;
     let to_embed = {
-        let inner = crate::error::mutex(&engine.inner, "[SearchEngine] lock vector store")?;
+        let inner = crate::error::rw_read(&engine.inner, "[SearchEngine] lock vector store")?;
         slots_needing_embed(
             inner.vector.as_ref(),
             embedder,
@@ -933,11 +972,12 @@ fn forget_record(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Er
     forget_source(&mut inner.edges, collection, id);
     inner.dirty = true;
     inner.ensure_writer()?;
-    if let Some(lexical) = inner.lexical.as_mut()
-        && let Some(writer) = &lexical.writer
-    {
-        let key = doc_key(collection, id);
-        writer.delete_term(Term::from_field_text(lexical.f_key, &key));
+    if let Some(lexical) = inner.lexical.as_ref() {
+        let slot = crate::error::mutex(&lexical.writer, "[SearchEngine::forget] writer")?;
+        if let Some(writer) = slot.as_ref() {
+            let key = doc_key(collection, id);
+            writer.delete_term(Term::from_field_text(lexical.f_key, &key));
+        }
     }
     #[cfg(feature = "search")]
     forget_vector(inner, collection, id)?;
@@ -972,7 +1012,8 @@ fn index_lexical(
     text: &str,
     ord: u64,
 ) -> Result<(), Error> {
-    let Some(writer) = &lexical.writer else {
+    let slot = crate::error::mutex(&lexical.writer, "[SearchEngine::index_lexical] writer")?;
+    let Some(writer) = slot.as_ref() else {
         return Ok(());
     };
     let Some(id) = record.id.as_deref() else {
@@ -1415,13 +1456,13 @@ fn fusion_pool(k: usize, rerank_limit: Option<u32>) -> usize {
 
 #[cfg(feature = "search")]
 fn lexical_search(
-    inner: &mut Inner,
+    inner: &Inner,
     collections: &[&str],
     text: &str,
     pool: usize,
     allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
 ) -> Result<Vec<LegHit>, Error> {
-    let Some(lexical) = inner.lexical.as_mut() else {
+    let Some(lexical) = inner.lexical.as_ref() else {
         return Ok(Vec::new());
     };
     lexical.reader.reload().context(
@@ -1799,7 +1840,7 @@ fn bind_lexical(index: Index) -> Result<Lexical, Error> {
         )?;
     Ok(Lexical {
         index,
-        writer: None,
+        writer: Mutex::new(None),
         reader,
         f_key,
         f_collection,
@@ -2062,5 +2103,14 @@ fn save_next_ord(index_dir: &Path, next_ord: &BTreeMap<String, u64>) -> Result<(
         let bytes = serde_json::to_vec(next_ord)
             .context(Code::Invalid, "[SearchEngine::save_next_ord] encode ord")?;
         store::atomic_write(&path, &bytes)
+    }
+}
+
+#[cfg(test)]
+mod engine_sync {
+    #[test]
+    fn search_engine_is_sync() {
+        fn assert_sync<T: Sync>() {}
+        assert_sync::<super::SearchEngine>();
     }
 }

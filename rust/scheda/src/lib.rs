@@ -43,13 +43,15 @@
 //! There is no `tokio` crate feature: disk I/O and libgit2 block the calling
 //! thread. From a Tokio task, run them on the blocking pool so worker threads
 //! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is
-//! `Send + Sync`. Remote git (`push` / `pull` / `sync`) and `reindex` /
+//! `Send + Sync`. Concurrent `find` / `search` on one handle share the
+//! Index (many readers). A write still takes the exclusive side of that
+//! lock, and the Vault write lock is one writer (`locked` if a second
+//! writer races it). Remote git (`push` / `pull` / `sync`) and `reindex` /
 //! `search` are the calls that must not sit on a worker thread. The Vault
 //! write lock is held for an open transaction and for one mutating call
-//! outside a transaction, then released: one writer, `locked` if a second
-//! writer races it. The lexical Index writer uses the same lifetime, so a
-//! second handle can write after `commit` without waiting on Tantivy's
-//! directory lock.
+//! outside a transaction, then released. The lexical Index writer uses
+//! the same lifetime, so a second handle can write after `commit` without
+//! waiting on Tantivy's directory lock.
 //!
 //! ```rust,ignore (tokio is not a crate dependency)
 //! use std::sync::Arc;
