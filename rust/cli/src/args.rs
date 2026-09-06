@@ -122,7 +122,8 @@ pub enum Command {
     Check,
     /// Rebuild the derived Index.
     Reindex,
-    /// Tantivy Query, then files. Unset `--collections` → every non-isolated collection.
+    /// Tantivy Query, then files. Unset `--collections` → every non-isolated,
+    /// non-encrypted collection that is in the lexical Index.
     Find {
         #[arg(long, value_delimiter = ',', value_name = "NAME")]
         collections: Vec<String>,
@@ -137,6 +138,8 @@ pub enum Command {
         include_raw: bool,
     },
     /// Hybrid search (BM25, ANN, RRF). `--query` is Protobuf JSON `SearchQuery`.
+    /// Unset `--collections` → every non-isolated, non-encrypted collection
+    /// that has at least one Index leg.
     Search {
         #[arg(long, value_delimiter = ',', value_name = "NAME")]
         collections: Vec<String>,

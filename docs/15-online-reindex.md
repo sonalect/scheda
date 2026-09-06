@@ -1,6 +1,6 @@
 # 15. Online reindex
 
-Document 15 of the Scheda package. Version 0.4, 6 September 2026.
+Document 15 of the Scheda package. Version 0.5, 6 September 2026.
 
 Work order so `reindex` no longer holds `{vault}/.scheda/write.lock` for
 the whole rebuild. The walk still fills every Index artifact of the new
@@ -12,10 +12,10 @@ mutating call. One `reindex` at a time. Catch-up of those writes is a
 folder of files, so a second process on the same working tree can
 enqueue without sharing the rebuilder's memory.
 
-This file records the design until R0 copies it into `04` / `06` / `07`
-/ `13`. After R0 those documents are normative; tick boxes here only when
-the cited *Check:* passes under `bazel test //...`. It does not reopen
-C0–C10 or A0–A7. P16 is unrelated.
+After R0, `04` / `06` / `07` / `13` are the normative protocol. This file
+is the work-order and checklist for that protocol; tick boxes here only
+when the cited *Check:* passes under `bazel test //...`. It does not
+reopen C0–C10 or A0–A7. P16 is unrelated.
 
 The first implementation is the crate `scheda`. There is no Index worker
 thread (LIB-6). Catch-up runs on the `reindex` call, on that thread.

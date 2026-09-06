@@ -464,6 +464,7 @@ fn id_from_listed_file(decl: &CollectionDecl, path: &Path) -> Result<String, Err
     }
 }
 
+#[cfg(not(feature = "find"))]
 pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64), Error> {
     if !decl.any_indexed() {
         return Ok((0, 0));

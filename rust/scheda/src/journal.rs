@@ -195,8 +195,8 @@ pub(crate) fn insert_journal(
     Ok((id, rel, JournalRollback { path, previous_len }))
 }
 
-/// Scan segment files for `id`. Catch-up uses this so a map that does not
-/// yet know the line still finds it on disk.
+/// Scan segment files for `id`. Catch-up uses this when the live map is
+/// missing, so a map that does not yet know the line still finds it on disk.
 pub(crate) fn find_journal_scan(
     vault: &Path,
     decl: &CollectionDecl,
@@ -233,7 +233,7 @@ pub(crate) fn find_journal(
     }
 }
 
-fn find_in_segment(
+pub(crate) fn find_in_segment(
     vault: &Path,
     decl: &CollectionDecl,
     rel: &str,
@@ -254,14 +254,23 @@ fn find_in_segment(
     )))
 }
 
+/// Number of segment files in Schema sequence. Missing directory → 0.
 #[cfg(feature = "find")]
-pub(crate) fn scan_journal(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Record>, Error> {
-    let mut out = Vec::new();
+pub(crate) fn segment_count(vault: &Path, decl: &CollectionDecl) -> Result<u64, Error> {
+    Ok(list_segments(&journal_dir(vault, decl)?)?.len() as u64)
+}
+
+/// Walk every parsed line as a Record, one at a time. `visit` returns
+/// `false` to stop. Does not collect the collection in memory.
+#[cfg(feature = "find")]
+pub(crate) fn for_each_record(
+    vault: &Path,
+    decl: &CollectionDecl,
+    mut visit: impl FnMut(Record) -> Result<bool, Error>,
+) -> Result<(), Error> {
     for_each_parsed(vault, decl, |path, parsed| {
-        out.push(record_from_parsed(vault, decl, path, parsed)?);
-        Ok(true)
-    })?;
-    Ok(out)
+        visit(record_from_parsed(vault, decl, path, parsed)?)
+    })
 }
 
 pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error> {

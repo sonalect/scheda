@@ -8,8 +8,30 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Dropping a `Vault` no longer releases `write.lock` while a
+  `Collection` still holds it.** Returning a collection from a function
+  that opened the Vault, or dropping the Vault after `begin`, used to
+  unlock the flock for a second process. The lock stays until the last
+  shared handle is gone.
+- **A failed catch-up enqueue no longer splits Index from files.** When
+  `replace` / `remove` wrote the Record (and updated live `N`) but could
+  not write the queue file during an online `reindex`, the Index forgot
+  the id while git restored the file — or the reverse. The mutating call
+  now restores the file from git and rebuilds that Index slot from disk,
+  so `get` / `find` agree with what is on disk.
+- **Journal catch-up no longer scans every segment for each queued id.**
+  Catch-up reads the live generation `ids` file. An id the walk already
+  mapped is not appended again.
+
 ### Changed
 
+- **`reindex` walks each indexed collection once and streams Records.**
+  The search-engine pass used to parse every file again after the stats /
+  journal-map walk and hold the collection in a `Vec`. Indexed journals
+  write their `id` map in that same pass. Builds without `find` still
+  walk once for stats and maps.
 - **Vector search depth no longer reshuffles the head of the ranking.**
   HNSW connectivity and insert / search expansion are set by Scheda
   (`M` 16, `ef` construction 128, `ef` search 512), not USearch

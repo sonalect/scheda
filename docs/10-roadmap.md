@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.48, 6 September 2026.
+Document 10 of the Scheda package. Version 0.49, 6 September 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -174,13 +174,11 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 
 **Exact Schema YAML key names.** Closed in `05` §8. Pretty-print is still free.
 
-**Marker path for isolated encryption (**later**).** ISO-11 allows a binding path (example `.scheda/encrypted`). A shared path across languages would ease mixed-binding Vaults; not fixed yet.
-
 **Passphrase vs identity in fixtures (**later**).** Both are required by ISO-7. Tests should cover each; not decided which the README example leads with.
 
 **Hooks.** `04` already: Vault hooks are the consumer's and must not recurse into the same write lock. Worth a binding note when a CLI lands.
 
-Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); isolated Remote (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`).
+Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); isolated Remote (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`); encryption marker path (no — ISO-11 is the Schema key `encrypted`, not a file).
 
 ---
 

@@ -116,6 +116,14 @@ impl JournalIdMaps {
         self.collections.insert(collection, ids);
     }
 
+    /// Take another map's collections. Used to merge the search-engine walk
+    /// into the maps `reindex` already built for journals that are not indexed.
+    #[cfg(feature = "find")]
+    pub(crate) fn absorb(&mut self, other: Self) {
+        self.collections.extend(other.collections);
+        self.segment_lines.extend(other.segment_lines);
+    }
+
     pub(crate) fn forget_id(&mut self, collection: &str, id: &str) {
         if let Some(ids) = self.collections.get_mut(collection) {
             ids.remove(id);
@@ -348,6 +356,11 @@ pub(crate) fn rebuild(
     for decl in schema.collections().filter(|decl| !decl.encrypted) {
         match decl.kind {
             Kind::Journal => {
+                #[cfg(feature = "find")]
+                if decl.any_indexed() {
+                    // The search-engine walk builds this map in the same pass.
+                    continue;
+                }
                 let (records, invalid, segments, ids) = journal::reindex_map(vault, decl)?;
                 records_read += records;
                 skipped_invalid += invalid;
@@ -356,12 +369,17 @@ pub(crate) fn rebuild(
                 maps.replace_collection(decl.name.clone(), ids);
             }
             Kind::Document | Kind::Singleton => {
-                if !decl.any_indexed() {
-                    continue;
+                #[cfg(feature = "find")]
+                continue;
+                #[cfg(not(feature = "find"))]
+                {
+                    if !decl.any_indexed() {
+                        continue;
+                    }
+                    let (records, invalid) = store::reindex_stats(vault, decl)?;
+                    records_read += records;
+                    skipped_invalid += invalid;
                 }
-                let (records, invalid) = store::reindex_stats(vault, decl)?;
-                records_read += records;
-                skipped_invalid += invalid;
             }
         }
     }
@@ -412,9 +430,58 @@ pub(crate) fn remember_id(
     id: &str,
     rel: &str,
 ) -> Result<(), Error> {
+    let previous = match maps.lookup(collection, id) {
+        MapLookup::Path(old) => Some(old.to_owned()),
+        MapLookup::UnknownId | MapLookup::MissingMap => None,
+    };
+    if let Some(old) = previous {
+        maps.put(collection.to_owned(), id.to_owned(), rel.to_owned());
+        if old != rel {
+            let ids = maps
+                .collections
+                .get(collection)
+                .cloned()
+                .unwrap_or_default();
+            write_ids_file(index_dir, collection, &ids)?;
+        }
+        return Ok(());
+    }
     append_ids_line(index_dir, collection, id, rel)?;
     maps.put(collection.to_owned(), id.to_owned(), rel.to_owned());
     Ok(())
+}
+
+/// Look up `id` in `{index_dir}/journal/{collection}/ids`.
+///
+/// A missing or unreadable file is [`OwnedLookup::MissingMap`] (caller may
+/// scan). A readable file that does not name `id` is [`OwnedLookup::UnknownId`].
+pub(crate) fn lookup_on_disk(
+    index_dir: &Path,
+    collection: &str,
+    id: &str,
+) -> Result<OwnedLookup, Error> {
+    let path = ids_path(index_dir, collection);
+    if !path.is_file() {
+        return Ok(OwnedLookup::MissingMap);
+    }
+    match read_ids_file(&path)? {
+        None => Ok(OwnedLookup::MissingMap),
+        Some(ids) => match ids.get(id) {
+            Some(rel) => Ok(OwnedLookup::Path(rel.clone())),
+            None => Ok(OwnedLookup::UnknownId),
+        },
+    }
+}
+
+/// [`MapLookup`] with an owned segment path.
+#[derive(Debug)]
+pub(crate) enum OwnedLookup {
+    /// No ids file, or the file could not be parsed.
+    MissingMap,
+    /// Ids file exists and does not name this `id`.
+    UnknownId,
+    /// Vault-relative POSIX path of the segment that holds `id`.
+    Path(String),
 }
 
 pub(crate) fn forget_remembered(
@@ -618,4 +685,51 @@ fn clear_index_dir(index_dir: &Path) -> Result<(), Error> {
         result.context("[Index::clear] remove entry")?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+
+    fn scratch_dir() -> PathBuf {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("scheda-index-{}-{n}", std::process::id()));
+        let generation = root.join(".scheda").join("index").join("1");
+        fs::create_dir_all(&generation).unwrap();
+        generation
+    }
+
+    #[test]
+    fn remember_id_twice_does_not_duplicate_ids_file() {
+        let dir = scratch_dir();
+        let mut maps = JournalIdMaps::default();
+        maps.replace_collection("log".into(), BTreeMap::new());
+        remember_id(&dir, &mut maps, "log", "a", "log/2024-01-01.jsonl").unwrap();
+        remember_id(&dir, &mut maps, "log", "a", "log/2024-01-01.jsonl").unwrap();
+        let path = ids_path(&dir, "log");
+        let text = fs::read_to_string(&path).unwrap();
+        let hits = text.lines().filter(|line| line.contains("\"a\"")).count();
+        assert_eq!(hits, 1, "{text}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lookup_on_disk_unknown_id_is_not_missing_map() {
+        let dir = scratch_dir();
+        let mut maps = JournalIdMaps::default();
+        maps.replace_collection("log".into(), BTreeMap::new());
+        remember_id(&dir, &mut maps, "log", "a", "log/open.jsonl").unwrap();
+        match lookup_on_disk(&dir, "log", "missing").unwrap() {
+            OwnedLookup::UnknownId => {}
+            other => panic!("expected UnknownId, got {other:?}"),
+        }
+        match lookup_on_disk(&dir, "log", "a").unwrap() {
+            OwnedLookup::Path(rel) => assert_eq!(rel, "log/open.jsonl"),
+            other => panic!("expected Path, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

@@ -30,9 +30,9 @@ use tantivy::{
 #[cfg(feature = "search")]
 use crate::error::ContextGit;
 use crate::error::{Code, ContextAs, ContextIo, bail};
-use crate::index;
+use crate::index::{self, JournalIdMaps};
 use crate::query::{self, FindFields};
-use crate::schema::{self, CollectionDecl, FieldDecl, Schema};
+use crate::schema::{self, CollectionDecl, FieldDecl, Kind, Schema};
 use crate::store;
 use crate::{Embedder, Error, Filter, Record};
 #[cfg(feature = "search")]
@@ -71,6 +71,19 @@ const FUSION_POOL_FLOOR: usize = 50;
 pub(crate) struct SearchEngine {
     index_dir: RwLock<PathBuf>,
     inner: RwLock<Inner>,
+}
+
+/// Counts and journal maps from one file walk that also fills this engine.
+#[derive(Debug, Default)]
+pub(crate) struct RebuildStats {
+    /// Records opened during the walk, including invalid ones.
+    pub records_read: u64,
+    /// Opened Records that failed current Schema.
+    pub skipped_invalid: u64,
+    /// Journal segment files seen.
+    pub segments_seen: u64,
+    /// `id` maps written for indexed journals in this walk.
+    pub journal_maps: JournalIdMaps,
 }
 
 struct Inner {
@@ -382,20 +395,22 @@ impl SearchEngine {
         vault: &Path,
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
-    ) -> Result<(), Error> {
+    ) -> Result<RebuildStats, Error> {
         self.rebuild_from(vault, schema, embedder, None)
     }
 
     /// Fill this engine from Vault files. `hook` runs after a collection's
     /// files are listed and before they are read, so a test can `remove`
-    /// in that window.
+    /// in that window. One Record at a time: the walk does not hold the
+    /// collection in memory. Indexed journals write their `id` map in this
+    /// same pass.
     pub(crate) fn rebuild_online(
         &self,
         vault: &Path,
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
         hook: Option<&dyn Fn(&str)>,
-    ) -> Result<(), Error> {
+    ) -> Result<RebuildStats, Error> {
         self.rebuild_from(vault, schema, embedder, hook)
     }
 
@@ -426,7 +441,7 @@ impl SearchEngine {
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
         hook: Option<&dyn Fn(&str)>,
-    ) -> Result<(), Error> {
+    ) -> Result<RebuildStats, Error> {
         #[cfg(not(feature = "search"))]
         let _ = embedder;
         let can_write = {
@@ -456,35 +471,80 @@ impl SearchEngine {
         }
         #[cfg(feature = "search")]
         let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut stats = RebuildStats::default();
         for decl in schema.collections().filter(|decl| decl.any_indexed()) {
-            let records = records_for_rebuild(vault, decl, hook)?;
-            for record in records {
-                if record.valid != Some(true) {
-                    continue;
+            match decl.kind {
+                Kind::Journal => {
+                    if let Some(hook) = hook {
+                        hook(&decl.name);
+                    }
+                    stats.segments_seen += crate::journal::segment_count(vault, decl)?;
+                    let mut ids = BTreeMap::new();
+                    crate::journal::for_each_record(vault, decl, |record| {
+                        stats.records_read += 1;
+                        if let (Some(id), Some(rel)) =
+                            (record.id.as_deref(), record.path.as_deref())
+                        {
+                            ids.insert(id.to_owned(), rel.to_owned());
+                        }
+                        if record.valid != Some(true) {
+                            stats.skipped_invalid += 1;
+                            return Ok(true);
+                        }
+                        index_one_rebuild_record(
+                            self,
+                            &index_dir,
+                            can_write,
+                            decl,
+                            &record,
+                            embedder,
+                            #[cfg(feature = "search")]
+                            &mut seen,
+                        )?;
+                        Ok(true)
+                    })?;
+                    index::rewrite_collection(
+                        &index_dir,
+                        &mut stats.journal_maps,
+                        &decl.name,
+                        ids,
+                    )?;
                 }
-                #[cfg(feature = "search")]
-                let batch = embed_changed_slots(self, decl, &record, embedder)?;
-                #[cfg(not(feature = "search"))]
-                let batch = VectorBatch::empty();
-                let mut inner =
-                    crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] lock")?;
-                upsert_record(
-                    &mut inner, &index_dir, can_write, decl, &record, embedder, &batch,
-                )?;
-                #[cfg(feature = "search")]
-                if decl.vector_indexed()
-                    && let Some(id) = record.id.as_deref().filter(|id| !id.is_empty())
-                {
-                    seen.entry(decl.name.clone())
-                        .or_default()
-                        .insert(id.to_owned());
+                Kind::Document | Kind::Singleton => {
+                    let files = store::list_files(vault, decl)?;
+                    if let Some(hook) = hook {
+                        hook(&decl.name);
+                    }
+                    for path in files {
+                        let record = match store::read_file(vault, decl, &path, None) {
+                            Ok(record) => record,
+                            Err(err) if crate::reindex::is_absent(&err) => continue,
+                            Err(err) => return Err(err),
+                        };
+                        stats.records_read += 1;
+                        if record.valid != Some(true) {
+                            stats.skipped_invalid += 1;
+                            continue;
+                        }
+                        index_one_rebuild_record(
+                            self,
+                            &index_dir,
+                            can_write,
+                            decl,
+                            &record,
+                            embedder,
+                            #[cfg(feature = "search")]
+                            &mut seen,
+                        )?;
+                    }
                 }
             }
         }
         let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] commit")?;
         #[cfg(feature = "search")]
         drop_unseen_vectors(&mut inner, &seen)?;
-        inner.commit(&index_dir, can_write)
+        inner.commit(&index_dir, can_write)?;
+        Ok(stats)
     }
 
     pub(crate) fn upsert(
@@ -935,34 +995,32 @@ fn empty_inner(can_write: bool) -> Inner {
     }
 }
 
-fn records_for_rebuild(
-    vault: &Path,
+fn index_one_rebuild_record(
+    engine: &SearchEngine,
+    index_dir: &Path,
+    can_write: bool,
     decl: &CollectionDecl,
-    hook: Option<&dyn Fn(&str)>,
-) -> Result<Vec<Record>, Error> {
-    match decl.kind {
-        crate::schema::Kind::Journal => {
-            if let Some(hook) = hook {
-                hook(&decl.name);
-            }
-            crate::journal::scan_journal(vault, decl)
-        }
-        crate::schema::Kind::Document | crate::schema::Kind::Singleton => {
-            let files = store::list_files(vault, decl)?;
-            if let Some(hook) = hook {
-                hook(&decl.name);
-            }
-            let mut out = Vec::new();
-            for path in files {
-                match store::read_file(vault, decl, &path, None) {
-                    Ok(record) => out.push(record),
-                    Err(err) if crate::reindex::is_absent(&err) => {}
-                    Err(err) => return Err(err),
-                }
-            }
-            Ok(out)
-        }
+    record: &Record,
+    embedder: Option<&dyn Embedder>,
+    #[cfg(feature = "search")] seen: &mut BTreeMap<String, BTreeSet<String>>,
+) -> Result<(), Error> {
+    #[cfg(feature = "search")]
+    let batch = embed_changed_slots(engine, decl, record, embedder)?;
+    #[cfg(not(feature = "search"))]
+    let batch = VectorBatch::empty();
+    let mut inner = crate::error::rw_write(&engine.inner, "[SearchEngine::rebuild] lock")?;
+    upsert_record(
+        &mut inner, index_dir, can_write, decl, record, embedder, &batch,
+    )?;
+    #[cfg(feature = "search")]
+    if decl.vector_indexed()
+        && let Some(id) = record.id.as_deref().filter(|id| !id.is_empty())
+    {
+        seen.entry(decl.name.clone())
+            .or_default()
+            .insert(id.to_owned());
     }
+    Ok(())
 }
 
 fn open_lexical_writer(index: &Index, frame: &'static str) -> Result<IndexWriter, Error> {
