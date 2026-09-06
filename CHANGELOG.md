@@ -8,6 +8,22 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **Vector search depth no longer reshuffles the head of the ranking.**
+  HNSW connectivity and insert / search expansion are set by Scheda
+  (`M` 16, `ef` construction 128, `ef` search 512), not USearch
+  zero-defaults. A request for `N` neighbours is the prefix of a request
+  for `2N` (and both match brute-force nearest neighbours on a small
+  index). An existing dump keeps the graph it was built with; search
+  expansion is re-applied on restore. `reindex` rebuilds the graph with
+  the named construction values.
+- **Unchanged vector slots are found in one lookup, not a scan of every
+  key.** Incremental `add` / `replace` / `reindex` used to walk the whole
+  slot table for each Record. The Index now keeps a `(collection, id)`
+  map to those keys, so skip / drop / copy of one Record stays
+  proportional to that Record's fields.
+
 ## [0.10.0] - 2026-09-06
 
 ### Changed

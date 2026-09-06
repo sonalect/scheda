@@ -27,8 +27,20 @@ impl std::fmt::Debug for AnnIndex {
 
 impl AnnIndex {
     const INITIAL_CAPACITY: usize = 16;
+    /// HNSW `M`. Named here so a new dump is not "whatever USearch maps 0 to".
+    pub(crate) const CONNECTIVITY: usize = 16;
+    /// HNSW `ef` at insert (graph quality).
+    pub(crate) const EXPANSION_ADD: usize = 128;
+    /// HNSW `ef` at query. USearch walks `max(ef, wanted)`; a request for
+    /// `k` at or below this value shares that walk, so `search(N)` is the
+    /// prefix of `search(2N)` and both match brute-force nearest neighbours
+    /// on a small index.
+    pub(crate) const EXPANSION_SEARCH: usize = 512;
 
     /// Empty cosine `f32` index with the given vector size.
+    ///
+    /// Graph connectivity, construction expansion, and search expansion are
+    /// the constants on this type, not USearch zero-defaults.
     pub fn new(dimensions: usize) -> Result<Self, Error> {
         ensure!(
             dimensions > 0,
@@ -38,7 +50,10 @@ impl AnnIndex {
             dimensions,
             metric: MetricKind::Cos,
             quantization: ScalarKind::F32,
-            ..IndexOptions::default()
+            connectivity: Self::CONNECTIVITY,
+            expansion_add: Self::EXPANSION_ADD,
+            expansion_search: Self::EXPANSION_SEARCH,
+            multi: false,
         };
         let inner =
             Index::new(&options).context(Code::IndexVector, "[AnnIndex::new] create new index")?;
@@ -54,11 +69,17 @@ impl AnnIndex {
     }
 
     /// Open a dump written by [`save`](Self::save).
+    ///
+    /// Connectivity is whatever the dump was built with. Search and insert
+    /// expansion are re-applied: those are not a stable part of the file
+    /// header.
     pub fn restore(path: &Path) -> Result<Self, Error> {
         let inner =
             Index::restore(path_str(path).context("[AnnIndex::restore] path must be UTF-8")?)
                 .context(Code::IndexVector, "[AnnIndex::restore] open dump")?;
-        Ok(Self { inner })
+        let index = Self { inner };
+        index.apply_expansion();
+        Ok(index)
     }
 
     /// Vector length this index was created with.
@@ -127,6 +148,10 @@ impl AnnIndex {
     }
 
     /// k nearest keys and cosine distances (lower is closer).
+    ///
+    /// The graph walk is at least the search-expansion floor wide, then
+    /// truncated to `k`, so a deeper request does not reshuffle the head of a
+    /// shallower one.
     pub fn search(&self, query: &[f32], k: usize) -> Result<Vec<(u64, f32)>, Error> {
         ensure!(
             query.len() == self.inner.dimensions(),
@@ -140,13 +165,15 @@ impl AnnIndex {
         if k == 0 {
             return Ok(Vec::new());
         }
+        self.apply_expansion();
+        let walk = k.max(Self::EXPANSION_SEARCH);
         let hits = self
             .inner
-            .search(query, k)
+            .search(query, walk)
             .with_context(Code::IndexVector, || {
                 format!("[AnnIndex::search] query k={k}")
             })?;
-        Ok(hits.keys.into_iter().zip(hits.distances).collect())
+        Ok(hits.keys.into_iter().zip(hits.distances).take(k).collect())
     }
 
     /// Like [`search`](Self::search), keeping only keys for which `predicate` is true.
@@ -168,13 +195,15 @@ impl AnnIndex {
         if k == 0 {
             return Ok(Vec::new());
         }
+        self.apply_expansion();
+        let walk = k.max(Self::EXPANSION_SEARCH);
         let hits = self
             .inner
-            .filtered_search(query, k, predicate)
+            .filtered_search(query, walk, predicate)
             .with_context(Code::IndexVector, || {
                 format!("[AnnIndex::filtered_search] query k={k}")
             })?;
-        Ok(hits.keys.into_iter().zip(hits.distances).collect())
+        Ok(hits.keys.into_iter().zip(hits.distances).take(k).collect())
     }
 
     /// Write a dump that [`restore`](Self::restore) can open.
@@ -182,6 +211,11 @@ impl AnnIndex {
         self.inner
             .save(path_str(path).context("[AnnIndex::save] path must be UTF-8")?)
             .context(Code::IndexVector, "[AnnIndex::save] write dump")
+    }
+
+    fn apply_expansion(&self) {
+        self.inner.change_expansion_add(Self::EXPANSION_ADD);
+        self.inner.change_expansion_search(Self::EXPANSION_SEARCH);
     }
 
     fn ensure_capacity(&self) -> Result<(), Error> {

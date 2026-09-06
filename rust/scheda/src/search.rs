@@ -105,13 +105,117 @@ struct Lexical {
 }
 
 #[cfg(feature = "search")]
+type FieldKeys = BTreeMap<String, u64>;
+#[cfg(feature = "search")]
+type SlotIndex = BTreeMap<String, BTreeMap<String, FieldKeys>>;
+
+#[cfg(feature = "search")]
 struct VectorStore {
     ann: AnnIndex,
     keys: BTreeMap<u64, DocRef>,
+    /// `(collection, id) → field → ANN key`. Inverse of `keys` so a Record's
+    /// slots are a map lookup, not a scan of every key.
+    by_record: SlotIndex,
     model_id: String,
     dimensions: usize,
     field_ids: BTreeSet<String>,
     next_key: u64,
+}
+
+#[cfg(feature = "search")]
+impl VectorStore {
+    fn empty(ann: AnnIndex, model_id: String, dimensions: usize) -> Self {
+        Self {
+            ann,
+            keys: BTreeMap::new(),
+            by_record: BTreeMap::new(),
+            model_id,
+            dimensions,
+            field_ids: BTreeSet::new(),
+            next_key: 1,
+        }
+    }
+
+    fn loaded(
+        ann: AnnIndex,
+        keys: BTreeMap<u64, DocRef>,
+        model_id: String,
+        dimensions: usize,
+        field_ids: BTreeSet<String>,
+        next_key: u64,
+    ) -> Self {
+        let mut by_record: SlotIndex = BTreeMap::new();
+        for (key, doc) in &keys {
+            by_record
+                .entry(doc.collection.clone())
+                .or_default()
+                .entry(doc.id.clone())
+                .or_default()
+                .insert(doc.field.clone(), *key);
+        }
+        Self {
+            ann,
+            keys,
+            by_record,
+            model_id,
+            dimensions,
+            field_ids,
+            next_key,
+        }
+    }
+
+    fn record_slots(&self, collection: &str, id: &str) -> Option<&FieldKeys> {
+        self.by_record.get(collection)?.get(id)
+    }
+
+    fn slot_key(&self, collection: &str, id: &str, field: &str) -> Option<u64> {
+        self.record_slots(collection, id)?.get(field).copied()
+    }
+
+    fn record_keys(&self, collection: &str, id: &str) -> Vec<u64> {
+        self.record_slots(collection, id)
+            .map(|fields| fields.values().copied().collect())
+            .unwrap_or_default()
+    }
+
+    fn insert_slot(&mut self, key: u64, doc: DocRef) {
+        self.by_record
+            .entry(doc.collection.clone())
+            .or_default()
+            .entry(doc.id.clone())
+            .or_default()
+            .insert(doc.field.clone(), key);
+        self.keys.insert(key, doc);
+    }
+
+    fn remove_slot(&mut self, key: u64) {
+        let Some(doc) = self.keys.remove(&key) else {
+            return;
+        };
+        let drop_collection = {
+            let Some(ids) = self.by_record.get_mut(&doc.collection) else {
+                return;
+            };
+            if let Some(fields) = ids.get_mut(&doc.id) {
+                fields.remove(&doc.field);
+                if fields.is_empty() {
+                    ids.remove(&doc.id);
+                }
+            }
+            ids.is_empty()
+        };
+        if drop_collection {
+            self.by_record.remove(&doc.collection);
+        }
+    }
+
+    fn drop_ann_slot(&mut self, key: u64) -> Result<(), Error> {
+        if self.ann.contains(key) {
+            self.ann.remove(key)?;
+        }
+        self.remove_slot(key);
+        Ok(())
+    }
 }
 
 #[cfg(feature = "search")]
@@ -1055,17 +1159,9 @@ fn forget_vector(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Er
     let Some(store) = inner.vector.as_mut() else {
         return Ok(());
     };
-    let stale: Vec<u64> = store
-        .keys
-        .iter()
-        .filter(|(_, doc)| doc.collection == collection && doc.id == id)
-        .map(|(key, _)| *key)
-        .collect();
+    let stale = store.record_keys(collection, id);
     for key in stale {
-        if store.ann.contains(key) {
-            store.ann.remove(key)?;
-        }
-        store.keys.remove(&key);
+        store.drop_ann_slot(key)?;
     }
     refresh_field_ids(store);
     Ok(())
@@ -1217,12 +1313,10 @@ fn slots_needing_embed(
     let mut out = Vec::new();
     for (field, text) in nonempty {
         let digest = vector_digest(&text)?;
-        let unchanged = store.keys.values().any(|doc| {
-            doc.collection == collection
-                && doc.id == id
-                && doc.field == field
-                && doc.digest == digest
-        });
+        let unchanged = store
+            .slot_key(collection, id, &field)
+            .and_then(|key| store.keys.get(&key))
+            .is_some_and(|doc| doc.digest == digest);
         if !unchanged {
             out.push((field, text));
         }
@@ -1253,10 +1347,7 @@ fn drop_unseen_vectors(
         return Ok(());
     }
     for key in stale {
-        if store.ann.contains(key) {
-            store.ann.remove(key)?;
-        }
-        store.keys.remove(&key);
+        store.drop_ann_slot(key)?;
     }
     refresh_field_ids(store);
     inner.dirty = true;
@@ -1368,32 +1459,31 @@ impl VectorSource {
         let model_id = src.model_id.clone();
         let dimensions = src.dimensions;
         let mut copied = Vec::new();
-        for (key, doc) in &src.keys {
-            if doc.collection != collection || doc.id != id {
-                continue;
+        if let Some(fields) = src.record_slots(collection, id) {
+            for key in fields.values() {
+                let Some(doc) = src.keys.get(key) else {
+                    continue;
+                };
+                let Some(vector) = src.ann.get(*key)? else {
+                    continue;
+                };
+                copied.push(CopiedSlot {
+                    doc: doc.clone(),
+                    vector,
+                    keep: false,
+                });
             }
-            let Some(vector) = src.ann.get(*key)? else {
-                continue;
-            };
-            copied.push(CopiedSlot {
-                doc: doc.clone(),
-                vector,
-                keep: false,
-            });
         }
         let mut inner = crate::error::rw_write(&dest.inner, "[SearchEngine] copy vectors")?;
         if inner.vector.is_none() {
             if copied.is_empty() {
                 return Ok(());
             }
-            inner.vector = Some(VectorStore {
-                ann: crate::ann::AnnIndex::new(dimensions)?,
-                keys: BTreeMap::new(),
-                model_id: model_id.clone(),
+            inner.vector = Some(VectorStore::empty(
+                crate::ann::AnnIndex::new(dimensions)?,
+                model_id.clone(),
                 dimensions,
-                field_ids: BTreeSet::new(),
-                next_key: 1,
-            });
+            ));
         }
         let Some(store) = inner.vector.as_mut() else {
             return Ok(());
@@ -1401,12 +1491,18 @@ impl VectorSource {
         if store.model_id != model_id || store.dimensions != dimensions {
             return Ok(());
         }
-        let dest_keys: Vec<(u64, String, String)> = store
-            .keys
-            .iter()
-            .filter(|(_, doc)| doc.collection == collection && doc.id == id)
-            .map(|(key, doc)| (*key, doc.field.clone(), doc.digest.clone()))
-            .collect();
+        let dest_keys: Vec<(u64, String, String)> = match store.record_slots(collection, id) {
+            Some(fields) => fields
+                .iter()
+                .filter_map(|(field, key)| {
+                    store
+                        .keys
+                        .get(key)
+                        .map(|doc| (*key, field.clone(), doc.digest.clone()))
+                })
+                .collect(),
+            None => Vec::new(),
+        };
         let mut changed = false;
         for (key, field, digest) in dest_keys {
             match copied
@@ -1415,10 +1511,7 @@ impl VectorSource {
             {
                 Some(slot) => slot.keep = true,
                 None => {
-                    if store.ann.contains(key) {
-                        store.ann.remove(key)?;
-                    }
-                    store.keys.remove(&key);
+                    store.drop_ann_slot(key)?;
                     changed = true;
                 }
             }
@@ -1430,7 +1523,7 @@ impl VectorSource {
             let key = store.next_key.max(1);
             store.next_key = key.saturating_add(1);
             store.ann.add(key, &slot.vector)?;
-            store.keys.insert(key, slot.doc);
+            store.insert_slot(key, slot.doc);
             changed = true;
         }
         if changed {
@@ -1463,14 +1556,11 @@ fn upsert_vector(
     let dimensions = embedder.dimensions().get();
     let model_id = embedder.model_id();
     if inner.vector.is_none() {
-        inner.vector = Some(VectorStore {
-            ann: AnnIndex::new(dimensions)?,
-            keys: BTreeMap::new(),
-            model_id: model_id.to_owned(),
+        inner.vector = Some(VectorStore::empty(
+            AnnIndex::new(dimensions)?,
+            model_id.to_owned(),
             dimensions,
-            field_ids: BTreeSet::new(),
-            next_key: 1,
-        });
+        ));
     }
     let Some(store) = inner.vector.as_mut() else {
         return Ok(());
@@ -1484,19 +1574,20 @@ fn upsert_vector(
         .filter(|(_, text)| !text.is_empty())
         .map(|(field, _)| field.as_str())
         .collect();
-    let vanished: Vec<u64> = store
-        .keys
-        .iter()
-        .filter(|(_, doc)| {
-            doc.collection == decl.name && doc.id == id && !current.contains(doc.field.as_str())
-        })
-        .map(|(key, _)| *key)
-        .collect();
-    for key in vanished {
-        if store.ann.contains(key) {
-            store.ann.remove(key)?;
+    let vanished: Vec<u64> = match store.record_slots(&decl.name, id) {
+        Some(fields) => {
+            let mut stale = Vec::new();
+            for (name, key) in fields {
+                if !current.contains(name.as_str()) {
+                    stale.push(*key);
+                }
+            }
+            stale
         }
-        store.keys.remove(&key);
+        None => Vec::new(),
+    };
+    for key in vanished {
+        store.drop_ann_slot(key)?;
     }
     let new_vectors: BTreeMap<&str, &Vec<f32>> = batch
         .vectors
@@ -1515,19 +1606,13 @@ fn upsert_vector(
                 )));
             }
             let digest = vector_digest(text)?;
-            let existing = store.keys.iter().find_map(|(key, doc)| {
-                (doc.collection == decl.name && doc.id == id && doc.field == *field).then_some(*key)
-            });
-            if let Some(key) = existing {
-                if store.ann.contains(key) {
-                    store.ann.remove(key)?;
-                }
-                store.keys.remove(&key);
+            if let Some(key) = store.slot_key(&decl.name, id, field) {
+                store.drop_ann_slot(key)?;
             }
             let key = store.next_key.max(1);
             store.next_key = key.saturating_add(1);
             store.ann.add(key, vector)?;
-            store.keys.insert(
+            store.insert_slot(
                 key,
                 DocRef {
                     collection: decl.name.clone(),
@@ -1537,10 +1622,8 @@ fn upsert_vector(
                     digest,
                 },
             );
-        } else if let Some(doc) = store
-            .keys
-            .values_mut()
-            .find(|doc| doc.collection == decl.name && doc.id == id && doc.field == *field)
+        } else if let Some(key) = store.slot_key(&decl.name, id, field)
+            && let Some(doc) = store.keys.get_mut(&key)
         {
             doc.path.clone_from(&path);
         }
@@ -1746,14 +1829,13 @@ fn vector_search(
         )));
     }
     let names: BTreeSet<&str> = collections.iter().copied().collect();
-    let raw = store
-        .ann
-        .filtered_search(query, pool.saturating_mul(8).max(pool), |key| {
-            store.keys.get(&key).is_some_and(|doc| {
-                names.contains(doc.collection.as_str())
-                    && allowed.is_none_or(|set| allowed_has(set, &doc.collection, &doc.id))
-            })
-        })?;
+    let slot_k = pool.max(crate::ann::AnnIndex::EXPANSION_SEARCH);
+    let raw = store.ann.filtered_search(query, slot_k, |key| {
+        store.keys.get(&key).is_some_and(|doc| {
+            names.contains(doc.collection.as_str())
+                && allowed.is_none_or(|set| allowed_has(set, &doc.collection, &doc.id))
+        })
+    })?;
     let mut best: BTreeMap<(String, String), LegHit> = BTreeMap::new();
     for (key, distance) in raw {
         let Some(doc) = store.keys.get(&key) else {
@@ -2085,14 +2167,14 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
         BTreeMap::new()
     };
     let next_key = next_ann_key(meta.next_key, &keys);
-    Ok(Some(VectorStore {
+    Ok(Some(VectorStore::loaded(
         ann,
         keys,
-        model_id: meta.model_id,
-        dimensions: meta.dimensions,
-        field_ids: meta.field_ids.into_iter().collect(),
+        meta.model_id,
+        meta.dimensions,
+        meta.field_ids.into_iter().collect(),
         next_key,
-    }))
+    )))
 }
 
 #[cfg(feature = "search")]

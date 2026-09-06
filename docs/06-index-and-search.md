@@ -1,6 +1,6 @@
 # 06. Index and search
 
-Document 6 of the Scheda package. Version 0.40, 6 September 2026.
+Document 6 of the Scheda package. Version 0.41, 6 September 2026.
 
 Normative rules for the derived Index and `get`. **`find` and `search` (how they must work) are `13`.** Terms are in `02`. Marks and edges in Schema are in `05`. The caller's method names are in `07`. Codes: `IDX`, `QRY`. Phase **core** or **search** as marked.
 
@@ -50,7 +50,7 @@ The Index is a **retrieval** engine an agent can recall from, not a substring de
 
 **IDX-6. Lexical index.** Ranked full-text (BM25 or equivalent) over `string` / `string_list` fields and body that are not `exclude_fts` (SCH-9). In-process; a separate search server is not required. Identifiers, rare tokens, and exact phrases must surface. The first implementation (Rust) pins a BM25 library (for example Tantivy); the contract is the ranking class, not a crate name, and is not SQL. *Check:* an exact token in an included field ranks that Record inside the requested `k` among distractors that lack the token; the same token only in an `exclude_fts` field is not a hit.
 
-**IDX-7. Vector index.** In-process ANN nearest neighbours (HNSW or equivalent) over slots that are not `exclude_vector` (SCH-9, SCH-10). Same Index directory as lexical. No external vector database. At OPS-1, brute-force over every stored vector is not the implementation. The first implementation may pin an ANN library (for example USearch). *Check:* a query that shares no tokens with the Record but is a synonym (fixture) still ranks that Record inside the requested `k` when an embedder is present.
+**IDX-7. Vector index.** In-process ANN nearest neighbours (HNSW or equivalent) over slots that are not `exclude_vector` (SCH-9, SCH-10). Same Index directory as lexical. No external vector database. At OPS-1, brute-force over every stored vector is not the implementation. The first implementation may pin an ANN library (for example USearch). Graph connectivity and the insert / search expansion of that graph are chosen by the binding, not left as library zero-defaults. Search expansion is a floor independent of the requested `k`: on a small fixture whose exact neighbours are known by brute force, the list for `N` is the prefix of the list for `2N`, and both match that exact order. *Check:* a query that shares no tokens with the Record but is a synonym (fixture) still ranks that Record inside the requested `k` when an embedder is present. *Check:* `search(N)` keys equal `search(2N)[..N]` and both equal brute-force nearest neighbours on a small in-process index.
 
 **IDX-8. Embedder is injected.** The caller passes an embedder (a function or interface; in Rust, typically a trait). The library does not require the network to embed. No embedder → vector leg off; lexical, `find`, and writes still work. An embedder that calls the network is the caller's; core git with `auto_sync` off still GIT-8. *Check:* build and query with no embedder; a stub that returns a fixed vector fills the vector table; those runs make no unexpected connections.
 
