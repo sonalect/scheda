@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-06
+
 ### Changed
 
 - **Online `reindex`.** `reindex` holds `write.lock` only for start and
@@ -1097,6 +1099,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.10.0]
 - [0.9.12]
 - [0.9.11]
 - [0.9.10]
@@ -1126,7 +1129,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.9.12...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/amsokol/scheda/releases/tag/v0.10.0
 [0.9.12]: https://github.com/amsokol/scheda/releases/tag/v0.9.12
 [0.9.11]: https://github.com/amsokol/scheda/releases/tag/v0.9.11
 [0.9.10]: https://github.com/amsokol/scheda/releases/tag/v0.9.10
