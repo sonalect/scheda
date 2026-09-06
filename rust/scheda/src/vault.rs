@@ -2,6 +2,8 @@ use std::collections::BTreeSet;
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Instant;
 
 #[cfg(feature = "search")]
 use crate::Reranker;
@@ -29,6 +31,9 @@ use crate::{SearchHits, SearchQuery, search_hits};
 
 const AUTO_COMMIT_MESSAGE: &str = "scheda";
 
+#[cfg(feature = "find")]
+type ReindexWalkHook = Arc<dyn Fn(&str) + Send + Sync>;
+
 /// A git working tree that holds collections of records.
 pub struct Vault {
     path: PathBuf,
@@ -45,6 +50,8 @@ pub struct Vault {
     embedder: Option<Arc<dyn Embedder>>,
     identity: Arc<git::CommitIdentity>,
     encryption: Option<Encryption>,
+    #[cfg(all(test, feature = "find"))]
+    walk_hook: Mutex<Option<ReindexWalkHook>>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
@@ -201,6 +208,8 @@ impl Vault {
             embedder,
             identity: Arc::new(identity),
             encryption,
+            #[cfg(all(test, feature = "find"))]
+            walk_hook: Mutex::new(None),
         };
         if gitignore_pending {
             vault.write_gitignore_under_lock()?;
@@ -452,6 +461,7 @@ impl Vault {
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.conclude_write((|| {
+            self.reject_if_reindex_active("discard")?;
             self.restore_recorded()?;
             set_in_txn(&self.in_txn, false)?;
             Ok(())
@@ -483,8 +493,13 @@ impl Vault {
         if paths.is_empty() {
             return Ok(());
         }
+        let schema = self.schema_arc()?;
+        let snapshot = crate::reindex::snapshot_restored(&self.path, &schema, &paths)?;
         isolated::discard_recorded(&self.path, &paths)?;
-        self.reload_after_restore()
+        self.reload_after_restore()?;
+        let schema = self.schema_arc()?;
+        crate::reindex::enqueue_restored(&self.path, &schema, &paths, &snapshot)?;
+        Ok(())
     }
 
     fn reload_after_restore(&self) -> Result<(), Error> {
@@ -548,6 +563,7 @@ impl Vault {
     pub fn pull(&self) -> Result<(), Error> {
         self.require_write_lock("pull")?;
         self.conclude_write((|| {
+            self.reject_if_reindex_active("pull")?;
             git::pull(&self.path)?;
             self.reload_after_restore()
         })())
@@ -558,6 +574,7 @@ impl Vault {
     pub fn sync(&self) -> Result<(), Error> {
         self.require_write_lock("sync")?;
         self.conclude_write((|| {
+            self.reject_if_reindex_active("sync")?;
             git::pull(&self.path)?;
             self.reload_after_restore()?;
             git::push(&self.path)
@@ -688,6 +705,7 @@ impl Vault {
         let message = require_commit_message(message)?;
         self.require_write_lock("create_collection")?;
         self.conclude_write((|| {
+            self.reject_if_reindex_active("create_collection")?;
             self.drain_abandoned()?;
             if schema.isolated == Some(true)
                 && let Some(rel) = isolated::ensure(&self.path)?
@@ -721,43 +739,380 @@ impl Vault {
     /// swap keeps its generation. A reader older than one `reindex` cycle
     /// may lose those files (`index_missing` or `index_lexical`). Removes
     /// a leftover `{vault}/.isolated/.scheda/` directory when one is
-    /// present. Takes the write lock for this call. Outside a transaction
-    /// the lock is released before return, so there is no concurrent
-    /// writer during the swap.
+    /// present.
+    ///
+    /// Takes `write.lock` only for start and publish. The file walk does
+    /// not hold it, so `add` / `replace` / `remove` stay allowed. Holds
+    /// `{vault}/.scheda/reindex.lock` for the whole call. A second `reindex`
+    /// is `locked`. Inside an open transaction the write lock is kept for
+    /// the whole call and no marker or queue is written.
     pub fn reindex(&self) -> Result<ReindexResult, Error> {
+        let in_txn = flag(&self.in_txn)?;
         self.require_write_lock("reindex")?;
-        self.conclude_write((|| {
+        let reindex_lock = match crate::reindex::acquire_lock(&self.path) {
+            Ok(file) => file,
+            Err(err) => return self.conclude_write(Err(err)),
+        };
+        let result = match self.reindex_body(in_txn) {
+            Ok(counts) => Ok(counts),
+            Err(err) => {
+                let _ = crate::reindex::clear_active(&self.path);
+                Err(err)
+            }
+        };
+        drop(reindex_lock);
+        if in_txn {
+            result
+        } else {
+            self.conclude_write(result)
+        }
+    }
+
+    fn reindex_body(&self, in_txn: bool) -> Result<ReindexResult, Error> {
+        let schema = schema::load(&self.path)?;
+        #[cfg(feature = "search")]
+        let previous = self.generation_dir()?;
+        let new_dir = index::start_generation(&self.index.root)?;
+        let generation = index::generation_number(&new_dir)?;
+        if !in_txn {
+            crate::reindex::write_active(&self.path, generation)?;
+        }
+        #[cfg(feature = "search")]
+        {
+            self.search.flush()?;
+            // Must precede `index::rebuild`: that walk clears the generation
+            // except an inherited `vector/` dump already in place.
+            crate::search::copy_vector_dump(&previous, &new_dir, self.embedder.as_deref())?;
+        }
+        if !in_txn {
             #[cfg(feature = "find")]
-            self.search.close_for_rebuild();
-            let schema = schema::load(&self.path)?;
-            #[cfg(feature = "find")]
-            let previous = self.generation_dir()?;
-            let (counts, maps, new_dir) =
-                index::prepare_generation(&self.path, &schema, &self.index.root)?;
-            #[cfg(feature = "find")]
-            if let Err(err) = self.search.rebuild_into(
-                &new_dir,
+            self.search.release_writer()?;
+            release_held_write_lock(&self.write_lock)?;
+        }
+        let (counts, mut maps) = index::rebuild(&self.path, &schema, &new_dir)?;
+        #[cfg(feature = "find")]
+        {
+            let hook = self.walk_hook();
+            let hook_ref = hook.as_deref();
+            let rebuilder = SearchEngine::open(&new_dir, true)?;
+            rebuilder.rebuild_online(
                 &self.path,
                 &schema,
                 self.embedder.as_deref(),
-                Some(previous.as_path()),
-            ) {
-                let _ = self.search.set_index_dir(&previous);
-                return Err(err);
+                hook_ref.map(|h| h as &dyn Fn(&str)),
+            )?;
+            if in_txn {
+                self.publish_reindex(&new_dir, maps, rebuilder)?;
+            } else {
+                self.catch_up_and_publish(
+                    &schema,
+                    &new_dir,
+                    &mut maps,
+                    rebuilder,
+                    #[cfg(feature = "search")]
+                    &previous,
+                )?;
             }
-            #[cfg(not(feature = "find"))]
+        }
+        #[cfg(not(feature = "find"))]
+        {
             index::mark_stale(&new_dir)?;
-            #[cfg(feature = "find")]
-            if let Err(err) = index::publish_generation(&self.index.root, &new_dir) {
-                let _ = self.search.set_index_dir(&previous);
-                return Err(err);
+            if in_txn {
+                index::publish_generation(&self.index.root, &new_dir)?;
+                self.index.set_dir(new_dir)?;
+                *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
+            } else {
+                self.catch_up_and_publish_thin(&schema, &new_dir, &mut maps)?;
             }
-            #[cfg(not(feature = "find"))]
-            index::publish_generation(&self.index.root, &new_dir)?;
-            self.index.set_dir(new_dir)?;
-            *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
-            Ok(counts)
-        })())
+        }
+        Ok(counts)
+    }
+
+    #[cfg(feature = "find")]
+    fn walk_hook(&self) -> Option<ReindexWalkHook> {
+        #[cfg(test)]
+        {
+            crate::error::mutex(&self.walk_hook, "[Vault] walk hook")
+                .ok()
+                .and_then(|slot| slot.clone())
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
+    #[cfg(all(test, feature = "find"))]
+    pub(crate) fn set_reindex_walk_hook(
+        &self,
+        hook: Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> Result<(), Error> {
+        *crate::error::mutex(&self.walk_hook, "[Vault] walk hook")? = Some(hook);
+        Ok(())
+    }
+
+    fn reject_if_reindex_active(&self, op: &str) -> Result<(), Error> {
+        if crate::reindex::active_exists(&self.path) {
+            return Err(Error::locked("reindex is in progress")
+                .with_context(|| format!("[Vault::{op}] reindex")));
+        }
+        Ok(())
+    }
+
+    #[cfg(feature = "find")]
+    fn catch_up_and_publish(
+        &self,
+        schema: &LoadedSchema,
+        new_dir: &Path,
+        maps: &mut JournalIdMaps,
+        rebuilder: SearchEngine,
+        #[cfg(feature = "search")] previous: &Path,
+    ) -> Result<(), Error> {
+        #[cfg(feature = "search")]
+        let models_differ = self.vector_models_differ();
+        #[cfg(not(feature = "search"))]
+        let models_differ = false;
+        let copy_vectors = self.embedder.is_some() && !models_differ;
+        let deadline = Instant::now() + crate::reindex::publish_window();
+        loop {
+            self.apply_queue(
+                schema,
+                new_dir,
+                maps,
+                &rebuilder,
+                #[cfg(feature = "search")]
+                previous,
+                copy_vectors,
+            )?;
+            if self.try_take_write_lock()? {
+                #[cfg(feature = "search")]
+                if !crate::reindex::list_queue(&self.path)?.is_empty() && models_differ {
+                    let _ = self.search.release_writer();
+                    release_held_write_lock(&self.write_lock)?;
+                    if Instant::now() >= deadline {
+                        return Err(Error::locked("vault write lock is held")
+                            .context("[Vault::reindex] publish write lock"));
+                    }
+                    thread::sleep(crate::reindex::PUBLISH_RETRY);
+                    continue;
+                }
+                self.apply_queue(
+                    schema,
+                    new_dir,
+                    maps,
+                    &rebuilder,
+                    #[cfg(feature = "search")]
+                    previous,
+                    copy_vectors,
+                )?;
+                self.publish_reindex(new_dir, std::mem::take(maps), rebuilder)?;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::locked("vault write lock is held")
+                    .context("[Vault::reindex] publish write lock"));
+            }
+            thread::sleep(crate::reindex::PUBLISH_RETRY);
+        }
+    }
+
+    #[cfg(not(feature = "find"))]
+    fn catch_up_and_publish_thin(
+        &self,
+        schema: &LoadedSchema,
+        new_dir: &Path,
+        maps: &mut JournalIdMaps,
+    ) -> Result<(), Error> {
+        let deadline = Instant::now() + crate::reindex::publish_window();
+        loop {
+            self.apply_queue_thin(schema, new_dir, maps)?;
+            if self.try_take_write_lock()? {
+                self.apply_queue_thin(schema, new_dir, maps)?;
+                index::publish_generation(&self.index.root, new_dir)?;
+                self.index.set_dir(new_dir.to_path_buf())?;
+                *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
+                    std::mem::take(maps);
+                crate::reindex::clear_active(&self.path)?;
+                return Ok(());
+            }
+            if Instant::now() >= deadline {
+                return Err(Error::locked("vault write lock is held")
+                    .context("[Vault::reindex] publish write lock"));
+            }
+            thread::sleep(crate::reindex::PUBLISH_RETRY);
+        }
+    }
+
+    #[cfg(feature = "find")]
+    fn apply_queue(
+        &self,
+        schema: &LoadedSchema,
+        new_dir: &Path,
+        maps: &mut JournalIdMaps,
+        rebuilder: &SearchEngine,
+        #[cfg(feature = "search")] previous: &Path,
+        copy_vectors: bool,
+    ) -> Result<(), Error> {
+        let files = crate::reindex::list_queue(&self.path)?;
+        if files.is_empty() {
+            return Ok(());
+        }
+        #[cfg(feature = "search")]
+        let vector_source = if copy_vectors {
+            Some(crate::search::load_vector_source(previous)?)
+        } else {
+            None
+        };
+        #[cfg(not(feature = "search"))]
+        let _ = copy_vectors;
+        for path in files {
+            let Some((collection, id)) = crate::reindex::take_queue_file(&path)? else {
+                continue;
+            };
+            let Some(decl) = schema.get(&collection) else {
+                continue;
+            };
+            if decl.encrypted {
+                continue;
+            }
+            match self.read_queued_record(decl, &id)? {
+                Some(record) if record.valid == Some(true) => {
+                    if decl.kind == Kind::Journal
+                        && let Some(rel) = record.path.as_deref()
+                    {
+                        index::remember_id(new_dir, maps, &decl.name, &id, rel)?;
+                    }
+                    #[cfg(feature = "search")]
+                    if decl.vector_indexed()
+                        && let Some(source) = vector_source.as_ref()
+                    {
+                        source.copy_record(rebuilder, &decl.name, &id)?;
+                    }
+                    if decl.any_indexed() {
+                        rebuilder.upsert(decl, &record, self.embedder.as_deref())?;
+                    }
+                }
+                _ => {
+                    if decl.kind == Kind::Journal {
+                        index::forget_remembered(new_dir, maps, &decl.name, &id)?;
+                    }
+                    if decl.any_indexed() {
+                        rebuilder.forget(decl, &id)?;
+                    }
+                }
+            }
+        }
+        rebuilder.flush()
+    }
+
+    #[cfg(not(feature = "find"))]
+    fn apply_queue_thin(
+        &self,
+        schema: &LoadedSchema,
+        new_dir: &Path,
+        maps: &mut JournalIdMaps,
+    ) -> Result<(), Error> {
+        for path in crate::reindex::list_queue(&self.path)? {
+            let Some((collection, id)) = crate::reindex::take_queue_file(&path)? else {
+                continue;
+            };
+            let Some(decl) = schema.get(&collection) else {
+                continue;
+            };
+            if decl.encrypted {
+                continue;
+            }
+            match self.read_queued_record(decl, &id)? {
+                Some(record) if record.valid == Some(true) => {
+                    if decl.kind == Kind::Journal
+                        && let Some(rel) = record.path.as_deref()
+                    {
+                        index::remember_id(new_dir, maps, &decl.name, &id, rel)?;
+                    }
+                }
+                _ => {
+                    if decl.kind == Kind::Journal {
+                        index::forget_remembered(new_dir, maps, &decl.name, &id)?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn read_queued_record(&self, decl: &CollectionDecl, id: &str) -> Result<Option<Record>, Error> {
+        match decl.kind {
+            Kind::Journal => match journal::find_journal_scan(&self.path, decl, id) {
+                Ok(record) => Ok(Some(record)),
+                Err(err) if crate::reindex::is_absent(&err) => Ok(None),
+                Err(err) => Err(err),
+            },
+            Kind::Document | Kind::Singleton => {
+                match store::find_document(&self.path, decl, id, self.encryption.as_ref()) {
+                    Ok(record) => Ok(Some(record)),
+                    Err(err) if crate::reindex::is_absent(&err) => Ok(None),
+                    Err(err) => Err(err),
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "find")]
+    fn publish_reindex(
+        &self,
+        new_dir: &Path,
+        maps: JournalIdMaps,
+        rebuilder: SearchEngine,
+    ) -> Result<(), Error> {
+        index::publish_generation(&self.index.root, new_dir)?;
+        self.search.release_writer()?;
+        self.search.adopt(rebuilder)?;
+        self.index.set_dir(new_dir.to_path_buf())?;
+        *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
+        crate::reindex::clear_active(&self.path)
+    }
+
+    #[cfg(feature = "search")]
+    fn vector_models_differ(&self) -> bool {
+        let Some(embedder) = self.embedder.as_deref() else {
+            return false;
+        };
+        let Ok(dir) = self.generation_dir() else {
+            return false;
+        };
+        let meta_path = dir.join("vector").join("meta.json");
+        let Ok(raw) = fs::read_to_string(&meta_path) else {
+            return false;
+        };
+        let Ok(meta) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            return false;
+        };
+        let model = meta.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
+        let dims = meta
+            .get("dimensions")
+            .and_then(serde_json::Value::as_u64)
+            .unwrap_or(0);
+        model != embedder.model_id() || dims != embedder.dimensions().get() as u64
+    }
+
+    fn try_take_write_lock(&self) -> Result<bool, Error> {
+        let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")
+            .with_context(|| "[Vault::reindex] take write lock")?;
+        if slot.is_some() {
+            return Ok(true);
+        }
+        match try_acquire_write_lock(&self.path)? {
+            Some(file) => {
+                #[cfg(feature = "find")]
+                if let Err(err) = self.search.enable_write() {
+                    let _ = file.unlock();
+                    return Err(err).with_context(|| "[Vault::reindex] take write lock");
+                }
+                *slot = Some(file);
+                Ok(true)
+            }
+            None => Ok(false),
+        }
     }
 
     /// Fill a new generation without swapping `current`. Test seam for a
@@ -766,20 +1121,21 @@ impl Vault {
     pub(crate) fn reindex_without_publish(&self) -> Result<PathBuf, Error> {
         self.require_write_lock("reindex")?;
         self.conclude_write((|| {
-            self.search.close_for_rebuild();
             let schema = schema::load(&self.path)?;
+            #[cfg(feature = "search")]
             let previous = self.generation_dir()?;
-            let (_, _, new_dir) = index::prepare_generation(&self.path, &schema, &self.index.root)?;
-            if let Err(err) = self.search.rebuild_into(
-                &new_dir,
-                &self.path,
-                &schema,
-                self.embedder.as_deref(),
-                Some(previous.as_path()),
-            ) {
-                let _ = self.search.set_index_dir(&previous);
-                return Err(err);
+            let new_dir = index::start_generation(&self.index.root)?;
+            #[cfg(feature = "search")]
+            {
+                self.search.flush()?;
+                // Must precede `index::rebuild`: that walk clears the generation
+                // except an inherited `vector/` dump already in place.
+                crate::search::copy_vector_dump(&previous, &new_dir, self.embedder.as_deref())?;
             }
+            index::rebuild(&self.path, &schema, &new_dir)?;
+            let rebuilder = SearchEngine::open(&new_dir, true)?;
+            rebuilder.rebuild_online(&self.path, &schema, self.embedder.as_deref(), None)?;
+            drop(rebuilder);
             Ok(new_dir)
         })())
     }
@@ -1037,6 +1393,7 @@ impl Collection {
         if paths.is_empty() {
             return Ok(());
         }
+        let snapshot = crate::reindex::snapshot_restored(&self.vault, &self.schema, &paths)?;
         isolated::discard_recorded(&self.vault, &paths)?;
         let dir = self.generation_dir()?;
         repair_index_after_discard(
@@ -1046,7 +1403,8 @@ impl Collection {
             #[cfg(feature = "find")]
             &self.search,
             self.embedder.as_deref(),
-        )
+        )?;
+        crate::reindex::enqueue_restored(&self.vault, &self.schema, &paths, &snapshot)
     }
 
     fn prepare_isolated_write(&self) -> Result<(), Error> {
@@ -1178,6 +1536,11 @@ impl Collection {
                         self.rollback_journal_insert(&id, &rel, &rollback);
                         return Err(err);
                     }
+                    if let Err(err) = crate::reindex::enqueue(&self.vault, &self.decl, &id) {
+                        let _ = self.forget_lexical(&id);
+                        self.rollback_journal_insert(&id, &rel, &rollback);
+                        return Err(err);
+                    }
                     self.finish_mutation(message)?;
                     Ok(())
                 }
@@ -1192,6 +1555,12 @@ impl Collection {
                     record.valid = Some(true);
                     self.note_write(rel.clone())?;
                     if let Err(err) = self.upsert_lexical(&record) {
+                        let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+                        let _ = self.unnote_write(&rel);
+                        return Err(err);
+                    }
+                    if let Err(err) = crate::reindex::enqueue(&self.vault, &self.decl, id) {
+                        let _ = self.forget_lexical(id);
                         let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
                         let _ = self.unnote_write(&rel);
                         return Err(err);
@@ -1316,6 +1685,12 @@ impl Collection {
                 let _ = self.unnote_write(&rel);
                 return Err(err);
             }
+            if let Err(err) = crate::reindex::enqueue(&self.vault, &self.decl, id) {
+                let _ = self.forget_lexical(id);
+                let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+                let _ = self.unnote_write(&rel);
+                return Err(err);
+            }
             self.finish_mutation(message)?;
             Ok(())
         })())
@@ -1357,6 +1732,11 @@ impl Collection {
             self.note_write(rel.clone())?;
             store::remove_document(&self.vault, &self.decl, id)?;
             if let Err(err) = self.forget_lexical(id) {
+                let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
+                let _ = self.unnote_write(&rel);
+                return Err(err);
+            }
+            if let Err(err) = crate::reindex::enqueue(&self.vault, &self.decl, id) {
                 let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
                 let _ = self.unnote_write(&rel);
                 return Err(err);
@@ -2151,8 +2531,8 @@ fn persist_written(vault: &Path, set: &BTreeSet<String>) -> Result<(), Error> {
     Ok(())
 }
 
-/// Prune orphan generations when no writer holds the lock. Skip if a writer
-/// is in the middle of `reindex` (its new generation is not yet `current`).
+/// Prune orphan generations when no writer holds the lock and no
+/// `reindex` is filling `N+1`. Skip if `write.lock` or `reindex.lock` is held.
 fn try_prune_orphans(vault: &Path, root: &Path) -> Result<(), Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Vault::open] create .scheda for prune")?;
@@ -2168,7 +2548,15 @@ fn try_prune_orphans(vault: &Path, root: &Path) -> Result<(), Error> {
     store::restrict_file(&lock_path)?;
     match file.try_lock() {
         Ok(()) => {
-            let result = index::prune_generations(root);
+            let result = match crate::reindex::try_lock(vault)? {
+                None => Ok(()),
+                Some(reindex_lock) => {
+                    let result = crate::reindex::clear_stale(vault)
+                        .and_then(|()| index::prune_generations(root));
+                    drop(reindex_lock);
+                    result
+                }
+            };
             if let Err(err) = file.unlock()
                 && result.is_ok()
             {
@@ -2233,6 +2621,15 @@ fn release_lock_unless_in_transaction<T>(
 }
 
 fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
+    match try_acquire_write_lock(vault)? {
+        Some(file) => Ok(file),
+        None => {
+            Err(Error::locked("vault write lock is held").context("[Vault] acquire write lock"))
+        }
+    }
+}
+
+fn try_acquire_write_lock(vault: &Path) -> Result<Option<File>, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Vault] create .scheda for write lock")?;
     store::restrict_dir(&scheda)?;
@@ -2247,10 +2644,8 @@ fn acquire_write_lock(vault: &Path) -> Result<File, Error> {
         .context("[Vault] open write lock")?;
     store::restrict_file(&lock_path)?;
     match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => {
-            Err(Error::locked("vault write lock is held").context("[Vault] acquire write lock"))
-        }
+        Ok(()) => Ok(Some(file)),
+        Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(err)) => {
             Err(Error::new(io_code(&err), err.to_string()).context("[Vault] lock write lock"))
         }
@@ -2303,13 +2698,19 @@ fn drain_legacy_index_lock(scheda: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    #[cfg(feature = "search")]
+    use std::num::NonZeroUsize;
     use std::path::{Path, PathBuf};
     use std::process;
+    #[cfg(feature = "search")]
+    use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
     use crate::{Code, Encryption, Error, RecordAdd, RecordReplace, Schema, VaultInfo};
+    #[cfg(feature = "search")]
+    use crate::{Embedder, SearchQuery};
 
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -2600,8 +3001,82 @@ mod tests {
         schema
     }
 
+    fn journal_schema() -> Schema {
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "journal": {},
+            "fields": [{"name": "tag", "string": {}}]
+        }))
+        .unwrap()
+    }
+
     fn empty_add() -> RecordAdd {
         serde_json::from_value(serde_json::json!({"fields": {}})).unwrap()
+    }
+
+    #[cfg(feature = "search")]
+    fn body_add(text: &str) -> RecordAdd {
+        serde_json::from_value(serde_json::json!({"fields": {}, "body": text})).unwrap()
+    }
+
+    #[cfg(feature = "search")]
+    fn counting_vector(text: &str) -> Vec<f32> {
+        let mut acc = [0.0f32; 4];
+        for (i, b) in text.as_bytes().iter().enumerate() {
+            acc[i % 4] += f32::from(*b) / 255.0;
+        }
+        let norm = acc.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            for x in &mut acc {
+                *x /= norm;
+            }
+        } else {
+            acc[0] = 1.0;
+        }
+        acc.to_vec()
+    }
+
+    #[cfg(feature = "search")]
+    struct CountingEmbedder {
+        model_id: &'static str,
+        slots: AtomicU64,
+    }
+
+    #[cfg(feature = "search")]
+    impl CountingEmbedder {
+        fn new(model_id: &'static str) -> Arc<Self> {
+            Arc::new(Self {
+                model_id,
+                slots: AtomicU64::new(0),
+            })
+        }
+
+        fn slots(&self) -> u64 {
+            self.slots.load(Ordering::Relaxed)
+        }
+    }
+
+    #[cfg(feature = "search")]
+    impl Embedder for CountingEmbedder {
+        fn model_id(&self) -> &str {
+            self.model_id
+        }
+
+        fn dimensions(&self) -> NonZeroUsize {
+            NonZeroUsize::new(4).unwrap()
+        }
+
+        fn many_limit(&self) -> NonZeroUsize {
+            NonZeroUsize::new(32).unwrap()
+        }
+
+        fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+            self.slots.fetch_add(
+                u64::try_from(texts.len()).expect("embed batch fits u64"),
+                Ordering::Relaxed,
+            );
+            Ok(texts.iter().copied().map(counting_vector).collect())
+        }
     }
 
     #[test]
@@ -2914,6 +3389,649 @@ mod tests {
         assert!(
             !orphan.exists(),
             "unpublished generation must be removed on the next open"
+        );
+    }
+
+    #[cfg(feature = "find")]
+    fn live_generation(vault: &Vault) -> u64 {
+        fs::read_to_string(vault.index_dir().join("current"))
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap()
+    }
+
+    #[cfg(feature = "find")]
+    fn assert_locked_reindex(err: &Error) {
+        assert_eq!(err.known_code(), Some(Code::Locked));
+        assert!(
+            err.stack.iter().any(|frame| frame.contains("reindex")),
+            "reindex missing from stack: {:?}",
+            err.stack
+        );
+    }
+
+    fn seeded(scratch: &Scratch) -> Vault {
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        vault.commit("schema").unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("alpha", empty_add(), None)
+            .unwrap();
+        vault
+    }
+
+    #[cfg(feature = "find")]
+    fn find_ids(vault: &Vault, name: &str) -> Vec<String> {
+        vault
+            .collection(name)
+            .unwrap()
+            .find(&crate::FindQuery::all(), 0, 10)
+            .unwrap()
+            .records
+            .into_iter()
+            .filter_map(|record| record.id)
+            .collect()
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn reindex_releases_write_lock_during_walk() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let other = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let saw_free = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                let saw_free = std::sync::Arc::clone(&saw_free);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                    saw_free.store(true, std::sync::atomic::Ordering::Relaxed);
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                assert!(
+                    !vault.holds_write_lock(),
+                    "write.lock must be free during the walk"
+                );
+                other
+                    .collection("c")
+                    .unwrap()
+                    .add("beta", empty_add(), None)
+                    .unwrap();
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+        assert!(saw_free.load(std::sync::atomic::Ordering::Relaxed));
+        let mut ids = find_ids(&vault, "c");
+        ids.sort();
+        assert_eq!(ids, ["alpha", "beta"]);
+        assert!(
+            !scratch
+                .vault()
+                .join(".scheda")
+                .join("reindex")
+                .join("active")
+                .exists()
+        );
+        vault
+            .collection("c")
+            .unwrap()
+            .add("gamma", empty_add(), None)
+            .unwrap();
+        let queue = scratch
+            .vault()
+            .join(".scheda")
+            .join("reindex")
+            .join("queue");
+        let leftover = queue.is_dir()
+            && fs::read_dir(&queue)
+                .unwrap()
+                .any(|entry| entry.unwrap().path().is_file());
+        assert!(!leftover, "add after publish must not enqueue");
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn publish_gives_up_when_transaction_holds_write_lock() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let live = live_generation(&vault);
+        let holder = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        let window = std::time::Duration::from_millis(250);
+        let _guard = crate::reindex::set_publish_window(window);
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                holder.begin().unwrap();
+                done.wait();
+            });
+            let started = std::time::Instant::now();
+            let err = vault.reindex().unwrap_err();
+            assert!(
+                started.elapsed() >= window,
+                "publish must retry for the shortened window"
+            );
+            assert_locked_reindex(&err);
+            assert_eq!(live_generation(&vault), live);
+            holder.discard().unwrap();
+        });
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn same_model_catch_up_copies_queued_vectors() {
+        let scratch = Scratch::new();
+        let embedder = CountingEmbedder::new("model-x");
+        let vault = Vault::open(
+            scratch.vault(),
+            scratch.options(),
+            Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+        )
+        .unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        vault.commit("schema").unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("keep", body_add("alpha mineral"), None)
+            .unwrap();
+        let after_add = embedder.slots();
+        let other = Vault::open(
+            scratch.vault(),
+            scratch.options(),
+            Some(CountingEmbedder::new("model-x") as Arc<dyn Embedder>),
+        )
+        .unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                other
+                    .collection("c")
+                    .unwrap()
+                    .add("queued", body_add("queued mineral"), None)
+                    .unwrap();
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+        assert_eq!(
+            embedder.slots(),
+            after_add,
+            "same-model catch-up must copy queued slots, not embed"
+        );
+        let mut ids = find_ids(&vault, "c");
+        ids.sort();
+        assert_eq!(ids, ["keep", "queued"]);
+        let hits = vault
+            .collection("c")
+            .unwrap()
+            .search(
+                &SearchQuery::default()
+                    .with_text("queued mineral")
+                    .with_k(10)
+                    .with_lexical_weight(0.0),
+                None,
+            )
+            .unwrap()
+            .hits
+            .into_iter()
+            .filter_map(|hit| hit.id)
+            .collect::<Vec<_>>();
+        assert!(hits.contains(&"queued".to_owned()), "{hits:?}");
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn catch_up_without_embedder_does_not_create_vector_table() {
+        let scratch = Scratch::new();
+        let seeded = Vault::open(
+            scratch.vault(),
+            scratch.options(),
+            Some(CountingEmbedder::new("model-x") as Arc<dyn Embedder>),
+        )
+        .unwrap();
+        seeded.begin().unwrap();
+        seeded
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        seeded.commit("schema").unwrap();
+        seeded
+            .collection("c")
+            .unwrap()
+            .add("keep", body_add("alpha mineral"), None)
+            .unwrap();
+        drop(seeded);
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let other = Vault::open(
+            scratch.vault(),
+            scratch.options(),
+            Some(CountingEmbedder::new("model-x") as Arc<dyn Embedder>),
+        )
+        .unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                other
+                    .collection("c")
+                    .unwrap()
+                    .add("queued", body_add("queued mineral"), None)
+                    .unwrap();
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+        let generation = live_generation(&vault);
+        assert!(
+            !vault
+                .index_dir()
+                .join(generation.to_string())
+                .join("vector")
+                .exists(),
+            "catch-up without an embedder must not create a vector table"
+        );
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn second_reindex_during_walk_is_locked() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let other = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                let err = other.reindex().unwrap_err();
+                assert_locked_reindex(&err);
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn remove_during_walk_is_skipped_not_not_found() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let other = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                other
+                    .collection("c")
+                    .unwrap()
+                    .remove("alpha", None)
+                    .unwrap();
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+        assert!(find_ids(&vault, "c").is_empty());
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn open_during_walk_does_not_prune_new_generation() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let before = live_generation(&vault);
+        let next = scratch
+            .vault()
+            .join(".scheda")
+            .join("index")
+            .join((before + 1).to_string());
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                let opened = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+                assert!(
+                    next.is_dir(),
+                    "open must not prune N+1 while reindex.lock is held"
+                );
+                assert_eq!(live_generation(&opened), before);
+                let ids = find_ids(&opened, "c");
+                assert_eq!(ids, ["alpha"]);
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+        assert_eq!(live_generation(&vault), before + 1);
+        assert_eq!(find_ids(&vault, "c"), ["alpha"]);
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn admin_ops_are_locked_during_reindex_but_push_is_not() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let other = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                assert_locked_reindex(
+                    &other
+                        .create_collection("x", document_schema(), None)
+                        .unwrap_err(),
+                );
+                assert_locked_reindex(&other.discard().unwrap_err());
+                assert_locked_reindex(&other.pull().unwrap_err());
+                assert_locked_reindex(&other.sync().unwrap_err());
+                let push = other.push().unwrap_err();
+                assert_ne!(
+                    push.known_code(),
+                    Some(Code::Locked),
+                    "push must not be locked by reindex: {:?}",
+                    push.stack
+                );
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn reindex_inside_transaction_writes_no_marker() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        vault.begin().unwrap();
+        vault.reindex().unwrap();
+        assert!(vault.holds_write_lock());
+        assert!(
+            !scratch
+                .vault()
+                .join(".scheda")
+                .join("reindex")
+                .join("active")
+                .exists()
+        );
+        vault.discard().unwrap();
+        assert_eq!(find_ids(&vault, "c"), ["alpha"]);
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn journal_add_during_walk_is_in_map_after_publish() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("j", journal_schema(), None)
+            .unwrap();
+        vault.commit("schema").unwrap();
+        vault
+            .collection("j")
+            .unwrap()
+            .add("keep", empty_add(), None)
+            .unwrap();
+        let other = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let start = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let done = std::sync::Arc::new(std::sync::Barrier::new(2));
+        vault
+            .set_reindex_walk_hook({
+                let start = std::sync::Arc::clone(&start);
+                let done = std::sync::Arc::clone(&done);
+                std::sync::Arc::new(move |_| {
+                    start.wait();
+                    done.wait();
+                })
+            })
+            .unwrap();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                start.wait();
+                other
+                    .collection("j")
+                    .unwrap()
+                    .add("queued", empty_add(), None)
+                    .unwrap();
+                done.wait();
+            });
+            vault.reindex().unwrap();
+        });
+        let got = vault.collection("j").unwrap().get("queued").unwrap();
+        assert_eq!(got.id.as_deref(), Some("queued"));
+    }
+
+    #[test]
+    fn leftover_isolated_scheda_is_removed_by_reindex() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        let leftover = scratch.vault().join(".isolated").join(".scheda");
+        fs::create_dir_all(&leftover).unwrap();
+        fs::write(leftover.join("stale"), b"old").unwrap();
+        vault.reindex().unwrap();
+        assert!(!leftover.exists());
+    }
+
+    #[test]
+    fn reindex_does_not_delete_tx_log() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        vault.begin().unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("beta", empty_add(), None)
+            .unwrap();
+        let tx = scratch.vault().join(".scheda").join("tx.log");
+        assert!(tx.is_file());
+        vault.reindex().unwrap();
+        assert!(tx.is_file(), "reindex must not delete tx.log");
+        vault.discard().unwrap();
+    }
+
+    #[cfg(feature = "find")]
+    #[test]
+    fn stale_active_without_lock_is_cleared_on_open() {
+        let scratch = Scratch::new();
+        let writer = seeded(&scratch);
+        writer.reindex().unwrap();
+        let live = fs::read_to_string(writer.index_dir().join("current")).unwrap();
+        let orphan = writer.reindex_without_publish().unwrap();
+        let reindex = scratch.vault().join(".scheda").join("reindex");
+        fs::create_dir_all(reindex.join("queue")).unwrap();
+        fs::write(reindex.join("active"), b"99\n").unwrap();
+        fs::write(
+            reindex.join("queue").join("deadbeef"),
+            b"{\"collection\":\"c\",\"id\":\"alpha\"}",
+        )
+        .unwrap();
+        drop(writer);
+        let opened = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        assert!(!orphan.exists());
+        assert!(!reindex.join("active").exists());
+        assert!(
+            !reindex.join("queue").join("deadbeef").exists(),
+            "stale queue files must be dropped"
+        );
+        assert_eq!(
+            fs::read_to_string(opened.index_dir().join("current")).unwrap(),
+            live
+        );
+        opened
+            .collection("c")
+            .unwrap()
+            .add("gamma", empty_add(), None)
+            .unwrap();
+        assert!(
+            fs::read_dir(reindex.join("queue"))
+                .map(|entries| !entries.filter_map(Result::ok).any(|e| e.path().is_file()))
+                .unwrap_or(true),
+            "add after stale clear must not enqueue"
+        );
+    }
+
+    #[cfg(unix)]
+    #[cfg(feature = "find")]
+    #[test]
+    fn published_generation_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        vault.reindex().unwrap();
+        let generation = vault.index_dir().join(live_generation(&vault).to_string());
+        let mode = fs::metadata(&generation).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[test]
+    fn restore_of_uncommitted_journal_segment_enqueues_deleted_ids() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        vault.begin().unwrap();
+        vault
+            .create_collection("j", journal_schema(), None)
+            .unwrap();
+        vault
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        vault.commit("schema").unwrap();
+        vault.reindex().unwrap();
+        vault.begin().unwrap();
+        vault
+            .collection("j")
+            .unwrap()
+            .add("lost", empty_add(), None)
+            .unwrap();
+        let rel = vault
+            .collection("j")
+            .unwrap()
+            .get("lost")
+            .unwrap()
+            .path
+            .clone()
+            .unwrap();
+        let segment = scratch.vault().join(&rel);
+        assert!(segment.is_file(), "uncommitted journal segment must exist");
+        drop(vault);
+
+        let _reindex_lock = crate::reindex::acquire_lock(&scratch.vault()).unwrap();
+        crate::reindex::write_active(&scratch.vault(), 2).unwrap();
+
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("beta", empty_add(), None)
+            .unwrap();
+
+        assert!(
+            !segment.is_file(),
+            "restore must unlink the uncommitted journal segment"
+        );
+        let files = crate::reindex::list_queue(&scratch.vault()).unwrap();
+        let mut queued = Vec::new();
+        for path in files {
+            if let Some(entry) = crate::reindex::take_queue_file(&path).unwrap() {
+                queued.push(entry);
+            }
+        }
+        assert!(
+            queued.iter().any(|(c, id)| c == "j" && id == "lost"),
+            "deleted journal line must be queued, got {queued:?}"
         );
     }
 }

@@ -204,6 +204,19 @@ fn find_one_uses_collection_and_id_not_segment_name() {
 }
 
 #[test]
+fn get_missing_segment_file_is_io_not_found_with_path() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    collection.add("a", rec("x"), None).unwrap();
+    let rel = collection.get("a").unwrap().path.expect("journal path");
+    fs::remove_file(scratch.vault().join(&rel)).unwrap();
+    let err = collection.get("a").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IoNotFound));
+    assert_eq!(err.path.as_deref(), Some(rel.as_str()));
+}
+
+#[test]
 fn empty_find_and_scan_keep_append_order_across_rotate() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);

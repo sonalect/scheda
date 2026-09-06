@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.34, 4 September 2026.
+Document 4 of the Scheda package. Version 0.35, 6 September 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -26,6 +26,21 @@ closes the descriptor. Stale pid-files are not the mechanism: they would
 survive a crash. Locks do not travel with `git push` / `git pull`. Two clones
 are two working trees: each may have a writer. NFS/SMB lock semantics are not
 relied on; Vaults on those shares are outside **core**.
+
+`reindex` takes `write.lock` only for its start protocol and for publish. The
+file walk that fills the new generation does not hold it: `add` / `replace`
+/ `remove` stay one writer per mutating call. A second flock,
+`{vault}/.scheda/reindex.lock`, is held from start until after publish (or
+failure cleanup). Only `reindex` takes `reindex.lock`. Both locks are
+`try_lock`; neither becomes a blocking wait. Start takes `write.lock` then
+`reindex.lock`; publish takes `write.lock` while already holding
+`reindex.lock`. A second `reindex` is `locked`. Mutating calls do not take
+`reindex.lock`: they look at `{vault}/.scheda/reindex/active` (LIB-16).
+`create_collection`, `pull`, `sync`, and `discard` are `locked` while that
+marker exists; `push` is not. *Check:* a second handle `add`s during an
+unlocked `reindex` walk and is not `locked`. *Check:* a second `reindex`
+while the first holds `reindex.lock` → `locked` with `reindex` in the
+stack.
 
 **STO-5. A failed write is not the new truth.** Validation failure, a full disk, or a killed process must not leave a half-written `document` or `singleton` as the file at the Record path, must not leave a `journal` segment cut in the middle of a line as an accepted Record, and must not leave a partial `remove` (the path holds the whole file or no file). *Check:* interrupt `replace` / `add` / `remove`; after reopen, the set of accepted Records equals the last successful write. Technique for `document`/`singleton` writes: write a sibling temp file in the same directory, `fsync`, rename over the target. Technique for `remove`: unlink the Record file (atomic: the path holds the file or nothing). Technique for `journal`: write one complete line including `\n`; a tail without `\n` is not a Record (STO-3).
 

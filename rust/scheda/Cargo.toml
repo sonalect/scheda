@@ -39,6 +39,7 @@ buffa = { workspace = true }
 buffa-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 tantivy = { workspace = true, optional = true }
 usearch = { workspace = true, optional = true }
 yaml_serde = { workspace = true }
@@ -88,4 +89,8 @@ required-features = ["find"]
 
 [[test]]
 name = "search"
+required-features = ["search"]
+
+[[test]]
+name = "reindex"
 required-features = ["search"]

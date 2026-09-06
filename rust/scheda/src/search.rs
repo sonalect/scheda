@@ -27,7 +27,9 @@ use tantivy::{
     Term,
 };
 
-use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail};
+#[cfg(feature = "search")]
+use crate::error::ContextGit;
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index;
 use crate::query::{self, FindFields};
 use crate::schema::{self, CollectionDecl, FieldDecl, Schema};
@@ -112,16 +114,27 @@ struct VectorStore {
     next_key: u64,
 }
 
+#[cfg(feature = "search")]
 struct VectorBatch {
     pieces: Vec<(String, String)>,
     vectors: Vec<(String, Vec<f32>)>,
 }
 
+#[cfg(not(feature = "search"))]
+struct VectorBatch;
+
 impl VectorBatch {
     fn empty() -> Self {
-        Self {
-            pieces: Vec::new(),
-            vectors: Vec::new(),
+        #[cfg(feature = "search")]
+        {
+            Self {
+                pieces: Vec::new(),
+                vectors: Vec::new(),
+            }
+        }
+        #[cfg(not(feature = "search"))]
+        {
+            Self
         }
     }
 }
@@ -260,25 +273,6 @@ impl SearchEngine {
         shutdown_lexical(lexical);
     }
 
-    /// Rebuild lexical / vector / edges into `index_dir`, then remember it
-    /// as this handle's generation.
-    ///
-    /// `previous` is the generation to inherit vectors from. When it is
-    /// `None`, this generation's own vector dump is the source (in-place
-    /// repair). Unchanged field slots keep their stored vectors; a
-    /// `model_id` or dimensions mismatch starts from an empty ANN table.
-    pub(crate) fn rebuild_into(
-        &self,
-        index_dir: &Path,
-        vault: &Path,
-        schema: &Schema,
-        embedder: Option<&dyn Embedder>,
-        previous: Option<&Path>,
-    ) -> Result<(), Error> {
-        self.set_index_dir(index_dir)?;
-        self.rebuild_from(vault, schema, embedder, previous)
-    }
-
     pub(crate) fn rebuild(
         &self,
         vault: &Path,
@@ -288,15 +282,49 @@ impl SearchEngine {
         self.rebuild_from(vault, schema, embedder, None)
     }
 
+    /// Fill this engine from Vault files. `hook` runs after a collection's
+    /// files are listed and before they are read, so a test can `remove`
+    /// in that window.
+    pub(crate) fn rebuild_online(
+        &self,
+        vault: &Path,
+        schema: &Schema,
+        embedder: Option<&dyn Embedder>,
+        hook: Option<&dyn Fn(&str)>,
+    ) -> Result<(), Error> {
+        self.rebuild_from(vault, schema, embedder, hook)
+    }
+
+    /// Install `other`'s engine and generation directory as this handle's
+    /// live Index. The previous live engine is shut down.
+    pub(crate) fn adopt(&self, other: SearchEngine) -> Result<(), Error> {
+        let dir = other.dir()?;
+        let mut other_inner = crate::error::rw_write(&other.inner, "[SearchEngine::adopt] take")?;
+        let taken = std::mem::replace(&mut *other_inner, empty_inner(false));
+        drop(other_inner);
+        // Directory first, then engine. `find` / `search` check freshness and
+        // format against the directory, then read the engine. Pointing the
+        // directory at N+1 first means a concurrent reader may still see N's
+        // engine, but never N+1's engine against N's files. Holding both write
+        // locks together would deadlock with `flush` (inner then dir) or
+        // `find` (dir then inner).
+        self.set_index_dir(&dir)?;
+        let mut self_inner = crate::error::rw_write(&self.inner, "[SearchEngine::adopt] install")?;
+        let old = std::mem::replace(&mut *self_inner, taken);
+        drop(self_inner);
+        shutdown_lexical(old.lexical);
+        Ok(())
+    }
+
     fn rebuild_from(
         &self,
         vault: &Path,
         schema: &Schema,
         embedder: Option<&dyn Embedder>,
-        previous: Option<&Path>,
+        hook: Option<&dyn Fn(&str)>,
     ) -> Result<(), Error> {
         #[cfg(not(feature = "search"))]
-        let _ = (embedder, previous);
+        let _ = embedder;
         let can_write = {
             let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] lock")?;
             let lexical = inner.lexical.take();
@@ -318,20 +346,14 @@ impl SearchEngine {
         }
         #[cfg(feature = "search")]
         {
-            let source = previous.unwrap_or(index_dir.as_path());
-            let inherited = inherit_vector(source, &index_dir, embedder)?;
+            let inherited = inherit_vector(&index_dir, &index_dir, embedder)?;
             let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] inherit")?;
             inner.vector = inherited;
         }
         #[cfg(feature = "search")]
         let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for decl in schema.collections().filter(|decl| decl.any_indexed()) {
-            let records = match decl.kind {
-                crate::schema::Kind::Journal => crate::journal::scan_journal(vault, decl)?,
-                crate::schema::Kind::Document | crate::schema::Kind::Singleton => {
-                    store::scan_documents(vault, decl, None)?
-                }
-            };
+            let records = records_for_rebuild(vault, decl, hook)?;
             for record in records {
                 if record.valid != Some(true) {
                     continue;
@@ -795,6 +817,50 @@ fn shutdown_lexical(lexical: Option<Lexical>) {
     }
 }
 
+fn empty_inner(can_write: bool) -> Inner {
+    Inner {
+        lexical: None,
+        #[cfg(feature = "search")]
+        vector: None,
+        edges: EdgeIndex::default(),
+        dirty: false,
+        can_write,
+        next_ord: BTreeMap::new(),
+        #[cfg(test)]
+        writer_opens: 0,
+    }
+}
+
+fn records_for_rebuild(
+    vault: &Path,
+    decl: &CollectionDecl,
+    hook: Option<&dyn Fn(&str)>,
+) -> Result<Vec<Record>, Error> {
+    match decl.kind {
+        crate::schema::Kind::Journal => {
+            if let Some(hook) = hook {
+                hook(&decl.name);
+            }
+            crate::journal::scan_journal(vault, decl)
+        }
+        crate::schema::Kind::Document | crate::schema::Kind::Singleton => {
+            let files = store::list_files(vault, decl)?;
+            if let Some(hook) = hook {
+                hook(&decl.name);
+            }
+            let mut out = Vec::new();
+            for path in files {
+                match store::read_file(vault, decl, &path, None) {
+                    Ok(record) => out.push(record),
+                    Err(err) if crate::reindex::is_absent(&err) => {}
+                    Err(err) => return Err(err),
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
 fn open_lexical_writer(index: &Index, frame: &'static str) -> Result<IndexWriter, Error> {
     let mut delay = Duration::from_millis(10);
     let mut last = None;
@@ -1226,25 +1292,160 @@ fn copy_vector_dir(from: &Path, to: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Copy `source`'s vector dump into `dest` when the embedder matches
+/// `model_id` and dimensions. Does not restore the ANN index.
+#[cfg(feature = "search")]
+fn copy_matching_vector_dump(
+    source: &Path,
+    dest: &Path,
+    embedder: Option<&dyn Embedder>,
+) -> Result<bool, Error> {
+    let Some(embedder) = embedder else {
+        return Ok(false);
+    };
+    let Some(meta) = peek_vector_meta(source)? else {
+        return Ok(false);
+    };
+    if meta.model_id != embedder.model_id() || meta.dimensions != embedder.dimensions().get() {
+        return Ok(false);
+    }
+    if source != dest {
+        copy_vector_dir(source, dest)?;
+    }
+    Ok(true)
+}
+
+#[cfg(feature = "search")]
+pub(crate) fn copy_vector_dump(
+    source: &Path,
+    dest: &Path,
+    embedder: Option<&dyn Embedder>,
+) -> Result<(), Error> {
+    let _ = copy_matching_vector_dump(source, dest, embedder)?;
+    Ok(())
+}
+
 #[cfg(feature = "search")]
 fn inherit_vector(
     source: &Path,
     dest: &Path,
     embedder: Option<&dyn Embedder>,
 ) -> Result<Option<VectorStore>, Error> {
-    let Some(embedder) = embedder else {
+    if !copy_matching_vector_dump(source, dest, embedder)? {
         return Ok(None);
-    };
-    let Some(meta) = peek_vector_meta(source)? else {
-        return Ok(None);
-    };
-    if meta.model_id != embedder.model_id() || meta.dimensions != embedder.dimensions().get() {
-        return Ok(None);
-    }
-    if source != dest {
-        copy_vector_dir(source, dest)?;
     }
     load_vector(dest)
+}
+
+/// Vector slots of one generation, read from its dump.
+#[cfg(feature = "search")]
+pub(crate) struct VectorSource {
+    store: Option<VectorStore>,
+}
+
+/// Load the vector dump under `dir` (`dir/vector/`). Missing dump → empty source.
+#[cfg(feature = "search")]
+pub(crate) fn load_vector_source(dir: &Path) -> Result<VectorSource, Error> {
+    Ok(VectorSource {
+        store: load_vector(dir)?,
+    })
+}
+
+#[cfg(feature = "search")]
+impl VectorSource {
+    /// Copy this Record's slots into `dest`. Same digest already in `dest`
+    /// is left in place; slots `dest` has that this source no longer has
+    /// are removed. Marks `dest` dirty; does not commit.
+    pub(crate) fn copy_record(
+        &self,
+        dest: &SearchEngine,
+        collection: &str,
+        id: &str,
+    ) -> Result<(), Error> {
+        let Some(src) = self.store.as_ref() else {
+            return Ok(());
+        };
+        let model_id = src.model_id.clone();
+        let dimensions = src.dimensions;
+        let mut copied = Vec::new();
+        for (key, doc) in &src.keys {
+            if doc.collection != collection || doc.id != id {
+                continue;
+            }
+            let Some(vector) = src.ann.get(*key)? else {
+                continue;
+            };
+            copied.push(CopiedSlot {
+                doc: doc.clone(),
+                vector,
+                keep: false,
+            });
+        }
+        let mut inner = crate::error::rw_write(&dest.inner, "[SearchEngine] copy vectors")?;
+        if inner.vector.is_none() {
+            if copied.is_empty() {
+                return Ok(());
+            }
+            inner.vector = Some(VectorStore {
+                ann: crate::ann::AnnIndex::new(dimensions)?,
+                keys: BTreeMap::new(),
+                model_id: model_id.clone(),
+                dimensions,
+                field_ids: BTreeSet::new(),
+                next_key: 1,
+            });
+        }
+        let Some(store) = inner.vector.as_mut() else {
+            return Ok(());
+        };
+        if store.model_id != model_id || store.dimensions != dimensions {
+            return Ok(());
+        }
+        let dest_keys: Vec<(u64, String, String)> = store
+            .keys
+            .iter()
+            .filter(|(_, doc)| doc.collection == collection && doc.id == id)
+            .map(|(key, doc)| (*key, doc.field.clone(), doc.digest.clone()))
+            .collect();
+        let mut changed = false;
+        for (key, field, digest) in dest_keys {
+            match copied
+                .iter_mut()
+                .find(|slot| !slot.keep && slot.doc.field == field && slot.doc.digest == digest)
+            {
+                Some(slot) => slot.keep = true,
+                None => {
+                    if store.ann.contains(key) {
+                        store.ann.remove(key)?;
+                    }
+                    store.keys.remove(&key);
+                    changed = true;
+                }
+            }
+        }
+        for slot in copied {
+            if slot.keep || slot.vector.len() != dimensions {
+                continue;
+            }
+            let key = store.next_key.max(1);
+            store.next_key = key.saturating_add(1);
+            store.ann.add(key, &slot.vector)?;
+            store.keys.insert(key, slot.doc);
+            changed = true;
+        }
+        if changed {
+            refresh_field_ids(store);
+            inner.dirty = true;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(feature = "search")]
+struct CopiedSlot {
+    doc: DocRef,
+    vector: Vec<f32>,
+    keep: bool,
 }
 
 #[cfg(feature = "search")]

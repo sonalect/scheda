@@ -8,6 +8,31 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **Online `reindex`.** `reindex` holds `write.lock` only for start and
+  publish. `add` / `replace` / `remove` stay allowed during the file walk
+  (one writer per mutating call). A second flock,
+  `{vault}/.scheda/reindex.lock`, allows one rebuild at a time; a second
+  `reindex` is `locked`. Catch-up is a folder of queue files under
+  `{vault}/.scheda/reindex/queue/`. `create_collection` / `pull` /
+  `sync` / `discard` are `locked` while a rebuild is active; `push` is
+  not. Publish retries `write.lock` for 30 seconds at 25 ms; an open
+  transaction that holds it throughout fails with `locked` and leaves
+  `current` unchanged.
+- **A rebuild does not pay the embedder twice.** A write that lands
+  during the file walk is caught up by copying its vector slots from the
+  live generation's dump when `model_id` and dimensions match, so a
+  network embedder is not called again for text it already embedded,
+  including when that write came from another handle or another process.
+  A Vault opened without an embedder gains no vector data from a rebuild.
+- **A Vault opened by an older Scheda must not write during a rebuild.**
+  The rebuild marker and the catch-up queue live in
+  `{vault}/.scheda/reindex/`. A build without this release ignores both,
+  so its `add` / `replace` / `remove` reach the live generation but never
+  the one being built, and the published Index silently misses them.
+  Upgrade every handle on a Vault together.
+
 ## [0.9.12] - 2026-09-06
 
 ### Changed

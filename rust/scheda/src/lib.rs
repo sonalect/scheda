@@ -49,7 +49,9 @@
 //! writer races it). Remote git (`push` / `pull` / `sync`) and `reindex` /
 //! `search` are the calls that must not sit on a worker thread. The Vault
 //! write lock is held for an open transaction and for one mutating call
-//! outside a transaction, then released. The lexical Index writer uses
+//! outside a transaction, then released. `reindex` takes that lock only
+//! for start and publish; the file walk does not hold it. A second flock,
+//! `reindex.lock`, is held for the whole rebuild. The lexical Index writer uses
 //! the same lifetime, so a second handle can write after `commit` without
 //! waiting on Tantivy's directory lock.
 //!
@@ -82,6 +84,7 @@ mod isolated;
 mod journal;
 #[cfg(feature = "find")]
 mod query;
+mod reindex;
 mod schema;
 #[cfg(feature = "find")]
 mod search;

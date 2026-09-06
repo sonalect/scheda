@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.46, 5 September 2026.
+Document 10 of the Scheda package. Version 0.48, 6 September 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -119,6 +119,8 @@ Unencrypted isolated (`encryption` unset, `0600`, no Remote) is valid; encryptio
 
 **Still later — P16:** a CLI that can carry the encryption secret (`14`), and a Remote of the nested tree's own (ISO-6 relaxation). `OpenOptions.encryption` does not wait; the library already uses it.
 
+Online `reindex` (writers during the Index walk) is not P16. The work order is `15`.
+
 **Isolated is accepted** when:
 
 1. A fixture with gitignored `{vault}/.isolated/`: queries on non-isolated collections return no isolated Records and do not require `.isolated/` (ISO-2, SCH-15).
@@ -134,6 +136,7 @@ Gates 1–5 hold in `scheda` today. The nested Remote and the CLI secret are P16
 Not required of **core**, **search**, or **agent**:
 
 - File watcher for human edits (default remains `reindex`, IDX-5).
+- Holding a rebuild across a long transaction: publish gives up after 30 seconds and the caller runs `reindex` again (`15`).
 - Line-level journal blame (`history` of a JSONL line). `history(id)` of the segment that holds that `id` stays **core** (GIT-3, LIB-17).
 - Journal line `remove` (not for `document` / `singleton`: those have LIB-24).
 - REL-4 multi-step walk.
@@ -155,7 +158,7 @@ These are orders of magnitude for an interactive caller on one machine, not SLAs
 
 **OPS-2. Search budget.** Hybrid `search` without a pair reranker on the OPS-1 fixture finishes in tens of milliseconds. *Check (**search**):* timed fixture queries.
 
-**OPS-3. `reindex` is measurable.** Full `reindex` on OPS-1 completes and reports Records read, skipped invalid, segments seen (LIB-16). *Check (**core**):* counts match a hand tally of files and journal lines.
+**OPS-3. `reindex` is measurable.** Full `reindex` on OPS-1 completes and reports Records read, skipped invalid, segments seen (LIB-16). Those counts are what the walk saw. A Record written or removed during the walk may fall either side; the hand tally holds on a quiet tree. *Check (**core**):* counts match a hand tally of files and journal lines.
 
 **OPS-4. Offline embed.** After embedder weights are already on disk, **search** does not need the network. Download of weights is the consumer's install, not the library hot path. *Check (**search**):* a full cycle with the network disabled.
 

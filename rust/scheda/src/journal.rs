@@ -195,6 +195,25 @@ pub(crate) fn insert_journal(
     Ok((id, rel, JournalRollback { path, previous_len }))
 }
 
+/// Scan segment files for `id`. Catch-up uses this so a map that does not
+/// yet know the line still finds it on disk.
+pub(crate) fn find_journal_scan(
+    vault: &Path,
+    decl: &CollectionDecl,
+    id: &str,
+) -> Result<Record, Error> {
+    let mut found = None;
+    for_each_parsed(vault, decl, |path, parsed| {
+        if parsed.id == id {
+            found = Some(record_from_parsed(vault, decl, path, parsed)?);
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    })?;
+    found.ok_or_else(|| Error::not_found(format!("record {id} is not in {}", decl.name)))
+}
+
 pub(crate) fn find_journal(
     vault: &Path,
     decl: &CollectionDecl,
@@ -214,19 +233,6 @@ pub(crate) fn find_journal(
     }
 }
 
-fn find_journal_scan(vault: &Path, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
-    let mut found = None;
-    for_each_parsed(vault, decl, |path, parsed| {
-        if parsed.id == id {
-            found = Some(record_from_parsed(vault, decl, path, parsed)?);
-            Ok(false)
-        } else {
-            Ok(true)
-        }
-    })?;
-    found.ok_or_else(|| Error::not_found(format!("record {id} is not in {}", decl.name)))
-}
-
 fn find_in_segment(
     vault: &Path,
     decl: &CollectionDecl,
@@ -234,7 +240,10 @@ fn find_in_segment(
     id: &str,
 ) -> Result<Record, Error> {
     let path = vault.join(rel);
-    for parsed in parse_segment(&path)? {
+    let raw = fs::read(&path)
+        .context("[Journal::find] read segment")
+        .map_err(|err| err.with_path(rel))?;
+    for parsed in parse_segment_bytes(&raw) {
         if parsed.id == id {
             return record_from_parsed(vault, decl, &path, parsed);
         }
@@ -707,13 +716,29 @@ fn map_from_files(vault: &Path, decl: &CollectionDecl) -> Result<BTreeMap<String
     Ok(ids)
 }
 
+/// Record `id`s in one journal segment file. Missing file → empty.
+pub(crate) fn ids_in_segment(path: &Path) -> Result<Vec<String>, Error> {
+    Ok(parse_segment(path)?
+        .into_iter()
+        .map(|parsed| parsed.id)
+        .collect())
+}
+
 fn parse_segment(path: &Path) -> Result<Vec<ParsedLine>, Error> {
-    let raw = fs::read(path).context("[Journal::parse_segment] read segment")?;
-    let Ok(text) = str::from_utf8(&raw) else {
-        return Ok(Vec::new());
+    let raw = match fs::read(path) {
+        Ok(raw) => raw,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err).context("[Journal::parse_segment] read segment"),
+    };
+    Ok(parse_segment_bytes(&raw))
+}
+
+fn parse_segment_bytes(raw: &[u8]) -> Vec<ParsedLine> {
+    let Ok(text) = str::from_utf8(raw) else {
+        return Vec::new();
     };
     if store::has_conflict_markers(text) {
-        return Ok(Vec::new());
+        return Vec::new();
     }
     let (complete, _) = split_complete(text);
     let mut out = Vec::new();
@@ -723,7 +748,7 @@ fn parse_segment(path: &Path) -> Result<Vec<ParsedLine>, Error> {
             Err(_) => continue,
         }
     }
-    Ok(out)
+    out
 }
 
 fn split_complete(text: &str) -> (Vec<&str>, Option<&str>) {

@@ -28,6 +28,7 @@ _SCHEDA_DEPS = [
     "@cargo//:regex",
     "@cargo//:serde",
     "@cargo//:serde_json",
+    "@cargo//:sha2",
     "@cargo//:yaml_serde",
 ]
 
@@ -165,6 +166,19 @@ rust_test(
     srcs = ["tests/search.rs"],
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/search.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "reindex_test",
+    size = "large",
+    srcs = ["tests/reindex.rs"],
+    compile_data = glob(["testdata/**"]),
+    crate_root = "tests/reindex.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",

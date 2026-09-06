@@ -221,7 +221,20 @@ fn next_generation(root: &Path) -> Result<u64, Error> {
     Ok(read_current(root)?.unwrap_or(0).saturating_add(1).max(1))
 }
 
-fn generation_number(dir: &Path) -> Result<u64, Error> {
+/// Build a new generation directory without publishing `current`.
+///
+/// Used by `reindex`. A caller that stops before [`publish_generation`]
+/// leaves the previous generation live; the unfinished directory is an
+/// orphan removed by the next `reindex` or by `open` when the write lock
+/// and `reindex.lock` are free.
+pub(crate) fn start_generation(root: &Path) -> Result<PathBuf, Error> {
+    prune_generations(root)?;
+    let n = next_generation(root)?;
+    create_generation(root, n)
+}
+
+/// Generation number named by `dir`'s last component.
+pub(crate) fn generation_number(dir: &Path) -> Result<u64, Error> {
     let name = dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -233,24 +246,6 @@ fn generation_number(dir: &Path) -> Result<u64, Error> {
                 .context("[Index] generation name"),
         ),
     }
-}
-
-/// Build a new generation directory without publishing `current`.
-///
-/// Used by `reindex`. A caller that stops before [`publish_generation`]
-/// leaves the previous generation live; the unfinished directory is an
-/// orphan removed by the next `reindex` or by `open` when the write lock
-/// is free.
-pub(crate) fn prepare_generation(
-    vault: &Path,
-    schema: &Schema,
-    root: &Path,
-) -> Result<(ReindexResult, JournalIdMaps, PathBuf), Error> {
-    prune_generations(root)?;
-    let n = next_generation(root)?;
-    let dir = create_generation(root, n)?;
-    let (counts, maps) = rebuild(vault, schema, &dir)?;
-    Ok((counts, maps, dir))
 }
 
 /// Atomically point `current` at `dir`, keep one previous generation, and
@@ -610,6 +605,11 @@ fn clear_index_dir(index_dir: &Path) -> Result<(), Error> {
     for entry in entries {
         let entry = entry.context("[Index::clear] read entry")?;
         let path = entry.path();
+        if path.file_name().is_some_and(|name| name == "vector") {
+            // An inherited vector dump may already sit here from the start
+            // of `reindex` and must survive this clear.
+            continue;
+        }
         let result = if path.is_dir() {
             fs::remove_dir_all(&path)
         } else {

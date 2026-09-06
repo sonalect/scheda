@@ -464,15 +464,6 @@ fn id_from_listed_file(decl: &CollectionDecl, path: &Path) -> Result<String, Err
     }
 }
 
-#[cfg(feature = "find")]
-pub(crate) fn scan_documents(
-    vault: &Path,
-    decl: &CollectionDecl,
-    encryption: Option<&Encryption>,
-) -> Result<Vec<Record>, Error> {
-    collection_documents(vault, decl, encryption)?.collect()
-}
-
 pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64, u64), Error> {
     if !decl.any_indexed() {
         return Ok((0, 0));
@@ -480,7 +471,11 @@ pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64,
     let mut records = 0u64;
     let mut invalid = 0u64;
     for path in list_files(vault, decl)? {
-        let record = read_file(vault, decl, &path, None)?;
+        let record = match read_file(vault, decl, &path, None) {
+            Ok(record) => record,
+            Err(err) if crate::reindex::is_absent(&err) => continue,
+            Err(err) => return Err(err),
+        };
         records += 1;
         if record.valid != Some(true) {
             invalid += 1;

@@ -63,3 +63,12 @@ fn wrong_vector_length_is_invalid() {
     let err = idx.add(1, &[1.0, 0.0]).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
+
+#[test]
+fn get_round_trips_added_vector_and_none_for_absent() {
+    let idx = AnnIndex::new(4).unwrap();
+    idx.add(7, &[0.0, 1.0, 0.0, 0.0]).unwrap();
+    let got = idx.get(7).unwrap().expect("stored vector");
+    assert_eq!(got, vec![0.0, 1.0, 0.0, 0.0]);
+    assert!(idx.get(99).unwrap().is_none());
+}

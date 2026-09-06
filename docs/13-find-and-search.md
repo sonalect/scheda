@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.24, 5 September 2026.
+Document 13 of the Scheda package. Version 0.25, 6 September 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -95,6 +95,8 @@ Do not glue title+body+other fields into one blob. One field, one vector. Do not
 If `embed` is missing, skip all vector writes. Tantivy still indexes lexical fields (`exclude_fts` stays out of BM25).
 
 Index remembers `model_id` and `dimensions`. Mismatch with the current function → rebuild vectors from an empty table (every slot is embedded) or skip mixing spaces on a live write; lexical still works. `reindex` copies the previous generation’s vector dump into the new generation when model and dimensions match, then applies the skip/remove rules above. The lexical Index is always rebuilt in full.
+
+Catch-up of writes that finished while `reindex/active` exists copies that Record’s vector slots from live `N` into `N+1` when the two generations share `model_id` and dimensions — including the digest stored in `keys.json`. It does not call the embedder: `add` already paid for those vectors on `N`. If the digest already matches in `N+1`, skip. If the models differ, `N` did not mix spaces; catch-up embeds into `N+1` with `embed_many` **before** the publish `write.lock`. The locked tail is empty or those few slots copy from `N` (same-model) or were already embedded in the unlocked pass.
 
 ---
 

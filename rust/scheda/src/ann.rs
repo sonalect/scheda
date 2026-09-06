@@ -93,6 +93,24 @@ impl AnnIndex {
             .context(Code::IndexVector, "[AnnIndex::add] insert vector")
     }
 
+    /// Stored vector for `key`, or `None` if the key is absent.
+    pub fn get(&self, key: u64) -> Result<Option<Vec<f32>>, Error> {
+        if !self.inner.contains(key) {
+            return Ok(None);
+        }
+        let mut vector = Vec::new();
+        let n = self
+            .inner
+            .export(key, &mut vector)
+            .context(Code::IndexVector, "[AnnIndex::get] export vector")?;
+        if n == 0 {
+            return Ok(None);
+        }
+        let dim = self.inner.dimensions();
+        vector.truncate(dim);
+        Ok(Some(vector))
+    }
+
     /// Whether `key` is in the index.
     pub fn contains(&self, key: u64) -> bool {
         self.inner.contains(key)
