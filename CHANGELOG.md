@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-07
+
 ### Added
 
 - **`schema_from_json` / `schema_from_value` refuse unknown Schema keys.**
@@ -1197,6 +1199,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.11.0]
 - [0.10.3]
 - [0.10.2]
 - [0.10.1]
@@ -1230,7 +1233,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.10.3...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/amsokol/scheda/releases/tag/v0.11.0
 [0.10.3]: https://github.com/amsokol/scheda/releases/tag/v0.10.3
 [0.10.2]: https://github.com/amsokol/scheda/releases/tag/v0.10.2
 [0.10.1]: https://github.com/amsokol/scheda/releases/tag/v0.10.1
