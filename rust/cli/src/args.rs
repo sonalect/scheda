@@ -89,6 +89,28 @@ pub struct Cli {
     #[arg(long, global = true, value_name = "EMAIL")]
     pub author_email: Option<String>,
 
+    /// Env var whose value is `OpenOptions.encryption.passphrase`.
+    /// Missing or empty var → `invalid` before `open`. Not with
+    /// `--encryption-identity-file`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        conflicts_with = "encryption_identity_file"
+    )]
+    pub encryption_passphrase_env_var: Option<String>,
+
+    /// Age identity file (`AGE-SECRET-KEY-…`, `age-keygen` comments allowed).
+    /// Unreadable or malformed → `invalid` before `open`. Not with
+    /// `--encryption-passphrase-env-var`.
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        conflicts_with = "encryption_passphrase_env_var"
+    )]
+    pub encryption_identity_file: Option<PathBuf>,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -152,6 +174,15 @@ pub enum Command {
     Pull,
     /// `pull` then `push`.
     Sync,
+    /// Push `{vault}/.isolated/` to its own Remote. Does not touch the main tree.
+    #[command(name = "push-isolated")]
+    PushIsolated,
+    /// Pull `{vault}/.isolated/` from its own Remote, then rebuild the Index.
+    #[command(name = "pull-isolated")]
+    PullIsolated,
+    /// Isolated `pull` then `push`.
+    #[command(name = "sync-isolated")]
+    SyncIsolated,
 }
 
 #[derive(Subcommand, Debug)]
@@ -200,6 +231,13 @@ pub enum CollectionCommand {
         #[arg(long)]
         message: Option<String>,
     },
+    /// Walk Record files of this `document` or `singleton` in `id` order.
+    /// `journal` → `unsupported`. Encrypted collection without a secret →
+    /// `crypto`.
+    Documents,
+    /// Ids of this `document` or `singleton` in the same order as `documents`.
+    /// `journal` → `unsupported`. Encrypted collections do not need a secret.
+    Ids,
     /// Tantivy Query on this collection, then files.
     Find {
         #[arg(long)]

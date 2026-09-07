@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.76, 5 September 2026.
+Document 12 of the Scheda package. Version 0.77, 7 September 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -22,7 +22,7 @@ consumer** needs before it can move its primary layer onto the crate.
 P15 and P16 are the exception and say so in their own text — engine work
 past that consumer's list, kept here because they came out of P14 rather
 than out of a second consumer's requirements. P15 shipped as `0.7.0`.
-P16 remains. They are not **agent**, and they do not reopen A0–A7. Their codes cross
+P16 shipped. They are not **agent**, and they do not reopen A0–A7. Their codes cross
 **core**, **search**, and **later**, so the unencrypted
 `{vault}/.isolated/` tree of `10` §1 (ISO-2 nested git, ISO-4, ISO-6,
 IDX-4) is P4 here instead of being out of scope. Accepting **agent**
@@ -442,7 +442,7 @@ encryption shipped as P14. A CLI secret and a nested Remote stay P16.
 
 ## 4. First-consumer readiness
 
-**Status of the part:** P0–P5 and P8–P15 are done. P13 closed the last
+**Status of the part:** P0–P5 and P8–P16 are done. P13 closed the last
 thing the consumer hit while reading: a `document` collection could not be
 listed at all in a build without `find`. P14 is the first stage here that
 was not a gap the consumer tripped over but a promise the crate had been
@@ -451,12 +451,12 @@ making without keeping — an encryption option nothing read. It shipped as
 collection is searchable by name, and the nested directory that only
 ever held a journal `id` map is gone.
 
-P16 is behind them and is not a consumer's blocker. It finishes the two
-things P14 designed and did not build: the CLI cannot open an encrypted
-Vault at all, and the nested isolated tree still may not have a Remote of
-its own. It sits in its own stage so that P14's status keeps answering
-the question actually asked of it — whether encryption works — instead
-of reporting open forever because a CLI flag is missing.
+P16 finished the two things P14 designed and did not build: the CLI can
+open an encrypted Vault from argv-safe input, and the nested isolated
+tree may have a Remote of its own. It sat in its own stage so that P14's
+status kept answering the question actually asked of it — whether
+encryption works — instead of reporting open forever because a CLI flag
+was missing.
 
 Two numbers are empty and stay empty, so the rest keep the names other
 documents already use. P6 asked which of `04` STO-2 and `05` SCH-6 was
@@ -504,7 +504,7 @@ A P stage closes the way an A stage does: the cited *Check:* passes under
 | [P13](#p13-listing-a-collection-without-the-index)       | done        | Asking a `document` collection what it holds, with `find` off       |
 | [P14](#p14-encryption-as-a-property-of-a-collection)     | done (`0.6.0`) | Ciphertext on disk for any one collection, and an option that works |
 | [P15](#p15-one-index-for-the-vault)                      | done (`0.7.0`) | One Index per Vault instead of a nested one nothing can query     |
-| [P16](#p16-a-secret-in-the-cli-and-a-remote-for-the-nested-tree) | not started | Reaching an encrypted Vault from argv-safe input; two audiences, two Remotes |
+| [P16](#p16-a-secret-in-the-cli-and-a-remote-for-the-nested-tree) | done        | Reaching an encrypted Vault from argv-safe input; two audiences, two Remotes |
 
 **Order.** P0 first, and its grep box before its fixture box: a fixture
 shaped like a consumer carries that consumer's collection names, and
@@ -1830,10 +1830,10 @@ the text. A checkmark earned by segment layout, not by behaviour.
 
 ## P16. A secret in the CLI, and a Remote for the nested tree
 
-**Status:** not started.
+**Status:** done.
 
 **Codes:** `14` and the two secret flags, `09` ISO-6, `04` GIT-9,
-`07` LIB-13.
+`07` LIB-13, LIB-14.
 
 **Needs:** nothing new. P14 shipped the library side of both.
 
@@ -1844,50 +1844,25 @@ status useless: a reader asking "does encryption work" would have seen
 an open stage and concluded no.
 
 What they share is that the **documents already describe them** and the
-code does not do them. `14` lists `--encryption-passphrase-env-var` and
-`--encryption-identity-file` marked "not implemented yet", and `09` ISO-6
-carries its relaxation with the same mark. That is honest but it is not
-a resting state: a specification that outlives its stage by long enough
-stops being read as a promise and starts being read as description. This
-stage exists so that does not happen.
+code now does them. `14` lists `--encryption-passphrase-env-var` and
+`--encryption-identity-file`, and `09` ISO-6 carries its relaxation.
 
-**The CLI cannot open an encrypted Vault at all.** It builds
-`OpenOptions` from flags, and there is no flag that carries a secret, so
-`scheda` on a Vault holding an encrypted collection fails — clearly, by
-code, with nothing corrupted, but it fails. The owner of such a Vault has
-no command-line way in, which for a tool whose consumers debug by hand
-is a real gap rather than a missing convenience. The rule the flags must
-keep is the reason they were specified before they were built: the secret
-must not arrive in argv, which every process on the machine can read.
-A path and an environment variable name are safe to put there; the secret
-itself never is. That also settles a smaller question — the file form has
-to accept an age identity file as `age-keygen` writes it, trailing
-newline and comment lines included, rather than demanding a bare key.
+**The CLI opens an encrypted Vault from argv-safe input.** It builds
+`OpenOptions` from flags. A path and an environment variable name are
+safe to put there; the secret itself never is. The file form accepts an
+age identity file as `age-keygen` writes it, trailing newline and comment
+lines included, rather than demanding a bare key.
 
-Whoever writes this reaches the second item in P14's closing note: this
-is the first place that would parse `OpenOptions` from something a caller
-composed, so it is the first place that could reject the old
-`isolatedEncryption` key. If the flags read JSON at any point, that
-parser rejects an unknown key instead of dropping it. A dropped secret
-key means a plaintext Vault and no error, which is the exact hole P14
-existed to close.
+The flags do not parse `OpenOptions` from JSON, so an unknown key such as
+`isolatedEncryption` has no input to land on. That box is unreachable
+rather than a JSON-parser check.
 
-**The nested tree may have its own Remote.** Today `check` treats one as
-a defect, and `tests/isolated.rs::check_fails_when_nested_git_has_a_remote`
-holds that rule in place. The relaxation serves two audiences rather than
-one: shared material on a shared Remote, private state on a personal one,
-neither riding the other. Vault-level `push` / `pull` / `sync` keep
-touching only the main tree; reaching the nested Remote stays a separate
-call, because a consumer that meant to publish one tree must not discover
-it published two.
+**The nested tree may have its own Remote.** `check` does not call one a
+defect. Vault-level `push` / `pull` / `sync` keep touching only the main
+tree; reaching the nested Remote is `push_isolated` / `pull_isolated` /
+`sync_isolated`.
 
-Note what this does **not** restore. Encryption left the isolation flag
-in P14, so a consumer wanting ciphertext in a published history has it
-without a nested tree, and Praxis — the one consumer — uses no isolated
-collection at all. This stage is therefore engine capability, not a
-consumer's blocker, and it should be scheduled as such.
-
-- [ ] The CLI takes the encryption secret from a file path or an
+- [x] The CLI takes the encryption secret from a file path or an
       environment variable name, and there is no flag whose value is the
       secret (`14`). A missing or empty environment variable, and an
       unreadable or malformed identity file, are `invalid` before a Vault
@@ -1896,26 +1871,29 @@ consumer's blocker, and it should be scheduled as such.
       that exist opens a Vault with an encrypted collection and
       round-trips a Record; a missing variable and a malformed file are
       `invalid`, and neither creates or modifies anything on disk.
-- [ ] The secret does not reach a log line, an error `message`, a
+      `rust/cli/tests/cli.rs::encryption_secret_is_not_an_argv_flag`,
+      `encryption_passphrase_env_round_trips_and_stays_off_output`,
+      `encryption_identity_file_round_trips_and_malformed_is_invalid_before_open`.
+- [x] The secret does not reach a log line, an error `message`, a
       `stack` frame, or the JSON the CLI prints (ISO-7). *Check:* a run
       with a fixture passphrase in the environment, then grep of stdout,
       stderr, and the Vault for those bytes.
-- [ ] Anything the CLI parses into `OpenOptions` rejects an unknown key
-      rather than dropping it, `isolatedEncryption` among them. If the
-      flags carry no JSON, say so and this box closes as unreachable
-      rather than ticked. *Check:* the old key fails before a Vault
-      directory exists.
-- [ ] The nested isolated tree accepts a Remote of its own, and
+- [x] Unreachable: the CLI builds `OpenOptions` from flags, not from
+      JSON, so there is no parser that could drop `isolatedEncryption`.
+      *Check:* there is no JSON `OpenOptions` input on the CLI.
+- [x] The nested isolated tree accepts a Remote of its own, and
       Vault-level `push` / `pull` / `sync` still touch only the main tree
       (ISO-6, `04` GIT-9). `check` no longer calls a nested Remote a
       defect, and the test that asserts the old rule is rewritten rather
       than deleted. *Check:* a nested push uploads only nested files; a
       Vault push after an isolated write uploads nothing of theirs; the
       main tree's Remote never appears in the nested config.
-- [ ] `09` ISO-6 and `14`'s two flag rows lose their "not implemented"
+      `rust/scheda/tests/isolated.rs::check_passes_when_nested_git_has_a_remote`,
+      `vault_push_leaves_nested_remote_untouched`.
+- [x] `09` ISO-6 and `14`'s two flag rows lose their "not implemented"
       marks in the same change that implements them, not before and not
       later. *Check:* `rg` finds no surviving mark for a shipped rule.
-- [ ] `bazel test //...` green; CHANGELOG under `[Unreleased]`, including
+- [x] `bazel test //...` green; CHANGELOG under `[Unreleased]`, including
       that a CLI which previously could not open an encrypted Vault now
       can.
 

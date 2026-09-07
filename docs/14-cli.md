@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.62, 5 September 2026.
+Document 14 of the Scheda package. Version 0.63, 7 September 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -18,8 +18,8 @@ Unset reranker → RRF order.
 | `--auto-sync` | `OpenOptions.auto_sync` (default off). |
 | `--author-name NAME` | `OpenOptions.author.name`. With `--author-email`, or neither. Git author and committer on this process. |
 | `--author-email EMAIL` | `OpenOptions.author.email`. With `--author-name`, or neither. HTML email. |
-| `--encryption-passphrase-env-var NAME` | **Not implemented yet.** Read `NAME` and use it as `OpenOptions.encryption.passphrase`. Missing or empty var → `invalid`. Not with `--encryption-identity-file`. |
-| `--encryption-identity-file PATH` | **Not implemented yet.** Age identity file (`AGE-SECRET-KEY-…`) as `OpenOptions.encryption.identity`. Not with `--encryption-passphrase-env-var`. |
+| `--encryption-passphrase-env-var NAME` | Read `NAME` and use it as `OpenOptions.encryption.passphrase`. Missing or empty var → `invalid` before `open`. Not with `--encryption-identity-file`. |
+| `--encryption-identity-file PATH` | Age identity file (`AGE-SECRET-KEY-…`, comments and a trailing newline as `age-keygen` writes) as `OpenOptions.encryption.identity`. Unreadable or malformed → `invalid` before `open`. Not with `--encryption-passphrase-env-var`. |
 | `--embedder-openai-url URL` | OpenAI-compatible API root (`http`/`https`). CLI `POST`s `{URL}embeddings`. With `--embedder-model` and `--embedder-dimensions`, or none of the three. Partial set → `invalid`. Implements `Embedder`, passed to `open`. Unset (and no `--model2vec-embedder`) → vector leg off. Not with `--model2vec-embedder`. |
 | `--embedder-model NAME` | JSON `model` on the embeddings body. With the other two HTTP embedder flags, or none. |
 | `--embedder-dimensions N` | Positive integer. `Embedder.dimensions` (no probe). Response length must match. With the other two HTTP embedder flags, or none. |
@@ -28,7 +28,7 @@ Unset reranker → RRF order.
 
 HTTP embedder body is `{ "model": <embedder-model>, "input": "<text>" }` for one text, or `"input": ["…", …]` for a batch of at most 2048. Rerank body is `{ "model": <reranker-model>, "query": "…", "documents": ["…", …] }` for one Record or a batch of at most 1000.
 
-Both flags are specification ahead of code: the CLI has no secret flag of any kind today, so it cannot open a Vault with an encrypted collection at all. What is decided is the shape they must take when they land, and the work is `12` P16. There is no flag that takes the encryption secret as its value, and adding one would be a defect: argv is readable by every process on the machine, so a passphrase on the command line is a passphrase published to the host and left in the shell history. The secret arrives by environment variable or by file path, the same way the embedder API key does. Both flags together → `invalid`. Neither: the handle has no secret, plain collections work, and an encrypted one fails with `crypto` (ISO-5). In a build without the `encrypt` feature either flag is `unsupported_encryption` and nothing is created (SCH-16).
+There is no flag that takes the encryption secret as its value, and adding one would be a defect: argv is readable by every process on the machine, so a passphrase on the command line is a passphrase published to the host and left in the shell history. The secret arrives by environment variable or by file path, the same way the embedder API key does. Both flags together → `invalid`. Neither: the handle has no secret, plain collections work, and an encrypted one fails with `crypto` (ISO-5). The CLI does not parse `OpenOptions` from JSON; unknown keys such as `isolatedEncryption` have no input to land on. In a build without the `encrypt` feature either flag is `unsupported_encryption` and nothing is created (SCH-16).
 
 `--help` / `--version` stay. No Record path.
 
@@ -51,6 +51,9 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 | `push` | |
 | `pull` | |
 | `sync` | |
+| `push-isolated` | Push `{vault}/.isolated/` to its own Remote. Missing nested work tree or no Remote → `invalid`. |
+| `pull-isolated` | Pull `{vault}/.isolated/` from its own Remote, then reload Schema and rebuild the Index. `locked` while `reindex` is in flight. |
+| `sync-isolated` | Isolated `pull` then `push`. |
 
 `find` / `search` are Vault methods (`07` LIB-10, LIB-11). `--collections`
 is a set of names. Unset or empty → every non-isolated, non-encrypted
@@ -125,11 +128,13 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `history` | `--id ID --offset N --count N` |
 | `replace` | `--id ID --record JSON` (or stdin) [`--message TEXT`] |
 | `remove` | `--id ID` [`--message TEXT`] |
+| `documents` | Walk Record files of this `document` or `singleton` in `id` order. JSON array of Records. `journal` → `unsupported`. Encrypted collection without a secret → `crypto`. |
+| `ids` | Ids in the same order. JSON array of strings. Encrypted collections do not need a secret. `journal` → `unsupported`. |
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 
 Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
-`history`, `replace`, `remove`, `find`, `search` (and `lines` on the
+`history`, `replace`, `remove`, `documents`, `ids`, `find`, `search` (and `lines` on the
 library, not this CLI). `find` / `search` on that `NAME` are ordinary
 queries, same as Vault `--collections` with an isolated name. Encrypted
 `NAME` is `unsupported` on `find` / `search`. A collection with both

@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.48, 5 September 2026.
+Document 11 of the Scheda package. Version 0.49, 7 September 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -56,7 +56,7 @@ hybrid `search` → core acceptance.
 **Core in:** MOD-1–18; STO-1–5; GIT-1–13; SCH-1–8, SCH-12–14; IDX-1, IDX-2,
 IDX-5; QRY-1, QRY-2, QRY-7; LIB-1–10, LIB-12–19, LIB-24; ISO-1; OPS-1, OPS-3.
 
-Next crate work after this checklist is `12` §4 (P0–P15 are in; P16 is the CLI secret and nested Remote).
+Next crate work after this checklist is `12` §4 (P0–P16 are in).
 **agent** is accepted (`12`). This file does not add those stages.
 
 C10 accepted **core** against the codes as they read then. Several
@@ -76,7 +76,7 @@ These must **compile**. They must not be required to pass C0–C8 or C10.
 Writes must not depend on them (`10` §2). **C9** implements **search**
 (`10` §3). After C10, `scheda` coded unencrypted isolated nested git (ISO-2,
 ISO-4, ISO-6, IDX-4) as in `10` §1 (`{vault}/.isolated/`, `12` P4). **agent** (AGT-1–5) and ISO-3 listing
-are accepted (`12`). Collection encryption (ISO-5, ISO-7–9, ISO-11) shipped as `12` P14. A CLI secret and a nested Remote stay `12` P16.
+are accepted (`12`). Collection encryption (ISO-5, ISO-7–9, ISO-11) shipped as `12` P14. A CLI secret and a nested Remote shipped as `12` P16.
 
 Journal line `remove`, line-level journal blame, file watcher: not in this plan (`10`
 §5).
@@ -370,7 +370,7 @@ Re-run the five gates in `10` §2:
 
 When C10 is `done`, **core** is accepted for the Rust binding. **search** is
 C9. This checklist stops there. **agent** is accepted in `12`. Next crate
-work is `12` §4 (P0–P15 are in, P6 and P7 are gone; P16 is open).
+work is `12` §4 (P0–P16 are in, P6 and P7 are gone).
 
 ---
 

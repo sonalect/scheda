@@ -1,4 +1,4 @@
-//! Unencrypted isolated tree: `{vault}/.isolated/` nested git, no Remote.
+//! Unencrypted isolated tree: `{vault}/.isolated/` nested git.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -129,22 +129,12 @@ pub(crate) fn discard_recorded(vault: &Path, paths: &[String]) -> Result<(), Err
     Ok(())
 }
 
-/// Parent must not track `.isolated/`; nested git must have no Remote.
+/// Parent must not track `.isolated/`. A nested Remote of its own is allowed.
 pub(crate) fn check_perimeter(vault: &Path) -> Result<(), Error> {
     if git::index_has_prefix(vault, DIR)? {
         bail!(Error::invalid(
             "parent git tracks .isolated/; isolated Records must stay gitignored"
         ));
-    }
-    let nested = root(vault);
-    if !nested.exists() {
-        return Ok(());
-    }
-    if !git::is_work_tree(&nested) {
-        return Ok(());
-    }
-    if !git::remotes(&nested)?.is_empty() {
-        bail!(Error::invalid("isolated nested git must not have a Remote"));
     }
     Ok(())
 }

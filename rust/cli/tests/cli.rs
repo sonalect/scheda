@@ -13,7 +13,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use scheda::{
-    Embedder, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery, Vault,
+    Embedder, Encryption, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery,
+    Vault,
 };
 use serde_json::{Value, json};
 
@@ -85,18 +86,25 @@ fn scheda_bin() -> PathBuf {
 }
 
 fn run(args: &[&str]) -> Run {
-    run_cmd(args, &[])
+    run_cmd(args, &[], &[])
 }
 
 fn run_without_env(args: &[&str], unset: &str) -> Run {
-    run_cmd(args, &[unset])
+    run_cmd(args, &[unset], &[])
 }
 
-fn run_cmd(args: &[&str], unset: &[&str]) -> Run {
+fn run_with_env(args: &[&str], env: &[(&str, &str)]) -> Run {
+    run_cmd(args, &[], env)
+}
+
+fn run_cmd(args: &[&str], unset: &[&str], env: &[(&str, &str)]) -> Run {
     let mut cmd = Command::new(scheda_bin());
     cmd.args(args);
     for name in unset {
         cmd.env_remove(name);
+    }
+    for (name, value) in env {
+        cmd.env(name, value);
     }
     let out = cmd.output().expect("spawn scheda");
     Run {
@@ -181,9 +189,9 @@ fn text_query(text: &str) -> String {
 
 #[test]
 fn help_lists_lib2_tools_not_collection_names() {
-    let run = run(&["--help"]);
-    assert_eq!(run.status, 0, "stderr={}", run.stderr);
-    let help = format!("{}{}", run.stdout, run.stderr);
+    let help_run = run(&["--help"]);
+    assert_eq!(help_run.status, 0, "stderr={}", help_run.stderr);
+    let help = format!("{}{}", help_run.stdout, help_run.stderr);
     for name in [
         "open",
         "info",
@@ -203,6 +211,11 @@ fn help_lists_lib2_tools_not_collection_names() {
         "embedder-api-key-env-var",
         "author-name",
         "author-email",
+        "encryption-passphrase-env-var",
+        "encryption-identity-file",
+        "push-isolated",
+        "pull-isolated",
+        "sync-isolated",
     ] {
         assert!(help.contains(name), "missing {name} in help:\n{help}");
     }
@@ -230,6 +243,15 @@ fn help_lists_lib2_tools_not_collection_names() {
     }
     assert!(!help.contains("agent_notes"));
     assert!(!help.contains("west_docs"));
+    let collection = run(&["collection", "--help"]);
+    assert_eq!(collection.status, 0, "stderr={}", collection.stderr);
+    let collection_help = format!("{}{}", collection.stdout, collection.stderr);
+    for name in ["documents", "ids", "schema", "add", "get"] {
+        assert!(
+            collection_help.contains(name),
+            "missing {name} in collection help:\n{collection_help}"
+        );
+    }
 }
 
 #[test]
@@ -674,6 +696,203 @@ fn contains_collection_name(haystack: &str, name: &str) -> bool {
         let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
         before.is_none_or(|c| !ident(c)) && after.is_none_or(|c| !ident(c))
     })
+}
+
+const CLI_PASS: &str = "p16-cli-passphrase-never-on-disk";
+const CLI_IDENTITY: &str =
+    "AGE-SECRET-KEY-1GQ9778VQXMMJVE8SK7J6VT8UJ4HDQAJUVSFCWCM02D8GEWQ72PVQ2Y5J33";
+
+fn encrypted_decl() -> Schema {
+    serde_json::from_value(json!({
+        "version": 1,
+        "encrypted": true,
+        "document": {},
+        "fields": [{"name": "title", "required": true, "string": {}}]
+    }))
+    .unwrap()
+}
+
+fn tree_contains_text(root: &Path, needle: &str) -> bool {
+    fn walk(path: &Path, needle: &str) -> bool {
+        if path.is_file() {
+            return fs::read_to_string(path).is_ok_and(|text| text.contains(needle));
+        }
+        let Ok(entries) = fs::read_dir(path) else {
+            return false;
+        };
+        entries.flatten().any(|entry| walk(&entry.path(), needle))
+    }
+    walk(root, needle)
+}
+
+#[test]
+fn create_collection_rejects_layout_json_key() {
+    let scratch = Scratch::new();
+    let path = vault_arg(&scratch);
+    assert_eq!(run(&["--vault", &path, "open"]).status, 0);
+    let schema = json!({
+        "version": 1,
+        "document": {},
+        "layout": ["c/{id}.md"],
+        "fields": [{"name": "title", "string": {}}]
+    })
+    .to_string();
+    let err = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "agent_notes",
+        "--schema",
+        &schema,
+    ]);
+    assert_eq!(error_json(&err)["code"], "CODE_INVALID");
+    assert!(
+        !scratch
+            .vault()
+            .join("agent_notes")
+            .join(".schema.yaml")
+            .is_file()
+    );
+}
+
+#[test]
+fn collection_documents_and_ids() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let ids = run(&["--vault", &path, "collection", "agent_notes", "ids"]);
+    assert_eq!(stdout_json(&ids), json!(["alpha"]));
+    let docs = run(&["--vault", &path, "collection", "agent_notes", "documents"]);
+    let docs = stdout_json(&docs);
+    assert_eq!(docs.as_array().map(Vec::len), Some(1));
+    assert_eq!(docs[0]["id"], "alpha");
+
+    let journal_ids = run(&["--vault", &path, "collection", "agent_log", "ids"]);
+    assert_eq!(error_json(&journal_ids)["code"], "CODE_UNSUPPORTED");
+    let journal_docs = run(&["--vault", &path, "collection", "agent_log", "documents"]);
+    assert_eq!(error_json(&journal_docs)["code"], "CODE_UNSUPPORTED");
+}
+
+#[test]
+fn encryption_secret_is_not_an_argv_flag() {
+    let out = run(&[
+        "--encryption-passphrase",
+        CLI_PASS,
+        "--vault",
+        "/tmp/scheda-missing-vault",
+        "info",
+    ]);
+    assert_ne!(out.status, 0);
+    let err = error_json(&out);
+    assert_eq!(err["code"], "CODE_INVALID");
+}
+
+#[test]
+fn encryption_passphrase_env_round_trips_and_stays_off_output() {
+    let scratch = Scratch::new();
+    let secret = Encryption::new().passphrase(CLI_PASS);
+    let vault = Vault::open(scratch.vault(), OpenOptions::new().encryption(secret), None).unwrap();
+    vault
+        .create_collection("agent_sealed", encrypted_decl(), None)
+        .unwrap();
+    vault
+        .collection("agent_sealed")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "sealed"})), None)
+        .unwrap();
+    drop(vault);
+
+    let path = vault_arg(&scratch);
+    let missing = run_without_env(
+        &[
+            "--vault",
+            &path,
+            "--encryption-passphrase-env-var",
+            "SCHEDA_P16_PASS",
+            "collection",
+            "agent_sealed",
+            "get",
+            "--id",
+            "alpha",
+        ],
+        "SCHEDA_P16_PASS",
+    );
+    assert_eq!(error_json(&missing)["code"], "CODE_INVALID");
+
+    let got = run_with_env(
+        &[
+            "--vault",
+            &path,
+            "--encryption-passphrase-env-var",
+            "SCHEDA_P16_PASS",
+            "collection",
+            "agent_sealed",
+            "get",
+            "--id",
+            "alpha",
+        ],
+        &[("SCHEDA_P16_PASS", CLI_PASS)],
+    );
+    assert_eq!(stdout_json(&got)["id"], "alpha");
+    let blob = format!("{}{}", got.stdout, got.stderr);
+    assert!(!blob.contains(CLI_PASS), "{blob}");
+    assert!(!tree_contains_text(&scratch.vault(), CLI_PASS));
+
+    let ids = run(&["--vault", &path, "collection", "agent_sealed", "ids"]);
+    assert_eq!(stdout_json(&ids), json!(["alpha"]));
+    let docs = run(&["--vault", &path, "collection", "agent_sealed", "documents"]);
+    assert_eq!(error_json(&docs)["code"], "CODE_CRYPTO");
+}
+
+#[test]
+fn encryption_identity_file_round_trips_and_malformed_is_invalid_before_open() {
+    let scratch = Scratch::new();
+    let dest = scratch.vault();
+    assert!(!dest.exists() || !dest.join(".git").exists());
+    let bad = scratch.root.join("bad-identity");
+    fs::write(&bad, "not-an-age-key\n").unwrap();
+    let bad_run = run(&[
+        "--vault",
+        &dest.display().to_string(),
+        "--encryption-identity-file",
+        &bad.display().to_string(),
+        "open",
+    ]);
+    assert_eq!(error_json(&bad_run)["code"], "CODE_INVALID");
+    assert!(!dest.join(".git").exists());
+
+    let secret = Encryption::new().identity(CLI_IDENTITY);
+    let vault = Vault::open(dest, OpenOptions::new().encryption(secret), None).unwrap();
+    vault
+        .create_collection("agent_sealed", encrypted_decl(), None)
+        .unwrap();
+    vault
+        .collection("agent_sealed")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "sealed"})), None)
+        .unwrap();
+    drop(vault);
+
+    let file = scratch.root.join("identity.txt");
+    fs::write(
+        &file,
+        format!("# created: 2026-01-01T00:00:00Z\n# public key: age1cli\n{CLI_IDENTITY}\n"),
+    )
+    .unwrap();
+    let path = vault_arg(&scratch);
+    let got = run(&[
+        "--vault",
+        &path,
+        "--encryption-identity-file",
+        &file.display().to_string(),
+        "collection",
+        "agent_sealed",
+        "get",
+        "--id",
+        "alpha",
+    ]);
+    assert_eq!(stdout_json(&got)["id"], "alpha");
+    let blob = format!("{}{}", got.stdout, got.stderr);
+    assert!(!blob.contains(CLI_IDENTITY), "{blob}");
 }
 
 const TREE_SEALED: &str = "agent-sealed-tree-token";

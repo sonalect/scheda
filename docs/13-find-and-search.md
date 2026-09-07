@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.27, 6 September 2026.
+Document 13 of the Scheda package. Version 0.28, 7 September 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -61,12 +61,13 @@ The **program that links the library** passes a function at `open`:
 ```text
 embed_many(texts) → [][]float32   required
 embed(text) → []float32           provided: embed_many with one text
+embed_query(text) → []float32     provided: embed(text); search-query role
 many_limit → non-zero size
 ```
 
 plus `model_id` and `dimensions` (also non-zero). No function → vector leg off; `find`, BM25, and writes still work. Network inside that function is the program’s problem.
 
-Only the batch function is required, and the single-text one is the batch path with one element. A program may override it, but then the same text must give the same vector whether it travelled alone or inside a padded batch — a wrong attention mask under padding splits the vector space and raises nothing.
+Only the batch function is required, and the single-text one is the batch path with one element. A program may override it, but then the same text must give the same vector whether it travelled alone or inside a padded batch — a wrong attention mask under padding splits the vector space and raises nothing. `embed_query` defaults to `embed`: a symmetric encoder does nothing extra. `search` calls `embed_query` for the query string and still uses `embed` / `embed_many` for Record fields.
 
 Zero is not representable in either size. Absence of a vector leg is no embedder at all, not a zero `dimensions`.
 
@@ -110,7 +111,7 @@ Steps:
 
 1. Resolve `collections` as in `find`. If `filter` is set: Tantivy runs `Filter` → allow-set of `(collection, id)`s. Both legs search **only** that set. Unset `filter` → the selected collections, not other collections in the same Index.
 2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on `text` (`Must(filter)` if filtered). Top pool by score.
-3. Vector (weight > 0 and embedder set): `embed(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). The HNSW walk width is a binding floor (search expansion), not the caller's `k`; the engine retrieves at least that many slots, then truncates to the fusion pool, so asking for a deeper page does not reshuffle the head of a shallower one (IDX-7). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
+3. Vector (weight > 0 and embedder set): `embed_query(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). The HNSW walk width is a binding floor (search expansion), not the caller's `k`; the engine retrieves at least that many slots, then truncates to the fusion pool, so asking for a deeper page does not reshuffle the head of a shallower one (IDX-7). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
 4. Fuse. Candidate pool is **larger than `k`**: at least `max(k, 50)` (or all fused hits if fewer). When a reranker is passed and `rerank_limit` is set above that floor, the pool is `max(k, 50, rerank_limit)` and both Index legs retrieve to that depth. Reciprocal Rank Fusion scores are always computed and reported on each hit.
    - **No reranker:** weighted RRF both orders the fused list and truncates it to the pool (ties: collection, then id). That order is the page.
    - **Reranker present:** RRF does not decide membership. Fill the pool by alternating legs — vector rank 1, lexical rank 1, vector rank 2, lexical rank 2, and so on — skipping a document already taken, until the pool is full or both legs are exhausted. A short leg does not leave the pool short while the other still has hits. When both weights are non-zero the interleave is one-for-one; the weights no longer choose who enters the pool.

@@ -1899,7 +1899,7 @@ fn vector_search(
                 && allowed.is_none_or(|set| allowed_has(set, &doc.collection, &doc.id))
         })
     })?;
-    let mut best: BTreeMap<(String, String), LegHit> = BTreeMap::new();
+    let mut best: BTreeMap<(&str, &str), LegHit> = BTreeMap::new();
     for (key, distance) in raw {
         let Some(doc) = store.keys.get(&key) else {
             continue;
@@ -1911,7 +1911,7 @@ fn vector_search(
             continue;
         }
         let score = f64::from(1.0 / (1.0 + distance));
-        best.entry((doc.collection.clone(), doc.id.clone()))
+        best.entry((doc.collection.as_str(), doc.id.as_str()))
             .and_modify(|hit| {
                 if score > hit.score {
                     hit.score = score;
@@ -1961,20 +1961,20 @@ struct FusedScores {
 /// leg did not run; when both weights are non-zero the interleave is
 /// one-for-one and the weights no longer govern membership.
 #[cfg(feature = "search")]
-fn fuse(
-    lexical: &[LegHit],
-    vector: &[LegHit],
+fn fuse<'a>(
+    lexical: &'a [LegHit],
+    vector: &'a [LegHit],
     lexical_weight: f64,
     vector_weight: f64,
     k: usize,
     has_reranker: bool,
 ) -> SearchHits {
-    let mut scores: BTreeMap<(String, String), FusedScores> = BTreeMap::new();
+    let mut scores: BTreeMap<(&'a str, &'a str), FusedScores> = BTreeMap::new();
     if lexical_weight > 0.0 {
         for (rank, hit) in lexical.iter().enumerate() {
             let rrf = lexical_weight / (RRF_K + (rank as f64) + 1.0);
             let entry = scores
-                .entry((hit.collection.clone(), hit.id.clone()))
+                .entry((hit.collection.as_str(), hit.id.as_str()))
                 .or_insert_with(|| FusedScores {
                     rrf: 0.0,
                     lexical: None,
@@ -1992,7 +1992,7 @@ fn fuse(
         for (rank, hit) in vector.iter().enumerate() {
             let rrf = vector_weight / (RRF_K + (rank as f64) + 1.0);
             let entry = scores
-                .entry((hit.collection.clone(), hit.id.clone()))
+                .entry((hit.collection.as_str(), hit.id.as_str()))
                 .or_insert_with(|| FusedScores {
                     rrf: 0.0,
                     lexical: None,
@@ -2024,10 +2024,10 @@ fn fuse(
 }
 
 #[cfg(feature = "search")]
-fn fuse_by_leg_rank(
-    lexical: &[LegHit],
-    vector: &[LegHit],
-    mut scores: BTreeMap<(String, String), FusedScores>,
+fn fuse_by_leg_rank<'a>(
+    lexical: &'a [LegHit],
+    vector: &'a [LegHit],
+    mut scores: BTreeMap<(&'a str, &'a str), FusedScores>,
     k: usize,
 ) -> SearchHits {
     let mut seen: BTreeSet<(&str, &str)> = BTreeSet::new();
@@ -2054,17 +2054,17 @@ fn fuse_by_leg_rank(
     }
     let mut hits = SearchHits::default();
     for hit in chosen {
-        let key = (hit.collection.clone(), hit.id.clone());
-        let Some(fused) = scores.remove(&key) else {
+        let Some(fused) = scores.remove(&(hit.collection.as_str(), hit.id.as_str())) else {
             continue;
         };
-        hits.hits.push(hit_from_fused(key.0, key.1, fused));
+        hits.hits
+            .push(hit_from_fused(&hit.collection, &hit.id, fused));
     }
     hits
 }
 
 #[cfg(feature = "search")]
-fn hit_from_fused(collection: String, id: String, fused: FusedScores) -> search_hits::Hit {
+fn hit_from_fused(collection: &str, id: &str, fused: FusedScores) -> search_hits::Hit {
     let mut hit = search_hits::Hit::default()
         .with_id(id)
         .with_collection(collection)

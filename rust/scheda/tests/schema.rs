@@ -216,8 +216,8 @@ fn two_vaults_with_different_collection_names() {
     east_vault.collection("east_docs").unwrap();
     assert!(west_vault.collection("east_docs").is_err());
     assert!(east_vault.collection("west_docs").is_err());
-    assert_eq!(west_vault.versions(), &[1]);
-    assert_eq!(east_vault.versions(), &[2]);
+    assert_eq!(west_vault.versions().unwrap(), &[1]);
+    assert_eq!(east_vault.versions().unwrap(), &[2]);
 }
 
 #[test]

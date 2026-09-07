@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.35, 6 September 2026.
+Document 4 of the Scheda package. Version 0.36, 7 September 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -95,7 +95,7 @@ A **Remote** is the one optional git remote Scheda uses on the Vault repository,
 | missing, no `remote_repo` | empty or new directory | no | `git init`, no Remote |
 | exists but is not a Vault | that path | no | `invalid` |
 
-Isolated nested git (**later** phase, implemented) is created by Scheda under `{vault}/.isolated/`; `remote_repo` there is forbidden (ISO-6). *Check:* `open` of a missing path with `remote_repo` produces a Vault whose `origin` is that URL; `open` of a missing path without `remote_repo` has no Remote; `open`+`remote_repo` on an existing Vault succeeds and does not change `origin`. *Check:* empty `remote_repo`, a filesystem path, and `git@host:path` are `invalid`.
+Isolated nested git (**later** phase, implemented) is created by Scheda under `{vault}/.isolated/`; `remote_repo` on `open` never clones into that nested tree (ISO-6). The nested repository may have a Remote of its own; reaching it is `push_isolated` / `pull_isolated` / `sync_isolated`, not Vault `push` / `pull` / `sync`. *Check:* `open` of a missing path with `remote_repo` produces a Vault whose `origin` is that URL; `open` of a missing path without `remote_repo` has no Remote; `open`+`remote_repo` on an existing Vault succeeds and does not change `origin`. *Check:* empty `remote_repo`, a filesystem path, and `git@host:path` are `invalid`.
 
 **GIT-10. `auto_sync`.** Option at `open` (default **off**). When on **and** a Remote exists:
 

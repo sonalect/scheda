@@ -82,6 +82,7 @@ mod id;
 mod index;
 mod isolated;
 mod journal;
+mod json;
 #[cfg(feature = "find")]
 mod query;
 mod reindex;
@@ -99,6 +100,7 @@ pub use embed::{Embedder, Reranker};
 pub use error::redact_remote_text;
 pub use error::{Code, Repeat};
 pub use journal::JournalLines;
+pub use json::{schema_from_json, schema_from_value};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
     Author, Body, CollectionInfo, Edge, Encryption, Error, Field, History, Journal, Object,
@@ -114,3 +116,6 @@ pub use scheda_generated::api::v1::{SearchHits, SearchQuery, search_hits};
 pub use schema::Kind;
 pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};
+
+#[cfg(feature = "encrypt")]
+pub use crypto::parse_age_identity;

@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
-    Author, Embedder, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Reranker,
-    Schema, SearchQuery, Vault,
+    Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace,
+    Reranker, SearchQuery, Vault, parse_age_identity, schema_from_json,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -66,8 +66,14 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         model2vec_embedder,
         author_name,
         author_email,
+        encryption_passphrase_env_var,
+        encryption_identity_file,
         command,
     } = cli;
+    let encryption = load_encryption(
+        encryption_passphrase_env_var.as_deref(),
+        encryption_identity_file.as_deref(),
+    )?;
     let embedder = load_embedder(
         embedder_openai_url.as_deref(),
         embedder_model.as_deref(),
@@ -83,37 +89,73 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
                 remote_repo,
                 author_name,
                 author_email,
+                encryption,
                 embedder,
             )?;
             Ok(())
         }
         Command::Info => emit_json(
-            &open_existing(&vault, auto_sync, author_name, author_email, embedder)?.info()?,
+            &open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?
+            .info()?,
         ),
         Command::CreateCollection {
             name,
             schema,
             message,
         } => {
-            let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
-            let schema: Schema = parse_json(&json_input(
+            let vault = open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?;
+            let schema = schema_from_json(&json_input(
                 schema.as_deref(),
                 "missing schema JSON (pass --schema or stdin)",
             )?)?;
-            schema.require_valid()?;
             let collection = vault.create_collection(&name, schema, message.as_deref())?;
             emit_json(&collection.schema()?)
         }
         Command::Collection { name, command } => collection_dispatch(
-            &open_existing(&vault, auto_sync, author_name, author_email, embedder)?,
+            &open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?,
             &name,
             command,
         ),
-        Command::Check => {
-            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.check()
-        }
+        Command::Check => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .check(),
         Command::Reindex => emit_json(
-            &open_existing(&vault, auto_sync, author_name, author_email, embedder)?.reindex()?,
+            &open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?
+            .reindex()?,
         ),
         Command::Find {
             collections,
@@ -122,7 +164,14 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             count,
             include_raw,
         } => {
-            let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
+            let vault = open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?;
             let names = collection_names(&collections);
             let query = parse_find_query(filter.as_deref(), include_raw)?;
             emit_json(&vault.find(&names, &query, offset, count)?)
@@ -131,7 +180,14 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             collections,
             search,
         } => {
-            let vault = open_existing(&vault, auto_sync, author_name, author_email, embedder)?;
+            let vault = open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?;
             let names = collection_names(&collections);
             let query = parse_search_query(
                 search.query.as_deref(),
@@ -145,15 +201,60 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             )?;
             emit_json(&vault.search(&names, &query, reranker.as_deref())?)
         }
-        Command::Push => {
-            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.push()
-        }
-        Command::Pull => {
-            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.pull()
-        }
-        Command::Sync => {
-            open_existing(&vault, auto_sync, author_name, author_email, embedder)?.sync()
-        }
+        Command::Push => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .push(),
+        Command::Pull => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .pull(),
+        Command::Sync => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .sync(),
+        Command::PushIsolated => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .push_isolated(),
+        Command::PullIsolated => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .pull_isolated(),
+        Command::SyncIsolated => open_existing(
+            &vault,
+            auto_sync,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?
+        .sync_isolated(),
     }
 }
 
@@ -176,6 +277,14 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
             message,
         } => collection.replace(&id, parse_replace(record.as_deref())?, message.as_deref()),
         CollectionCommand::Remove { id, message } => collection.remove(&id, message.as_deref()),
+        CollectionCommand::Documents => {
+            let mut records = Vec::new();
+            for item in collection.documents()? {
+                records.push(item?);
+            }
+            emit_json(&records)
+        }
+        CollectionCommand::Ids => emit_json(&collection.ids()?),
         CollectionCommand::Find {
             filter,
             offset,
@@ -212,10 +321,14 @@ fn open_options(
     remote_repo: Option<String>,
     author_name: Option<String>,
     author_email: Option<String>,
+    encryption: Option<Encryption>,
 ) -> OpenOptions {
     let mut options = OpenOptions::new().auto_sync(auto_sync);
     if let Some(url) = remote_repo {
         options = options.remote_repo(url);
+    }
+    if let Some(encryption) = encryption {
+        options = options.encryption(encryption);
     }
     match (author_name, author_email) {
         (None, None) => options,
@@ -238,11 +351,18 @@ fn open_vault(
     remote_repo: Option<String>,
     author_name: Option<String>,
     author_email: Option<String>,
+    encryption: Option<Encryption>,
     embedder: Option<Arc<dyn Embedder>>,
 ) -> Result<Vault, Error> {
     Vault::open(
         path,
-        open_options(auto_sync, remote_repo, author_name, author_email),
+        open_options(
+            auto_sync,
+            remote_repo,
+            author_name,
+            author_email,
+            encryption,
+        ),
         embedder,
     )
 }
@@ -252,13 +372,39 @@ fn open_existing(
     auto_sync: bool,
     author_name: Option<String>,
     author_email: Option<String>,
+    encryption: Option<Encryption>,
     embedder: Option<Arc<dyn Embedder>>,
 ) -> Result<Vault, Error> {
     Vault::open(
         path,
-        open_options(auto_sync, None, author_name, author_email),
+        open_options(auto_sync, None, author_name, author_email, encryption),
         embedder,
     )
+}
+
+fn load_encryption(
+    pass_env: Option<&str>,
+    identity_file: Option<&Path>,
+) -> Result<Option<Encryption>, Error> {
+    let pass_env = nonempty(pass_env);
+    match (pass_env, identity_file) {
+        (None, None) => Ok(None),
+        (Some(_), Some(_)) => Err(Error::invalid(
+            "use --encryption-passphrase-env-var or --encryption-identity-file, not both",
+        )),
+        (Some(name), None) => match std::env::var(name) {
+            Ok(value) if !value.is_empty() => Ok(Some(Encryption::new().passphrase(value))),
+            Ok(_) | Err(_) => Err(Error::invalid(format!(
+                "environment variable {name} is not set or empty"
+            ))),
+        },
+        (None, Some(path)) => {
+            let text = std::fs::read_to_string(path)
+                .map_err(|_| Error::invalid("encryption identity file is unreadable"))?;
+            let identity = parse_age_identity(&text)?;
+            Ok(Some(Encryption::new().identity(identity)))
+        }
+    }
 }
 
 fn collection_names(names: &[String]) -> Vec<&str> {

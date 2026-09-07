@@ -280,14 +280,9 @@ impl Vault {
 
     /// Schema `version` values present in this Vault.
     ///
-    /// A poisoned schema lock still returns the versions last stored.
-    #[must_use]
-    pub fn versions(&self) -> Vec<u32> {
-        let schema = match self.schema.lock() {
-            Ok(guard) => Arc::clone(&*guard),
-            Err(poisoned) => Arc::clone(&*poisoned.into_inner()),
-        };
-        schema.versions()
+    /// A poisoned schema lock is `io_other`, same as the other schema reads.
+    pub fn versions(&self) -> Result<Vec<u32>, Error> {
+        Ok(self.schema_arc()?.versions())
     }
 
     fn schema_arc(&self) -> Result<Arc<LoadedSchema>, Error> {
@@ -594,6 +589,52 @@ impl Vault {
             self.reload_after_restore()?;
             git::push(&self.path)
         })())
+    }
+
+    /// `git push` of `{vault}/.isolated/` to its own `origin`.
+    ///
+    /// Vault `push` never reaches this nested repository. Missing nested
+    /// work tree → `invalid`. No Remote → `invalid`. Takes the write lock
+    /// for this call. Not `locked` while `reindex` is in flight: no Record
+    /// file is written.
+    pub fn push_isolated(&self) -> Result<(), Error> {
+        self.require_write_lock("push_isolated")?;
+        self.conclude_write(git::push(&self.isolated_work_tree()?))
+    }
+
+    /// `git pull` of `{vault}/.isolated/` from its own `origin`, then reload
+    /// Schema and rebuild the Index.
+    ///
+    /// Isolated Records live in the one Vault Index, so this call is
+    /// `locked` while `reindex` is in flight. Missing nested work tree →
+    /// `invalid`.
+    pub fn pull_isolated(&self) -> Result<(), Error> {
+        self.require_write_lock("pull_isolated")?;
+        self.conclude_write((|| {
+            self.reject_if_reindex_active("pull_isolated")?;
+            git::pull(&self.isolated_work_tree()?)?;
+            self.reload_after_restore()
+        })())
+    }
+
+    /// Isolated `pull` then `push`. Takes the write lock for this call.
+    pub fn sync_isolated(&self) -> Result<(), Error> {
+        self.require_write_lock("sync_isolated")?;
+        self.conclude_write((|| {
+            self.reject_if_reindex_active("sync_isolated")?;
+            let nested = self.isolated_work_tree()?;
+            git::pull(&nested)?;
+            self.reload_after_restore()?;
+            git::push(&nested)
+        })())
+    }
+
+    fn isolated_work_tree(&self) -> Result<PathBuf, Error> {
+        let root = isolated::root(&self.path);
+        if !git::is_work_tree(&root) {
+            bail!(Error::invalid("isolated nested git is not a work tree"));
+        }
+        Ok(root)
     }
 
     fn require_write_lock(&self, op: &str) -> Result<(), Error> {
@@ -1293,42 +1334,67 @@ impl Collection {
     }
 
     /// Whether `field` is a Schema filter key (`find` / `search` Filter).
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema).
     #[must_use]
     pub fn is_filter_key(&self, field: &str) -> bool {
         self.decl.filter_keys.contains(field)
     }
 
     /// Journal segment size cap in bytes. `None` on `document` / `singleton`.
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema).
     #[must_use]
     pub fn segment_max_bytes(&self) -> Option<u64> {
         self.decl.segment_max_bytes
     }
 
     /// Fixed `id` of a `singleton` collection. `None` otherwise.
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema).
     #[must_use]
     pub fn singleton_id(&self) -> Option<&str> {
         self.decl.singleton_id.as_deref()
     }
 
     /// Schema type name of `name` (`string`, `integer`, …). Nested fields included.
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema). The first nested field with this name wins
+    /// if names collide.
     #[must_use]
     pub fn field_type(&self, name: &str) -> Option<&'static str> {
         self.field(name).map(|field| field.type_.as_str())
     }
 
     /// Whether Schema marks `name` required. `None` if the field is unknown.
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema). The first nested field with this name wins
+    /// if names collide.
     #[must_use]
     pub fn field_is_required(&self, name: &str) -> Option<bool> {
         self.field(name).map(|field| field.required)
     }
 
     /// Whether Schema marks `name` nullable. `None` if the field is unknown.
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema). The first nested field with this name wins
+    /// if names collide.
     #[must_use]
     pub fn field_is_nullable(&self, name: &str) -> Option<bool> {
         self.field(name).map(|field| field.nullable)
     }
 
     /// Whether Schema sets a default for `name`. `None` if the field is unknown.
+    ///
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema). The first nested field with this name wins
+    /// if names collide.
     #[must_use]
     pub fn field_has_default(&self, name: &str) -> Option<bool> {
         self.field(name).map(|field| field.default.is_some())

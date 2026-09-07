@@ -1,6 +1,6 @@
 # 15. Online reindex
 
-Document 15 of the Scheda package. Version 0.5, 6 September 2026.
+Document 15 of the Scheda package. Version 0.6, 7 September 2026.
 
 Work order so `reindex` no longer holds `{vault}/.scheda/write.lock` for
 the whole rebuild. The walk still fills every Index artifact of the new
@@ -62,13 +62,14 @@ surface.
 
 ## 3. Design
 
-Today `Vault::reindex` takes `write.lock` for the whole call, calls
-`close_for_rebuild` on this handle, fills a new generation directory
-(lexical **and** vector), then points `{vault}/.scheda/index/current` at
-it. A second writer is `locked` for minutes. IDX-9 incremental updates
+Before R0, `Vault::reindex` took `write.lock` for the whole call, called
+`close_for_rebuild` on this handle, filled a new generation directory
+(lexical **and** vector), then pointed `{vault}/.scheda/index/current` at
+it. A second writer was `locked` for minutes. IDX-9 incremental updates
 already keep the live generation current without a full rebuild;
 `reindex` is repair, editor edits, and embedder-model change.
-Those still take too long to freeze writes.
+Those still take too long to freeze writes. R0–R8 shipped the unlocked
+walk: `reindex` takes `write.lock` only for start and publish (LIB-16).
 
 The unlocked walk in this plan is that same full rebuild into `N+1`:
 every eligible Record is written into Tantivy; vector slots are inherited

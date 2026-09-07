@@ -395,7 +395,7 @@ fn isolated_remove_uses_nested_git() {
 }
 
 #[test]
-fn check_fails_when_nested_git_has_a_remote() {
+fn check_passes_when_nested_git_has_a_remote() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     write_schema(&scratch, SEALED_LOG);
@@ -410,8 +410,120 @@ fn check_fails_when_nested_git_has_a_remote() {
     let repo = Repository::open(&nested).unwrap();
     repo.remote("origin", "https://example.invalid/isolated.git")
         .unwrap();
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    vault.check().unwrap();
+}
+
+#[test]
+fn vault_push_leaves_nested_remote_untouched() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    write_schema(&scratch, WEST_ISOLATED);
+    let vault = scratch.reopen();
+    vault
+        .collection("west_isolated")
+        .unwrap()
+        .add("secret", rec(json!({"west_pass": "one"})), None)
+        .unwrap();
+    let vault_dir = scratch.vault();
+    let root = vault_dir.parent().unwrap();
+    let main_bare = root.join("main-bare");
+    let nested_bare = root.join("nested-bare");
+    let nested = scratch.vault().join(".isolated");
+    make_bare(vault.path(), &main_bare);
+    make_bare(&nested, &nested_bare);
+    let main_url = as_url(&main_bare);
+    let nested_url = as_url(&nested_bare);
+    set_origin(vault.path(), &main_url);
+    set_origin(&nested, &nested_url);
+    vault.check().unwrap();
+    assert_eq!(origin_url(&nested), nested_url);
+    assert_ne!(origin_url(&nested), origin_url(vault.path()));
+    let nested_cfg = fs::read_to_string(nested.join(".git").join("config")).unwrap();
+    assert!(
+        !nested_cfg.contains(&main_url),
+        "main origin must not appear in nested config: {nested_cfg}"
+    );
+
+    vault
+        .collection("west_isolated")
+        .unwrap()
+        .add("later", rec(json!({"west_pass": "two"})), None)
+        .unwrap();
+    let nested_head = head_id(&nested_bare);
+    vault.push().unwrap();
+    assert_eq!(head_id(&nested_bare), nested_head);
+    assert!(!tree_contains(&main_bare, "later.md"));
+    assert!(!tree_contains(&main_bare, "secret.md"));
+    assert!(!tree_contains(&nested_bare, "later.md"));
+
+    vault.push_isolated().unwrap();
+    assert_ne!(head_id(&nested_bare), nested_head);
+    assert!(tree_contains(&nested_bare, "later.md"));
+    assert!(tree_contains(&nested_bare, "secret.md"));
+    assert!(!tree_contains(&main_bare, "later.md"));
+    assert_eq!(origin_url(&nested), nested_url);
+}
+
+fn as_url(path: &Path) -> String {
+    let path = path.to_str().expect("utf-8 path");
+    if let Some(rest) = path.strip_prefix('/') {
+        format!("file:///{rest}")
+    } else {
+        format!("file:///{}", path.replace('\\', "/"))
+    }
+}
+
+fn make_bare(src: &Path, bare: &Path) {
+    git2::build::RepoBuilder::new()
+        .bare(true)
+        .clone(&as_url(src), bare)
+        .unwrap();
+}
+
+fn set_origin(dir: &Path, url: &str) {
+    let repo = Repository::open(dir).unwrap();
+    if repo.find_remote("origin").is_ok() {
+        repo.remote_set_url("origin", url).unwrap();
+    } else {
+        repo.remote("origin", url).unwrap();
+    }
+}
+
+fn origin_url(dir: &Path) -> String {
+    Repository::open(dir)
+        .unwrap()
+        .find_remote("origin")
+        .unwrap()
+        .url()
+        .unwrap()
+        .to_owned()
+}
+
+fn head_id(dir: &Path) -> git2::Oid {
+    Repository::open(dir)
+        .unwrap()
+        .head()
+        .unwrap()
+        .peel_to_commit()
+        .unwrap()
+        .id()
+}
+
+fn tree_contains(dir: &Path, needle: &str) -> bool {
+    let repo = Repository::open(dir).unwrap();
+    let tree = repo.head().unwrap().peel_to_tree().unwrap();
+    let mut found = false;
+    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
+        if let Ok(name) = entry.name() {
+            let path = format!("{root}{name}");
+            if path.contains(needle) {
+                found = true;
+            }
+        }
+        git2::TreeWalkResult::Ok
+    })
+    .unwrap();
+    found
 }
 
 #[test]

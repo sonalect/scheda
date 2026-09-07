@@ -104,13 +104,43 @@ fn lf_only(armor: String) -> Vec<u8> {
     bytes
 }
 
+/// First `AGE-SECRET-KEY-…` line from an `age-keygen` file.
+///
+/// Comment lines (`#`), blank lines, and a UTF-8 BOM are skipped. Extra
+/// non-comment text after the key is `invalid`. The returned string is the
+/// key line only. The error does not include the secret.
+pub fn parse_age_identity(text: &str) -> Result<String, Error> {
+    identity_line(text).ok_or_else(|| Error::invalid("age identity file is malformed"))
+}
+
 fn parse_x25519(identity: &str) -> Result<age::x25519::Identity, Error> {
-    match identity.trim().parse::<age::x25519::Identity>() {
-        Ok(identity) => Ok(identity),
-        Err(_) => {
+    match identity_line(identity).and_then(|line| line.parse().ok()) {
+        Some(identity) => Ok(identity),
+        None => {
             bail!(Error::crypto("secret is missing or wrong").context("[crypto] parse identity"));
         }
     }
+}
+
+fn identity_line(text: &str) -> Option<String> {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut found = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        if !line.starts_with("AGE-SECRET-KEY-") {
+            return None;
+        }
+        found = Some(line);
+    }
+    let line = found?;
+    line.parse::<age::x25519::Identity>().ok()?;
+    Some(line.to_owned())
 }
 
 fn finish_decrypt<R: Read>(
@@ -219,5 +249,30 @@ mod tests {
         let err = Error::crypto("file will not decrypt");
         assert_eq!(err.known_code(), Some(Code::Crypto));
         assert_eq!(err.known_repeat(), Some(crate::error::Repeat::Forbidden));
+    }
+
+    #[test]
+    fn age_keygen_file_is_accepted() {
+        use age::secrecy::ExposeSecret;
+        let key = age::x25519::Identity::generate()
+            .to_string()
+            .expose_secret()
+            .to_owned();
+        let file = format!("# created: 2026-01-01T00:00:00Z\n# public key: age1test\n{key}\n");
+        let parsed = super::parse_age_identity(&file).unwrap();
+        assert_eq!(parsed, key);
+        let cipher = encrypt(b"file-body", Some(&Encryption::new().identity(file))).unwrap();
+        let plain = decrypt(&cipher, Some(&Encryption::new().identity(parsed))).unwrap();
+        assert_eq!(plain, b"file-body");
+    }
+
+    #[test]
+    fn malformed_identity_file_is_invalid() {
+        let err = super::parse_age_identity("not-a-key\n").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        let err = super::parse_age_identity("").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        let msg = err.message.as_deref().unwrap_or("");
+        assert!(!msg.contains("AGE-SECRET-KEY"));
     }
 }

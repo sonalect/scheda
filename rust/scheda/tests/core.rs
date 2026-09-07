@@ -88,6 +88,7 @@ fn read_src_rs() -> String {
         include_str!("../src/index.rs"),
         include_str!("../src/isolated.rs"),
         include_str!("../src/journal.rs"),
+        include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
         include_str!("../src/schema.rs"),

@@ -8,6 +8,35 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **`schema_from_json` / `schema_from_value` refuse unknown Schema keys.**
+  Protobuf JSON used to drop a leftover `layout` key and
+  `create_collection` would write a file. YAML Schema files already
+  denied unknown keys. The CLI `--schema` flag uses this parser.
+- **The CLI takes an encryption secret from an environment variable or an
+  identity file**, never from argv. `--encryption-passphrase-env-var` and
+  `--encryption-identity-file` are mutually exclusive. A missing or empty
+  variable, and an unreadable or malformed identity file, are `invalid`
+  before a Vault is opened. An `age-keygen` file (comment lines, trailing
+  newline) is accepted. A Vault that holds an encrypted collection can
+  now be opened from the command line.
+- **`push_isolated` / `pull_isolated` / `sync_isolated`** reach a Remote
+  on `{vault}/.isolated/` without touching the main tree. Vault `push` /
+  `pull` / `sync` still publish the main tree only. `check` no longer
+  treats a nested Remote as a defect. The CLI encodes
+  `push-isolated` / `pull-isolated` / `sync-isolated`.
+- **CLI `collection NAME documents` and `ids`.** Encrypted collections
+  are not in the Index, so listing them was library-only. `ids` works
+  without a secret; `documents` needs one (`crypto` without it).
+  `journal` is `unsupported`.
+
+### Changed
+
+- **`Vault::versions` returns `Result`.** A poisoned schema lock is
+  `io_other`, same as the other schema reads, instead of returning the
+  last stored versions.
+
 ## [0.10.3] - 2026-09-07
 
 ### Added

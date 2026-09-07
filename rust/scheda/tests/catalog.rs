@@ -95,6 +95,7 @@ fn src_rs() -> String {
         include_str!("../src/index.rs"),
         include_str!("../src/isolated.rs"),
         include_str!("../src/journal.rs"),
+        include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
         include_str!("../src/schema.rs"),
@@ -554,21 +555,25 @@ fn create_collection_isolated_writes_schema_and_nested_git() {
 }
 
 #[test]
-fn create_collection_does_not_persist_layout_json_key() {
+fn create_collection_rejects_layout_json_key() {
     let scratch = Scratch::new();
-    let vault = scratch.init();
-    let json = json!({
+    let _vault = scratch.init();
+    let json = r#"{
         "version": 1,
         "document": {},
         "layout": ["c/{id}.md"],
         "fields": [{"name": "title", "string": {}}]
-    });
-    assert!(json.get("layout").is_some());
-    let decl: Schema = serde_json::from_value(json).unwrap();
-    vault.create_collection("west_docs", decl, None).unwrap();
-    let path = scratch.vault().join("west_docs").join(".schema.yaml");
-    let yaml = fs::read_to_string(&path).unwrap();
-    assert!(!yaml.contains("layout"), "{yaml}");
+    }"#;
+    let err = scheda::schema_from_json(json).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(err.message.as_deref().unwrap_or("").contains("layout"));
+    assert!(
+        !scratch
+            .vault()
+            .join("west_docs")
+            .join(".schema.yaml")
+            .is_file()
+    );
 }
 
 #[test]
