@@ -926,7 +926,7 @@ impl SearchEngine {
         let pool = fusion_pool(k, query.rerank_limit.filter(|_| has_reranker));
         let query_vec = if vector_weight > 0.0 && !vector_names.is_empty() {
             match embedder {
-                Some(embedder) => Some(embedder.embed(text)?),
+                Some(embedder) => Some(embedder.embed_query(text)?),
                 None => None,
             }
         } else {

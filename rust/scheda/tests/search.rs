@@ -2008,6 +2008,69 @@ fn vector_digest_is_stable_across_runs() {
     );
 }
 
+struct RoleEmbedder {
+    queries: Mutex<Vec<String>>,
+    fields: Mutex<Vec<String>>,
+}
+
+impl Embedder for RoleEmbedder {
+    fn model_id(&self) -> &str {
+        "role"
+    }
+
+    fn dimensions(&self) -> NonZeroUsize {
+        NonZeroUsize::new(4).unwrap()
+    }
+
+    fn many_limit(&self) -> NonZeroUsize {
+        NonZeroUsize::new(32).unwrap()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        self.fields
+            .lock()
+            .unwrap()
+            .extend(texts.iter().map(|text| (*text).to_string()));
+        Ok(texts.iter().copied().map(counting_vector).collect())
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, scheda::Error> {
+        self.queries.lock().unwrap().push(text.to_string());
+        Ok(counting_vector(text))
+    }
+}
+
+#[test]
+fn search_sends_the_query_through_embed_query_not_embed_many() {
+    let scratch = Scratch::new();
+    let embedder = Arc::new(RoleEmbedder {
+        queries: Mutex::new(Vec::new()),
+        fields: Mutex::new(Vec::new()),
+    });
+    let vault = open_tokens(&scratch, Some(Arc::clone(&embedder) as Arc<dyn Embedder>));
+    vault
+        .collection("token_notes")
+        .unwrap()
+        .add("vehicle", rec(json!({"title": "car"})), None)
+        .unwrap();
+    let _ = vault
+        .collection("token_notes")
+        .unwrap()
+        .search(&q("automobile", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    let queries = embedder.queries.lock().unwrap().clone();
+    let fields = embedder.fields.lock().unwrap().clone();
+    assert_eq!(queries, vec!["automobile".to_string()]);
+    assert!(
+        fields.iter().any(|text| text == "car"),
+        "record fields must still travel embed_many: {fields:?}"
+    );
+    assert!(
+        !fields.iter().any(|text| text == "automobile"),
+        "the search query must not travel embed_many: {fields:?}"
+    );
+}
+
 fn peek_schema_name(body: &str) -> String {
     for line in body.lines() {
         let line = line.trim();

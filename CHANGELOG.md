@@ -8,6 +8,14 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **`Embedder::embed_query` names the search-query role of a text.** The
+  default calls `embed`, so every current implementation stays a one-line
+  no-op. `search` uses the query method for the query string and still
+  uses `embed` / `embed_many` for record fields. An implementation may
+  encode the two roles differently, or do nothing.
+
 ## [0.10.2] - 2026-09-06
 
 ### Changed

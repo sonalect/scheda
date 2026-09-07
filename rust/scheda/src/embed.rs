@@ -51,7 +51,22 @@ pub trait Embedder: Send + Sync {
     /// Required. The library calls this for every batch larger than one
     /// (chunks of [`many_limit`](Self::many_limit)). The default
     /// [`embed`](Self::embed) also calls this with a one-element slice.
+    /// Record fields at ingest travel this path, not
+    /// [`embed_query`](Self::embed_query).
     fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error>;
+    /// Embed a search-query text, as opposed to a stored record field.
+    ///
+    /// The library calls this for the query string on `search`, and
+    /// [`embed`](Self::embed) / [`embed_many`](Self::embed_many) for record
+    /// fields at ingest. The default is [`embed`](Self::embed): the same
+    /// encoding for both roles is correct for a symmetric encoder.
+    ///
+    /// An implementation may encode the two roles differently — a query
+    /// prefix, a search-query input type, or nothing. Doing nothing is
+    /// allowed. This method names the role of the text, not a model.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error> {
+        self.embed(text)
+    }
 }
 
 /// Caller-supplied pair scorer. Not an `api/v1` field.
@@ -191,6 +206,16 @@ mod tests {
             many_calls: AtomicU64::new(0),
         };
         let vector = embedder.embed("hello").unwrap();
+        assert_eq!(vector, vec![1.0, 0.0, 0.0, 0.0]);
+        assert_eq!(embedder.many_calls.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn embed_query_default_delegates_to_embed() {
+        let embedder = OnlyManyEmbedder {
+            many_calls: AtomicU64::new(0),
+        };
+        let vector = embedder.embed_query("hello").unwrap();
         assert_eq!(vector, vec![1.0, 0.0, 0.0, 0.0]);
         assert_eq!(embedder.many_calls.load(Ordering::Relaxed), 1);
     }
