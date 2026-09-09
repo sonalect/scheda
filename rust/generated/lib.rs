@@ -7,6 +7,7 @@ use std::fmt;
 
 use protovalidate_buffa::Validate;
 
+#[rustfmt::skip]
 #[path = "api/v1/mod.rs"]
 mod generated;
 // protovalidate-buffa emits `__buffa::oneof::more_like_this` (and
