@@ -11,14 +11,14 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "find")]
 use crate::error::Context;
-use crate::error::{Code, ContextAs, ContextIo};
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::journal;
 use crate::schema::{self, Kind, Schema};
 use crate::store;
@@ -334,7 +334,8 @@ pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<Jour
         if !path.is_file() {
             continue;
         }
-        if let Some(ids) = read_ids_file(&path)? {
+        if let Some(mut ids) = read_ids_file(&path)? {
+            ids.retain(|id, rel| id_map_line_ok(decl, id, rel));
             maps.replace_collection(decl.name.clone(), ids);
         }
     }
@@ -467,10 +468,87 @@ pub(crate) fn lookup_on_disk(
     match read_ids_file(&path)? {
         None => Ok(OwnedLookup::MissingMap),
         Some(ids) => match ids.get(id) {
-            Some(rel) => Ok(OwnedLookup::Path(rel.clone())),
-            None => Ok(OwnedLookup::UnknownId),
+            Some(rel) if id_map_rel_ok_for_name(collection, rel) => {
+                Ok(OwnedLookup::Path(rel.clone()))
+            }
+            Some(_) | None => Ok(OwnedLookup::UnknownId),
         },
     }
+}
+
+/// Whether `rel` is a Vault-relative segment under this collection directory.
+///
+/// Rejects absolute paths, `..`, and a prefix that is not this collection
+/// (plain or `.isolated/`). Used when reading the journal `id` map so a
+/// hand-edited line cannot name a file outside the collection.
+pub(crate) fn id_map_rel_ok(decl: &schema::CollectionDecl, rel: &str) -> bool {
+    let dir = schema::collection_dir(&decl.name);
+    let prefix = if decl.isolated {
+        format!(".isolated/{dir}/")
+    } else {
+        format!("{dir}/")
+    };
+    id_map_rel_has_prefix(rel, &prefix)
+}
+
+fn id_map_line_ok(decl: &schema::CollectionDecl, id: &str, rel: &str) -> bool {
+    crate::id::require_slug("id", id).is_ok() && id_map_rel_ok(decl, rel)
+}
+
+fn id_map_rel_ok_for_name(collection: &str, rel: &str) -> bool {
+    let dir = schema::collection_dir(collection);
+    let plain = format!("{dir}/");
+    let isolated = format!(".isolated/{dir}/");
+    id_map_rel_has_prefix(rel, &plain) || id_map_rel_has_prefix(rel, &isolated)
+}
+
+fn id_map_rel_has_prefix(rel: &str, prefix: &str) -> bool {
+    if rel.is_empty() || !rel.starts_with(prefix) || rel.len() <= prefix.len() {
+        return false;
+    }
+    let path = Path::new(rel);
+    if path.is_absolute() {
+        return false;
+    }
+    path.components()
+        .all(|component| matches!(component, Component::Normal(_)))
+}
+
+/// Fail if a journal `ids` file names a path outside its collection.
+pub(crate) fn check_journal_id_maps(index_dir: &Path, schema: &Schema) -> Result<(), Error> {
+    for decl in schema.collections() {
+        if decl.encrypted || decl.kind != Kind::Journal {
+            continue;
+        }
+        let path = ids_path(index_dir, &decl.name);
+        if !path.is_file() {
+            continue;
+        }
+        let raw = fs::read(&path).context("[Index::check_journal_id_maps] read ids")?;
+        let text = str::from_utf8(&raw).context(
+            Code::IndexCorrupt,
+            "[Index::check_journal_id_maps] decode UTF-8",
+        )?;
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let parsed: IdMapLine = serde_json::from_str(line).context(
+                Code::IndexCorrupt,
+                "[Index::check_journal_id_maps] parse line",
+            )?;
+            if !id_map_line_ok(decl, &parsed.id, &parsed.path) {
+                bail!(
+                    Error::index_corrupt(format!(
+                        "journal id map for {} has a path outside the collection",
+                        decl.name
+                    ))
+                    .context("[Index::check_journal_id_maps] path")
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 /// [`MapLookup`] with an owned segment path.
@@ -729,6 +807,55 @@ mod tests {
         match lookup_on_disk(&dir, "log", "a").unwrap() {
             OwnedLookup::Path(rel) => assert_eq!(rel, "log/open.jsonl"),
             other => panic!("expected Path, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    fn journal_decl(name: &str, isolated: bool) -> schema::CollectionDecl {
+        schema::CollectionDecl {
+            name: name.to_owned(),
+            kind: Kind::Journal,
+            version: 1,
+            filter_keys: Default::default(),
+            segment_max_bytes: None,
+            segment_max_lines: None,
+            segment_rotate: None,
+            singleton_id: None,
+            body: None,
+            fields: Vec::new(),
+            isolated,
+            encrypted: false,
+            exclude_lexical_index: false,
+            exclude_vector_index: false,
+        }
+    }
+
+    #[test]
+    fn id_map_rel_ok_rejects_absolute_parent_and_other_collection() {
+        let decl = journal_decl("log", false);
+        assert!(id_map_rel_ok(&decl, "log/open.jsonl"));
+        assert!(!id_map_rel_ok(&decl, "/etc/passwd"));
+        assert!(!id_map_rel_ok(&decl, "../secret"));
+        assert!(!id_map_rel_ok(&decl, "log/../secret"));
+        assert!(!id_map_rel_ok(&decl, "other/open.jsonl"));
+        let isolated = journal_decl("log", true);
+        assert!(id_map_rel_ok(&isolated, ".isolated/log/open.jsonl"));
+        assert!(!id_map_rel_ok(&isolated, "log/open.jsonl"));
+    }
+
+    #[test]
+    fn lookup_on_disk_skips_path_outside_the_collection() {
+        let dir = scratch_dir();
+        let mut maps = JournalIdMaps::default();
+        maps.replace_collection("log".into(), BTreeMap::new());
+        remember_id(&dir, &mut maps, "log", "a", "log/open.jsonl").unwrap();
+        let path = ids_path(&dir, "log");
+        let mut text = fs::read_to_string(&path).unwrap();
+        text.push_str("{\"id\":\"stolen\",\"path\":\"/etc/passwd\"}\n");
+        fs::write(&path, text).unwrap();
+        match lookup_on_disk(&dir, "log", "stolen").unwrap() {
+            OwnedLookup::UnknownId => {}
+            other => panic!("expected UnknownId, got {other:?}"),
         }
         let _ = fs::remove_dir_all(&dir);
     }

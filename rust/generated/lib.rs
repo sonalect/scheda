@@ -10,12 +10,12 @@ use protovalidate_buffa::Validate;
 #[rustfmt::skip]
 #[path = "api/v1/mod.rs"]
 mod generated;
-// protovalidate-buffa emits `__buffa::oneof::more_like_this` (and
-// `__buffa::view::oneof::more_like_this`) for nested
-// `Filter.MoreLikeThis.source`. Buffa places that oneof at
-// `__buffa::oneof::filter::more_like_this` (and
-// `__buffa::view::oneof::filter::more_like_this`). Alias here so generate
-// output is not edited (generate wipes `api/v1/`).
+// packaging=false emits `*.validate.rs` beside the Buffa types and omits
+// a packaging `mod.rs`. Include them here: generate wipes `api/v1/`.
+// Nested `Filter.MoreLikeThis.source` is `__buffa::oneof::more_like_this`
+// (and `__buffa::view::oneof::more_like_this`); Buffa places that oneof
+// at `__buffa::oneof::filter::more_like_this`. Alias so generate output
+// is not edited.
 mod validate {
     pub mod api {
         pub mod v1 {
@@ -76,7 +76,18 @@ mod validate {
                 }
             }
 
-            include!("api/v1/validate/api.v1.mod.rs");
+            include!("api/v1/api.v1.author.validate.rs");
+            include!("api/v1/api.v1.schema.validate.rs");
+            include!("api/v1/api.v1.collection.validate.rs");
+            include!("api/v1/api.v1.encryption.validate.rs");
+            include!("api/v1/api.v1.error.validate.rs");
+            include!("api/v1/api.v1.record.validate.rs");
+            include!("api/v1/api.v1.find.validate.rs");
+            include!("api/v1/api.v1.history.validate.rs");
+            include!("api/v1/api.v1.index.validate.rs");
+            include!("api/v1/api.v1.options.validate.rs");
+            include!("api/v1/api.v1.search.validate.rs");
+            include!("api/v1/api.v1.vault.validate.rs");
         }
     }
 }

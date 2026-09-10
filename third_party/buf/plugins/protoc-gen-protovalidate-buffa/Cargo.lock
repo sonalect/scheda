@@ -76,17 +76,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "buffa-build"
-version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "247d43740a4854a9c1b98a5931d6d67d8f8b41ffeb2a43ca008d460e79b1eb2c"
-dependencies = [
- "buffa",
- "buffa-codegen",
- "tempfile",
-]
-
-[[package]]
 name = "buffa-codegen"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -197,22 +186,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "errno"
-version = "0.3.14"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
-dependencies = [
- "libc",
- "windows-sys",
-]
-
-[[package]]
-name = "fastrand"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
-
-[[package]]
 name = "foldhash"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -240,17 +213,6 @@ dependencies = [
  "futures-task",
  "pin-project-lite",
  "slab",
-]
-
-[[package]]
-name = "getrandom"
-version = "0.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "300e883d756b2e4ec94e02791f39b04b522276138852cfc41d9fb7e904106099"
-dependencies = [
- "cfg-if",
- "libc",
- "r-efi",
 ]
 
 [[package]]
@@ -326,12 +288,6 @@ name = "libc"
 version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
-
-[[package]]
-name = "linux-raw-sys"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32a66949e030da00e8c7d4434b251670a91556f4144941d37452769c25d58a53"
 
 [[package]]
 name = "lock_api"
@@ -466,8 +422,8 @@ dependencies = [
 
 [[package]]
 name = "protoc-gen-protovalidate-buffa"
-version = "0.7.2"
-source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=v0.7.1#fdb4edb90caf84e1dc941c3ca222382bb1344835"
+version = "0.10.0"
+source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=protoc-gen-protovalidate-buffa-v0.10.0#3b22ee73057edeeab2f025cf5939507375e29552"
 dependencies = [
  "anyhow",
  "buffa",
@@ -482,19 +438,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "protoc-gen-protovalidate-buffa-v0-7-1"
-version = "0.7.1"
+name = "protoc-gen-protovalidate-buffa-v0-10-0"
+version = "0.10.0"
 dependencies = [
  "protoc-gen-protovalidate-buffa",
 ]
 
 [[package]]
 name = "protovalidate-buffa-protos"
-version = "0.7.0"
-source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=v0.7.1#fdb4edb90caf84e1dc941c3ca222382bb1344835"
+version = "0.7.1"
+source = "git+https://github.com/mathematic-inc/protovalidate-buffa?tag=protoc-gen-protovalidate-buffa-v0.10.0#3b22ee73057edeeab2f025cf5939507375e29552"
 dependencies = [
  "buffa",
- "buffa-build",
  "buffa-descriptor",
  "buffa-types",
 ]
@@ -509,31 +464,12 @@ dependencies = [
 ]
 
 [[package]]
-name = "r-efi"
-version = "6.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
-
-[[package]]
 name = "redox_syscall"
 version = "0.5.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags 2.13.1",
-]
-
-[[package]]
-name = "rustix"
-version = "1.1.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190"
-dependencies = [
- "bitflags 2.13.1",
- "errno",
- "libc",
- "linux-raw-sys",
- "windows-sys",
 ]
 
 [[package]]
@@ -641,19 +577,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tempfile"
-version = "3.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
-dependencies = [
- "fastrand",
- "getrandom",
- "once_cell",
- "rustix",
- "windows-sys",
-]
-
-[[package]]
 name = "thiserror"
 version = "2.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -745,15 +668,6 @@ name = "windows-link"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f0805222e57f7521d6a62e36fa9163bc891acd422f971defe97d64e70d0a4fe5"
-
-[[package]]
-name = "windows-sys"
-version = "0.61.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae137229bcbd6cdf0f7b80a31df61766145077ddf49416a728b02cb3921ff3fc"
-dependencies = [
- "windows-link",
-]
 
 [[package]]
 name = "zmij"

@@ -8,6 +8,32 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-10
+
+### Fixed
+
+- **Journal `get` no longer follows a hand-edited `id` map off the
+  collection.** A line whose `path` is absolute or walks `..` is skipped
+  on load, so `get` does not open that file. `check` reports the map as
+  `index_corrupt`.
+- **`create_collection` restores the Schema file if a later step fails
+  outside a transaction.** A leftover `{name}/.schema.yaml` is no longer
+  visible on the next `open` before the next mutating call. An open
+  transaction still owns earlier Record paths until `commit` or
+  `discard`.
+
+### Changed
+
+- **Documents match shipped P16.** `07` LIB-13 no longer ties
+  `OpenOptions.encryption` to `{vault}/.isolated/`. Isolated I/O does
+  not require a secret unless the collection is also `encrypted`.
+- **Pinned `bazel_utils_*` modules at `v0.2.5`.**
+- protovalidate-buffa 0.7.2 and `protoc-gen-protovalidate-buffa` 0.10.0.
+  Generated Validate impls sit beside the Buffa types
+  (`packaging=false`).
+- Update `tantivy` to `0.26.2` and `ureq` to `3.4.1`.
+- vLLM sidecars: `vllm==0.29.0` in `uv.lock`.
+
 ## [0.11.0] - 2026-09-07
 
 ### Added
@@ -1199,6 +1225,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.11.1]
 - [0.11.0]
 - [0.10.3]
 - [0.10.2]
@@ -1233,7 +1260,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/amsokol/scheda/releases/tag/v0.11.1
 [0.11.0]: https://github.com/amsokol/scheda/releases/tag/v0.11.0
 [0.10.3]: https://github.com/amsokol/scheda/releases/tag/v0.10.3
 [0.10.2]: https://github.com/amsokol/scheda/releases/tag/v0.10.2

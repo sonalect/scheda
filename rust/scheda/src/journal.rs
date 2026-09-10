@@ -233,13 +233,34 @@ pub(crate) fn find_journal(
     }
 }
 
+fn resolve_segment(vault: &Path, decl: &CollectionDecl, rel: &str) -> Result<PathBuf, Error> {
+    if !index::id_map_rel_ok(decl, rel) {
+        bail!(
+            Error::index_corrupt("journal id map path is not a collection segment")
+                .context("[Journal::find] resolve segment")
+        );
+    }
+    let path = crate::schema::join_inside(vault, rel).map_err(|_| {
+        Error::index_corrupt("journal id map path is not a collection segment")
+            .context("[Journal::find] resolve segment")
+    })?;
+    let dir = crate::isolated::records_dir(vault, decl)?;
+    if !path.starts_with(&dir) {
+        bail!(
+            Error::index_corrupt("journal id map path is not a collection segment")
+                .context("[Journal::find] resolve segment")
+        );
+    }
+    Ok(path)
+}
+
 pub(crate) fn find_in_segment(
     vault: &Path,
     decl: &CollectionDecl,
     rel: &str,
     id: &str,
 ) -> Result<Record, Error> {
-    let path = vault.join(rel);
+    let path = resolve_segment(vault, decl, rel)?;
     let raw = fs::read(&path)
         .context("[Journal::find] read segment")
         .map_err(|err| err.with_path(rel))?;

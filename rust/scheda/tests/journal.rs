@@ -536,6 +536,52 @@ fn lines_truncated_tail_is_invalid() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
+fn journal_ids_path(vault: &std::path::Path, collection: &str) -> PathBuf {
+    let generation = fs::read_to_string(vault.join(".scheda").join("index").join("current"))
+        .unwrap()
+        .trim()
+        .to_owned();
+    vault
+        .join(".scheda")
+        .join("index")
+        .join(generation)
+        .join("journal")
+        .join(collection)
+        .join("ids")
+}
+
+#[test]
+fn journal_id_map_outside_collection_is_not_read() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    vault
+        .collection("south_log")
+        .unwrap()
+        .add("kept", rec("ok"), None)
+        .unwrap();
+    let marker = "UNIQUE_LEAK_MARKER";
+    let outside = scratch.root.join("secret.txt");
+    fs::write(&outside, marker).unwrap();
+    let ids = journal_ids_path(&scratch.vault(), "south_log");
+    let mut text = fs::read_to_string(&ids).unwrap();
+    let abs = serde_json::json!({"id": "stolen", "path": outside.to_str().unwrap()});
+    let parent = serde_json::json!({"id": "parent", "path": "../secret.txt"});
+    text.push_str(&format!("{abs}\n{parent}\n"));
+    fs::write(&ids, text).unwrap();
+    let vault = scratch.reopen();
+    let collection = vault.collection("south_log").unwrap();
+    assert_eq!(collection.get("kept").unwrap().id.as_deref(), Some("kept"));
+    let stolen = collection.get("stolen").unwrap_err();
+    assert_eq!(stolen.known_code(), Some(Code::NotFound));
+    assert!(!stolen.to_string().contains(marker));
+    assert_eq!(
+        collection.get("parent").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    let check = vault.check().unwrap_err();
+    assert_eq!(check.known_code(), Some(Code::IndexCorrupt));
+}
+
 fn peek_schema_name(body: &str) -> String {
     for line in body.lines() {
         let line = line.trim();

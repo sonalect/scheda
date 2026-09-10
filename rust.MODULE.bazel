@@ -21,6 +21,9 @@ cargo = use_extension(
     "crate",
 )
 
+include("//third_party/buf/plugins/protoc-gen-buffa-packaging:crates.MODULE.bazel")
+include("//third_party/buf/plugins/protoc-gen-protovalidate-buffa:crates.MODULE.bazel")
+
 # USearch compiles C++ via cxx-build. Bazel injects CXX=gcc on Linux unless we
 # pin /usr/bin/c++. Do not set CXX on macOS: cargo_build_script already passes
 # Apple CXXFLAGS with __BAZEL_XCODE_SDKROOT__, which only Bazel's clang wrapper

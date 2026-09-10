@@ -695,16 +695,17 @@ impl Vault {
 
     /// Validate Schema, encodings, journal lines, `id` uniqueness, and conflict
     /// markers. Isolated Record files are scanned when `{vault}/.isolated/`
-    /// exists. Parent git must not track `.isolated/`; nested git must have no
-    /// Remote. On Unix, `{vault}/.scheda/` must be owner-only (`0700`
-    /// directories, `0600` files); a wider mode is reported with that path.
-    /// Does not write Records. Lexical Index freshness is validated
-    /// only when the crate is built with `find`; a build without `find` has no
-    /// lexical segments and no way to rebuild them, so it ignores the stale
-    /// marker even though its own writes keep setting it. An encrypted
-    /// collection whose secret is absent is not checked (`crypto`); a build
-    /// without `encrypt` reports `unsupported_encryption`. With the secret,
-    /// encrypted collections are validated like any other.
+    /// exists. Parent git must not track `.isolated/`. A nested Remote of its
+    /// own is not a defect. On Unix, `{vault}/.scheda/` must be owner-only
+    /// (`0700` directories, `0600` files); a wider mode is reported with that
+    /// path. A journal `id` map line whose path is outside that collection is
+    /// `index_corrupt`. Does not write Records. Lexical Index freshness is
+    /// validated only when the crate is built with `find`; a build without
+    /// `find` has no lexical segments and no way to rebuild them, so it ignores
+    /// the stale marker even though its own writes keep setting it. An
+    /// encrypted collection whose secret is absent is not checked
+    /// (`crypto`); a build without `encrypt` reports `unsupported_encryption`.
+    /// With the secret, encrypted collections are validated like any other.
     pub fn check(&self) -> Result<(), Error> {
         isolated::check_perimeter(&self.path)?;
         #[cfg(feature = "find")]
@@ -714,6 +715,7 @@ impl Vault {
         }
         store::check_scheda_owner_only(&self.path)?;
         let schema = schema::load(&self.path)?;
+        index::check_journal_id_maps(&self.generation_dir()?, &schema)?;
         store::check_documents(&self.path, &schema, self.encryption.as_ref())?;
         journal::check_journals(&self.path, &schema)
     }
@@ -763,20 +765,30 @@ impl Vault {
         self.conclude_write((|| {
             self.reject_if_reindex_active("create_collection")?;
             self.drain_abandoned()?;
-            if schema.isolated == Some(true)
-                && let Some(rel) = isolated::ensure(&self.path)?
-            {
+            let result = (|| {
+                if schema.isolated == Some(true)
+                    && let Some(rel) = isolated::ensure(&self.path)?
+                {
+                    self.note_write(rel)?;
+                }
+                let rel = schema::put_collection(&self.path, name, &schema)?;
                 self.note_write(rel)?;
+                let loaded = schema::load(&self.path)?;
+                let dir = self.generation_dir()?;
+                *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
+                    index::load_journal_ids(&dir, &loaded)?;
+                *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
+                self.finish_mutation(message)?;
+                Ok(())
+            })();
+            // Autocommit only: a later step can fail after the Schema file is
+            // recorded. Inside a transaction the written set also holds earlier
+            // Record paths; restoring them here would drop work that `commit`
+            // or `discard` still owns.
+            if result.is_err() && flag(&self.in_txn).ok() == Some(false) {
+                let _ = self.restore_recorded();
             }
-            let rel = schema::put_collection(&self.path, name, &schema)?;
-            self.note_write(rel)?;
-            let loaded = schema::load(&self.path)?;
-            let dir = self.generation_dir()?;
-            *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
-                index::load_journal_ids(&dir, &loaded)?;
-            *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
-            self.finish_mutation(message)?;
-            Ok(())
+            result
         })())?;
         self.collection(name)
     }

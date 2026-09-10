@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.50, 7 September 2026.
+Document 10 of the Scheda package. Version 0.51, 10 September 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -33,7 +33,7 @@ Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collec
 
 **First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, P9, P10, P11, P12, and P13 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git) is P4; listing a `document` collection without the Index is P13. P14 took encryption out of the isolation flag and made it a Schema key on any one collection, behind the `encrypt` feature; it shipped as `0.6.0`, and the two things it designed without building — a CLI that can carry a secret, and a Remote for the nested tree — shipped as P16. P15 replaced the nested isolated Index with one owner-only Index per Vault, which is what makes an isolated collection searchable at all. `find` and `search` are opt-in crate features (P8); Cargo default is `remote-git` only. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave. P10 is acceptance on that fixture. P11 is an `object` that takes listed keys, a typed open map (`values`), or an open map of `string` values when both arms are omitted. P12 is an optional commit message on each mutating call and a commit identity at `open`.
 
-**Still deferred:** ISO-5, ISO-7–11; file watcher; journal line delete; REL-4; extra language bindings.
+**Still deferred:** file watcher; journal line delete; REL-4; extra language bindings.
 
 ---
 
@@ -101,7 +101,7 @@ Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipp
 The thin encoding is CLI argv `14`. ISO-3 holds on that surface when an
 isolated collection exists. Unencrypted nested `{vault}/.isolated/` I/O
 is in (`12` P4). Collection encryption shipped as `12` P14. A CLI secret
-and a nested Remote stay `12` P16.
+and a nested Remote shipped as `12` P16.
 
 ---
 
@@ -113,23 +113,21 @@ and a nested Remote stay `12` P16.
 
 ISO-1 stays **core**. The main Vault is never encrypted.
 
-Unencrypted isolated (`encryption` unset, `0600`, no Remote) is valid; encryption is optional on top.
+Unencrypted isolated (`encryption` unset, `0600`, nested Remote optional) is valid; encryption is optional on top.
 
-**Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-6 no Remote (the relaxation is P16); ISO-4 and IDX-4 in their P15 form — one owner-only Index per Vault that holds isolated collections and no encrypted one, and no nested Index (ISO-10 retired). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; naming an isolated collection is an ordinary query. `check` covers the nested tree. ISO-5, ISO-7–9, and ISO-11 shipped as collection encryption (`12` P14): `OpenOptions.encryption` is read, `encrypted: true` is a Schema key on any one collection, and the Schema is the marker (no `.encrypted` file).
-
-**Still later — P16:** a CLI that can carry the encryption secret (`14`), and a Remote of the nested tree's own (ISO-6 relaxation). `OpenOptions.encryption` does not wait; the library already uses it.
+**Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-6 with a nested Remote of its own (`12` P16); ISO-4 and IDX-4 in their P15 form — one owner-only Index per Vault that holds isolated collections and no encrypted one, and no nested Index (ISO-10 retired). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; naming an isolated collection is an ordinary query. `check` covers the nested tree. ISO-5, ISO-7–9, and ISO-11 shipped as collection encryption (`12` P14): `OpenOptions.encryption` is read, `encrypted: true` is a Schema key on any one collection, and the Schema is the marker (no `.encrypted` file). The CLI can carry the encryption secret (`14`), and the nested tree may have a Remote of its own (`12` P16).
 
 Online `reindex` (writers during the Index walk) is not P16. The work order is `15`.
 
 **Isolated is accepted** when:
 
 1. A fixture with gitignored `{vault}/.isolated/`: queries on non-isolated collections return no isolated Records and do not require `.isolated/` (ISO-2, SCH-15).
-2. Nested git: local `commit` / `history` of isolated paths; `push` does not upload `.isolated/`; until P16, `check` fails if the nested repo has a Remote or the parent tracks `.isolated/` (ISO-6).
+2. Nested git: local `commit` / `history` of isolated paths; `push` does not upload `.isolated/`; `check` fails if the parent tracks `.isolated/`; a nested Remote of its own is not a defect (ISO-6).
 3. Encryption of a collection (P14): `add` / `get` round-trip with the handle secret; I/O without it is `crypto`; files decrypt with `age -d`; flipping `encrypted` on a non-empty collection is `invalid` (ISO-5–9, ISO-11). Independent of `isolated`.
 4. No Index holds a fixture string from an encrypted collection (ISO-4, IDX-4). Isolated field values sit in the owner-only Index.
 5. If **agent** is on: default tools never return that sealed value (ISO-3).
 
-Gates 1–5 hold in `scheda` today. The nested Remote and the CLI secret are P16; they do not reopen these gates.
+Gates 1–5 hold in `scheda` today. The nested Remote and the CLI secret shipped as P16; they do not reopen these gates.
 
 ### Everything else later
 
@@ -178,7 +176,7 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 
 **Hooks.** `04` already: Vault hooks are the consumer's and must not recurse into the same write lock. Worth a binding note when a CLI lands.
 
-Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); isolated Remote (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`); encryption marker path (no — ISO-11 is the Schema key `encrypted`, not a file).
+Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`); encryption marker path (no — ISO-11 is the Schema key `encrypted`, not a file). Main-tree `push` / `pull` / `sync` never publish `.isolated/`; a nested Remote is reached only by `push_isolated` / `pull_isolated` / `sync_isolated` (ISO-6).
 
 ---
 

@@ -11,7 +11,7 @@ edition = "2024"
 rust-version = "1.98.1"
 license = "Apache-2.0"
 repository = "https://github.com/amsokol/scheda"
-version = "0.11.0"
+version = "0.11.1"
 
 [workspace.dependencies]
 age = { version = "=0.12.1", default-features = false, features = ["armor"] }
@@ -32,15 +32,15 @@ model2vec-rs = { version = "=0.2.1", default-features = false, features = [
     "fancy-regex",
     "local-only",
 ] }
-protovalidate-buffa = { version = "=0.7.1", default-features = false }
+protovalidate-buffa = { version = "=0.7.2", default-features = false }
 regex = "=1.13.1"
 scheda = { path = "rust/scheda" }
 scheda-generated = { path = "rust/generated" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha2 = "=0.11.0"
-ureq = { version = "=3.4.0", features = ["json"] }
-tantivy = "=0.26.1"
+ureq = { version = "=3.4.1", features = ["json"] }
+tantivy = "=0.26.2"
 usearch = { version = "=2.26.2", default-features = false }
 yaml_serde = "=0.10.7"
 

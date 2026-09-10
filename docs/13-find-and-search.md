@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.28, 7 September 2026.
+Document 13 of the Scheda package. Version 0.29, 10 September 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Schema marks: `05` SCH-8–10. This document is the target. Implementations that concatenate all fields into one vector, or treat `search` as a query string only, are wrong.
 
@@ -13,12 +13,12 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 | | `find` | `search` |
 |---|---|---|
 | Call | Vault `find(collections, query, offset, count)`. Collection `find(query, offset, count)` calls that with its name. | Vault `search(collections, query, reranker?)`. Collection `search(query, reranker?)` calls that with its name. |
-| In | `api.v1.FindQuery` (`Filter` required; `include_raw` default false) plus a set of collection names (empty = this Vault, non-isolated) | `api.v1.SearchQuery` (`text` required; `include_raw` default false) plus the same name set |
+| In | `api.v1.FindQuery` (`Filter` required; `include_raw` default false) plus a set of collection names (empty = this Vault, non-isolated and non-encrypted) | `api.v1.SearchQuery` (`text` required; `include_raw` default false) plus the same name set |
 | Out | `api.v1.FindResult` (`records` plus `total`; `Record.collection` on each hit; `Record.raw` only if `include_raw`) | `api.v1.SearchHits` (`collection`, `id`, `path`, scores; `rerank_score` if reranker; `raw` only if `include_raw`) |
 | Engine | Tantivy Query only | BM25 (Tantivy) **and** ANN (USearch), fuse, then optional rerank |
 | Vectors | no | yes, if an embedder is set |
 
-Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → an ordinary query. Encrypted name → `unsupported`. Empty set stays non-isolated.
+Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → an ordinary query. Encrypted name → `unsupported`. Empty set stays non-isolated and non-encrypted.
 
 `get` / `add` / `history` / `lines` do not wait on the Index. `find` / `search` take `id`s from the Index, then open files. `replace` / `remove` do the same when `find` is on, isolated collections included; when `find` is off, and on encrypted collections either way, they use the Record file. Orphan file: `get` works; `find` / `search` skip it until indexed. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
 

@@ -8,7 +8,8 @@ plugins:
     out: rust/generated/api/v1
     strategy: all
   - local: protoc-gen-protovalidate-buffa
-    out: rust/generated/api/v1/validate
+    out: rust/generated/api/v1
     strategy: all
     opt:
       - proto_module=crate::generated
+      - packaging=false

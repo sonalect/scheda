@@ -519,6 +519,68 @@ fn create_collection_missing_kind_writes_nothing() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn create_collection_restores_schema_when_journal_map_is_unreadable() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = Scratch::new();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let log: Schema = serde_json::from_value(json!({
+        "version": 1,
+        "journal": {},
+        "fields": [{"name": "msg", "string": {}}]
+    }))
+    .unwrap();
+    vault.create_collection("east_log", log, None).unwrap();
+    vault
+        .collection("east_log")
+        .unwrap()
+        .add("a", rec(json!({"msg": "x"})), None)
+        .unwrap();
+    let generation = fs::read_to_string(
+        scratch
+            .vault()
+            .join(".scheda")
+            .join("index")
+            .join("current"),
+    )
+    .unwrap()
+    .trim()
+    .to_owned();
+    let ids = scratch
+        .vault()
+        .join(".scheda")
+        .join("index")
+        .join(generation)
+        .join("journal")
+        .join("east_log")
+        .join("ids");
+    // Taking the write lock re-applies owner-only modes under `.scheda/`,
+    // so chmod on `ids` itself would be undone before `load_journal_ids`.
+    // A symlink to a file outside that tree is skipped by the walk.
+    let blocked = scratch.root.join("blocked-ids");
+    fs::write(&blocked, b"x").unwrap();
+    let mut deny = fs::metadata(&blocked).unwrap().permissions();
+    deny.set_mode(0o000);
+    fs::set_permissions(&blocked, deny.clone()).unwrap();
+    fs::remove_file(&ids).unwrap();
+    std::os::unix::fs::symlink(&blocked, &ids).unwrap();
+    let err = vault.create_collection("west_docs", west_docs_decl(), None);
+    deny.set_mode(0o600);
+    fs::set_permissions(&blocked, deny).unwrap();
+    assert!(err.is_err(), "{err:?}");
+    assert!(
+        !scratch
+            .vault()
+            .join("west_docs")
+            .join(".schema.yaml")
+            .exists()
+    );
+    let missing = scratch.reopen().collection("west_docs").unwrap_err();
+    assert_eq!(missing.known_code(), Some(Code::NotFound));
+}
+
 #[test]
 fn create_collection_isolated_writes_schema_and_nested_git() {
     let scratch = Scratch::new();

@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.77, 7 September 2026.
+Document 12 of the Scheda package. Version 0.78, 10 September 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -436,7 +436,7 @@ and `library_and_cli_json_and_code_match` (`info`, `get`, `find`, `search`,
 - [x] Library vs transport JSON (and `code`) match on one Vault (AGT-4).
 
 When A7 is `done`, **agent** is accepted for the Rust binding. Collection
-encryption shipped as P14. A CLI secret and a nested Remote stay P16.
+encryption shipped as P14. A CLI secret and a nested Remote shipped as P16.
 
 ---
 
