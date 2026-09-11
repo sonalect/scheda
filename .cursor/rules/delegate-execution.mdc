@@ -1,13 +1,16 @@
 ---
-description: Delegate command execution and file creation to a Cursor Grok subagent
+description: Every parent agent delegates commands and new files to a Cursor Grok subagent, then reviews
 alwaysApply: true
 ---
 
 # Delegate execution and creation
 
-**Applies to Claude models only.** If you are a Claude model, follow this rule. If you are any other model — Grok in particular — ignore it entirely and do the work yourself: a Grok agent spawning a Grok subagent for its own commands is pointless.
+Applies to **every parent agent**, including Grok. A Grok parent still
+launches a Grok subagent. If **you** were launched via the Task tool, you
+are the subagent: do the work yourself and do not spawn another Task.
 
-Do not run commands yourself and do not create files yourself. Both go to a subagent on `cursor-grok-4.6-high`.
+The parent does not run commands and does not create files. Both go to
+a subagent on `cursor-grok-4.6-high`.
 
 ## Always delegate
 
@@ -31,7 +34,13 @@ The subagent starts with no context. Give it absolute paths, the exact content o
 
 ## After it returns
 
-Read what the subagent produced and verify it. Never report success on the subagent's word alone.
+Read what the subagent produced and verify it against the request and the
+conventions above. Never report success on the subagent's word alone.
+
+If the review finds issues, do **not** patch them in this agent. Launch the
+subagent again with the findings (paths, what is wrong, the expected fix)
+and repeat until the result is acceptable or you must stop and tell the
+user what remains.
 
 ## Example
 

@@ -8,6 +8,8 @@ alwaysApply: true
 ## Subagent model
 
 - When launching subagents via the Task tool, default the model to `cursor-grok-4.6-high` (Cursor Grok 4.6).
+- Do not skip the subagent because the parent is already Grok. Follow `delegate-execution.mdc`.
+- After a subagent returns, the parent reviews the result. Issues go back to a new Grok subagent; the parent does not patch them itself.
 - Do not substitute another model and do not leave `inherit`, unless the user explicitly asked for a different model.
 - If `cursor-grok-4.6-high` is not in the list of available models, do not pick a replacement silently; tell the user and stop.
 
