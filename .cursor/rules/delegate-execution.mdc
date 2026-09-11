@@ -5,12 +5,13 @@ alwaysApply: true
 
 # Delegate execution and creation
 
-Applies to **every parent agent**, including Grok. A Grok parent still
-launches a Grok subagent. If **you** were launched via the Task tool, you
+Applies to **every parent agent**, including Cursor Grok (this model when
+the parent is `cursor-grok-4.6-high`). A Cursor Grok parent still launches
+a Cursor Grok subagent. If **you** were launched via the Task tool, you
 are the subagent: do the work yourself and do not spawn another Task.
 
 The parent does not run commands and does not create files. Both go to
-a subagent on `cursor-grok-4.6-high`.
+a Cursor Grok subagent (`model: "cursor-grok-4.6-high"`).
 
 ## Always delegate
 
