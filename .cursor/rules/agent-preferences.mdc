@@ -8,10 +8,21 @@ alwaysApply: true
 ## Subagent model
 
 - When launching subagents via the Task tool, default the model to `cursor-grok-4.6-high` (Cursor Grok 4.6).
+- Never run a Fast subagent. Do not pass `composer-2.5-fast`, any slug ending in `-fast`, or `subagent_type: "explore"` (Cursor's Fast explorer). Do not pick Fast because the Task tool, the UI, or latency suggests it.
+- For search or codebase questions that would have used `explore`, search in the parent (Read, Grep, Glob) or launch `generalPurpose` with `cursor-grok-4.6-high`.
 - Do not skip the subagent because the parent is already Cursor Grok. Follow `delegate-execution.mdc`.
 - After a subagent returns, the parent reviews the result. Issues go back to a new Cursor Grok subagent; the parent does not patch them itself.
 - Do not substitute another model and do not leave `inherit`, unless the user explicitly asked for a different model.
 - If `cursor-grok-4.6-high` is not in the list of available models, do not pick a replacement silently; tell the user and stop.
+
+```text
+# BAD — Fast explorer or Fast Composer
+Task(subagent_type: "explore", ...)
+Task(..., model: "composer-2.5-fast")
+
+# GOOD
+Task(subagent_type: "generalPurpose", model: "cursor-grok-4.6-high", ...)
+```
 
 ## Language
 

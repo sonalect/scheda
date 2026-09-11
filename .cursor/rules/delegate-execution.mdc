@@ -18,7 +18,7 @@ a Cursor Grok subagent (`model: "cursor-grok-4.6-high"`).
 - Any shell command: `cargo` builds and tests, `git`, clippy, formatters, scans, scripts, one-off measurements.
 - Creating new files, new crates, new packages.
 
-Launch it with the Task tool: `subagent_type: "shell"` for pure command work, `subagent_type: "generalPurpose"` when the subagent must also write files. Always pass `model: "cursor-grok-4.6-high"`.
+Launch it with the Task tool: `subagent_type: "shell"` for pure command work, `subagent_type: "generalPurpose"` when the subagent must also write files. Always pass `model: "cursor-grok-4.6-high"`. Never pass a Fast model (`composer-2.5-fast`, any slug ending in `-fast`) and never use `subagent_type: "explore"`.
 
 The subagent starts with no context. Give it absolute paths, the exact content or a full specification, and the repository conventions it must obey. Every `bazel` / `cargo` / `buf` command must run with `working_directory` set to this clone's root (the directory with `MODULE.bazel`) and unrestricted permissions (`required_permissions: ["all"]`) — never a sibling folder or the Cursor sandbox. `bazel run //api/v1:generate` belongs there too. Also:
 
