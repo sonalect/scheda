@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import logging
 import os
+import platform
 import sys
 
 from huggingface_hub import snapshot_download
 from huggingface_hub.errors import HfHubHTTPError
-from vllm.entrypoints.cli.main import main as vllm_main
 
 from python.vllm import hf_home
 
@@ -20,6 +20,7 @@ GPU_MEMORY_UTILIZATION = "0.35"
 MAX_MODEL_LEN = "8192"
 MAX_NUM_SEQS = "16"
 _LOG = logging.getLogger("python.vllm")
+_WSL_PIN_MEMORY_ENV = "VLLM_WSL2_ENABLE_PIN_MEMORY"
 
 
 def serve(model: str, port: int, extra: tuple[str, ...] = ()) -> None:
@@ -27,10 +28,21 @@ def serve(model: str, port: int, extra: tuple[str, ...] = ()) -> None:
 
     Loads the prefetched snapshot path so EngineCore does not fetch the
     Hub repo a second time. The API still advertises ``model``.
+
+    On WSL, vLLM 0.29's default V2 GPU runner needs UVA (pinned host
+    memory), and vLLM itself turns pin_memory off there, so EngineCore
+    dies at init with ``UVA is not available``. Unless the operator
+    already set ``VLLM_WSL2_ENABLE_PIN_MEMORY``, this turns pin_memory
+    on so the V2 runner can start. Native Linux is unchanged. Embedder,
+    reranker, and the Jina sidecars all go through this function.
     """
     logging.basicConfig(level=logging.INFO, format="%(message)s", stream=sys.stderr)
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
     hf_home.log(_LOG)
+    _enable_wsl_pin_memory()
+    # Import after pin_memory: vLLM caches UVA availability at first use.
+    from vllm.entrypoints.cli.main import main as vllm_main  # noqa: PLC0415
+
     snapshot = _prefetch_model(model)
     sys.argv = [
         "vllm",
@@ -52,6 +64,18 @@ def serve(model: str, port: int, extra: tuple[str, ...] = ()) -> None:
         *sys.argv[1:],
     ]
     vllm_main()
+
+
+def _enable_wsl_pin_memory() -> None:
+    if _WSL_PIN_MEMORY_ENV in os.environ:
+        return
+    if "microsoft" not in platform.release().casefold():
+        return
+    os.environ[_WSL_PIN_MEMORY_ENV] = "1"
+    _LOG.info(
+        "WSL: V2 model runner needs UVA; enabling pin_memory (%s=1)",
+        _WSL_PIN_MEMORY_ENV,
+    )
 
 
 def _prefetch_model(model: str) -> str:

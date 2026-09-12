@@ -219,8 +219,9 @@ GPU memory so embedder and reranker fit on one card. First start
 `snapshot_download`s Qwen weights into `<workspace>/.cache/huggingface`
 (`HF_HOME`; an already-set `HF_HOME` wins; tqdm on stderr). On a cold
 cache, start the embedder and wait until it is listening before the
-reranker, so the two Hub fetches do not stall each other. `find` and
-`--lexical-only` do not need a GPU.
+reranker, so the two Hub fetches do not stall each other. On WSL2 the
+launcher sets `VLLM_WSL2_ENABLE_PIN_MEMORY=1` so vLLM's default V2
+runner can use UVA. `find` and `--lexical-only` do not need a GPU.
 
 Leave these two processes running (separate terminals):
 

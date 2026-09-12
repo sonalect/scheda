@@ -8,6 +8,17 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.11.2] - 2026-09-12
+
+### Fixed
+
+- **vLLM sidecars on WSL2 no longer die at EngineCore with `UVA is not
+  available`.** vLLM 0.29's default V2 GPU runner needs pinned host
+  memory; on WSL it turns pin_memory off. `python/vllm/serve.py` sets
+  `VLLM_WSL2_ENABLE_PIN_MEMORY=1` unless the operator already chose, so
+  V2 can start. Embedder, reranker, and the Jina binaries share that
+  launcher. Native Linux is unchanged.
+
 ## [0.11.1] - 2026-09-10
 
 ### Fixed
@@ -1225,6 +1236,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.11.2]
 - [0.11.1]
 - [0.11.0]
 - [0.10.3]
@@ -1260,7 +1272,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.2...HEAD
+[0.11.2]: https://github.com/amsokol/scheda/releases/tag/v0.11.2
 [0.11.1]: https://github.com/amsokol/scheda/releases/tag/v0.11.1
 [0.11.0]: https://github.com/amsokol/scheda/releases/tag/v0.11.0
 [0.10.3]: https://github.com/amsokol/scheda/releases/tag/v0.10.3

@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.63, 7 September 2026.
+Document 14 of the Scheda package. Version 0.64, 12 September 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`.
@@ -112,7 +112,8 @@ wins) before `vllm serve`. `tags = ["manual"]` so `bazel build //...`
 does not fetch torch.
 Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 0.35`, `--max-model-len 8192`). No extra argv required. Override after
-`--` if the card is larger.
+`--` if the card is larger. On WSL2, `python/vllm/serve.py` sets
+`VLLM_WSL2_ENABLE_PIN_MEMORY=1` so vLLM's default V2 runner can use UVA.
 
 ---
 
