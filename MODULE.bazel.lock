@@ -368,7 +368,7 @@
     "@@rules_rust+//crate_universe:extensions.bzl%crate": {
       "general": {
         "bzlTransitiveDigest": "gmeEhuu88BuiEt2IG7Ntyd3L+TfU4mZgsJ8GDjvZ3tQ=",
-        "usagesDigest": "Ya0p6iuP5qMvtR9jsiyyo0EZXY16TtnN8KOUS/VCid4=",
+        "usagesDigest": "ggdyzEF4+KiBElaJ4pmKkF8VhqoJCd3txgAWeKIqmD8=",
         "recordedInputs": [
           "ENV:CARGO_BAZEL_DEBUG \\0",
           "ENV:CARGO_BAZEL_GENERATOR_SHA256 \\0",
@@ -395,8 +395,8 @@
           "FILE:@@//third_party/buf/plugins/protoc-gen-buffa-packaging/Cargo.toml 09498af85ca9b72d8444b4c9a1fd6bdd492cccbd739d0f14506b1161f19f3b38",
           "FILE:@@//third_party/buf/plugins/protoc-gen-protovalidate-buffa/Cargo.lock d14907811c2d96e5662dcdbaf40e4d5b0b155b98960c7a7d3f876de62a64d7e0",
           "FILE:@@//third_party/buf/plugins/protoc-gen-protovalidate-buffa/Cargo.toml 9addfed068e33844cd9c7b071cfb21836b4391ad690bf28b70876b2a5704302f",
-          "FILE:@@//Cargo.lock 24de88bf0fb3f4d54f0de4a1e5e13ba82ccbcc82aa2bd4e90e66a2702ba557a2",
-          "FILE:@@//Cargo.toml a19b1bf6035073f91efb98b55954e130fb2135262eccb54bbf0a39bcef9196a5",
+          "FILE:@@//Cargo.lock 64726239a2a022cbde298d7fe93e0684ce198b140652ccc4151dee61a32d2519",
+          "FILE:@@//Cargo.toml 0f7a1f1e1457cc9d83bae9451b54c7f9777915522b7071b10d04e60bcefe821c",
           "FILE:@@//rust/cli/Cargo.toml ed7e7abec9d0c4a91882aa17dde914e2ecc32b9466388660fc7c531a53b82f8b",
           "FILE:@@//rust/scheda/Cargo.toml f9c096a51d5781592498397e3c2a72e1d70df877f10b758989c698ec6eae3b8c",
           "FILE:@@//rust/generated/Cargo.toml b51c67c1a3f45254072ff69c5e5dad5b106b54e34331ceae7d1310da27238600"
