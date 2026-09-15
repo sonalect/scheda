@@ -2999,7 +2999,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "age",
  "buffa 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "clap",
  "mimalloc",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-generated"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "buffa 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "buffa-types",
