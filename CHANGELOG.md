@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.11.3] - 2026-09-15
+
 ### Changed
 
 - **`protoc-gen-protovalidate-buffa` comes from the
@@ -1270,6 +1272,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.11.3]
 - [0.11.2]
 - [0.11.1]
 - [0.11.0]
@@ -1306,7 +1309,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.2...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.3...HEAD
+[0.11.3]: https://github.com/amsokol/scheda/releases/tag/v0.11.3
 [0.11.2]: https://github.com/amsokol/scheda/releases/tag/v0.11.2
 [0.11.1]: https://github.com/amsokol/scheda/releases/tag/v0.11.1
 [0.11.0]: https://github.com/amsokol/scheda/releases/tag/v0.11.0
