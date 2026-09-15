@@ -21,25 +21,17 @@ cargo = use_extension(
     "crate",
 )
 
-include("//third_party/buf/plugins/protoc-gen-buffa-packaging:crates.MODULE.bazel")
-include("//third_party/buf/plugins/protoc-gen-protovalidate-buffa:crates.MODULE.bazel")
-
 # USearch compiles C++ via cxx-build. Bazel injects CXX=gcc on Linux unless we
 # pin /usr/bin/c++. Do not set CXX on macOS: cargo_build_script already passes
 # Apple CXXFLAGS with __BAZEL_XCODE_SDKROOT__, which only Bazel's clang wrapper
 # expands; a raw /usr/bin/c++ then fails to find <algorithm>. Windows uses MSVC
-# (no CXX override). Patches: drop dangling OUT_DIR symlinks after the C++
-# compile; write rust/cxx.h into OUT_DIR when DEP_CXXBRIDGE1_HEADER is outside
-# the sandbox (shared scratch dir is best-effort — WSL linux-sandbox remounts
-# it EROFS; always a regular file on Windows — MSVC cannot follow the symlink);
-# cxx must run build.rs (not cc_library cxx_cc) so libstdc++ TLS still links.
-# numkong SIMD: copy headers into OUT_DIR so DEP_NUMKONG_INCLUDE is visible to
-# usearch's sandboxed C++ compile.
+# (no CXX override). cxx/cxx-build come from 1.0.202-bazel-sandbox-fix-2
+# (sandbox HEADER + no-op subcrate build.rs). numkong comes from
+# v7.8.2-bazel-sandbox-fix (headers copied into OUT_DIR). usearch comes
+# from v2.26.2-bazel-sandbox-fix (drop dangling OUT_DIR symlinks).
 cargo.annotation(
     crate = "cxx",
     gen_build_script = "on",
-    patch_args = ["-p1"],
-    patches = ["//third_party/cxx:enable-build-script.patch"],
     repositories = ["cargo"],
 )
 cargo.annotation_select(
@@ -52,24 +44,6 @@ cargo.annotation_select(
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
     ],
-)
-cargo.annotation(
-    crate = "cxx-build",
-    patch_args = ["-p1"],
-    patches = ["//third_party/cxx:cxx-build-header-fallback.patch"],
-    repositories = ["cargo"],
-)
-cargo.annotation(
-    crate = "numkong",
-    patch_args = ["-p1"],
-    patches = ["//third_party/numkong:include-to-outdir.patch"],
-    repositories = ["cargo"],
-)
-cargo.annotation(
-    crate = "usearch",
-    patch_args = ["-p1"],
-    patches = ["//third_party/usearch:drop-out-dir-symlinks.patch"],
-    repositories = ["cargo"],
 )
 cargo.annotation_select(
     build_script_env = {
@@ -94,6 +68,25 @@ cargo.spec(
     package = "age",
     repositories = ["cargo"],
     version = "=0.12.1",
+)
+
+# Binary plugin for buf generate. crates.io 0.9.2 is bin-only; the fork
+# tag adds an empty [lib] so crate_universe generate_binaries can emit it.
+# Spec on this hub (not a dummy crate) so there is no third_party pin pkg.
+cargo.spec(
+    git = "https://github.com/amsokol/buffa",
+    package = "protoc-gen-buffa-packaging",
+    repositories = ["cargo"],
+    tag = "v0.9.2-bazel-packaging",
+)
+
+# Plugin already has a [lib]; fork tag so generate_binaries can emit it
+# without a dummy crate. protovalidate-buffa-protos is generated (no PROTOC).
+cargo.spec(
+    git = "https://github.com/amsokol/protovalidate-buffa",
+    package = "protoc-gen-protovalidate-buffa",
+    repositories = ["cargo"],
+    tag = "protoc-gen-protovalidate-buffa-v0.10.0",
 )
 cargo.from_cargo(
     name = "cargo",

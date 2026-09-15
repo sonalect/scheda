@@ -8,6 +8,40 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **`protoc-gen-protovalidate-buffa` comes from the
+  `protoc-gen-protovalidate-buffa-v0.10.0` fork tag via crate_universe
+  `generate_binaries` on the `cargo` hub.** The in-tree dummy crate, short
+  `pvb` hub, and `protoc_prefix` PROTOC annotation are gone.
+- **`protoc-gen-buffa-packaging` comes from the `v0.9.2-bazel-packaging`
+  fork tag via crate_universe `generate_binaries` on the `cargo` hub.** The
+  in-tree dummy crate, crates.io tarball `http_archive`, and handwritten
+  `rust_binary` BUILD are gone.
+- **`aspect_rules_py` comes from the `v1.12.1-windows-fix-backported-3`
+  fork tag.** The in-tree Windows uv-host patch is gone;
+  `host_platform_repo` reports `msvc` on Windows, and git consumers download
+  official `v1.12.1` venv/unpack/shim tools.
+- **`cxx` / `cxx-build` come from the `1.0.202-bazel-sandbox-fix-2` fork
+  tag.** In-tree crate_universe patches are gone: `make_include_dir`
+  writes `rust/cxx.h` in `OUT_DIR`, Bazel runs `build.rs`, and subcrate
+  `build.rs` is a no-op so crate_universe can consume git. Workspace `cxx` is
+  `1.0.202`.
+- **`numkong` comes from the `v7.8.2-bazel-sandbox-fix` fork tag.** The
+  in-tree include-to-outdir patch is gone; `build.rs` copies headers into
+  `OUT_DIR` so Bazel sandboxes can compile USearch.
+- **`usearch` comes from the `v2.26.2-bazel-sandbox-fix` fork tag.** The
+  in-tree drop-out-dir-symlinks patch is gone; `build.rs` unlinks
+  cxx-build's relative `OUT_DIR` links after compile.
+- Update `mimalloc` to `v3.5.2`.
+- huggingface-hub 1.31.0 for the vLLM sidecars.
+
+### Fixed
+
+- **`//rust:vuln` no longer fails on rustls 0.23.44
+  (RUSTSEC-2026-0285).** The lockfile uses `0.23.45`, which rejects TLS 1.3
+  handshake messages at the wrong encryption level. `ureq` stays `3.4.1`.
+
 ## [0.11.2] - 2026-09-12
 
 ### Fixed
