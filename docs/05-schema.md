@@ -1,6 +1,6 @@
 # 05. Schema
 
-Document 5 of the Scheda package. Version 0.38, 31 August 2026.
+Document 5 of the Scheda package. Version 0.39, 15 September 2026.
 
 Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
 
@@ -80,9 +80,13 @@ A default is applied only if Schema states one; otherwise MOD-12 (missing is mis
 **SCH-14. Size cap is required for `journal`.** Schema sets `segment_max_bytes`. If omitted, the default is **8 MiB** (8 × 1024 × 1024). The implementation rejects a cap greater than **32 MiB** (still under typical host warn/reject limits of ~50 / ~100 MiB; GIT-6). Optional: `segment_max_lines`, `segment_rotate` calendar (`daily` UTC). Rotation is still size-first: a cap hit closes the segment even mid-day. *Check:* default Vault without the key rotates at 8 MiB; Schema with `48 MiB` is rejected; after the cap, the next `add` does not grow the closed file (MOD-10).
 
 Closed segments are never rewritten. Sequence files are eight lowercase hex
-digits (`00000001.jsonl` … `ffffffff.jsonl`) so name order matches numeric
-order. With `segment_rotate: daily`, the open name is `YYYY-MM-DD.jsonl`, then
-`YYYY-MM-DD-00000002.jsonl` if that day already closed on size.
+digits, then the clone's writer identity (`00000001-alice.jsonl`), so name
+order matches numeric order and two clones cannot create the same path.
+With `segment_rotate: daily`, the open name is `YYYY-MM-DD-{writer}.jsonl`,
+then `YYYY-MM-DD-00000001-{writer}.jsonl` if that day already closed on size.
+A writer never appends to a segment named by another clone, nor to an
+older writerless name (`00000001.jsonl`, `YYYY-MM-DD.jsonl`): those files
+are still read. Rotation caps are evaluated per writer.
 
 ---
 

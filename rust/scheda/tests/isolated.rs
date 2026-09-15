@@ -174,10 +174,8 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
     );
     let got = collection.get("a").unwrap();
     assert_eq!(got.id.as_deref(), Some("a"));
-    assert_eq!(
-        got.path.as_deref(),
-        Some(".isolated/sealed_log/00000001.jsonl")
-    );
+    let expected = format!(".isolated/sealed_log/{:08x}-{}.jsonl", 1, vault.writer());
+    assert_eq!(got.path.as_deref(), Some(expected.as_str()));
     let ids: Vec<_> = collection
         .lines()
         .unwrap()
@@ -258,8 +256,16 @@ fn isolated_journal_rotates_and_ids_map_is_in_main_index() {
         .unwrap();
     vault.commit("rotate").unwrap();
     let nested = scratch.vault().join(".isolated").join("sealed_log");
-    assert!(nested.join("00000001.jsonl").is_file());
-    assert!(nested.join("00000002.jsonl").is_file());
+    assert!(
+        nested
+            .join(format!("00000001-{}.jsonl", vault.writer()))
+            .is_file()
+    );
+    assert!(
+        nested
+            .join(format!("00000002-{}.jsonl", vault.writer()))
+            .is_file()
+    );
     assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
     let ids = live_index_at(&scratch.vault())
         .join("journal")
@@ -537,8 +543,8 @@ fn check_fails_when_parent_tracks_isolated() {
         .unwrap()
         .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
-    let rel = ".isolated/sealed_log/00000001.jsonl";
-    let bytes = fs::read(vault.path().join(rel)).unwrap();
+    let rel = format!(".isolated/sealed_log/{:08x}-{}.jsonl", 1, vault.writer());
+    let bytes = fs::read(vault.path().join(&rel)).unwrap();
     let repo = Repository::open(vault.path()).unwrap();
     let mut index = repo.index().unwrap();
     let entry = IndexEntry {
@@ -578,7 +584,7 @@ fn isolated_record_files_are_owner_only() {
         .vault()
         .join(".isolated")
         .join("sealed_log")
-        .join("00000001.jsonl");
+        .join(format!("00000001-{}.jsonl", vault.writer()));
     let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 }

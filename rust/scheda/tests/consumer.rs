@@ -287,12 +287,15 @@ fn fixture_raw_matches(vault: &Vault) {
         &["chain_heads", "record.yaml"],
     );
     assert_raw_eq_file(vault, "run_heads", "cursor", &["run_heads", "record.yaml"]);
-    assert_raw_eq_file(
-        vault,
-        "alias_bindings",
-        "bound",
-        &[".isolated", "alias_bindings", "00000001.jsonl"],
-    );
+    let bound = vault
+        .collection("alias_bindings")
+        .unwrap()
+        .get("bound")
+        .unwrap();
+    let rel = bound.path.as_deref().expect("isolated journal record path");
+    let on_disk = fs::read(vault.path().join(rel)).unwrap();
+    assert_eq!(bound.raw.as_deref(), Some(on_disk.as_slice()), "{rel}");
+    assert_eq!(bound.valid, Some(true));
 }
 
 fn walk_files(root: &Path) -> Vec<PathBuf> {
@@ -570,13 +573,13 @@ fn isolated_journal_is_nested_and_check_covers_it() {
         .vault()
         .join(".isolated")
         .join("alias_bindings")
-        .join("00000001.jsonl");
+        .join(format!("00000001-{}.jsonl", vault.writer()));
     assert!(nested.is_file());
     assert!(
         !scratch
             .vault()
             .join("alias_bindings")
-            .join("00000001.jsonl")
+            .join(format!("00000001-{}.jsonl", vault.writer()))
             .exists()
     );
     #[cfg(feature = "find")]

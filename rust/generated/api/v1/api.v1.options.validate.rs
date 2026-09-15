@@ -67,6 +67,113 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                     );
             }
         }
+        if let Some(v) = self.writer.as_deref() {
+            if v.chars().count() < 1usize {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("writer")), field_type :
+                                Some(::protovalidate_buffa::FieldType::String), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(14i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("min_len")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint64), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            if v.chars().count() > 32usize {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("writer")), field_type :
+                                Some(::protovalidate_buffa::FieldType::String), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(14i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("max_len")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint64), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("string.max_len"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            {
+                static RE_ONEOF_WRITER: ::std::sync::OnceLock<
+                    ::protovalidate_buffa::regex::Regex,
+                > = ::std::sync::OnceLock::new();
+                let re = RE_ONEOF_WRITER
+                    .get_or_init(|| {
+                        ::protovalidate_buffa::regex::Regex::new(
+                                "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+                            )
+                            .expect("pattern regex compiled at code-gen time")
+                    });
+                if !re.is_match(::core::convert::AsRef::<str>::as_ref(v)) {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(5i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("writer")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(14i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(6i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("pattern")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
+                            message: ::std::borrow::Cow::Borrowed(""),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.remote_repo.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
             if !(::protovalidate_buffa::rules::string::is_uri(((__cel_this)))) {
@@ -185,6 +292,113 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                                 v
                             }),
                     );
+            }
+        }
+        if let Some(v) = self.writer.as_deref() {
+            if v.chars().count() < 1usize {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("writer")), field_type :
+                                Some(::protovalidate_buffa::FieldType::String), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(14i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("min_len")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint64), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            if v.chars().count() > 32usize {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("writer")), field_type :
+                                Some(::protovalidate_buffa::FieldType::String), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(14i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("max_len")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint64), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("string.max_len"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            {
+                static RE_ONEOF_WRITER: ::std::sync::OnceLock<
+                    ::protovalidate_buffa::regex::Regex,
+                > = ::std::sync::OnceLock::new();
+                let re = RE_ONEOF_WRITER
+                    .get_or_init(|| {
+                        ::protovalidate_buffa::regex::Regex::new(
+                                "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
+                            )
+                            .expect("pattern regex compiled at code-gen time")
+                    });
+                if !re.is_match(::core::convert::AsRef::<str>::as_ref(v)) {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(5i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("writer")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(14i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(6i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("pattern")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
+                            message: ::std::borrow::Cow::Borrowed(""),
+                            for_key: false,
+                        });
+                }
             }
         }
         if let ::core::option::Option::Some(__cel_inner) = self.remote_repo.as_ref() {

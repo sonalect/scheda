@@ -29,6 +29,15 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 4: `author`
     pub author: ::buffa::MessageFieldView<super::super::__buffa::view::AuthorView<'a>>,
+    /// Machine-local identity of the process that writes this clone.
+    /// Unset: generated on first `open` and stored in `{vault}/.scheda/writer`.
+    /// When set: lowercase alphanumeric plus `-`, 1–32 bytes, so it can sit
+    /// in a journal segment file name. Must not start with eight hexadecimal
+    /// digits (those names are sequence segments). Never committed (`.scheda/` is
+    /// gitignored).
+    ///
+    /// Field 5: `writer`
+    pub writer: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -117,6 +126,13 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                     }
                 }
             }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.writer = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -159,6 +175,7 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 }
                 None => ::buffa::MessageField::none(),
             },
+            writer: self.writer.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -192,6 +209,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(ref v) = self.writer {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -224,6 +244,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
                 buf,
             );
             self.author.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.writer {
+            ::buffa::types::put_string_field(5u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -261,6 +284,9 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
             if let ::core::option::Option::Some(__v) = self.author.as_option() {
                 __map.serialize_entry("author", __v)?;
             }
+        }
+        if let ::core::option::Option::Some(__v) = self.writer {
+            __map.serialize_entry("writer", __v)?;
         }
         __map.end()
     }
@@ -392,6 +418,18 @@ impl OpenOptionsOwnedView {
         &self,
     ) -> &::buffa::MessageFieldView<super::super::__buffa::view::AuthorView<'_>> {
         &self.0.reborrow().author
+    }
+    /// Machine-local identity of the process that writes this clone.
+    /// Unset: generated on first `open` and stored in `{vault}/.scheda/writer`.
+    /// When set: lowercase alphanumeric plus `-`, 1–32 bytes, so it can sit
+    /// in a journal segment file name. Must not start with eight hexadecimal
+    /// digits (those names are sequence segments). Never committed (`.scheda/` is
+    /// gitignored).
+    ///
+    /// Field 5: `writer`
+    #[must_use]
+    pub fn writer(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().writer
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

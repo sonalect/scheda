@@ -140,7 +140,11 @@ fn find_one_does_not_read_unrelated_segments() {
     collection.add("mid", rec_log("x"), None).unwrap();
     collection.add("late", rec_log("x"), None).unwrap();
     let log_dir = scratch.vault().join("south_log");
-    assert!(log_dir.join("00000001.jsonl").is_file());
+    assert!(
+        log_dir
+            .join(format!("00000001-{}.jsonl", vault.writer()))
+            .is_file()
+    );
     fs::write(log_dir.join("ffffffff.jsonl"), vec![0u8; 2 * 1024 * 1024]).unwrap();
     let got = collection.get("early").unwrap();
     assert_eq!(got.id.as_deref(), Some("early"));
@@ -159,7 +163,10 @@ fn writer_updates_map_human_edit_needs_reindex() {
         .join("south_log")
         .join("ids");
     assert!(ids.is_file());
-    let log = scratch.vault().join("south_log").join("00000001.jsonl");
+    let log = scratch
+        .vault()
+        .join("south_log")
+        .join(format!("00000001-{}.jsonl", vault.writer()));
     let mut text = fs::read_to_string(&log).unwrap();
     text.push_str(r#"{"id":"human","msg":"edit"}"#);
     text.push('\n');

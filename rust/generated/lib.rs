@@ -404,6 +404,13 @@ impl api::v1::OpenOptions {
         self
     }
 
+    /// Machine-local identity of the process that writes this clone.
+    /// Unset: generated on first `open` and stored in `{vault}/.scheda/writer`.
+    #[must_use]
+    pub fn writer(self, writer: impl Into<String>) -> Self {
+        self.with_writer(writer)
+    }
+
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
@@ -659,6 +666,18 @@ mod tests {
                 .validate()
                 .is_err()
         );
+    }
+
+    #[test]
+    fn open_options_writer_token() {
+        assert!(OpenOptions::new().writer("alice").validate().is_ok());
+        assert!(OpenOptions::new().writer("host-1").validate().is_ok());
+        assert!(OpenOptions::new().writer("a").validate().is_ok());
+        assert!(OpenOptions::new().writer("").validate().is_err());
+        assert!(OpenOptions::new().writer("Alice").validate().is_err());
+        assert!(OpenOptions::new().writer("a_b").validate().is_err());
+        assert!(OpenOptions::new().writer("-abc").validate().is_err());
+        assert!(OpenOptions::new().writer("00000001").validate().is_ok());
     }
 
     #[test]

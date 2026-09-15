@@ -152,6 +152,7 @@ pub(crate) fn insert_journal(
     record: &Record,
     index_dir: &Path,
     maps: &mut JournalIdMaps,
+    writer: &str,
 ) -> Result<(String, String, JournalRollback), Error> {
     let (id, line) = prepare_line(decl, record)?;
     match maps.contains(&decl.name, &id) {
@@ -174,7 +175,7 @@ pub(crate) fn insert_journal(
     let dir = journal_dir(vault, decl)?;
     fs::create_dir_all(&dir).context("[Journal::insert] create dir")?;
     crate::isolated::restrict_record(vault, &dir)?;
-    let path = open_segment_path(&dir, decl, line.len() as u64, maps)?;
+    let path = open_segment_path(&dir, decl, line.len() as u64, maps, writer)?;
     let previous_len = if path.is_file() {
         fs::metadata(&path)
             .context("[Journal::insert] stat segment")?
@@ -522,8 +523,67 @@ fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
         }
         out.push(path);
     }
-    out.sort();
+    out.sort_by_cached_key(|path| segment_order(path));
     Ok(out)
+}
+
+/// Sequence files (`00000001…`) before daily (`YYYY-MM-DD…`), then sequence
+/// number (daily overflow after the first file of that date), then writer
+/// (writerless names first so older vaults keep append order), then the
+/// file name as a last tie-break. Lexicographic file names put
+/// `{seq}-{writer}` before a writerless `{seq}` because `-` sorts before `.`.
+fn segment_order(path: &Path) -> (u8, String, u32, String, String) {
+    let name = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_owned();
+    let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+        return (2, String::new(), 0, String::new(), name);
+    };
+    if let Some((seq, writer)) = sequence_order(stem) {
+        return (0, String::new(), seq, writer, name);
+    }
+    if let Some((date, seq, writer)) = daily_order(stem) {
+        return (1, date, seq, writer, name);
+    }
+    (2, String::new(), 0, String::new(), name)
+}
+
+fn sequence_order(stem: &str) -> Option<(u32, String)> {
+    if let Some(seq) = parse_hex_seq(stem) {
+        return Some((seq, String::new()));
+    }
+    let (hex, writer) = stem.split_once('-')?;
+    let seq = parse_hex_seq(hex)?;
+    if writer.is_empty() {
+        return None;
+    }
+    Some((seq, writer.to_owned()))
+}
+
+fn daily_order(stem: &str) -> Option<(String, u32, String)> {
+    let date = segment_date_stem(stem)?;
+    if stem == date {
+        return Some((date.to_owned(), 0, String::new()));
+    }
+    if stem.as_bytes().get(date.len()) != Some(&b'-') {
+        return None;
+    }
+    let rest = &stem[date.len() + 1..];
+    if let Some(seq) = parse_hex_seq(rest) {
+        return Some((date.to_owned(), seq, String::new()));
+    }
+    if let Some((hex, writer)) = rest.split_once('-')
+        && let Some(seq) = parse_hex_seq(hex)
+        && !writer.is_empty()
+    {
+        return Some((date.to_owned(), seq, writer.to_owned()));
+    }
+    if rest.is_empty() {
+        return None;
+    }
+    Some((date.to_owned(), 0, rest.to_owned()))
 }
 
 fn open_segment_path(
@@ -531,14 +591,20 @@ fn open_segment_path(
     decl: &CollectionDecl,
     line_len: u64,
     maps: &mut JournalIdMaps,
+    writer: &str,
 ) -> Result<PathBuf, Error> {
     let segments = list_segments(dir)?;
-    if let Some(last) = segments.last()
+    let mine: Vec<PathBuf> = segments
+        .iter()
+        .filter(|path| segment_belongs_to(path, writer))
+        .cloned()
+        .collect();
+    if let Some(last) = mine.last()
         && !segment_is_full(last, decl, line_len, maps)?
     {
         return Ok(last.clone());
     }
-    Ok(dir.join(next_segment_name(&segments, decl)?))
+    Ok(dir.join(next_segment_name(&mine, decl, writer)?))
 }
 
 fn segment_is_full(
@@ -582,49 +648,107 @@ fn parse_hex_seq(stem: &str) -> Option<u32> {
     u32::from_str_radix(stem, 16).ok()
 }
 
-fn next_segment_name(existing: &[PathBuf], decl: &CollectionDecl) -> Result<String, Error> {
+fn next_segment_name(
+    existing: &[PathBuf],
+    decl: &CollectionDecl,
+    writer: &str,
+) -> Result<String, Error> {
     if decl.segment_rotate == Some(SegmentRotate::Daily) {
         let today = utc_ymd(SystemTime::now())?;
         let mut seq = 0u32;
+        let mut has_plain = false;
+        let prefix = format!("{today}-");
+        let writer_suffix = format!("-{writer}");
+        let plain = format!("{today}-{writer}");
         for path in existing {
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
                 continue;
             };
-            if stem == today {
-                seq = seq.max(1);
-            } else if let Some(rest) = stem.strip_prefix(&format!("{today}-"))
-                && let Some(n) = parse_hex_seq(rest)
-            {
+            if stem == plain {
+                has_plain = true;
+                continue;
+            }
+            let Some(rest) = stem.strip_prefix(&prefix) else {
+                continue;
+            };
+            let Some(hex) = rest.strip_suffix(&writer_suffix) else {
+                continue;
+            };
+            if let Some(n) = parse_hex_seq(hex) {
                 seq = seq.max(n);
             }
+        }
+        if !has_plain && seq == 0 {
+            return Ok(format!("{today}-{writer}.jsonl"));
         }
         let next = seq
             .checked_add(1)
             .ok_or_else(|| Error::invalid("journal segment sequence exhausted"))?;
-        return Ok(if seq == 0 {
-            format!("{today}.jsonl")
-        } else {
-            format!("{today}-{next:08x}.jsonl")
-        });
+        return Ok(format!("{today}-{next:08x}-{writer}.jsonl"));
     }
     let mut max = 0u32;
+    let writer_suffix = format!("-{writer}");
     for path in existing {
-        if let Some(n) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(parse_hex_seq)
-        {
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let Some(hex) = stem.strip_suffix(&writer_suffix) else {
+            continue;
+        };
+        if let Some(n) = parse_hex_seq(hex) {
             max = max.max(n);
         }
     }
     let next = max
         .checked_add(1)
         .ok_or_else(|| Error::invalid("journal segment sequence exhausted"))?;
-    Ok(format!("{next:08x}.jsonl"))
+    Ok(format!("{next:08x}-{writer}.jsonl"))
+}
+
+/// Writer named in a segment stem, if this file is writer-owned.
+fn segment_writer(stem: &str) -> Option<&str> {
+    if parse_hex_seq(stem).is_some() {
+        return None;
+    }
+    if segment_date_stem(stem).is_some_and(|date| date == stem) {
+        return None;
+    }
+    if let Some(date) = segment_date_stem(stem)
+        && stem.len() > date.len() + 1
+        && stem.as_bytes().get(date.len()) == Some(&b'-')
+    {
+        let rest = &stem[date.len() + 1..];
+        if parse_hex_seq(rest).is_some() {
+            return None;
+        }
+        if let Some((hex, writer)) = rest.split_once('-')
+            && parse_hex_seq(hex).is_some()
+            && !writer.is_empty()
+        {
+            return Some(writer);
+        }
+        return Some(rest);
+    }
+    if let Some((hex, writer)) = stem.split_once('-')
+        && parse_hex_seq(hex).is_some()
+        && !writer.is_empty()
+    {
+        return Some(writer);
+    }
+    None
+}
+
+fn segment_belongs_to(path: &Path, writer: &str) -> bool {
+    path.file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|stem| segment_writer(stem) == Some(writer))
 }
 
 fn segment_date(path: &Path) -> Option<&str> {
-    let stem = path.file_stem()?.to_str()?;
+    segment_date_stem(path.file_stem()?.to_str()?)
+}
+
+fn segment_date_stem(stem: &str) -> Option<&str> {
     if stem.len() >= 10 && stem.as_bytes()[4] == b'-' && stem.as_bytes()[7] == b'-' {
         Some(&stem[..10])
     } else {
@@ -848,6 +972,7 @@ fn record_from_parsed(
 mod tests {
     use super::{canonical_json, civil_from_unix_days, write_canonical};
     use serde_json::{Number, Value, json};
+    use std::path::PathBuf;
 
     #[test]
     fn canonical_json_sorts_object_keys() {
@@ -922,5 +1047,121 @@ mod tests {
         assert_eq!(super::parse_hex_seq("0001"), None);
         assert_eq!(super::parse_hex_seq("+0000001"), None);
         assert_eq!(format!("{:08x}", 10u32), "0000000a");
+    }
+
+    #[test]
+    fn segment_writer_parses_owned_and_writerless_names() {
+        assert_eq!(super::segment_writer("00000001"), None);
+        assert_eq!(super::segment_writer("2026-09-15"), None);
+        assert_eq!(super::segment_writer("2026-09-15-00000002"), None);
+        assert_eq!(super::segment_writer("00000001-alice"), Some("alice"));
+        assert_eq!(super::segment_writer("2026-09-15-alice"), Some("alice"));
+        assert_eq!(
+            super::segment_writer("2026-09-15-00000001-alice"),
+            Some("alice")
+        );
+        assert_eq!(super::segment_writer("00000001-host-1"), Some("host-1"));
+    }
+
+    #[test]
+    fn hyphenated_writer_round_trips_in_all_segment_forms() {
+        for writer in ["host-1", "node-abcdef01", "a-b-c-1"] {
+            crate::writer::validate(writer).unwrap();
+            assert_writer_name_round_trip(writer);
+        }
+    }
+
+    fn journal_decl(daily: bool) -> crate::schema::CollectionDecl {
+        crate::schema::CollectionDecl {
+            name: String::from("log"),
+            kind: crate::schema::Kind::Journal,
+            version: 1,
+            filter_keys: Default::default(),
+            segment_max_bytes: None,
+            segment_max_lines: None,
+            segment_rotate: daily.then_some(crate::schema::SegmentRotate::Daily),
+            singleton_id: None,
+            body: None,
+            fields: Vec::new(),
+            isolated: false,
+            encrypted: false,
+            exclude_lexical_index: false,
+            exclude_vector_index: false,
+        }
+    }
+
+    fn stem_of(name: &str) -> &str {
+        name.strip_suffix(".jsonl").unwrap_or(name)
+    }
+
+    fn assert_writer_name_round_trip(writer: &str) {
+        let seq = super::next_segment_name(&[], &journal_decl(false), writer).unwrap();
+        let seq_path = PathBuf::from(&seq);
+        assert_eq!(super::segment_writer(stem_of(&seq)), Some(writer), "{seq}");
+        assert!(
+            super::segment_belongs_to(&seq_path, writer),
+            "{seq} belongs to {writer}"
+        );
+
+        let daily = super::next_segment_name(&[], &journal_decl(true), writer).unwrap();
+        let daily_path = PathBuf::from(&daily);
+        assert_eq!(
+            super::segment_writer(stem_of(&daily)),
+            Some(writer),
+            "{daily}"
+        );
+        assert!(
+            super::segment_belongs_to(&daily_path, writer),
+            "{daily} belongs to {writer}"
+        );
+
+        let overflow = super::next_segment_name(
+            std::slice::from_ref(&daily_path),
+            &journal_decl(true),
+            writer,
+        )
+        .unwrap();
+        let overflow_path = PathBuf::from(&overflow);
+        assert_ne!(overflow, daily);
+        assert_eq!(
+            super::segment_writer(stem_of(&overflow)),
+            Some(writer),
+            "{overflow}"
+        );
+        assert!(
+            super::segment_belongs_to(&overflow_path, writer),
+            "{overflow} belongs to {writer}"
+        );
+    }
+
+    #[test]
+    fn segment_order_is_seq_then_writer_then_daily_overflow() {
+        let names = [
+            "00000001-alice.jsonl",
+            "00000001.jsonl",
+            "00000002-alice.jsonl",
+            "00000001-bob.jsonl",
+            "2026-09-15-00000001-alice.jsonl",
+            "2026-09-15-alice.jsonl",
+            "2026-09-15.jsonl",
+        ];
+        let mut paths: Vec<_> = names.iter().map(PathBuf::from).collect();
+        paths.sort_by_key(|a| super::segment_order(a));
+        let ordered: Vec<_> = paths
+            .iter()
+            .filter_map(|p| p.file_name()?.to_str())
+            .collect();
+        assert_eq!(
+            ordered,
+            [
+                "00000001.jsonl",
+                "00000001-alice.jsonl",
+                "00000001-bob.jsonl",
+                "00000002-alice.jsonl",
+                "2026-09-15.jsonl",
+                "2026-09-15-alice.jsonl",
+                "2026-09-15-00000001-alice.jsonl",
+            ]
+        );
     }
 }

@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.37, 15 September 2026.
+Document 4 of the Scheda package. Version 0.38, 15 September 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -70,7 +70,7 @@ Who owns untracked files the human created in the Vault is the caller's problem;
 
 Line-level “this journal Record's first commit” is **later** (requires blaming JSONL). **Core** `history(id)` on `journal` is git history of the segment file.
 
-**GIT-4. Conflicts are git's, shown to a person.** Scheda does not three-way-merge YAML. Conflict markers in a `document` make that Record unreadable until the person resolves them; `check` fails on that file. Two closed journal segments that never overlapped do not conflict. Two writers who both appended to the same **open** segment on different clones can conflict on that file; rotation does not make that safe. *Check:* a conflicted `document` is rejected on read/`check`; merging two segments with disjoint new lines and unique `id`s can be a clean git merge of those files.
+**GIT-4. Conflicts are git's, shown to a person.** Scheda does not three-way-merge YAML. Conflict markers in a `document` make that Record unreadable until the person resolves them; `check` fails on that file. Two closed journal segments that never overlapped do not conflict. Each clone appends only to journal segments named with its writer identity (`{vault}/.scheda/writer`, gitignored), so two clones do not manufacture an add/add conflict on a segment path. A caller who writes the same Record `id` on two clones still has a duplicate after merge; that choice is theirs. Older writerless names (`00000001.jsonl`) are read and never appended to. *Check:* a conflicted `document` is rejected on read/`check`; merging two segments with disjoint new lines and unique `id`s can be a clean git merge of those files.
 
 **GIT-5. Several Vaults per process.** `open` on distinct roots is allowed. Search, `find`, and edges do not cross roots unless the caller issues a combined request (API in `07`). *Check:* a Record in Vault A never appears in `find`/`search` on Vault B.
 

@@ -595,7 +595,10 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
     let collection = vault.collection("north_log").unwrap();
     collection.add("e1", rec(json!({})), None).unwrap();
     collection.add("e2", rec(json!({})), None).unwrap();
-    let path = scratch.vault().join("north_log").join("00000001.jsonl");
+    let path = scratch
+        .vault()
+        .join("north_log")
+        .join(format!("00000001-{}.jsonl", vault.writer()));
     let mut text = fs::read_to_string(&path).unwrap();
     text.push_str(r#"{"id":"partial"}"#);
     fs::write(&path, &text).unwrap();

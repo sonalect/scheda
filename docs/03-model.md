@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.22, 5 September 2026.
+Document 3 of the Scheda package. Version 0.23, 15 September 2026.
 
 Normative data model: collection kinds, Record identity, paths, fields, and body. Terms are in `02`. File encoding, git, and locks are in `04`. The Schema language is in `05`. Checkable requirements use codes `MOD`. Phase **core** unless marked otherwise.
 
@@ -54,7 +54,7 @@ The caller never passes a Record path. `get` / `add` / `history` validate `id` t
 
 **MOD-9. Journal path is the segment, not the `id`.** The Record still lives at `(collection, id)`. The file path is the open or closed segment that contains the line. Callers must not treat the segment name as `id`. *Check:* `get` does not require the caller to pass a segment name.
 
-**MOD-10. Journal segments.** A `journal` collection is a directory of `*.jsonl` files. At most one segment is open for append. Schema closes it on a size cap (required) and optionally a line cap or calendar boundary. A closed segment is never rewritten. *Check:* after the cap, the next `add` creates or opens a new segment; bytes of the previous file are unchanged; each segment stays below the cap.
+**MOD-10. Journal segments.** A `journal` collection is a directory of `*.jsonl` files. Each clone of the Vault has a writer identity and appends only to its own segments. Schema closes that writer's open segment on a size cap (required) and optionally a line cap or calendar boundary. A closed segment is never rewritten. *Check:* after the cap, the next `add` creates or opens a new segment for that writer; bytes of the previous file are unchanged; each segment stays below the cap. *Check:* two clones with different writers produce disjoint segment names.
 
 The numeric default cap is in `05`. It must sit well below common git-host file limits (warn ~50 MiB, reject ~100 MiB) and well below what `git diff` remains usable for. This package does not use Git LFS.
 

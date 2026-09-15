@@ -8,6 +8,40 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.13.0] - 2026-09-15
+
+### Added
+
+- **`OpenOptions.writer` and `Vault::writer()`.** Each Vault clone has a
+  machine-local writer identity, stored in `{vault}/.scheda/writer`
+  (gitignored). Unset at `open` generates sixteen lowercase hex digits.
+  A set value is a short lowercase token (`invalid` if empty, illegal,
+  or if it starts with eight hex digits). Downstream code can reuse the
+  same identity for its own per-writer records.
+
+### Changed
+
+- **Journal segments are named per writer.** Sequence files are
+  `{seq}-{writer}.jsonl`; daily files are `{date}-{writer}.jsonl` then
+  `{date}-{seq}-{writer}.jsonl`. A clone appends only to its own
+  segments, so independent clones of one Vault no longer collide on
+  segment paths. Writerless names from older Vaults are still iterated,
+  found, and checked.
+- **Generated writer identity** mixes process id, clock nanoseconds, and
+  hashed randomness so two clones do not depend on `RandomState` staying
+  non-deterministic.
+
+### Fixed
+
+- **A write from another thread can no longer join an open
+  transaction.** While one thread holds the write lock on a shared
+  `Vault` (including after `begin`), a mutating call, `commit`, or
+  `discard` from another thread is retryable `locked` and does not
+  enter that transaction.
+- **A writer token that starts with eight hex plus a hyphen
+  (`abcdef01-node`) is `invalid`.** It used to pass and then fail to
+  match its own journal segments, so every append minted a new file.
+
 ## [0.12.0] - 2026-09-15
 
 ### Changed
@@ -1282,6 +1316,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.13.0]
 - [0.12.0]
 - [0.11.3]
 - [0.11.2]
@@ -1320,7 +1355,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/amsokol/scheda/releases/tag/v0.13.0
 [0.12.0]: https://github.com/amsokol/scheda/releases/tag/v0.12.0
 [0.11.3]: https://github.com/amsokol/scheda/releases/tag/v0.11.3
 [0.11.2]: https://github.com/amsokol/scheda/releases/tag/v0.11.2

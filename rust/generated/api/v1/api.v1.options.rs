@@ -47,6 +47,16 @@ pub struct OpenOptions {
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
     pub author: ::buffa::MessageField<Author, ::buffa::Inline<Author>>,
+    /// Machine-local identity of the process that writes this clone.
+    /// Unset: generated on first `open` and stored in `{vault}/.scheda/writer`.
+    /// When set: lowercase alphanumeric plus `-`, 1–32 bytes, so it can sit
+    /// in a journal segment file name. Must not start with eight hexadecimal
+    /// digits (those names are sequence segments). Never committed (`.scheda/` is
+    /// gitignored).
+    ///
+    /// Field 5: `writer`
+    #[serde(rename = "writer", skip_serializing_if = "::core::option::Option::is_none")]
+    pub writer: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -58,6 +68,7 @@ impl ::core::fmt::Debug for OpenOptions {
             .field("remote_repo", &self.remote_repo)
             .field("encryption", &self.encryption)
             .field("author", &self.author)
+            .field("writer", &self.writer)
             .finish()
     }
 }
@@ -84,6 +95,16 @@ impl OpenOptions {
         value: impl Into<::buffa::alloc::string::String>,
     ) -> Self {
         self.remote_repo = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::writer`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_writer(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.writer = Some(value.into());
         self
     }
 }
@@ -129,6 +150,9 @@ impl ::buffa::Message for OpenOptions {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(ref v) = self.writer {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -160,6 +184,9 @@ impl ::buffa::Message for OpenOptions {
                 buf,
             );
             self.author.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.writer {
+            ::buffa::types::put_string_field(5u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -217,6 +244,16 @@ impl ::buffa::Message for OpenOptions {
                     ctx,
                 )?;
             }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.writer.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -229,6 +266,7 @@ impl ::buffa::Message for OpenOptions {
         self.remote_repo = ::core::option::Option::None;
         self.encryption = ::buffa::MessageField::none();
         self.author = ::buffa::MessageField::none();
+        self.writer = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

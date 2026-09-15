@@ -31,6 +31,25 @@ use crate::{SearchHits, SearchQuery, search_hits};
 
 const AUTO_COMMIT_MESSAGE: &str = "scheda";
 
+/// In-process write lock plus the thread that currently holds it.
+struct WriteLock {
+    file: Option<File>,
+    owner: Option<thread::ThreadId>,
+}
+
+impl WriteLock {
+    fn new() -> Self {
+        Self {
+            file: None,
+            owner: None,
+        }
+    }
+
+    fn is_held(&self) -> bool {
+        self.file.is_some()
+    }
+}
+
 #[cfg(feature = "find")]
 type ReindexWalkHook = Arc<dyn Fn(&str) + Send + Sync>;
 
@@ -40,10 +59,11 @@ pub struct Vault {
     index: Arc<index::IndexHandle>,
     remotes: Vec<String>,
     auto_sync: bool,
-    write_lock: Arc<Mutex<Option<File>>>,
+    write_lock: Arc<Mutex<WriteLock>>,
     schema: Mutex<Arc<LoadedSchema>>,
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
+    writer: Arc<str>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
@@ -58,13 +78,14 @@ pub struct Vault {
 pub struct Collection {
     vault: PathBuf,
     index: Arc<index::IndexHandle>,
-    write_lock: Arc<Mutex<Option<File>>>,
+    write_lock: Arc<Mutex<WriteLock>>,
     auto_sync: bool,
     remotes: Vec<String>,
     decl: CollectionDecl,
     schema: Arc<LoadedSchema>,
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
+    writer: Arc<str>,
     journal_ids: Arc<Mutex<JournalIdMaps>>,
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
@@ -97,6 +118,12 @@ impl Vault {
     /// feature refuses a set value (`unsupported_encryption`) before any
     /// directory is created. Unset `encryption` is unchanged: `open` of the
     /// Vault still succeeds.
+    ///
+    /// `OpenOptions.writer` is the machine-local identity of this clone. Unset
+    /// → generated on first `open` and stored in `{vault}/.scheda/writer`.
+    /// That file is gitignored with the rest of `.scheda/`. A set value must
+    /// be lowercase alphanumeric plus `-`, 1–32 bytes, and must not start
+    /// with eight hex digits (`invalid` otherwise).
     pub fn open(
         path: impl AsRef<Path>,
         options: OpenOptions,
@@ -192,6 +219,10 @@ impl Vault {
         let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&generation, &schema)?));
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
+        let writer = Arc::<str>::from(crate::writer::load_or_create(
+            &path,
+            options.writer.as_deref(),
+        )?);
         let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
         #[cfg(feature = "find")]
         let search = Arc::new(SearchEngine::open(&generation, false)?);
@@ -201,10 +232,11 @@ impl Vault {
             index,
             remotes,
             auto_sync,
-            write_lock: Arc::new(Mutex::new(None)),
+            write_lock: Arc::new(Mutex::new(WriteLock::new())),
             schema: Mutex::new(schema),
             written,
             in_txn,
+            writer,
             journal_ids,
             #[cfg(feature = "find")]
             search,
@@ -253,9 +285,22 @@ impl Vault {
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
         match self.write_lock.lock() {
-            Ok(slot) => slot.is_some(),
+            Ok(slot) => slot.is_held(),
             Err(_) => true,
         }
+    }
+
+    /// Machine-local identity of the process that writes this clone.
+    ///
+    /// Stored in `{vault}/.scheda/writer` (gitignored with the rest of
+    /// `.scheda/`). Independent clones of the same Vault keep distinct
+    /// identities, so journal segments named with this token cannot collide
+    /// across clones. Override at `open` with `OpenOptions.writer`. Generated
+    /// on first `open` when the file is absent: sixteen lowercase hex digits
+    /// unique to this clone.
+    #[must_use]
+    pub fn writer(&self) -> &str {
+        &self.writer
     }
 
     #[cfg(all(test, feature = "find"))]
@@ -327,6 +372,7 @@ impl Vault {
             schema,
             written: Arc::clone(&self.written),
             in_txn: Arc::clone(&self.in_txn),
+            writer: Arc::clone(&self.writer),
             journal_ids: Arc::clone(&self.journal_ids),
             #[cfg(feature = "find")]
             search: Arc::clone(&self.search),
@@ -453,6 +499,9 @@ impl Vault {
     /// The lexical Index writer is opened on the first indexed write and
     /// kept until that point. Discards leftover Scheda writes first.
     /// `invalid` if a transaction is already open on this handle.
+    /// A mutating call, `commit`, or `discard` from another thread while a
+    /// transaction is open is `locked` (retryable); it does not join this
+    /// transaction.
     pub fn begin(&self) -> Result<(), Error> {
         self.require_write_lock("begin")?;
         self.conclude_write((|| {
@@ -643,18 +692,14 @@ impl Vault {
     fn require_write_lock(&self, op: &str) -> Result<(), Error> {
         let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")
             .with_context(|| format!("[Vault::{op}] take write lock"))?;
-        if slot.is_some() {
-            return Ok(());
-        }
-        let file = acquire_write_lock(&self.path)
-            .with_context(|| format!("[Vault::{op}] take write lock"))?;
-        #[cfg(feature = "find")]
-        if let Err(err) = self.search.enable_write() {
-            let _ = file.unlock();
-            return Err(err).with_context(|| format!("[Vault::{op}] take write lock"));
-        }
-        *slot = Some(file);
-        Ok(())
+        take_write_slot(
+            &mut slot,
+            &self.path,
+            #[cfg(feature = "find")]
+            &self.search,
+            "Vault",
+            op,
+        )
     }
 
     fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
@@ -672,8 +717,15 @@ impl Vault {
     fn write_gitignore_under_lock(&self) -> Result<(), Error> {
         {
             let mut slot = crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
-            if slot.is_none() {
-                *slot = Some(acquire_write_lock(&self.path)?);
+            if !slot.is_held() {
+                take_write_slot(
+                    &mut slot,
+                    &self.path,
+                    #[cfg(feature = "find")]
+                    &self.search,
+                    "Vault",
+                    "open",
+                )?;
             }
         }
         let result = (|| {
@@ -686,11 +738,13 @@ impl Vault {
         {
             let mut slot =
                 crate::error::mutex(&self.write_lock, "[Vault::open] release write lock")?;
-            if let Some(file) = slot.take()
-                && let Err(err) = file.unlock()
-                && result.is_ok()
-            {
-                return Err(err).context("[Vault::open] unlock write lock");
+            if let Some(file) = slot.file.take() {
+                slot.owner = None;
+                if let Err(err) = file.unlock()
+                    && result.is_ok()
+                {
+                    return Err(err).context("[Vault::open] unlock write lock");
+                }
             }
         }
         result
@@ -1197,8 +1251,8 @@ impl Vault {
     fn try_take_write_lock(&self) -> Result<bool, Error> {
         let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")
             .with_context(|| "[Vault::reindex] take write lock")?;
-        if slot.is_some() {
-            return Ok(true);
+        if slot.is_held() {
+            return Ok(slot.owner == Some(thread::current().id()));
         }
         match try_acquire_write_lock(&self.path)? {
             Some(file) => {
@@ -1207,7 +1261,8 @@ impl Vault {
                     let _ = file.unlock();
                     return Err(err).with_context(|| "[Vault::reindex] take write lock");
                 }
-                *slot = Some(file);
+                slot.file = Some(file);
+                slot.owner = Some(thread::current().id());
                 Ok(true)
             }
             None => Ok(false),
@@ -1294,7 +1349,7 @@ impl Collection {
         Self {
             vault: PathBuf::new(),
             index: Arc::new(index::IndexHandle::empty()),
-            write_lock: Arc::new(Mutex::new(None)),
+            write_lock: Arc::new(Mutex::new(WriteLock::new())),
             auto_sync: false,
             remotes: Vec::new(),
             decl: CollectionDecl {
@@ -1316,6 +1371,7 @@ impl Collection {
             schema: Arc::new(LoadedSchema::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),
             in_txn: Arc::new(Mutex::new(false)),
+            writer: Arc::from("stub"),
             journal_ids: Arc::new(Mutex::new(JournalIdMaps::default())),
             #[cfg(feature = "find")]
             search: Arc::new(SearchEngine::empty()),
@@ -1501,18 +1557,14 @@ impl Collection {
     fn require_write(&self, op: &str) -> Result<(), Error> {
         let mut slot = crate::error::mutex(&self.write_lock, "[Collection] lock write lock")
             .with_context(|| format!("[Collection::{op}] take write lock"))?;
-        if slot.is_some() {
-            return Ok(());
-        }
-        let file = acquire_write_lock(&self.vault)
-            .with_context(|| format!("[Collection::{op}] take write lock"))?;
-        #[cfg(feature = "find")]
-        if let Err(err) = self.search.enable_write() {
-            let _ = file.unlock();
-            return Err(err).with_context(|| format!("[Collection::{op}] take write lock"));
-        }
-        *slot = Some(file);
-        Ok(())
+        take_write_slot(
+            &mut slot,
+            &self.vault,
+            #[cfg(feature = "find")]
+            &self.search,
+            "Collection",
+            op,
+        )
     }
 
     fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
@@ -1678,8 +1730,14 @@ impl Collection {
                         "[Collection::add] lock journal ids",
                     )?;
                     let dir = self.generation_dir()?;
-                    let (id, rel, rollback) =
-                        journal::insert_journal(&self.vault, &self.decl, &record, &dir, &mut maps)?;
+                    let (id, rel, rollback) = journal::insert_journal(
+                        &self.vault,
+                        &self.decl,
+                        &record,
+                        &dir,
+                        &mut maps,
+                        &self.writer,
+                    )?;
                     drop(maps);
                     record.path = Some(rel.clone());
                     record.valid = Some(true);
@@ -2763,13 +2821,14 @@ fn try_prune_orphans(vault: &Path, root: &Path) -> Result<(), Error> {
     }
 }
 
-fn release_held_write_lock(slot: &Mutex<Option<File>>) -> Result<(), Error> {
+fn release_held_write_lock(slot: &Mutex<WriteLock>) -> Result<(), Error> {
     let mut guard = crate::error::mutex(slot, "[Vault] release write lock")?;
     release_held_write_lock_in(&mut guard)
 }
 
-fn release_held_write_lock_in(slot: &mut Option<File>) -> Result<(), Error> {
-    if let Some(file) = slot.take()
+fn release_held_write_lock_in(slot: &mut WriteLock) -> Result<(), Error> {
+    slot.owner = None;
+    if let Some(file) = slot.file.take()
         && let Err(err) = file.unlock()
     {
         return Err(err).context("[Vault] unlock write lock");
@@ -2777,15 +2836,44 @@ fn release_held_write_lock_in(slot: &mut Option<File>) -> Result<(), Error> {
     Ok(())
 }
 
-fn release_write_lock_on_drop(slot: &Mutex<Option<File>>) {
+fn release_write_lock_on_drop(slot: &Mutex<WriteLock>) {
     let Ok(mut guard) = slot.lock() else {
         return;
     };
     let _ = release_held_write_lock_in(&mut guard);
 }
 
+fn take_write_slot(
+    slot: &mut WriteLock,
+    vault: &Path,
+    #[cfg(feature = "find")] search: &SearchEngine,
+    kind: &str,
+    op: &str,
+) -> Result<(), Error> {
+    let me = thread::current().id();
+    if slot.is_held() {
+        if slot.owner != Some(me) {
+            return Err(
+                Error::locked("another thread holds the write lock on this handle")
+                    .with_context(|| format!("[{kind}::{op}] take write lock")),
+            );
+        }
+        return Ok(());
+    }
+    let file =
+        acquire_write_lock(vault).with_context(|| format!("[{kind}::{op}] take write lock"))?;
+    #[cfg(feature = "find")]
+    if let Err(err) = search.enable_write() {
+        let _ = file.unlock();
+        return Err(err).with_context(|| format!("[{kind}::{op}] take write lock"));
+    }
+    slot.file = Some(file);
+    slot.owner = Some(me);
+    Ok(())
+}
+
 fn release_lock_unless_in_transaction<T>(
-    write_lock: &Mutex<Option<File>>,
+    write_lock: &Mutex<WriteLock>,
     in_txn: &Mutex<bool>,
     #[cfg(feature = "find")] search: &SearchEngine,
     result: Result<T, Error>,
@@ -2955,10 +3043,22 @@ mod tests {
         assert!(gitignore.lines().any(|line| line.trim() == ".scheda/"));
         assert!(gitignore.lines().any(|line| line.trim() == ".isolated/"));
         assert!(git::is_ignored(vault.path(), Path::new(".scheda/index")).unwrap());
+        assert!(git::is_ignored(vault.path(), Path::new(".scheda/writer")).unwrap());
+        let token = vault.writer().to_owned();
+        assert!(!token.is_empty());
+        assert_eq!(
+            fs::read_to_string(scratch.vault().join(".scheda").join("writer"))
+                .unwrap()
+                .trim(),
+            token
+        );
         assert!(vault.index_dir().starts_with(vault.path()));
         assert!(vault.index_dir().ends_with("index"));
         fs::remove_dir_all(vault.index_dir()).unwrap();
         assert!(scratch.vault().join(".git").exists());
+        drop(vault);
+        let reopened = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+        assert_eq!(reopened.writer(), token);
     }
 
     #[test]
@@ -3826,10 +3926,13 @@ mod tests {
         let window = std::time::Duration::from_millis(250);
         let _guard = crate::reindex::set_publish_window(window);
         std::thread::scope(|s| {
-            s.spawn(|| {
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            s.spawn(move || {
                 start.wait();
                 holder.begin().unwrap();
                 done.wait();
+                release_rx.recv().unwrap();
+                holder.discard().unwrap();
             });
             let started = std::time::Instant::now();
             let err = vault.reindex().unwrap_err();
@@ -3839,7 +3942,7 @@ mod tests {
             );
             assert_locked_reindex(&err);
             assert_eq!(live_generation(&vault), live);
-            holder.discard().unwrap();
+            release_tx.send(()).unwrap();
         });
     }
 

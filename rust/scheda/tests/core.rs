@@ -548,7 +548,13 @@ fields:
         .unwrap();
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["env"]["prod"].as_f64(), Some(1.0));
-    let line = fs::read_to_string(scratch.vault().join("c").join("00000001.jsonl")).unwrap();
+    let line = fs::read_to_string(
+        scratch
+            .vault()
+            .join("c")
+            .join(format!("00000001-{}.jsonl", vault.writer())),
+    )
+    .unwrap();
     assert_eq!(line, "{\"env\":{\"prod\":1,\"staging\":0},\"id\":\"ok\"}\n");
 
     let err = collection

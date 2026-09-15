@@ -157,6 +157,7 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
+        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )

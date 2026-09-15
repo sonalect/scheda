@@ -91,6 +91,7 @@ mod schema;
 mod search;
 mod store;
 mod vault;
+mod writer;
 
 #[cfg(feature = "search")]
 #[doc(hidden)]

@@ -2,11 +2,14 @@
 //! in `testdata/journal/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
 
-use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Vault};
+use git2::{IndexAddOption, Repository, Signature};
+use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Repeat, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -115,6 +118,10 @@ fn jsonl_names(dir: &std::path::Path) -> Vec<String> {
     names
 }
 
+fn seq_jsonl(vault: &Vault, n: u32) -> String {
+    format!("{n:08x}-{}.jsonl", vault.writer())
+}
+
 #[test]
 fn insert_appends_canonical_json_line() {
     let scratch = Scratch::new();
@@ -122,7 +129,7 @@ fn insert_appends_canonical_json_line() {
     let collection = vault.collection("south_log").unwrap();
     collection.add("p", rec("m"), None).unwrap();
     collection.add("q", rec("m"), None).unwrap();
-    let text = fs::read_to_string(scratch.log_dir().join("00000001.jsonl")).unwrap();
+    let text = fs::read_to_string(scratch.log_dir().join(seq_jsonl(&vault, 1))).unwrap();
     let mut lines = text.lines();
     let a = lines.next().unwrap();
     let b = lines.next().unwrap();
@@ -165,12 +172,12 @@ fn size_cap_closes_segment_without_rewriting_it() {
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
     collection.add("b", rec("x"), None).unwrap();
-    let first = scratch.log_dir().join("00000001.jsonl");
+    let first = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let before = fs::read(&first).unwrap();
     collection.add("c", rec("x"), None).unwrap();
     assert_eq!(fs::read(&first).unwrap(), before);
     assert!(before.len() as u64 <= 45);
-    assert!(scratch.log_dir().join("00000002.jsonl").is_file());
+    assert!(scratch.log_dir().join(seq_jsonl(&vault, 2)).is_file());
     let ids: Vec<_> = collection
         .find(&Filter::all().into(), 0, 1000)
         .unwrap()
@@ -249,7 +256,7 @@ fn mid_segment_corruption_fails_check_and_is_not_rewritten() {
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
     collection.add("b", rec("x"), None).unwrap();
-    let path = scratch.log_dir().join("00000001.jsonl");
+    let path = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let original = fs::read_to_string(&path).unwrap();
     let first = original.split_once('\n').unwrap().0;
     let damaged = format!("{first}\nthis is not a json object\n");
@@ -269,7 +276,7 @@ fn tail_without_newline_is_not_a_record() {
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
-    let path = scratch.log_dir().join("00000001.jsonl");
+    let path = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let mut text = fs::read_to_string(&path).unwrap();
     text.push_str(r#"{"id":"b","msg":"x"}"#);
     fs::write(&path, &text).unwrap();
@@ -322,7 +329,7 @@ fn integer_field_round_trips_as_integer_not_1_0() {
     collection
         .add("a", rec_fields(json!({"n": 1})), None)
         .unwrap();
-    let path = scratch.lines_dir().join("00000001.jsonl");
+    let path = scratch.lines_dir().join(seq_jsonl(&vault, 1));
     let before = fs::read(&path).unwrap();
     let text = str::from_utf8(&before).unwrap();
     assert!(text.contains(r#""n":1"#), "{text}");
@@ -342,7 +349,7 @@ fn get_and_find_include_raw_match_segment_line() {
     collection
         .add("a", rec_fields(json!({"n": 1})), None)
         .unwrap();
-    let line = fs::read(scratch.lines_dir().join("00000001.jsonl")).unwrap();
+    let line = fs::read(scratch.lines_dir().join(seq_jsonl(&vault, 1))).unwrap();
     let got = collection.get("a").unwrap();
     assert_eq!(got.raw.as_deref(), Some(line.as_slice()));
     let found = collection
@@ -373,7 +380,7 @@ fn journal_line_round_trip_fixture_is_rfc_8785() {
     collection
         .add("one", rec_fields(fields.clone()), None)
         .unwrap();
-    let path = scratch.lines_dir().join("00000001.jsonl");
+    let path = scratch.lines_dir().join(seq_jsonl(&vault, 1));
     let line = fs::read_to_string(&path).unwrap();
     let expected = "{\"id\":\"one\",\"meta\":{\"z\":\"ascii\",\"\u{1F600}\":\"grin\",\"\u{FB33}\":\"he\"},\"n\":1,\"neg\":-42,\"tags\":[\"a\",\"b\"],\"x\":0.5}\n";
     assert_eq!(line, expected);
@@ -403,7 +410,7 @@ fn non_integral_integer_field_is_invalid() {
         .add("frac", rec_fields(json!({"n": 1.5})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
-    assert!(!scratch.lines_dir().join("00000001.jsonl").is_file());
+    assert!(!scratch.lines_dir().join(seq_jsonl(&vault, 1)).is_file());
 }
 
 #[test]
@@ -418,7 +425,7 @@ fn integer_above_2_pow_53_is_invalid() {
             None,
         )
         .unwrap();
-    let text = fs::read_to_string(scratch.lines_dir().join("00000001.jsonl")).unwrap();
+    let text = fs::read_to_string(scratch.lines_dir().join(seq_jsonl(&vault, 1))).unwrap();
     assert!(text.contains(r#""n":9007199254740992"#), "{text}");
     let err = collection
         .add(
@@ -524,7 +531,7 @@ fn lines_truncated_tail_is_invalid() {
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
-    let path = scratch.log_dir().join("00000001.jsonl");
+    let path = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let mut text = fs::read_to_string(&path).unwrap();
     text.push_str(r#"{"id":"b","msg":"x"}"#);
     fs::write(&path, &text).unwrap();
@@ -580,6 +587,220 @@ fn journal_id_map_outside_collection_is_not_read() {
     );
     let check = vault.check().unwrap_err();
     assert_eq!(check.known_code(), Some(Code::IndexCorrupt));
+}
+
+fn as_url(path: &Path) -> String {
+    let path = path.to_str().expect("utf-8 path");
+    if let Some(rest) = path.strip_prefix('/') {
+        format!("file:///{rest}")
+    } else {
+        format!("file:///{}", path.replace('\\', "/"))
+    }
+}
+
+fn commit_all(dir: &Path, message: &str) {
+    let repo = Repository::open(dir).unwrap();
+    let mut index = repo.index().unwrap();
+    index
+        .add_all(["."].iter(), IndexAddOption::DEFAULT, None)
+        .unwrap();
+    index.write().unwrap();
+    let tree_id = index.write_tree().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let sig = Signature::now("Scheda", "scheda@invalid").unwrap();
+    let parent = match repo.head() {
+        Ok(head) => Some(head.peel_to_commit().unwrap()),
+        Err(_) => None,
+    };
+    let parents: Vec<&git2::Commit<'_>> = parent.as_ref().into_iter().collect();
+    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+        .unwrap();
+}
+
+#[test]
+fn two_clones_write_disjoint_journal_segments() {
+    let scratch = Scratch::new();
+    let source = scratch.root.join("source");
+    drop(Vault::open(&source, OpenOptions::new(), None).unwrap());
+    let dir = source.join("south_log");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".schema.yaml"), LOG).unwrap();
+    commit_all(&source, "schema");
+    let bare = scratch.root.join("bare");
+    git2::build::RepoBuilder::new()
+        .bare(true)
+        .clone(&as_url(&source), &bare)
+        .unwrap();
+    let remote = as_url(&bare);
+    let alice_dir = scratch.root.join("alice");
+    let bob_dir = scratch.root.join("bob");
+    let alice = Vault::open(
+        &alice_dir,
+        OpenOptions::new().remote_repo(&remote).writer("alice"),
+        None,
+    )
+    .unwrap();
+    let bob = Vault::open(
+        &bob_dir,
+        OpenOptions::new().remote_repo(&remote).writer("bob"),
+        None,
+    )
+    .unwrap();
+    assert_eq!(alice.writer(), "alice");
+    assert_eq!(bob.writer(), "bob");
+    alice
+        .collection("south_log")
+        .unwrap()
+        .add("from-alice", rec("a"), None)
+        .unwrap();
+    alice.push().unwrap();
+    bob.pull().unwrap();
+    bob.collection("south_log")
+        .unwrap()
+        .add("from-bob", rec("b"), None)
+        .unwrap();
+    let alice_names = jsonl_names(&alice_dir.join("south_log"));
+    let bob_names = jsonl_names(&bob_dir.join("south_log"));
+    assert!(alice_names.contains(&String::from("00000001-alice.jsonl")));
+    assert!(bob_names.contains(&String::from("00000001-bob.jsonl")));
+    assert!(!alice_names.contains(&String::from("00000001-bob.jsonl")));
+    bob.push().unwrap();
+    alice.pull().unwrap();
+    let merged = jsonl_names(&alice_dir.join("south_log"));
+    assert!(merged.contains(&String::from("00000001-alice.jsonl")));
+    assert!(merged.contains(&String::from("00000001-bob.jsonl")));
+    let ids: Vec<_> = alice
+        .collection("south_log")
+        .unwrap()
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["from-alice", "from-bob"]);
+}
+
+#[test]
+fn writerless_segment_is_read_and_not_appended() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("log.yaml", LOG);
+    fs::create_dir_all(scratch.log_dir()).unwrap();
+    fs::write(
+        scratch.log_dir().join("00000001.jsonl"),
+        "{\"id\":\"old\",\"msg\":\"kept\"}\n",
+    )
+    .unwrap();
+    let vault = scratch.reopen();
+    let collection = vault.collection("south_log").unwrap();
+    assert_eq!(collection.get("old").unwrap().id.as_deref(), Some("old"));
+    let walked: Vec<_> = collection
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(walked, ["old"]);
+    let before = fs::read(scratch.log_dir().join("00000001.jsonl")).unwrap();
+    collection.add("new", rec("fresh"), None).unwrap();
+    assert_eq!(
+        fs::read(scratch.log_dir().join("00000001.jsonl")).unwrap(),
+        before
+    );
+    assert!(scratch.log_dir().join(seq_jsonl(&vault, 1)).is_file());
+    let ids: Vec<_> = collection
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["old", "new"]);
+}
+
+#[test]
+fn rotation_caps_are_per_writer() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("log.yaml", LOG);
+    fs::create_dir_all(scratch.log_dir()).unwrap();
+    fs::write(
+        scratch.log_dir().join("00000001-bob.jsonl"),
+        "{\"id\":\"bob-line\",\"msg\":\"x\"}\n",
+    )
+    .unwrap();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new().writer("alice"), None).unwrap();
+    let collection = vault.collection("south_log").unwrap();
+    collection.add("a", rec("x"), None).unwrap();
+    collection.add("b", rec("x"), None).unwrap();
+    let alice_first = scratch.log_dir().join("00000001-alice.jsonl");
+    let before_alice = fs::read(&alice_first).unwrap();
+    let before_bob = fs::read(scratch.log_dir().join("00000001-bob.jsonl")).unwrap();
+    collection.add("c", rec("x"), None).unwrap();
+    assert_eq!(fs::read(&alice_first).unwrap(), before_alice);
+    assert_eq!(
+        fs::read(scratch.log_dir().join("00000001-bob.jsonl")).unwrap(),
+        before_bob
+    );
+    assert!(scratch.log_dir().join("00000002-alice.jsonl").is_file());
+    let ids: Vec<_> = collection
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["a", "b", "bob-line", "c"]);
+}
+
+#[test]
+fn overridden_writer_must_be_a_token() {
+    let scratch = Scratch::new();
+    let err = Vault::open(scratch.vault(), OpenOptions::new().writer(""), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = Vault::open(scratch.vault(), OpenOptions::new().writer("Alice"), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err =
+        Vault::open(scratch.vault(), OpenOptions::new().writer("00000001"), None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = Vault::open(
+        scratch.vault(),
+        OpenOptions::new().writer("abcdef01-node"),
+        None,
+    )
+    .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn foreign_thread_cannot_join_open_transaction() {
+    let scratch = Scratch::new();
+    let vault = Arc::new(open_log(&scratch));
+    vault.begin().unwrap();
+    vault
+        .collection("south_log")
+        .unwrap()
+        .add("a", rec("in-txn"), None)
+        .unwrap();
+    let other = Arc::clone(&vault);
+    let err = thread::spawn(move || {
+        other
+            .collection("south_log")
+            .unwrap()
+            .add("b", rec("intruder"), None)
+    })
+    .join()
+    .expect("thread")
+    .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Locked));
+    assert_eq!(err.known_repeat(), Some(Repeat::Allowed));
+    let committer = Arc::clone(&vault);
+    let err = thread::spawn(move || committer.commit("nope"))
+        .join()
+        .expect("thread")
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Locked));
+    vault.commit("owner").unwrap();
+    let collection = vault.collection("south_log").unwrap();
+    assert_eq!(collection.get("a").unwrap().id.as_deref(), Some("a"));
+    assert_eq!(
+        collection.get("b").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
 }
 
 fn peek_schema_name(body: &str) -> String {

@@ -37,4 +37,17 @@ message OpenOptions {
   // and `{vault}/.isolated/`). Unset: local git config, then
   // `Scheda <scheda@invalid>`.
   Author author = 4;
+  // Machine-local identity of the process that writes this clone.
+  // Unset: generated on first `open` and stored in `{vault}/.scheda/writer`.
+  // When set: lowercase alphanumeric plus `-`, 1–32 bytes, so it can sit
+  // in a journal segment file name. Must not start with eight hexadecimal
+  // digits (those names are sequence segments). Never committed (`.scheda/` is
+  // gitignored).
+  string writer = 5 [(buf.validate.field) = {
+    string: {
+      min_len: 1
+      max_len: 32
+      pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    }
+  }];
 }
