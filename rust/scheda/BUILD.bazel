@@ -3,20 +3,17 @@ load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
-# Full CI build (`find` + `search` + SIMD). Cargo default is `remote-git`
-# only. `openmp` is Cargo-only (needs libomp).
+# Full CI build (`find` + `search` + SIMD). The crate has no default
+# features. `openmp` is Cargo-only (needs libomp).
 _SCHEDA_FEATURES = [
     "find",
     "search",
     "simd",
-    "remote-git",
     "encrypt",
 ]
 
-# Matches Cargo.toml [features] default. No Tantivy, USearch, or C++.
-_SCHEDA_THIN_FEATURES = [
-    "remote-git",
-]
+# Matches Cargo.toml [features]: no feature at all. No Tantivy, USearch, or C++.
+_SCHEDA_THIN_FEATURES = []
 
 # Shared by every integration test crate (`mod common`).
 _TEST_COMMON = [

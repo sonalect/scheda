@@ -9,11 +9,14 @@
 //!
 //! # Crate features
 //!
-//! The default feature is `remote-git`. `cargo add scheda` does not pull
+//! There are no default features. `cargo add scheda` does not pull
 //! Tantivy or USearch. `search` turns `find` on; `simd` turns `search`
-//! on; the reverse does not. `encrypt` is also off by default.
-//! `default-features = false` still runs local git; it refuses `https://`
-//! and `git@` remotes.
+//! on; the reverse does not. `encrypt` is also off. Git is not a feature:
+//! every build invokes the system `git` executable, so `git` must be
+//! installed and on `PATH`. Remotes (`https://`, `http://`, `ssh://`,
+//! `git@`, and file paths) all work and authenticate exactly like a plain
+//! `git` command, including `~/.ssh/config`, `ProxyCommand`, credential
+//! helpers, and host-key checking.
 //!
 //! - **`find`** — Tantivy `Vault::find` / `Collection::find`.
 //!   Writes without it mark the Index stale, so a later build with
@@ -24,11 +27,6 @@
 //! - **`search`** — hybrid `Vault::search` / `Collection::search`
 //!   (BM25 + USearch). Pulls `find` in. `open` with an embedder without
 //!   this feature fails (`index_vector`): the vector leg is absent.
-//! - **`remote-git`** *(default)* — policy gate for `https://`, `http://`,
-//!   `ssh://`, and `git@` remotes. Scheda invokes the system `git`
-//!   executable, so authentication follows `~/.ssh/config`, credential
-//!   helpers, and host-key checking. Without the feature those remotes
-//!   are `unsupported`. File remotes still work. `git` must be installed.
 //! - **`simd`** — USearch SIMD kernels via the `numkong` crate
 //!   (`usearch/numkong`). Pulls `search` in. Needed for fast in-process
 //!   ANN.

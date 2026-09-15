@@ -8,6 +8,24 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.15.0] - 2026-09-15
+
+### Removed
+
+- **Crate features `remote-git` and `vendored-openssl`, and the default
+  feature set with them.** `remote-git` was a compile-time gate that
+  refused `https://`, `http://`, `ssh://`, and `git@` remotes. Since git
+  operations invoke the system `git` executable it no longer enabled any
+  library, and a build flag cannot enforce the policy anyway: Cargo
+  unifies features across the graph, and `git remote set-url` sits
+  outside the crate. Remote URLs are now always accepted, and `pull` /
+  `push` no longer spawn `git remote get-url` merely to feed the gate.
+  `vendored-openssl` was an empty no-op; nothing links OpenSSL. **A
+  dependant that names either feature must drop the name**, or Cargo
+  fails with an unknown-feature error. `cargo add scheda` still gets git
+  plus Records without Tantivy or USearch, which is what the old default
+  set amounted to.
+
 ## [0.14.0] - 2026-09-15
 
 ### Changed
@@ -1334,6 +1352,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.15.0]
 - [0.14.0]
 - [0.13.0]
 - [0.12.0]
@@ -1374,7 +1393,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/amsokol/scheda/releases/tag/v0.15.0
 [0.14.0]: https://github.com/amsokol/scheda/releases/tag/v0.14.0
 [0.13.0]: https://github.com/amsokol/scheda/releases/tag/v0.13.0
 [0.12.0]: https://github.com/amsokol/scheda/releases/tag/v0.12.0

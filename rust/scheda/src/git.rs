@@ -366,27 +366,7 @@ pub(crate) fn origin_url(dir: &Path) -> Result<Option<String>, Error> {
     }
 }
 
-fn url_needs_remote_git(url: &str) -> bool {
-    let url = url.trim();
-    let prefix = url.get(..8).unwrap_or(url);
-    let lower = prefix.to_ascii_lowercase();
-    lower.starts_with("http://")
-        || lower.starts_with("https://")
-        || lower.starts_with("ssh://")
-        || url.starts_with("git@")
-}
-
-fn require_remote_git_url(url: &str) -> Result<(), Error> {
-    if url_needs_remote_git(url) && !cfg!(feature = "remote-git") {
-        bail!(Error::unsupported(
-            "https://, http://, ssh://, and git@ remotes need the scheda crate feature remote-git",
-        ));
-    }
-    Ok(())
-}
-
 pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
-    require_remote_git_url(url)?;
     git()
         .arg("clone")
         .arg("--")
@@ -463,13 +443,6 @@ fn fast_forward(dir: &Path) -> Result<(), Error> {
 pub(crate) fn pull(dir: &Path) -> Result<(), Error> {
     let name = default_remote_name(dir)?;
     require_work_tree(dir)?;
-    let url = git()
-        .current_dir(dir)
-        .arg("remote")
-        .arg("get-url")
-        .arg(&name)
-        .run("[Git::pull] read remote URL")?;
-    require_remote_git_url(url.stdout_trim("[Git::pull] read remote URL")?)?;
     git()
         .current_dir(dir)
         .arg("fetch")
@@ -515,13 +488,6 @@ pub(crate) fn push(dir: &Path) -> Result<(), Error> {
     require_work_tree(dir)?;
     let refname = branch_refname(dir)?;
     let spec = format!("{refname}:{refname}");
-    let url = git()
-        .current_dir(dir)
-        .arg("remote")
-        .arg("get-url")
-        .arg(&name)
-        .run("[Git::push] read remote URL")?;
-    require_remote_git_url(url.stdout_trim("[Git::push] read remote URL")?)?;
     git()
         .current_dir(dir)
         .arg("push")
@@ -928,24 +894,8 @@ pub(crate) fn local_config_mentions_lfs(dir: &Path) -> Result<bool, Error> {
 
 #[cfg(test)]
 mod transport_tests {
-    use super::{require_remote_git_url, url_needs_remote_git};
     use crate::Error;
     use crate::error::{git_code, redact_remote_text};
-
-    #[test]
-    fn file_and_path_urls_do_not_need_remote_git() {
-        assert!(!url_needs_remote_git("file:///tmp/repo"));
-        assert!(!url_needs_remote_git("/tmp/repo"));
-        assert!(!url_needs_remote_git(""));
-    }
-
-    #[test]
-    fn https_ssh_and_git_at_urls_need_remote_git() {
-        assert!(url_needs_remote_git("https://github.com/a/b.git"));
-        assert!(url_needs_remote_git("http://example.test/a.git"));
-        assert!(url_needs_remote_git("ssh://git@host/repo.git"));
-        assert!(url_needs_remote_git("git@host:repo.git"));
-    }
 
     #[test]
     fn git_fail_redacts_userinfo_in_message() {
@@ -957,21 +907,6 @@ mod transport_tests {
         assert!(!msg.contains("token"), "{msg}");
         assert!(!msg.contains("user:"), "{msg}");
         assert!(msg.contains("https://example.test"), "{msg}");
-    }
-
-    #[test]
-    #[cfg(not(feature = "remote-git"))]
-    fn https_clone_is_unsupported_without_the_feature() {
-        use crate::Code;
-        let err = require_remote_git_url("https://example.invalid/x.git").unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::Unsupported));
-        assert_ne!(err.to_string(), "unsupported");
-    }
-
-    #[test]
-    #[cfg(feature = "remote-git")]
-    fn remote_https_url_is_allowed_with_the_feature() {
-        assert!(require_remote_git_url("https://example.invalid/x.git").is_ok());
     }
 
     #[test]

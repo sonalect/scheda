@@ -88,16 +88,14 @@ Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
 Target crates use the platform CRT (dynamic glibc on Linux). Git
 operations invoke the system **`git`** executable (`git` must be on
-`PATH`). Feature `remote-git` (default) is a policy gate: without it,
-`https://`, `http://`, `ssh://`, and `git@` remotes are `unsupported`.
-File remotes still work. Authentication, `~/.ssh/config`, and host-key
-checking match a plain `git` command. Features
+`PATH`). Git is not behind a feature: `https://`, `http://`, `ssh://`,
+`git@`, and file remotes all work, and authentication, `~/.ssh/config`,
+and host-key checking match a plain `git` command. Features
 `find` and `search` are opt-in: Tantivy `find` and hybrid `search`
 (BM25 + USearch). `search` turns `find` on. `simd` turns `search` on
 and enables USearch SIMD kernels. `openmp` is opt-in (Linux
-`libomp-dev`). Cargo default is `remote-git` only. `default-features =
-false` still runs local git and refuses remote `https://` / `git@`
-URLs. Add `features =
+`libomp-dev`). There are no default features: `cargo add scheda` is
+git plus Records, without Tantivy or USearch. Add `features =
 ["search", "simd"]` for ANN + SIMD, or `features = ["find"]` for
 Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
 **clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
@@ -159,17 +157,17 @@ bazel run //bazel:format        # buildifier -mode=fix
 ```
 
 `cargo test` / `cargo clippy` still work for local iteration. `cargo test
--p scheda` is Cargo default (`remote-git` only). For `find` / `search`
-tests: `cargo test -p scheda --features search,simd`. GitHub Actions
-CI (Bazel) is currently disabled.
+-p scheda --lib` is the fast loop: no feature, no C++ compile. For `find`
+/ `search` tests: `cargo test -p scheda --features search,simd`. GitHub
+Actions CI (Bazel) is currently disabled.
 `cargo build --release` uses thin LTO, one codegen unit, and symbol strip.
 
 Optional Cargo-only **static CRT** CLI. Bazel and default Cargo stay
 dynamically linked. Per-target rustflags live in `.cargo/static-glibc.toml`
 (Linux gnu, Windows msvc, macOS darwin). `--target` must be this machine
-or `+crt-static` hits host proc-macros. `vendored-openssl` is an empty
-feature kept so existing command lines still resolve; git no longer
-links OpenSSL. Unset `RUSTFLAGS` /
+or `+crt-static` hits host proc-macros. Nothing links OpenSSL: git is the
+system executable, so there is no vendored TLS feature to pass. Unset
+`RUSTFLAGS` /
 `CARGO_ENCODED_RUSTFLAGS` so they do not override the extra config.
 Artifact: `target/<host-tuple>/release/scheda` (`.exe` on Windows).
 
@@ -177,7 +175,7 @@ Linux, macOS, and Git Bash:
 
 ```bash
 unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS
-cargo build -p scheda-cli --release --features vendored-openssl \
+cargo build -p scheda-cli --release \
   --target "$(rustc --print host-tuple)" --config .cargo/static-glibc.toml
 ```
 
@@ -185,7 +183,7 @@ PowerShell:
 
 ```powershell
 Remove-Item Env:RUSTFLAGS, Env:CARGO_ENCODED_RUSTFLAGS -ErrorAction SilentlyContinue
-cargo build -p scheda-cli --release --features vendored-openssl `
+cargo build -p scheda-cli --release `
   --target (rustc --print host-tuple) --config .cargo/static-glibc.toml
 ```
 
@@ -194,7 +192,7 @@ cmd.exe (interactive; use `%%i` inside a `.bat`):
 ```bat
 set RUSTFLAGS=
 set CARGO_ENCODED_RUSTFLAGS=
-for /f %i in ('rustc --print host-tuple') do cargo build -p scheda-cli --release --features vendored-openssl --target %i --config .cargo/static-glibc.toml
+for /f %i in ('rustc --print host-tuple') do cargo build -p scheda-cli --release --target %i --config .cargo/static-glibc.toml
 ```
 
 ## Python CLI

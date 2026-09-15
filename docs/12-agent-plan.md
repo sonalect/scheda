@@ -818,11 +818,10 @@ The slug rule is the whole `id` rule, and the identity field is `id`.
 after the two methods, `search` pulls `find` in, generated types stay
 compiled and stop being public.
 
-Not urgent: nothing waits on it. Cargo `default` is `remote-git` only.
+Not urgent: nothing waits on it. The crate has no default features.
 `tantivy`, `usearch`, and `cxx` are `optional = true` behind `find` and
-`search`. Git is the product: Scheda invokes the system `git` executable.
-`remote-git` is a policy gate for HTTPS/SSH remotes; `vendored-openssl`
-is an empty leftover feature.
+`search`. Git is the product and not a feature: Scheda invokes the system
+`git` executable, and every remote scheme works in every build.
 
 `search` cannot stand without `find`. `search.proto` imports `find.proto`
 for `SearchQuery.filter`, and the hybrid's lexical half is BM25 on the
@@ -838,8 +837,8 @@ search = ["find", "dep:usearch", "dep:cxx"]
 simd   = ["search", "usearch/numkong"]
 ```
 
-- [x] `tantivy`, `usearch`, and `cxx` are `optional = true`. Cargo
-      `default` is `remote-git` only. `find`, `search`, and `simd` are
+- [x] `tantivy`, `usearch`, and `cxx` are `optional = true`. There is no
+      Cargo `default` feature set. `find`, `search`, and `simd` are
       opt-in; turning `search` on turns `find` on; turning `simd` on
       turns `search` on. The fourth combination (`search` without
       `find`) does not exist. Bazel CI still links those three legs.
@@ -874,7 +873,7 @@ simd   = ["search", "usearch/numkong"]
       feature set. A thin build opens a Vault a full build wrote and the
       reverse.
 - [x] `10` §2 says the phases grade a build with `find` and `search`
-      on (Bazel CI). Cargo default is `remote-git` only: the same
+      on (Bazel CI). A build with no feature at all is the same
       library with those legs off, not a second product.
 - [x] CI builds full.
 

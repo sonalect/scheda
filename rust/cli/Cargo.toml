@@ -12,10 +12,6 @@ publish = false
 name = "scheda"
 path = "src/main.rs"
 
-[features]
-# Cargo-only static glibc CLI (`+crt-static`). Not used by Bazel.
-vendored-openssl = ["scheda/vendored-openssl"]
-
 [dependencies]
 clap = { workspace = true }
 mimalloc = { workspace = true }
