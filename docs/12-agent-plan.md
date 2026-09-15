@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.78, 10 September 2026.
+Document 12 of the Scheda package. Version 0.79, 15 September 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -222,9 +222,9 @@ Close only after A1. Public crate API is `07` / `13`. `Embedder` /
       `walk_inverse`, `scan`, `find_one`, `insert_one`, `replace_one`,
       `push_remote` / `pull_remote` / `sync_remote` are gone.
 - [x] `Vault::open(path, OpenOptions, Option<Arc<dyn Embedder>>)` as in
-      `07`. Path exists → open (`remote_repo` ignored). Path missing +
-      `remote_repo` → clone. Path missing → `git init`. Path exists but is
-      not a Vault → `invalid`.
+      `07`. Path exists → open (a set `remote_repo` must match `origin`).
+      Path missing + `remote_repo` → clone. Path missing → `git init`. Path
+      exists but is not a Vault → `invalid`.
 - [x] `Vault::info` returns `api.v1.VaultInfo` (collections + nested
       Schema). No `catalog()` method. AGT-1 listing is this message.
 - [x] `create_collection(name, schema)`. Schema has no `name` / `layout`.

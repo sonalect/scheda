@@ -136,6 +136,22 @@ pub(crate) fn remotes(dir: &Path) -> Result<Vec<String>, Error> {
     Ok(out)
 }
 
+/// Fetch URL of `origin`, if that remote exists. Local config; not a fetch.
+///
+/// Missing `origin`, or an empty URL, is `None`.
+pub(crate) fn origin_url(dir: &Path) -> Result<Option<String>, Error> {
+    let repo = open_work_tree(dir)?;
+    match repo.find_remote("origin") {
+        Ok(remote) => {
+            let url = remote.url().context("[Git::origin_url] read origin URL")?;
+            let url = url.trim();
+            Ok((!url.is_empty()).then(|| url.to_owned()))
+        }
+        Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
+        Err(err) => Err(err).context("[Git::origin_url] find origin"),
+    }
+}
+
 fn url_needs_remote_git(url: &str) -> bool {
     let url = url.trim();
     let prefix = url.get(..8).unwrap_or(url);

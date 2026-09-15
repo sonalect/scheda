@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.53, 1 September 2026.
+Document 2 of the Scheda package. Version 0.54, 15 September 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -134,7 +134,7 @@ Do not confuse with git's staging area, with the Vault, or with source of truth.
 
 **Library API** — the operations every implementation must provide, named in `07`. Message fields are `api/v1` (Protobuf edition 2024). Language-neutral as a contract. The first binding is Rust.
 
-**`open`** — attach to a Vault working tree, or create one. Path exists as a Vault → open (`remote_repo` ignored). Path missing and `remote_repo` set → `git clone`. Path missing → `git init`, no Remote. Reads the Remote locally on an existing tree (no fetch unless `auto_sync`). `open` does not take the write lock. More than one Vault may be open in one process. Roots do not leak into each other's search.
+**`open`** — attach to a Vault working tree, or create one. Path exists as a Vault → open. A set `remote_repo` must match `origin` (`invalid` if there is no `origin` or the URL differs). Unset `remote_repo` attaches and does not change `origin`. Path missing and `remote_repo` set → `git clone`. Path missing → `git init`, no Remote. Reads the Remote locally on an existing tree (no fetch unless `auto_sync`). `open` does not take the write lock. More than one Vault may be open in one process. Roots do not leak into each other's search.
 
 **`info`** — snapshot of the open Vault as `api.v1.VaultInfo` (path, Index path, `remote`, `auto_sync`, collections). Not a live handle.
 

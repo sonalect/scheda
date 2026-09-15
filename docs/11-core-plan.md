@@ -1,6 +1,6 @@
 # 11. Core development plan
 
-Document 11 of the Scheda package. Version 0.49, 7 September 2026.
+Document 11 of the Scheda package. Version 0.50, 15 September 2026.
 
 Work order for the Rust binding of **core** (`10` §2) and the **search**
 stage that runs after C8 (`10` §3). It does not add product rules. Codes and
@@ -275,7 +275,8 @@ SCH-12.
 
 - [x] `open` of a missing path with `remote_repo` produces a Vault whose
       `origin` is that URL; `open`+`remote_repo` on an existing Vault
-      ignores `remote_repo` (GIT-9).
+      succeeds only when that URL matches `origin`, otherwise `invalid`
+      (GIT-9).
 - [x] `auto_sync` default off: `open` does not change `HEAD` when Remote has
       new commits (GIT-10).
 - [x] `auto_sync` on + fast-forward → `HEAD` matches Remote after `open`;

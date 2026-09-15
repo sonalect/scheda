@@ -15,8 +15,10 @@ pub struct OpenOptions {
     )]
     pub auto_sync: ::core::option::Option<bool>,
     /// Clone URL when `path` does not exist. Unset means local `git init`.
-    /// Ignored when `path` is already a Vault. A set value must be an absolute
-    /// URI (RFC 3986): `https://…`, `ssh://…`, `file:///…`.
+    /// When `path` is already a Vault, a set value must match the fetch URL of
+    /// `origin`; otherwise `invalid`. Unset on an existing Vault attaches and
+    /// does not change `origin`. A set value must be an absolute URI (RFC 3986):
+    /// `https://…`, `ssh://…`, `file:///…`.
     ///
     /// Field 2: `remote_repo`
     #[serde(

@@ -117,7 +117,8 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Open or create a Vault. `--remote-repo` is used only when the path is missing.
+    /// Open or create a Vault. `--remote-repo` fills a missing path from that
+    /// URL; on an existing Vault it must match `origin`.
     Open {
         #[arg(long)]
         remote_repo: Option<String>,

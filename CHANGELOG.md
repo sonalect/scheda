@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-15
+
+### Changed
+
+- **`open` of an existing Vault no longer ignores `remote_repo`.** A set
+  URL must match the fetch URL of `origin`. No `origin`, or a different
+  URL, is `invalid`; `origin` is not added or rewritten. Unset
+  `remote_repo` still attaches and leaves `origin` unchanged. Clone of a
+  missing path is unchanged.
+
 ## [0.11.3] - 2026-09-15
 
 ### Changed
@@ -1272,6 +1282,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.12.0]
 - [0.11.3]
 - [0.11.2]
 - [0.11.1]
@@ -1309,7 +1320,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.11.3...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/amsokol/scheda/releases/tag/v0.12.0
 [0.11.3]: https://github.com/amsokol/scheda/releases/tag/v0.11.3
 [0.11.2]: https://github.com/amsokol/scheda/releases/tag/v0.11.2
 [0.11.1]: https://github.com/amsokol/scheda/releases/tag/v0.11.1

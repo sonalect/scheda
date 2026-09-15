@@ -76,9 +76,11 @@ pub struct Collection {
 impl Vault {
     /// Open, create, or clone a Vault.
     ///
-    /// Path exists → open (`remote_repo` ignored). Path missing + `remote_repo`
-    /// → clone. Path missing → `git init`. Path exists but is not a Vault →
-    /// `invalid`.
+    /// Path exists → open. A set `remote_repo` must match the fetch URL of
+    /// `origin` (`invalid` if there is no `origin` or the URL differs); `origin`
+    /// is not added or rewritten. Unset `remote_repo` attaches and does not
+    /// change `origin`. Path missing + `remote_repo` → clone. Path missing →
+    /// `git init`. Path exists but is not a Vault → `invalid`.
     /// Optional caller embedder. Turns on the vector leg of `search`.
     /// Without the `search` crate feature, a `Some` value fails
     /// (`index_vector`): that leg is absent. The signature is the same in
@@ -116,6 +118,7 @@ impl Vault {
                     path.display()
                 )));
             }
+            require_matching_origin(path, &options)?;
             let identity = git::identity_from_open(&options, path)?;
             return Self::open_existing(path, options, embedder, identity);
         }
@@ -2501,6 +2504,46 @@ fn remote_repo_url(options: &OpenOptions) -> Option<&str> {
         .filter(|url| !url.is_empty())
 }
 
+/// On an existing Vault, a set `remote_repo` must equal `origin`'s fetch URL.
+fn require_matching_origin(path: &Path, options: &OpenOptions) -> Result<(), Error> {
+    let Some(requested) = remote_repo_url(options) else {
+        return Ok(());
+    };
+    let Some(origin) = git::origin_url(path)? else {
+        bail!(
+            Error::invalid(format!(
+                "existing Vault has no origin; remote_repo is {}",
+                remote_url_for_message(requested)
+            ))
+            .context("[Vault::open] match origin")
+        );
+    };
+    if origin == requested {
+        return Ok(());
+    }
+    bail!(
+        Error::invalid(format!(
+            "existing Vault origin {} does not match remote_repo {}",
+            remote_url_for_message(&origin),
+            remote_url_for_message(requested)
+        ))
+        .context("[Vault::open] match origin")
+    )
+}
+
+/// Drop URL userinfo from an error message; keep scheme, host, and path.
+fn remote_url_for_message(url: &str) -> String {
+    let Some((scheme, rest)) = url.split_once("://") else {
+        return url.to_owned();
+    };
+    match rest.rsplit_once('@') {
+        Some((_, host_and_path)) if !host_and_path.is_empty() => {
+            format!("{scheme}://{host_and_path}")
+        }
+        _ => url.to_owned(),
+    }
+}
+
 fn without_remote_repo(mut options: OpenOptions) -> OpenOptions {
     options.remote_repo = None;
     options
@@ -3488,21 +3531,80 @@ mod tests {
     }
 
     #[test]
-    fn open_on_existing_vault_ignores_remote_repo() {
+    fn open_existing_without_origin_rejects_remote_repo() {
         let scratch = Scratch::new();
         let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
-        git::add_remote(vault.path(), "origin", "https://example.invalid/scheda.git").unwrap();
+        let path = vault.path().to_path_buf();
+        drop(vault);
+        let err = Vault::open(
+            &path,
+            OpenOptions::new().remote_repo("https://example.invalid/scheda.git"),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(
+            err.message
+                .as_deref()
+                .is_some_and(|m| m.contains("has no origin"))
+        );
+        assert!(git::origin_url(&path).unwrap().is_none());
+        assert!(git::remotes(&path).unwrap().is_empty());
+    }
+
+    #[test]
+    fn open_existing_rejects_different_remote_repo() {
+        const ORIGIN: &str = "https://example.invalid/scheda.git";
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        git::add_remote(vault.path(), "origin", ORIGIN).unwrap();
+        let path = vault.path().to_path_buf();
+        drop(vault);
+        let err = Vault::open(
+            &path,
+            OpenOptions::new().remote_repo("https://example.invalid/other.git"),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(
+            err.message
+                .as_deref()
+                .is_some_and(|m| m.contains("does not match remote_repo"))
+        );
+        assert_eq!(git::origin_url(&path).unwrap().as_deref(), Some(ORIGIN));
+        assert_eq!(git::remotes(&path).unwrap(), vec!["origin".to_owned()]);
+    }
+
+    #[test]
+    fn remote_url_for_message_drops_userinfo_keeps_path() {
+        assert_eq!(
+            super::remote_url_for_message("https://token@github.com/org/repo.git"),
+            "https://github.com/org/repo.git"
+        );
+        assert_eq!(
+            super::remote_url_for_message("https://github.com/org/repo.git"),
+            "https://github.com/org/repo.git"
+        );
+    }
+
+    #[test]
+    fn open_existing_accepts_matching_remote_repo() {
+        const ORIGIN: &str = "https://example.invalid/scheda.git";
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        git::add_remote(vault.path(), "origin", ORIGIN).unwrap();
         drop(vault);
         let opened = Vault::open(
             scratch.vault(),
-            OpenOptions::new().remote_repo("https://example.invalid/other.git"),
+            OpenOptions::new().remote_repo(ORIGIN),
             None,
         )
         .unwrap();
         assert_eq!(opened.remote_names(), &["origin".to_owned()]);
         assert_eq!(
-            git::remotes(opened.path()).unwrap(),
-            vec!["origin".to_owned()]
+            git::origin_url(opened.path()).unwrap().as_deref(),
+            Some(ORIGIN)
         );
     }
 
