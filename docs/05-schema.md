@@ -45,7 +45,7 @@ Unknown types are rejected. Flags `required` / `optional` / `nullable` apply to 
 
 A default is applied only if Schema states one; otherwise MOD-12 (missing is missing) and MOD-18 (`null` stays `null`). *Check:* omit a required field → write error; omit an optional non-nullable field → read-back has no such key; required nullable with `null` round-trips; optional non-nullable with `null` → write error.
 
-**SCH-6. Identity field.** The Record identity key is always `id` (MOD-13). Schema must not declare a field named `id` or `body` (`body` is the Markdown body in `find`, SCH-7). There is no Schema key that renames `id` or that adds a pattern on top of the library slug (same slug as collection `name`: Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes, no trailing `.` or whitespace, not a Windows device name). For `document`, header `id` must match the filename stem (`{id}.md`). For `singleton`, header `id` must match `Schema.singleton.id` (the file is always `record.yaml`). *Check:* header/object `id` ≠ that identity → write and `check` fail. *Check:* a Schema field named `id` or `body` is `invalid`. *Check:* `id` `a/b` is `invalid` on `add`.
+**SCH-6. Identity field.** The Record identity key is always `id` (MOD-13). Schema must not declare a field named `id` or `body` (`body` is the Markdown body in `find`, SCH-7). There is no Schema key that renames `id` or that adds a pattern on top of the library rule (each component is the same slug as collection `name`: Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes for the whole `id`, no trailing `.` or whitespace, not a Windows device name). A `document` `id` may be `/`-separated slugs (`work/meeting`, `2026-01-15/standup`); `journal` and `singleton` stay a single slug. For `document`, header `id` must equal the path-derived `id` (relative POSIX path under the collection, slashes, no `.md`). For `singleton`, header `id` must match `Schema.singleton.id` (the file is always `record.yaml`). *Check:* header/object `id` ≠ that identity → write and `check` fail. *Check:* a Schema field named `id` or `body` is `invalid`. *Check:* `document` `add("work/meeting")` writes `{name}/work/meeting.md`; `journal` / `singleton` `id` `a/b` is `invalid` on `add`.
 
 **SCH-7. Body marks (`document` only).** Schema says whether a Markdown body is forbidden (`no_body`) and whether it is excluded from the lexical Index and from vector search (`text.exclude_fts` / `text.exclude_vector`). Default: body allowed and in the lexical Index (`find` field `body` and BM25) and in vectors. *Check:* `no_body` with a non-empty body → write error; `exclude_fts` body text is not a `find` key and is not found by lexical `search`; **core** still stores the body.
 
@@ -113,10 +113,10 @@ Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record files are th
 
 | Key | Required | Meaning |
 |---|---|---|
-| `name` | yes | Collection name. Unique in the Vault. Same slug as Record `id` (library): Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes, no trailing `.` or whitespace, not a Windows device name. The on-disk directory is this name (MOD-8). |
+| `name` | yes | Collection name. Unique in the Vault. Same slug as one Record `id` component (library): Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes, no trailing `.` or whitespace, not a Windows device name. The on-disk directory is this name (MOD-8). |
 | `kind` | yes | `document` \| `journal` \| `singleton` |
 | `version` | yes | Integer ≥ `1` |
-| `id` | — | Removed. Identity is always Record `id`. No `id_pattern`. The library slug is the only `id` constraint (SCH-6). |
+| `id` | — | Removed. Identity is always Record `id`. No `id_pattern`. The library slug (or `/`-separated slugs for `document`) is the only `id` constraint (SCH-6). |
 | `fields` | yes | List of field declarations (may be empty). |
 | `segment_max_bytes` | `journal` only | Integer bytes. Omitted → **8 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
 | `segment_max_lines` | `journal` only | Optional integer line cap. If set, ≥ `1`. |

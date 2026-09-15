@@ -92,11 +92,11 @@ Replace replaces that file after Schema checks. There is not a set of ids in the
 
 **`id`** — stable identifier of a Record inside its collection.
 
-The library checks `id` as a slug: starts with a Unicode letter or digit, then letters, digits, combining marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@` (max 255 bytes; not a Windows device name; no leading/trailing whitespace; no trailing `.`). Schema does not add a tighter pattern (SCH-6). Scheda does not mint domain identifiers for the consumer. Renaming a file so that it no longer matches the derived path is rejected: `id` is not the current basename “until someone renames it”.
+The library checks `id` as a slug: starts with a Unicode letter or digit, then letters, digits, combining marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@` (max 255 bytes; not a Windows device name; no leading/trailing whitespace; no trailing `.`). A `document` `id` may join those slugs with `/` (`work/meeting`); `journal`, `singleton`, and collection names stay a single slug. Schema does not add a tighter pattern (SCH-6). Scheda does not mint domain identifiers for the consumer. Renaming a file so that it no longer matches the derived path is rejected: `id` is not the current basename “until someone renames it”.
 
 **Path** — location of the Record in the Vault.
 
-For `document`, `{collection}/{id}.md`. For `journal`, the segment file that contains the line (the Record is still addressed by `(collection, id)`, not by segment name). For `singleton`, `{collection}/record.yaml`. The caller never chooses these paths.
+For `document`, `{collection}/{id}.md` (`/` in `id` is a directory). For `journal`, the segment file that contains the line (the Record is still addressed by `(collection, id)`, not by segment name). For `singleton`, `{collection}/record.yaml`. The caller never chooses these paths.
 
 **Fields** — structured values.
 

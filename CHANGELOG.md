@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- **Hierarchical `document` ids.** A `document` `id` may be `/`-separated
+  slugs (`work/meeting`, `2026-01-15/standup`). Each component is a
+  directory; the last is the file stem. The whole `id` is still at most
+  255 bytes. `get` opens that one path; `replace` does not move the file;
+  `remove` unlinks it and prunes empty parent directories. `documents()` /
+  `ids()` descend slug-named directories and skip others. `journal`,
+  `singleton`, and collection names still reject `/`.
+
 ## [0.15.1] - 2026-09-15
 
 ### Fixed

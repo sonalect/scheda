@@ -78,7 +78,6 @@ const NOTES: &str = include_str!("../testdata/document/notes.yaml");
 const NOTES_PLUS: &str = include_str!("../testdata/document/notes_plus.yaml");
 const NOTES_REQUIRED: &str = include_str!("../testdata/document/notes_required.yaml");
 const PAGES: &str = include_str!("../testdata/document/pages.yaml");
-const SLUGS: &str = include_str!("../testdata/document/slugs.yaml");
 const INBOX: &str = include_str!("../testdata/document/inbox.yaml");
 const LOG: &str = include_str!("../testdata/document/log.yaml");
 const ALPHA_MD: &str = include_str!("../testdata/document/alpha.md");
@@ -321,22 +320,110 @@ fn optional_omit_versus_null() {
 }
 
 #[test]
-fn slug_rejects_slash_in_id() {
+fn document_id_may_contain_slash_namespaces() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add(
+            "work/meeting",
+            rec(serde_json::json!({"title": "Work"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add(
+            "2026-01-15/standup",
+            rec(serde_json::json!({"title": "Daily"})),
+            None,
+        )
+        .unwrap();
+    let work = collection.get("work/meeting").unwrap();
+    assert_eq!(work.path.as_deref(), Some("north_notes/work/meeting.md"));
+    assert_eq!(fields_of(&work)["title"], "Work");
+    assert!(
+        scratch
+            .coll_file("north_notes", "work/meeting.md")
+            .is_file()
+    );
+    let daily = collection.get("2026-01-15/standup").unwrap();
+    assert_eq!(
+        daily.path.as_deref(),
+        Some("north_notes/2026-01-15/standup.md")
+    );
+    collection
+        .replace(
+            "work/meeting",
+            rec_rep(serde_json::json!({"title": "Still work"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        collection.get("work/meeting").unwrap().path.as_deref(),
+        Some("north_notes/work/meeting.md")
+    );
+    let hist = collection.history("work/meeting", 0, 10).unwrap();
+    assert!(!hist.entries.is_empty());
+    let err = collection
+        .add(
+            "work/meeting",
+            rec(serde_json::json!({"title": "Again"})),
+            None,
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::DuplicateId));
+    drop(collection);
+    drop(vault);
+    fs::remove_dir_all(scratch.vault().join(".scheda")).unwrap();
+    let reopened = scratch.reopen();
+    let collection = reopened.collection("north_notes").unwrap();
+    assert_eq!(
+        collection.get("work/meeting").unwrap().id.as_deref(),
+        Some("work/meeting")
+    );
+    assert_eq!(
+        collection.ids().unwrap(),
+        ["2026-01-15/standup", "work/meeting"]
+    );
+    reopened.reindex().unwrap();
+    collection.remove("work/meeting", None).unwrap();
+    assert!(!scratch.coll_file("north_notes", "work").exists());
+}
+
+#[test]
+fn document_id_rejects_path_injection() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    for id in [
+        "../x", "x/../y", "CON/a", "a/CON", "a//b", "a/", "/a", r"a\b",
+    ] {
+        let err = collection
+            .add(id, rec(serde_json::json!({"title": "Bad"})), None)
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
+    }
+}
+
+#[test]
+fn journal_and_singleton_still_reject_slash_in_id() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("slugs.yaml", SLUGS);
+    scratch.write_schema("log.yaml", LOG);
+    scratch.write_schema("inbox.yaml", INBOX);
     let vault = scratch.reopen();
-    let collection = vault.collection("north_slugs").unwrap();
-    let err = collection
+    let err = vault
+        .collection("north_log")
+        .unwrap()
+        .add("a/b", rec(serde_json::json!({})), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = vault
+        .collection("north_inbox")
+        .unwrap()
         .add("a/b", rec(serde_json::json!({"title": "Bad"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
-    collection
-        .add("ok-id", rec(serde_json::json!({"title": "Good"})), None)
-        .unwrap();
-    let got = collection.get("ok-id").unwrap();
-    assert_eq!(got.path, Some(coll_rel("north_slugs", "ok-id.md")));
-    assert_eq!(fields_of(&got)["title"], "Good");
 }
 
 #[test]
@@ -671,6 +758,52 @@ fn header_id_must_match_record_id() {
 }
 
 #[test]
+fn nested_document_header_must_match_path() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add(
+            "work/meeting",
+            rec(serde_json::json!({"title": "Work"})),
+            None,
+        )
+        .unwrap();
+    let path = scratch.coll_file("north_notes", "work/meeting.md");
+    let mut text = fs::read_to_string(&path).unwrap();
+    text = text.replace("id: work/meeting", "id: meeting");
+    fs::write(&path, text).unwrap();
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn find_term_on_hierarchical_id() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add(
+            "work/meeting",
+            rec(serde_json::json!({"title": "Work"})),
+            None,
+        )
+        .unwrap();
+    collection
+        .add("alpha", rec(serde_json::json!({"title": "Flat"})), None)
+        .unwrap();
+    let query: Filter = serde_json::from_value(serde_json::json!({
+        "term": {"field": "id", "value": "work/meeting"}
+    }))
+    .unwrap();
+    let page = collection.find(&query.into(), 0, 10).unwrap();
+    assert_eq!(page.total, Some(1));
+    assert_eq!(page.records.len(), 1);
+    assert_eq!(page.records[0].id.as_deref(), Some("work/meeting"));
+}
+
+#[test]
 fn duplicate_insert_is_conflict() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
@@ -741,9 +874,9 @@ fn documents_skips_non_record_names() {
         .unwrap();
     let dir = scratch.vault().join("north_notes");
     fs::write(dir.join("notes.txt"), "not a record").unwrap();
-    fs::create_dir_all(dir.join("nested")).unwrap();
+    fs::create_dir_all(dir.join("$stash")).unwrap();
     fs::write(
-        dir.join("nested").join("hidden.md"),
+        dir.join("$stash").join("hidden.md"),
         "---\nid: hidden\ntitle: Nested\n---\n",
     )
     .unwrap();
@@ -926,6 +1059,46 @@ fn documents_isolated_walks_nested_dir() {
             .join("west_isolated")
             .join("secret.md")
             .is_file()
+    );
+}
+
+#[test]
+fn isolated_document_id_may_contain_slash_namespaces() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST_ISOLATED);
+    let vault = scratch.reopen();
+    let collection = vault.collection("west_isolated").unwrap();
+    collection
+        .add(
+            "work/secret",
+            rec(serde_json::json!({"west_pass": "nested-secret"})),
+            None,
+        )
+        .unwrap();
+    let got = collection.get("work/secret").unwrap();
+    assert_eq!(
+        got.path.as_deref(),
+        Some(".isolated/west_isolated/work/secret.md")
+    );
+    assert!(
+        scratch
+            .vault()
+            .join(".isolated")
+            .join("west_isolated")
+            .join("work")
+            .join("secret.md")
+            .is_file()
+    );
+    assert_eq!(collection.ids().unwrap(), ["work/secret"]);
+    collection.remove("work/secret", None).unwrap();
+    assert!(
+        !scratch
+            .vault()
+            .join(".isolated")
+            .join("west_isolated")
+            .join("work")
+            .exists()
     );
 }
 

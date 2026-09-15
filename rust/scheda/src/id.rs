@@ -47,6 +47,34 @@ pub(crate) fn require_slug(label: &str, value: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// `document` Record `id`: one slug, or `/`-separated slugs (each a directory,
+/// last is the file stem). The whole string is at most 255 bytes, same as a
+/// flat slug. `journal` / `singleton` / collection names still use [`require_slug`].
+pub(crate) fn require_document_id(id: &str) -> Result<(), Error> {
+    if id.is_empty() {
+        bail!(Error::invalid("id is empty"));
+    }
+    if id.len() > MAX_BYTES {
+        bail!(Error::invalid(format!("id exceeds {MAX_BYTES} bytes")));
+    }
+    if id.contains('\\') {
+        bail!(Error::invalid("id is not a valid slug"));
+    }
+    if !id.contains('/') {
+        return require_slug("id", id);
+    }
+    if id.starts_with('/') || id.ends_with('/') || id.contains("//") {
+        bail!(Error::invalid("id is not a valid slug"));
+    }
+    for component in id.split('/') {
+        if component == "." || component == ".." {
+            bail!(Error::invalid("id is not a valid slug"));
+        }
+        require_slug("id", component)?;
+    }
+    Ok(())
+}
+
 fn is_windows_device(value: &str) -> bool {
     let stem = value.split('.').next().unwrap_or(value);
     let upper = stem.to_ascii_uppercase();
@@ -79,7 +107,7 @@ fn is_windows_device(value: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::require_slug;
+    use super::{require_document_id, require_slug};
     use crate::error::Code;
 
     #[test]
@@ -109,6 +137,40 @@ mod tests {
         );
         assert_eq!(
             require_slug("id", ".hidden").unwrap_err().known_code(),
+            Some(Code::Invalid)
+        );
+    }
+
+    #[test]
+    fn document_id_allows_slash_separated_slugs() {
+        require_document_id("alpha").unwrap();
+        require_document_id("work/meeting").unwrap();
+        require_document_id("2026-01-15/meeting").unwrap();
+        require_document_id("2026/01/15/meeting").unwrap();
+    }
+
+    #[test]
+    fn document_id_rejects_injection() {
+        for id in [
+            "",
+            "../x",
+            "x/../y",
+            "CON/a",
+            "a/CON",
+            "a//b",
+            "a/",
+            "/a",
+            r"a\b",
+            ".hidden/a",
+        ] {
+            assert_eq!(
+                require_document_id(id).unwrap_err().known_code(),
+                Some(Code::Invalid),
+                "{id:?}"
+            );
+        }
+        assert_eq!(
+            require_slug("id", "a/b").unwrap_err().known_code(),
             Some(Code::Invalid)
         );
     }

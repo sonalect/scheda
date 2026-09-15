@@ -128,6 +128,38 @@ fn passphrase_add_get_round_trip() {
 }
 
 #[test]
+fn encrypted_document_id_may_contain_slash_namespaces() {
+    let scratch = Scratch::new();
+    let vault = open_encrypted(&scratch, passphrase());
+    vault.begin().unwrap();
+    vault
+        .create_collection("sealed_notes", document_schema(true, false), None)
+        .unwrap();
+    let collection = vault.collection("sealed_notes").unwrap();
+    collection
+        .add("work/meeting", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    vault.commit("encrypted nested").unwrap();
+    let got = collection.get("work/meeting").unwrap();
+    assert_eq!(fields_of(&got)["title"], "Keep");
+    assert_eq!(got.body.as_deref(), Some(PLAIN));
+    assert_eq!(got.path.as_deref(), Some("sealed_notes/work/meeting.md"));
+    assert_eq!(collection.ids().unwrap(), ["work/meeting"]);
+    let on_disk = fs::read(
+        scratch
+            .vault()
+            .join("sealed_notes")
+            .join("work")
+            .join("meeting.md"),
+    )
+    .unwrap();
+    let text = String::from_utf8(on_disk).unwrap();
+    assert!(text.starts_with("-----BEGIN AGE ENCRYPTED FILE-----"));
+    assert!(!text.contains(PLAIN));
+    assert!(!text.contains("Keep"));
+}
+
+#[test]
 fn identity_add_get_round_trip() {
     let scratch = Scratch::new();
     let secret = Encryption::new().identity(IDENTITY);

@@ -1700,6 +1700,9 @@ impl Collection {
 
     /// Create a Record. Same `id` already present → `duplicate_id`.
     ///
+    /// For `document`, `id` may be `/`-separated slugs (`work/meeting` is
+    /// `{name}/work/meeting.md`). `journal` and `singleton` remain one slug.
+    ///
     /// Encrypted collections write age armor after the canonical plaintext
     /// is built. A missing secret is `crypto`. The temp file never holds
     /// plaintext. `exclude_lexical_index` skips the Tantivy write;
@@ -1711,7 +1714,7 @@ impl Collection {
     /// subject. Outside a transaction the write lock is held only for this
     /// call, and the lexical Index writer is released with it.
     pub fn add(&self, id: &str, record: RecordAdd, message: Option<&str>) -> Result<(), Error> {
-        crate::id::require_slug("id", id)?;
+        require_caller_id(self.decl.kind, id)?;
         record.require_valid()?;
         self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
@@ -1788,7 +1791,7 @@ impl Collection {
     /// or bytes that will not decrypt, is `crypto`. After a successful
     /// decrypt, a file that does not parse is a Record with `valid: false`.
     pub fn get(&self, id: &str) -> Result<Record, Error> {
-        crate::id::require_slug("id", id)?;
+        require_caller_id(self.decl.kind, id)?;
         self.require_encryption_secret()?;
         match self.decl.kind {
             Kind::Journal => {
@@ -1815,14 +1818,16 @@ impl Collection {
 
     /// Walk this `document` or `singleton` in `id` order without opening the Index.
     ///
-    /// Files the library names, in the byte order of the file name (`{id}.md`).
-    /// A `singleton` yields its one Record, or nothing before the first write.
+    /// Files the library names, in the byte order of the full `id` (`{id}.md`,
+    /// where `/` in a `document` `id` is a directory). A `singleton` yields its
+    /// one Record, or nothing before the first write.
     /// Each item is what `get` returns for that `id`, `raw` included: a file
     /// that does not parse and a Record that fails current Schema are both
     /// yielded with `valid: false`, and the walk continues. Unlike `lines()`,
     /// a bad file does not hide the next — each Record is its own file.
     /// Names that are not Record files (dotfiles, not `*.md`, not a regular
-    /// file) and subdirectories are skipped. `journal` → `unsupported`. A
+    /// file) are skipped. Directories whose names are slugs are descended;
+    /// other subdirectories are skipped. `journal` → `unsupported`. A
     /// missing Index directory does not stop the walk. Encrypted collections
     /// decrypt each file; a file that decrypts but does not parse is
     /// `valid: false`. A file that will not decrypt is `crypto`.
@@ -1858,7 +1863,7 @@ impl Collection {
         record: RecordReplace,
         message: Option<&str>,
     ) -> Result<(), Error> {
-        crate::id::require_slug("id", id)?;
+        require_caller_id(self.decl.kind, id)?;
         record.require_valid()?;
         self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
@@ -1919,7 +1924,7 @@ impl Collection {
     /// subject. Outside a transaction the write lock is held only for this
     /// call, and the lexical Index writer is released with it.
     pub fn remove(&self, id: &str, message: Option<&str>) -> Result<(), Error> {
-        crate::id::require_slug("id", id)?;
+        require_caller_id(self.decl.kind, id)?;
         self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
         if self.decl.kind == Kind::Journal {
@@ -2046,7 +2051,7 @@ impl Collection {
     /// handle secret is required. An empty `raw` (a deletion revision) is
     /// returned as is.
     pub fn history(&self, id: &str, offset: u32, count: u32) -> Result<History, Error> {
-        crate::id::require_slug("id", id)?;
+        require_caller_id(self.decl.kind, id)?;
         self.require_encryption_secret()?;
         if count == 0 {
             bail!(Error::invalid("history count must be > 0"));
@@ -2148,6 +2153,13 @@ impl Collection {
                 store::find_document(&self.vault, decl, id, self.encryption.as_ref())
             }
         }
+    }
+}
+
+fn require_caller_id(kind: Kind, id: &str) -> Result<(), Error> {
+    match kind {
+        Kind::Document => crate::id::require_document_id(id),
+        Kind::Journal | Kind::Singleton => crate::id::require_slug("id", id),
     }
 }
 

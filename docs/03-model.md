@@ -32,9 +32,9 @@ A rare immutable note can still be a `document` the consumer never replaces. `jo
 
 **MOD-4. `id` is unique in the collection.** A second `add` with the same `id` is rejected. Uniqueness is across all segments of a `journal`. *Check:* insert, insert same `id` → error; two segments must not both contain the same `id`.
 
-**MOD-5. `id` is stable.** Schema derives the `document` path from `id` (and optional extra path slots). Renaming or moving a file so it no longer matches that derivation is rejected on `check` and must not be treated as a new Record with a new `id`. *Check:* file `notes/alpha.md` with Schema `id` = basename; rename to `beta.md` without changing the header `id` → `check` fails; `get("alpha")` does not silently follow the rename.
+**MOD-5. `id` is stable.** The library derives the `document` path from `id`: `{id}.md`, where `/` is a directory. Renaming or moving a file so it no longer matches that derivation is rejected on `check` and must not be treated as a new Record with a new `id`. *Check:* file `notes/alpha.md` with header `id` = `alpha`; rename to `beta.md` without changing the header `id` → `check` fails; `get("alpha")` does not silently follow the rename. *Check:* file `notes/work/meeting.md` with header `id: meeting` → `check` fails.
 
-**MOD-6. Scheda does not invent domain identifiers.** The caller supplies `id` on insert. The library (`07` LIB-7) requires `id` to be a slug (Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`) so Scheda files (`.schema.yaml`, `.scheda/`) stay distinct from Records. Schema does not add a pattern on top of that slug (SCH-6). The library does not mint ULIDs, kebab-case, or any other consumer scheme. *Check:* insert with an `id` that fails the slug is rejected; implementation source does not hard-code a consumer's id scheme.
+**MOD-6. Scheda does not invent domain identifiers.** The caller supplies `id` on insert. The library (`07` LIB-7) requires each `id` component to be a slug (Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`) so Scheda files (`.schema.yaml`, `.scheda/`) stay distinct from Records. A `document` `id` may join those slugs with `/`; `journal`, `singleton`, and collection names stay a single slug. Schema does not add a pattern on top of that rule (SCH-6). The library does not mint ULIDs, kebab-case, or any other consumer scheme. *Check:* insert with an `id` that fails the slug is rejected; a `document` `id` `work/meeting` is accepted; implementation source does not hard-code a consumer's id scheme.
 
 **MOD-7. Singleton identity.** A `singleton` collection has exactly one Record. Schema fixes its `id`. `add` is allowed only when the file is absent; afterwards only `replace`. *Check:* second `add` is rejected; `get` with that `id` round-trips the file.
 
@@ -42,15 +42,15 @@ A rare immutable note can still be a `document` the consumer never replaces. `jo
 
 ## 3. Paths
 
-**MOD-8. The library owns Record paths.** The only filesystem path the caller supplies is the Vault root (`open`). Collection name is a slug (same rules as Record `id`), not a path. Each collection occupies `{vault}/{name}/`. Isolated Records: `{vault}/.isolated/{name}/`; Schema stays `{vault}/{name}/.schema.yaml`. Files:
+**MOD-8. The library owns Record paths.** The only filesystem path the caller supplies is the Vault root (`open`). Collection name is a slug (same rules as one Record `id` component), not a path. Each collection occupies `{vault}/{name}/`. Isolated Records: `{vault}/.isolated/{name}/`; Schema stays `{vault}/{name}/.schema.yaml`. Files:
 
 | Kind | Record file |
 |---|---|
-| `document` | `{name}/{id}.md` |
+| `document` | `{name}/{id}.md` (`/` in `id` is a directory: `work/meeting` → `{name}/work/meeting.md`) |
 | `journal` | `{name}/*.jsonl` (library names segments) |
 | `singleton` | `{name}/record.yaml` |
 
-The caller never passes a Record path. `get` / `add` / `history` validate `id` then open, create, or git that file. `find` / `replace` / `remove` / `search` take `id`s from the Index when `find` is on and the collection is lexically indexed, then open or unlink those files (IDX-10). When `find` is off, or the collection is not lexically indexed, `replace` / `remove` use the Record file (same path as `get`). Isolated is not a special case. *Check:* `create_collection` with a `layout` key → `invalid`; a collection named `a/b` is `invalid`; `get("alpha")` reads `{name}/alpha.md` for a `document`.
+The caller never passes a Record path. `get` / `add` / `history` validate `id` then open, create, or git that file. `find` / `replace` / `remove` / `search` take `id`s from the Index when `find` is on and the collection is lexically indexed, then open or unlink those files (IDX-10). When `find` is off, or the collection is not lexically indexed, `replace` / `remove` use the Record file (same path as `get`). Isolated is not a special case. *Check:* `create_collection` with a `layout` key → `invalid`; a collection named `a/b` is `invalid`; `get("alpha")` reads `{name}/alpha.md` for a `document`; `get("work/meeting")` reads `{name}/work/meeting.md`.
 
 **MOD-9. Journal path is the segment, not the `id`.** The Record still lives at `(collection, id)`. The file path is the open or closed segment that contains the line. Callers must not treat the segment name as `id`. *Check:* `get` does not require the caller to pass a segment name.
 

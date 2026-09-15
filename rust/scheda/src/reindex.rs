@@ -321,7 +321,7 @@ fn parse_queue_body(raw: &[u8]) -> Option<(String, String)> {
     if id::require_slug("collection", &parsed.collection).is_err() {
         return None;
     }
-    if id::require_slug("id", &parsed.id).is_err() {
+    if id::require_document_id(&parsed.id).is_err() {
         return None;
     }
     Some((parsed.collection, parsed.id))
@@ -378,7 +378,7 @@ fn ids_from_restored(
             let Some(id) = file.strip_suffix(".md") else {
                 return Ok(Vec::new());
             };
-            if id::require_slug("id", id).is_err() {
+            if id::require_document_id(id).is_err() {
                 return Ok(Vec::new());
             }
             Ok(vec![(decl.name.clone(), id.to_owned())])
@@ -473,6 +473,22 @@ mod tests {
             Some(("c", "alpha"))
         );
         assert!(list_queue(vault).unwrap().is_empty());
+    }
+
+    #[test]
+    fn queue_file_accepts_hierarchical_document_id() {
+        let scratch = Scratch::new();
+        let vault = scratch.vault();
+        write_active(vault, 2).unwrap();
+        let notes = decl("c", Kind::Document);
+        enqueue(vault, &notes, "work/meeting").unwrap();
+        let files = list_queue(vault).unwrap();
+        assert_eq!(files.len(), 1);
+        let taken = take_queue_file(&files[0]).unwrap();
+        assert_eq!(
+            taken.as_ref().map(|(c, i)| (c.as_str(), i.as_str())),
+            Some(("c", "work/meeting"))
+        );
     }
 
     #[cfg(unix)]

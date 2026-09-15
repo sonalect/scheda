@@ -99,8 +99,12 @@ pub(crate) fn remove_document(
         )));
     };
     let rel = rel_posix(vault, &path)?;
+    let dir = crate::isolated::records_dir(vault, decl)?;
     match fs::remove_file(&path) {
-        Ok(()) => Ok(rel),
+        Ok(()) => {
+            prune_empty_parents(&dir, &path)?;
+            Ok(rel)
+        }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             bail!(Error::not_found(format!(
                 "record {id} is not in {}",
@@ -222,7 +226,10 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
     let Some(id) = record.id.as_deref() else {
         bail!(Error::invalid("record id is required"));
     };
-    crate::id::require_slug("id", id)?;
+    match decl.kind {
+        Kind::Document => crate::id::require_document_id(id)?,
+        Kind::Journal | Kind::Singleton => crate::id::require_slug("id", id)?,
+    }
     if decl.kind == Kind::Journal {
         bail!(Error::invalid(
             "document write used on a journal collection",
@@ -273,7 +280,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
     validate_fields(&fields, &decl.fields, true, false)?;
     let rel = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
-    let path = dir.join(&rel);
+    let path = crate::schema::join_inside(&dir, &rel)?;
     let body = record.body.as_deref().filter(|body| !body.is_empty());
     let bytes = encode_file(decl, &fields, body)?;
     Ok(Prepared {
@@ -286,13 +293,18 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
 fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
     match decl.kind {
         Kind::Document => {
-            let file = format!("{id}.md");
+            crate::id::require_document_id(id)?;
+            let leaf = match id.rsplit('/').next() {
+                Some(leaf) => leaf,
+                None => unreachable!("document id is non-empty"),
+            };
+            let file = format!("{leaf}.md");
             if file.len() > FS_NAME_MAX {
                 bail!(Error::invalid(format!(
                     "record file name exceeds {FS_NAME_MAX} bytes"
                 )));
             }
-            Ok(file)
+            Ok(format!("{id}.md"))
         }
         Kind::Singleton => Ok(String::from("record.yaml")),
         Kind::Journal => bail!(Error::invalid("document path used on a journal collection",)),
@@ -301,6 +313,99 @@ fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
 
 fn vault_rel(decl: &CollectionDecl, file: &str) -> String {
     crate::isolated::vault_rel(decl, file)
+}
+
+fn list_document_files(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let mut found = Vec::new();
+    collect_document_files(dir, &mut found)?;
+    let mut keyed = Vec::new();
+    for path in found {
+        let id = document_id_from_path(dir, &path)?;
+        keyed.push((id, path));
+    }
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    Ok(keyed.into_iter().map(|(_, path)| path).collect())
+}
+
+fn collect_document_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Error> {
+    let entries = fs::read_dir(dir).context("[store::list_files] read collection")?;
+    for entry in entries {
+        let entry = entry.context("[store::list_files] read entry")?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue;
+        }
+        let meta = fs::symlink_metadata(&path).context("[store::list_files] stat entry")?;
+        if meta.file_type().is_symlink() {
+            continue;
+        }
+        if meta.is_dir() {
+            if crate::id::require_slug("id", name).is_err() {
+                continue;
+            }
+            collect_document_files(&path, out)?;
+            continue;
+        }
+        if meta.is_file() && name.ends_with(".md") {
+            out.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn document_id_from_path(records_dir: &Path, path: &Path) -> Result<String, Error> {
+    let rel = path.strip_prefix(records_dir).map_err(|_| {
+        Error::invalid(format!("path {} is outside the collection", path.display()))
+    })?;
+    let mut out = String::new();
+    for component in rel.components() {
+        match component {
+            Component::Normal(part) => {
+                let Some(name) = part.to_str() else {
+                    bail!(Error::invalid("record file name is not UTF-8"));
+                };
+                if !out.is_empty() {
+                    out.push('/');
+                }
+                out.push_str(name);
+            }
+            Component::CurDir => {}
+            _ => {
+                bail!(Error::invalid(format!(
+                    "path {} is outside the collection",
+                    path.display()
+                )));
+            }
+        }
+    }
+    let Some(id) = out.strip_suffix(".md") else {
+        unreachable!("list_files only yields .md names for document");
+    };
+    Ok(id.to_owned())
+}
+
+fn prune_empty_parents(stop: &Path, file: &Path) -> Result<(), Error> {
+    let Some(mut dir) = file.parent().map(Path::to_path_buf) else {
+        return Ok(());
+    };
+    while dir.starts_with(stop) && dir != stop {
+        match fs::remove_dir(&dir) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::DirectoryNotEmpty => break,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) => {
+                return Err(err).context("[store::remove_document] prune empty dir");
+            }
+        }
+        let Some(parent) = dir.parent() else {
+            break;
+        };
+        dir = parent.to_path_buf();
+    }
+    Ok(())
 }
 
 pub(crate) fn locate_file(
@@ -318,7 +423,7 @@ pub(crate) fn locate_file(
     }
     let file = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
-    let path = dir.join(&file);
+    let path = crate::schema::join_inside(&dir, &file)?;
     Ok(path.is_file().then_some(path))
 }
 
@@ -332,23 +437,7 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
             let path = dir.join("record.yaml");
             Ok(path.is_file().then_some(path).into_iter().collect())
         }
-        Kind::Document => {
-            let mut out = Vec::new();
-            let entries = fs::read_dir(&dir).context("[store::list_files] read collection")?;
-            for entry in entries {
-                let entry = entry.context("[store::list_files] read entry")?;
-                let path = entry.path();
-                let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-                    continue;
-                };
-                if name.starts_with('.') || !name.ends_with(".md") || !path.is_file() {
-                    continue;
-                }
-                out.push(path);
-            }
-            out.sort();
-            Ok(out)
-        }
+        Kind::Document => list_document_files(&dir),
         Kind::Journal => Ok(Vec::new()),
     }
 }
@@ -356,7 +445,8 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
 /// Id-order walk of one `document` or `singleton` collection.
 ///
 /// Yields one Record at a time from the files the library names. Does not
-/// open the Index. Order is the byte order of the file name (`{id}.md`).
+/// open the Index. Order is the byte order of the full `id` (`{id}.md`).
+/// A `document` `id` may contain `/`, each component a directory.
 /// A `singleton` yields its one Record, or nothing before the first write.
 /// `journal` is refused when the walk is created.
 pub struct CollectionDocuments {
@@ -436,11 +526,11 @@ pub(crate) fn collection_ids(vault: &Path, decl: &CollectionDecl) -> Result<Vec<
     }
     list_files(vault, decl)?
         .iter()
-        .map(|path| id_from_listed_file(decl, path))
+        .map(|path| id_from_listed_file(vault, decl, path))
         .collect()
 }
 
-fn id_from_listed_file(decl: &CollectionDecl, path: &Path) -> Result<String, Error> {
+fn id_from_listed_file(vault: &Path, decl: &CollectionDecl, path: &Path) -> Result<String, Error> {
     match decl.kind {
         Kind::Singleton => match decl.singleton_id.clone() {
             Some(id) => Ok(id),
@@ -452,13 +542,8 @@ fn id_from_listed_file(decl: &CollectionDecl, path: &Path) -> Result<String, Err
             }
         },
         Kind::Document => {
-            let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
-                bail!(Error::invalid("record file name is not UTF-8"));
-            };
-            let Some(id) = name.strip_suffix(".md") else {
-                unreachable!("list_files only yields .md names for document");
-            };
-            Ok(id.to_owned())
+            let dir = crate::isolated::records_dir(vault, decl)?;
+            document_id_from_path(&dir, path)
         }
         Kind::Journal => unreachable!("journal is refused before listing"),
     }
@@ -1174,6 +1259,10 @@ mod tests {
         assert_eq!(
             record_file(&decl(Kind::Document), "alpha").unwrap(),
             "alpha.md"
+        );
+        assert_eq!(
+            record_file(&decl(Kind::Document), "work/meeting").unwrap(),
+            "work/meeting.md"
         );
         assert_eq!(
             record_file(&decl(Kind::Singleton), "inbox").unwrap(),
