@@ -1,19 +1,10 @@
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
+use std::process::{Command, ExitStatus, Stdio};
 
-#[cfg(any(test, feature = "remote-git"))]
-use git2::Config;
-#[cfg(test)]
-use git2::ConfigLevel;
-use git2::build::{CheckoutBuilder, RepoBuilder};
-use git2::{
-    AnnotatedCommit, Commit as GitCommit, Cred, CredentialType, DiffOptions, ErrorCode,
-    FetchOptions, ObjectType, PushOptions, RemoteCallbacks, Repository, RepositoryInitOptions,
-    RepositoryOpenFlags, ResetType, Signature, Sort, Status, StatusOptions,
-};
-
-use crate::error::{Code, ContextAs, ContextGit, ContextIo, bail, git_code, redact_remote_text};
+use crate::error::{Code, ContextAs, ContextIo, bail, git_code, redact_remote_text};
 use crate::{Error, OpenOptions, history};
 
 /// Git author and committer for every commit on a Vault handle.
@@ -29,10 +20,6 @@ impl CommitIdentity {
             name: String::from("Scheda"),
             email: String::from("scheda@invalid"),
         }
-    }
-
-    fn signature(&self) -> Result<Signature<'static>, Error> {
-        Signature::now(&self.name, &self.email).context("[Git::signature] commit identity")
     }
 }
 
@@ -57,98 +44,325 @@ fn options_identity(options: &OpenOptions) -> Option<CommitIdentity> {
 }
 
 fn config_identity(repo_dir: &Path) -> Result<CommitIdentity, Error> {
-    let repo = open_work_tree(repo_dir)?;
-    if let Ok(sig) = repo.signature()
-        && let (Ok(name), Ok(email)) = (sig.name(), sig.email())
-        && !name.is_empty()
-        && !email.is_empty()
-    {
-        return Ok(CommitIdentity {
-            name: name.to_owned(),
-            email: email.to_owned(),
-        });
+    let name = config_get(Some(repo_dir), "user.name")?;
+    let email = config_get(Some(repo_dir), "user.email")?;
+    match (name, email) {
+        (Some(name), Some(email)) if !name.is_empty() && !email.is_empty() => {
+            Ok(CommitIdentity { name, email })
+        }
+        _ => Ok(CommitIdentity::fallback()),
     }
-    Ok(CommitIdentity::fallback())
 }
 
-fn git_fail(err: git2::Error, frame: &str) -> Error {
-    Error::new(git_code(&err), redact_remote_text(err.message())).context(frame)
+struct GitOutput {
+    stdout: Vec<u8>,
+    stderr: String,
+    status: ExitStatus,
 }
 
-fn open_at(dir: &Path) -> Result<Repository, git2::Error> {
-    Repository::open_ext(
-        dir,
-        RepositoryOpenFlags::NO_SEARCH,
-        std::iter::empty::<&OsStr>(),
-    )
+impl GitOutput {
+    fn stdout_str(&self, frame: &str) -> Result<&str, Error> {
+        std::str::from_utf8(&self.stdout).context(Code::NotUtf8, frame)
+    }
+
+    fn stdout_trim(&self, frame: &str) -> Result<&str, Error> {
+        Ok(self.stdout_str(frame)?.trim())
+    }
 }
 
-fn open_work_tree(dir: &Path) -> Result<Repository, Error> {
-    let repo = open_at(dir).context("[Git::open_work_tree] open repository")?;
-    if repo.is_bare() {
+struct GitCmd {
+    dir: Option<PathBuf>,
+    args: Vec<OsString>,
+    envs: Vec<(OsString, OsString)>,
+}
+
+fn git() -> GitCmd {
+    #[cfg(test)]
+    isolate_test_git_env();
+    GitCmd {
+        dir: None,
+        args: Vec::new(),
+        envs: Vec::new(),
+    }
+}
+
+impl GitCmd {
+    fn current_dir(mut self, dir: &Path) -> Self {
+        self.dir = Some(dir.to_path_buf());
+        self
+    }
+
+    fn arg(mut self, arg: impl AsRef<OsStr>) -> Self {
+        self.args.push(arg.as_ref().to_os_string());
+        self
+    }
+
+    fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
+        self.envs
+            .push((key.as_ref().to_os_string(), value.as_ref().to_os_string()));
+        self
+    }
+
+    fn spawn(self, frame: &str) -> Result<GitOutput, Error> {
+        let mut cmd = Command::new("git");
+        cmd.env("LC_ALL", "C")
+            .env("LANG", "C")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_PAGER", "cat")
+            .env("GIT_OPTIONAL_LOCKS", "0")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // Disable interactive add-ons from the user's ~/.gitconfig that can
+        // hang a library (watchman fsmonitor, auto-gc, repo hooks). User
+        // identity, credential helpers, and the operator's GIT_SSH_COMMAND
+        // still apply: Scheda does not set or read an SSH command.
+        cmd.arg("-c")
+            .arg("core.fsmonitor=")
+            .arg("-c")
+            .arg("core.useBuiltinFSMonitor=false")
+            .arg("-c")
+            .arg("core.hooksPath=")
+            .arg("-c")
+            .arg("gc.auto=0");
+        if let Some(dir) = &self.dir {
+            cmd.arg("-C").arg(dir);
+        }
+        cmd.args(&self.args);
+        for (key, value) in &self.envs {
+            cmd.env(key, value);
+        }
+        match cmd.output() {
+            Ok(out) => Ok(GitOutput {
+                stdout: out.stdout,
+                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                status: out.status,
+            }),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Err(Error::io_not_found(
+                "git executable was not found on PATH; install Git and retry",
+            )
+            .context(frame)),
+            Err(err) => Err(err).context(frame),
+        }
+    }
+
+    fn run(self, frame: &str) -> Result<GitOutput, Error> {
+        let out = self.spawn(frame)?;
+        if out.status.success() {
+            Ok(out)
+        } else {
+            Err(git_fail(&out, frame))
+        }
+    }
+}
+
+fn git_fail(out: &GitOutput, frame: &str) -> Error {
+    let message = if out.stderr.trim().is_empty() {
+        match out.status.code() {
+            Some(code) => format!("git exited with status {code}"),
+            None => String::from("git exited with a failure"),
+        }
+    } else {
+        redact_remote_text(out.stderr.trim())
+    };
+    Error::new(git_code(out.status.code(), &out.stderr), message).context(frame)
+}
+
+/// Point this process at an empty git config.
+///
+/// Tests call this so the developer's `~/.gitconfig` cannot change
+/// outcomes. Production `git()` does not call it. Creates no files:
+/// git treats a missing `GIT_CONFIG_GLOBAL` / `GIT_CONFIG_SYSTEM` path
+/// as an empty config. `HOME` is left alone; isolation does not need
+/// a scratch home.
+#[cfg(test)]
+pub(crate) fn isolate_test_git_env() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let absent = std::env::temp_dir().join("scheda-absent-gitconfig");
+        // SAFETY: Once serializes callers. Other test threads wait here
+        // before they read these keys, so the environment is not torn.
+        unsafe {
+            std::env::set_var("GIT_CONFIG_GLOBAL", &absent);
+            std::env::set_var("GIT_CONFIG_SYSTEM", &absent);
+            std::env::set_var("GIT_CONFIG_NOSYSTEM", "1");
+        }
+    });
+}
+
+fn config_get(dir: Option<&Path>, key: &str) -> Result<Option<String>, Error> {
+    let mut cmd = git().arg("config").arg("--get").arg(key);
+    if let Some(dir) = dir {
+        cmd = cmd.current_dir(dir);
+    }
+    let out = cmd.spawn("[Git] read config")?;
+    if out.status.success() {
+        let value = out.stdout_trim("[Git] read config")?.to_owned();
+        Ok((!value.is_empty()).then_some(value))
+    } else if out.status.code() == Some(1) {
+        Ok(None)
+    } else {
+        Err(git_fail(&out, "[Git] read config"))
+    }
+}
+
+/// `core.longpaths` lets Windows stage a 255-byte filename component when the
+/// absolute path is longer than MAX_PATH. Unix ignores the key.
+fn enable_long_paths(dir: &Path) -> Result<(), Error> {
+    match git()
+        .current_dir(dir)
+        .arg("config")
+        .arg("--local")
+        .arg("--get")
+        .arg("--type=bool")
+        .arg("core.longpaths")
+        .spawn("[Git] open config")?
+    {
+        out if out.status.success() && out.stdout_trim("[Git] open config")? == "true" => Ok(()),
+        out if out.status.success() || out.status.code() == Some(1) => git()
+            .current_dir(dir)
+            .arg("config")
+            .arg("--local")
+            .arg("core.longpaths")
+            .arg("true")
+            .run("[Git] set core.longpaths")
+            .map(|_| ()),
+        out => Err(git_fail(&out, "[Git] open config")),
+    }
+}
+
+fn require_work_tree(dir: &Path) -> Result<(), Error> {
+    let inside = git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .run("[Git::open_work_tree] open repository")?;
+    if inside.stdout_trim("[Git::open_work_tree] open repository")? != "true" {
         bail!(Error::invalid(format!(
             "path is a bare git repository, not a working tree: {}",
             dir.display()
         )));
     }
-    Ok(repo)
-}
-
-/// libgit2 rejects a work-tree path past Windows MAX_PATH unless
-/// `core.longpaths` is set. A 255-byte filename (`{id}.md`) is legal and
-/// often exceeds that once the Vault sits under a user profile directory.
-fn enable_long_paths(repo: &Repository) -> Result<(), Error> {
-    let mut cfg = repo.config().context("[Git] open config")?;
-    if cfg.get_bool("core.longpaths").is_ok_and(|on| on) {
-        return Ok(());
+    let top = git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .run("[Git::open_work_tree] open repository")?;
+    let toplevel = top.stdout_trim("[Git::open_work_tree] open repository")?;
+    if !paths_equal(dir, toplevel) {
+        bail!(Error::git_not_found(format!(
+            "path is not a git working tree: {}",
+            dir.display()
+        )));
     }
-    cfg.set_bool("core.longpaths", true)
-        .context("[Git] set core.longpaths")
+    Ok(())
 }
 
-fn is_unborn(err: &git2::Error) -> bool {
-    matches!(err.code(), ErrorCode::UnbornBranch | ErrorCode::NotFound)
+fn paths_equal(dir: &Path, toplevel: &str) -> bool {
+    match (dir.canonicalize(), Path::new(toplevel).canonicalize()) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+fn is_unborn_head(dir: &Path) -> Result<bool, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg("HEAD")
+        .spawn("[Git] read HEAD")?;
+    if out.status.success() {
+        return Ok(false);
+    }
+    if git_code(out.status.code(), &out.stderr) == Code::GitUnbornBranch {
+        return Ok(true);
+    }
+    Err(git_fail(&out, "[Git] read HEAD"))
 }
 
 pub(crate) fn init(dir: &Path) -> Result<(), Error> {
-    let mut opts = RepositoryInitOptions::new();
-    opts.no_reinit(true);
-    let repo = Repository::init_opts(dir, &opts).context("[Git::init] create repository")?;
-    enable_long_paths(&repo)
+    if is_work_tree(dir) {
+        bail!(
+            Error::git_exists(format!(
+                "git repository already exists at {}",
+                dir.display()
+            ))
+            .context("[Git::init] create repository")
+        );
+    }
+    git()
+        .arg("init")
+        .arg("--")
+        .arg(dir)
+        .run("[Git::init] create repository")?;
+    enable_long_paths(dir)
 }
 
 pub(crate) fn is_work_tree(dir: &Path) -> bool {
-    match open_at(dir) {
-        Ok(repo) => !repo.is_bare(),
-        Err(_) => false,
+    if !dir.exists() {
+        return false;
     }
+    let Ok(inside) = git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--is-inside-work-tree")
+        .spawn("[Git::is_work_tree] open repository")
+    else {
+        return false;
+    };
+    if !inside.status.success() || inside.stdout_trim("").ok() != Some("true") {
+        return false;
+    }
+    let Ok(top) = git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--show-toplevel")
+        .spawn("[Git::is_work_tree] open repository")
+    else {
+        return false;
+    };
+    top.status.success()
+        && top
+            .stdout_trim("")
+            .is_ok_and(|toplevel| paths_equal(dir, toplevel))
 }
 
 pub(crate) fn remotes(dir: &Path) -> Result<Vec<String>, Error> {
-    let repo = open_work_tree(dir)?;
-    let names = repo.remotes().context("[Git::remotes] list remotes")?;
-    let mut out = Vec::new();
-    for bytes in names.iter_bytes() {
-        let name =
-            std::str::from_utf8(bytes).context(Code::NotUtf8, "[Git::remotes] remote name")?;
-        out.push(name.to_owned());
-    }
-    Ok(out)
+    require_work_tree(dir)?;
+    let out = git()
+        .current_dir(dir)
+        .arg("remote")
+        .run("[Git::remotes] list remotes")?;
+    let text = out.stdout_str("[Git::remotes] remote name")?;
+    Ok(text
+        .lines()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_owned)
+        .collect())
 }
 
 /// Fetch URL of `origin`, if that remote exists. Local config; not a fetch.
 ///
 /// Missing `origin`, or an empty URL, is `None`.
 pub(crate) fn origin_url(dir: &Path) -> Result<Option<String>, Error> {
-    let repo = open_work_tree(dir)?;
-    match repo.find_remote("origin") {
-        Ok(remote) => {
-            let url = remote.url().context("[Git::origin_url] read origin URL")?;
-            let url = url.trim();
-            Ok((!url.is_empty()).then(|| url.to_owned()))
-        }
-        Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
-        Err(err) => Err(err).context("[Git::origin_url] find origin"),
+    require_work_tree(dir)?;
+    let out = git()
+        .current_dir(dir)
+        .arg("remote")
+        .arg("get-url")
+        .arg("origin")
+        .spawn("[Git::origin_url] find origin")?;
+    if out.status.success() {
+        let url = out.stdout_trim("[Git::origin_url] read origin URL")?;
+        Ok((!url.is_empty()).then(|| url.to_owned()))
+    } else if git_code(out.status.code(), &out.stderr) == Code::GitNotFound
+        || out.stderr.to_ascii_lowercase().contains("no such remote")
+    {
+        Ok(None)
+    } else {
+        Err(git_fail(&out, "[Git::origin_url] find origin"))
     }
 }
 
@@ -173,50 +387,13 @@ fn require_remote_git_url(url: &str) -> Result<(), Error> {
 
 pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
     require_remote_git_url(url)?;
-    let mut fetch = FetchOptions::new();
-    fetch.remote_callbacks(auth_callbacks());
-    RepoBuilder::new()
-        .fetch_options(fetch)
-        .clone(url, path)
-        .context("[Git::clone] clone repository")?;
-    let repo = open_at(path).context("[Git::clone] open cloned repository")?;
-    enable_long_paths(&repo)
-}
-
-fn auth_callbacks() -> RemoteCallbacks<'static> {
-    let mut callbacks = RemoteCallbacks::new();
-    callbacks.credentials(git_credentials);
-    callbacks
-}
-
-fn git_credentials(
-    url: &str,
-    username_from_url: Option<&str>,
-    allowed: CredentialType,
-) -> Result<Cred, git2::Error> {
-    if allowed.is_username() {
-        return Cred::username(username_from_url.unwrap_or("git"));
-    }
-    if allowed.is_ssh_key() {
-        let username = username_from_url.unwrap_or("git");
-        if let Ok(cred) = Cred::ssh_key_from_agent(username) {
-            return Ok(cred);
-        }
-    }
-    if allowed.is_user_pass_plaintext() {
-        #[cfg(feature = "remote-git")]
-        {
-            let cfg = Config::open_default()?;
-            return Cred::credential_helper(&cfg, url, username_from_url);
-        }
-    }
-    if allowed.is_default() {
-        return Cred::default();
-    }
-    let _ = url;
-    Err(git2::Error::from_str(
-        "no git credentials available for this remote",
-    ))
+    git()
+        .arg("clone")
+        .arg("--")
+        .arg(url)
+        .arg(path)
+        .run("[Git::clone] clone repository")?;
+    enable_long_paths(path)
 }
 
 fn default_remote_name(dir: &Path) -> Result<String, Error> {
@@ -230,106 +407,103 @@ fn default_remote_name(dir: &Path) -> Result<String, Error> {
         .ok_or_else(|| Error::invalid("no Remote configured"))
 }
 
-fn branch_refname(repo: &Repository) -> Result<String, Error> {
-    match repo.head() {
-        Ok(head) => {
-            if !head.is_branch() {
-                bail!(
-                    Error::git_head("HEAD is not a branch")
-                        .context("[Git::branch_refname] require branch")
-                );
-            }
-            Ok(head
-                .name()
-                .context("[Git::branch_refname] read branch name")?
-                .to_owned())
+fn branch_refname(dir: &Path) -> Result<String, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("symbolic-ref")
+        .arg("HEAD")
+        .spawn("[Git::branch_refname] read HEAD")?;
+    if out.status.success() {
+        let name = out.stdout_trim("[Git::branch_refname] read branch name")?;
+        if name.is_empty() {
+            return Err(Error::git_head("unborn HEAD has no branch name")
+                .context("[Git::branch_refname] read HEAD target"));
         }
-        Err(err) if is_unborn(&err) => {
-            let head = repo
-                .find_reference("HEAD")
-                .context("[Git::branch_refname] read HEAD")?;
-            match head
-                .symbolic_target()
-                .context("[Git::branch_refname] read HEAD target")?
-            {
-                Some(name) => Ok(name.to_owned()),
-                None => Err(Error::git_head("unborn HEAD has no branch name")
-                    .context("[Git::branch_refname] read HEAD target")),
-            }
-        }
-        Err(err) => Err(git_fail(err, "[Git::branch_refname] read HEAD")),
+        return Ok(name.to_owned());
     }
+    let lower = out.stderr.to_ascii_lowercase();
+    if lower.contains("not a symbolic ref") || lower.contains("is not a symbolic ref") {
+        return Err(
+            Error::git_head("HEAD is not a branch").context("[Git::branch_refname] require branch")
+        );
+    }
+    Err(git_fail(&out, "[Git::branch_refname] read HEAD"))
 }
 
-fn worktree_has_local_changes(repo: &Repository) -> Result<bool, Error> {
-    let mut opts = StatusOptions::new();
-    opts.include_untracked(true)
-        .recurse_untracked_dirs(true)
-        .exclude_submodules(true);
-    let statuses = repo
-        .statuses(Some(&mut opts))
-        .context("[Git::fast_forward] status")?;
-    Ok(statuses.iter().any(|entry| {
-        let status = entry.status();
-        !status.is_empty() && status != Status::CURRENT && !status.is_ignored()
-    }))
+fn worktree_has_local_changes(dir: &Path) -> Result<bool, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("status")
+        .arg("--porcelain=v1")
+        .arg("--untracked-files=normal")
+        .arg("--ignore-submodules=all")
+        .run("[Git::fast_forward] status")?;
+    Ok(out
+        .stdout_str("[Git::fast_forward] status")?
+        .lines()
+        .any(|line| !line.trim().is_empty()))
 }
 
-fn fast_forward(repo: &Repository, fetch_commit: &AnnotatedCommit<'_>) -> Result<(), Error> {
-    if worktree_has_local_changes(repo)? {
+fn fast_forward(dir: &Path) -> Result<(), Error> {
+    if worktree_has_local_changes(dir)? {
         bail!(
             Error::git_uncommitted("working tree has local changes; pull needs a clean tree")
                 .context("[Git::fast_forward] require clean tree")
         );
     }
-    let refname = branch_refname(repo)?;
-    match repo.find_reference(&refname) {
-        Ok(mut local) => {
-            let msg = format!("Fast-forward: setting {refname} to {}", fetch_commit.id());
-            local
-                .set_target(fetch_commit.id(), &msg)
-                .context("[Git::fast_forward] update branch")?;
-        }
-        Err(err) if err.code() == ErrorCode::NotFound => {
-            let msg = format!("Setting {refname} to {}", fetch_commit.id());
-            repo.reference(&refname, fetch_commit.id(), true, &msg)
-                .context("[Git::fast_forward] create branch")?;
-        }
-        Err(err) => bail!(git_fail(err, "[Git::fast_forward] find branch")),
-    }
-    repo.set_head(&refname)
-        .context("[Git::fast_forward] set HEAD")?;
-    repo.checkout_head(Some(git2::build::CheckoutBuilder::default().force()))
-        .context("[Git::fast_forward] checkout HEAD")?;
+    git()
+        .current_dir(dir)
+        .arg("merge")
+        .arg("--ff-only")
+        .arg("FETCH_HEAD")
+        .run("[Git::fast_forward] update branch")?;
     Ok(())
 }
 
 pub(crate) fn pull(dir: &Path) -> Result<(), Error> {
     let name = default_remote_name(dir)?;
-    let repo = open_work_tree(dir)?;
-    {
-        let mut remote = repo.find_remote(&name).context("[Git::pull] find remote")?;
-        require_remote_git_url(remote.url().context("[Git::pull] read remote URL")?)?;
-        let mut fetch = FetchOptions::new();
-        fetch.remote_callbacks(auth_callbacks());
-        remote
-            .fetch(&[] as &[&str], Some(&mut fetch), None)
-            .context("[Git::pull] fetch")?;
+    require_work_tree(dir)?;
+    let url = git()
+        .current_dir(dir)
+        .arg("remote")
+        .arg("get-url")
+        .arg(&name)
+        .run("[Git::pull] read remote URL")?;
+    require_remote_git_url(url.stdout_trim("[Git::pull] read remote URL")?)?;
+    git()
+        .current_dir(dir)
+        .arg("fetch")
+        .arg("--")
+        .arg(&name)
+        .run("[Git::pull] fetch")?;
+    git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg("FETCH_HEAD")
+        .run("[Git::pull] read FETCH_HEAD")?;
+    if is_unborn_head(dir)? {
+        return fast_forward(dir);
     }
-    let fetch_head = repo
-        .find_reference("FETCH_HEAD")
-        .context("[Git::pull] read FETCH_HEAD")?;
-    let fetch_commit = repo
-        .reference_to_annotated_commit(&fetch_head)
-        .context("[Git::pull] annotate FETCH_HEAD")?;
-    let (analysis, _) = repo
-        .merge_analysis(&[&fetch_commit])
-        .context("[Git::pull] merge analysis")?;
-    if analysis.is_up_to_date() {
+    let ancestor = git()
+        .current_dir(dir)
+        .arg("merge-base")
+        .arg("--is-ancestor")
+        .arg("FETCH_HEAD")
+        .arg("HEAD")
+        .spawn("[Git::pull] merge analysis")?;
+    if ancestor.status.success() {
         return Ok(());
     }
-    if analysis.is_fast_forward() || analysis.is_unborn() {
-        return fast_forward(&repo, &fetch_commit);
+    let can_ff = git()
+        .current_dir(dir)
+        .arg("merge-base")
+        .arg("--is-ancestor")
+        .arg("HEAD")
+        .arg("FETCH_HEAD")
+        .spawn("[Git::pull] merge analysis")?;
+    if can_ff.status.success() {
+        return fast_forward(dir);
     }
     Err(Error::not_fast_forward(
         "Remote is not a fast-forward of HEAD",
@@ -338,28 +512,40 @@ pub(crate) fn pull(dir: &Path) -> Result<(), Error> {
 
 pub(crate) fn push(dir: &Path) -> Result<(), Error> {
     let name = default_remote_name(dir)?;
-    let repo = open_work_tree(dir)?;
-    let refname = branch_refname(&repo)?;
+    require_work_tree(dir)?;
+    let refname = branch_refname(dir)?;
     let spec = format!("{refname}:{refname}");
-    let mut remote = repo.find_remote(&name).context("[Git::push] find remote")?;
-    require_remote_git_url(remote.url().context("[Git::push] read remote URL")?)?;
-    let mut push = PushOptions::new();
-    push.remote_callbacks(auth_callbacks());
-    remote
-        .push(&[spec.as_str()], Some(&mut push))
-        .context("[Git::push] push")?;
+    let url = git()
+        .current_dir(dir)
+        .arg("remote")
+        .arg("get-url")
+        .arg(&name)
+        .run("[Git::push] read remote URL")?;
+    require_remote_git_url(url.stdout_trim("[Git::push] read remote URL")?)?;
+    git()
+        .current_dir(dir)
+        .arg("push")
+        .arg("--")
+        .arg(&name)
+        .arg(&spec)
+        .run("[Git::push] push")?;
     Ok(())
 }
 
 /// True when the git index tracks `prefix` or any path under it.
 pub(crate) fn index_has_prefix(dir: &Path, prefix: &str) -> Result<bool, Error> {
-    let repo = open_work_tree(dir)?;
-    let index = repo.index().context("[Git::index_has_prefix] open index")?;
+    require_work_tree(dir)?;
+    let out = git()
+        .current_dir(dir)
+        .arg("ls-files")
+        .arg("-z")
+        .arg("--cached")
+        .run("[Git::index_has_prefix] open index")?;
     let prefix = prefix.trim_end_matches('/');
     let nested = format!("{prefix}/");
-    for entry in index.iter() {
-        let path = std::str::from_utf8(&entry.path)
-            .context(Code::NotUtf8, "[Git::index_has_prefix] path")?;
+    for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let path =
+            std::str::from_utf8(path).context(Code::NotUtf8, "[Git::index_has_prefix] path")?;
         if path == prefix || path.starts_with(&nested) {
             return Ok(true);
         }
@@ -379,90 +565,125 @@ pub(crate) fn commit(
     if paths.is_empty() {
         bail!(Error::invalid("nothing to commit"));
     }
-    let repo = open_work_tree(dir)?;
-    enable_long_paths(&repo)?;
-    let mut index = repo.index().context("[Git::commit] open index")?;
+    require_work_tree(dir)?;
+    enable_long_paths(dir)?;
     let mut staged = 0usize;
     for rel in paths {
         let abs = dir.join(rel);
         if abs.is_file() {
-            index
-                .add_path(Path::new(rel))
-                .with_context(|| format!("[Git::commit] stage {rel}"))?;
+            git()
+                .current_dir(dir)
+                .arg("add")
+                .arg("--")
+                .arg(rel)
+                .run(&format!("[Git::commit] stage {rel}"))?;
             staged += 1;
         } else {
-            match index.remove_path(Path::new(rel)) {
-                Ok(()) => staged += 1,
-                Err(err) if err.code() == ErrorCode::NotFound => {}
-                Err(err) => {
-                    return Err(err).with_context(|| format!("[Git::commit] remove {rel}"));
-                }
+            let tracked = git()
+                .current_dir(dir)
+                .arg("ls-files")
+                .arg("--error-unmatch")
+                .arg("--")
+                .arg(rel)
+                .spawn(&format!("[Git::commit] remove {rel}"))?;
+            if tracked.status.success() {
+                git()
+                    .current_dir(dir)
+                    .arg("rm")
+                    .arg("--cached")
+                    .arg("--")
+                    .arg(rel)
+                    .run(&format!("[Git::commit] remove {rel}"))?;
+                staged += 1;
+            } else if git_code(tracked.status.code(), &tracked.stderr) == Code::GitNotFound
+                || tracked
+                    .stderr
+                    .to_ascii_lowercase()
+                    .contains("did not match")
+            {
+            } else {
+                return Err(git_fail(&tracked, &format!("[Git::commit] remove {rel}")));
             }
         }
     }
     if staged == 0 {
         bail!(Error::invalid("nothing to commit"));
     }
-    index.write().context("[Git::commit] write index")?;
-    let tree_id = index.write_tree().context("[Git::commit] write tree")?;
-    let tree = repo.find_tree(tree_id).context("[Git::commit] read tree")?;
-    let sig = identity.signature()?;
-    let parent = match repo.head() {
-        Ok(head) => Some(head.peel_to_commit().context("[Git::commit] peel HEAD")?),
-        Err(err) if is_unborn(&err) => None,
-        Err(err) => bail!(git_fail(err, "[Git::commit] read HEAD")),
-    };
-    if parent
-        .as_ref()
-        .is_some_and(|parent| parent.tree_id() == tree_id)
-    {
-        return Ok(());
+    let tree = git()
+        .current_dir(dir)
+        .arg("write-tree")
+        .run("[Git::commit] write tree")?;
+    let tree_id = tree.stdout_trim("[Git::commit] write tree")?;
+    if !is_unborn_head(dir)? {
+        let head_tree = git()
+            .current_dir(dir)
+            .arg("rev-parse")
+            .arg("HEAD^{tree}")
+            .run("[Git::commit] peel HEAD")?;
+        if head_tree.stdout_trim("[Git::commit] peel HEAD")? == tree_id {
+            return Ok(());
+        }
     }
-    let parents: Vec<&GitCommit<'_>> = parent.as_ref().into_iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
-        .context("[Git::commit] create commit")?;
+    git()
+        .current_dir(dir)
+        .arg("-c")
+        .arg("commit.gpgsign=false")
+        .arg("commit")
+        .arg("--no-edit")
+        .arg("-m")
+        .arg(message)
+        .env("GIT_AUTHOR_NAME", &identity.name)
+        .env("GIT_AUTHOR_EMAIL", &identity.email)
+        .env("GIT_COMMITTER_NAME", &identity.name)
+        .env("GIT_COMMITTER_EMAIL", &identity.email)
+        .run("[Git::commit] create commit")?;
     Ok(())
 }
 
 /// Current `HEAD` commit, or `None` when the branch is unborn.
-pub(crate) fn peel_head_oid(dir: &Path) -> Result<Option<git2::Oid>, Error> {
-    let repo = open_work_tree(dir)?;
-    match repo.head() {
-        Ok(head) => {
-            let commit = head.peel_to_commit().context("[Git] peel HEAD")?;
-            Ok(Some(commit.id()))
-        }
-        Err(err) if is_unborn(&err) => Ok(None),
-        Err(err) => bail!(git_fail(err, "[Git] read HEAD")),
+pub(crate) fn peel_head_oid(dir: &Path) -> Result<Option<String>, Error> {
+    require_work_tree(dir)?;
+    let out = git()
+        .current_dir(dir)
+        .arg("rev-parse")
+        .arg("--verify")
+        .arg("HEAD")
+        .spawn("[Git] read HEAD")?;
+    if out.status.success() {
+        Ok(Some(out.stdout_trim("[Git] peel HEAD")?.to_owned()))
+    } else if git_code(out.status.code(), &out.stderr) == Code::GitUnbornBranch {
+        Ok(None)
+    } else {
+        Err(git_fail(&out, "[Git] read HEAD"))
     }
 }
 
 /// Move `HEAD` (and the work tree) to `oid`. `None` returns the repo to
 /// an unborn branch after a first commit that must be undone.
-pub(crate) fn reset_head_to(dir: &Path, oid: Option<git2::Oid>) -> Result<(), Error> {
-    let repo = open_work_tree(dir)?;
-    enable_long_paths(&repo)?;
+pub(crate) fn reset_head_to(dir: &Path, oid: Option<&str>) -> Result<(), Error> {
+    require_work_tree(dir)?;
+    enable_long_paths(dir)?;
     match oid {
         Some(oid) => {
-            let obj = repo
-                .find_object(oid, Some(ObjectType::Commit))
-                .context("[Git] find reset target")?;
-            repo.reset(&obj, ResetType::Hard, None)
-                .context("[Git] reset HEAD")?;
+            git()
+                .current_dir(dir)
+                .arg("reset")
+                .arg("--hard")
+                .arg(oid)
+                .run("[Git] reset HEAD")?;
         }
-        None => match repo.head() {
-            Ok(head) => {
-                let name = head.name().context("[Git] HEAD name")?;
-                let mut reference = repo
-                    .find_reference(name)
-                    .context("[Git] find branch to unborn")?;
-                reference
-                    .delete()
-                    .context("[Git] delete branch to unborn")?;
+        None => {
+            if is_unborn_head(dir)? {
+                return Ok(());
             }
-            Err(err) if is_unborn(&err) => {}
-            Err(err) => bail!(git_fail(err, "[Git] read HEAD for unborn reset")),
-        },
+            let name = branch_refname(dir)?;
+            git()
+                .current_dir(dir)
+                .arg("update-ref")
+                .arg("-d")
+                .arg(&name)
+                .run("[Git] delete branch to unborn")?;
+        }
     }
     Ok(())
 }
@@ -470,25 +691,31 @@ pub(crate) fn reset_head_to(dir: &Path, oid: Option<git2::Oid>) -> Result<(), Er
 /// Restore Scheda-recorded paths to HEAD. New files (not in HEAD) are deleted.
 /// Does not `git reset --hard` the whole tree.
 pub(crate) fn discard_paths(dir: &Path, paths: &[String]) -> Result<(), Error> {
-    let repo = open_work_tree(dir)?;
-    enable_long_paths(&repo)?;
-    let head_tree = match repo.head() {
-        Ok(head) => Some(
-            head.peel_to_tree()
-                .context("[Git::discard] peel HEAD tree")?,
-        ),
-        Err(err) if is_unborn(&err) => None,
-        Err(err) => bail!(git_fail(err, "[Git::discard] read HEAD")),
-    };
+    require_work_tree(dir)?;
+    enable_long_paths(dir)?;
+    let unborn = is_unborn_head(dir)?;
     for rel in paths {
-        let in_head = head_tree
-            .as_ref()
-            .is_some_and(|tree| tree.get_path(Path::new(rel)).is_ok());
+        let in_head = if unborn {
+            false
+        } else {
+            git()
+                .current_dir(dir)
+                .arg("cat-file")
+                .arg("-e")
+                .arg(format!("HEAD:{rel}"))
+                .spawn("[Git::discard] peel HEAD tree")?
+                .status
+                .success()
+        };
         if in_head {
-            let mut opts = CheckoutBuilder::new();
-            opts.force().path(rel.as_str());
-            repo.checkout_head(Some(&mut opts))
-                .with_context(|| format!("[Git::discard] restore {rel}"))?;
+            git()
+                .current_dir(dir)
+                .arg("checkout")
+                .arg("-f")
+                .arg("HEAD")
+                .arg("--")
+                .arg(rel)
+                .run(&format!("[Git::discard] restore {rel}"))?;
         } else {
             let abs = dir.join(rel);
             match fs::remove_file(&abs) {
@@ -506,25 +733,30 @@ pub(crate) fn discard_paths(dir: &Path, paths: &[String]) -> Result<(), Error> {
 /// True when any commit reachable from HEAD stored `path` in its tree.
 pub(crate) fn path_has_history(dir: &Path, path: &str) -> Result<bool, Error> {
     require_vault_rel(path)?;
-    let repo = open_work_tree(dir)?;
-    match repo.head() {
-        Ok(_) => {}
-        Err(err) if is_unborn(&err) => return Ok(false),
-        Err(err) => bail!(git_fail(err, "[Git::path_has_history] read HEAD")),
+    require_work_tree(dir)?;
+    if is_unborn_head(dir)? {
+        return Ok(false);
     }
-    let mut revwalk = repo
-        .revwalk()
-        .context("[Git::path_has_history] start revwalk")?;
-    revwalk
-        .push_head()
-        .context("[Git::path_has_history] walk from HEAD")?;
-    for oid in revwalk {
-        let oid = oid.context("[Git::path_has_history] next commit")?;
-        let commit = repo
-            .find_commit(oid)
-            .context("[Git::path_has_history] read commit")?;
-        let tree = commit.tree().context("[Git::path_has_history] read tree")?;
-        if tree.get_path(Path::new(path)).is_ok() {
+    let out = git()
+        .current_dir(dir)
+        .arg("log")
+        .arg("--format=%H")
+        .arg("--")
+        .arg(path)
+        .run("[Git::path_has_history] walk from HEAD")?;
+    for hash in out
+        .stdout_str("[Git::path_has_history] next commit")?
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        let probe = git()
+            .current_dir(dir)
+            .arg("cat-file")
+            .arg("-e")
+            .arg(format!("{hash}:{path}"))
+            .spawn("[Git::path_has_history] read tree")?;
+        if probe.status.success() {
             return Ok(true);
         }
     }
@@ -538,73 +770,83 @@ pub(crate) fn history(
     count: u32,
 ) -> Result<Vec<history::Entry>, Error> {
     require_vault_rel(path)?;
-    let repo = open_work_tree(dir)?;
-    match repo.head() {
-        Ok(_) => {}
-        Err(err) if is_unborn(&err) => return Ok(Vec::new()),
-        Err(err) => bail!(git_fail(err, "[Git::history] read HEAD")),
+    require_work_tree(dir)?;
+    if is_unborn_head(dir)? {
+        return Ok(Vec::new());
     }
-    let mut revwalk = repo.revwalk().context("[Git::history] start revwalk")?;
-    revwalk
-        .set_sorting(Sort::TIME)
-        .context("[Git::history] sort revwalk")?;
-    revwalk
-        .push_head()
-        .context("[Git::history] walk from HEAD")?;
+    let out = git()
+        .current_dir(dir)
+        .arg("log")
+        .arg("--date-order")
+        .arg("-z")
+        .arg("--format=%H%x1f%at%x1f%an%x1f%ae%x1f%B")
+        .arg("--")
+        .arg(path)
+        .run("[Git::history] walk from HEAD")?;
     struct Hit {
-        oid: git2::Oid,
+        hash: String,
         seconds: i64,
         author: String,
         message: String,
     }
     let mut hits = Vec::new();
-    for oid in revwalk {
-        let oid = oid.context("[Git::history] next commit")?;
-        let commit = repo
-            .find_commit(oid)
-            .context("[Git::history] read commit")?;
-        if !path_changed(&repo, &commit, path)? {
+    for rec in out.stdout.split(|b| *b == 0).filter(|r| !r.is_empty()) {
+        let rec = std::str::from_utf8(rec).context(Code::NotUtf8, "[Git::history] next commit")?;
+        let mut fields = rec.splitn(5, '\x1f');
+        let Some(hash) = fields.next() else {
+            continue;
+        };
+        let Some(at) = fields.next() else {
+            continue;
+        };
+        let Some(name) = fields.next() else {
+            continue;
+        };
+        let Some(email) = fields.next() else {
+            continue;
+        };
+        let message = fields.next().unwrap_or("");
+        let in_tree = git()
+            .current_dir(dir)
+            .arg("cat-file")
+            .arg("-e")
+            .arg(format!("{hash}:{path}"))
+            .spawn("[Git::history] read tree")?;
+        if !in_tree.status.success() {
             continue;
         }
-        let tree = commit.tree().context("[Git::history] read tree")?;
-        if tree.get_path(Path::new(path)).is_err() {
-            continue;
-        }
-        let author = commit.author();
-        let name = author.name().unwrap_or("");
-        let email = author.email().unwrap_or("");
+        let seconds = at.parse::<i64>().map_err(|_| {
+            Error::git_generic(format!("commit time is not an integer: {at}"))
+                .context("[Git::history] read commit")
+        })?;
         let author = if email.is_empty() {
             name.to_owned()
         } else {
             format!("{name} <{email}>")
         };
         hits.push(Hit {
-            oid,
-            seconds: commit.time().seconds(),
+            hash: hash.to_owned(),
+            seconds,
             author,
-            message: commit.message().unwrap_or("").to_owned(),
+            message: message.to_owned(),
         });
     }
     hits.sort_by_key(|hit| std::cmp::Reverse(hit.seconds));
     let mut out = Vec::new();
     for hit in hits.into_iter().skip(offset as usize).take(count as usize) {
-        let commit = repo
-            .find_commit(hit.oid)
-            .context("[Git::history] read commit")?;
-        let tree = commit.tree().context("[Git::history] read tree")?;
-        let entry = tree
-            .get_path(Path::new(path))
-            .context("[Git::history] read path")?;
-        let blob = repo
-            .find_blob(entry.id())
-            .context("[Git::history] read blob")?;
+        let blob = git()
+            .current_dir(dir)
+            .arg("cat-file")
+            .arg("blob")
+            .arg(format!("{}:{path}", hit.hash))
+            .run("[Git::history] read blob")?;
         out.push(
             history::Entry::default()
-                .with_hash(hit.oid.to_string())
+                .with_hash(hit.hash)
                 .with_time(hit.seconds)
                 .with_author(hit.author)
                 .with_message(hit.message)
-                .with_raw(blob.content().to_vec()),
+                .with_raw(blob.stdout),
         );
     }
     Ok(out)
@@ -625,76 +867,70 @@ fn require_vault_rel(path: &str) -> Result<(), Error> {
     Ok(())
 }
 
-fn path_changed(repo: &Repository, commit: &GitCommit<'_>, path: &str) -> Result<bool, Error> {
-    let new_tree = commit.tree().context("[Git::history] read tree")?;
-    let old_tree = if commit.parent_count() == 0 {
-        None
-    } else {
-        Some(
-            commit
-                .parent(0)
-                .context("[Git::history] read parent")?
-                .tree()
-                .context("[Git::history] read parent tree")?,
-        )
-    };
-    let mut opts = DiffOptions::new();
-    opts.pathspec(path);
-    let diff = repo
-        .diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), Some(&mut opts))
-        .context("[Git::history] diff path")?;
-    Ok(diff.deltas().next().is_some())
-}
-
 #[cfg(test)]
 pub(crate) fn add_remote(dir: &Path, name: &str, url: &str) -> Result<(), Error> {
-    let repo = open_work_tree(dir)?;
-    repo.remote(name, url)
-        .context("[Git::add_remote] add remote")?;
+    require_work_tree(dir)?;
+    git()
+        .current_dir(dir)
+        .arg("remote")
+        .arg("add")
+        .arg(name)
+        .arg(url)
+        .run("[Git::add_remote] add remote")?;
     Ok(())
 }
 
 #[cfg(test)]
 pub(crate) fn is_ignored(dir: &Path, rel: &Path) -> Result<bool, Error> {
-    let repo = open_work_tree(dir)?;
-    repo.status_should_ignore(rel)
-        .context("[Git::is_ignored] check ignore")
+    require_work_tree(dir)?;
+    let out = git()
+        .current_dir(dir)
+        .arg("check-ignore")
+        .arg("-q")
+        .arg("--")
+        .arg(rel)
+        .spawn("[Git::is_ignored] check ignore")?;
+    match out.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(git_fail(&out, "[Git::is_ignored] check ignore")),
+    }
 }
 
 #[cfg(test)]
 pub(crate) fn local_config_mentions_lfs(dir: &Path) -> Result<bool, Error> {
-    let repo = open_work_tree(dir)?;
-    let config = repo
-        .config()
-        .context("[Git::local_config_mentions_lfs] read config")?;
+    require_work_tree(dir)?;
     for key in [
         "filter.lfs.process",
         "filter.lfs.required",
         "filter.lfs.clean",
         "filter.lfs.smudge",
     ] {
-        if config_has_local(&config, key)? {
+        let out = git()
+            .current_dir(dir)
+            .arg("config")
+            .arg("--local")
+            .arg("--get")
+            .arg(key)
+            .spawn("[Git::local_config_mentions_lfs] read config entry")?;
+        if out.status.success() {
             return Ok(true);
+        }
+        if out.status.code() != Some(1) {
+            return Err(git_fail(
+                &out,
+                "[Git::local_config_mentions_lfs] read config entry",
+            ));
         }
     }
     Ok(false)
 }
 
 #[cfg(test)]
-fn config_has_local(config: &Config, key: &str) -> Result<bool, Error> {
-    match config.get_entry(key) {
-        Ok(entry) => Ok(entry.level() == ConfigLevel::Local),
-        Err(err) if err.code() == ErrorCode::NotFound => Ok(false),
-        Err(err) => Err(git_fail(
-            err,
-            "[Git::local_config_mentions_lfs] read config entry",
-        )),
-    }
-}
-
-#[cfg(test)]
 mod transport_tests {
-    use super::url_needs_remote_git;
+    use super::{require_remote_git_url, url_needs_remote_git};
+    use crate::Error;
+    use crate::error::{git_code, redact_remote_text};
 
     #[test]
     fn file_and_path_urls_do_not_need_remote_git() {
@@ -713,13 +949,10 @@ mod transport_tests {
 
     #[test]
     fn git_fail_redacts_userinfo_in_message() {
-        use super::git_fail;
-        let err = git_fail(
-            git2::Error::from_str(
-                "could not find repository from 'https://user:token@example.test/org/repo.git'",
-            ),
-            "[Git::clone] clone repository",
-        );
+        let stderr =
+            "could not find repository from 'https://user:token@example.test/org/repo.git'";
+        let err = Error::new(git_code(Some(128), stderr), redact_remote_text(stderr))
+            .context("[Git::clone] clone repository");
         let msg = err.message.as_deref().unwrap_or("");
         assert!(!msg.contains("token"), "{msg}");
         assert!(!msg.contains("user:"), "{msg}");
@@ -729,7 +962,6 @@ mod transport_tests {
     #[test]
     #[cfg(not(feature = "remote-git"))]
     fn https_clone_is_unsupported_without_the_feature() {
-        use super::require_remote_git_url;
         use crate::Code;
         let err = require_remote_git_url("https://example.invalid/x.git").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Unsupported));
@@ -738,9 +970,27 @@ mod transport_tests {
 
     #[test]
     #[cfg(feature = "remote-git")]
-    fn libgit2_https_and_ssh_are_linked() {
-        let v = git2::Version::get();
-        assert!(v.https(), "libgit2 HTTPS missing: {v:?}");
-        assert!(v.ssh(), "libgit2 SSH missing: {v:?}");
+    fn remote_https_url_is_allowed_with_the_feature() {
+        assert!(require_remote_git_url("https://example.invalid/x.git").is_ok());
+    }
+
+    #[test]
+    fn isolate_does_not_set_an_ssh_command() {
+        super::isolate_test_git_env();
+        match std::env::var_os("GIT_SSH_COMMAND") {
+            None => {}
+            Some(val) => {
+                assert!(
+                    !val.to_string_lossy().contains("BatchMode"),
+                    "Scheda must not set GIT_SSH_COMMAND: {val:?}"
+                );
+            }
+        }
+        assert!(std::env::var_os("GIT_CONFIG_NOSYSTEM").is_some());
+        let global = std::env::var_os("GIT_CONFIG_GLOBAL").expect("GIT_CONFIG_GLOBAL");
+        assert!(
+            !std::path::Path::new(&global).exists(),
+            "isolation must not create {global:?}"
+        );
     }
 }

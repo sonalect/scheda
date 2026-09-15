@@ -86,18 +86,18 @@ crates refer to them with `workspace = true`.
 The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.2.0**).
 Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
-Target crates use the platform CRT (dynamic glibc on Linux). Vendored
-libgit2 needs **cmake**, **pkg-config**, and zlib headers. Feature
-`remote-git` (default) adds libgit2 **https** + **ssh**: OpenSSL on Linux
-(`libssl-dev`), Secure Transport on macOS, WinHTTP on Windows. SSH uses
-vendored libssh2, which still needs OpenSSL headers on Unix (Homebrew
-`openssl` on macOS; keg-only, so set
-`PKG_CONFIG_PATH="$(brew --prefix openssl)/lib/pkgconfig"`). Features
+Target crates use the platform CRT (dynamic glibc on Linux). Git
+operations invoke the system **`git`** executable (`git` must be on
+`PATH`). Feature `remote-git` (default) is a policy gate: without it,
+`https://`, `http://`, `ssh://`, and `git@` remotes are `unsupported`.
+File remotes still work. Authentication, `~/.ssh/config`, and host-key
+checking match a plain `git` command. Features
 `find` and `search` are opt-in: Tantivy `find` and hybrid `search`
 (BM25 + USearch). `search` turns `find` on. `simd` turns `search` on
 and enables USearch SIMD kernels. `openmp` is opt-in (Linux
 `libomp-dev`). Cargo default is `remote-git` only. `default-features =
-false` also drops git TLS (file remotes still work). Add `features =
+false` still runs local git and refuses remote `https://` / `git@`
+URLs. Add `features =
 ["search", "simd"]` for ANN + SIMD, or `features = ["find"]` for
 Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
 **clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
@@ -167,8 +167,9 @@ CI (Bazel) is currently disabled.
 Optional Cargo-only **static CRT** CLI. Bazel and default Cargo stay
 dynamically linked. Per-target rustflags live in `.cargo/static-glibc.toml`
 (Linux gnu, Windows msvc, macOS darwin). `--target` must be this machine
-or `+crt-static` hits host proc-macros. `vendored-openssl` is required on
-Linux (distro `libcrypto.a` does not link). Unset `RUSTFLAGS` /
+or `+crt-static` hits host proc-macros. `vendored-openssl` is an empty
+feature kept so existing command lines still resolve; git no longer
+links OpenSSL. Unset `RUSTFLAGS` /
 `CARGO_ENCODED_RUSTFLAGS` so they do not override the extra config.
 Artifact: `target/<host-tuple>/release/scheda` (`.exe` on Windows).
 

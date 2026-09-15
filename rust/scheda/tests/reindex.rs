@@ -2,6 +2,8 @@
 //! Collection names here and in `testdata/search/` must not appear in
 //! `rust/scheda/src`.
 
+mod common;
+
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
@@ -21,6 +23,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-reindex-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();

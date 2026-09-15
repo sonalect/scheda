@@ -12,7 +12,8 @@
 //! The default feature is `remote-git`. `cargo add scheda` does not pull
 //! Tantivy or USearch. `search` turns `find` on; `simd` turns `search`
 //! on; the reverse does not. `encrypt` is also off by default.
-//! `default-features = false` also drops git TLS (file remotes still work).
+//! `default-features = false` still runs local git; it refuses `https://`
+//! and `git@` remotes.
 //!
 //! - **`find`** — Tantivy `Vault::find` / `Collection::find`.
 //!   Writes without it mark the Index stale, so a later build with
@@ -23,9 +24,11 @@
 //! - **`search`** — hybrid `Vault::search` / `Collection::search`
 //!   (BM25 + USearch). Pulls `find` in. `open` with an embedder without
 //!   this feature fails (`index_vector`): the vector leg is absent.
-//! - **`remote-git`** *(default)* — libgit2 HTTPS and SSH (`git2/https`,
-//!   `git2/ssh`). TLS is platform OpenSSL / Secure Transport / WinHTTP.
-//!   Without it, `https://` and `git@` remotes are `unsupported`.
+//! - **`remote-git`** *(default)* — policy gate for `https://`, `http://`,
+//!   `ssh://`, and `git@` remotes. Scheda invokes the system `git`
+//!   executable, so authentication follows `~/.ssh/config`, credential
+//!   helpers, and host-key checking. Without the feature those remotes
+//!   are `unsupported`. File remotes still work. `git` must be installed.
 //! - **`simd`** — USearch SIMD kernels via the `numkong` crate
 //!   (`usearch/numkong`). Pulls `search` in. Needed for fast in-process
 //!   ANN.
@@ -40,20 +43,21 @@
 //! # Tokio and other async runtimes
 //!
 //! Core operations are synchronous and do not start an async executor.
-//! There is no `tokio` crate feature: disk I/O and libgit2 block the calling
-//! thread. From a Tokio task, run them on the blocking pool so worker threads
-//! stay free. Share a [`Vault`] with [`std::sync::Arc`] — the handle is
-//! `Send + Sync`. Concurrent `find` / `search` on one handle share the
-//! Index (many readers). A write still takes the exclusive side of that
-//! lock, and the Vault write lock is one writer (`locked` if a second
-//! writer races it). Remote git (`push` / `pull` / `sync`) and `reindex` /
-//! `search` are the calls that must not sit on a worker thread. The Vault
-//! write lock is held for an open transaction and for one mutating call
-//! outside a transaction, then released. `reindex` takes that lock only
-//! for start and publish; the file walk does not hold it. A second flock,
-//! `reindex.lock`, is held for the whole rebuild. The lexical Index writer uses
-//! the same lifetime, so a second handle can write after `commit` without
-//! waiting on Tantivy's directory lock.
+//! There is no `tokio` crate feature: disk I/O and git child processes
+//! block the calling thread. From a Tokio task, run them on the blocking
+//! pool so worker threads stay free. Share a [`Vault`] with
+//! [`std::sync::Arc`] — the handle is `Send + Sync`. Concurrent `find` /
+//! `search` on one handle share the Index (many readers). A write still
+//! takes the exclusive side of that lock, and the Vault write lock is one
+//! writer (`locked` if a second writer races it). Remote git (`push` /
+//! `pull` / `sync`) and `reindex` / `search` are the calls that must not
+//! sit on a worker thread. The Vault write lock is held for an open
+//! transaction and for one mutating call outside a transaction, then
+//! released. `reindex` takes that lock only for start and publish; the
+//! file walk does not hold it. A second flock, `reindex.lock`, is held
+//! for the whole rebuild. The lexical Index writer uses the same
+//! lifetime, so a second handle can write after `commit` without waiting
+//! on Tantivy's directory lock.
 //!
 //! ```rust,ignore (tokio is not a crate dependency)
 //! use std::sync::Arc;

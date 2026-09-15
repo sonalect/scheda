@@ -31,7 +31,7 @@ constructing errors, or converting `map_err` / `format!(...: {err})` sites.
 
 - Already `Result<T, Error>`: `.context(frame)` (literal); `.with_context(|| …)` (lazy).
 - `std::io::Error`: `.context(frame)` (`ContextIo`, maps via `io_code`).
-- `git2::Error`: `.context(frame)` (`ContextGit`, maps via `git_code`).
+- git CLI (exit + stderr): `git_code`, then `.context(frame)`.
 - Other foreign `Display` (`usearch`, tantivy, serde): `.context(Code::…, frame)`.
 - Interpolated frames: `.with_context(|| format!("… {n}"))` (only on `Err`).
 - Leaf constructors: inherent on generated `Error` (`Error::invalid`, `Error::io_not_found`, …).

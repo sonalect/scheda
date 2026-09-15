@@ -1,14 +1,15 @@
 //! C4: `journal` segments (`03`, `04`, `07`, `11`). Collection names here and
 //! in `testdata/journal/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use git2::{IndexAddOption, Repository, Signature};
 use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Repeat, Vault};
 use serde_json::json;
 
@@ -20,6 +21,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-c4-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -191,7 +193,13 @@ fn size_cap_closes_segment_without_rewriting_it() {
 #[test]
 fn find_one_uses_collection_and_id_not_segment_name() {
     let scratch = Scratch::new();
-    let vault = open_log(&scratch);
+    // Writer `c` makes the segment name end in `-c.jsonl`. A substring
+    // check for `c.jsonl` would then fail even though the file is not
+    // `id.jsonl`.
+    let options = OpenOptions::new().writer("c");
+    drop(Vault::open(scratch.vault(), options.clone(), None).unwrap());
+    scratch.write_schema("log.yaml", LOG);
+    let vault = Vault::open(scratch.vault(), options, None).unwrap();
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
     collection.add("b", rec("x"), None).unwrap();
@@ -200,12 +208,17 @@ fn find_one_uses_collection_and_id_not_segment_name() {
     assert_eq!(got.id.as_deref(), Some("c"));
     assert_eq!(got.collection.as_deref(), Some("south_log"));
     assert_eq!(got.valid, Some(true));
-    assert!(
-        got.path
-            .as_deref()
-            .is_some_and(|path| path.ends_with(".jsonl"))
+    let path = got.path.as_deref().expect("journal path");
+    assert!(path.ends_with(".jsonl"), "{path}");
+    let file = path.rsplit('/').next().unwrap_or(path);
+    assert_ne!(
+        file, "c.jsonl",
+        "get must use the segment path, not id.jsonl: {path}"
     );
-    assert!(!got.path.as_deref().unwrap().contains("c.jsonl"));
+    assert!(
+        file.ends_with("-c.jsonl"),
+        "writer c must appear in the segment name: {path}"
+    );
     let err = collection.get("missing").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
@@ -598,23 +611,38 @@ fn as_url(path: &Path) -> String {
     }
 }
 
+fn git_ok(dir: &Path, args: &[&str]) -> std::process::Output {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("LC_ALL", "C")
+        .output()
+        .expect("git executable");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
 fn commit_all(dir: &Path, message: &str) {
-    let repo = Repository::open(dir).unwrap();
-    let mut index = repo.index().unwrap();
-    index
-        .add_all(["."].iter(), IndexAddOption::DEFAULT, None)
-        .unwrap();
-    index.write().unwrap();
-    let tree_id = index.write_tree().unwrap();
-    let tree = repo.find_tree(tree_id).unwrap();
-    let sig = Signature::now("Scheda", "scheda@invalid").unwrap();
-    let parent = match repo.head() {
-        Ok(head) => Some(head.peel_to_commit().unwrap()),
-        Err(_) => None,
-    };
-    let parents: Vec<&git2::Commit<'_>> = parent.as_ref().into_iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
-        .unwrap();
+    git_ok(dir, &["add", "-A"]);
+    git_ok(
+        dir,
+        &[
+            "-c",
+            "user.name=Scheda",
+            "-c",
+            "user.email=scheda@invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            message,
+        ],
+    );
 }
 
 #[test]
@@ -627,10 +655,16 @@ fn two_clones_write_disjoint_journal_segments() {
     fs::write(dir.join(".schema.yaml"), LOG).unwrap();
     commit_all(&source, "schema");
     let bare = scratch.root.join("bare");
-    git2::build::RepoBuilder::new()
-        .bare(true)
-        .clone(&as_url(&source), &bare)
-        .unwrap();
+    git_ok(
+        &source,
+        &[
+            "clone",
+            "--bare",
+            "--",
+            &as_url(&source),
+            &bare.to_string_lossy(),
+        ],
+    );
     let remote = as_url(&bare);
     let alice_dir = scratch.root.join("alice");
     let bob_dir = scratch.root.join("bob");

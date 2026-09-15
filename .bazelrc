@@ -11,6 +11,14 @@ common:linux --@pypi//venv=scheda
 common:macos --@pypi//venv=scheda
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles
+# Host `git` on PATH. Scheda invokes the system git executable.
+# Do not inherit HOME: Bazel already gives tests a scratch home, and the
+# developer's ~/.gitconfig must not change outcomes. Empty GIT_CONFIG_*
+# paths disable global and system git config for the test process only.
+test --test_env=PATH
+test --test_env=GIT_CONFIG_NOSYSTEM=1
+test --test_env=GIT_CONFIG_GLOBAL=
+test --test_env=GIT_CONFIG_SYSTEM=
 # uv.lock is Linux-only (vLLM manylinux). `//python/cli` would compile
 # hf_xet / PyYAML sdists (`No module named build`). Keep //python for ruff.
 common:macos --deleted_packages=python/cli,python/vllm

@@ -337,9 +337,9 @@ pub mod error {
         CODE_IO_UNEXPECTED_EOF = 437i32,
         CODE_IO_OUT_OF_MEMORY = 438i32,
         CODE_IO_OTHER = 439i32,
-        /// git2 `ErrorCode`, one proto value each. Fast-forward pull/push is
-        /// `not_fast_forward`. `CODE_GIT_HEAD` is ours (HEAD is not a branch),
-        /// not a git2 code.
+        /// Git failure classes, classified from the git CLI (exit status and
+        /// stderr). Fast-forward pull/push is `not_fast_forward`.
+        /// `CODE_GIT_HEAD` is ours (HEAD is not a branch).
         CODE_NOT_FAST_FORWARD = 501i32,
         CODE_GIT_GENERIC = 502i32,
         CODE_GIT_NOT_FOUND = 503i32,

@@ -18,13 +18,17 @@ _SCHEDA_THIN_FEATURES = [
     "remote-git",
 ]
 
+# Shared by every integration test crate (`mod common`).
+_TEST_COMMON = [
+    "tests/common/mod.rs",
+]
+
 _SCHEDA_SRCS = glob(["src/**/*.rs"])
 
 _SCHEDA_DEPS = [
     "//rust/generated:generated_v1",
     "@cargo//:buffa",
     "@cargo//:buffa-types",
-    "@cargo//:git2",
     "@cargo//:regex",
     "@cargo//:serde",
     "@cargo//:serde_json",
@@ -41,6 +45,7 @@ rust_library(
     deps = _SCHEDA_DEPS + [
         "@cargo//:age",
         "@cargo//:cxx",
+        "@cargo//:sha1",
         "@cargo//:tantivy",
         "@cargo//:usearch",
     ],
@@ -57,7 +62,7 @@ rust_library(
 
 rust_test(
     name = "core_test",
-    srcs = ["tests/core.rs"],
+    srcs = ["tests/core.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
         "testdata/**",
@@ -72,7 +77,7 @@ rust_test(
 
 rust_test(
     name = "document_test",
-    srcs = ["tests/document.rs"],
+    srcs = ["tests/document.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/document.rs",
     visibility = ["//rust:__pkg__"],
@@ -84,7 +89,7 @@ rust_test(
 
 rust_test(
     name = "query_test",
-    srcs = ["tests/query.rs"],
+    srcs = ["tests/query.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/query.rs",
     visibility = ["//rust:__pkg__"],
@@ -96,20 +101,19 @@ rust_test(
 
 rust_test(
     name = "git_test",
-    srcs = ["tests/git.rs"],
+    srcs = ["tests/git.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/git.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
 
 rust_test(
     name = "ann_test",
-    srcs = ["tests/ann.rs"],
+    srcs = ["tests/ann.rs"] + _TEST_COMMON,
     crate_root = "tests/ann.rs",
     visibility = ["//rust:__pkg__"],
     deps = [":scheda"],
@@ -118,26 +122,24 @@ rust_test(
 rust_test(
     name = "ops_test",
     size = "large",
-    srcs = ["tests/ops.rs"],
+    srcs = ["tests/ops.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/ops.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
 
 rust_test(
     name = "remote_test",
-    srcs = ["tests/remote.rs"],
+    srcs = ["tests/remote.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/remote.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
@@ -151,20 +153,19 @@ rust_test(
 
 rust_test(
     name = "journal_test",
-    srcs = ["tests/journal.rs"],
+    srcs = ["tests/journal.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/journal.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
 
 rust_test(
     name = "search_test",
-    srcs = ["tests/search.rs"],
+    srcs = ["tests/search.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/search.rs",
     visibility = ["//rust:__pkg__"],
@@ -177,7 +178,7 @@ rust_test(
 rust_test(
     name = "reindex_test",
     size = "large",
-    srcs = ["tests/reindex.rs"],
+    srcs = ["tests/reindex.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/reindex.rs",
     visibility = ["//rust:__pkg__"],
@@ -189,7 +190,7 @@ rust_test(
 
 rust_test(
     name = "schema_test",
-    srcs = ["tests/schema.rs"],
+    srcs = ["tests/schema.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/schema.rs",
     visibility = ["//rust:__pkg__"],
@@ -201,7 +202,7 @@ rust_test(
 
 rust_test(
     name = "encrypt_test",
-    srcs = ["tests/encrypt.rs"],
+    srcs = ["tests/encrypt.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/encrypt.rs",
@@ -214,20 +215,19 @@ rust_test(
 
 rust_test(
     name = "isolated_test",
-    srcs = ["tests/isolated.rs"],
+    srcs = ["tests/isolated.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/isolated.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
 
 rust_test(
     name = "catalog_test",
-    srcs = ["tests/catalog.rs"],
+    srcs = ["tests/catalog.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
         "testdata/**",
@@ -243,7 +243,7 @@ rust_test(
 rust_test(
     name = "consumer_test",
     size = "large",
-    srcs = ["tests/consumer.rs"],
+    srcs = ["tests/consumer.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
         "testdata/**",
@@ -253,14 +253,13 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
 
 rust_test(
     name = "consumer_thin_test",
-    srcs = ["tests/consumer.rs"],
+    srcs = ["tests/consumer.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
         "testdata/**",
@@ -269,14 +268,13 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda_thin",
-        "@cargo//:git2",
         "@cargo//:serde_json",
     ],
 )
 
 rust_test(
     name = "thin_test",
-    srcs = ["tests/thin.rs"],
+    srcs = ["tests/thin.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/thin.rs",
     visibility = ["//rust:__pkg__"],

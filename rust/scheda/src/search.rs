@@ -13,6 +13,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 #[cfg(feature = "search")]
+use sha1::{Digest, Sha1};
+#[cfg(feature = "search")]
 use tantivy::collector::DocSetCollector;
 use tantivy::collector::{Count, TopDocs};
 #[cfg(feature = "search")]
@@ -27,8 +29,6 @@ use tantivy::{
     Term,
 };
 
-#[cfg(feature = "search")]
-use crate::error::ContextGit;
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
 use crate::query::{self, FindFields};
@@ -1337,11 +1337,31 @@ fn eq_values(value: &Value) -> Vec<String> {
     }
 }
 
+/// SHA-1 git blob object id of `bytes` (`blob <len>\0` + content).
 #[cfg(feature = "search")]
-fn vector_digest(text: &str) -> Result<String, Error> {
-    git2::Oid::hash_object(git2::ObjectType::Blob, text.as_bytes())
-        .context("[SearchEngine] hash vector text")
-        .map(|oid| oid.to_string())
+fn blob_oid(bytes: &[u8]) -> String {
+    let mut hasher = Sha1::new();
+    hasher.update(b"blob ");
+    hasher.update(bytes.len().to_string().as_bytes());
+    hasher.update([0u8]);
+    hasher.update(bytes);
+    hex_lower(&hasher.finalize())
+}
+
+#[cfg(feature = "search")]
+fn hex_lower(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for &b in bytes {
+        out.push(HEX[usize::from(b >> 4)] as char);
+        out.push(HEX[usize::from(b & 0x0f)] as char);
+    }
+    out
+}
+
+#[cfg(feature = "search")]
+fn vector_digest(text: &str) -> String {
+    blob_oid(text.as_bytes())
 }
 
 #[cfg(feature = "search")]
@@ -1371,7 +1391,7 @@ fn slots_needing_embed(
     }
     let mut out = Vec::new();
     for (field, text) in nonempty {
-        let digest = vector_digest(&text)?;
+        let digest = vector_digest(&text);
         let unchanged = store
             .slot_key(collection, id, &field)
             .and_then(|key| store.keys.get(&key))
@@ -1664,7 +1684,7 @@ fn upsert_vector(
                     vector.len()
                 )));
             }
-            let digest = vector_digest(text)?;
+            let digest = vector_digest(text);
             if let Some(key) = store.slot_key(&decl.name, id, field) {
                 store.drop_ann_slot(key)?;
             }
@@ -2522,5 +2542,20 @@ mod engine_sync {
     fn search_engine_is_sync() {
         fn assert_sync<T: Sync>() {}
         assert_sync::<super::SearchEngine>();
+    }
+}
+
+#[cfg(all(test, feature = "search"))]
+mod blob_oid_tests {
+    #[test]
+    fn blob_oid_matches_known_git_ids() {
+        assert_eq!(
+            super::blob_oid(b""),
+            "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+        );
+        assert_eq!(
+            super::blob_oid(b"hello\n"),
+            "ce013625030ba8dba906f756967f9e9ca394464a"
+        );
     }
 }

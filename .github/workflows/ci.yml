@@ -219,8 +219,7 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7.0.1
 
-      # HTTPS uses WinHTTP; SSH uses vendored libssh2 + WinCNG. CMake is on the
-      # image for vendored libgit2. Git usr/bin supplies patch.exe.
+      # Git for Windows is on PATH; Scheda invokes the `git` executable.
       - name: Install Bazelisk
         shell: bash
         run: |

@@ -2,13 +2,14 @@
 //! Collection names here and in `testdata/` must not appear in
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
+mod common;
+
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use git2::{ObjectType, Repository};
 use scheda::{Author, Code, OpenOptions, RecordAdd, RecordReplace, Vault};
 use serde_json::{Value, json};
 
@@ -20,6 +21,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-c6-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -87,72 +89,71 @@ fn open_notes(scratch: &Scratch) -> Vault {
     vault
 }
 
+fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("LC_ALL", "C")
+        .output()
+        .expect("git executable")
+}
+
+fn git_ok(dir: &Path, args: &[&str]) -> std::process::Output {
+    let out = git_output(dir, args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+fn git_stdout(dir: &Path, args: &[&str]) -> String {
+    String::from_utf8(git_ok(dir, args).stdout).unwrap()
+}
+
 fn log_len(dir: &Path) -> usize {
-    let repo = Repository::open(dir).unwrap();
-    let mut walk = repo.revwalk().unwrap();
-    if walk.push_head().is_err() {
+    let out = git_output(dir, &["rev-list", "--count", "HEAD"]);
+    if !out.status.success() {
         return 0;
     }
-    walk.count()
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap_or(0)
 }
 
 fn git_show(dir: &Path, hash: &str, path: &str) -> Vec<u8> {
-    let repo = Repository::open(dir).unwrap();
-    let oid = git2::Oid::from_str(hash).unwrap();
-    let commit = repo.find_commit(oid).unwrap();
-    let blob = commit
-        .tree()
-        .unwrap()
-        .get_path(Path::new(path))
-        .unwrap()
-        .to_object(&repo)
-        .unwrap()
-        .peel_to_blob()
-        .unwrap();
-    blob.content().to_vec()
+    git_ok(dir, &["cat-file", "blob", &format!("{hash}:{path}")]).stdout
 }
 
-fn git_commit_time(dir: &Path, hash: &str) -> git2::Time {
-    let repo = Repository::open(dir).unwrap();
-    let oid = git2::Oid::from_str(hash).unwrap();
-    repo.find_commit(oid).unwrap().time()
-}
-
-fn tree_paths(repo: &Repository, tree: &git2::Tree, prefix: &str, out: &mut BTreeSet<String>) {
-    for entry in tree {
-        let name = entry.name().unwrap();
-        let path = if prefix.is_empty() {
-            name.to_owned()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        match entry.kind() {
-            Some(ObjectType::Tree) => {
-                let child = repo.find_tree(entry.id()).unwrap();
-                tree_paths(repo, &child, &path, out);
-            }
-            Some(ObjectType::Blob) => {
-                out.insert(path);
-            }
-            _ => {}
-        }
-    }
+fn git_commit_time(dir: &Path, hash: &str) -> i64 {
+    git_stdout(dir, &["log", "-1", "--format=%at", hash])
+        .trim()
+        .parse()
+        .unwrap()
 }
 
 fn head_paths(dir: &Path) -> BTreeSet<String> {
-    let repo = Repository::open(dir).unwrap();
-    let tree = repo.head().unwrap().peel_to_tree().unwrap();
-    let mut out = BTreeSet::new();
-    tree_paths(&repo, &tree, "", &mut out);
-    out
+    git_stdout(dir, &["ls-tree", "-r", "--name-only", "HEAD"])
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
 }
 
 #[test]
 fn create_sets_core_longpaths() {
     let scratch = Scratch::new();
     let _vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
-    let repo = Repository::open(scratch.vault()).unwrap();
-    assert!(repo.config().unwrap().get_bool("core.longpaths").unwrap());
+    let value = git_stdout(
+        scratch.vault().as_path(),
+        &["config", "--local", "--get", "core.longpaths"],
+    );
+    assert_eq!(value.trim(), "true");
 }
 
 #[test]
@@ -270,7 +271,7 @@ fn history_matches_git_show_after_two_document_commits() {
         git_show(vault.path(), oldest.hash.as_deref().unwrap(), &path)
     );
     let when = git_commit_time(vault.path(), newest.hash.as_deref().unwrap());
-    assert_eq!(newest.time.seconds, when.seconds());
+    assert_eq!(newest.time.seconds, when);
     assert_eq!(newest.time.nanos, 0);
     let newest_text = String::from_utf8(newest.raw.clone().unwrap()).unwrap();
     let oldest_text = String::from_utf8(oldest.raw.clone().unwrap()).unwrap();
@@ -622,23 +623,19 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
 }
 
 fn head_identity(dir: &Path) -> (String, String, String, String) {
-    let repo = Repository::open(dir).unwrap();
-    let commit = repo.head().unwrap().peel_to_commit().unwrap();
-    let author = commit.author();
-    let committer = commit.committer();
+    let text = git_stdout(dir, &["log", "-1", "--format=%an%n%ae%n%cn%n%ce"]);
+    let mut lines = text.lines().map(str::trim);
     (
-        author.name().unwrap_or("").to_owned(),
-        author.email().unwrap_or("").to_owned(),
-        committer.name().unwrap_or("").to_owned(),
-        committer.email().unwrap_or("").to_owned(),
+        lines.next().unwrap_or("").to_owned(),
+        lines.next().unwrap_or("").to_owned(),
+        lines.next().unwrap_or("").to_owned(),
+        lines.next().unwrap_or("").to_owned(),
     )
 }
 
 fn set_local_identity(dir: &Path, name: &str, email: &str) {
-    let repo = Repository::open(dir).unwrap();
-    let mut cfg = repo.config().unwrap();
-    cfg.set_str("user.name", name).unwrap();
-    cfg.set_str("user.email", email).unwrap();
+    git_ok(dir, &["config", "user.name", name]);
+    git_ok(dir, &["config", "user.email", email]);
 }
 
 #[test]

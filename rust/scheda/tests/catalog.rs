@@ -1,6 +1,8 @@
 //! A1: `catalog` from Schema (`08` AGT-1, `12`). Collection names here and in
 //! `testdata/schema/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
 
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process;
@@ -17,6 +19,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-a1-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();

@@ -2,7 +2,7 @@
 //!
 //! Constructors, [`crate::Error::context`], and [`crate::Error::with_context`]
 //! live on the generated type. This module adds `Result` bubbling (`Context`,
-//! `ContextAs`, IO/git maps) and `ensure!` / `bail!`.
+//! `ContextAs`, IO and git-CLI maps) and `ensure!` / `bail!`.
 
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -91,39 +91,143 @@ pub(crate) fn io_code(err: &std::io::Error) -> Code {
     }
 }
 
+/// Map a git CLI failure (`exit` + `stderr`) onto [`Code`].
+///
+/// Patterns are matched on lower-cased `stderr` (Scheda runs git with
+/// `LC_ALL=C`). More specific classes win over [`Code::GitGeneric`].
 #[must_use]
-pub(crate) fn git_code(err: &git2::Error) -> Code {
-    use git2::ErrorCode;
-    match err.code() {
-        ErrorCode::GenericError => Code::GitGeneric,
-        ErrorCode::NotFound => Code::GitNotFound,
-        ErrorCode::Exists => Code::GitExists,
-        ErrorCode::Ambiguous => Code::GitAmbiguous,
-        ErrorCode::BufSize => Code::GitBufSize,
-        ErrorCode::User => Code::GitUser,
-        ErrorCode::BareRepo => Code::GitBareRepo,
-        ErrorCode::UnbornBranch => Code::GitUnbornBranch,
-        ErrorCode::Unmerged => Code::GitUnmerged,
-        ErrorCode::NotFastForward => Code::NotFastForward,
-        ErrorCode::InvalidSpec => Code::GitInvalidSpec,
-        ErrorCode::Conflict => Code::GitConflict,
-        ErrorCode::Locked => Code::GitLocked,
-        ErrorCode::Modified => Code::GitModified,
-        ErrorCode::Auth => Code::GitAuth,
-        ErrorCode::Certificate => Code::GitCertificate,
-        ErrorCode::Applied => Code::GitApplied,
-        ErrorCode::Peel => Code::GitPeel,
-        ErrorCode::Eof => Code::GitEof,
-        ErrorCode::Invalid => Code::GitInvalid,
-        ErrorCode::Uncommitted => Code::GitUncommitted,
-        ErrorCode::Directory => Code::GitDirectory,
-        ErrorCode::MergeConflict => Code::GitMergeConflict,
-        ErrorCode::HashsumMismatch => Code::GitHashsumMismatch,
-        ErrorCode::IndexDirty => Code::GitIndexDirty,
-        ErrorCode::ApplyFail => Code::GitApplyFail,
-        ErrorCode::Owner => Code::GitOwner,
-        ErrorCode::Timeout => Code::GitTimeout,
+pub(crate) fn git_code(status: Option<i32>, stderr: &str) -> Code {
+    let _ = status;
+    let text = stderr.to_ascii_lowercase();
+    let hay = text.as_str();
+    if matches_auth(hay) {
+        return Code::GitAuth;
     }
+    if matches_cert(hay) {
+        return Code::GitCertificate;
+    }
+    if matches_timeout(hay) {
+        return Code::GitTimeout;
+    }
+    if matches_nff(hay) {
+        return Code::NotFastForward;
+    }
+    if matches_dirty(hay) {
+        return Code::GitUncommitted;
+    }
+    if matches_unborn(hay) {
+        return Code::GitUnbornBranch;
+    }
+    if matches_locked(hay) {
+        return Code::GitLocked;
+    }
+    if hay.contains("already exists") {
+        return Code::GitExists;
+    }
+    if hay.contains("bare repository") || hay.contains("bare repo") {
+        return Code::GitBareRepo;
+    }
+    if hay.contains("merge conflict") || hay.contains("fix conflicts") {
+        return Code::GitMergeConflict;
+    }
+    if hay.contains("conflict") {
+        return Code::GitConflict;
+    }
+    if hay.contains("not a symbolic ref") || hay.contains("detached") {
+        return Code::GitHead;
+    }
+    if matches_host_unreachable(hay) {
+        return Code::IoHostUnreachable;
+    }
+    if hay.contains("network is unreachable") || hay.contains("network unreachable") {
+        return Code::IoNetworkUnreachable;
+    }
+    if hay.contains("connection refused") {
+        return Code::IoConnectionRefused;
+    }
+    if hay.contains("connection reset") {
+        return Code::IoConnectionReset;
+    }
+    if matches_not_found(hay) {
+        return Code::GitNotFound;
+    }
+    Code::GitGeneric
+}
+
+fn matches_auth(hay: &str) -> bool {
+    hay.contains("authentication failed")
+        || hay.contains("permission denied (publickey)")
+        || hay.contains("permission denied (keyboard-interactive)")
+        || hay.contains("could not read username")
+        || hay.contains("invalid username or password")
+        || hay.contains("terminal prompts disabled")
+        || hay.contains("support for password authentication was removed")
+        || hay.contains("no git credentials available")
+}
+
+fn matches_cert(hay: &str) -> bool {
+    hay.contains("ssl certificate")
+        || hay.contains("certificate verify failed")
+        || hay.contains("server certificate verification failed")
+        || hay.contains("certificate problem")
+        || hay.contains("unknown ssl protocol")
+}
+
+fn matches_timeout(hay: &str) -> bool {
+    hay.contains("timed out")
+        || hay.contains("timeout")
+        || hay.contains("couldn't connect to server")
+}
+
+fn matches_nff(hay: &str) -> bool {
+    hay.contains("non-fast-forward")
+        || hay.contains("not possible to fast-forward")
+        || hay.contains("not a fast-forward")
+        || hay.contains("updates were rejected because the remote contains work")
+        || (hay.contains("failed to push some refs") && hay.contains("rejected"))
+}
+
+fn matches_dirty(hay: &str) -> bool {
+    hay.contains("your local changes")
+        || hay.contains("please commit your changes or stash")
+        || hay.contains("not uptodate")
+        || hay.contains("uncommitted changes")
+        || hay.contains("would be overwritten by")
+}
+
+fn matches_unborn(hay: &str) -> bool {
+    hay.contains("does not have any commits yet")
+        || hay.contains("needed a single revision")
+        || hay.contains("unknown revision or path not in the working tree")
+        || hay.contains("ambiguous argument 'head'")
+}
+
+fn matches_locked(hay: &str) -> bool {
+    hay.contains("index.lock")
+        || (hay.contains("unable to create") && hay.contains(".lock"))
+        || hay.contains("unable to lock")
+}
+
+fn matches_host_unreachable(hay: &str) -> bool {
+    hay.contains("could not resolve hostname")
+        || hay.contains("could not resolve host")
+        || hay.contains("name or service not known")
+        || hay.contains("temporary failure in name resolution")
+        || hay.contains("nodename nor servname")
+        || hay.contains("no route to host")
+        || hay.contains("host is unreachable")
+}
+
+fn matches_not_found(hay: &str) -> bool {
+    hay.contains("not a git repository")
+        || hay.contains("repository not found")
+        || (hay.contains("repository '") && hay.contains("' not found"))
+        || (hay.contains("pathspec") && hay.contains("did not match"))
+        || hay.contains("no such remote")
+        || hay.contains("couldn't find remote ref")
+        || hay.contains("could not find remote")
+        || hay.contains("no such file or directory")
+        || hay.contains("cannot change to")
 }
 
 /// Drop userinfo, path, and query from remote URLs in a foreign error string.
@@ -235,8 +339,7 @@ impl<T> Context<T> for Result<T, crate::Error> {
 
 /// Convert a listed foreign `Display` error into [`crate::Error`] and prepend a
 /// frame. Not a blanket `E: Display` impl: Rust does not disambiguate `context`
-/// by arity, so that would collide with [`ContextIo`] / [`ContextGit`] /
-/// [`Context`].
+/// by arity, so that would collide with [`ContextIo`] / [`Context`].
 pub(crate) trait ContextAs<T> {
     fn context(self, code: Code, frame: impl fmt::Display) -> Result<T, crate::Error>
     where
@@ -283,33 +386,6 @@ pub(crate) trait ContextIo<T> {
 impl<T> ContextIo<T> for Result<T, std::io::Error> {
     fn context(self, frame: impl fmt::Display) -> Result<T, crate::Error> {
         self.map_err(|err| crate::Error::new(io_code(&err), err.to_string()).context(frame))
-    }
-}
-
-/// Map `git2::Error` by [`git_code`] and prepend a frame.
-pub(crate) trait ContextGit<T> {
-    fn context(self, frame: impl fmt::Display) -> Result<T, crate::Error>
-    where
-        Self: Sized,
-    {
-        self.with_context(|| frame)
-    }
-
-    fn with_context<F, C>(self, f: F) -> Result<T, crate::Error>
-    where
-        F: FnOnce() -> C,
-        C: fmt::Display;
-}
-
-impl<T> ContextGit<T> for Result<T, git2::Error> {
-    fn with_context<F, C>(self, f: F) -> Result<T, crate::Error>
-    where
-        F: FnOnce() -> C,
-        C: fmt::Display,
-    {
-        self.map_err(|err| {
-            crate::Error::new(git_code(&err), redact_remote_text(err.message())).context(f())
-        })
     }
 }
 
@@ -502,5 +578,111 @@ mod tests {
         let scp = redact_remote_text("failed git@host.example:org/secret.git");
         assert_eq!(scp, "failed git@host.example");
         assert_eq!(redact_remote_text("no remotes here"), "no remotes here");
+    }
+
+    #[test]
+    fn git_code_maps_literal_stderr_samples() {
+        use super::git_code;
+        let cases: &[(&str, Code)] = &[
+            (
+                "fatal: Authentication failed for 'https://github.com/org/repo.git'",
+                Code::GitAuth,
+            ),
+            ("Permission denied (publickey).", Code::GitAuth),
+            (
+                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+                Code::GitAuth,
+            ),
+            (
+                "remote: Invalid username or password.\nfatal: Authentication failed",
+                Code::GitAuth,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': SSL certificate problem: unable to get local issuer certificate",
+                Code::GitCertificate,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': server certificate verification failed. CAfile: none CRLfile: none",
+                Code::GitCertificate,
+            ),
+            (
+                "ssh: connect to host github.com port 22: Connection timed out",
+                Code::GitTimeout,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': Failed to connect to github.com port 443 after 21000 ms: Couldn't connect to server",
+                Code::GitTimeout,
+            ),
+            (
+                "ssh: Could not resolve hostname github.com: Name or service not known",
+                Code::IoHostUnreachable,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': Could not resolve host: github.com",
+                Code::IoHostUnreachable,
+            ),
+            (
+                "ssh: connect to host github.com port 22: Network is unreachable",
+                Code::IoNetworkUnreachable,
+            ),
+            (
+                "ssh: connect to host github.com port 22: Connection refused",
+                Code::IoConnectionRefused,
+            ),
+            (
+                "fatal: not a git repository (or any of the parent directories): .git",
+                Code::GitNotFound,
+            ),
+            (
+                "fatal: repository 'https://github.com/foo/bar.git' not found",
+                Code::GitNotFound,
+            ),
+            (
+                "fatal: pathspec 'notes/missing.md' did not match any files",
+                Code::GitNotFound,
+            ),
+            ("error: No such remote 'origin'", Code::GitNotFound),
+            (
+                "! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs to 'https://github.com/org/repo.git'",
+                Code::NotFastForward,
+            ),
+            (
+                "fatal: Not possible to fast-forward, aborting.",
+                Code::NotFastForward,
+            ),
+            (
+                "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.",
+                Code::GitUnbornBranch,
+            ),
+            (
+                "fatal: your current branch 'main' does not have any commits yet",
+                Code::GitUnbornBranch,
+            ),
+            ("fatal: Needed a single revision", Code::GitUnbornBranch),
+            (
+                "error: Your local changes to the following files would be overwritten by merge:",
+                Code::GitUncommitted,
+            ),
+            (
+                "error: Entry 'notes/a.md' not uptodate. Cannot merge.",
+                Code::GitUncommitted,
+            ),
+            (
+                "fatal: Unable to create '/tmp/vault/.git/index.lock': File exists.",
+                Code::GitLocked,
+            ),
+            ("fatal: remote origin already exists.", Code::GitExists),
+            (
+                "fatal: this operation must be run in a work tree",
+                Code::GitGeneric,
+            ),
+        ];
+        for (stderr, want) in cases {
+            assert_eq!(git_code(Some(128), stderr), *want, "{stderr}");
+        }
+        assert_eq!(
+            git_code(Some(1), "some unrecognized git failure"),
+            Code::GitGeneric
+        );
     }
 }

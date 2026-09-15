@@ -8,6 +8,24 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-15
+
+### Changed
+
+- **Git operations invoke the system `git` executable.** Clone, fetch,
+  push, commit, and the rest of the Vault git surface no longer link
+  `git2` / libgit2 / libssh2. **`git` must be installed and on
+  `PATH`.** Authentication now behaves exactly like a plain `git`
+  command, including `~/.ssh/config`, `ProxyCommand`, credential
+  helpers, and host-key checking. Scheda does not impose `BatchMode`:
+  it does not set `GIT_SSH_COMMAND` and does not read `core.sshCommand`.
+  An operator who wants BatchMode sets `GIT_SSH_COMMAND` in the
+  environment. Crate feature `remote-git` remains the policy gate that
+  refuses `https://` / `ssh://` / `git@` remotes when it is off; it no
+  longer enables a library. `vendored-openssl` is kept as an empty
+  feature so existing `--features vendored-openssl` builds still
+  resolve.
+
 ## [0.13.0] - 2026-09-15
 
 ### Added
@@ -1316,6 +1334,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.14.0]
 - [0.13.0]
 - [0.12.0]
 - [0.11.3]
@@ -1355,7 +1374,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/amsokol/scheda/releases/tag/v0.14.0
 [0.13.0]: https://github.com/amsokol/scheda/releases/tag/v0.13.0
 [0.12.0]: https://github.com/amsokol/scheda/releases/tag/v0.12.0
 [0.11.3]: https://github.com/amsokol/scheda/releases/tag/v0.11.3

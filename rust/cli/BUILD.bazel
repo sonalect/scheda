@@ -37,7 +37,10 @@ rust_test(
 
 rust_test(
     name = "cli_test",
-    srcs = ["tests/cli.rs"],
+    srcs = [
+        "tests/cli.rs",
+        "tests/common/mod.rs",
+    ],
     compile_data = glob(["src/**/*.rs"]),
     crate_root = "tests/cli.rs",
     data = [":scheda"],
@@ -53,7 +56,10 @@ rust_test(
 
 rust_test(
     name = "agent_test",
-    srcs = ["tests/agent.rs"],
+    srcs = [
+        "tests/agent.rs",
+        "tests/common/mod.rs",
+    ],
     compile_data = glob(["src/**/*.rs"]),
     crate_root = "tests/agent.rs",
     data = [":scheda"],

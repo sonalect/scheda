@@ -1,6 +1,8 @@
 //! A7: agent acceptance gates (`10` §4, `12` A7). Collection names here
 //! must not appear in `rust/cli/src` (SCH-1).
 
+mod common;
+
 use std::fs;
 use std::path::PathBuf;
 use std::process::{self, Command};
@@ -17,6 +19,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!(
             "scheda-a7-{}-{}-{n}",

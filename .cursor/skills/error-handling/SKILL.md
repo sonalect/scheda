@@ -23,7 +23,8 @@ index `601`). Leave room inside a group.
 
 Do **not** enum every Schema/envelope rule — that stays `CODE_INVALID` +
 Catch-alls (`CODE_IO_OTHER`) only for `ErrorKind::Other` and future/unstable
-kinds. git2 `ErrorCode` is mapped 1:1; do not join several kinds into one
+kinds. Git CLI failures are classified from exit status and stderr onto the
+same `git_*` / `not_fast_forward` codes; do not join several kinds into one
 proto value.
 
 After editing the proto: `bazel run //api/v1:generate` from the repo root
@@ -111,7 +112,7 @@ ensure!(
 Use them from `scheda`:
 
 ```rust
-use crate::error::{ensure, bail, Code, Context, ContextAs, ContextIo, ContextGit};
+use crate::error::{ensure, bail, Code, Context, ContextAs, ContextIo};
 use crate::Error;
 ```
 
@@ -120,15 +121,16 @@ use crate::Error;
 | Our error, add a frame | `.context(frame)` |
 | Frame needs format / extra work | `.with_context` with a closure |
 | `std::io::Error` | `.context(frame)` (`ContextIo`) |
-| `git2::Error` | `.context(frame)` (`ContextGit`) |
+| `git` CLI (exit + stderr) | `.context(frame)` after `git_code` |
 | Other foreign `Display` (`usearch`/`cxx`, tantivy, serde) | `.context(Code::…, frame)` |
 | Guard | `ensure!(cond, Error::invalid("…"))` |
 | Early return | `bail!(Error::unsupported("…"))` |
 | Record file | `.with_path("notes/a.md")` |
 | Method-specific retry | `.with_repeat(Repeat::Forbidden)` |
 
-Do not `.map_err(helper).context(...)` for foreign errors. IO and git use
-one-arg `.context(frame)` (code comes from `io_code` / `git_code`). Other
+Do not `.map_err(helper).context(...)` for foreign errors. IO uses
+one-arg `.context(frame)` (code comes from `io_code`). Git CLI failures
+are classified with `git_code` then `.context(frame)`. Other
 foreign errors use two-arg `.context(code, frame)`. Interpolated frames use
 `.with_context(|| format!("… {n}"))`, not `.context(format!(...))`.
 

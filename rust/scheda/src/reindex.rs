@@ -419,6 +419,7 @@ mod tests {
 
     impl Scratch {
         fn new() -> Self {
+            crate::git::isolate_test_git_env();
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
             let root =
                 std::env::temp_dir().join(format!("scheda-reindex-{}-{n}", std::process::id()));

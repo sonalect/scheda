@@ -14,17 +14,18 @@ default = ["remote-git"]
 # Tantivy `find` (lexical Index). `search` pulls this in.
 find = ["dep:tantivy"]
 # Hybrid `search` (BM25 + USearch). Turns `find` on; the reverse does not.
-search = ["find", "dep:usearch", "dep:cxx"]
+search = ["find", "dep:usearch", "dep:cxx", "dep:sha1"]
 # USearch SIMD kernels (`usearch/numkong`). Pulls `search` in.
 simd = ["search", "usearch/numkong"]
 # USearch OpenMP executor. Needs libomp (Linux `libomp-dev`; not used by Bazel CI).
 openmp = ["search", "usearch/openmp"]
-# libgit2 HTTPS and SSH. File remotes and local git work without this;
-# skip it to avoid OpenSSL (`default-features = false`).
-remote-git = ["git2/https", "git2/ssh"]
-# Static OpenSSL for a Cargo `+crt-static` Linux CLI. Bazel stays on the
-# system libssl (dynamic CRT).
-vendored-openssl = ["git2/vendored-openssl"]
+# Policy gate for https://, http://, ssh://, and git@ remotes. File remotes
+# and local git work without this. Does not enable a library: Scheda
+# invokes the system `git` executable for every git operation.
+remote-git = []
+# Kept so existing `--features vendored-openssl` builds still resolve.
+# Git TLS is now the system `git` binary, not a linked OpenSSL.
+vendored-openssl = []
 # Age ASCII-armor Record files. Off by default: a consumer that encrypts
 # nothing does not compile scrypt / ChaCha20-Poly1305 / X25519.
 encrypt = ["dep:age"]
@@ -32,20 +33,19 @@ encrypt = ["dep:age"]
 [dependencies]
 age = { workspace = true, optional = true }
 cxx = { workspace = true, optional = true }
-git2 = { workspace = true }
 regex = { workspace = true }
 scheda-generated = { workspace = true }
 buffa = { workspace = true }
 buffa-types = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha1 = { workspace = true, optional = true }
 sha2 = { workspace = true }
 tantivy = { workspace = true, optional = true }
 usearch = { workspace = true, optional = true }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]
-git2 = { workspace = true }
 serde_json = { workspace = true }
 
 [lints]

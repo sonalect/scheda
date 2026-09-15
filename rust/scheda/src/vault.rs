@@ -3001,6 +3001,7 @@ mod tests {
 
     impl Scratch {
         fn new() -> Self {
+            crate::git::isolate_test_git_env();
             let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
             let root = std::env::temp_dir().join(format!("scheda-c1-{}-{n}", process::id()));
             fs::create_dir_all(&root).unwrap();
@@ -3724,7 +3725,7 @@ mod tests {
     }
 
     #[test]
-    fn git2_works_without_an_async_runtime() {
+    fn git_works_without_an_async_runtime() {
         let scratch = Scratch::new();
         let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(git::is_work_tree(vault.path()));

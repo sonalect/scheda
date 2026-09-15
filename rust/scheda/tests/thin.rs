@@ -1,6 +1,8 @@
 //! Reduced crate: `find` and `search` off. Writes still work; the Index is
 //! marked stale. Collection names here must not appear in `rust/scheda/src`.
 
+mod common;
+
 use std::fs;
 #[cfg(not(feature = "search"))]
 use std::num::NonZeroUsize;
@@ -23,6 +25,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-thin-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();

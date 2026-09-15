@@ -94,7 +94,7 @@ pub(crate) fn commit_recorded(
         if !main.is_empty()
             && let Err(err) = git::commit(vault, message, &main, identity)
         {
-            git::reset_head_to(&nested_root, previous)
+            git::reset_head_to(&nested_root, previous.as_deref())
                 .map_err(|reset_err| reset_err.context("[Isolated] rollback nested git"))?;
             return Err(err);
         }

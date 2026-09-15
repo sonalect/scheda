@@ -2,12 +2,13 @@
 //! Collection names here and in `testdata/` must not appear in
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use git2::{IndexAddOption, Oid, Repository, Signature};
 use scheda::{Code, OpenOptions, RecordAdd, Vault};
 use serde_json::json;
 
@@ -19,6 +20,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-c7-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -54,50 +56,60 @@ fn as_url(path: &Path) -> String {
     }
 }
 
-fn head_id(dir: &Path) -> Oid {
-    Repository::open(dir)
-        .unwrap()
-        .head()
-        .unwrap()
-        .peel_to_commit()
-        .unwrap()
-        .id()
+fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("LC_ALL", "C")
+        .output()
+        .expect("git executable")
+}
+
+fn git_ok(dir: &Path, args: &[&str]) -> std::process::Output {
+    let out = git_output(dir, args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+fn git_stdout(dir: &Path, args: &[&str]) -> String {
+    String::from_utf8(git_ok(dir, args).stdout).unwrap()
+}
+
+fn head_id(dir: &Path) -> String {
+    git_stdout(dir, &["rev-parse", "HEAD"]).trim().to_owned()
 }
 
 fn origin_url(dir: &Path) -> String {
-    Repository::open(dir)
-        .unwrap()
-        .find_remote("origin")
-        .unwrap()
-        .url()
-        .unwrap()
+    git_stdout(dir, &["remote", "get-url", "origin"])
+        .trim()
         .to_owned()
 }
 
 fn set_origin(dir: &Path, url: &str) {
-    Repository::open(dir)
-        .unwrap()
-        .remote_set_url("origin", url)
-        .unwrap();
+    git_ok(dir, &["remote", "set-url", "origin", url]);
 }
 
 fn commit_all(dir: &Path, message: &str) {
-    let repo = Repository::open(dir).unwrap();
-    let mut index = repo.index().unwrap();
-    index
-        .add_all(["."].iter(), IndexAddOption::DEFAULT, None)
-        .unwrap();
-    index.write().unwrap();
-    let tree_id = index.write_tree().unwrap();
-    let tree = repo.find_tree(tree_id).unwrap();
-    let sig = Signature::now("Scheda", "scheda@invalid").unwrap();
-    let parent = match repo.head() {
-        Ok(head) => Some(head.peel_to_commit().unwrap()),
-        Err(_) => None,
-    };
-    let parents: Vec<&git2::Commit<'_>> = parent.as_ref().into_iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
-        .unwrap();
+    git_ok(dir, &["add", "-A"]);
+    git_ok(
+        dir,
+        &[
+            "-c",
+            "user.name=Scheda",
+            "-c",
+            "user.email=scheda@invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            message,
+        ],
+    );
 }
 
 fn seed_source(path: &Path) {
@@ -116,10 +128,16 @@ fn seed_source(path: &Path) {
 }
 
 fn make_bare(src: &Path, bare: &Path) {
-    git2::build::RepoBuilder::new()
-        .bare(true)
-        .clone(&as_url(src), bare)
-        .unwrap();
+    git_ok(
+        src,
+        &[
+            "clone",
+            "--bare",
+            "--",
+            &as_url(src),
+            &bare.to_string_lossy(),
+        ],
+    );
 }
 
 fn pair_with_bare(scratch: &Scratch) -> (PathBuf, PathBuf) {
@@ -360,10 +378,15 @@ fn writes_and_commit_do_not_need_the_network() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
     let vault = Vault::open(&vault_path, OpenOptions::new(), None).unwrap();
-    git2::Repository::open(vault.path())
-        .unwrap()
-        .remote("origin", "https://example.invalid/scheda.git")
-        .unwrap();
+    git_ok(
+        vault.path(),
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/scheda.git",
+        ],
+    );
     drop(vault);
     let vault = Vault::open(&vault_path, OpenOptions::new(), None).unwrap();
     vault.begin().unwrap();

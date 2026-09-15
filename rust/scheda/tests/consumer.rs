@@ -3,14 +3,15 @@
 //! `rust/scheda/src` (MOD-1, SCH-1). That grep is library source only;
 //! test data must not be able to turn it red.
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "find")]
 use std::time::{Duration, Instant};
 
-use git2::{DiffFormat, IndexAddOption, Repository, Signature};
 use scheda::{Code, OpenOptions, RecordAdd, RecordReplace, Vault};
 use serde_json::json;
 
@@ -25,6 +26,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-p10-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -161,23 +163,38 @@ fn write_rel(vault: &Path, parts: &[&str], body: &str) {
     fs::write(&path, body).unwrap();
 }
 
+fn git_ok(dir: &Path, args: &[&str]) -> std::process::Output {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("LC_ALL", "C")
+        .output()
+        .expect("git executable");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
 fn commit_all(dir: &Path, message: &str) {
-    let repo = Repository::open(dir).unwrap();
-    let mut index = repo.index().unwrap();
-    index
-        .add_all(["."].iter(), IndexAddOption::DEFAULT, None)
-        .unwrap();
-    index.write().unwrap();
-    let tree_id = index.write_tree().unwrap();
-    let tree = repo.find_tree(tree_id).unwrap();
-    let sig = Signature::now("Scheda", "scheda@invalid").unwrap();
-    let parent = match repo.head() {
-        Ok(head) => Some(head.peel_to_commit().unwrap()),
-        Err(_) => None,
-    };
-    let parents: Vec<&git2::Commit<'_>> = parent.as_ref().into_iter().collect();
-    repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
-        .unwrap();
+    git_ok(dir, &["add", "-A"]);
+    git_ok(
+        dir,
+        &[
+            "-c",
+            "user.name=Scheda",
+            "-c",
+            "user.email=scheda@invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            message,
+        ],
+    );
 }
 
 fn plant_main_tree(vault: &Path) {
@@ -338,18 +355,7 @@ fn hand_tally(vault: &Path) -> (u64, u64) {
 }
 
 fn git_diff_workdir(dir: &Path) -> String {
-    let repo = Repository::open(dir).unwrap();
-    let head = repo.head().unwrap().peel_to_tree().unwrap();
-    let diff = repo.diff_tree_to_workdir(Some(&head), None).unwrap();
-    let mut out = String::new();
-    diff.print(DiffFormat::Patch, |_delta, _hunk, line| {
-        if let Ok(text) = str::from_utf8(line.content()) {
-            out.push_str(text);
-        }
-        true
-    })
-    .unwrap();
-    out
+    String::from_utf8(git_ok(dir, &["diff", "HEAD"]).stdout).unwrap()
 }
 
 fn assert_utf8_text(body: &str) {
@@ -613,9 +619,20 @@ fn isolated_round_trip_skipped_by_main_find() {
         .unwrap();
     assert_eq!(named.records.len(), 1);
     assert_eq!(named.records[0].id.as_deref(), Some("bound"));
-    let repo = Repository::open(scratch.vault()).unwrap();
-    assert!(repo.is_path_ignored(Path::new(".scheda")).unwrap());
-    assert!(repo.is_path_ignored(Path::new(".scheda/index")).unwrap());
+    let ignored = Command::new("git")
+        .arg("-C")
+        .arg(scratch.vault())
+        .args(["check-ignore", "-q", "--", ".scheda"])
+        .output()
+        .unwrap();
+    assert_eq!(ignored.status.code(), Some(0));
+    let ignored = Command::new("git")
+        .arg("-C")
+        .arg(scratch.vault())
+        .args(["check-ignore", "-q", "--", ".scheda/index"])
+        .output()
+        .unwrap();
+    assert_eq!(ignored.status.code(), Some(0));
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;

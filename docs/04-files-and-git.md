@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.38, 15 September 2026.
+Document 4 of the Scheda package. Version 0.39, 15 September 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -48,7 +48,7 @@ stack.
 
 ## 2. The Vault is a git working tree
 
-**GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. `init` and `clone` write `core.longpaths` in the Vault's local git config (`commit` and `discard` set it on an older tree that lacks it) so Windows can stage a 255-byte filename component when the absolute path is longer than MAX_PATH. Unix ignores the key. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s. *Check:* after `open` of a new Vault, local `core.longpaths` is true. *Check:* `add` of a 252-character `id` (on-disk `{id}.md` = 255 bytes) commits.
+**GIT-1. Root is a repository.** The Vault directory is a git working tree. The Index lives **inside** that tree under `.scheda/` and is gitignored; it is not committed. A Remote is optional. Scheda invokes the system `git` executable for every git operation (`init`, `clone`, `commit`, `push`, `pull`, history); `git` must be installed and on `PATH`. Authentication, `~/.ssh/config`, `ProxyCommand`, credential helpers, and host-key checking are git's, not a linked SSH library. `init` and `clone` write `core.longpaths` in the Vault's local git config (`commit` and `discard` set it on an older tree that lacks it) so Windows can stage a 255-byte filename component when the absolute path is longer than MAX_PATH. Unix ignores the key. *Check:* `git status` at the Vault root lists collection files and `.gitignore`, and does not list Index files; a Vault with no `remote` still `commit`s. *Check:* after `open` of a new Vault, local `core.longpaths` is true. *Check:* `add` of a 252-character `id` (on-disk `{id}.md` = 255 bytes) commits.
 
 **GIT-2. Autocommit unless a transaction is open.** Outside a transaction, each mutating call (`add`, `replace`, `remove`, `create_collection`) writes the working tree and then creates one git commit. The default message is `scheda`. A mutating call may pass a message; outside a transaction that text is the commit subject. A message that is present but empty is `invalid` before any file is written. Inside a transaction those calls do not commit, so a message passed there is ignored; `commit(message)` is the subject that lands. Isolated Record paths commit in `{vault}/.isolated/` nested git; Schema stubs and non-isolated files commit in the main repository. If that commit fails, those writes are discarded: only paths Scheda recorded are restored to HEAD (new files are deleted). Isolated and main commits are two git operations; if the main commit fails after the nested one succeeded, Scheda resets the nested repository to the HEAD it had before that nested commit. This is not `git reset --hard` of the whole main tree.
 
@@ -80,7 +80,7 @@ Line-level “this journal Record's first commit” is **later** (requires blami
 
 ## 3. Remote, open, pull, push
 
-A **Remote** is the one optional git remote Scheda uses on the Vault repository, named `origin`. GitHub is an example host, not a Scheda type. Auth is git's (credentials, SSH, `GIT_ASKPASS`); Scheda does not store host tokens in the Vault. Extra remotes in git config are ignored.
+A **Remote** is the one optional git remote Scheda uses on the Vault repository, named `origin`. GitHub is an example host, not a Scheda type. Auth is git's (credentials, SSH keys from `~/.ssh`, `~/.ssh/config`, `GIT_ASKPASS`); Scheda does not store host tokens in the Vault. Extra remotes in git config are ignored.
 
 **GIT-7. Detect Remote without the network.** `open` of an existing working tree reads git config locally. `Vault.info` reports `api.v1.VaultInfo.remote`: `origin` when that remote exists, otherwise empty. That is not a fetch. *Check:* `open` with network disabled still reports `origin` on `info` if it is configured.
 

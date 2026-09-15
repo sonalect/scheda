@@ -2,12 +2,13 @@
 //! Collection names here and in `testdata/` must not appear in
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
+mod common;
+
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use git2::{IndexEntry, IndexTime, Oid, Repository};
 use scheda::{Code, Filter, OpenOptions, RecordAdd, RecordReplace, Schema, Vault};
 use serde_json::{Value, json};
 
@@ -19,6 +20,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-p4-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -71,13 +73,40 @@ fn write_schema(scratch: &Scratch, body: &str) {
     fs::write(dir.join(".schema.yaml"), body).unwrap();
 }
 
+fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
+    Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .env("LC_ALL", "C")
+        .output()
+        .expect("git executable")
+}
+
+fn git_ok(dir: &Path, args: &[&str]) -> std::process::Output {
+    let out = git_output(dir, args);
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    out
+}
+
+fn git_stdout(dir: &Path, args: &[&str]) -> String {
+    String::from_utf8(git_ok(dir, args).stdout).unwrap()
+}
+
 fn log_len(dir: &Path) -> usize {
-    let repo = Repository::open(dir).unwrap();
-    let mut walk = repo.revwalk().unwrap();
-    if walk.push_head().is_err() {
+    let out = git_output(dir, &["rev-list", "--count", "HEAD"]);
+    if !out.status.success() {
         return 0;
     }
-    walk.count()
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap_or(0)
 }
 
 fn peek_schema_name(body: &str) -> String {
@@ -153,7 +182,7 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
     vault.create_collection("sealed_log", decl, None).unwrap();
     let main_before = log_len(vault.path());
     let nested = scratch.vault().join(".isolated");
-    assert!(Repository::open(&nested).is_ok());
+    assert!(nested.join(".git").exists() || nested.join("HEAD").exists());
     let collection = vault.collection("sealed_log").unwrap();
     collection
         .add("a", rec(json!({"msg": "one"})), None)
@@ -165,13 +194,7 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
     vault.commit("isolated batch").unwrap();
     assert_eq!(log_len(vault.path()), main_before + 1);
     assert_eq!(log_len(&nested), 1);
-    assert!(
-        git2::Repository::open(&nested)
-            .unwrap()
-            .remotes()
-            .unwrap()
-            .is_empty()
-    );
+    assert_eq!(git_stdout(&nested, &["remote"]).trim(), "");
     let got = collection.get("a").unwrap();
     assert_eq!(got.id.as_deref(), Some("a"));
     let expected = format!(".isolated/sealed_log/{:08x}-{}.jsonl", 1, vault.writer());
@@ -333,9 +356,24 @@ fn isolated_document_round_trip_and_main_find_skips_it() {
         .unwrap();
     assert_eq!(scoped.records.len(), 1);
     assert_eq!(scoped.records[0].id.as_deref(), Some("secret"));
-    let repo = git2::Repository::open(scratch.vault()).unwrap();
-    assert!(repo.is_path_ignored(Path::new(".scheda")).unwrap());
-    assert!(repo.is_path_ignored(Path::new(".scheda/index")).unwrap());
+    assert_eq!(
+        git_output(
+            scratch.vault().as_path(),
+            &["check-ignore", "-q", "--", ".scheda"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
+    assert_eq!(
+        git_output(
+            scratch.vault().as_path(),
+            &["check-ignore", "-q", "--", ".scheda/index"]
+        )
+        .status
+        .code(),
+        Some(0)
+    );
     #[cfg(unix)]
     assert_owner_only_tree(&scratch.vault().join(".scheda"));
 }
@@ -413,9 +451,15 @@ fn check_passes_when_nested_git_has_a_remote() {
         .unwrap();
     vault.check().unwrap();
     let nested = scratch.vault().join(".isolated");
-    let repo = Repository::open(&nested).unwrap();
-    repo.remote("origin", "https://example.invalid/isolated.git")
-        .unwrap();
+    git_ok(
+        &nested,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "https://example.invalid/isolated.git",
+        ],
+    );
     vault.check().unwrap();
 }
 
@@ -480,56 +524,40 @@ fn as_url(path: &Path) -> String {
 }
 
 fn make_bare(src: &Path, bare: &Path) {
-    git2::build::RepoBuilder::new()
-        .bare(true)
-        .clone(&as_url(src), bare)
-        .unwrap();
+    git_ok(
+        src,
+        &[
+            "clone",
+            "--bare",
+            "--",
+            &as_url(src),
+            &bare.to_string_lossy(),
+        ],
+    );
 }
 
 fn set_origin(dir: &Path, url: &str) {
-    let repo = Repository::open(dir).unwrap();
-    if repo.find_remote("origin").is_ok() {
-        repo.remote_set_url("origin", url).unwrap();
+    let existing = git_output(dir, &["remote"]);
+    let names = String::from_utf8_lossy(&existing.stdout);
+    if names.lines().any(|name| name.trim() == "origin") {
+        git_ok(dir, &["remote", "set-url", "origin", url]);
     } else {
-        repo.remote("origin", url).unwrap();
+        git_ok(dir, &["remote", "add", "origin", url]);
     }
 }
 
 fn origin_url(dir: &Path) -> String {
-    Repository::open(dir)
-        .unwrap()
-        .find_remote("origin")
-        .unwrap()
-        .url()
-        .unwrap()
+    git_stdout(dir, &["remote", "get-url", "origin"])
+        .trim()
         .to_owned()
 }
 
-fn head_id(dir: &Path) -> git2::Oid {
-    Repository::open(dir)
-        .unwrap()
-        .head()
-        .unwrap()
-        .peel_to_commit()
-        .unwrap()
-        .id()
+fn head_id(dir: &Path) -> String {
+    git_stdout(dir, &["rev-parse", "HEAD"]).trim().to_owned()
 }
 
 fn tree_contains(dir: &Path, needle: &str) -> bool {
-    let repo = Repository::open(dir).unwrap();
-    let tree = repo.head().unwrap().peel_to_tree().unwrap();
-    let mut found = false;
-    tree.walk(git2::TreeWalkMode::PreOrder, |root, entry| {
-        if let Ok(name) = entry.name() {
-            let path = format!("{root}{name}");
-            if path.contains(needle) {
-                found = true;
-            }
-        }
-        git2::TreeWalkResult::Ok
-    })
-    .unwrap();
-    found
+    git_stdout(dir, &["ls-tree", "-r", "--name-only", "HEAD"]).contains(needle)
 }
 
 #[test]
@@ -544,25 +572,18 @@ fn check_fails_when_parent_tracks_isolated() {
         .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
     let rel = format!(".isolated/sealed_log/{:08x}-{}.jsonl", 1, vault.writer());
-    let bytes = fs::read(vault.path().join(&rel)).unwrap();
-    let repo = Repository::open(vault.path()).unwrap();
-    let mut index = repo.index().unwrap();
-    let entry = IndexEntry {
-        ctime: IndexTime::new(0, 0),
-        mtime: IndexTime::new(0, 0),
-        dev: 0,
-        ino: 0,
-        mode: 0o100644,
-        uid: 0,
-        gid: 0,
-        file_size: bytes.len() as u32,
-        id: Oid::ZERO_SHA1,
-        flags: 0,
-        flags_extended: 0,
-        path: rel.as_bytes().to_vec(),
-    };
-    index.add_frombuffer(&entry, &bytes).unwrap();
-    index.write().unwrap();
+    let hash = git_stdout(vault.path(), &["hash-object", "-w", "--", &rel])
+        .trim()
+        .to_owned();
+    git_ok(
+        vault.path(),
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("100644,{hash},{rel}"),
+        ],
+    );
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

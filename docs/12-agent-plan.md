@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.79, 15 September 2026.
+Document 12 of the Scheda package. Version 0.80, 15 September 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -820,8 +820,9 @@ compiled and stop being public.
 
 Not urgent: nothing waits on it. Cargo `default` is `remote-git` only.
 `tantivy`, `usearch`, and `cxx` are `optional = true` behind `find` and
-`search`. `git2` is not part of this — git is the product — and its
-network legs are already `remote-git` and `vendored-openssl`.
+`search`. Git is the product: Scheda invokes the system `git` executable.
+`remote-git` is a policy gate for HTTPS/SSH remotes; `vendored-openssl`
+is an empty leftover feature.
 
 `search` cannot stand without `find`. `search.proto` imports `find.proto`
 for `SearchQuery.filter`, and the hybrid's lexical half is BM25 on the

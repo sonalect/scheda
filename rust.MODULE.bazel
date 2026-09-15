@@ -6,8 +6,8 @@ RUST_VERSION = "1.98.1"
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 
-# Host CRT on every OS. +crt-static on Linux blocked git2 OpenSSL/libssh2
-# and USearch/cxx TLS; macOS/Windows never used it.
+# Host CRT on every OS. +crt-static on Linux still blocks USearch/cxx TLS;
+# macOS/Windows never used it.
 rust.toolchain(
     edition = RUST_EDITION,
     versions = [RUST_VERSION],

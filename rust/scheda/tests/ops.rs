@@ -2,13 +2,14 @@
 //! Collection names here and in `testdata/` must not appear in
 //! `rust/scheda/src` (MOD-1, SCH-1).
 
+mod common;
+
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process;
+use std::process::{self, Command};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use git2::Repository;
 use scheda::{Code, Embedder, OpenOptions, RecordAdd, SearchQuery, Vault};
 use serde_json::json;
 
@@ -20,6 +21,7 @@ struct Scratch {
 
 impl Scratch {
     fn new() -> Self {
+        common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
         let root = std::env::temp_dir().join(format!("scheda-c8-{}-{n}", process::id()));
         fs::create_dir_all(&root).unwrap();
@@ -294,12 +296,21 @@ fn live_index(vault: &Vault) -> PathBuf {
 }
 
 fn log_len(dir: &Path) -> usize {
-    let repo = Repository::open(dir).unwrap();
-    let mut walk = repo.revwalk().unwrap();
-    if walk.push_head().is_err() {
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-list", "--count", "HEAD"])
+        .env("LC_ALL", "C")
+        .output()
+        .expect("git executable");
+    if !out.status.success() {
         return 0;
     }
-    walk.count()
+    String::from_utf8(out.stdout)
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap_or(0)
 }
 
 fn peek_schema_name(body: &str) -> String {
