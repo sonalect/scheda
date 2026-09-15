@@ -308,7 +308,8 @@ pub mod history {
         ///
         /// Field 3: `author`
         pub author: ::core::option::Option<&'a str>,
-        /// Git commit message.
+        /// Git commit message. No trailing newline (git stores one after the
+        /// body); inner newlines of a multi-line message are preserved.
         ///
         /// Field 4: `message`
         pub message: ::core::option::Option<&'a str>,
@@ -665,7 +666,8 @@ pub mod history {
         pub fn author(&self) -> ::core::option::Option<&'_ str> {
             self.0.reborrow().author
         }
-        /// Git commit message.
+        /// Git commit message. No trailing newline (git stores one after the
+        /// body); inner newlines of a multi-line message are preserved.
         ///
         /// Field 4: `message`
         #[must_use]

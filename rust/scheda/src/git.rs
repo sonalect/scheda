@@ -771,7 +771,7 @@ pub(crate) fn history(
         let Some(email) = fields.next() else {
             continue;
         };
-        let message = fields.next().unwrap_or("");
+        let message = fields.next().unwrap_or("").trim_end_matches('\n');
         let in_tree = git()
             .current_dir(dir)
             .arg("cat-file")

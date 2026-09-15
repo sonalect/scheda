@@ -26,7 +26,8 @@ message History {
     google.protobuf.Timestamp time = 2;
     // Git author as `Name <email>`.
     string author = 3;
-    // Git commit message.
+    // Git commit message. No trailing newline (git stores one after the
+    // body); inner newlines of a multi-line message are preserved.
     string message = 4;
     // Bytes of that file at this commit (`git show`). Not a Record envelope.
     // For `journal`, the whole segment, not one line. For an encrypted

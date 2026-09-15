@@ -8,6 +8,22 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.15.1] - 2026-09-15
+
+### Fixed
+
+- **`History.Entry.message` no longer carries a trailing newline.**
+  `history` reads the commit body with `git log --format=…%B`, and git
+  stores a newline after the body, so every entry came back as
+  `"my subject\n"`. That was a silent contract change from `0.14.0`,
+  where the `git` executable replaced libgit2: a caller comparing
+  `entry.message` with the message it passed to `add`, `remove`, or
+  `commit` stopped matching. Only the terminator is stripped — the blank
+  line and the body of a multi-line message are preserved. The proto
+  field now states the contract, and the tests assert the whole message
+  instead of a substring, which is why the regression survived two
+  releases.
+
 ## [0.15.0] - 2026-09-15
 
 ### Removed
@@ -1352,6 +1368,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.15.1]
 - [0.15.0]
 - [0.14.0]
 - [0.13.0]
@@ -1393,7 +1410,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/amsokol/scheda/releases/tag/v0.15.1
 [0.15.0]: https://github.com/amsokol/scheda/releases/tag/v0.15.0
 [0.14.0]: https://github.com/amsokol/scheda/releases/tag/v0.14.0
 [0.13.0]: https://github.com/amsokol/scheda/releases/tag/v0.13.0

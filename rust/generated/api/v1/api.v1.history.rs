@@ -181,7 +181,8 @@ pub mod history {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub author: ::core::option::Option<::buffa::alloc::string::String>,
-        /// Git commit message.
+        /// Git commit message. No trailing newline (git stores one after the
+        /// body); inner newlines of a multi-line message are preserved.
         ///
         /// Field 4: `message`
         #[serde(

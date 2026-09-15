@@ -658,12 +658,9 @@ fn autocommit_uses_caller_message() {
         .unwrap()
         .history("alpha", 0, 10)
         .unwrap();
-    assert!(
-        hist.entries[0]
-            .message
-            .as_deref()
-            .unwrap()
-            .contains("note alpha"),
+    assert_eq!(
+        hist.entries[0].message.as_deref().unwrap(),
+        "note alpha",
         "{hist:?}"
     );
 }
@@ -733,8 +730,35 @@ fn message_inside_transaction_is_ignored() {
         .history("alpha", 0, 10)
         .unwrap();
     let message = hist.entries[0].message.as_deref().unwrap();
-    assert!(message.contains("txn subject"), "{message}");
+    assert_eq!(message, "txn subject", "{message}");
     assert!(!message.contains("ignored"), "{message}");
+}
+
+#[test]
+fn history_message_keeps_the_body_and_drops_the_terminator() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
+    scratch.write_schema("notes.yaml", NOTES);
+    let vault = scratch.reopen();
+    vault
+        .collection("north_notes")
+        .unwrap()
+        .add(
+            "alpha",
+            rec(json!({"title": "A", "count": 1})),
+            Some("subject line\n\nbody line"),
+        )
+        .unwrap();
+    let hist = vault
+        .collection("north_notes")
+        .unwrap()
+        .history("alpha", 0, 10)
+        .unwrap();
+    assert_eq!(
+        hist.entries[0].message.as_deref().unwrap(),
+        "subject line\n\nbody line",
+        "{hist:?}"
+    );
 }
 
 #[test]
