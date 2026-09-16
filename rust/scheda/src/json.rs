@@ -10,8 +10,8 @@ use crate::error::bail;
 use crate::{Error, Schema};
 
 const SCHEMA_KEYS: &[&str] = &[
-    "version",
     "fields",
+    "isolated",
     "isolated",
     "encrypted",
     "excludeLexicalIndex",
@@ -231,8 +231,7 @@ mod tests {
     #[test]
     fn layout_key_is_invalid() {
         let err =
-            schema_from_json(r#"{"version":1,"document":{},"layout":["c/{id}.md"],"fields":[]}"#)
-                .unwrap_err();
+            schema_from_json(r#"{"document":{},"layout":["c/{id}.md"],"fields":[]}"#).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("layout"));
     }
@@ -240,7 +239,6 @@ mod tests {
     #[test]
     fn nested_unknown_field_key_is_invalid() {
         let err = schema_from_value(&json!({
-            "version": 1,
             "document": {},
             "fields": [{"name": "title", "string": {}, "layout": true}]
         }))
@@ -250,10 +248,15 @@ mod tests {
 
     #[test]
     fn known_schema_parses() {
-        let schema = schema_from_json(
-            r#"{"version":1,"document":{},"fields":[{"name":"title","string":{}}]}"#,
-        )
-        .unwrap();
-        assert_eq!(schema.version, Some(1));
+        let schema =
+            schema_from_json(r#"{"document":{},"fields":[{"name":"title","string":{}}]}"#).unwrap();
+        assert!(schema.kind.is_some());
+    }
+
+    #[test]
+    fn leftover_version_key_is_invalid() {
+        let err = schema_from_json(r#"{"version":1,"document":{},"fields":[]}"#).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(err.message.as_deref().unwrap_or("").contains("version"));
     }
 }

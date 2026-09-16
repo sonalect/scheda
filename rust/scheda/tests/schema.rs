@@ -5,7 +5,6 @@ mod common;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda::{Code, Kind, OpenOptions, Vault};
@@ -20,9 +19,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c2-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c2", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -103,6 +102,18 @@ fn missing_version_is_rejected_on_open() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("west.yaml", WEST_MISSING_VERSION);
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn version_2_is_rejected_on_open() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema(
+        "west.yaml",
+        "name: west_docs\nkind: document\nversion: 2\nfields: []\n",
+    );
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -220,7 +231,7 @@ fn two_vaults_with_different_collection_names() {
     assert!(west_vault.collection("east_docs").is_err());
     assert!(east_vault.collection("west_docs").is_err());
     assert_eq!(west_vault.versions().unwrap(), &[1]);
-    assert_eq!(east_vault.versions().unwrap(), &[2]);
+    assert_eq!(east_vault.versions().unwrap(), &[1]);
 }
 
 #[test]

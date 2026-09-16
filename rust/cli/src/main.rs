@@ -13,8 +13,8 @@ use std::sync::Arc;
 
 use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
-    Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace,
-    Reranker, SearchQuery, Vault, parse_age_identity, schema_from_json,
+    Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, Reranker, SearchQuery,
+    Vault, parse_age_identity, schema_from_json,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -262,20 +262,16 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
     let collection = vault.collection(name)?;
     match command {
         CollectionCommand::Schema => emit_json(&collection.schema()?),
-        CollectionCommand::Add {
-            id,
-            record,
-            message,
-        } => collection.add(&id, parse_add(record.as_deref())?, message.as_deref()),
+        CollectionCommand::Add { id, file, message } => {
+            collection.add(&id, read_raw_bytes(file.as_deref())?, message.as_deref())
+        }
         CollectionCommand::Get { id } => emit_json(&collection.get(&id)?),
         CollectionCommand::History { id, offset, count } => {
             emit_json(&collection.history(&id, offset, count)?)
         }
-        CollectionCommand::Replace {
-            id,
-            record,
-            message,
-        } => collection.replace(&id, parse_replace(record.as_deref())?, message.as_deref()),
+        CollectionCommand::Replace { id, file, message } => {
+            collection.replace(&id, read_raw_bytes(file.as_deref())?, message.as_deref())
+        }
         CollectionCommand::Remove { id, message } => collection.remove(&id, message.as_deref()),
         CollectionCommand::Documents => {
             let mut records = Vec::new();
@@ -512,22 +508,36 @@ fn parse_search_query(
     Ok(query)
 }
 
-fn parse_add(json: Option<&str>) -> Result<RecordAdd, Error> {
-    let add: RecordAdd = parse_json(&json_input(
-        json,
-        "missing record JSON (pass --record or stdin)",
-    )?)?;
-    add.require_valid()?;
-    Ok(add)
+fn read_raw_bytes(file: Option<&Path>) -> Result<Vec<u8>, Error> {
+    match file {
+        Some(path) => {
+            refuse_stdin_with_file()?;
+            std::fs::read(path).map_err(|err| Error::io_other(format!("{}: {err}", path.display())))
+        }
+        None => {
+            let mut buf = Vec::new();
+            io::stdin()
+                .read_to_end(&mut buf)
+                .map_err(|err| Error::io_other(err.to_string()))?;
+            Ok(buf)
+        }
+    }
 }
 
-fn parse_replace(json: Option<&str>) -> Result<RecordReplace, Error> {
-    let replace: RecordReplace = parse_json(&json_input(
-        json,
-        "missing record JSON (pass --record or stdin)",
-    )?)?;
-    replace.require_valid()?;
-    Ok(replace)
+fn refuse_stdin_with_file() -> Result<(), Error> {
+    use std::io::IsTerminal;
+    if io::stdin().is_terminal() {
+        return Ok(());
+    }
+    let mut buf = Vec::new();
+    io::stdin()
+        .read_to_end(&mut buf)
+        .map_err(|err| Error::io_other(err.to_string()))?;
+    if buf.is_empty() {
+        Ok(())
+    } else {
+        Err(Error::invalid("--file and stdin together"))
+    }
 }
 
 fn json_input(flag: Option<&str>, missing: &str) -> Result<String, Error> {

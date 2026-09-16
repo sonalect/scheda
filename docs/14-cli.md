@@ -1,12 +1,21 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.64, 12 September 2026.
+Document 14 of the Scheda package. Version 0.70, 16 September 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
-the Protobuf JSON mapping of `api/v1`.
+the Protobuf JSON mapping of `api/v1`, except `collection … get`, which
+writes `Record.raw` bytes.
 
 Unset embedder → no vector leg; `search` is lexical only (`13` §4).
 Unset reranker → RRF order.
+
+The CLI installs a **default whole-file Projector** at `open` when the
+process is this binary: one text column `body` (marks `find`, `fts`, and
+`vector`) whose value is the entire UTF-8 Record (`project` returns that
+string). `find` / `search` Filter leaves other than identity and `body`
+are `invalid`. Vault `find` / `search` still require the collection
+qualifier on `body` (`13` §3). This default is CLI-only. The library does
+not install it when a program passes no Projector.
 
 ---
 
@@ -32,7 +41,9 @@ There is no flag that takes the encryption secret as its value, and adding one w
 
 `--help` / `--version` stay. No Record path.
 
-Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
+Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`,
+except `collection … get` (stdout is `Record.raw` bytes; errors stay JSON
+on stderr).
 
 ---
 
@@ -42,17 +53,17 @@ Stdout / stderr: protobuf JSON of the library result or `api.v1.Error`.
 |---|---|
 | `open` | [`--remote-repo URL`] (absolute URI when set) |
 | `info` | |
-| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`] |
+| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is the thin collection declaration (`api.v1.Schema` today). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |
 | `check` | |
-| `reindex` | |
-| `find` | [`--collections NAME,…`] `--filter JSON --offset N --count N` [`--include-raw`] |
+| `reindex` | Uses the CLI default Projector (`body` = whole Record). |
+| `find` | [`--collections NAME,…`] `--filter JSON --offset N --count N` [`--include-raw`]. Projector column in the Filter is `body` only (plus identity). Vault leaves must set `collection` (`13` §3). |
 | `search` | [`--collections NAME,…`] `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`] |
 | `push` | |
 | `pull` | |
 | `sync` | |
 | `push-isolated` | Push `{vault}/.isolated/` to its own Remote. Missing nested work tree or no Remote → `invalid`. |
-| `pull-isolated` | Pull `{vault}/.isolated/` from its own Remote, then reload Schema and rebuild the Index. `locked` while `reindex` is in flight. |
+| `pull-isolated` | Pull `{vault}/.isolated/` from its own Remote, then reload collection declarations and rebuild the Index. `locked` while `reindex` is in flight. |
 | `sync-isolated` | Isolated `pull` then `push`. |
 
 `find` / `search` are Vault methods (`07` LIB-10, LIB-11). `--collections`
@@ -67,7 +78,8 @@ plain names is one page with one `total`. Encrypted name →
 is `unsupported`. Stdout JSON includes `collection` on each `Record`
 / `Hit`. `--include-raw` sets `FindQuery.include_raw` /
 `SearchQuery.include_raw` (default off: omit `raw`). `--filter` is
-`FindQuery.filter` JSON.
+`FindQuery.filter` JSON. With the CLI Projector, a Filter leaf other than
+identity or `body` is `invalid`.
 
 The CLI does not encode `begin` / `commit` / `discard`. Each mutating
 command (`create-collection`, `collection … add` / `replace` / `remove`) autocommits
@@ -123,15 +135,15 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 
 | Subcommand | Args |
 |---|---|
-| `schema` | |
-| `add` | `--id ID --record JSON` (or stdin) [`--message TEXT`] |
-| `get` | `--id ID` |
-| `history` | `--id ID --offset N --count N` |
-| `replace` | `--id ID --record JSON` (or stdin) [`--message TEXT`] |
+| `schema` | Print this collection's declaration as protobuf JSON (kind, perimeter, caps). No field list. |
+| `add` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. `raw` is those UTF-8 bytes. Not a JSON `fields` object. `--file` and a non-empty stdin together → `invalid`. Empty bytes are allowed. |
+| `get` | `--id ID`. Stdout is `Record.raw` (UTF-8 bytes), not a JSON envelope. Errors are protobuf JSON on stderr. |
+| `history` | `--id ID --offset N --count N`. JSON `History`. |
+| `replace` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. Same bytes rule as `add`. `journal` → `unsupported`. |
 | `remove` | `--id ID` [`--message TEXT`] |
-| `documents` | Walk Record files of this `document` or `singleton` in `id` order. JSON array of Records. `journal` → `unsupported`. Encrypted collection without a secret → `crypto`. |
-| `ids` | Ids in the same order. JSON array of strings. Encrypted collections do not need a secret. `journal` → `unsupported`. |
-| `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. |
+| `documents` | Walk Record files of this `document` or `singleton` in `id` order. JSON array of Records (`collection`, `id`, `path`, `raw`). `journal` → `unsupported`. Encrypted collection without a secret → `crypto`. |
+| `ids` | Ids in the same order (relative path, including extension). JSON array of strings. Encrypted collections do not need a secret. `journal` → `unsupported`. |
+| `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. CLI Projector: identity and `body` only. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 
 Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
@@ -182,8 +194,8 @@ Vault path.
 
 `import` creates that Vault with `open` if the path is not a Vault yet.
 Then it walks `python/cli/testdata/animals/`:
-`create-collection` from each `.schema.yaml` when `info` does not list the
-name; `get` then `add` for each Markdown document. Existing ids are
+`create-collection` from each `.collection.yaml` when `info` does not list the
+name; `get` then `add --file` for each Record file. Existing ids are
 skipped. `open` / `info` / `create-collection` / `get` / `find` do not
 pass embedder flags. `cli_LLMs` `add` passes the HTTP embedder so
 `index/vector/` is written per Record; skipped ids then `reindex`.

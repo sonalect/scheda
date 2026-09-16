@@ -37,7 +37,7 @@ the rule.
 |---|---|
 | `code` | Root/deep class. Same `get` may be `NOT_FOUND` or `IO_NOT_FOUND`. |
 | `message` | Detail. Must not replace `code`. |
-| `path` | Vault-relative POSIX, same as `Record.path`. Unset if there is no Record file. |
+| `path` | Vault-relative POSIX of the file this failure is about. Unset if there is no such file. |
 | `repeat` | Same call, same args, may succeed later? |
 | `stack` | Causal frames, outermost first. Not a backtrace. |
 

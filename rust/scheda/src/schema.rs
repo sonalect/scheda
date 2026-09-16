@@ -226,7 +226,7 @@ struct RawSingleton {
 struct RawCollection {
     name: String,
     kind: Kind,
-    version: u32,
+    version: Option<u32>,
     fields: Vec<RawField>,
     segment_max_bytes: Option<u64>,
     segment_max_lines: Option<u64>,
@@ -428,11 +428,17 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
         bail!(Error::invalid(format!("schema {loc}: name is required")));
     }
     require_slug("collection name", &raw.name).with_context(|| format!("schema {loc}: name"))?;
-    if raw.version < 1 {
-        bail!(Error::invalid(format!(
-            "schema {loc}: version must be >= 1"
-        )));
-    }
+    let version = match raw.version {
+        None => {
+            bail!(Error::invalid(format!("schema {loc}: version is required")));
+        }
+        Some(1) => 1,
+        Some(n) => {
+            bail!(Error::invalid(format!(
+                "schema {loc}: version {n} is not implemented"
+            )));
+        }
+    };
     match raw.kind {
         Kind::Journal => {
             if raw.singleton.is_some() {
@@ -539,7 +545,7 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
     Ok(CollectionDecl {
         name: raw.name,
         kind: raw.kind,
-        version: raw.version,
+        version,
         filter_keys,
         segment_max_bytes,
         segment_max_lines,
@@ -787,7 +793,7 @@ pub(crate) fn to_proto_schema(
     decl: &CollectionDecl,
     omit_fields: bool,
 ) -> Result<ApiSchema, Error> {
-    let mut out = ApiSchema::default().with_version(decl.version);
+    let mut out = ApiSchema::default();
     if decl.isolated {
         out = out.with_isolated(true);
     }
@@ -1011,9 +1017,6 @@ pub(crate) fn put_collection(
 
 fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Error> {
     use scheda_generated::api::v1::__buffa::oneof::schema::Kind as SchemaKind;
-    let version = schema
-        .version
-        .ok_or_else(|| Error::invalid("schema: version is required"))?;
     let (kind, body, singleton_id, segment_max_bytes, segment_max_lines, segment_rotate) =
         match schema.kind.as_ref() {
             Some(SchemaKind::Document(body)) => (
@@ -1058,7 +1061,7 @@ fn decl_from_proto(name: &str, schema: &ApiSchema) -> Result<CollectionDecl, Err
     let decl = CollectionDecl {
         name: name.to_owned(),
         kind,
-        version,
+        version: 1,
         filter_keys,
         segment_max_bytes,
         segment_max_lines,
@@ -1529,7 +1532,7 @@ pub(crate) fn check_strict_edges(
     record: &Record,
     lookup: impl Fn(&str, &str) -> Result<Record, Error>,
 ) -> Result<(), Error> {
-    let fields = store::fields_map(record)?;
+    let fields = store::fields_from_record(decl, record)?;
     check_strict_fields(&decl.fields, &fields, schema, &lookup)
 }
 
@@ -1638,7 +1641,7 @@ mod tests {
                 FieldType::ObjectList,
             ]
         );
-        assert_eq!(decl.kind, Kind::Document);
+        assert_eq!(decl.kind, Kind::Journal);
     }
 
     #[test]
@@ -1652,11 +1655,32 @@ mod tests {
 
     #[test]
     fn missing_version_is_invalid() {
-        let err = yaml_serde::from_str::<super::RawCollection>(include_str!(
-            "../testdata/schema/missing_version.yaml"
-        ))
-        .expect_err("version is required");
-        let _ = err;
+        let err = parse(include_str!("../testdata/schema/missing_version.yaml")).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(
+            err.message
+                .as_deref()
+                .unwrap_or("")
+                .contains("version is required")
+        );
+    }
+
+    #[test]
+    fn version_2_is_invalid() {
+        let err = parse("name: c\nkind: document\nversion: 2\nfields: []\n").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(
+            err.message
+                .as_deref()
+                .unwrap_or("")
+                .contains("version 2 is not implemented")
+        );
+    }
+
+    #[test]
+    fn version_0_is_invalid() {
+        let err = parse("name: c\nkind: document\nversion: 0\nfields: []\n").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
     #[test]

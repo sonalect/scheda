@@ -1,8 +1,8 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.49, 10 September 2026.
+Document 1 of the Scheda package. Version 0.50, 16 September 2026.
 
-This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting schemas, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
+This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting collection declarations, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
 Scheda is a **library**. The thing on disk is a **Vault**: a directory that is a git working tree, not a proprietary database file.
 
@@ -10,7 +10,7 @@ Scheda is a **library**. The thing on disk is a **Vault**: a directory that is a
 
 ## 1. The gap
 
-Work that matters still lands as text: notes, configs, journals, tickets exported to files, Markdown with a YAML header. Git already versions that text. A person can open a file in an editor, `diff` a field, and recover last week's bytes without a vendor tool.
+Work that matters still lands as text: notes, configs, journals, tickets exported to files, Markdown, YAML, TOML. Git already versions that text. A person can open a file in an editor, `diff` the change, and recover last week's bytes without a vendor tool.
 
 The moment those files need to be **queried** — by field, by words, by meaning — the usual move is to leave git. Put the records in a document database. Put the prose in a vector database. Put the schema in application code. The files either disappear or become an export. The index becomes the thing people trust.
 
@@ -22,7 +22,7 @@ That split is expensive.
 
 The other usual move is a **product**: a second brain, a wiki, a knowledge app. Those can be excellent. They are not a library another program calls on its hot path. They bring users, a UI, and someone else's model of notes.
 
-Scheda exists for the case in between: **the files stay the source of truth**, git stays the history, and a library in the caller's process gives structured access and search without inventing a second store.
+Scheda exists for the case in between: **the files stay the source of truth**, git stays the history, and a library in the caller's process gives access and search without inventing a second store, and without owning the format of those files.
 
 ---
 
@@ -30,13 +30,15 @@ Scheda exists for the case in between: **the files stay the source of truth**, g
 
 ### Challenge 1. Search must not become truth
 
-An index that is fast to query will always be more convenient than walking Markdown. If the API lets callers treat that index as the database — SQL over a binary file, updates that never hit the working tree — the files rot. After that, deleting the index is data loss.
+An index that is fast to query will always be more convenient than walking files. If the API lets callers treat that index as the database — SQL over a binary file, updates that never hit the working tree — the files rot. After that, deleting the index is data loss.
 
 The store has to make the opposite accident cheap: wipe the Index, open the Vault with another copy of the library, rebuild, and get the same records back.
 
 ### Challenge 2. A person must be able to ignore the library
 
-If the only honest way to read a record is through Scheda, the Vault is already a database with extra steps. A file must be UTF-8 text a person can open, grep, and commit. `git diff` on a field change must show the field, not a binary snapshot.
+If the only honest way to read a record is through Scheda, the Vault is already a database with extra steps. A Record file must be UTF-8 text a person can open, grep, and commit. `git diff` on a change must show that text, not a binary snapshot.
+
+Arbitrary binary Records (images, protobuf wire, and the like) are **later**, not day one. Encrypted collections are a separate mark: whole-file age armor of UTF-8 plaintext (`09`).
 
 The library is the disciplined path for programs and agents. It is not a gate in front of the tree.
 
@@ -44,7 +46,9 @@ The library is the disciplined path for programs and agents. It is not a gate in
 
 A library that names the caller's collections in source is a framework, not a store. The next consumer then forks the library or lives with the wrong nouns.
 
-Collections, field names, what is searchable, and what is a link are **data in the Vault**. Changing them is a commit. Grep over library source (`rust/scheda/src`) must not find the first consumer's type names. Test data is not that grep.
+The engine also must not own the consumer's document shape. Record bytes are opaque: YAML, Markdown, TOML, prototext, or a mix in one collection. Field names, types, and which columns enter `find` / `search` live in the consumer — in code, as a `Projector` passed at `open`, not as a field list in the Vault. Grep over library source (`rust/scheda/src`) must not find the first consumer's type names. Test data is not that grep.
+
+What **does** sit in the Vault, as data next to the records, is the **collection declaration**: name, kind (write mode), isolation, encryption, journal caps. Changing those is a commit. `open` discovers collections from those files. That is not a schema of Record contents.
 
 ### Challenge 4. Git is a history tool, not a row lock
 
@@ -54,31 +58,31 @@ Scheda does not invent a merge engine or a multi-master story to paper over that
 
 ### Challenge 5. A small surface is enough
 
-Callers should not learn a new dialect of “write these bytes at this path”. `add`, `get`, `replace`, `remove`, `find`, `search`, and `commit` are enough. The Index may use an embedded database internally; that is not the caller API.
+Callers should not learn a dialect of “write these bytes at this filesystem path”. `add`, `get`, `replace`, `remove`, `find`, `search`, and `commit` are enough. The caller supplies Record `id` and bytes; the library places the file. The Index may use an embedded database internally; that is not the caller API.
 
 ---
 
 ## 3. The answer
 
-A **Vault** is a git working tree. Inside it, the consumer declares **collections**. Each collection has one write mode:
+A **Vault** is a git working tree. Inside it, the consumer declares **collections**. Each collection has one write mode. Kind is how Scheda writes, not a codec for contents:
 
 | Kind | On disk | Write |
 |---|---|---|
-| `document` | one file per Record (YAML header plus optional Markdown body, or YAML throughout) | replace the file; `remove` unlinks it |
-| `journal` | directory of JSONL segments; one object per line | append to the open segment; rotate when Schema says; no `remove` |
-| `singleton` | one JSON or YAML file | replace the file; `remove` unlinks it |
+| `document` | one UTF-8 file per Record; path is the `id` (extension, if any, is part of `id`) | replace the file; `remove` unlinks it |
+| `journal` | directory of segment files; one Record per line | append to the open segment; rotate when the declaration says; no `remove` |
+| `singleton` | one UTF-8 file, named by the declaration | replace the file; `remove` unlinks it |
 
-A **Record** has a stable `id` in its collection. The library places the file (MOD-8). The caller never supplies a Record path; the only filesystem path they pass is the Vault root (`open`). The `id` is not “whatever the file is currently named”.
+A **Record** is `(collection, id)` plus opaque UTF-8 bytes. The library places the file. The caller never supplies a Record path; the only filesystem path they pass is the Vault root (`open`). Format and extension are the caller's. Scheda does not parse the bytes. For `document` and `singleton`, renaming the file is changing `id`.
 
-**Schema** sits in the Vault next to the records: which collections exist, which fields are required, which fields and which body participate in word search or vectors, which fields are edges to another collection. There is no executable code in the schema.
+A **collection declaration** sits in the Vault next to the records: which collections exist, their kind, isolation, encryption, journal caps. There is no field list, no required keys inside the Record, and no executable code in the declaration.
 
-**Index** is derived, lives outside git, is not part of a Vault backup, and can be deleted. Rebuild reads files. Search that needs the Index fails closed if the Index is junk: empty or error, not stale ids from a corrupt file.
+**Index** is derived, lives outside git, is not part of a Vault backup, and can be deleted. Rebuild reads files. Columns beyond identity come from a caller-supplied **Projector** (same injection idea as an embedder): not Vault data, not an `api/v1` field. Search that needs the Index fails closed if the Index is junk: empty or error, not stale ids from a corrupt file. Without a Projector, writes and `get` still work; `find` by field and content `search` do not.
 
-**Scheda** is a library in the caller's process. The first implementation is the Rust crate `scheda`; others (Python, Java, Go, TypeScript, and more) may follow. Every implementation must speak the same Vault layout and the same operations. Shared message fields live in `api/v1` (Protobuf edition 2024); Vault files stay text. A Scheda daemon or HTTP server is not required to read and write. Opening a Vault, writing, and lexical search do not call the network unless `auto_sync` or an explicit remote operation is on. An embedder, if any, is supplied by the caller; without it, vector search is off and the rest still works.
+**Scheda** is a library in the caller's process. The first implementation is the Rust crate `scheda`; others (Python, Java, Go, TypeScript, and more) may follow. Every implementation must speak the same Vault layout and the same operations. Shared message fields live in `api/v1` (Protobuf edition 2024); Vault Record files stay UTF-8 text. A Scheda daemon or HTTP server is not required to read and write. Opening a Vault, writing, and lexical search do not call the network unless `auto_sync` or an explicit remote operation is on. An embedder, if any, is supplied by the caller; without it, vector search is off and the rest still works.
 
-A collection may be **isolated** (**later**, `09`): Record files under `{vault}/.isolated/` (a gitignored nested git the main Vault's `push` never publishes). Schema stays in the main tree. Separately, a collection may be **encrypted**: its Schema sets `encrypted: true`, its Record files are [age](https://age-encryption.org/) ASCII armor, and I/O on it takes the handle's `passphrase` or `identity` (`OpenOptions.encryption`). The two marks are independent — ciphertext is worth having for material a consumer fully intends to publish, and a merely local collection has no need of it — so all four combinations are valid. Only the collections that declare it are encrypted; the rest of the Vault stays plaintext.
+A collection may be **isolated** (**later**, `09`): Record files under `{vault}/.isolated/` (a gitignored nested git the main Vault's `push` never publishes). The collection declaration stays in the main tree. Separately, a collection may be **encrypted**: the declaration sets `encrypted: true`, its Record files are [age](https://age-encryption.org/) ASCII armor, and I/O on it takes the handle's `passphrase` or `identity` (`OpenOptions.encryption`). The two marks are independent — ciphertext is worth having for material a consumer fully intends to publish, and a merely local collection has no need of it — so all four combinations are valid. Only the collections that declare it are encrypted; the rest of the Vault stays plaintext.
 
-An **AI agent** does not get a second, looser API. It gets the same operations, plus `info` taken from Schema so it does not guess paths, and `create_collection` so it does not write Schema YAML by hand. A person may still edit files in an editor; that path is not offered to the agent as “write any Markdown anywhere”.
+An **AI agent** does not get a second, looser API. It gets the same operations, plus `info` taken from collection declarations so it does not guess paths, and `create_collection` so it does not write the declaration file by hand. `info` lists collections and write-mode marks, not Record fields. A person may still edit files in an editor; that path is not offered to the agent as “write any file at any path”.
 
 The library does not score records, does not decide what to show a human, does not call a language model, and does not know a profession. Those belong to the consumer.
 
@@ -92,23 +96,25 @@ The library does not score records, does not decide what to show a human, does n
 
 **Not a vector database as source of truth.** Vectors live in the Index. Embedding weights live in the consumer's install, not in the Vault.
 
-**Not a replacement for git.** There is no Scheda-specific versioning of records. A field such as `revision` on a document is the consumer's schema, not a substitute for `git log`.
+**Not a replacement for git.** There is no Scheda-specific versioning of records. A field such as `revision` inside a consumer's file is that consumer's document, not a substitute for `git log`.
 
-**Not a consumer's domain model.** Collection names, scores, and product protocol belong to the caller. Mapping that caller's records onto `document` / `journal` / `singleton` is that consumer's schema, not a Scheda feature.
+**Not a consumer's domain model.** Collection names, scores, product protocol, and the bytes of each Record belong to the caller. Mapping those bytes onto `document` / `journal` / `singleton` is a choice of write mode, not a Scheda content schema.
 
-Ready-made experiments that keep Markdown under git and hang a search index on the side are useful as prior art. They are not an acceptable implementation of this package if they are not a library a program can call on its hot path, if they bake in a foreign knowledge model, or if their index is not a disposable layer over files.
+Ready-made experiments that keep text files under git and hang a search index on the side are useful as prior art. They are not an acceptable implementation of this package if they are not a library a program can call on its hot path, if they bake in a foreign knowledge model or a single file format, or if their index is not a disposable layer over files.
 
 ---
 
 ## 5. What works on day one
 
-A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, the library writes them safely, one writer, autocommit or `begin`/`commit`/`discard`, `get` by id, `find` (`journal` in append order; other kinds by Tantivy score). Isolated collections under `{vault}/.isolated/` and encrypted collections stay a **later** phase (`09`, `10`); neither is required to accept **core**, **search**, or **agent**.
+A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, Records are opaque UTF-8, the library writes them safely, one writer, autocommit or `begin`/`commit`/`discard`, `get` by id, `find` (`journal` in append order; other kinds by Tantivy score). Isolated collections under `{vault}/.isolated/` and encrypted collections stay a **later** phase (`09`, `10`); neither is required to accept **core**, **search**, or **agent**.
 
-Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25 over Schema `fts` marks, in-process ANN (HNSW-class) over vector marks, Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). It must not be required to insert a journal line or replace a document.
+The crate `scheda` already accepted **core**, **search**, and **agent** on the previous Record shape (YAML/Markdown files and field Schema). Opaque Records are `16`: F0 is done; this document is F1. Until that plan's implementation stages land, the on-disk store and `api/v1` still follow `03`–`09` as they read today.
 
-Age encryption as a property of a collection, behind the opt-in `encrypt` feature, shipped as `0.6.0` (`09`, `12` P14). After it, one Index for the Vault (`12` P15): isolated collections became searchable by name, the nested Index went away, and `{vault}/.scheda/` became owner-only because it now holds their field values. A CLI that can carry a secret, and a Remote for the nested isolated tree, shipped as `12` P16. Consumer readiness P0–P16 is in (`12` §4). Unencrypted isolated I/O (`{vault}/.isolated/` nested git, owner-only files, optional nested Remote) is in. The slug is the whole `id` rule. `find` and `search` are opt-in crate features; the crate has no default features. **agent** is accepted (`12`).
+Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25, in-process ANN (HNSW-class), Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). After `16`, BM25 and vector slots come from the Projector, not from field marks in a Schema file. It must not be required to insert a journal line or replace a document.
 
-What is deliberately later after those slices: field-level encryption inside an otherwise plaintext Record, and an encrypted `journal` — both refused on purpose (`09`, SCH-16); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom YAML merge; extracting edges from `[[wiki-links]]` unless the schema names that extractor.
+Age encryption as a property of a collection, behind the opt-in `encrypt` feature, shipped as `0.6.0` (`09`, `12` P14). After it, one Index for the Vault (`12` P15): isolated collections became searchable by name, the nested Index went away, and `{vault}/.scheda/` became owner-only because it now holds their indexed values. A CLI that can carry a secret, and a Remote for the nested isolated tree, shipped as `12` P16. Consumer readiness P0–P16 is in (`12` §4). Unencrypted isolated I/O (`{vault}/.isolated/` nested git, owner-only files, optional nested Remote) is in. The slug is the whole `id` rule. `find` and `search` are opt-in crate features; the crate has no default features. **agent** is accepted (`12`).
+
+What is deliberately later after those slices: binary Records; field-level encryption inside an otherwise plaintext Record, and an encrypted `journal` — both refused on purpose (`09`, SCH-16); a server-side index for tens of millions of records (a new Index implementation behind the same API, not a new primary layer); multi-master without the single-writer lock; CRDTs; a custom merge of a consumer's format.
 
 ---
 
@@ -129,13 +135,16 @@ What is deliberately later after those slices: field-level encryption inside an 
 | `11` | Rust stage checklist (core, then hybrid `search`; both done) |
 | `12` | Rust stage checklist (**agent**; done) |
 | `13` | `find` and `search` (target: Tantivy Query, hybrid BM25 + USearch, per-field vectors) |
+| `14` | CLI |
+| `15` | Online reindex |
+| `16` | Opaque Records (work order) |
 
-Checkable requirements live in `03`–`09` and `13`, and are gathered with phases in `10`. This document does not list them.
+Checkable requirements live in `03`–`09` and `13`, and are gathered with phases in `10`. This document does not list them. While `16` is in progress, `03`–`09` may still describe the previous Record shape until their F stages amend them.
 
 ---
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Unencrypted isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); the crate has no default features. Consumer readiness P0–P16 is in (`12` §4). Age encryption of a collection shipped as `0.6.0` (`12` P14), one Index for the Vault is in (`12` P15), and a secret in the CLI plus a Remote for the nested tree shipped as `12` P16. Extra language bindings and the rest of `10` §5 stay deferred. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Unencrypted isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); the crate has no default features. Consumer readiness P0–P16 is in (`12` §4). Age encryption of a collection shipped as `0.6.0` (`12` P14), one Index for the Vault is in (`12` P15), and a secret in the CLI plus a Remote for the nested tree shipped as `12` P16. Extra language bindings and the rest of `10` §5 stay deferred. Opaque Records (`16`): F0 is done; this document is F1 (in progress). That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.

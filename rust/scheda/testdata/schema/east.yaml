@@ -1,6 +1,6 @@
 name: east_docs
 kind: document
-version: 2
+version: 1
 fields:
   - name: title
     string: {}

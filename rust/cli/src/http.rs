@@ -272,11 +272,12 @@ fn parse_embeddings(
 }
 
 fn document_text(record: &Record) -> Result<String, Error> {
-    serde_json::to_string(&json!({
-        "fields": record.fields,
-        "body": record.body,
-    }))
-    .map_err(|err| Error::invalid(err.to_string()))
+    match record.raw.as_deref() {
+        Some(raw) => {
+            String::from_utf8(raw.to_vec()).map_err(|err| Error::not_utf8(err.to_string()))
+        }
+        None => Ok(String::new()),
+    }
 }
 
 fn http_agent() -> ureq::Agent {

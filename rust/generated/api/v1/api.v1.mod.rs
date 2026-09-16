@@ -72,8 +72,6 @@ pub mod __buffa {
         reg.register_json_any(super::__ENCRYPTION_JSON_ANY);
         reg.register_json_any(super::__ERROR_JSON_ANY);
         reg.register_json_any(super::__RECORD_JSON_ANY);
-        reg.register_json_any(super::__RECORD_ADD_JSON_ANY);
-        reg.register_json_any(super::__RECORD_REPLACE_JSON_ANY);
         reg.register_json_any(super::__FILTER_JSON_ANY);
         reg.register_json_any(super::filter::__ALL_JSON_ANY);
         reg.register_json_any(super::filter::__EMPTY_JSON_ANY);
@@ -163,14 +161,6 @@ pub use self::__buffa::view::ErrorOwnedView;
 pub use self::__buffa::view::RecordView;
 #[doc(inline)]
 pub use self::__buffa::view::RecordOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::RecordAddView;
-#[doc(inline)]
-pub use self::__buffa::view::RecordAddOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::RecordReplaceView;
-#[doc(inline)]
-pub use self::__buffa::view::RecordReplaceOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::FilterView;
 #[doc(inline)]

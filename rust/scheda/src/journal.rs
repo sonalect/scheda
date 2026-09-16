@@ -95,12 +95,7 @@ impl JournalLines {
             let parsed = parse_line(line).map_err(|err| {
                 Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
             })?;
-            return Ok(Some(record_from_parsed(
-                &self.vault,
-                &self.decl,
-                &self.current_path,
-                parsed,
-            )?));
+            return Ok(Some(record_from_parsed(&self.decl, parsed)));
         }
     }
 }
@@ -204,9 +199,31 @@ pub(crate) fn find_journal_scan(
     id: &str,
 ) -> Result<Record, Error> {
     let mut found = None;
+    for_each_parsed(vault, decl, |_path, parsed| {
+        if parsed.id == id {
+            found = Some(record_from_parsed(decl, parsed));
+            Ok(false)
+        } else {
+            Ok(true)
+        }
+    })?;
+    found.ok_or_else(|| Error::not_found(format!("record {id} is not in {}", decl.name)))
+}
+
+/// Same as [`find_journal_scan`], plus the vault-relative POSIX path of the
+/// segment that held the line.
+pub(crate) fn find_journal_scan_with_rel(
+    vault: &Path,
+    decl: &CollectionDecl,
+    id: &str,
+) -> Result<(Record, String), Error> {
+    let mut found = None;
     for_each_parsed(vault, decl, |path, parsed| {
         if parsed.id == id {
-            found = Some(record_from_parsed(vault, decl, path, parsed)?);
+            found = Some((
+                record_from_parsed(decl, parsed),
+                store::rel_posix(vault, path)?,
+            ));
             Ok(false)
         } else {
             Ok(true)
@@ -267,7 +284,7 @@ pub(crate) fn find_in_segment(
         .map_err(|err| err.with_path(rel))?;
     for parsed in parse_segment_bytes(&raw) {
         if parsed.id == id {
-            return record_from_parsed(vault, decl, &path, parsed);
+            return Ok(record_from_parsed(decl, parsed));
         }
     }
     Err(Error::not_found(format!(
@@ -282,16 +299,18 @@ pub(crate) fn segment_count(vault: &Path, decl: &CollectionDecl) -> Result<u64, 
     Ok(list_segments(&journal_dir(vault, decl)?)?.len() as u64)
 }
 
-/// Walk every parsed line as a Record, one at a time. `visit` returns
-/// `false` to stop. Does not collect the collection in memory.
+/// Walk every parsed line as a Record, one at a time. `visit` receives the
+/// Record and the vault-relative POSIX path of its segment. Returns `false`
+/// to stop. Does not collect the collection in memory.
 #[cfg(feature = "find")]
 pub(crate) fn for_each_record(
     vault: &Path,
     decl: &CollectionDecl,
-    mut visit: impl FnMut(Record) -> Result<bool, Error>,
+    mut visit: impl FnMut(Record, &str) -> Result<bool, Error>,
 ) -> Result<(), Error> {
     for_each_parsed(vault, decl, |path, parsed| {
-        visit(record_from_parsed(vault, decl, path, parsed)?)
+        let rel = store::rel_posix(vault, path)?;
+        visit(record_from_parsed(decl, parsed), &rel)
     })
 }
 
@@ -351,26 +370,17 @@ fn prepare_line(decl: &CollectionDecl, record: &Record) -> Result<(String, Vec<u
         bail!(Error::invalid("record id is required"));
     };
     crate::id::require_slug("id", id)?;
-    if record.body.as_deref().is_some_and(|body| !body.is_empty()) {
+    let mut fields = store::fields_map(record)?;
+    if let Some(Value::String(body)) = fields.get("body")
+        && !body.is_empty()
+    {
         bail!(Error::invalid(format!(
             "journal {} does not allow a Markdown body",
             decl.name
         )));
     }
-    let mut fields = store::fields_map(record)?;
     store::apply_defaults(&mut fields, &decl.fields);
-    match fields.get(crate::id::FIELD) {
-        Some(Value::String(existing)) if existing == id => {}
-        Some(Value::Null) | None => {
-            fields.insert(String::from(crate::id::FIELD), Value::String(id.to_owned()));
-        }
-        Some(_) => {
-            bail!(Error::invalid(format!(
-                "object {} must equal record id {id}",
-                crate::id::FIELD
-            )));
-        }
-    }
+    store::inject_id(&mut fields, id)?;
     store::validate_fields(&fields, &decl.fields, true, false)?;
     let mut line = canonical_json(&Value::Object(fields))?;
     line.push(b'\n');
@@ -848,11 +858,12 @@ pub(crate) fn reindex_map(
     let mut ids = std::collections::BTreeMap::new();
     for_each_parsed(vault, decl, |path, parsed| {
         records += 1;
-        let record = record_from_parsed(vault, decl, path, parsed)?;
-        if record.valid != Some(true) {
+        let rel = store::rel_posix(vault, path)?;
+        let record = record_from_parsed(decl, parsed);
+        if !store::record_indexable(decl, &record) {
             invalid += 1;
         }
-        if let (Some(id), Some(rel)) = (record.id, record.path) {
+        if let Some(id) = record.id {
             ids.insert(id, rel);
         }
         Ok(true)
@@ -950,22 +961,42 @@ fn parse_line(line: &str) -> Result<ParsedLine, Error> {
     Ok(ParsedLine { id, fields, raw })
 }
 
-fn record_from_parsed(
-    vault: &Path,
-    decl: &CollectionDecl,
-    path: &Path,
-    parsed: ParsedLine,
-) -> Result<Record, Error> {
-    let rel = store::rel_posix(vault, path)?;
-    let valid = store::validate_fields(&parsed.fields, &decl.fields, true, false).is_ok();
-    let mut record = Record::default()
+fn record_from_parsed(decl: &CollectionDecl, parsed: ParsedLine) -> Record {
+    Record::default()
         .with_id(parsed.id)
         .with_collection(decl.name.as_str())
-        .with_path(rel)
-        .with_valid(valid)
-        .with_raw(parsed.raw);
-    store::put_fields(&mut record, parsed.fields)?;
-    Ok(record)
+        .with_raw(parsed.raw)
+}
+
+/// Vault-relative POSIX path of the segment that holds `id` (IDX-5 map).
+pub(crate) fn segment_rel(
+    vault: &Path,
+    decl: &CollectionDecl,
+    id: &str,
+    maps: &JournalIdMaps,
+) -> Result<String, Error> {
+    if id.is_empty() {
+        bail!(Error::invalid("id is empty"));
+    }
+    match maps.lookup(&decl.name, id) {
+        index::MapLookup::UnknownId => Err(Error::not_found(format!(
+            "record {id} is not in {}",
+            decl.name
+        ))),
+        index::MapLookup::Path(rel) => Ok(rel.to_owned()),
+        index::MapLookup::MissingMap => {
+            let mut found = None;
+            for_each_parsed(vault, decl, |path, parsed| {
+                if parsed.id == id {
+                    found = Some(store::rel_posix(vault, path)?);
+                    Ok(false)
+                } else {
+                    Ok(true)
+                }
+            })?;
+            found.ok_or_else(|| Error::not_found(format!("record {id} is not in {}", decl.name)))
+        }
+    }
 }
 
 #[cfg(test)]

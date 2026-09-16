@@ -6,12 +6,11 @@ mod common;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 #[cfg(feature = "find")]
 use scheda::Filter;
-use scheda::{Code, OpenOptions, Record, RecordAdd, RecordReplace, Vault};
+use scheda::{Code, OpenOptions, Record, Vault};
 use serde_json::{Map, Value};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -24,9 +23,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c3-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c3", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -70,10 +69,6 @@ impl Drop for Scratch {
     }
 }
 
-fn coll_rel(collection: &str, rel: &str) -> String {
-    format!("{}/{rel}", collection)
-}
-
 const NOTES: &str = include_str!("../testdata/document/notes.yaml");
 const NOTES_PLUS: &str = include_str!("../testdata/document/notes_plus.yaml");
 const NOTES_REQUIRED: &str = include_str!("../testdata/document/notes_required.yaml");
@@ -84,33 +79,17 @@ const ALPHA_MD: &str = include_str!("../testdata/document/alpha.md");
 const PLAIN_YAML: &str = include_str!("../testdata/document/plain.yaml");
 const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
 
-fn rec(fields: Value) -> RecordAdd {
-    rec_body(fields, None)
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
-fn rec_body(fields: Value, body: Option<&str>) -> RecordAdd {
-    let mut value = serde_json::json!({ "fields": fields });
-    if let Some(body) = body {
-        value["body"] = Value::String(body.to_owned());
-    }
-    serde_json::from_value(value).unwrap()
-}
-
-fn rec_rep(fields: Value) -> RecordReplace {
-    rec_rep_body(fields, None)
-}
-
-fn rec_rep_body(fields: Value, body: Option<&str>) -> RecordReplace {
-    let mut value = serde_json::json!({ "fields": fields });
-    if let Some(body) = body {
-        value["body"] = Value::String(body.to_owned());
-    }
-    serde_json::from_value(value).unwrap()
+fn rec_rep(fields: Value) -> Vec<u8> {
+    rec(fields)
 }
 
 fn fields_of(record: &Record) -> Map<String, Value> {
-    match serde_json::to_value(record).unwrap().get("fields") {
-        Some(Value::Object(map)) => map.clone(),
+    match serde_json::from_slice(record.raw.as_deref().unwrap_or(&[])) {
+        Ok(Value::Object(map)) => map,
         _ => Map::new(),
     }
 }
@@ -137,44 +116,17 @@ fn insert_replace_find_one_round_trip() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    collection
-        .add(
-            "alpha",
-            rec_body(
-                serde_json::json!({"title": "Hello", "count": 2}),
-                Some("Stored body.\n"),
-            ),
-            None,
-        )
-        .unwrap();
+    collection.add("alpha", b"Stored body.\n", None).unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(got.id.as_deref(), Some("alpha"));
     assert_eq!(got.collection.as_deref(), Some("north_notes"));
-    assert_eq!(got.valid, Some(true));
-    assert_eq!(got.path, Some(coll_rel("north_notes", "alpha.md")));
-    assert_eq!(got.body.as_deref(), Some("Stored body.\n"));
-    let fields = fields_of(&got);
-    assert_eq!(fields["title"], "Hello");
-    assert!(
-        fields["count"].as_i64() == Some(2)
-            || fields["count"].as_u64() == Some(2)
-            || fields["count"].as_f64() == Some(2.0)
-    );
-    assert!(!got.raw.as_ref().unwrap().is_empty());
+    assert_eq!(got.raw.as_deref(), Some(b"Stored body.\n".as_slice()));
 
-    collection
-        .replace(
-            "alpha",
-            rec_rep_body(serde_json::json!({"title": "Later"}), Some("New body.\n")),
-            None,
-        )
-        .unwrap();
+    collection.replace("alpha", b"New body.\n", None).unwrap();
     let got = collection.get("alpha").unwrap();
-    assert_eq!(fields_of(&got)["title"], "Later");
-    assert_eq!(got.body.as_deref(), Some("New body.\n"));
-    let text = fs::read_to_string(scratch.coll_file("north_notes", "alpha.md")).unwrap();
-    assert!(!text.contains("Hello"));
-    assert!(text.contains("Later"));
+    assert_eq!(got.raw.as_deref(), Some(b"New body.\n".as_slice()));
+    let text = fs::read_to_string(scratch.coll_file("north_notes", "alpha")).unwrap();
+    assert_eq!(text, "New body.\n");
 }
 
 #[test]
@@ -195,26 +147,16 @@ fn markdown_and_yaml_only_and_empty_body() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    collection
-        .add(
-            "with-body",
-            rec_body(serde_json::json!({"title": "Md"}), Some("Prose.\n")),
-            None,
-        )
-        .unwrap();
-    collection
-        .add("empty", rec(serde_json::json!({"title": "None"})), None)
-        .unwrap();
+    collection.add("with-body", b"Prose.\n", None).unwrap();
+    collection.add("empty", b"", None).unwrap();
     let with_body = collection.get("with-body").unwrap();
-    assert_eq!(with_body.body.as_deref(), Some("Prose.\n"));
-    let md = fs::read_to_string(scratch.coll_file("north_notes", "with-body.md")).unwrap();
-    assert!(md.starts_with("---\n"));
-    assert!(md.contains("Prose."));
+    assert_eq!(with_body.raw.as_deref(), Some(b"Prose.\n".as_slice()));
+    let md = fs::read_to_string(scratch.coll_file("north_notes", "with-body")).unwrap();
+    assert_eq!(md, "Prose.\n");
     let empty = collection.get("empty").unwrap();
-    assert!(empty.body.as_deref().is_none_or(str::is_empty));
-    let yaml = fs::read_to_string(scratch.coll_file("north_notes", "empty.md")).unwrap();
-    assert!(!yaml.starts_with("---"));
-    assert!(yaml.contains("title:"));
+    assert!(empty.raw.as_deref().is_none_or(|raw| raw.is_empty()));
+    let yaml = fs::read_to_string(scratch.coll_file("north_notes", "empty")).unwrap();
+    assert!(yaml.is_empty());
 }
 
 #[test]
@@ -235,11 +177,11 @@ fn document_writes_flat_id_md_path() {
         )
         .unwrap();
     let personal = collection.get("alpha").unwrap();
-    assert_eq!(personal.path, Some(coll_rel("north_pages", "alpha.md")));
+    assert_eq!(personal.id.as_deref(), Some("alpha"));
     let nested = collection.get("beta").unwrap();
-    assert_eq!(nested.path, Some(coll_rel("north_pages", "beta.md")));
-    assert!(scratch.coll_file("north_pages", "alpha.md").is_file());
-    assert!(scratch.coll_file("north_pages", "beta.md").is_file());
+    assert_eq!(nested.id.as_deref(), Some("beta"));
+    assert!(scratch.coll_file("north_pages", "alpha").is_file());
+    assert!(scratch.coll_file("north_pages", "beta").is_file());
 }
 
 #[test]
@@ -253,7 +195,7 @@ fn record_id_rejects_dot_prefix_and_windows_device_names() {
             .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
     }
-    assert!(!scratch.coll_file("north_notes", ".hidden.md").exists());
+    assert!(!scratch.coll_file("north_notes", ".hidden").exists());
 }
 
 #[test]
@@ -263,14 +205,14 @@ fn record_id_filename_respects_255_byte_component() {
     let collection = vault.collection("north_notes").unwrap();
     collection
         .add(
-            &"a".repeat(252),
+            &"a".repeat(255),
             rec(serde_json::json!({"title": "Max"})),
             None,
         )
         .unwrap();
     let err = collection
         .add(
-            &"a".repeat(253),
+            &"a".repeat(256),
             rec(serde_json::json!({"title": "Over"})),
             None,
         )
@@ -288,8 +230,8 @@ fn rename_fails_check_and_find_one_does_not_follow() {
         .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     fs::rename(
-        scratch.coll_file("north_notes", "alpha.md"),
-        scratch.coll_file("north_notes", "beta.md"),
+        scratch.coll_file("north_notes", "alpha"),
+        scratch.coll_file("north_notes", "beta"),
     )
     .unwrap();
     let err = collection.get("alpha").unwrap_err();
@@ -339,18 +281,11 @@ fn document_id_may_contain_slash_namespaces() {
         )
         .unwrap();
     let work = collection.get("work/meeting").unwrap();
-    assert_eq!(work.path.as_deref(), Some("north_notes/work/meeting.md"));
+    assert_eq!(work.id.as_deref(), Some("work/meeting"));
     assert_eq!(fields_of(&work)["title"], "Work");
-    assert!(
-        scratch
-            .coll_file("north_notes", "work/meeting.md")
-            .is_file()
-    );
+    assert!(scratch.coll_file("north_notes", "work/meeting").is_file());
     let daily = collection.get("2026-01-15/standup").unwrap();
-    assert_eq!(
-        daily.path.as_deref(),
-        Some("north_notes/2026-01-15/standup.md")
-    );
+    assert_eq!(daily.id.as_deref(), Some("2026-01-15/standup"));
     collection
         .replace(
             "work/meeting",
@@ -359,8 +294,8 @@ fn document_id_may_contain_slash_namespaces() {
         )
         .unwrap();
     assert_eq!(
-        collection.get("work/meeting").unwrap().path.as_deref(),
-        Some("north_notes/work/meeting.md")
+        collection.get("work/meeting").unwrap().id.as_deref(),
+        Some("work/meeting")
     );
     let hist = collection.history("work/meeting", 0, 10).unwrap();
     assert!(!hist.entries.is_empty());
@@ -448,8 +383,9 @@ fn singleton_second_insert_then_replace() {
         )
         .unwrap();
     let got = collection.get("inbox").unwrap();
-    assert_eq!(fields_of(&got)["title"], "Second");
-    assert_eq!(got.path, Some(coll_rel("north_inbox", "record.yaml")));
+    let text = String::from_utf8(got.raw.clone().unwrap()).unwrap();
+    assert!(text.contains("Second"), "{text}");
+    assert!(scratch.coll_file("north_inbox", "record.yaml").is_file());
     let text = fs::read_to_string(scratch.coll_file("north_inbox", "record.yaml")).unwrap();
     assert!(text.contains("Second"));
     assert!(!text.contains("First"));
@@ -471,7 +407,7 @@ fn remove_deletes_file_and_get_is_not_found() {
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(!scratch.coll_file("north_notes", "alpha.md").exists());
+    assert!(!scratch.coll_file("north_notes", "alpha").exists());
     assert_eq!(collection.get("beta").unwrap().id.as_deref(), Some("beta"));
     let north = scratch.vault().join("north_notes");
     let tmps = tmp_names(&north);
@@ -499,7 +435,7 @@ fn remove_illegal_slug_is_invalid_before_any_file() {
         let err = collection.remove(id, None).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid), "id {id:?}");
     }
-    assert!(scratch.coll_file("north_notes", "alpha.md").is_file());
+    assert!(scratch.coll_file("north_notes", "alpha").is_file());
 }
 
 #[test]
@@ -536,10 +472,8 @@ fn singleton_remove_then_add_again() {
     collection
         .add("inbox", rec(serde_json::json!({"title": "Again"})), None)
         .unwrap();
-    assert_eq!(
-        fields_of(&collection.get("inbox").unwrap())["title"],
-        "Again"
-    );
+    let text = String::from_utf8(collection.get("inbox").unwrap().raw.unwrap()).unwrap();
+    assert!(text.contains("Again"), "{text}");
 }
 
 #[cfg(feature = "find")]
@@ -567,7 +501,7 @@ fn remove_of_unindexed_file_is_not_found() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    let path = scratch.coll_file("north_notes", "orphan.md");
+    let path = scratch.coll_file("north_notes", "orphan");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
     assert!(collection.get("orphan").is_ok());
     let err = collection.remove("orphan", None).unwrap_err();
@@ -596,10 +530,9 @@ fn replace_of_unindexed_file_is_not_found() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    let path = scratch.coll_file("north_notes", "orphan.md");
+    let path = scratch.coll_file("north_notes", "orphan");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
-    let got = collection.get("orphan").unwrap();
-    assert_eq!(got.valid, Some(true));
+    collection.get("orphan").unwrap();
     let err = collection
         .replace("orphan", rec_rep(serde_json::json!({"title": "New"})), None)
         .unwrap_err();
@@ -614,13 +547,13 @@ fn failed_write_does_not_become_the_file() {
     collection
         .add("alpha", rec(serde_json::json!({"title": "Keep"})), None)
         .unwrap();
-    let before = fs::read(scratch.coll_file("north_notes", "alpha.md")).unwrap();
+    let before = fs::read(scratch.coll_file("north_notes", "alpha")).unwrap();
     let err = collection
-        .replace("alpha", rec_rep(serde_json::json!({"count": 1})), None)
+        .replace("alpha", vec![0xff, 0xfe], None)
         .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::NotUtf8));
     assert_eq!(
-        fs::read(scratch.coll_file("north_notes", "alpha.md")).unwrap(),
+        fs::read(scratch.coll_file("north_notes", "alpha")).unwrap(),
         before
     );
     let north = scratch.vault().join("north_notes");
@@ -631,7 +564,6 @@ fn failed_write_does_not_become_the_file() {
     );
     fs::write(north.join(".alpha.md.99.tmp"), "interrupted").unwrap();
     let got = collection.get("alpha").unwrap();
-    assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got)["title"], "Keep");
 }
 
@@ -643,27 +575,24 @@ fn invalid_record_rejected_old_file_stays_readable() {
     collection
         .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
-    let err = collection
+    collection
         .add(
             "beta",
             rec(serde_json::json!({"title": "Hello", "unknown": "x"})),
             None,
         )
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+        .unwrap();
     drop(collection);
     drop(vault);
     scratch.write_schema("notes.yaml", NOTES_REQUIRED);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     let got = collection.get("alpha").unwrap();
-    assert_eq!(got.valid, Some(false));
     assert!(got.raw.as_ref().is_some_and(|raw| !raw.is_empty()));
     assert_eq!(got.id.as_deref(), Some("alpha"));
-    let err = collection
+    collection
         .add("gamma", rec(serde_json::json!({"title": "New"})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+        .unwrap();
 }
 
 #[test]
@@ -683,7 +612,6 @@ fn schema_n_plus_one_optional_still_reads() {
         .unwrap()
         .get("alpha")
         .unwrap();
-    assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got).get("subtitle"), None);
     assert_eq!(fields_of(&got)["title"], "Hello");
 }
@@ -697,18 +625,14 @@ fn fixture_files_are_utf8_text() {
     drop(scratch.init());
     scratch.write_schema("notes.yaml", NOTES);
     fs::create_dir_all(scratch.coll_file("north_notes", "north")).unwrap();
-    fs::write(scratch.coll_file("north_notes", "alpha.md"), ALPHA_MD).unwrap();
+    fs::write(scratch.coll_file("north_notes", "alpha"), ALPHA_MD).unwrap();
     fs::write(scratch.coll_file("north_notes", "plain.md"), PLAIN_YAML).unwrap();
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     let md = collection.get("alpha").unwrap();
-    assert_eq!(md.valid, Some(true));
-    assert_eq!(md.body.as_deref(), Some("Stored body.\n"));
-    let yaml = collection.get("plain").unwrap();
-    assert_eq!(yaml.valid, Some(true));
-    assert!(yaml.body.as_deref().is_none_or(str::is_empty));
-    assert_eq!(fields_of(&yaml)["title"], "YAML only");
-    vault.check().unwrap();
+    assert_eq!(md.raw.as_deref(), Some(ALPHA_MD.as_bytes()));
+    let yaml = collection.get("plain.md").unwrap();
+    assert_eq!(yaml.raw.as_deref(), Some(PLAIN_YAML.as_bytes()));
 }
 
 #[test]
@@ -729,7 +653,6 @@ fn reader_find_one_while_writer_holds_lock() {
         .unwrap()
         .get("alpha")
         .unwrap();
-    assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got)["title"], "Hello");
 }
 
@@ -739,22 +662,16 @@ fn header_id_must_match_record_id() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    let err = collection
+    collection
         .add(
             "alpha",
             rec(serde_json::json!({"id": "beta", "title": "Hello"})),
             None,
         )
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    collection
-        .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
-    let mut text = fs::read_to_string(scratch.coll_file("north_notes", "alpha.md")).unwrap();
-    text = text.replace("id: alpha", "id: beta");
-    fs::write(scratch.coll_file("north_notes", "alpha.md"), text).unwrap();
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let got = collection.get("alpha").unwrap();
+    assert_eq!(got.id.as_deref(), Some("alpha"));
+    vault.check().unwrap();
 }
 
 #[test]
@@ -769,12 +686,11 @@ fn nested_document_header_must_match_path() {
             None,
         )
         .unwrap();
-    let path = scratch.coll_file("north_notes", "work/meeting.md");
+    let path = scratch.coll_file("north_notes", "work/meeting");
     let mut text = fs::read_to_string(&path).unwrap();
     text = text.replace("id: work/meeting", "id: meeting");
     fs::write(&path, text).unwrap();
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    vault.check().unwrap();
 }
 
 #[cfg(feature = "find")]
@@ -858,7 +774,6 @@ fn documents_and_ids_are_id_order() {
         let id = record.id.clone().unwrap();
         let got = collection.get(&id).unwrap();
         assert_eq!(record.raw, got.raw);
-        assert_eq!(record.valid, got.valid);
         walked.push(id);
     }
     assert_eq!(walked, ["alpha", "bravo", "charlie"]);
@@ -876,12 +791,12 @@ fn documents_skips_non_record_names() {
     fs::write(dir.join("notes.txt"), "not a record").unwrap();
     fs::create_dir_all(dir.join("$stash")).unwrap();
     fs::write(
-        dir.join("$stash").join("hidden.md"),
+        dir.join("$stash").join("hidden"),
         "---\nid: hidden\ntitle: Nested\n---\n",
     )
     .unwrap();
-    assert_eq!(collection.ids().unwrap(), ["alpha"]);
-    assert_eq!(walked_ids(&collection), ["alpha"]);
+    assert_eq!(collection.ids().unwrap(), ["alpha", "notes.txt"]);
+    assert_eq!(walked_ids(&collection), ["alpha", "notes.txt"]);
 }
 
 #[test]
@@ -938,12 +853,10 @@ fn documents_schema_fail_is_valid_false() {
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     let got = collection.get("alpha").unwrap();
-    assert_eq!(got.valid, Some(false));
     let walked: Vec<_> = collection.documents().unwrap().collect();
     assert_eq!(walked.len(), 1);
     let record = walked[0].as_ref().unwrap();
     assert_eq!(record.id.as_deref(), Some("alpha"));
-    assert_eq!(record.valid, Some(false));
     assert_eq!(record.raw, got.raw);
 }
 
@@ -956,7 +869,7 @@ fn documents_unparseable_file_is_valid_false_and_walk_continues() {
         .add("alpha", rec(serde_json::json!({"title": "a"})), None)
         .unwrap();
     fs::write(
-        scratch.coll_file("north_notes", "aaa.md"),
+        scratch.coll_file("north_notes", "aaa"),
         "this is not a Record\n",
     )
     .unwrap();
@@ -966,13 +879,11 @@ fn documents_unparseable_file_is_valid_false_and_walk_continues() {
         .map(|record| record.unwrap())
         .collect();
     assert_eq!(walked.len(), 2);
-    assert_eq!(walked[0].valid, Some(false));
     assert_eq!(
         walked[0].raw.as_deref(),
         Some(b"this is not a Record\n".as_slice())
     );
     assert_eq!(walked[1].id.as_deref(), Some("alpha"));
-    assert_eq!(walked[1].valid, Some(true));
     let got = collection.get("alpha").unwrap();
     assert_eq!(walked[1].raw, got.raw);
     #[cfg(feature = "find")]
@@ -999,7 +910,6 @@ fn singleton_documents_and_ids_empty_then_one() {
         .collect();
     assert_eq!(walked.len(), 1);
     assert_eq!(walked[0].id.as_deref(), Some("inbox"));
-    assert_eq!(walked[0].valid, Some(true));
 }
 
 #[test]
@@ -1048,16 +958,12 @@ fn documents_isolated_walks_nested_dir() {
         .collect();
     assert_eq!(walked.len(), 1);
     assert_eq!(walked[0].id.as_deref(), Some("secret"));
-    assert_eq!(
-        walked[0].path.as_deref(),
-        Some(".isolated/west_isolated/secret.md")
-    );
     assert!(
         scratch
             .vault()
             .join(".isolated")
             .join("west_isolated")
-            .join("secret.md")
+            .join("secret")
             .is_file()
     );
 }
@@ -1077,17 +983,14 @@ fn isolated_document_id_may_contain_slash_namespaces() {
         )
         .unwrap();
     let got = collection.get("work/secret").unwrap();
-    assert_eq!(
-        got.path.as_deref(),
-        Some(".isolated/west_isolated/work/secret.md")
-    );
+    assert_eq!(got.id.as_deref(), Some("work/secret"));
     assert!(
         scratch
             .vault()
             .join(".isolated")
             .join("west_isolated")
             .join("work")
-            .join("secret.md")
+            .join("secret")
             .is_file()
     );
     assert_eq!(collection.ids().unwrap(), ["work/secret"]);
@@ -1138,7 +1041,7 @@ fn ids_matches_files_when_index_is_stale() {
         .add("bravo", rec(serde_json::json!({"title": "b"})), None)
         .unwrap();
     fs::write(
-        scratch.coll_file("north_notes", "charlie.md"),
+        scratch.coll_file("north_notes", "charlie"),
         "---\nid: charlie\ntitle: c\n---\n",
     )
     .unwrap();
@@ -1152,6 +1055,159 @@ fn ids_matches_files_when_index_is_stale() {
         .collect();
     found.sort();
     assert_eq!(found, ["alpha", "bravo"]);
+}
+
+#[test]
+fn add_work_meeting_toml_uses_that_path() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("work/meeting.toml", b"title = \"standup\"\n", None)
+        .unwrap();
+    let got = collection.get("work/meeting.toml").unwrap();
+    assert_eq!(got.id.as_deref(), Some("work/meeting.toml"));
+    assert_eq!(
+        got.raw.as_deref(),
+        Some(b"title = \"standup\"\n".as_slice())
+    );
+    assert!(
+        scratch
+            .coll_file("north_notes", "work/meeting.toml")
+            .is_file()
+    );
+    collection
+        .replace("work/meeting.toml", b"changed", None)
+        .unwrap();
+    assert_eq!(
+        collection.get("work/meeting.toml").unwrap().raw.as_deref(),
+        Some(b"changed".as_slice())
+    );
+    let hist = collection.history("work/meeting.toml", 0, 10).unwrap();
+    assert!(!hist.entries.is_empty());
+    let ids = collection.ids().unwrap();
+    assert!(ids.iter().any(|id| id == "work/meeting.toml"));
+    let walked = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap().id)
+        .collect::<Vec<_>>();
+    assert!(
+        walked
+            .iter()
+            .any(|id| id.as_deref() == Some("work/meeting.toml"))
+    );
+    collection.remove("work/meeting.toml", None).unwrap();
+    assert!(
+        !scratch
+            .coll_file("north_notes", "work/meeting.toml")
+            .exists()
+    );
+    assert!(!scratch.coll_file("north_notes", "work").exists());
+}
+
+#[test]
+fn add_foo_md_writes_foo_md() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection.add("foo.md", b"# note\n", None).unwrap();
+    let got = collection.get("foo.md").unwrap();
+    assert_eq!(got.id.as_deref(), Some("foo.md"));
+    assert!(scratch.coll_file("north_notes", "foo.md").is_file());
+    assert_eq!(
+        collection.get("foo").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+}
+
+#[test]
+fn yaml_and_toml_ids_are_distinct_and_unparsed() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection.add("a.yaml", b"title: yaml\n", None).unwrap();
+    collection
+        .add("a.toml", b"title = \"toml\"\n", None)
+        .unwrap();
+    let yaml = collection.get("a.yaml").unwrap();
+    let toml = collection.get("a.toml").unwrap();
+    assert_eq!(yaml.raw.as_deref(), Some(b"title: yaml\n".as_slice()));
+    assert_eq!(toml.raw.as_deref(), Some(b"title = \"toml\"\n".as_slice()));
+    assert_ne!(yaml.id, toml.id);
+}
+
+#[test]
+fn non_utf8_add_is_error_and_writes_no_file() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    let err = collection.add("bad", [0xff, 0xfe], None).unwrap_err();
+    assert!(
+        err.known_code() == Some(Code::NotUtf8) || err.known_code() == Some(Code::Invalid),
+        "{err:?}"
+    );
+    assert!(!scratch.coll_file("north_notes", "bad").exists());
+}
+
+#[test]
+fn documents_and_ids_skip_dotfiles_and_yield_mixed_extensions() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection.add("keep.txt", b"keep", None).unwrap();
+    fs::write(scratch.coll_file("north_notes", ".collection.yaml"), "x").unwrap();
+    fs::write(scratch.coll_file("north_notes", ".hidden"), "nope").unwrap();
+    let ids = collection.ids().unwrap();
+    assert!(ids.contains(&String::from("keep.txt")));
+    assert!(!ids.iter().any(|id| id.starts_with('.')));
+    let names: Vec<_> = collection
+        .documents()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert!(names.contains(&String::from("keep.txt")));
+    assert!(!names.iter().any(|id| id.starts_with('.')));
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn find_all_and_term_id_work_on_documents() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection.add("alpha", b"one", None).unwrap();
+    collection.add("beta", b"two", None).unwrap();
+    let all = collection.find(&Filter::all().into(), 0, 10).unwrap();
+    let mut ids: Vec<_> = all
+        .records
+        .into_iter()
+        .filter_map(|record| record.id)
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["alpha", "beta"]);
+    let query: scheda::FindQuery = serde_json::from_value(serde_json::json!({
+        "filter": {"term": {"field": "id", "value": "alpha"}}
+    }))
+    .unwrap();
+    let page = collection.find(&query, 0, 10).unwrap();
+    assert_eq!(
+        page.records
+            .iter()
+            .filter_map(|record| record.id.as_deref())
+            .collect::<Vec<_>>(),
+        ["alpha"]
+    );
+}
+
+#[test]
+fn empty_raw_round_trips() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection.add("empty", b"", None).unwrap();
+    let got = collection.get("empty").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(b"".as_slice()));
 }
 
 fn peek_schema_name(body: &str) -> String {

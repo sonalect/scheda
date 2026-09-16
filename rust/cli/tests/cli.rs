@@ -8,15 +8,14 @@ use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use scheda::{
-    Embedder, Encryption, Filter, OpenOptions, Record, RecordAdd, Reranker, Schema, SearchQuery,
-    Vault,
+    Embedder, Encryption, Filter, OpenOptions, Record, Reranker, Schema, SearchQuery, Vault,
 };
 use serde_json::{Value, json};
 
@@ -30,13 +29,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "scheda-a4-{}-{}-{n}",
-            process::id(),
-            format!("{:?}", std::thread::current().id()).replace(['(', ')'], "")
-        ));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-a4", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -63,6 +58,12 @@ impl Scratch {
             ".schema.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+    }
+
+    fn payload_file(&self, name: &str, bytes: impl AsRef<[u8]>) -> String {
+        let path = self.root.join(name);
+        fs::write(&path, bytes).unwrap();
+        path.display().to_string()
     }
 }
 
@@ -127,8 +128,8 @@ fn error_json(run: &Run) -> Value {
     serde_json::from_str(run.stderr.trim()).expect("stderr json")
 }
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn notes_schema() -> &'static str {
@@ -294,10 +295,23 @@ fn scripted_find_search_get_journal_add_commit() {
     let page_raw = stdout_json(&found_raw);
     assert!(page_raw["records"][0]["raw"].as_str().is_some());
 
+    let logged = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_log",
+        "add",
+        "--id",
+        "alpha",
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Alpha token"}))),
+    ]);
+    assert_eq!(logged.status, 0, "stderr={}", logged.stderr);
+
     let search = run(&["--vault", &path, "search", "--query", &query]);
     let hits = stdout_json(&search);
     assert_eq!(hits["hits"][0]["id"], "alpha");
-    assert_eq!(hits["hits"][0]["collection"], "agent_notes");
+    assert_eq!(hits["hits"][0]["collection"], "agent_log");
     assert!(hits["hits"][0].get("lexicalScore").is_some());
 
     let one = run(&[
@@ -312,8 +326,7 @@ fn scripted_find_search_get_journal_add_commit() {
     let record = stdout_json(&one);
     assert_eq!(record["id"], "alpha");
     assert_eq!(record["collection"], "agent_notes");
-    assert!(record["path"].as_str().unwrap().contains("alpha"));
-    assert_eq!(record["valid"], true);
+    assert!(record.get("path").is_none());
 
     let add = run(&[
         "--vault",
@@ -323,8 +336,8 @@ fn scripted_find_search_get_journal_add_commit() {
         "add",
         "--id",
         "e1",
-        "--record",
-        &json!({"fields":{"title":"logged"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"logged"}))),
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
     assert!(add.stdout.trim().is_empty());
@@ -363,8 +376,8 @@ fn collection_remove_deletes_the_record() {
         "add",
         "--id",
         "e1",
-        "--record",
-        &json!({"fields":{"title":"logged"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"logged"}))),
     ]);
     assert_eq!(journal.status, 0, "stderr={}", journal.stderr);
     let bad = run(&[
@@ -395,8 +408,8 @@ fn mutating_command_commit_message_and_identity() {
         "add",
         "--id",
         "beta",
-        "--record",
-        &json!({"fields":{"title":"Beta","tag":"blue"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Beta","tag":"blue"}))),
         "--message",
         "note beta",
     ]);
@@ -430,27 +443,24 @@ fn extra_field_is_invalid_and_write_nothing() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("notes.yaml", notes_schema());
+    scratch.write_schema(
+        "log.yaml",
+        "name: agent_log\nkind: journal\nversion: 1\nfields:\n  - name: title\n    string: {}\n",
+    );
     let path = vault_arg(&scratch);
 
     let extra = run(&[
         "--vault",
         &path,
         "collection",
-        "agent_notes",
+        "agent_log",
         "add",
         "--id",
         "rogue",
-        "--record",
-        &json!({"fields":{"title":"x","unknown":"y"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"x","unknown":"y"}))),
     ]);
     assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-    assert!(
-        !scratch
-            .vault()
-            .join("agent_notes")
-            .join("rogue.md")
-            .exists()
-    );
 
     let keep = run(&[
         "--vault",
@@ -460,11 +470,12 @@ fn extra_field_is_invalid_and_write_nothing() {
         "add",
         "--id",
         "keep",
-        "--record",
-        &json!({"fields":{"title":"Keep"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Keep"}))),
     ]);
     assert_eq!(keep.status, 0, "stderr={}", keep.stderr);
-    let bad_replace = run(&[
+    assert!(scratch.vault().join("agent_notes").join("keep").is_file());
+    let extra_replace = run(&[
         "--vault",
         &path,
         "collection",
@@ -472,10 +483,10 @@ fn extra_field_is_invalid_and_write_nothing() {
         "replace",
         "--id",
         "keep",
-        "--record",
-        &json!({"fields":{"title":"Keep","unknown":"y"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Keep","unknown":"y"}))),
     ]);
-    assert_eq!(error_json(&bad_replace)["code"], "CODE_INVALID");
+    assert_eq!(extra_replace.status, 0, "stderr={}", extra_replace.stderr);
 }
 
 #[test]
@@ -548,8 +559,8 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
         "add",
         "--id",
         "beta",
-        "--record",
-        &json!({"fields":{"title":"B"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"B"}))),
     ]);
     assert_eq!(error_json(&locked)["code"], "CODE_LOCKED");
     drop(writer);
@@ -558,12 +569,12 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
         "--vault",
         &path,
         "collection",
-        "agent_notes",
+        "agent_log",
         "add",
         "--id",
         "x",
-        "--record",
-        &json!({"fields":{"title":"t","nope":1}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"t","nope":1}))),
     ]);
     assert_eq!(error_json(&invalid)["code"], "CODE_INVALID");
 
@@ -595,7 +606,13 @@ fn auto_sync_off_local_info_get_add_commit() {
     ]);
     let declared = stdout_json(&put);
     assert!(declared.get("document").is_some());
-    assert_eq!(declared["version"], 1);
+    assert!(declared.get("version").is_none());
+    let on_disk =
+        fs::read_to_string(scratch.vault().join("agent_notes").join(".schema.yaml")).unwrap();
+    assert!(
+        on_disk.contains("version: 1"),
+        "create_collection must write generation 1: {on_disk}"
+    );
 
     let info = run(&["--vault", &path, "info"]);
     let info = stdout_json(&info);
@@ -615,8 +632,8 @@ fn auto_sync_off_local_info_get_add_commit() {
         "add",
         "--id",
         "alpha",
-        "--record",
-        &json!({"fields":{"title":"A"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"A"}))),
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
 
@@ -632,8 +649,7 @@ fn auto_sync_off_local_info_get_add_commit() {
     let record = stdout_json(&got);
     assert_eq!(record["id"], "alpha");
     assert_eq!(record["collection"], "agent_notes");
-    assert_eq!(record["valid"], true);
-    assert!(record.get("path").is_some());
+    assert!(record.get("path").is_none());
 }
 
 #[test]
@@ -660,8 +676,8 @@ fn create_collection_then_add_without_handwritten_yaml() {
         "add",
         "--id",
         "alpha",
-        "--record",
-        &json!({"fields":{"title":"A","tag":"t"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"A","tag":"t"}))),
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
     let got = run(&[
@@ -734,7 +750,6 @@ fn create_collection_rejects_layout_json_key() {
     let path = vault_arg(&scratch);
     assert_eq!(run(&["--vault", &path, "open"]).status, 0);
     let schema = json!({
-        "version": 1,
         "document": {},
         "layout": ["c/{id}.md"],
         "fields": [{"name": "title", "string": {}}]
@@ -969,8 +984,11 @@ fn cli_omits_isolated_sealed_values() {
         "--query",
         &text_query("Alpha token"),
     ]));
-    assert_eq!(search["hits"][0]["id"], "alpha");
-    assert_eq!(search["hits"][0]["collection"], "agent_notes");
+    assert_eq!(
+        search["hits"].as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "document collections do not index title for search: {search}"
+    );
     assert_no_sealed(&search.to_string());
 
     let miss = stdout_json(&run(&[
@@ -1023,8 +1041,10 @@ fn cli_omits_isolated_sealed_values() {
         "--query",
         &text_query("Alpha token"),
     ]));
-    assert_eq!(scoped_search["hits"][0]["id"], "alpha");
-    assert_eq!(scoped_search["hits"][0]["collection"], "agent_notes");
+    assert_eq!(
+        scoped_search["hits"].as_array().map(Vec::len).unwrap_or(0),
+        0
+    );
     assert_no_sealed(&scoped_search.to_string());
 
     let isolated_get = stdout_json(&run(&[
@@ -1034,11 +1054,13 @@ fn cli_omits_isolated_sealed_values() {
         "agent_sealed",
         "get",
         "--id",
-        "sealed",
+        "sealed.md",
     ]));
-    assert_eq!(isolated_get["id"], "sealed");
-    assert!(isolated_get.to_string().contains(NESTED_SEALED));
-    assert!(!isolated_get.to_string().contains(TREE_SEALED));
+    assert_eq!(isolated_get["id"], "sealed.md");
+    let isolated_record: scheda::Record = serde_json::from_value(isolated_get.clone()).unwrap();
+    let isolated_text = String::from_utf8_lossy(isolated_record.raw.as_deref().unwrap_or(&[]));
+    assert!(isolated_text.contains(NESTED_SEALED));
+    assert!(!isolated_text.contains(TREE_SEALED));
 
     let named = stdout_json(&run(&[
         "--vault",
@@ -1054,9 +1076,8 @@ fn cli_omits_isolated_sealed_values() {
         "10",
     ]));
     assert_eq!(named["records"].as_array().unwrap().len(), 1);
-    assert_eq!(named["records"][0]["id"], "sealed");
+    assert_eq!(named["records"][0]["id"], "sealed.md");
     assert_eq!(named["records"][0]["collection"], "agent_sealed");
-    assert!(named.to_string().contains(NESTED_SEALED));
 
     let isolated_find = stdout_json(&run(&[
         "--vault",
@@ -1072,7 +1093,7 @@ fn cli_omits_isolated_sealed_values() {
         "10",
     ]));
     assert_eq!(isolated_find["records"].as_array().unwrap().len(), 1);
-    assert_eq!(isolated_find["records"][0]["id"], "sealed");
+    assert_eq!(isolated_find["records"][0]["id"], "sealed.md");
 
     let ignore = Command::new("git")
         .args(["-C", &path, "check-ignore", "-q", ".scheda"])
@@ -1398,6 +1419,19 @@ fn rerank_limit_flag_on_search_and_rejects_zero_or_below_k() {
     .unwrap();
     let from_json = run(&["--vault", &path, "search", "--query", &json_zero]);
     assert_eq!(error_json(&from_json)["code"], "CODE_INVALID");
+
+    let logged = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_log",
+        "add",
+        "--id",
+        "alpha",
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Alpha token"}))),
+    ]);
+    assert_eq!(logged.status, 0, "stderr={}", logged.stderr);
 
     let ignored = run(&[
         "--vault",
@@ -1817,12 +1851,10 @@ impl Reranker for HttpReranker {
         }
         let documents = records
             .iter()
-            .map(|record| {
-                serde_json::to_string(&json!({
-                    "fields": record.fields,
-                    "body": record.body,
-                }))
-                .map_err(|err| scheda::Error::invalid(err.to_string()))
+            .map(|record| match record.raw.as_deref() {
+                Some(raw) => String::from_utf8(raw.to_vec())
+                    .map_err(|err| scheda::Error::invalid(err.to_string())),
+                None => Ok(String::new()),
             })
             .collect::<Result<Vec<_>, _>>()?;
         let value = post_json(
@@ -1870,11 +1902,11 @@ fn http_embedder_writes_vectors_and_scores_match() {
     let scratch = Scratch::new();
     let path = vault_arg(&scratch);
     let url = stub.base.as_str();
-    let schema = serde_json::to_string(&notes_decl()).unwrap();
-    let decoy = json!({"fields":{"title":"banana"}}).to_string();
-    let vehicle = json!({"fields":{"title":"car"}}).to_string();
-    let split = json!({"fields":{"title":"zzzz"},"body":"car"}).to_string();
-    let replaced = json!({"fields":{"title":"automobile"}}).to_string();
+    let schema = serde_json::to_string(&log_decl()).unwrap();
+    let decoy = scratch.payload_file("decoy", rec(json!({"title":"banana"})));
+    let vehicle = scratch.payload_file("vehicle", rec(json!({"title":"car"})));
+    let split = scratch.payload_file("split", rec(json!({"title":"car"})));
+    let replaced = scratch.payload_file("auto", rec(json!({"title":"automobile"})));
     let query = vector_query("automobile");
 
     let open = run(&["--vault", &path, "open"]);
@@ -1903,7 +1935,7 @@ fn http_embedder_writes_vectors_and_scores_match() {
                 "add",
                 "--id",
                 id,
-                "--record",
+                "--file",
                 record,
             ],
         );
@@ -1913,10 +1945,9 @@ fn http_embedder_writes_vectors_and_scores_match() {
     {
         let seen = stub.seen.lock().unwrap();
         assert!(
-            seen.iter().filter(|text| text.as_str() == "car").count() >= 2,
-            "per-field embed missed title/body car: {seen:?}"
+            seen.iter().filter(|text| text.as_str() == "car").count() >= 1,
+            "title embed missed car: {seen:?}"
         );
-        assert!(seen.iter().any(|text| text == "zzzz"), "{seen:?}");
         assert!(seen.iter().any(|text| text == "banana"), "{seen:?}");
     }
 
@@ -1936,20 +1967,20 @@ fn http_embedder_writes_vectors_and_scores_match() {
         assert!(hit.get("lexicalScore").is_none(), "{hit}");
     }
 
-    let replace = run_embed(
+    let added = run_embed(
         &path,
         url,
         &[
             "collection",
             "http_notes",
-            "replace",
+            "add",
             "--id",
-            "vehicle",
-            "--record",
+            "auto",
+            "--file",
             &replaced,
         ],
     );
-    assert_eq!(replace.status, 0, "stderr={}", replace.stderr);
+    assert_eq!(added.status, 0, "stderr={}", added.stderr);
     let reindex = run_embed(&path, url, &["reindex"]);
     assert_eq!(reindex.status, 0, "stderr={}", reindex.stderr);
     let again = run_embed(&path, url, &["search", "--query", &query]);

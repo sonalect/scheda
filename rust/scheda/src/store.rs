@@ -7,11 +7,6 @@ use std::iter::FusedIterator;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use buffa::MessageField;
-use buffa_types::google::protobuf::__buffa::oneof::value::Kind as ProtoKind;
-use buffa_types::google::protobuf::{
-    ListValue, NullValue, Struct as ProtoStruct, Value as ProtoValue,
-};
 use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
@@ -188,22 +183,22 @@ pub(crate) fn check_documents(
                     "{rel} has git conflict markers"
                 )));
             }
-            let parsed = parse_file(text)?;
-            if !seen.insert(parsed.id.clone()) {
+            let id = id_from_listed_file(vault, decl, &path)?;
+            if !seen.insert(id.clone()) {
                 bail!(Error::duplicate_id(format!(
-                    "duplicate id {} in {}",
-                    parsed.id, decl.name
+                    "duplicate id {id} in {}",
+                    decl.name
                 )));
             }
-            if let Err(err) = validate_fields(&parsed.fields, &decl.fields, true, false) {
-                bail!(Error::invalid(format!("{rel}: {err}")));
-            }
-            let expected = vault_rel(decl, &record_file(decl, &parsed.id)?);
+            let expected = vault_rel(decl, &record_file(decl, &id)?);
             if expected != rel {
-                bail!(Error::invalid(format!(
-                    "{rel} path does not match id {}",
-                    parsed.id
-                )));
+                bail!(Error::invalid(format!("{rel} path does not match id {id}")));
+            }
+            if decl.kind == Kind::Singleton {
+                let parsed = parse_file(text)?;
+                if let Err(err) = validate_fields(&parsed.fields, &decl.fields, true, false) {
+                    bail!(Error::invalid(format!("{rel}: {err}")));
+                }
             }
         }
     }
@@ -217,9 +212,7 @@ struct Prepared {
 }
 
 struct ParsedFile {
-    id: String,
     fields: Map<String, Value>,
-    body: Option<String>,
 }
 
 fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result<Prepared, Error> {
@@ -248,41 +241,21 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
                 decl.name
             )));
         }
-        if record.body.as_deref().is_some_and(|body| !body.is_empty()) {
-            bail!(Error::invalid(format!(
-                "singleton {} does not allow a Markdown body",
-                decl.name
-            )));
-        }
     }
-    if record.body.as_deref().is_some_and(|body| !body.is_empty())
-        && decl.body.as_ref().is_none_or(|body| !body.allowed)
-    {
-        bail!(Error::invalid(format!(
-            "collection {} does not allow a Markdown body",
-            decl.name
-        )));
-    }
-    let mut fields = fields_map(record)?;
-    apply_defaults(&mut fields, &decl.fields);
-    match fields.get(crate::id::FIELD) {
-        Some(Value::String(existing)) if existing == id => {}
-        Some(Value::Null) | None => {
-            fields.insert(String::from(crate::id::FIELD), Value::String(id.to_owned()));
-        }
-        Some(_) => {
-            bail!(Error::invalid(format!(
-                "header {} must equal record id {id}",
-                crate::id::FIELD
-            )));
-        }
-    }
-    validate_fields(&fields, &decl.fields, true, false)?;
     let rel = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
     let path = crate::schema::join_inside(&dir, &rel)?;
-    let body = record.body.as_deref().filter(|body| !body.is_empty());
-    let bytes = encode_file(decl, &fields, body)?;
+    let bytes = match decl.kind {
+        Kind::Document => utf8_raw(record, "[store::prepare_write] decode UTF-8")?.to_vec(),
+        Kind::Singleton => {
+            let mut fields = yaml_object_from_raw(record)?;
+            apply_defaults(&mut fields, &decl.fields);
+            inject_id(&mut fields, id)?;
+            validate_fields(&fields, &decl.fields, true, false)?;
+            encode_file(&fields)?
+        }
+        Kind::Journal => unreachable!("journal write is refused above"),
+    };
     Ok(Prepared {
         id: id.to_owned(),
         path,
@@ -298,13 +271,12 @@ fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
                 Some(leaf) => leaf,
                 None => unreachable!("document id is non-empty"),
             };
-            let file = format!("{leaf}.md");
-            if file.len() > FS_NAME_MAX {
+            if leaf.len() > FS_NAME_MAX {
                 bail!(Error::invalid(format!(
                     "record file name exceeds {FS_NAME_MAX} bytes"
                 )));
             }
-            Ok(format!("{id}.md"))
+            Ok(id.to_owned())
         }
         Kind::Singleton => Ok(String::from("record.yaml")),
         Kind::Journal => bail!(Error::invalid("document path used on a journal collection",)),
@@ -349,7 +321,7 @@ fn collect_document_files(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), Erro
             collect_document_files(&path, out)?;
             continue;
         }
-        if meta.is_file() && name.ends_with(".md") {
+        if meta.is_file() {
             out.push(path);
         }
     }
@@ -381,10 +353,10 @@ fn document_id_from_path(records_dir: &Path, path: &Path) -> Result<String, Erro
             }
         }
     }
-    let Some(id) = out.strip_suffix(".md") else {
-        unreachable!("list_files only yields .md names for document");
-    };
-    Ok(id.to_owned())
+    if out.is_empty() {
+        bail!(Error::invalid("record path is empty"));
+    }
+    Ok(out)
 }
 
 fn prune_empty_parents(stop: &Path, file: &Path) -> Result<(), Error> {
@@ -445,7 +417,8 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
 /// Id-order walk of one `document` or `singleton` collection.
 ///
 /// Yields one Record at a time from the files the library names. Does not
-/// open the Index. Order is the byte order of the full `id` (`{id}.md`).
+/// open the Index. Order is the byte order of the full `id` (the relative
+/// POSIX path under the collection, including any extension).
 /// A `document` `id` may contain `/`, each component a directory.
 /// A `singleton` yields its one Record, or nothing before the first write.
 /// `journal` is refused when the walk is created.
@@ -563,7 +536,7 @@ pub(crate) fn reindex_stats(vault: &Path, decl: &CollectionDecl) -> Result<(u64,
             Err(err) => return Err(err),
         };
         records += 1;
-        if record.valid != Some(true) {
+        if !record_indexable(decl, &record) {
             invalid += 1;
         }
     }
@@ -581,80 +554,42 @@ pub(crate) fn read_file(
         .context("[store::read_file] read record")
         .map_err(|err| err.with_path(&rel))?;
     let raw = decode_record_file(raw, decl, encryption, &rel)?;
-    let mut record = Record::default()
-        .with_collection(decl.name.as_str())
-        .with_path(rel.clone());
-    let Ok(text) = str::from_utf8(&raw) else {
-        return Ok(record.with_id("").with_valid(false).with_raw(raw));
+    let id = match decl.kind {
+        Kind::Document => {
+            let dir = crate::isolated::records_dir(vault, decl)?;
+            document_id_from_path(&dir, path)?
+        }
+        Kind::Singleton => match decl.singleton_id.clone() {
+            Some(id) => id,
+            None => {
+                bail!(Error::invalid(format!(
+                    "collection {} is missing singleton_id",
+                    decl.name
+                )));
+            }
+        },
+        Kind::Journal => bail!(Error::invalid("document read used on a journal collection",)),
     };
-    if has_conflict_markers(text) {
-        record.valid = Some(false);
-        match parse_file(text) {
-            Ok(parsed) => {
-                let _ = fill_parsed(&mut record, parsed);
-            }
-            Err(_) => {
-                if let Some(id) = fallback_id(decl) {
-                    record.id = Some(id);
-                }
-            }
-        }
-        return Ok(record.with_raw(raw));
-    }
-    match parse_file(text) {
-        Ok(parsed) => {
-            let valid = validate_fields(&parsed.fields, &decl.fields, true, false).is_ok()
-                && id_matches_header(&parsed)
-                && record_file(decl, &parsed.id)
-                    .is_ok_and(|expected| vault_rel(decl, &expected) == rel);
-            if fill_parsed(&mut record, parsed).is_err() {
-                record.valid = Some(false);
-            } else {
-                record.valid = Some(valid);
-            }
-            Ok(record.with_raw(raw))
-        }
-        Err(_) => {
-            record.valid = Some(false);
-            if let Some(id) = fallback_id(decl) {
-                record.id = Some(id);
-            }
-            Ok(record.with_raw(raw))
-        }
-    }
-}
-
-fn fill_parsed(record: &mut Record, parsed: ParsedFile) -> Result<(), Error> {
-    record.id = Some(parsed.id);
-    record.body = parsed.body;
-    put_fields(record, parsed.fields)
-}
-
-fn fallback_id(decl: &CollectionDecl) -> Option<String> {
-    decl.singleton_id.clone()
-}
-
-fn id_matches_header(parsed: &ParsedFile) -> bool {
-    match parsed.fields.get(crate::id::FIELD) {
-        Some(Value::String(s)) => s == &parsed.id,
-        _ => false,
-    }
+    Ok(Record::default()
+        .with_collection(decl.name.as_str())
+        .with_id(id)
+        .with_raw(raw))
 }
 
 fn parse_file(text: &str) -> Result<ParsedFile, Error> {
-    let (yaml, body) = split_frontmatter(text);
+    let (yaml, _body) = split_frontmatter(text);
     let value: Value =
         yaml_serde::from_str(yaml).context(Code::Invalid, "[store::parse_file] decode YAML")?;
     let Value::Object(fields) = value else {
         bail!(Error::invalid("YAML header must be a mapping"));
     };
-    let id = match fields.get(crate::id::FIELD) {
-        Some(Value::String(s)) if !s.is_empty() => s.clone(),
+    match fields.get(crate::id::FIELD) {
+        Some(Value::String(s)) if !s.is_empty() => {}
         _ => {
             bail!(Error::invalid("header id is missing"));
         }
     };
-    Ok(ParsedFile { id, fields, body })
+    Ok(ParsedFile { fields })
 }
 
 fn split_frontmatter(text: &str) -> (&str, Option<String>) {
@@ -687,26 +622,10 @@ fn split_frontmatter(text: &str) -> (&str, Option<String>) {
     }
 }
 
-fn encode_file(
-    decl: &CollectionDecl,
-    fields: &Map<String, Value>,
-    body: Option<&str>,
-) -> Result<Vec<u8>, Error> {
+fn encode_file(fields: &Map<String, Value>) -> Result<Vec<u8>, Error> {
     let yaml =
         yaml_serde::to_string(fields).context(Code::Invalid, "[store::encode_file] encode YAML")?;
     let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-    if decl.kind == Kind::Document
-        && let Some(body) = body
-    {
-        let mut out = String::from("---\n");
-        out.push_str(yaml);
-        if !yaml.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push_str("---\n");
-        out.push_str(body);
-        return Ok(out.into_bytes());
-    }
     Ok(yaml.as_bytes().to_vec())
 }
 
@@ -870,27 +789,6 @@ fn is_integer(value: &Value) -> bool {
     })
 }
 
-/// `google.protobuf.Value` numbers are binary64. An exact integer whose
-/// magnitude is at most 2^53 is stored as a JSON integer so a journal line
-/// prints `1` rather than `1.0`.
-fn json_number_from_proto_f64(n: f64) -> Result<Value, Error> {
-    if !n.is_finite() {
-        bail!(Error::invalid("number must be finite"));
-    }
-    if n.fract() == 0.0 && n.abs() <= BINARY64_EXACT_INT_MAGNITUDE as f64 {
-        if n >= 0.0 {
-            Ok(Value::Number((n as u64).into()))
-        } else {
-            Ok(Value::Number((n as i64).into()))
-        }
-    } else {
-        let Some(number) = serde_json::Number::from_f64(n) else {
-            bail!(Error::invalid("number must be finite"));
-        };
-        Ok(Value::Number(number))
-    }
-}
-
 fn is_finite_number(value: &Value) -> bool {
     match value {
         Value::Number(n) => n.as_f64().is_some_and(f64::is_finite) || n.is_i64() || n.is_u64(),
@@ -898,81 +796,85 @@ fn is_finite_number(value: &Value) -> bool {
     }
 }
 
-pub(crate) fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
-    let Some(fields) = record.fields.as_option() else {
-        return Ok(Map::new());
-    };
-    proto_struct_to_map(fields)
+pub(crate) fn record_raw(record: &Record) -> &[u8] {
+    record.raw.as_deref().unwrap_or(&[])
 }
 
-pub(crate) fn put_fields(record: &mut Record, map: Map<String, Value>) -> Result<(), Error> {
-    record.fields = MessageField::some(map_to_proto_struct(map)?);
-    Ok(())
+pub(crate) fn utf8_raw<'a>(record: &'a Record, frame: &'static str) -> Result<&'a [u8], Error> {
+    let raw = record_raw(record);
+    str::from_utf8(raw).context(Code::NotUtf8, frame)?;
+    Ok(raw)
 }
 
-fn proto_struct_to_map(fields: &ProtoStruct) -> Result<Map<String, Value>, Error> {
-    let mut map = Map::new();
-    for (key, value) in &fields.fields {
-        map.insert(key.clone(), proto_value_to_json(value)?);
-    }
-    Ok(map)
-}
-
-fn proto_value_to_json(value: &ProtoValue) -> Result<Value, Error> {
-    match value.kind.as_ref() {
-        None | Some(ProtoKind::NullValue(_)) => Ok(Value::Null),
-        Some(ProtoKind::NumberValue(n)) => json_number_from_proto_f64(*n),
-        Some(ProtoKind::StringValue(text)) => Ok(Value::String(text.clone())),
-        Some(ProtoKind::BoolValue(flag)) => Ok(Value::Bool(*flag)),
-        Some(ProtoKind::StructValue(nested)) => Ok(Value::Object(proto_struct_to_map(nested)?)),
-        Some(ProtoKind::ListValue(list)) => {
-            let mut items = Vec::with_capacity(list.values.len());
-            for item in &list.values {
-                items.push(proto_value_to_json(item)?);
-            }
-            Ok(Value::Array(items))
+pub(crate) fn inject_id(fields: &mut Map<String, Value>, id: &str) -> Result<(), Error> {
+    match fields.get(crate::id::FIELD) {
+        Some(Value::String(existing)) if existing == id => Ok(()),
+        Some(Value::Null) | None => {
+            fields.insert(String::from(crate::id::FIELD), Value::String(id.to_owned()));
+            Ok(())
+        }
+        Some(_) => {
+            bail!(Error::invalid(format!(
+                "header {} must equal record id {id}",
+                crate::id::FIELD
+            )));
         }
     }
 }
 
-fn map_to_proto_struct(map: Map<String, Value>) -> Result<ProtoStruct, Error> {
-    map_ref_to_proto_struct(&map)
-}
-
-fn map_ref_to_proto_struct(map: &Map<String, Value>) -> Result<ProtoStruct, Error> {
-    let mut fields = ProtoStruct::default();
-    for (key, value) in map {
-        fields
-            .fields
-            .insert(key.clone(), json_to_proto_value(value)?);
+fn yaml_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
+    let text = str::from_utf8(record_raw(record)).context(Code::NotUtf8, "[store] decode UTF-8")?;
+    if text.trim().is_empty() {
+        return Ok(Map::new());
     }
+    let value: Value = yaml_serde::from_str(text).context(Code::Invalid, "[store] decode YAML")?;
+    let Value::Object(fields) = value else {
+        bail!(Error::invalid("YAML header must be a mapping"));
+    };
     Ok(fields)
 }
 
-fn json_to_proto_value(value: &Value) -> Result<ProtoValue, Error> {
-    let kind = match value {
-        Value::Null => ProtoKind::NullValue(buffa::EnumValue::from(NullValue::NULL_VALUE)),
-        Value::Bool(flag) => ProtoKind::BoolValue(*flag),
-        Value::Number(n) => {
-            let Some(number) = n.as_f64() else {
-                bail!(Error::invalid("number must be finite"));
-            };
-            ProtoKind::NumberValue(number)
-        }
-        Value::String(text) => ProtoKind::StringValue(text.clone()),
-        Value::Array(items) => {
-            let mut list = ListValue::default();
-            for item in items {
-                list.values.push(json_to_proto_value(item)?);
-            }
-            ProtoKind::from(list)
-        }
-        Value::Object(map) => ProtoKind::from(map_ref_to_proto_struct(map)?),
+fn json_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
+    let text = str::from_utf8(record_raw(record)).context(Code::NotUtf8, "[store] decode UTF-8")?;
+    let text = text.trim_end_matches('\n').trim_end_matches('\r');
+    if text.is_empty() {
+        return Ok(Map::new());
+    }
+    let value: Value = serde_json::from_str(text).context(Code::Invalid, "[store] decode JSON")?;
+    let Value::Object(fields) = value else {
+        bail!(Error::invalid("JSON must be an object"));
     };
-    Ok(ProtoValue {
-        kind: Some(kind),
-        ..ProtoValue::default()
-    })
+    Ok(fields)
+}
+
+/// Field map for journal/singleton indexing and Schema checks. Documents
+/// do not populate Schema columns.
+pub(crate) fn fields_from_record(
+    decl: &CollectionDecl,
+    record: &Record,
+) -> Result<Map<String, Value>, Error> {
+    match decl.kind {
+        Kind::Document => Ok(Map::new()),
+        Kind::Journal => json_object_from_raw(record),
+        Kind::Singleton => yaml_object_from_raw(record),
+    }
+}
+
+/// Whether this Record should enter the Index. Documents are present when
+/// the file was read. Journal/singleton keep Schema-field validation until
+/// those kinds become opaque.
+pub(crate) fn record_indexable(decl: &CollectionDecl, record: &Record) -> bool {
+    match decl.kind {
+        Kind::Document => true,
+        Kind::Journal | Kind::Singleton => match fields_from_record(decl, record) {
+            Ok(fields) => validate_fields(&fields, &decl.fields, true, false).is_ok(),
+            Err(_) => false,
+        },
+    }
+}
+
+pub(crate) fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
+    json_object_from_raw(record)
 }
 
 fn encode_record_file<'a>(
@@ -1255,14 +1157,22 @@ mod tests {
     }
 
     #[test]
-    fn document_file_is_id_md() {
+    fn document_file_is_id() {
         assert_eq!(
             record_file(&decl(Kind::Document), "alpha").unwrap(),
-            "alpha.md"
+            "alpha"
         );
         assert_eq!(
             record_file(&decl(Kind::Document), "work/meeting").unwrap(),
-            "work/meeting.md"
+            "work/meeting"
+        );
+        assert_eq!(
+            record_file(&decl(Kind::Document), "work/meeting.toml").unwrap(),
+            "work/meeting.toml"
+        );
+        assert_eq!(
+            record_file(&decl(Kind::Document), "foo.md").unwrap(),
+            "foo.md"
         );
         assert_eq!(
             record_file(&decl(Kind::Singleton), "inbox").unwrap(),

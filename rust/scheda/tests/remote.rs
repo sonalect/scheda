@@ -6,10 +6,10 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, OpenOptions, RecordAdd, Vault};
+use scheda::{Code, OpenOptions, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -22,9 +22,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c7-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c7", n),
+        }
     }
 
     fn dir(&self, name: &str) -> PathBuf {
@@ -40,11 +40,8 @@ impl Drop for Scratch {
 
 const NOTES: &str = include_str!("../testdata/document/notes.yaml");
 
-fn rec(title: &str) -> RecordAdd {
-    serde_json::from_value(json!({
-        "fields": {"title": title},
-    }))
-    .unwrap()
+fn rec(title: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({"title": title})).unwrap()
 }
 
 fn as_url(path: &Path) -> String {

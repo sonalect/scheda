@@ -19,8 +19,8 @@ constructing errors, or converting `map_err` / `format!(...: {err})` sites.
   name. Honest enums only — no catch-all `CODE_IO` / `CODE_GIT`. Schema rule
   text stays in `message` under `CODE_INVALID`.
 - **`message`**: must not replace `code`.
-- **`path`**: vault-relative POSIX, same meaning as `Record.path`. Unset when
-  there is no Record file (remote network, ANN dump under `.scheda/`).
+- **`path`**: vault-relative POSIX of the file this failure is about. Unset
+  when there is no such file (remote network, ANN dump under `.scheda/`).
 - **`repeat`**: constructors set it from `default_repeat(code)`. Override with
   `with_repeat` when the **method** knows better.
 - **`stack`**: causal frames, **outermost first**. Not a language backtrace.

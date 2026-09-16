@@ -765,25 +765,21 @@ pub mod search_hits {
         pub collection: ::core::option::Option<&'a str>,
         /// Field 2: `id`
         pub id: ::core::option::Option<&'a str>,
-        /// Vault-relative POSIX path. Output only.
-        ///
-        /// Field 3: `path`
-        pub path: ::core::option::Option<&'a str>,
         /// Set only when that leg produced the hit.
         ///
-        /// Field 4: `lexical_score`
+        /// Field 3: `lexical_score`
         pub lexical_score: ::core::option::Option<f64>,
-        /// Field 5: `vector_score`
+        /// Field 4: `vector_score`
         pub vector_score: ::core::option::Option<f64>,
-        /// Field 6: `rrf_score`
+        /// Field 5: `rrf_score`
         pub rrf_score: ::core::option::Option<f64>,
         /// Set only when `search` was called with a reranker.
         ///
-        /// Field 7: `rerank_score`
+        /// Field 6: `rerank_score`
         pub rerank_score: ::core::option::Option<f64>,
         /// Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
         ///
-        /// Field 8: `raw`
+        /// Field 7: `raw`
         pub raw: ::core::option::Option<&'a [u8]>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
@@ -836,39 +832,32 @@ pub mod search_hits {
                 3u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
-                        ::buffa::encoding::WireType::LengthDelimited,
+                        ::buffa::encoding::WireType::Fixed64,
                     )?;
-                    view.path = Some(::buffa::types::borrow_str(&mut cur)?);
+                    view.lexical_score = Some(::buffa::types::decode_double(&mut cur)?);
                 }
                 4u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
                         ::buffa::encoding::WireType::Fixed64,
                     )?;
-                    view.lexical_score = Some(::buffa::types::decode_double(&mut cur)?);
+                    view.vector_score = Some(::buffa::types::decode_double(&mut cur)?);
                 }
                 5u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
                         ::buffa::encoding::WireType::Fixed64,
                     )?;
-                    view.vector_score = Some(::buffa::types::decode_double(&mut cur)?);
+                    view.rrf_score = Some(::buffa::types::decode_double(&mut cur)?);
                 }
                 6u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
                         ::buffa::encoding::WireType::Fixed64,
                     )?;
-                    view.rrf_score = Some(::buffa::types::decode_double(&mut cur)?);
-                }
-                7u32 => {
-                    ::buffa::encoding::check_wire_type(
-                        tag,
-                        ::buffa::encoding::WireType::Fixed64,
-                    )?;
                     view.rerank_score = Some(::buffa::types::decode_double(&mut cur)?);
                 }
-                8u32 => {
+                7u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
                         ::buffa::encoding::WireType::LengthDelimited,
@@ -905,7 +894,6 @@ pub mod search_hits {
             ::core::result::Result::Ok(super::super::super::search_hits::Hit {
                 collection: self.collection.map(|s| s.to_string()),
                 id: self.id.map(|s| s.to_string()),
-                path: self.path.map(|s| s.to_string()),
                 lexical_score: self.lexical_score,
                 vector_score: self.vector_score,
                 rrf_score: self.rrf_score,
@@ -926,9 +914,6 @@ pub mod search_hits {
                 size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
             }
             if let Some(ref v) = self.id {
-                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-            }
-            if let Some(ref v) = self.path {
                 size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
             }
             if self.lexical_score.is_some() {
@@ -963,23 +948,20 @@ pub mod search_hits {
             if let Some(ref v) = self.id {
                 ::buffa::types::put_string_field(2u32, v, buf);
             }
-            if let Some(ref v) = self.path {
-                ::buffa::types::put_string_field(3u32, v, buf);
-            }
             if let Some(v) = self.lexical_score {
-                ::buffa::types::put_double_field(4u32, v, buf);
+                ::buffa::types::put_double_field(3u32, v, buf);
             }
             if let Some(v) = self.vector_score {
-                ::buffa::types::put_double_field(5u32, v, buf);
+                ::buffa::types::put_double_field(4u32, v, buf);
             }
             if let Some(v) = self.rrf_score {
-                ::buffa::types::put_double_field(6u32, v, buf);
+                ::buffa::types::put_double_field(5u32, v, buf);
             }
             if let Some(v) = self.rerank_score {
-                ::buffa::types::put_double_field(7u32, v, buf);
+                ::buffa::types::put_double_field(6u32, v, buf);
             }
             if let Some(ref v) = self.raw {
-                ::buffa::types::put_shared_bytes_field(8u32, v, buf);
+                ::buffa::types::put_shared_bytes_field(7u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -1007,9 +989,6 @@ pub mod search_hits {
             }
             if let ::core::option::Option::Some(__v) = self.id {
                 __map.serialize_entry("id", __v)?;
-            }
-            if let ::core::option::Option::Some(__v) = self.path {
-                __map.serialize_entry("path", __v)?;
             }
             if let ::core::option::Option::Some(__v) = self.lexical_score {
                 __map
@@ -1144,40 +1123,33 @@ pub mod search_hits {
         pub fn id(&self) -> ::core::option::Option<&'_ str> {
             self.0.reborrow().id
         }
-        /// Vault-relative POSIX path. Output only.
-        ///
-        /// Field 3: `path`
-        #[must_use]
-        pub fn path(&self) -> ::core::option::Option<&'_ str> {
-            self.0.reborrow().path
-        }
         /// Set only when that leg produced the hit.
         ///
-        /// Field 4: `lexical_score`
+        /// Field 3: `lexical_score`
         #[must_use]
         pub fn lexical_score(&self) -> ::core::option::Option<f64> {
             self.0.reborrow().lexical_score
         }
-        /// Field 5: `vector_score`
+        /// Field 4: `vector_score`
         #[must_use]
         pub fn vector_score(&self) -> ::core::option::Option<f64> {
             self.0.reborrow().vector_score
         }
-        /// Field 6: `rrf_score`
+        /// Field 5: `rrf_score`
         #[must_use]
         pub fn rrf_score(&self) -> ::core::option::Option<f64> {
             self.0.reborrow().rrf_score
         }
         /// Set only when `search` was called with a reranker.
         ///
-        /// Field 7: `rerank_score`
+        /// Field 6: `rerank_score`
         #[must_use]
         pub fn rerank_score(&self) -> ::core::option::Option<f64> {
             self.0.reborrow().rerank_score
         }
         /// Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
         ///
-        /// Field 8: `raw`
+        /// Field 7: `raw`
         #[must_use]
         pub fn raw(&self) -> ::core::option::Option<&'_ [u8]> {
             self.0.reborrow().raw

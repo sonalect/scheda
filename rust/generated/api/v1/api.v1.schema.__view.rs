@@ -3,27 +3,22 @@
 
 #[derive(Clone, Debug, Default)]
 pub struct SchemaView<'a> {
-    /// Integer ≥ 1. Same key on disk and in `create_collection`. Writes
-    /// must use the current version.
-    ///
-    /// Field 1: `version`
-    pub version: ::core::option::Option<u32>,
     /// Field declarations. May be empty.
     ///
-    /// Field 2: `fields`
+    /// Field 1: `fields`
     pub fields: ::buffa::RepeatedView<'a, super::super::__buffa::view::FieldView<'a>>,
     /// Later. Default false. `true`: Record files live under
     /// `{vault}/.isolated/{name}/` (gitignored nested git). Schema file
     /// stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
     /// collections does not read it.
     ///
-    /// Field 6: `isolated`
+    /// Field 5: `isolated`
     pub isolated: ::core::option::Option<bool>,
     /// Record files of this collection are age armor on disk. Independent
     /// of `isolated`. I/O requires the handle secret. `journal` may not
     /// set it.
     ///
-    /// Field 7: `encrypted`
+    /// Field 6: `encrypted`
     pub encrypted: ::core::option::Option<bool>,
     /// Default false: Records enter the Tantivy Index (`find`, filters,
     /// BM25). `true`: no Record of this collection is written there.
@@ -32,7 +27,7 @@ pub struct SchemaView<'a> {
     /// `encrypted` (ciphertext is never indexed) and allowed. A `journal`
     /// may set it.
     ///
-    /// Field 8: `exclude_lexical_index`
+    /// Field 7: `exclude_lexical_index`
     pub exclude_lexical_index: ::core::option::Option<bool>,
     /// Default false: eligible fields are embedded on write. `true`: no
     /// Record of this collection is embedded or stored in the vector
@@ -40,7 +35,7 @@ pub struct SchemaView<'a> {
     /// uses the lexical leg only. Redundant on `encrypted` and allowed.
     /// A `journal` may set it.
     ///
-    /// Field 9: `exclude_vector_index`
+    /// Field 8: `exclude_vector_index`
     pub exclude_vector_index: ::core::option::Option<bool>,
     pub kind: ::core::option::Option<
         super::super::__buffa::view::oneof::schema::Kind<'a>,
@@ -77,28 +72,21 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
-            1u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                view.version = Some(::buffa::types::decode_uint32(&mut cur)?);
-            }
-            6u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.isolated = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            7u32 => {
+            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.encrypted = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            8u32 => {
+            7u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -107,14 +95,14 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                     ::buffa::types::decode_bool(&mut cur)?,
                 );
             }
-            9u32 => {
+            8u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.exclude_vector_index = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            2u32 => {
+            1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -132,7 +120,7 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                         )?,
                     );
             }
-            3u32 => {
+            2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -163,7 +151,7 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                     );
                 }
             }
-            4u32 => {
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -194,7 +182,7 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                     );
                 }
             }
-            5u32 => {
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -247,7 +235,6 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
         use ::buffa::alloc::string::ToString as _;
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::Schema {
-            version: self.version,
             fields: self
                 .fields
                 .iter()
@@ -304,9 +291,6 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let Some(v) = self.version {
-            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
-        }
         for v in &self.fields {
             let __slot = __cache.reserve();
             let inner_size = v.compute_size(__cache);
@@ -366,12 +350,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let Some(v) = self.version {
-            ::buffa::types::put_uint32_field(1u32, v, buf);
-        }
         for v in &self.fields {
             ::buffa::types::put_len_delimited_header(
-                2u32,
+                1u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -381,7 +362,7 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
             match v {
                 super::super::__buffa::view::oneof::schema::Kind::Document(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        3u32,
+                        2u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -389,7 +370,7 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
                 }
                 super::super::__buffa::view::oneof::schema::Kind::Journal(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        4u32,
+                        3u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -397,7 +378,7 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
                 }
                 super::super::__buffa::view::oneof::schema::Kind::Singleton(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        5u32,
+                        4u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -406,16 +387,16 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
             }
         }
         if let Some(v) = self.isolated {
-            ::buffa::types::put_bool_field(6u32, v, buf);
+            ::buffa::types::put_bool_field(5u32, v, buf);
         }
         if let Some(v) = self.encrypted {
-            ::buffa::types::put_bool_field(7u32, v, buf);
+            ::buffa::types::put_bool_field(6u32, v, buf);
         }
         if let Some(v) = self.exclude_lexical_index {
-            ::buffa::types::put_bool_field(8u32, v, buf);
+            ::buffa::types::put_bool_field(7u32, v, buf);
         }
         if let Some(v) = self.exclude_vector_index {
-            ::buffa::types::put_bool_field(9u32, v, buf);
+            ::buffa::types::put_bool_field(8u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -438,9 +419,6 @@ impl<'__a> ::serde::Serialize for SchemaView<'__a> {
     ) -> ::core::result::Result<__S::Ok, __S::Error> {
         use ::serde::ser::SerializeMap as _;
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
-        if let ::core::option::Option::Some(__v) = self.version {
-            __map.serialize_entry("version", &::buffa::json_helpers::ProtoJson(&__v))?;
-        }
         if !self.fields.is_empty() {
             __map.serialize_entry("fields", &*self.fields)?;
         }
@@ -556,17 +534,9 @@ impl SchemaOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Integer ≥ 1. Same key on disk and in `create_collection`. Writes
-    /// must use the current version.
-    ///
-    /// Field 1: `version`
-    #[must_use]
-    pub fn version(&self) -> ::core::option::Option<u32> {
-        self.0.reborrow().version
-    }
     /// Field declarations. May be empty.
     ///
-    /// Field 2: `fields`
+    /// Field 1: `fields`
     #[must_use]
     pub fn fields(
         &self,
@@ -578,7 +548,7 @@ impl SchemaOwnedView {
     /// stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
     /// collections does not read it.
     ///
-    /// Field 6: `isolated`
+    /// Field 5: `isolated`
     #[must_use]
     pub fn isolated(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().isolated
@@ -587,7 +557,7 @@ impl SchemaOwnedView {
     /// of `isolated`. I/O requires the handle secret. `journal` may not
     /// set it.
     ///
-    /// Field 7: `encrypted`
+    /// Field 6: `encrypted`
     #[must_use]
     pub fn encrypted(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().encrypted
@@ -599,7 +569,7 @@ impl SchemaOwnedView {
     /// `encrypted` (ciphertext is never indexed) and allowed. A `journal`
     /// may set it.
     ///
-    /// Field 8: `exclude_lexical_index`
+    /// Field 7: `exclude_lexical_index`
     #[must_use]
     pub fn exclude_lexical_index(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().exclude_lexical_index
@@ -610,7 +580,7 @@ impl SchemaOwnedView {
     /// uses the lexical leg only. Redundant on `encrypted` and allowed.
     /// A `journal` may set it.
     ///
-    /// Field 9: `exclude_vector_index`
+    /// Field 8: `exclude_vector_index`
     #[must_use]
     pub fn exclude_vector_index(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().exclude_vector_index

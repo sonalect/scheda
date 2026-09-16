@@ -27,10 +27,9 @@ message Error {
 
     // Writes / remotes / encryption this handle cannot do.
     CODE_UNSUPPORTED = 301;
-    CODE_UNSUPPORTED_REMOTE = 302;
-    CODE_LOCKED = 303;
+    CODE_LOCKED = 302;
     // This build cannot encrypt; encryption is not available.
-    CODE_UNSUPPORTED_ENCRYPTION = 304;
+    CODE_UNSUPPORTED_ENCRYPTION = 303;
 
     // Filesystem / OS: one code per stable `std::io::ErrorKind`.
     // `CODE_IO_OTHER` is `ErrorKind::Other` and any future/unstable kind.
@@ -81,31 +80,16 @@ message Error {
     CODE_GIT_GENERIC = 502;
     CODE_GIT_NOT_FOUND = 503;
     CODE_GIT_EXISTS = 504;
-    CODE_GIT_AMBIGUOUS = 505;
-    CODE_GIT_BUF_SIZE = 506;
-    CODE_GIT_USER = 507;
-    CODE_GIT_BARE_REPO = 508;
-    CODE_GIT_UNBORN_BRANCH = 509;
-    CODE_GIT_UNMERGED = 510;
-    CODE_GIT_INVALID_SPEC = 511;
-    CODE_GIT_CONFLICT = 512;
-    CODE_GIT_LOCKED = 513;
-    CODE_GIT_MODIFIED = 514;
-    CODE_GIT_AUTH = 515;
-    CODE_GIT_CERTIFICATE = 516;
-    CODE_GIT_APPLIED = 517;
-    CODE_GIT_PEEL = 518;
-    CODE_GIT_EOF = 519;
-    CODE_GIT_INVALID = 520;
-    CODE_GIT_UNCOMMITTED = 521;
-    CODE_GIT_DIRECTORY = 522;
-    CODE_GIT_MERGE_CONFLICT = 523;
-    CODE_GIT_HASHSUM_MISMATCH = 524;
-    CODE_GIT_INDEX_DIRTY = 525;
-    CODE_GIT_APPLY_FAIL = 526;
-    CODE_GIT_OWNER = 527;
-    CODE_GIT_TIMEOUT = 528;
-    CODE_GIT_HEAD = 529;
+    CODE_GIT_BARE_REPO = 505;
+    CODE_GIT_UNBORN_BRANCH = 506;
+    CODE_GIT_CONFLICT = 507;
+    CODE_GIT_LOCKED = 508;
+    CODE_GIT_AUTH = 509;
+    CODE_GIT_CERTIFICATE = 510;
+    CODE_GIT_UNCOMMITTED = 511;
+    CODE_GIT_MERGE_CONFLICT = 512;
+    CODE_GIT_TIMEOUT = 513;
+    CODE_GIT_HEAD = 514;
 
     // Derived Index, not Vault text.
     CODE_INDEX_MISSING = 601;
@@ -136,8 +120,8 @@ message Error {
     }
   }];
   string message = 2;
-  // Vault-relative POSIX path of the file this failure is about, same
-  // meaning as `Record.path`. Unset when there is no such file.
+  // Vault-relative POSIX path of the file this failure is about.
+  // Unset when there is no such file.
   string path = 3 [(buf.validate.field) = {
     string: {min_len: 1}
   }];

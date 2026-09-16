@@ -48,8 +48,9 @@ pub(crate) fn require_slug(label: &str, value: &str) -> Result<(), Error> {
 }
 
 /// `document` Record `id`: one slug, or `/`-separated slugs (each a directory,
-/// last is the file stem). The whole string is at most 255 bytes, same as a
-/// flat slug. `journal` / `singleton` / collection names still use [`require_slug`].
+/// last is the filename and may include an extension). The whole string is
+/// at most 255 bytes, same as a flat slug. `journal` / `singleton` / collection
+/// names still use [`require_slug`].
 pub(crate) fn require_document_id(id: &str) -> Result<(), Error> {
     if id.is_empty() {
         bail!(Error::invalid("id is empty"));
@@ -147,6 +148,8 @@ mod tests {
         require_document_id("work/meeting").unwrap();
         require_document_id("2026-01-15/meeting").unwrap();
         require_document_id("2026/01/15/meeting").unwrap();
+        require_document_id("foo.md").unwrap();
+        require_document_id("work/meeting.toml").unwrap();
     }
 
     #[test]

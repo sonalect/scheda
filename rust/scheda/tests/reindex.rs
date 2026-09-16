@@ -7,12 +7,11 @@ mod common;
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 
-use scheda::{Code, Embedder, FindQuery, OpenOptions, RecordAdd, SearchQuery, Vault};
+use scheda::{Code, Embedder, FindQuery, OpenOptions, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -25,9 +24,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-reindex-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-reindex", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -60,8 +59,33 @@ fn peek_schema_name(body: &str) -> &str {
     "unknown"
 }
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
+}
+
+fn drop_journal_id(vault: &std::path::Path, collection: &str, id: &str) {
+    let dir = vault.join(collection);
+    let entries = fs::read_dir(&dir).unwrap();
+    for entry in entries {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        let mut out = String::new();
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(line).unwrap();
+            if value.get("id").and_then(Value::as_str) == Some(id) {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        fs::write(path, out).unwrap();
+    }
 }
 
 fn q(text: &str, k: u32) -> SearchQuery {
@@ -300,15 +324,21 @@ fn remove_during_rebuild_is_absent_after_publish() {
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
     )
     .unwrap();
-    let other = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
-            other
-                .collection("token_notes")
-                .unwrap()
-                .remove("gone", None)
-                .unwrap();
+            drop_journal_id(&scratch.vault(), "token_notes", "gone");
+            let queue = scratch
+                .vault()
+                .join(".scheda")
+                .join("reindex")
+                .join("queue");
+            fs::create_dir_all(&queue).unwrap();
+            fs::write(
+                queue.join("gone.json"),
+                r#"{"collection":"token_notes","id":"gone"}"#,
+            )
+            .unwrap();
             latch.resume();
         });
         vault.reindex().unwrap();

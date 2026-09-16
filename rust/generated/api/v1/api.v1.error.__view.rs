@@ -9,8 +9,8 @@ pub struct ErrorView<'a> {
     pub code: ::core::option::Option<::buffa::EnumValue<super::super::error::Code>>,
     /// Field 2: `message`
     pub message: ::core::option::Option<&'a str>,
-    /// Vault-relative POSIX path of the file this failure is about, same
-    /// meaning as `Record.path`. Unset when there is no such file.
+    /// Vault-relative POSIX path of the file this failure is about.
+    /// Unset when there is no such file.
     ///
     /// Field 3: `path`
     pub path: ::core::option::Option<&'a str>,
@@ -311,8 +311,8 @@ impl ErrorOwnedView {
     pub fn message(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().message
     }
-    /// Vault-relative POSIX path of the file this failure is about, same
-    /// meaning as `Record.path`. Unset when there is no such file.
+    /// Vault-relative POSIX path of the file this failure is about.
+    /// Unset when there is no such file.
     ///
     /// Field 3: `path`
     #[must_use]

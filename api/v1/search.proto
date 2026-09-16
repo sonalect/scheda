@@ -80,15 +80,13 @@ message SearchHits {
     // `Record.collection`.
     string collection = 1;
     string id = 2;
-    // Vault-relative POSIX path. Output only.
-    string path = 3;
     // Set only when that leg produced the hit.
-    double lexical_score = 4;
-    double vector_score = 5;
-    double rrf_score = 6;
+    double lexical_score = 3;
+    double vector_score = 4;
+    double rrf_score = 5;
     // Set only when `search` was called with a reranker.
-    double rerank_score = 7;
+    double rerank_score = 6;
     // Bytes of that Record as stored. Set only when `SearchQuery.include_raw`.
-    bytes raw = 8;
+    bytes raw = 7;
   }
 }

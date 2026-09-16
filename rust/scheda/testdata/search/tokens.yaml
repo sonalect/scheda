@@ -1,5 +1,5 @@
 name: token_notes
-kind: document
+kind: journal
 version: 1
 fields:
   - name: title

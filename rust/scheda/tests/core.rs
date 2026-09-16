@@ -7,10 +7,9 @@ mod common;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, Record, RecordAdd, Vault};
+use scheda::{Code, Filter, OpenOptions, Record, Vault};
 use serde_json::{Map, Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -23,9 +22,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c10-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c10", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -61,13 +60,13 @@ const WEST: &str = include_str!("../testdata/schema/west.yaml");
 const EAST: &str = include_str!("../testdata/schema/east.yaml");
 const TYPES: &str = include_str!("../testdata/schema/types.yaml");
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn fields_of(record: &Record) -> Map<String, Value> {
-    match serde_json::to_value(record).unwrap().get("fields") {
-        Some(Value::Object(map)) => map.clone(),
+    match serde_json::from_slice(record.raw.as_deref().unwrap_or(&[])) {
+        Ok(Value::Object(map)) => map,
         _ => Map::new(),
     }
 }
@@ -113,13 +112,7 @@ fn deleting_index_does_not_lose_records() {
         .unwrap()
         .add("alpha", rec(json!({"title": "keep"})), None)
         .unwrap();
-    let rel = vault
-        .collection("west_docs")
-        .unwrap()
-        .get("alpha")
-        .unwrap()
-        .path
-        .unwrap();
+    let rel = "west_docs/alpha".to_owned();
     let on_disk = fs::read_to_string(vault.path().join(&rel)).unwrap();
     assert!(!on_disk.starts_with('\u{feff}'));
     assert!(on_disk.contains("keep"));
@@ -130,7 +123,6 @@ fn deleting_index_does_not_lose_records() {
 
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let got = vault.collection("west_docs").unwrap().get("alpha").unwrap();
-    assert_eq!(got.valid, Some(true));
     assert_eq!(fields_of(&got).get("title").unwrap(), "keep");
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(1));
@@ -173,10 +165,7 @@ fn records_do_not_cross_vaults() {
         .find(&Filter::all().into(), 0, 1000)
         .unwrap();
     assert_eq!(east_scan.records.len(), 1);
-    assert_eq!(
-        fields_of(&east_scan.records[0]).get("title").unwrap(),
-        "east"
-    );
+    assert_eq!(east_scan.records[0].id.as_deref(), Some("alpha"));
 }
 
 #[test]
@@ -278,7 +267,7 @@ fn typed_open_map_round_trips_and_names_the_bad_key() {
         "maps.yaml",
         "\
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: env
@@ -335,7 +324,7 @@ fn typed_open_map_honours_nullable_on_the_value() {
         "nullable.yaml",
         "\
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: loose
@@ -385,7 +374,7 @@ fn object_list_takes_a_typed_open_map_too() {
         "rows.yaml",
         "\
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: rows
@@ -425,7 +414,7 @@ fn nested_open_maps_of_integer_accept_2_and_reject_string() {
         "grid.yaml",
         "\
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: grid
@@ -464,7 +453,7 @@ fn untyped_open_map_accepts_strings_and_rejects_a_number() {
         "open.yaml",
         "\
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: meta
@@ -498,7 +487,7 @@ fn typed_open_map_may_be_omitted_from_the_record() {
         "maps.yaml",
         "\
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: env

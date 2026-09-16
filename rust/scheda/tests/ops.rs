@@ -7,10 +7,10 @@ mod common;
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Embedder, OpenOptions, RecordAdd, SearchQuery, Vault};
+use scheda::{Code, Embedder, OpenOptions, SearchQuery, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -23,9 +23,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c8-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c8", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -72,7 +72,7 @@ fields:
 
 const OPS_NOTES: &str = "\
 name: north_notes
-kind: document
+kind: journal
 version: 1
 fields:
   - name: title
@@ -113,18 +113,12 @@ impl Embedder for OpsEmbedder {
     }
 }
 
-fn rec_log(msg: &str) -> RecordAdd {
-    serde_json::from_value(json!({
-        "fields": {"msg": msg},
-    }))
-    .unwrap()
+fn rec_log(msg: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({"msg": msg})).unwrap()
 }
 
-fn rec_note(title: &str) -> RecordAdd {
-    serde_json::from_value(json!({
-        "fields": {"title": title},
-    }))
-    .unwrap()
+fn rec_note(title: &str) -> Vec<u8> {
+    serde_json::to_vec(&json!({"title": title})).unwrap()
 }
 
 fn open_log(scratch: &Scratch) -> Vault {
@@ -267,7 +261,7 @@ fn ops_fixture_find_and_insert_and_reindex() {
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(OPS_JOURNAL + OPS_DOCS + 1));
     assert_eq!(counts.skipped_invalid, Some(0));
-    assert_eq!(counts.segments_seen, Some(OPS_JOURNAL / 100 + 1));
+    assert_eq!(counts.segments_seen, Some(OPS_JOURNAL / 100 + 2));
     let format = fs::read_to_string(live_index(&vault).join("format")).unwrap();
     assert_eq!(format.trim(), "4");
     let mid_doc = OPS_DOCS / 2;

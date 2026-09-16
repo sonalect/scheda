@@ -6,12 +6,11 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, Vault};
+use scheda::{Code, Filter, FindQuery, OpenOptions, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -24,9 +23,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c5-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c5", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -70,12 +69,8 @@ const NOTES: &str = include_str!("../testdata/query/notes.yaml");
 const PAGES: &str = include_str!("../testdata/query/pages.yaml");
 const LOG: &str = include_str!("../testdata/query/log.yaml");
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
-}
-
-fn rec_body(fields: Value, body: &str) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn filter(value: Value) -> FindQuery {
@@ -393,14 +388,12 @@ fn check_reports_schema_failure_with_path() {
     drop(vault);
     scratch.write_schema(
         "notes.yaml",
-        "name: query_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    required: true\n    string: {}\n",
+        "name: query_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    required: true\n    string: {}\n",
     );
     let vault = scratch.reopen();
-    let got = vault.collection("query_notes").unwrap().get("a").unwrap();
-    assert_eq!(got.valid, Some(false));
+    let _got = vault.collection("query_notes").unwrap().get("a").unwrap();
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
-    assert!(err.to_string().contains("a.md"));
 }
 
 #[test]
@@ -442,22 +435,32 @@ fn reindex_rebuilds_format_and_counts() {
     let format = fs::read_to_string(live.join("format")).unwrap();
     assert_eq!(format.trim(), "4");
     assert!(!live.join("stolen.json").exists());
-    let got = collection.get("a").unwrap();
-    assert_eq!(got.valid, Some(true));
+    collection.get("a").unwrap();
 }
 
 #[test]
 fn conflict_markers_fail_check() {
     let scratch = Scratch::new();
-    let vault = open_notes(&scratch);
+    drop(scratch.init());
+    scratch.write_schema(
+        "notes.yaml",
+        r#"
+name: query_notes
+kind: document
+version: 1
+fields:
+  - name: title
+    string: {}
+"#,
+    );
+    let vault = scratch.reopen();
     let collection = vault.collection("query_notes").unwrap();
     collection
         .add("a", rec(json!({"title": "A"})), None)
         .unwrap();
-    let rel = collection.get("a").unwrap().path.unwrap();
+    let rel = "query_notes/a".to_owned();
     fs::write(vault.path().join(&rel), "<<<<<<< HEAD\nid: a\n>>>>>>>\n").unwrap();
-    let got = collection.get("a").unwrap();
-    assert_eq!(got.valid, Some(false));
+    collection.get("a").unwrap();
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::ConflictMarkers));
     assert!(err.to_string().contains(&rel));
@@ -767,7 +770,7 @@ fn exists_json_subpaths_matches_nested_field() {
         "notes.yaml",
         r#"
 name: query_notes
-kind: document
+kind: journal
 version: 1
 fields:
   - name: title
@@ -813,20 +816,20 @@ fn find_regex_and_phrase_on_body() {
     collection
         .add(
             "panda",
-            rec_body(json!({"title": "Red fox"}), "The giant panda eats bamboo."),
+            rec(json!({"title": "The giant panda eats bamboo.", "tag": "red fox"})),
             None,
         )
         .unwrap();
     collection
         .add(
             "fox",
-            rec_body(json!({"title": "Giant panda"}), "A red fox in the woods."),
+            rec(json!({"title": "A red fox in the woods.", "tag": "Giant panda"})),
             None,
         )
         .unwrap();
     let regex = collection
         .find(
-            &filter(json!({"regex":{"field":"body","pattern":"bamb.*"}})),
+            &filter(json!({"regex":{"field":"title","pattern":"bamb.*"}})),
             0,
             100,
         )
@@ -834,7 +837,7 @@ fn find_regex_and_phrase_on_body() {
     assert_eq!(ids(&regex), ["panda"]);
     let phrase = collection
         .find(
-            &filter(json!({"phrase":{"field":"body","terms":["giant","panda"]}})),
+            &filter(json!({"phrase":{"field":"title","terms":["giant","panda"]}})),
             0,
             100,
         )
@@ -842,7 +845,7 @@ fn find_regex_and_phrase_on_body() {
     assert_eq!(ids(&phrase), ["panda"]);
     let title_only = collection
         .find(
-            &filter(json!({"regex":{"field":"title","pattern":"bamb.*"}})),
+            &filter(json!({"regex":{"field":"tag","pattern":"bamb.*"}})),
             0,
             100,
         )
@@ -858,13 +861,15 @@ fn exclude_fts_body_is_not_a_find_key() {
         "notes.yaml",
         r#"
 name: query_notes
-kind: document
+kind: journal
 version: 1
-body:
-  exclude_fts: true
 fields:
   - name: title
     string: {}
+  - name: aside
+    exclude_find: true
+    string:
+      exclude_fts: true
 "#,
     );
     let vault = scratch.reopen();
@@ -872,13 +877,13 @@ fields:
     collection
         .add(
             "panda",
-            rec_body(json!({"title": "Panda"}), "eats bamboo"),
+            rec(json!({"title": "Panda", "aside": "eats bamboo"})),
             None,
         )
         .unwrap();
     let err = collection
         .find(
-            &filter(json!({"regex":{"field":"body","pattern":"bamboo"}})),
+            &filter(json!({"regex":{"field":"aside","pattern":"bamboo"}})),
             0,
             10,
         )
@@ -1286,7 +1291,7 @@ fn new_field_on_excluded_collection_is_not_indexed() {
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_lexical_index: true
 exclude_vector_index: true
@@ -1356,7 +1361,7 @@ fn more_like_this_on_vector_excluded_collection_is_lexical() {
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_vector_index: true
 fields:

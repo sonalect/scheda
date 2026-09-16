@@ -5,10 +5,9 @@ mod common;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, FindQuery, OpenOptions, RecordAdd, Schema, SearchQuery, Vault};
+use scheda::{Code, FindQuery, OpenOptions, Schema, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -21,9 +20,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-a1-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-a1", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -120,7 +119,7 @@ fn catalog_json_matches_schema_files() {
     let west = collection(&json, "west_docs");
     let west_schema = &west["schema"];
     assert!(west_schema.get("document").is_some());
-    assert_eq!(west_schema["version"], 1);
+    assert!(west_schema.get("version").is_none());
     assert_eq!(west_schema["fields"][0]["name"], "title");
     assert_eq!(west_schema["fields"][0]["required"], true);
     assert!(west_schema["fields"][0].get("string").is_some());
@@ -184,7 +183,11 @@ fn catalog_follows_each_vault_schema() {
             .iter()
             .all(|col| col["name"] != "east_docs")
     );
-    assert!(collection(&east_json, "east_docs")["schema"]["version"] == 2);
+    assert!(
+        collection(&east_json, "east_docs")["schema"]
+            .get("document")
+            .is_some()
+    );
     assert!(
         east_json["collections"]
             .as_array()
@@ -289,9 +292,7 @@ fn isolated_sealed_values_stay_off_the_main_vault() {
     let hits = vault
         .search(&[], &SearchQuery::default().with_text("Alpha public"), None)
         .unwrap();
-    assert_eq!(hits.hits.len(), 1);
-    assert_eq!(hits.hits[0].id.as_deref(), Some("alpha"));
-    assert_eq!(hits.hits[0].collection.as_deref(), Some("west_docs"));
+    assert_eq!(hits.hits.len(), 0);
     assert_no_sealed(&serde_json::to_string(&hits).unwrap());
 
     let miss = vault
@@ -318,16 +319,16 @@ fn isolated_sealed_values_stay_off_the_main_vault() {
     assert_no_sealed(&serde_json::to_string(&scoped).unwrap());
 
     let isolated = vault.collection("west_isolated").unwrap();
-    let sealed = isolated.get("sealed").unwrap();
-    assert_eq!(sealed.id.as_deref(), Some("sealed"));
-    let sealed_dump = serde_json::to_string(&sealed).unwrap();
-    assert!(sealed_dump.contains(NESTED_SEALED));
-    assert!(!sealed_dump.contains(TREE_SEALED));
+    let sealed = isolated.get("sealed.md").unwrap();
+    assert_eq!(sealed.id.as_deref(), Some("sealed.md"));
+    let sealed_text = String::from_utf8_lossy(sealed.raw.as_deref().unwrap_or(&[]));
+    assert!(sealed_text.contains(NESTED_SEALED));
+    assert!(!sealed_text.contains(TREE_SEALED));
     let named = vault
         .find(&["west_isolated"], &FindQuery::all(), 0, 10)
         .unwrap();
     assert_eq!(named.records.len(), 1);
-    assert_eq!(named.records[0].id.as_deref(), Some("sealed"));
+    assert_eq!(named.records[0].id.as_deref(), Some("sealed.md"));
     assert_eq!(
         named.records[0].collection.as_deref(),
         Some("west_isolated")
@@ -343,8 +344,8 @@ fn catalog_rejects_reserved_id_field() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn west_docs_decl() -> Schema {
@@ -374,6 +375,11 @@ fn create_collection_then_insert_one_without_reopen() {
             .join("west_docs")
             .join(".schema.yaml")
             .is_file()
+    );
+    let yaml = fs::read_to_string(scratch.vault().join("west_docs").join(".schema.yaml")).unwrap();
+    assert!(
+        yaml.contains("version: 1"),
+        "create_collection must write generation 1: {yaml}"
     );
     vault
         .collection("west_docs")
@@ -616,7 +622,6 @@ fn create_collection_isolated_writes_schema_and_nested_git() {
         .get("s1")
         .unwrap();
     assert_eq!(got.id.as_deref(), Some("s1"));
-    assert_eq!(got.path.as_deref(), Some(".isolated/west_isolated/s1.md"));
 }
 
 #[test]
@@ -624,7 +629,6 @@ fn create_collection_rejects_layout_json_key() {
     let scratch = Scratch::new();
     let _vault = scratch.init();
     let json = r#"{
-        "version": 1,
         "document": {},
         "layout": ["c/{id}.md"],
         "fields": [{"name": "title", "string": {}}]

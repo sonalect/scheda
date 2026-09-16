@@ -8,6 +8,44 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- **`document` files are opaque UTF-8 at `{collection}/{id}`.** The library
+  no longer appends `.md`. An extension is part of `id` (`foo.md`,
+  `work/meeting.toml`). `add` / `replace` take raw bytes (`impl AsRef<[u8]>`
+  in Rust); empty is allowed; non-UTF-8 is refused and writes no file.
+  CLI `add` / `replace` take `--file` or stdin, not Protobuf JSON.
+  `get` returns those bytes without parsing YAML. `documents` / `ids`
+  list regular files of any extension and skip dotfiles.
+- **Collection declaration `version` is the collection generation**, required
+  on the YAML/JSON file, with no default. Only generation `1` is implemented.
+  `create_collection` always writes `version: 1`. Missing, `0`, or any other
+  integer is `invalid`.
+
+### Removed
+
+- **`Record.fields`, `Record.body`, and `Record.valid`.** Callers pass UTF-8
+  `raw`. Journal and singleton on-disk shape is unchanged until later stages:
+  pass the old JSON/YAML as `raw`.
+- **`api.v1` `RecordAdd` and `RecordReplace`.** Write is method `raw` bytes.
+  Proto `Record` is output-only (`get` / `find` / `search`).
+- **`CODE_UNSUPPORTED_REMOTE`.** The compile-time remote-git gate is gone; a
+  remote the system git cannot speak is `unsupported` or a `git_*` class.
+  `CODE_LOCKED` is 302; `CODE_UNSUPPORTED_ENCRYPTION` is 303.
+- **Unused `Error.Code` git values** that the git CLI classifier never
+  produced (`GIT_AMBIGUOUS`, `GIT_BUF_SIZE`, `GIT_USER`, `GIT_UNMERGED`,
+  `GIT_INVALID_SPEC`, `GIT_MODIFIED`, `GIT_APPLIED`, `GIT_PEEL`, `GIT_EOF`,
+  `GIT_INVALID`, `GIT_DIRECTORY`, `GIT_HASHSUM_MISMATCH`, `GIT_INDEX_DIRTY`,
+  `GIT_APPLY_FAIL`, `GIT_OWNER`). Remaining `git_*` codes are consecutive
+  505–514 (`BARE_REPO` through `HEAD`), the classes `git_code` actually maps
+  from stderr. Protobuf JSON callers branch on names, not integers. IO codes
+  stay: one per stable `std::io::ErrorKind`.
+- **`Record.path` and `SearchHits.Hit.path`.** Identity is `(collection, id)`.
+  Vault-relative file paths stay on `Error.path` (which file failed) and
+  `VaultInfo.path` (the Vault root).
+- **`api.v1.Schema.version`.** Generation lives on the collection file, not on
+  the proto. `info` therefore has no version field; the caller does not set it.
+
 ## [0.15.2] - 2026-09-16
 
 ### Added

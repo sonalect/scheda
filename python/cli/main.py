@@ -73,6 +73,7 @@ class Document:
     record_id: str
     fields: dict[str, Any]
     body: str
+    path: Path
 
 
 @dataclass(frozen=True, slots=True)
@@ -1265,7 +1266,9 @@ def _load_document(collection: str, path: Path) -> Document:
     if not meta:
         msg = f"no fields in front matter: {path}"
         raise ToolError(msg)
-    return Document(collection=collection, record_id=record_id, fields=meta, body=body)
+    return Document(
+        collection=collection, record_id=record_id, fields=meta, body=body, path=path
+    )
 
 
 def _split_front_matter(text: str, path: Path) -> tuple[dict[str, Any], str]:
@@ -1298,6 +1301,7 @@ def load_schema_json(path: Path) -> str:
     if not isinstance(data, dict):
         msg = f"schema must be a mapping: {path}"
         raise ToolError(msg)
+    data.pop("version", None)
     return json.dumps(data)
 
 
@@ -1614,16 +1618,15 @@ class SchedaCli:
     def add(
         self, collection: str, document: Document, *, embedder: bool = True
     ) -> None:
-        """`collection NAME add --id ID --record JSON`."""
-        record = json.dumps({"fields": document.fields, "body": document.body})
+        """`collection NAME add --id ID --file PATH`."""
         self._run(
             "collection",
             collection,
             "add",
             "--id",
             document.record_id,
-            "--record",
-            record,
+            "--file",
+            str(document.path),
             expect_stdout=False,
             embedder=embedder,
         )

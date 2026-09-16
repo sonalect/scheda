@@ -26,4 +26,5 @@ rust_library(
 rust_test(
     name = "generated_v1_test",
     crate = ":generated_v1",
+    visibility = ["//rust:__pkg__"],
 )

@@ -1,5 +1,5 @@
 name: c
-kind: document
+kind: journal
 version: 1
 fields:
   - name: s

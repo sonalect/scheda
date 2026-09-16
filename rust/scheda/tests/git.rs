@@ -7,10 +7,10 @@ mod common;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Author, Code, OpenOptions, RecordAdd, RecordReplace, Vault};
+use scheda::{Author, Code, OpenOptions, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -23,9 +23,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c6-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c6", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -69,16 +69,8 @@ const NOTES: &str = include_str!("../testdata/document/notes.yaml");
 const INBOX: &str = include_str!("../testdata/document/inbox.yaml");
 const LOG: &str = include_str!("../testdata/document/log.yaml");
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
-}
-
-fn rec_body(fields: Value, body: &str) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
-}
-
-fn rec_rep_body(fields: Value, body: &str) -> RecordReplace {
-    serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn open_notes(scratch: &Scratch) -> Vault {
@@ -177,20 +169,12 @@ fn commit_stages_written_paths_not_vault_root_junk() {
     let vault = open_notes(&scratch);
     fs::write(scratch.vault().join("noise.txt"), "leave me out\n").unwrap();
     let collection = vault.collection("north_notes").unwrap();
-    collection
-        .add(
-            "alpha",
-            rec_body(json!({"title": "A", "count": 1}), "hello"),
-            None,
-        )
-        .unwrap();
+    collection.add("alpha", b"hello", None).unwrap();
     collection
         .add("beta", rec(json!({"title": "B", "count": 2})), None)
         .unwrap();
-    let alpha = collection.get("alpha").unwrap();
-    let beta = collection.get("beta").unwrap();
-    let alpha_path = alpha.path.clone().unwrap();
-    let beta_path = beta.path.clone().unwrap();
+    let alpha_path = "north_notes/alpha".to_owned();
+    let beta_path = "north_notes/beta".to_owned();
     vault.commit("two notes").unwrap();
     assert_eq!(log_len(vault.path()), 2);
     let paths = head_paths(vault.path());
@@ -207,7 +191,7 @@ fn abandoned_writes_are_discarded_on_next_autocommit() {
     collection
         .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
-    let rel = collection.get("alpha").unwrap().path.unwrap();
+    let rel = "north_notes/alpha".to_owned();
     let journal = scratch.vault().join(".scheda").join("tx.log");
     assert!(journal.is_file(), "{}", journal.display());
     drop(collection);
@@ -240,24 +224,12 @@ fn history_matches_git_show_after_two_document_commits() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    collection
-        .add(
-            "alpha",
-            rec_body(json!({"title": "one", "count": 1}), "first"),
-            None,
-        )
-        .unwrap();
+    collection.add("alpha", b"first", None).unwrap();
     vault.commit("first edit").unwrap();
     vault.begin().unwrap();
-    collection
-        .replace(
-            "alpha",
-            rec_rep_body(json!({"title": "two", "count": 2}), "second"),
-            None,
-        )
-        .unwrap();
+    collection.replace("alpha", b"second", None).unwrap();
     vault.commit("second edit").unwrap();
-    let path = collection.get("alpha").unwrap().path.unwrap();
+    let path = "north_notes/alpha".to_owned();
     let snaps = collection.history("alpha", 0, 100).unwrap();
     assert_eq!(snaps.entries.len(), 2);
     let newest = &snaps.entries[0];
@@ -300,12 +272,7 @@ fn history_of_singleton_and_journal_segment() {
         .add("e1", rec(json!({})), None)
         .unwrap();
     vault.commit("singleton and journal").unwrap();
-    let page = vault
-        .collection("north_inbox")
-        .unwrap()
-        .get("inbox")
-        .unwrap();
-    let page_path = page.path.clone().unwrap();
+    let page_path = "north_inbox/record.yaml".to_owned();
     let page_hist = vault
         .collection("north_inbox")
         .unwrap()
@@ -320,8 +287,7 @@ fn history_of_singleton_and_journal_segment() {
             &page_path
         )
     );
-    let line = vault.collection("north_log").unwrap().get("e1").unwrap();
-    let seg = line.path.clone().unwrap();
+    let seg = format!("north_log/{:08x}-{}.jsonl", 1, vault.writer());
     let seg_hist = vault
         .collection("north_log")
         .unwrap()
@@ -399,7 +365,7 @@ fn discard_removes_uncommitted_insert() {
     collection
         .add("alpha", rec(json!({"title": "A", "count": 1})), None)
         .unwrap();
-    let rel = collection.get("alpha").unwrap().path.unwrap();
+    let rel = "north_notes/alpha".to_owned();
     vault.discard().unwrap();
     assert!(!scratch.vault().join(&rel).is_file());
     assert_eq!(
@@ -443,24 +409,12 @@ fn history_after_remove_still_answers_from_git() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
-    collection
-        .add(
-            "alpha",
-            rec_body(json!({"title": "one", "count": 1}), "first"),
-            None,
-        )
-        .unwrap();
+    collection.add("alpha", b"first", None).unwrap();
     vault.commit("first edit").unwrap();
     vault.begin().unwrap();
-    collection
-        .replace(
-            "alpha",
-            rec_rep_body(json!({"title": "two", "count": 2}), "second"),
-            None,
-        )
-        .unwrap();
+    collection.replace("alpha", b"second", None).unwrap();
     vault.commit("second edit").unwrap();
-    let path = collection.get("alpha").unwrap().path.unwrap();
+    let path = "north_notes/alpha".to_owned();
     let before = collection.history("alpha", 0, 100).unwrap();
     assert_eq!(before.entries.len(), 2);
     vault.begin().unwrap();
@@ -518,14 +472,8 @@ fn remove_autocommits_outside_a_transaction() {
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(
-        !scratch
-            .vault()
-            .join("north_notes")
-            .join("alpha.md")
-            .is_file()
-    );
-    assert!(!head_paths(vault.path()).contains("north_notes/alpha.md"));
+    assert!(!scratch.vault().join("north_notes").join("alpha").is_file());
+    assert!(!head_paths(vault.path()).contains("north_notes/alpha"));
 }
 
 #[test]
@@ -564,13 +512,7 @@ fn abandoned_remove_is_restored_on_next_autocommit() {
     vault.commit("keep").unwrap();
     vault.begin().unwrap();
     collection.remove("alpha", None).unwrap();
-    assert!(
-        !scratch
-            .vault()
-            .join("north_notes")
-            .join("alpha.md")
-            .is_file()
-    );
+    assert!(!scratch.vault().join("north_notes").join("alpha").is_file());
     drop(collection);
     drop(vault);
     let vault = scratch.reopen();

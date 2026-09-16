@@ -774,7 +774,11 @@ mod tests {
 
     fn scratch_dir() -> PathBuf {
         let n = NEXT.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-index-{}-{n}", std::process::id()));
+        let base = std::env::var_os("TEST_TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let tid = format!("{:?}", std::thread::current().id()).replace(['(', ')'], "");
+        let root = base.join(format!("scheda-index-{}-{n}-{tid}", std::process::id()));
         let generation = root.join(".scheda").join("index").join("1");
         fs::create_dir_all(&generation).unwrap();
         generation

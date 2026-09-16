@@ -5,11 +5,11 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Body, Code, Encryption, Journal, OpenOptions, RecordAdd, Schema, Singleton, Vault};
-use serde_json::{Map, Value, json};
+use scheda::{Body, Code, Encryption, Journal, OpenOptions, Schema, Singleton, Vault};
+use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 
@@ -25,9 +25,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-encrypt-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-encrypt", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -41,19 +41,12 @@ impl Drop for Scratch {
     }
 }
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields, "body": PLAIN })).unwrap()
+fn rec(_fields: Value) -> Vec<u8> {
+    PLAIN.as_bytes().to_vec()
 }
 
-fn rec_fields(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
-}
-
-fn fields_of(record: &scheda::Record) -> Map<String, Value> {
-    match serde_json::to_value(record).unwrap().get("fields") {
-        Some(Value::Object(map)) => map.clone(),
-        _ => Map::new(),
-    }
+fn rec_fields(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn passphrase() -> Encryption {
@@ -61,23 +54,27 @@ fn passphrase() -> Encryption {
 }
 
 fn document_schema(encrypted: bool, isolated: bool) -> Schema {
-    let mut schema = Schema::default().with_version(1);
-    schema.kind = Body::default().into();
+    let mut schema = Schema {
+        kind: Body::default().into(),
+        fields: vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()],
+        ..Schema::default()
+    };
     if encrypted {
         schema = schema.with_encrypted(true);
     }
     if isolated {
         schema = schema.with_isolated(true);
     }
-    schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
     schema
 }
 
 fn singleton_schema() -> Schema {
-    let mut schema = Schema::default().with_version(1).with_encrypted(true);
-    schema.kind = Singleton::default().with_id("inbox").into();
-    schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
-    schema
+    Schema {
+        kind: Singleton::default().with_id("inbox").into(),
+        fields: vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()],
+        ..Schema::default()
+    }
+    .with_encrypted(true)
 }
 
 fn open_encrypted(scratch: &Scratch, secret: Encryption) -> Vault {
@@ -122,9 +119,7 @@ fn passphrase_add_get_round_trip() {
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     let got = collection.get("alpha").unwrap();
-    assert_eq!(fields_of(&got)["title"], "Keep");
-    assert_eq!(got.body.as_deref(), Some(PLAIN));
-    assert_eq!(got.valid, Some(true));
+    assert_eq!(got.raw.as_deref(), Some(PLAIN.as_bytes()));
 }
 
 #[test]
@@ -141,16 +136,15 @@ fn encrypted_document_id_may_contain_slash_namespaces() {
         .unwrap();
     vault.commit("encrypted nested").unwrap();
     let got = collection.get("work/meeting").unwrap();
-    assert_eq!(fields_of(&got)["title"], "Keep");
-    assert_eq!(got.body.as_deref(), Some(PLAIN));
-    assert_eq!(got.path.as_deref(), Some("sealed_notes/work/meeting.md"));
+    assert_eq!(got.raw.as_deref(), Some(PLAIN.as_bytes()));
+    assert_eq!(got.id.as_deref(), Some("work/meeting"));
     assert_eq!(collection.ids().unwrap(), ["work/meeting"]);
     let on_disk = fs::read(
         scratch
             .vault()
             .join("sealed_notes")
             .join("work")
-            .join("meeting.md"),
+            .join("meeting"),
     )
     .unwrap();
     let text = String::from_utf8(on_disk).unwrap();
@@ -173,8 +167,7 @@ fn identity_add_get_round_trip() {
         .add("alpha", rec(json!({"title": "Id"})), None)
         .unwrap();
     let got = collection.get("alpha").unwrap();
-    assert_eq!(fields_of(&got)["title"], "Id");
-    assert_eq!(got.valid, Some(true));
+    assert_eq!(got.raw.as_deref(), Some(PLAIN.as_bytes()));
     assert!(!tree_contains(&scratch.vault(), IDENTITY));
 }
 
@@ -192,7 +185,7 @@ fn on_disk_is_armor_without_plaintext_or_secret() {
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     vault.commit("encrypted").unwrap();
-    let on_disk = fs::read(scratch.vault().join("sealed_notes").join("alpha.md")).unwrap();
+    let on_disk = fs::read(scratch.vault().join("sealed_notes").join("alpha")).unwrap();
     let text = String::from_utf8(on_disk.clone()).unwrap();
     assert!(text.starts_with("-----BEGIN AGE ENCRYPTED FILE-----"));
     assert!(!text.contains('\r'));
@@ -257,8 +250,11 @@ fn encrypted_journal_schema_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_encrypted(&scratch, passphrase());
     vault.begin().unwrap();
-    let mut schema = Schema::default().with_version(1).with_encrypted(true);
-    schema.kind = Journal::default().into();
+    let schema = Schema {
+        kind: Journal::default().into(),
+        ..Schema::default()
+    }
+    .with_encrypted(true);
     let err = vault
         .create_collection("sealed_log", schema, None)
         .unwrap_err();
@@ -394,19 +390,19 @@ fn flipping_encrypted_on_nonempty_is_invalid_files_unchanged() {
         .unwrap()
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    let before = fs::read(scratch.vault().join("sealed_notes").join("alpha.md")).unwrap();
+    let before = fs::read(scratch.vault().join("sealed_notes").join("alpha")).unwrap();
     let err = vault
         .create_collection("sealed_notes", document_schema(false, false), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
-    let after = fs::read(scratch.vault().join("sealed_notes").join("alpha.md")).unwrap();
+    let after = fs::read(scratch.vault().join("sealed_notes").join("alpha")).unwrap();
     assert_eq!(before, after);
     let got = vault
         .collection("sealed_notes")
         .unwrap()
         .get("alpha")
         .unwrap();
-    assert_eq!(fields_of(&got)["title"], "Keep");
+    assert_eq!(got.raw.as_deref(), Some(PLAIN.as_bytes()));
 }
 
 #[test]
@@ -418,18 +414,10 @@ fn history_of_encrypted_record_is_plaintext() {
         .create_collection("sealed_notes", document_schema(true, false), None)
         .unwrap();
     let collection = vault.collection("sealed_notes").unwrap();
-    collection
-        .add("alpha", rec(json!({"title": "Keep"})), None)
-        .unwrap();
+    collection.add("alpha", b"Keep", None).unwrap();
     vault.commit("first").unwrap();
     vault.begin().unwrap();
-    collection
-        .replace(
-            "alpha",
-            serde_json::from_value(json!({ "fields": {"title": "Next"}, "body": PLAIN })).unwrap(),
-            None,
-        )
-        .unwrap();
+    collection.replace("alpha", b"Next", None).unwrap();
     vault.commit("second").unwrap();
     let snaps = collection.history("alpha", 0, 100).unwrap();
     assert_eq!(snaps.entries.len(), 2);
@@ -468,16 +456,10 @@ fn replace_and_remove_encrypted() {
     collection
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    collection
-        .replace(
-            "alpha",
-            serde_json::from_value(json!({ "fields": {"title": "Next"}, "body": PLAIN })).unwrap(),
-            None,
-        )
-        .unwrap();
+    collection.replace("alpha", PLAIN.as_bytes(), None).unwrap();
     assert_eq!(
-        fields_of(&collection.get("alpha").unwrap())["title"],
-        "Next"
+        collection.get("alpha").unwrap().raw.as_deref(),
+        Some(PLAIN.as_bytes())
     );
     collection.remove("alpha", None).unwrap();
     assert_eq!(collection.ids().unwrap(), [] as [&str; 0]);
@@ -505,31 +487,31 @@ fn encrypted_isolated_and_non_isolated_round_trip() {
         .add("beta", rec(json!({"title": "Nested"})), None)
         .unwrap();
     assert_eq!(
-        fields_of(
-            &vault
-                .collection("sealed_notes")
-                .unwrap()
-                .get("alpha")
-                .unwrap()
-        )["title"],
-        "Main"
+        vault
+            .collection("sealed_notes")
+            .unwrap()
+            .get("alpha")
+            .unwrap()
+            .raw
+            .as_deref(),
+        Some(PLAIN.as_bytes())
     );
     assert_eq!(
-        fields_of(
-            &vault
-                .collection("sealed_local")
-                .unwrap()
-                .get("beta")
-                .unwrap()
-        )["title"],
-        "Nested"
+        vault
+            .collection("sealed_local")
+            .unwrap()
+            .get("beta")
+            .unwrap()
+            .raw
+            .as_deref(),
+        Some(PLAIN.as_bytes())
     );
     assert!(
         scratch
             .vault()
             .join(".isolated")
             .join("sealed_local")
-            .join("beta.md")
+            .join("beta")
             .is_file()
     );
 }
@@ -601,7 +583,8 @@ fn singleton_encrypted_round_trip() {
         .unwrap()
         .get("inbox")
         .unwrap();
-    assert_eq!(fields_of(&got)["title"], "One");
+    let text = String::from_utf8(got.raw.clone().unwrap()).unwrap();
+    assert!(text.contains("One"), "{text}");
 }
 
 #[test]
@@ -621,7 +604,7 @@ fn age_cli_decrypts_scheda_file() {
         .unwrap()
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    let file = scratch.vault().join("sealed_notes").join("alpha.md");
+    let file = scratch.vault().join("sealed_notes").join("alpha");
     let key_path = scratch.root.join("identity.txt");
     fs::write(&key_path, IDENTITY).unwrap();
     let out = Command::new("age")
@@ -636,6 +619,5 @@ fn age_cli_decrypts_scheda_file() {
         String::from_utf8_lossy(&out.stderr)
     );
     let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("Keep"));
     assert!(text.contains(PLAIN));
 }

@@ -5,19 +5,9 @@
 #[derive(::serde::Serialize)]
 #[serde(default)]
 pub struct Schema {
-    /// Integer ≥ 1. Same key on disk and in `create_collection`. Writes
-    /// must use the current version.
-    ///
-    /// Field 1: `version`
-    #[serde(
-        rename = "version",
-        with = "::buffa::json_helpers::opt_uint32",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub version: ::core::option::Option<u32>,
     /// Field declarations. May be empty.
     ///
-    /// Field 2: `fields`
+    /// Field 1: `fields`
     #[serde(
         rename = "fields",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_empty_vec",
@@ -29,7 +19,7 @@ pub struct Schema {
     /// stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
     /// collections does not read it.
     ///
-    /// Field 6: `isolated`
+    /// Field 5: `isolated`
     #[serde(
         rename = "isolated",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -39,7 +29,7 @@ pub struct Schema {
     /// of `isolated`. I/O requires the handle secret. `journal` may not
     /// set it.
     ///
-    /// Field 7: `encrypted`
+    /// Field 6: `encrypted`
     #[serde(
         rename = "encrypted",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -52,7 +42,7 @@ pub struct Schema {
     /// `encrypted` (ciphertext is never indexed) and allowed. A `journal`
     /// may set it.
     ///
-    /// Field 8: `exclude_lexical_index`
+    /// Field 7: `exclude_lexical_index`
     #[serde(
         rename = "excludeLexicalIndex",
         alias = "exclude_lexical_index",
@@ -65,7 +55,7 @@ pub struct Schema {
     /// uses the lexical leg only. Redundant on `encrypted` and allowed.
     /// A `journal` may set it.
     ///
-    /// Field 9: `exclude_vector_index`
+    /// Field 8: `exclude_vector_index`
     #[serde(
         rename = "excludeVectorIndex",
         alias = "exclude_vector_index",
@@ -81,7 +71,6 @@ pub struct Schema {
 impl ::core::fmt::Debug for Schema {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("Schema")
-            .field("version", &self.version)
             .field("fields", &self.fields)
             .field("isolated", &self.isolated)
             .field("encrypted", &self.encrypted)
@@ -99,13 +88,6 @@ impl Schema {
     pub const TYPE_URL: &'static str = "type.googleapis.com/api.v1.Schema";
 }
 impl Schema {
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::version`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_version(mut self, value: u32) -> Self {
-        self.version = Some(value);
-        self
-    }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets [`Self::isolated`] to `Some(value)`, consuming and returning `self`.
@@ -155,9 +137,6 @@ impl ::buffa::Message for Schema {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let Some(v) = self.version {
-            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
-        }
         for v in &self.fields {
             let __slot = __cache.reserve();
             let inner_size = v.compute_size(__cache);
@@ -216,12 +195,9 @@ impl ::buffa::Message for Schema {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let Some(v) = self.version {
-            ::buffa::types::put_uint32_field(1u32, v, buf);
-        }
         for v in &self.fields {
             ::buffa::types::put_len_delimited_header(
-                2u32,
+                1u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -231,7 +207,7 @@ impl ::buffa::Message for Schema {
             match v {
                 __buffa::oneof::schema::Kind::Document(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        3u32,
+                        2u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -239,7 +215,7 @@ impl ::buffa::Message for Schema {
                 }
                 __buffa::oneof::schema::Kind::Journal(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        4u32,
+                        3u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -247,7 +223,7 @@ impl ::buffa::Message for Schema {
                 }
                 __buffa::oneof::schema::Kind::Singleton(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        5u32,
+                        4u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -256,16 +232,16 @@ impl ::buffa::Message for Schema {
             }
         }
         if let Some(v) = self.isolated {
-            ::buffa::types::put_bool_field(6u32, v, buf);
+            ::buffa::types::put_bool_field(5u32, v, buf);
         }
         if let Some(v) = self.encrypted {
-            ::buffa::types::put_bool_field(7u32, v, buf);
+            ::buffa::types::put_bool_field(6u32, v, buf);
         }
         if let Some(v) = self.exclude_lexical_index {
-            ::buffa::types::put_bool_field(8u32, v, buf);
+            ::buffa::types::put_bool_field(7u32, v, buf);
         }
         if let Some(v) = self.exclude_vector_index {
-            ::buffa::types::put_bool_field(9u32, v, buf);
+            ::buffa::types::put_bool_field(8u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -283,15 +259,6 @@ impl ::buffa::Message for Schema {
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                self.version = ::core::option::Option::Some(
-                    ::buffa::types::decode_uint32(buf)?,
-                );
-            }
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
                 let mut elem = ::core::default::Default::default();
@@ -301,7 +268,7 @@ impl ::buffa::Message for Schema {
                 ::buffa::Message::merge_length_delimited(&mut elem, buf, ctx)?;
                 self.fields.push(elem);
             }
-            3u32 => {
+            2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -321,7 +288,7 @@ impl ::buffa::Message for Schema {
                     );
                 }
             }
-            4u32 => {
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -341,7 +308,7 @@ impl ::buffa::Message for Schema {
                     );
                 }
             }
-            5u32 => {
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -361,7 +328,7 @@ impl ::buffa::Message for Schema {
                     );
                 }
             }
-            6u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -370,7 +337,7 @@ impl ::buffa::Message for Schema {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            7u32 => {
+            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -379,7 +346,7 @@ impl ::buffa::Message for Schema {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            8u32 => {
+            7u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -388,7 +355,7 @@ impl ::buffa::Message for Schema {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            9u32 => {
+            8u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -405,7 +372,6 @@ impl ::buffa::Message for Schema {
         ::core::result::Result::Ok(())
     }
     fn clear(&mut self) {
-        self.version = ::core::option::Option::None;
         self.fields.clear();
         self.kind = ::core::option::Option::None;
         self.isolated = ::core::option::Option::None;
@@ -442,9 +408,6 @@ impl<'de> ::serde::Deserialize<'de> for Schema {
                 self,
                 mut map: A,
             ) -> ::core::result::Result<Schema, A::Error> {
-                let mut __f_version: ::core::option::Option<
-                    ::core::option::Option<u32>,
-                > = None;
                 let mut __f_fields: ::core::option::Option<
                     ::buffa::alloc::vec::Vec<Field>,
                 > = None;
@@ -465,24 +428,6 @@ impl<'de> ::serde::Deserialize<'de> for Schema {
                 > = None;
                 while let Some(key) = map.next_key::<::buffa::alloc::string::String>()? {
                     match key.as_str() {
-                        "version" => {
-                            __f_version = Some({
-                                struct _S;
-                                impl<'de> ::serde::de::DeserializeSeed<'de> for _S {
-                                    type Value = ::core::option::Option<u32>;
-                                    fn deserialize<D: ::serde::Deserializer<'de>>(
-                                        self,
-                                        d: D,
-                                    ) -> ::core::result::Result<
-                                        ::core::option::Option<u32>,
-                                        D::Error,
-                                    > {
-                                        ::buffa::json_helpers::opt_uint32::deserialize(d)
-                                    }
-                                }
-                                map.next_value_seed(_S)?
-                            });
-                        }
                         "fields" => {
                             __f_fields = Some({
                                 struct _S;
@@ -597,9 +542,6 @@ impl<'de> ::serde::Deserialize<'de> for Schema {
                     }
                 }
                 let mut __r = <Schema as ::core::default::Default>::default();
-                if let ::core::option::Option::Some(v) = __f_version {
-                    __r.version = v;
-                }
                 if let ::core::option::Option::Some(v) = __f_fields {
                     __r.fields = v;
                 }

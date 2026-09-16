@@ -36,6 +36,21 @@ pub(crate) fn is_unconstrained(filter: &Filter) -> bool {
     matches!(filter.kind.as_ref(), Some(Kind::All(_)))
 }
 
+/// `MoreLikeThis` needs Tantivy scoring; journal append-order collectors do not.
+pub(crate) fn uses_score(filter: &Filter) -> bool {
+    match filter.kind.as_ref() {
+        Some(Kind::MoreLikeThis(_)) => true,
+        Some(Kind::Boolean(boolean)) => boolean
+            .clauses
+            .iter()
+            .any(|clause| uses_score(&clause.query)),
+        Some(Kind::Boost(boost)) => uses_score(&boost.query),
+        Some(Kind::ConstScore(inner)) => uses_score(&inner.query),
+        Some(Kind::DisjunctionMax(inner)) => inner.queries.iter().any(uses_score),
+        _ => false,
+    }
+}
+
 pub(crate) fn validate(decl: &CollectionDecl, filter: &Filter) -> Result<(), Error> {
     check_fields(decl, filter)
 }

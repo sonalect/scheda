@@ -1,113 +1,230 @@
-# 05. Schema
+# 05. Collection declaration
 
-Document 5 of the Scheda package. Version 0.39, 15 September 2026.
+Document 5 of the Scheda package. Version 0.51, 16 September 2026.
 
-Normative rules for Schema as data in the Vault: where it lives, what a collection declaration contains, validation, evolution, index marks, edges, and the journal segment cap. Terms are in `02`. Kinds and identity are in `03`. Index marks here; `find` / `search` mechanics are `13`. Index disposal and `get` are `06`. Codes: `SCH`. Phase **core** unless marked **search**.
+Normative rules for collection declarations as data in the Vault: where
+they live, discovery, kind, journal caps, singleton `id`, isolation,
+encryption, and collection-level Index exclusion. Terms are in `02`.
+Kinds and identity are in `03`. Index columns and `Projector` are `06` /
+`13`. Isolation trees stay `09`. Codes: `SCH`. Phase **core** unless
+marked **search** or **later**.
 
-An assertion without a check is not a requirement. Schema contains no executable code.
-
----
-
-## 1. Schema is files, not library types
-
-**SCH-1. Schema lives in the Vault.** Collection declarations are UTF-8 YAML 1.2 (or JSON) files under git, next to the records: `{name}/.schema.yaml` (also `.schema.yml` or `.schema.json`). `name` is the collection name and the on-disk directory (MOD-8). The directory name must equal the `name` in the file. Changing Schema is an ordinary git commit. Bindings write a collection file through `create_collection` (`07` LIB-21), not by offering a raw path. A person may still edit those files in an editor (STO-2). Library source (`rust/scheda/src`) must not name a consumer's collections. Test data may: the check does not search it, so a fixture shaped like a consumer cannot turn SCH-1 red. *Check:* a second consumer adds collections without rebuilding Scheda; grep over `rust/scheda/src` does not contain those collection names.
-
-`info` (`08`) is this data serialized, not a guess from walking files.
-
-**SCH-2. One declaration per collection.** Each collection has: name (method argument / directory), kind (`document` | `journal` | `singleton`), `version` (integer ≥ `1`), field list, and kind-specific options (segment cap for `journal`; fixed Record `id` for `singleton`). There is no layout template. Record file paths are fixed (MOD-8). *Check:* a collection missing kind or `version` is rejected on `open`/`check`; a `layout` key is `invalid`.
-
-**SCH-3. No code in Schema.** No scripts, templates that call out to a language runtime, or “on write” hooks inside Schema files. Extracting edges from Markdown `[[wiki-links]]` is allowed only if Schema names a built-in extractor the implementation ships; silence is not an extractor. *Check:* a Schema file that is valid YAML but contains an executable blob is rejected; unmarked Markdown is not scanned for edges.
+An assertion without a check is not a requirement. A collection
+declaration contains no executable code and no field list.
 
 ---
 
-## 2. Fields
+## 1. Declaration is files, not library types
 
-**SCH-4. Each field is declared.** A field has a name, common flags, and exactly one spec: a SCH-4 type or an SCH-11 edge. Types in **core**:
+**SCH-1. The declaration lives in the Vault.** Collection declarations
+are UTF-8 YAML 1.2 (or JSON) files under git, next to the records:
+`{name}/.collection.yaml` (also `.collection.yml` or
+`.collection.json`). `name` is the collection name and the on-disk
+directory (MOD-8). The directory name must equal the `name` in the file.
+Changing a declaration is an ordinary git commit. Bindings write the
+file through `create_collection` (`07` LIB-21), not by offering a raw
+path. A person may still edit those files in an editor (STO-2). Library
+source (`rust/scheda/src`) must not name a consumer's collections. Test
+data may: the check does not search it, so a fixture shaped like a
+consumer cannot turn SCH-1 red. A leftover `{name}/.schema.yaml` (also
+`.schema.yml` / `.schema.json`) is `invalid`, not ignored. *Check:* a
+second consumer adds collections without rebuilding Scheda; grep over
+`rust/scheda/src` does not contain those collection names. *Check:* a
+directory with `.schema.yaml` fails `open` / `check`.
 
-| Type | On disk | Notes |
-|---|---|---|
-| `string` | JSON/YAML string | |
-| `integer` | JSON/YAML number with no fractional part and magnitude at most 2^53 | `1.5` rejected; a value `google.protobuf.Struct` `number_value` (IEEE 754 binary64) cannot hold exactly is `invalid` (`07` LIB-18) |
-| `number` | finite JSON/YAML number | JSON does not encode NaN/Infinity; YAML `.nan` / `.inf` rejected |
-| `boolean` | `true` / `false` | |
-| `string_list` | array of strings | empty `[]` is a value, not missing |
-| `object` | map | keys Schema lists (`fields`), or open with `values` (declared type of every unnamed key), or open with `string` values when both are omitted |
-| `object_list` | array of maps | empty `[]` is a value, not missing; each item follows the same `fields` **xor** `values` rule as `object` (nesting allowed) |
+`info` (`08`) is this data serialized, not a guess from walking Record
+files. It lists write-mode and perimeter marks, not Record fields.
 
-Unknown types are rejected. Flags `required` / `optional` / `nullable` apply to nested fields of `object` and `object_list` items the same way. On `values`, `nullable` keeps that meaning; `required`, `default`, and `exclude_find` are `invalid` at Schema load, and so is an `edge` anywhere beneath `values`, however deeply nested: under a key Schema does not name an edge could keep its dangling check but never be a find key. The `values` `name` labels one entry in error messages and is never a key on disk, so `id` and `body` are free for it. *Check:* insert with a field not in Schema → error; insert with a known field of the wrong type → error; `object_list` of two maps round-trips; `number` `0.5` accepted; the same value on an `integer` field is rejected; an `integer` whose magnitude exceeds 2^53 is rejected; a `values` map of the declared type round-trips; a value of the wrong type is `invalid` and names the field, the `values` label, and the key; `fields` and `values` together is `invalid`; an `edge` nested under `values` is `invalid`.
+**SCH-2. One declaration per collection.** Each collection has: name
+(method argument / directory), kind (`document` | `journal` |
+`singleton`), `version` (SCH-13), and the keys in §7 that apply to that
+kind (journal caps; fixed Record `id` for `singleton`; `isolated`;
+`encrypted`; `exclude_lexical_index`; `exclude_vector_index`). There is
+no `fields` key. There is no layout template. Record file paths for
+generation 1 are fixed (MOD-8). Kind does not change in place (MOD-2).
+Journal caps may change inside generation 1. *Check:* a collection
+missing `kind` or `version` is rejected on `open` / `check`; a `fields`
+key or a `layout` key is `invalid`. *Check:* two of `.collection.yaml`
+/ `.yml` / `.json` in one collection directory is `invalid`.
 
-**SCH-5. Required, optional, nullable.** Required fields must be present on write. Optional fields may be absent. Independently, Schema may mark a field `nullable` (default false).
-
-| | not nullable | `nullable` |
-|---|---|---|
-| required | key present, value not `null` | key present, value may be `null` |
-| optional | key may be absent; if present, not `null` | absent, `null`, or a value — three states |
-
-A default is applied only if Schema states one; otherwise MOD-12 (missing is missing) and MOD-18 (`null` stays `null`). *Check:* omit a required field → write error; omit an optional non-nullable field → read-back has no such key; required nullable with `null` round-trips; optional non-nullable with `null` → write error.
-
-**SCH-6. Identity field.** The Record identity key is always `id` (MOD-13). Schema must not declare a field named `id` or `body` (`body` is the Markdown body in `find`, SCH-7). There is no Schema key that renames `id` or that adds a pattern on top of the library rule (each component is the same slug as collection `name`: Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes for the whole `id`, no trailing `.` or whitespace, not a Windows device name). A `document` `id` may be `/`-separated slugs (`work/meeting`, `2026-01-15/standup`); `journal` and `singleton` stay a single slug. For `document`, header `id` must equal the path-derived `id` (relative POSIX path under the collection, slashes, no `.md`). For `singleton`, header `id` must match `Schema.singleton.id` (the file is always `record.yaml`). *Check:* header/object `id` ≠ that identity → write and `check` fail. *Check:* a Schema field named `id` or `body` is `invalid`. *Check:* `document` `add("work/meeting")` writes `{name}/work/meeting.md`; `journal` / `singleton` `id` `a/b` is `invalid` on `add`.
-
-**SCH-7. Body marks (`document` only).** Schema says whether a Markdown body is forbidden (`no_body`) and whether it is excluded from the lexical Index and from vector search (`text.exclude_fts` / `text.exclude_vector`). Default: body allowed and in the lexical Index (`find` field `body` and BM25) and in vectors. *Check:* `no_body` with a non-empty body → write error; `exclude_fts` body text is not a `find` key and is not found by lexical `search`; **core** still stores the body.
-
-**SCH-8. Filter keys.** `find` takes `api.v1.Filter` (IDX-10): a Tantivy 0.26 `Query` tree (`find.proto`), then files for those `id`s. Every declared field may appear in a leaf (`term`, `term_set`, `phrase`, `range`, `exists`, …) unless Schema sets `exclude_find`. Record identity `id` is always allowed; it is not a Schema field and cannot be `exclude_find`. Markdown `body` is a find key on `document` when the body is allowed and not `exclude_fts` (SCH-7); it is not a Schema field. A `values` label and keys Schema does not name are not find keys. `term` on `id` with JSON `null` is `invalid`. There is no path-prefix query: the caller never supplies a Record path. Existence (`exists`) means a non-null indexed value (`ExistsQuery`). Equality to JSON `null` is a `term` whose value is `null` (stored `null`, not absent). Combine with `boolean` (`must` / `should` / `must_not`). *Check:* `find` on an `exclude_find` field → error; `find` on an unmarked field round-trips; `term` `f = null` does not return a Record that omitted `f`. *Check:* `term` `id = "alpha"` returns that Record when it is in the Index. *Check:* `regex` / `phrase` on `body` hits prose that is not in a Schema field; `exclude_fts` body → `invalid`. **Core** for `find`; ranking is `06`.
-
----
-
-## 3. Index marks and embeddings
-
-**SCH-9. Search is opt-out per field (and body).** `string`, `string_list`, edges, and the body enter lexical (`fts`) and vector search unless Schema sets `exclude_fts` / `exclude_vector` on that arm (`Text`, `Edge`, or `Body`). Other types (`integer`, `number`, `boolean`, `object`, `object_list`) are never FTS or vector. Substring match over every field is not `search`. *Check (**search**):* two string fields, one with `exclude_fts`; word queries hit only the other field.
-
-**SCH-10. Model identity is in the Index.** The vector column is the field `name` (the body uses `body`). `model_id`, dimension, prompt variant, and quantization live in the Index, not on the Record. Mismatch with the caller's embedder → rebuild vectors or error, not search against the wrong matrix. Lexical search still works. *Check (**search**):* change of `model_id` in the Index header invalidates the vector table; `find` / FTS still succeed.
-
----
-
-## 4. Edges
-
-**SCH-11. An edge is a field.** The field spec is `edge`, not a SCH-4 type. Values are Record `id`s of the named collection: `one` stores a `string`, `many` a `string_list`. Not URLs or wiki labels. `strict` rejects a write whose target `id` is missing; default is lax. There is no `walk` method; the caller reads the field. *Check:* `strict` insert with a missing target → error; lax insert succeeds; `get` of the source succeeds.
+**SCH-3. No code in the declaration.** No scripts, templates that call
+out to a language runtime, or “on write” hooks. Unknown keys are
+rejected, so an executable blob cannot hide as an extra field. Scheda
+does not scan Record bytes for wiki-links or any other consumer syntax.
+*Check:* a declaration that is valid YAML but contains an unknown key is
+`invalid`.
 
 ---
 
-## 5. Validation vs old files
+## 2. Retired field Schema
 
-**SCH-12. Write validates; read does not rewrite.** `add` / `replace` reject a Record that fails the collection's current Schema. An older file that fails a tightened Schema is left on disk. `check` reports it. It does not enter the search Index until it validates (or Schema makes the new field optional). `get` by `id` still returns the file bytes if the path exists, with a validity flag specified in `07`. *Check:* add a required field in Schema `2`; old file still returns from `get`; `search` omits it; new insert without the field fails.
+Field names, types, `required` / `nullable` / `default`, `exclude_find`,
+body marks, and edges are not Scheda's. They are not keys on the
+declaration. Column names for `find` / `search` live in the caller's
+`Projector` (`06` / `13`). `add` does not type-check Record bytes.
 
-**SCH-13. Forward-compatible evolution.** Adding an optional field does not invalidate files at `version` N when Schema becomes N+1. Changing a field's type, removing a required field, or changing kind requires a bump of `version` and a rule in Schema (`read_as` / migrate-out-of-band). Scheda does not guess. Writes must use the current `version`. *Check:* files at version `1` read under Schema `2` that only added an optional field; a string where Schema now wants a list is rejected on write.
+**SCH-4 (retired).** Declared field types (`string`, `integer`, …,
+`object_list`) were a Vault Schema. Gone.
+
+**SCH-5 (retired).** Required / optional / nullable were Schema-field
+rules.
+
+**SCH-6 (retired).** A Schema field named `id` or `body`, and a header
+`id` that had to match the path. Identity is the path or the journal
+envelope (`03` MOD-5, MOD-7, MOD-16). The declaration does not add a
+pattern on top of the library slug (MOD-6).
+
+**SCH-7 (retired).** `no_body` and per-body `exclude_fts` /
+`exclude_vector`. There is no Scheda body. Collection-level Index
+exclusion is SCH-9.
+
+**SCH-8 (retired as a Schema rule).** Filter keys were Schema fields
+plus `body`. `Filter` field names other than identity come from the
+`Projector` (`06` / `13`).
+
+**SCH-10 (retired as a Schema rule).** Vector column names taken from
+Schema fields / `body`. Model identity still lives in the Index, not on
+the Record (`06`).
+
+**SCH-11 (retired).** Edges as Schema fields. Scheda does not store or
+validate graph links.
+
+**SCH-13. Collection generation.** `version` on the declaration is the
+collection generation: the declaration file **and** the on-disk Record
+layout of that collection. Required integer. No default: omit, a
+non-integer, `0`, or a generation the library does not implement →
+`invalid`. This plan implements **1** only. `create_collection` writes
+`1`; the proto argument does not carry `version`. Field-schema `read_as`
+/ migrate stays retired. Kind still does not change in place (MOD-2).
+Flipping `encrypted` on a non-empty collection is already `invalid`
+(ISO-11). Journal caps may change inside generation 1 (SCH-14). *Check:*
+missing `version` → `invalid`. *Check:* `version: 2` → `invalid` until
+the library implements 2. *Check:* `create_collection` writes
+`version: 1`.
 
 ---
 
-## 6. Journal segments (numbers)
+## 3. Writes vs Index
 
-**SCH-14. Size cap is required for `journal`.** Schema sets `segment_max_bytes`. If omitted, the default is **8 MiB** (8 × 1024 × 1024). The implementation rejects a cap greater than **32 MiB** (still under typical host warn/reject limits of ~50 / ~100 MiB; GIT-6). Optional: `segment_max_lines`, `segment_rotate` calendar (`daily` UTC). Rotation is still size-first: a cap hit closes the segment even mid-day. *Check:* default Vault without the key rotates at 8 MiB; Schema with `48 MiB` is rejected; after the cap, the next `add` does not grow the closed file (MOD-10).
-
-Closed segments are never rewritten. Sequence files are eight lowercase hex
-digits, then the clone's writer identity (`00000001-alice.jsonl`), so name
-order matches numeric order and two clones cannot create the same path.
-With `segment_rotate: daily`, the open name is `YYYY-MM-DD-{writer}.jsonl`,
-then `YYYY-MM-DD-00000001-{writer}.jsonl` if that day already closed on size.
-A writer never appends to a segment named by another clone, nor to an
-older writerless name (`00000001.jsonl`, `YYYY-MM-DD.jsonl`): those files
-are still read. Rotation caps are evaluated per writer.
-
----
-
-## 7. Isolated and encrypted collections (**later**)
-
-**SCH-15. Isolation is declared (**later**).** Schema may mark a collection `isolated: true`. Record files then live at `{vault}/.isolated/{name}/` (ISO-2): a gitignored nested git that the main Vault's `push` / `pull` / `sync` never touch (ISO-6). The Schema file stays `{vault}/{name}/.schema.yaml` in the main tree, which also makes a collection `name` unique across the Vault, isolated and plain alike. `find` / `search` that name no collection return nothing of theirs; naming one is an ordinary query, because its field values are in the one Vault Index, which is owner-only for that reason (ISO-4). *Check:* fixture with gitignored `.isolated/`; a query with no collection named returns no isolated Records while one naming that collection returns them; `open` does not require `.isolated/` to exist.
-
-**SCH-16. Encryption is declared, and it is a different question (**later**).** Schema may mark a collection `encrypted: true`. Every Record file of that collection is then age v1 armor on disk (ISO-8), whole-file (ISO-9), and I/O on it needs the handle secret (ISO-5). The key is independent of `isolated`: all four combinations are valid, and neither implies the other. Three rules come with it, and each one is a refusal rather than a silent accommodation. A `journal` with the key is `invalid` when the Schema is read, because an age file cannot be appended to and a line is what a journal is made of (STO-2, STO-3); `document` and `singleton` are the kinds offered. No Index holds anything from the collection (ISO-4), so `find` and `search` that name it fail with `unsupported` and never with an empty result. Setting or clearing the key on a collection that already holds Record files is `invalid`, and those files are left untouched (ISO-11). A build without the `encrypt` feature refuses the collection by code instead of returning ciphertext as a Record (LIB-15). *Check (**later**):* an encrypted non-isolated collection and a plain isolated one both round-trip; an encrypted `journal` Schema is `invalid`; `find` naming an encrypted collection is `unsupported`, not empty; the key added to a non-empty collection is `invalid` and its files are byte-identical afterwards.
+**SCH-12. Write stores bytes; `get` returns them.** `add` / `replace`
+accept opaque UTF-8 (MOD-11). They do not call `Projector.project` to
+accept or reject the write. An older file is left on disk. `get` by `id`
+returns the file bytes if the path exists (journal: the envelope
+payload). `check` does not type-check Record contents (`03` MOD-13). A
+Record that `project` rejects or omits stays out of the lexical and
+vector indexes; that is a `Projector` failure (`06`), not a Schema type
+check. *Check:* bytes that a later `Projector` would omit still return
+from `get`; `add` of those bytes succeeds.
 
 ---
 
-## 8. On-disk keys (**core**)
+## 4. Index exclusion
 
-UTF-8 YAML 1.2 or JSON. JSON uses the same keys. Unknown keys on a declaration
-are rejected, so an executable blob cannot hide as an extra field (SCH-3).
-Keys are snake_case. Values that `03`–`05` already name as literals stay those
-literals (`document`, `journal`, `singleton`, field types in SCH-4).
+**SCH-9. A collection may stay out of either Index.**
+`exclude_lexical_index: true` keeps every Record of that collection out
+of the Tantivy Index (`find`, filters, BM25). `find` that names it is
+`unsupported`, not an empty hit list. The journal id map is a separate
+file and is still written, so keyed `get` does not need Tantivy.
+`exclude_vector_index: true` skips the embedder on `add` / `replace` and
+keeps Records out of the vector Index; `search` then uses the lexical
+leg only. Either flag, or both. `search` is `unsupported` only when the
+collection has no remaining search leg (both flags, or encrypted —
+SCH-16). Both flags are redundant on `encrypted` and allowed. A
+`journal` may set either flag. Default for each is `false`. Per-field
+FTS / vector marks are not declaration keys; they belong on the
+`Projector` (`06` / `13`). *Check (**search**):* `find` that names a
+lexically excluded collection is `unsupported`; `search` on a collection
+with only `exclude_vector_index` still returns lexical hits and does not
+call the embedder on `add`.
 
-### Collection schema file
+---
 
-Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record files are the SCH-15 exception (`{vault}/.isolated/{name}/`). Discover collections by scanning the Vault root for directories that do not start with `.` and that contain exactly one of `.schema.yaml`, `.schema.yml`, or `.schema.json`. Skip `.git`, `.scheda`, and `.isolated`. Other files in that directory (for example Markdown) are ignored and are not extractors (SCH-3). A directory whose name is not the `name` in the file is `invalid`. Two schema files in one collection directory are `invalid`.
+## 5. Journal segments (numbers)
+
+**SCH-14. Size cap is required for `journal`.** The declaration sets
+`segment_max_bytes`. If omitted, the default is **8 MiB** (8 × 1024 ×
+1024). The implementation rejects a cap greater than **32 MiB** (still
+under typical host warn/reject limits of ~50 / ~100 MiB; GIT-6).
+Optional: `segment_max_lines`, calendar rotation (`daily` UTC). Rotation
+is still size-first: a cap hit closes the segment even mid-day. Caps may
+change on a later declaration write; no `version` key is involved.
+*Check:* default Vault without the key rotates at 8 MiB; a declaration
+with `48 MiB` is rejected; after the cap, the next `add` does not grow
+the closed file (MOD-10).
+
+Closed segments are never rewritten. Sequence files are eight lowercase
+hex digits, then the clone's writer identity (`00000001-alice.jsonl`),
+so name order matches numeric order and two clones cannot create the
+same path. With `daily`, the open name is `YYYY-MM-DD-{writer}.jsonl`,
+then `YYYY-MM-DD-00000001-{writer}.jsonl` if that day already closed on
+size. A writer never appends to a segment named by another clone, nor to
+an older writerless name (`00000001.jsonl`, `YYYY-MM-DD.jsonl`): those
+files are still read. Rotation caps are evaluated per writer.
+
+---
+
+## 6. Isolated and encrypted collections (**later**)
+
+**SCH-15. Isolation is declared (**later**).** The declaration may mark
+a collection `isolated: true`. Record files then live at
+`{vault}/.isolated/{name}/` (ISO-2): a gitignored nested git that the
+main Vault's `push` / `pull` / `sync` never touch (ISO-6). The
+declaration file stays `{vault}/{name}/.collection.yaml` in the main
+tree, which also makes a collection `name` unique across the Vault,
+isolated and plain alike. `find` / `search` that name no collection
+return nothing of theirs; naming one is an ordinary query, because
+identity (and Projector columns, when a Projector is present) sit in the
+one Vault Index, which is owner-only for that reason (ISO-4). `info`
+lists the collection as isolated; there is no field catalog to omit
+(ISO-3). *Check:* fixture with gitignored `.isolated/`; a query with no
+collection named returns no isolated Records while one naming that
+collection returns them; `open` does not require `.isolated/` to exist.
+
+**SCH-16. Encryption is declared, and it is a different question
+(**later**).** The declaration may mark a collection `encrypted: true`.
+Every Record file of that collection is then age v1 armor on disk
+(ISO-8), whole-file (ISO-9), and I/O on it needs the handle secret
+(ISO-5). The key is independent of `isolated`: all four combinations are
+valid, and neither implies the other. Three rules come with it, and each
+one is a refusal rather than a silent accommodation. A `journal` with
+the key is `invalid` when the declaration is read, because an age file
+cannot be appended to and a line is what a journal is made of (STO-2,
+STO-3); `document` and `singleton` are the kinds offered. No Index holds
+anything from the collection (ISO-4), so `find` and `search` that name
+it fail with `unsupported` and never with an empty result. Setting or
+clearing the key on a collection that already holds Record files is
+`invalid`, and those files are left untouched (ISO-11). A build without
+the `encrypt` feature refuses the collection by code instead of
+returning ciphertext as a Record (LIB-15). *Check (**later**):* an
+encrypted non-isolated collection and a plain isolated one both
+round-trip; an encrypted `journal` declaration is `invalid`; `find`
+naming an encrypted collection is `unsupported`, not empty; the key
+added to a non-empty collection is `invalid` and its files are
+byte-identical afterwards.
+
+---
+
+## 7. On-disk keys (**core**)
+
+UTF-8 YAML 1.2 or JSON. JSON uses the same keys. Unknown keys on a
+declaration are rejected, so an executable blob cannot hide as an extra
+field (SCH-3). Keys are snake_case. Values that `03`–`05` already name
+as literals stay those literals (`document`, `journal`, `singleton`).
+
+### Collection declaration file
+
+Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record
+files are the SCH-15 exception (`{vault}/.isolated/{name}/`). Discover
+collections by scanning the Vault root for directories that do not start
+with `.` and that contain exactly one of `.collection.yaml`,
+`.collection.yml`, or `.collection.json`. Skip `.git`, `.scheda`, and
+`.isolated`. Other files in that directory are Records or ignored
+dotfiles (`03` MOD-8); they are not extractors (SCH-3). A directory
+whose name is not the `name` in the file is `invalid`. Two declaration
+files in one collection directory are `invalid`. Any leftover
+`.schema.yaml` / `.schema.yml` / `.schema.json` in a non-dot directory
+at the Vault root is `invalid`, whether or not a `.collection.yaml` is
+also present.
 
 `info` (`08`) is this data serialized, not inferred from Record files.
 
@@ -115,66 +232,37 @@ Each collection occupies `{vault}/{name}/` (MOD-8). Isolated Record files are th
 |---|---|---|
 | `name` | yes | Collection name. Unique in the Vault. Same slug as one Record `id` component (library): Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes, no trailing `.` or whitespace, not a Windows device name. The on-disk directory is this name (MOD-8). |
 | `kind` | yes | `document` \| `journal` \| `singleton` |
-| `version` | yes | Integer ≥ `1` |
-| `id` | — | Removed. Identity is always Record `id`. No `id_pattern`. The library slug (or `/`-separated slugs for `document`) is the only `id` constraint (SCH-6). |
-| `fields` | yes | List of field declarations (may be empty). |
+| `version` | yes | Collection generation (SCH-13). Integer. This plan: **1** only. No default. |
+| `fields` | — | Retired. A leftover key is `invalid` (SCH-2). |
+| `id` | — | Removed as a collection-level identity pattern. Record `id` rules are `03`. |
 | `segment_max_bytes` | `journal` only | Integer bytes. Omitted → **8 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
 | `segment_max_lines` | `journal` only | Optional integer line cap. If set, ≥ `1`. |
 | `daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
-| `singleton` | `singleton` only | Mapping with `id` (MOD-7). Same slug as Record `id` (library). |
-| `body` / `document` | `document` only | Mapping (SCH-7). Omitted/empty: body allowed and indexed. |
-| `isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Records under `{vault}/.isolated/{name}/`. `info` lists the collection as isolated and omits `schema.fields` (ISO-3). |
+| `singleton` | `singleton` only | Mapping with `id` (MOD-7). Same slug as Record `id` (library); an extension, if any, is part of `id`. |
+| `body` / `document` | — | Retired (SCH-7). A leftover key is `invalid`. |
+| `isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Records under `{vault}/.isolated/{name}/`. `info` lists the collection as isolated (ISO-3). |
 | `encrypted` | no | Boolean. Default `false`. `true` marks SCH-16: Record files are age v1 armor and I/O needs the handle secret. Independent of `isolated`. `true` on `journal` is `invalid`. `info` lists the collection as encrypted (ISO-3). |
+| `exclude_lexical_index` | no | Boolean. Default `false`. `true` marks SCH-9: no Record of this collection is written to the Tantivy Index. `find` that names it is `unsupported`. |
+| `exclude_vector_index` | no | Boolean. Default `false`. `true` marks SCH-9: no Record of this collection is embedded or stored in the vector Index. |
 
-Journal-only keys on `document` / `singleton`, `singleton_id` on another
-kind, `body` on `journal` / `singleton`, and `encrypted` on `journal`, are rejected. Two files with
-the same `name` are rejected. Two `kind` values on one collection are
+Journal-only keys on `document` / `singleton`, `singleton` on another
+kind, and `encrypted` on `journal`, are rejected. Two files with the
+same `name` are rejected. Two `kind` values on one collection are
 rejected (one `kind` string).
 
-`body` mapping:
-
-| Key | Required | Meaning |
-|---|---|---|
-| `allowed` | no | Boolean. Default `true`. `false` rejects a non-empty body on write. |
-| `exclude_fts` | no | Boolean. Default `false`. `true` excludes the body from the lexical Index: `find` field `body` and BM25 (SCH-7, SCH-9). |
-| `exclude_vector` | no | Boolean. Default `false`. `true` excludes the body from vector search (SCH-9). |
-
-### Field declarations
-
-Each item of `fields`:
-
-| Key | Required | Meaning |
-|---|---|---|
-| `name` | yes | Field name. Non-empty. Not `id` (SCH-6) or `body` (SCH-7); those two are free on a `values` entry, which names no key. |
-| `required` | no | Boolean. Default `false` (optional). |
-| `nullable` | no | Boolean. Default `false` (SCH-5). |
-| `exclude_find` | no | Boolean. Default `false`. `true` excludes the field from `find` (SCH-8). |
-| `default` | no | Applied only when present (MOD-12). |
-| *spec* | yes | Exactly one of the following keys (Protobuf `oneof`). |
-
-Spec (exactly one):
-
-| Key | Meaning |
-|---|---|
-| `string` | JSON/YAML string. Mapping: `exclude_fts`, `exclude_vector` (SCH-9). Empty mapping is valid. |
-| `integer` | JSON/YAML integer. Empty mapping. |
-| `number` | Finite JSON/YAML number. Empty mapping. |
-| `boolean` | `true` / `false`. Empty mapping. |
-| `string_list` | Array of strings. Same search mapping as `string`. |
-| `object` | Map. Nested `fields` **xor** `values` (this same field table). Omitting both / empty `fields`: open map of `string` values. `values.name` labels one entry in error messages and is never a key on disk, so `id` and `body` are free for it. `required`, `default`, and `exclude_find` on that entry are `invalid`, and so is an `edge` anywhere beneath `values`. |
-| `object_list` | Array of maps. Same nested `fields` **xor** `values` as `object`. |
-| `edge` | SCH-11. Mapping: `collection` (required), `one` **xor** `many` (empty mapping), optional `dangling` (`lax` \| `strict`), optional `exclude_fts` / `exclude_vector`. |
-
-Nested `fields` and `values` exist only under `object` / `object_list`. They cannot appear on an edge or a scalar. The two are mutually exclusive.
+There is no field-declaration table. Nested `fields` / `values` / `edge`
+keys are unknown keys (SCH-3).
 
 ---
 
-## 9. What this document does not decide
+## 8. What this document does not decide
 
-Pretty-print (quotes, key order, YAML vs JSON). Bindings must round-trip the
-information in SCH-2–SCH-14 using the keys in §8. SCH-15's `{vault}/.isolated/`
-tree, owner-only files, and Index rules stay `09`.
+Pretty-print (quotes, key order, YAML vs JSON). Bindings must round-trip
+the information in SCH-2, SCH-9, and SCH-14–SCH-16 using the keys in §7.
+SCH-15's `{vault}/.isolated/` tree, owner-only files, and Index rules
+stay `09`.
 
-FTS engine, vector store, and `reindex` — `06`.
+FTS engine, vector store, `reindex`, and `Projector` column marks —
+`06` / `13`.
 
-Canonical JSON of journal lines — `07`.
+Journal line envelope — `03` (MOD-16). `get` / `add` bytes — `07`.

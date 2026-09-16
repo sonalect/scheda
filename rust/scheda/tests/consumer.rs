@@ -7,12 +7,12 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "find")]
 use std::time::{Duration, Instant};
 
-use scheda::{Code, OpenOptions, RecordAdd, RecordReplace, Vault};
+use scheda::{Code, OpenOptions, Vault};
 use serde_json::json;
 
 #[cfg(feature = "find")]
@@ -28,9 +28,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-p10-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-p10", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -107,12 +107,12 @@ const OPS_BUDGET: Duration = Duration::from_millis(250);
 #[cfg(all(feature = "find", not(windows)))]
 const OPS_BUDGET: Duration = Duration::from_millis(100);
 
-fn rec(fields: serde_json::Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
-fn rec_rep(fields: serde_json::Value) -> RecordReplace {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec_rep(fields: serde_json::Value) -> Vec<u8> {
+    rec(fields)
 }
 
 fn contains_collection_name(haystack: &str, name: &str) -> bool {
@@ -265,28 +265,27 @@ fn assert_raw_eq_file(vault: &Vault, collection: &str, id: &str, rel: &[&str]) {
         "{} {id}",
         rel.join("/")
     );
-    assert_eq!(got.valid, Some(true));
 }
 
 fn fixture_raw_matches(vault: &Vault) {
     assert_raw_eq_file(
         vault,
         "lessons_personal",
-        "shared-note",
+        "shared-note.md",
         &["lessons_personal", "shared-note.md"],
     );
     assert_raw_eq_file(
         vault,
         "lessons_project",
-        "shared-note",
+        "shared-note.md",
         &["lessons_project", "shared-note.md"],
     );
-    assert_raw_eq_file(vault, "entities", "named", &["entities", "named.md"]);
-    assert_raw_eq_file(vault, "profiles", "pilot", &["profiles", "pilot.md"]);
+    assert_raw_eq_file(vault, "entities", "named.md", &["entities", "named.md"]);
+    assert_raw_eq_file(vault, "profiles", "pilot.md", &["profiles", "pilot.md"]);
     assert_raw_eq_file(
         vault,
         "pending_items",
-        "ticket-one",
+        "ticket-one.md",
         &["pending_items", "ticket-one.md"],
     );
     assert_raw_eq_file(vault, "episodes", "alpha", &["episodes", "00000001.jsonl"]);
@@ -309,10 +308,20 @@ fn fixture_raw_matches(vault: &Vault) {
         .unwrap()
         .get("bound")
         .unwrap();
-    let rel = bound.path.as_deref().expect("isolated journal record path");
-    let on_disk = fs::read(vault.path().join(rel)).unwrap();
-    assert_eq!(bound.raw.as_deref(), Some(on_disk.as_slice()), "{rel}");
-    assert_eq!(bound.valid, Some(true));
+    let dir = vault.path().join(".isolated").join("alias_bindings");
+    let on_disk = fs::read(unique_jsonl(&dir)).unwrap();
+    assert_eq!(bound.raw.as_deref(), Some(on_disk.as_slice()));
+}
+
+fn unique_jsonl(dir: &Path) -> PathBuf {
+    let mut files: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("jsonl") && path.is_file())
+        .collect();
+    assert_eq!(files.len(), 1, "jsonl in {}", dir.display());
+    files.remove(0)
 }
 
 fn walk_files(root: &Path) -> Vec<PathBuf> {
@@ -426,7 +435,7 @@ fn fixture_opens_as_text_and_get_raw_matches() {
     let hist = vault
         .collection("lessons_personal")
         .unwrap()
-        .history("shared-note", 0, 10)
+        .history("shared-note.md", 0, 10)
         .unwrap();
     assert_eq!(hist.entries[0].raw.as_deref(), Some(file.as_slice()));
 
@@ -652,13 +661,13 @@ fn remove_work_queue_entry_is_gone() {
     let collection = vault.collection("pending_items").unwrap();
     collection
         .replace(
-            "ticket-one",
+            "ticket-one.md",
             rec_rep(json!({"title": "First ticket", "status": "done"})),
             None,
         )
         .unwrap();
-    collection.remove("ticket-one", None).unwrap();
-    let err = collection.get("ticket-one").unwrap_err();
+    collection.remove("ticket-one.md", None).unwrap();
+    let err = collection.get("ticket-one.md").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
     assert!(
         !scratch
@@ -677,7 +686,7 @@ fn remove_work_queue_entry_is_gone() {
         assert!(
             page.records
                 .iter()
-                .all(|record| record.id.as_deref() != Some("ticket-one"))
+                .all(|record| record.id.as_deref() != Some("ticket-one.md"))
         );
         vault.check().unwrap();
     }
@@ -770,7 +779,7 @@ fn identical_document_schemas_accept_the_same_record_and_find_stays_in_one() {
         personal
             .records
             .iter()
-            .any(|record| record.id.as_deref() == Some("shared-note"))
+            .any(|record| record.id.as_deref() == Some("shared-note.md"))
     );
     assert!(
         personal
@@ -779,7 +788,7 @@ fn identical_document_schemas_accept_the_same_record_and_find_stays_in_one() {
             .any(|record| record.id.as_deref() == Some("twin"))
     );
     assert!(!personal.records.iter().any(|record| {
-        record.id.as_deref() == Some("shared-note")
+        record.id.as_deref() == Some("shared-note.md")
             && record.collection.as_deref() == Some("lessons_project")
     }));
 

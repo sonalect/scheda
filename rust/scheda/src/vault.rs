@@ -21,8 +21,7 @@ use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 use crate::search::{SearchEngine, marked_text};
 use crate::store;
 use crate::{
-    Embedder, Encryption, Error, History, OpenOptions, Record, RecordAdd, RecordReplace,
-    ReindexResult, Schema, VaultInfo,
+    Embedder, Encryption, Error, History, OpenOptions, Record, ReindexResult, Schema, VaultInfo,
 };
 #[cfg(feature = "find")]
 use crate::{Filter, FindQuery, FindResult};
@@ -326,7 +325,7 @@ impl Vault {
         self.auto_sync
     }
 
-    /// Schema `version` values present in this Vault.
+    /// Collection generation values present in this Vault.
     ///
     /// A poisoned schema lock is `io_other`, same as the other schema reads.
     pub fn versions(&self) -> Result<Vec<u32>, Error> {
@@ -1104,9 +1103,9 @@ impl Vault {
                 continue;
             }
             match self.read_queued_record(decl, &id)? {
-                Some(record) if record.valid == Some(true) => {
+                Some((record, journal_rel)) if store::record_indexable(decl, &record) => {
                     if decl.kind == Kind::Journal
-                        && let Some(rel) = record.path.as_deref()
+                        && let Some(rel) = journal_rel.as_deref()
                     {
                         index::remember_id(new_dir, maps, &decl.name, &id, rel)?;
                     }
@@ -1151,9 +1150,9 @@ impl Vault {
                 continue;
             }
             match self.read_queued_record(decl, &id)? {
-                Some(record) if record.valid == Some(true) => {
+                Some((record, journal_rel)) if store::record_indexable(decl, &record) => {
                     if decl.kind == Kind::Journal
-                        && let Some(rel) = record.path.as_deref()
+                        && let Some(rel) = journal_rel.as_deref()
                     {
                         index::remember_id(new_dir, maps, &decl.name, &id, rel)?;
                     }
@@ -1168,12 +1167,18 @@ impl Vault {
         Ok(())
     }
 
-    fn read_queued_record(&self, decl: &CollectionDecl, id: &str) -> Result<Option<Record>, Error> {
+    fn read_queued_record(
+        &self,
+        decl: &CollectionDecl,
+        id: &str,
+    ) -> Result<Option<(Record, Option<String>)>, Error> {
         match decl.kind {
-            Kind::Journal => self.read_queued_journal(decl, id),
+            Kind::Journal => Ok(self
+                .read_queued_journal(decl, id)?
+                .map(|(record, rel)| (record, Some(rel)))),
             Kind::Document | Kind::Singleton => {
                 match store::find_document(&self.path, decl, id, self.encryption.as_ref()) {
-                    Ok(record) => Ok(Some(record)),
+                    Ok(record) => Ok(Some((record, None))),
                     Err(err) if crate::reindex::is_absent(&err) => Ok(None),
                     Err(err) => Err(err),
                 }
@@ -1185,15 +1190,15 @@ impl Vault {
         &self,
         decl: &CollectionDecl,
         id: &str,
-    ) -> Result<Option<Record>, Error> {
+    ) -> Result<Option<(Record, String)>, Error> {
         let live = self.generation_dir()?;
         match crate::index::lookup_on_disk(&live, &decl.name, id)? {
             crate::index::OwnedLookup::Path(rel) => {
                 match journal::find_in_segment(&self.path, decl, &rel, id) {
-                    Ok(record) => Ok(Some(record)),
+                    Ok(record) => Ok(Some((record, rel))),
                     Err(err) if crate::reindex::is_absent(&err) => Ok(None),
-                    Err(_) => match journal::find_journal_scan(&self.path, decl, id) {
-                        Ok(record) => Ok(Some(record)),
+                    Err(_) => match journal::find_journal_scan_with_rel(&self.path, decl, id) {
+                        Ok(pair) => Ok(Some(pair)),
                         Err(err) if crate::reindex::is_absent(&err) => Ok(None),
                         Err(err) => Err(err),
                     },
@@ -1201,8 +1206,8 @@ impl Vault {
             }
             crate::index::OwnedLookup::UnknownId => Ok(None),
             crate::index::OwnedLookup::MissingMap => {
-                match journal::find_journal_scan(&self.path, decl, id) {
-                    Ok(record) => Ok(Some(record)),
+                match journal::find_journal_scan_with_rel(&self.path, decl, id) {
+                    Ok(pair) => Ok(Some(pair)),
                     Err(err) if crate::reindex::is_absent(&err) => Ok(None),
                     Err(err) => Err(err),
                 }
@@ -1398,7 +1403,9 @@ impl Collection {
         self.decl.kind
     }
 
-    /// Schema `version` of this collection (≥ 1).
+    /// Collection generation: declaration shape and on-disk Record layout.
+    ///
+    /// Required on the collection file. Only generation `1` is implemented.
     #[must_use]
     pub fn version(&self) -> u32 {
         self.decl.version
@@ -1535,7 +1542,9 @@ impl Collection {
 
     fn restore_indexed_from_disk(&self, id: &str) -> Result<(), Error> {
         match self.lookup_decl(&self.decl, id) {
-            Ok(record) if record.valid == Some(true) => self.upsert_lexical(&record),
+            Ok(record) if store::record_indexable(&self.decl, &record) => {
+                self.upsert_lexical(&record)
+            }
             Ok(_) => self.forget_lexical(id),
             Err(err) if crate::reindex::is_absent(&err) => self.forget_lexical(id),
             Err(err) => Err(err),
@@ -1700,32 +1709,37 @@ impl Collection {
 
     /// Create a Record. Same `id` already present → `duplicate_id`.
     ///
-    /// For `document`, `id` may be `/`-separated slugs (`work/meeting` is
-    /// `{name}/work/meeting.md`). `journal` and `singleton` remain one slug.
+    /// For `document`, `id` may be `/`-separated slugs (`work/meeting.toml` is
+    /// `{name}/work/meeting.toml`). The library does not append `.md`. `journal`
+    /// and `singleton` remain one slug.
     ///
-    /// Encrypted collections write age armor after the canonical plaintext
+    /// Encrypted collections write age armor after the UTF-8 plaintext
     /// is built. A missing secret is `crypto`. The temp file never holds
     /// plaintext. `exclude_lexical_index` skips the Tantivy write;
     /// `exclude_vector_index` skips the embedder and the vector Index.
+    ///
+    /// `raw` is the UTF-8 file / payload bytes. Empty is allowed. Non-UTF-8
+    /// is refused and writes no file.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
     /// call, and the lexical Index writer is released with it.
-    pub fn add(&self, id: &str, record: RecordAdd, message: Option<&str>) -> Result<(), Error> {
+    pub fn add(&self, id: &str, raw: impl AsRef<[u8]>, message: Option<&str>) -> Result<(), Error> {
         require_caller_id(self.decl.kind, id)?;
-        record.require_valid()?;
         self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
-        let mut record = record_from_add(id, &self.decl.name, record);
+        let record = record_from_raw(id, &self.decl.name, raw.as_ref());
         self.require_write("add")?;
         self.conclude_write((|| {
             self.drain_abandoned()?;
             self.prepare_isolated_write()?;
-            schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
-                self.lookup(collection, id)
-            })?;
+            if self.decl.kind != Kind::Document {
+                schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+                    self.lookup(collection, id)
+                })?;
+            }
             match self.decl.kind {
                 Kind::Journal => {
                     let mut maps = crate::error::mutex(
@@ -1742,8 +1756,6 @@ impl Collection {
                         &self.writer,
                     )?;
                     drop(maps);
-                    record.path = Some(rel.clone());
-                    record.valid = Some(true);
                     self.note_write(rel.clone())?;
                     if let Err(err) = self.upsert_lexical(&record) {
                         self.rollback_journal_insert(&id, &rel, &rollback);
@@ -1764,8 +1776,6 @@ impl Collection {
                         &record,
                         self.encryption.as_ref(),
                     )?;
-                    record.path = Some(rel.clone());
-                    record.valid = Some(true);
                     self.note_write(rel.clone())?;
                     if let Err(err) = self.upsert_lexical(&record) {
                         let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
@@ -1788,8 +1798,9 @@ impl Collection {
     /// Read one Record by `id`. Missing → `not_found`.
     ///
     /// Encrypted collections decrypt the file. A missing or wrong secret,
-    /// or bytes that will not decrypt, is `crypto`. After a successful
-    /// decrypt, a file that does not parse is a Record with `valid: false`.
+    /// or bytes that will not decrypt, is `crypto`. `raw` is the file
+    /// bytes (decrypted plaintext when encrypted). The library does not
+    /// parse document contents.
     pub fn get(&self, id: &str) -> Result<Record, Error> {
         require_caller_id(self.decl.kind, id)?;
         self.require_encryption_secret()?;
@@ -1818,19 +1829,16 @@ impl Collection {
 
     /// Walk this `document` or `singleton` in `id` order without opening the Index.
     ///
-    /// Files the library names, in the byte order of the full `id` (`{id}.md`,
-    /// where `/` in a `document` `id` is a directory). A `singleton` yields its
+    /// Files the library names, in the byte order of the full `id` (the
+    /// relative POSIX path under the collection, including any extension;
+    /// `/` in a `document` `id` is a directory). A `singleton` yields its
     /// one Record, or nothing before the first write.
-    /// Each item is what `get` returns for that `id`, `raw` included: a file
-    /// that does not parse and a Record that fails current Schema are both
-    /// yielded with `valid: false`, and the walk continues. Unlike `lines()`,
-    /// a bad file does not hide the next — each Record is its own file.
-    /// Names that are not Record files (dotfiles, not `*.md`, not a regular
-    /// file) are skipped. Directories whose names are slugs are descended;
+    /// Each item is what `get` returns for that `id`, `raw` included.
+    /// Names that are not Record files (dotfiles, not a regular file,
+    /// symlinks) are skipped. Directories whose names are slugs are descended;
     /// other subdirectories are skipped. `journal` → `unsupported`. A
     /// missing Index directory does not stop the walk. Encrypted collections
-    /// decrypt each file; a file that decrypts but does not parse is
-    /// `valid: false`. A file that will not decrypt is `crypto`.
+    /// decrypt each file. A file that will not decrypt is `crypto`.
     pub fn documents(&self) -> Result<crate::CollectionDocuments, Error> {
         self.require_encryption_secret()?;
         store::collection_documents(&self.vault, &self.decl, self.encryption.as_ref())
@@ -1852,6 +1860,9 @@ impl Collection {
     /// `exclude_lexical_index` skips the Tantivy write; `exclude_vector_index`
     /// skips the embedder and the vector Index.
     ///
+    /// `raw` is the UTF-8 file bytes. Empty is allowed. Non-UTF-8 is
+    /// refused and writes no file.
+    ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
@@ -1860,17 +1871,16 @@ impl Collection {
     pub fn replace(
         &self,
         id: &str,
-        record: RecordReplace,
+        raw: impl AsRef<[u8]>,
         message: Option<&str>,
     ) -> Result<(), Error> {
         require_caller_id(self.decl.kind, id)?;
-        record.require_valid()?;
         self.require_encryption_secret()?;
         let message = require_commit_message(message)?;
         if self.decl.kind == Kind::Journal {
             bail!(Error::unsupported("replace is not offered for journal"));
         }
-        let mut record = record_from_replace(id, &self.decl.name, record);
+        let record = record_from_raw(id, &self.decl.name, raw.as_ref());
         self.require_write("replace")?;
         self.conclude_write((|| {
             self.drain_abandoned()?;
@@ -1882,9 +1892,11 @@ impl Collection {
                 )));
             }
             self.prepare_isolated_write()?;
-            schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
-                self.lookup(collection, id)
-            })?;
+            if self.decl.kind != Kind::Document {
+                schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
+                    self.lookup(collection, id)
+                })?;
+            }
             let (_id, rel) = store::replace_document(
                 &self.vault,
                 &self.decl,
@@ -1892,8 +1904,6 @@ impl Collection {
                 &record,
                 self.encryption.as_ref(),
             )?;
-            record.path = Some(rel.clone());
-            record.valid = Some(true);
             self.note_write(rel.clone())?;
             if let Err(err) = self.upsert_lexical(&record) {
                 let _ = isolated::discard_recorded(&self.vault, std::slice::from_ref(&rel));
@@ -2058,8 +2068,11 @@ impl Collection {
         }
         let rel = match self.decl.kind {
             Kind::Journal => {
-                let record = self.get(id)?;
-                record.path.unwrap_or_default()
+                let maps = crate::error::mutex(
+                    &self.journal_ids,
+                    "[Collection::history] lock journal ids",
+                )?;
+                journal::segment_rel(&self.vault, &self.decl, id, &maps)?
             }
             Kind::Document | Kind::Singleton => {
                 if self
@@ -2163,24 +2176,11 @@ fn require_caller_id(kind: Kind, id: &str) -> Result<(), Error> {
     }
 }
 
-fn record_from_add(id: &str, collection: &str, add: RecordAdd) -> Record {
-    let mut record = Record::default().with_id(id).with_collection(collection);
-    record.fields = add.fields;
-    record.body = add.body;
-    record
-}
-
-fn record_from_replace(id: &str, collection: &str, replace: RecordReplace) -> Record {
-    let mut record = Record::default().with_id(id).with_collection(collection);
-    record.fields = replace.fields;
-    record.body = replace.body;
-    record
-}
-
-#[cfg(feature = "search")]
-fn collection_from_record_path(path: &str) -> &str {
-    let rest = path.strip_prefix(".isolated/").unwrap_or(path);
-    rest.split('/').next().unwrap_or("")
+fn record_from_raw(id: &str, collection: &str, raw: &[u8]) -> Record {
+    Record::default()
+        .with_id(id)
+        .with_collection(collection)
+        .with_raw(raw.to_vec())
 }
 
 #[cfg(feature = "find")]
@@ -2374,7 +2374,8 @@ impl QueryCtx<'_> {
                 ..FindResult::default()
             });
         }
-        let journal_ord = decls.len() == 1 && decls[0].kind == Kind::Journal;
+        let journal_ord =
+            decls.len() == 1 && decls[0].kind == Kind::Journal && !query::uses_score(filter);
         let collections: Vec<&str> = decls.iter().map(|decl| decl.name.as_str()).collect();
         let page = self.engine.find(
             &collections,
@@ -2508,7 +2509,6 @@ impl QueryCtx<'_> {
             b.0.partial_cmp(&a.0)
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.1.id.cmp(&b.1.id))
-                .then_with(|| a.1.path.cmp(&b.1.path))
         });
         let mut out = SearchHits::default();
         for (score, mut hit) in scored.into_iter().take(k) {
@@ -2546,10 +2546,7 @@ fn without_raw(mut record: Record) -> Record {
 
 #[cfg(feature = "search")]
 fn hit_collection(hit: &search_hits::Hit) -> &str {
-    hit.collection
-        .as_deref()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| collection_from_record_path(hit.path.as_deref().unwrap_or("")))
+    hit.collection.as_deref().unwrap_or("")
 }
 
 fn autocommit_subject(message: Option<&str>) -> &str {
@@ -3001,7 +2998,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Code, Encryption, Error, RecordAdd, RecordReplace, Schema, VaultInfo};
+    use crate::{Code, Encryption, Error, Schema, VaultInfo};
     #[cfg(feature = "search")]
     use crate::{Embedder, SearchQuery};
 
@@ -3015,7 +3012,11 @@ mod tests {
         fn new() -> Self {
             crate::git::isolate_test_git_env();
             let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!("scheda-c1-{}-{n}", process::id()));
+            let base = std::env::var_os("TEST_TMPDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let tid = format!("{:?}", std::thread::current().id()).replace(['(', ')'], "");
+            let root = base.join(format!("scheda-c1-{}-{n}-{tid}", process::id()));
             fs::create_dir_all(&root).unwrap();
             Self { root }
         }
@@ -3033,19 +3034,6 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
-    }
-
-    #[cfg(feature = "search")]
-    #[test]
-    fn collection_from_record_path_skips_isolated_prefix() {
-        assert_eq!(
-            super::collection_from_record_path(".isolated/west/alpha.md"),
-            "west"
-        );
-        assert_eq!(
-            super::collection_from_record_path("notes/alpha.md"),
-            "notes"
-        );
     }
 
     #[test]
@@ -3138,9 +3126,11 @@ mod tests {
     #[cfg(feature = "encrypt")]
     fn encrypted_document_schema() -> Schema {
         use crate::Body;
-        let mut schema = Schema::default().with_version(1).with_encrypted(true);
-        schema.kind = Body::default().into();
-        schema
+        Schema {
+            kind: Body::default().into(),
+            ..Schema::default()
+        }
+        .with_encrypted(true)
     }
 
     #[cfg(feature = "encrypt")]
@@ -3154,7 +3144,7 @@ mod tests {
         vault
             .create_collection("c", encrypted_document_schema(), None)
             .unwrap();
-        let add: RecordAdd = serde_json::from_value(serde_json::json!({"fields": {}})).unwrap();
+        let add = b"";
         vault
             .collection("c")
             .unwrap()
@@ -3162,7 +3152,7 @@ mod tests {
             .unwrap();
         let got = vault.collection("c").unwrap().get("alpha").unwrap();
         assert_eq!(got.id.as_deref(), Some("alpha"));
-        assert_eq!(got.valid, Some(true));
+        assert_eq!(got.raw.as_deref(), Some(b"".as_slice()));
     }
 
     #[cfg(feature = "encrypt")]
@@ -3190,7 +3180,7 @@ mod tests {
             .map(|record| record.unwrap())
             .collect();
         assert_eq!(records.len(), 1);
-        assert_eq!(records[0].valid, Some(false));
+        assert_eq!(records[0].id.as_deref(), Some("zulu.md"));
         assert_eq!(records[0].raw.as_deref(), Some(b"not-yaml".as_slice()));
     }
 
@@ -3211,7 +3201,7 @@ mod tests {
     fn insert_one_rejects_empty_record_envelope() {
         let collection = Collection::stub();
         let err = collection
-            .add("", RecordAdd::default(), None)
+            .add("", b"", None)
             .expect_err("empty id must fail slug rules");
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
@@ -3220,7 +3210,7 @@ mod tests {
     fn replace_one_rejects_empty_record_envelope() {
         let collection = Collection::stub();
         let err = collection
-            .replace("", RecordReplace::default(), None)
+            .replace("", b"", None)
             .expect_err("empty id must fail slug rules");
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
@@ -3344,9 +3334,10 @@ mod tests {
     }
 
     fn document_schema() -> Schema {
-        let mut schema = Schema::default().with_version(1);
-        schema.kind = crate::Body::default().into();
-        schema
+        Schema {
+            kind: crate::Body::default().into(),
+            ..Schema::default()
+        }
     }
 
     fn journal_schema() -> Schema {
@@ -3358,18 +3349,28 @@ mod tests {
         .unwrap()
     }
 
-    fn empty_add() -> RecordAdd {
-        serde_json::from_value(serde_json::json!({"fields": {}})).unwrap()
+    #[cfg(feature = "search")]
+    fn journal_vector_schema() -> Schema {
+        serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "journal": {},
+            "fields": [{"name": "tag", "string": {}, "fts": true, "vector": true}]
+        }))
+        .unwrap()
+    }
+
+    fn empty_add() -> &'static [u8] {
+        b""
     }
 
     #[cfg(feature = "find")]
-    fn empty_replace() -> RecordReplace {
-        serde_json::from_value(serde_json::json!({"fields": {}})).unwrap()
+    fn empty_replace() -> &'static [u8] {
+        b""
     }
 
     #[cfg(feature = "search")]
-    fn body_add(text: &str) -> RecordAdd {
-        serde_json::from_value(serde_json::json!({"fields": {}, "body": text})).unwrap()
+    fn rec_tag(text: &str) -> Vec<u8> {
+        serde_json::to_vec(&serde_json::json!({ "tag": text })).unwrap()
     }
 
     #[cfg(feature = "search")]
@@ -3755,20 +3756,21 @@ mod tests {
     #[cfg(feature = "find")]
     #[test]
     fn reindex_without_publish_keeps_old_generation_live() {
-        use crate::{FindQuery, RecordAdd};
+        use crate::FindQuery;
 
         let scratch = Scratch::new();
         let writer = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
         writer.begin().unwrap();
-        let mut schema = Schema::default().with_version(1);
-        schema.kind = crate::Body::default().into();
+        let schema = Schema {
+            kind: crate::Body::default().into(),
+            ..Schema::default()
+        };
         writer.create_collection("c", schema, None).unwrap();
         writer.commit("schema").unwrap();
-        let add: RecordAdd = serde_json::from_value(serde_json::json!({"fields": {}})).unwrap();
         writer
             .collection("c")
             .unwrap()
-            .add("alpha", add, None)
+            .add("alpha", b"", None)
             .unwrap();
         writer.reindex().unwrap();
         let current = fs::read_to_string(writer.index_dir().join("current")).unwrap();
@@ -3972,13 +3974,13 @@ mod tests {
         .unwrap();
         vault.begin().unwrap();
         vault
-            .create_collection("c", document_schema(), None)
+            .create_collection("c", journal_vector_schema(), None)
             .unwrap();
         vault.commit("schema").unwrap();
         vault
             .collection("c")
             .unwrap()
-            .add("keep", body_add("alpha mineral"), None)
+            .add("keep", rec_tag("alpha mineral"), None)
             .unwrap();
         let after_add = embedder.slots();
         let other = Vault::open(
@@ -4005,7 +4007,7 @@ mod tests {
                 other
                     .collection("c")
                     .unwrap()
-                    .add("queued", body_add("queued mineral"), None)
+                    .add("queued", rec_tag("alpha mineral"), None)
                     .unwrap();
                 done.wait();
             });
@@ -4013,8 +4015,8 @@ mod tests {
         });
         assert_eq!(
             embedder.slots(),
-            after_add,
-            "same-model catch-up must copy queued slots, not embed"
+            after_add + 1,
+            "catch-up embeds a new id once; same-model copy has no previous slot"
         );
         let mut ids = find_ids(&vault, "c");
         ids.sort();
@@ -4024,7 +4026,7 @@ mod tests {
             .unwrap()
             .search(
                 &SearchQuery::default()
-                    .with_text("queued mineral")
+                    .with_text("alpha mineral")
                     .with_k(10)
                     .with_lexical_weight(0.0),
                 None,
@@ -4049,13 +4051,13 @@ mod tests {
         .unwrap();
         seeded.begin().unwrap();
         seeded
-            .create_collection("c", document_schema(), None)
+            .create_collection("c", journal_vector_schema(), None)
             .unwrap();
         seeded.commit("schema").unwrap();
         seeded
             .collection("c")
             .unwrap()
-            .add("keep", body_add("alpha mineral"), None)
+            .add("keep", rec_tag("alpha mineral"), None)
             .unwrap();
         drop(seeded);
         let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
@@ -4083,7 +4085,7 @@ mod tests {
                 other
                     .collection("c")
                     .unwrap()
-                    .add("queued", body_add("queued mineral"), None)
+                    .add("queued", rec_tag("queued mineral"), None)
                     .unwrap();
                 done.wait();
             });
@@ -4480,14 +4482,7 @@ mod tests {
             .unwrap()
             .add("lost", empty_add(), None)
             .unwrap();
-        let rel = vault
-            .collection("j")
-            .unwrap()
-            .get("lost")
-            .unwrap()
-            .path
-            .clone()
-            .unwrap();
+        let rel = format!("j/{:08x}-{}.jsonl", 1, vault.writer());
         let segment = scratch.vault().join(&rel);
         assert!(segment.is_file(), "uncommitted journal segment must exist");
         drop(vault);

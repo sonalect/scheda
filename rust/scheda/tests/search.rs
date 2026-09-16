@@ -7,14 +7,12 @@ mod common;
 use std::fs;
 use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 
 use scheda::{
-    Code, Embedder, Filter, FindQuery, OpenOptions, Record, RecordAdd, RecordReplace, Reranker,
-    SearchQuery, Vault,
+    Code, Embedder, Filter, FindQuery, OpenOptions, Record, Reranker, SearchQuery, Vault,
 };
 use serde_json::{Value, json};
 
@@ -28,9 +26,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c9-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c9", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -59,7 +57,7 @@ impl Drop for Scratch {
 const TOKENS: &str = include_str!("../testdata/search/tokens.yaml");
 const TOKEN_EXTRA: &str = "\
 name: token_extra
-kind: document
+kind: journal
 version: 1
 fields:
   - name: title
@@ -101,12 +99,43 @@ impl Embedder for MapEmbedder {
     }
 }
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
-fn rec_body(fields: Value, body: &str) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields, "body": body })).unwrap()
+fn rec_rep(fields: Value) -> Vec<u8> {
+    rec(fields)
+}
+
+fn slot_schema(name: &str, id: &str) -> String {
+    format!(
+        "name: {name}\nkind: singleton\nversion: 1\nsingleton:\n  id: {id}\nfields:\n  - name: title\n    required: true\n    string: {{}}\n  - name: tag\n    string: {{}}\n"
+    )
+}
+
+fn drop_journal_id(vault: &Path, collection: &str, id: &str) {
+    let dir = vault.join(collection);
+    let entries = fs::read_dir(&dir).unwrap();
+    for entry in entries {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|s| s.to_str()) != Some("jsonl") {
+            continue;
+        }
+        let text = fs::read_to_string(&path).unwrap();
+        let mut out = String::new();
+        for line in text.lines() {
+            if line.is_empty() {
+                continue;
+            }
+            let value: Value = serde_json::from_str(line).unwrap();
+            if value.get("id").and_then(Value::as_str) == Some(id) {
+                continue;
+            }
+            out.push_str(line);
+            out.push('\n');
+        }
+        fs::write(path, out).unwrap();
+    }
 }
 
 fn filter(value: Value) -> FindQuery {
@@ -225,7 +254,8 @@ fn remove_leaves_search() {
             None,
         )
         .unwrap();
-    collection.remove("hit", None).unwrap();
+    drop_journal_id(&scratch.vault(), "token_notes", "hit");
+    vault.reindex().unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(!ids.contains(&"hit"), "removed id still a hit: {ids:?}");
@@ -287,7 +317,7 @@ fn body_fts_is_indexed_when_marked() {
     collection
         .add(
             "bodyhit",
-            rec_body(json!({"title": "quiet"}), "kryptonite in the body"),
+            rec(json!({"title": "kryptonite in the body"})),
             None,
         )
         .unwrap();
@@ -958,28 +988,32 @@ fn without_reranker_fused_order_and_scores_stay_rrf() {
         .add("noise", rec(json!({"title": "unrelated prose"})), None)
         .unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
-    let got = serde_json::to_value(&hits).unwrap();
+    let mut got = serde_json::to_value(&hits).unwrap();
+    if let Some(hits) = got.get_mut("hits").and_then(Value::as_array_mut) {
+        for hit in hits {
+            if let Some(obj) = hit.as_object_mut() {
+                obj.remove("path");
+            }
+        }
+    }
     let expected = json!({
         "hits": [
             {
                 "collection": "token_notes",
                 "id": "both",
                 "lexicalScore": 1.0401802062988281,
-                "path": "token_notes/both.md",
                 "rrfScore": 0.03278688524590164,
                 "vectorScore": 1.0
             },
             {
                 "collection": "token_notes",
                 "id": "vector_only",
-                "path": "token_notes/vector_only.md",
                 "rrfScore": 0.016129032258064516,
                 "vectorScore": 0.9939209222793579
             },
             {
                 "collection": "token_notes",
                 "id": "noise",
-                "path": "token_notes/noise.md",
                 "rrfScore": 0.015873015873015872,
                 "vectorScore": 0.5
             }
@@ -1093,12 +1127,11 @@ fn invalid_record_is_omitted_from_search() {
     drop(vault);
     scratch.write_schema(
         "tokens.yaml",
-        "name: token_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
+        "name: token_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
     );
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("token_notes").unwrap();
-    let got = collection.get("old").unwrap();
-    assert_eq!(got.valid, Some(false));
+    collection.get("old").unwrap();
     vault.reindex().unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
@@ -1286,7 +1319,7 @@ fn embed_uses_single_or_many_by_limit() {
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema(
         "tokens.yaml",
-        "name: token_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n  - name: extra\n    string: {}\n",
+        "name: token_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n  - name: extra\n    string: {}\n",
     );
     let vault = Vault::open(
         scratch.vault(),
@@ -1362,8 +1395,7 @@ fn corrupt_lexical_index_fails_closed() {
     .unwrap();
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let collection = vault.collection("token_notes").unwrap();
-    let got = collection.get("a").unwrap();
-    assert_eq!(got.valid, Some(true));
+    collection.get("a").unwrap();
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexLexical));
 }
@@ -1401,15 +1433,16 @@ fn edge_field_read_matches_hand_list() {
     .unwrap();
     let found = src
         .find(
-            &filter(json!({"term":{"field":"title","value":"keep"}})),
+            &filter(json!({"term":{"field":"title","value":"keep"}})).with_include_raw(true),
             0,
             100,
         )
         .unwrap();
     let mut ids: Vec<String> = Vec::new();
     for record in &found.records {
-        let value = serde_json::to_value(record).unwrap();
-        let Some(target) = value["fields"]["target"].as_str() else {
+        let value: serde_json::Value =
+            serde_json::from_slice(record.raw.as_deref().unwrap_or(&[])).unwrap();
+        let Some(target) = value["target"].as_str() else {
             continue;
         };
         if dst.get(target).is_ok() {
@@ -1487,8 +1520,7 @@ fn stale_index_fails_closed_until_reindex() {
     assert_eq!(err.known_code(), Some(Code::IndexLexical));
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexLexical));
-    let got = collection.get("a").unwrap();
-    assert_eq!(got.valid, Some(true));
+    collection.get("a").unwrap();
     vault.reindex().unwrap();
     assert!(!live_index(&vault).join("stale").is_file());
     let found = collection.find(&FindQuery::all(), 0, 10).unwrap();
@@ -1507,10 +1539,6 @@ fn live_index_at(root: &Path) -> PathBuf {
     }
 }
 
-fn rec_rep(fields: Value) -> RecordReplace {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
-}
-
 #[test]
 fn search_on_lexically_excluded_collection_uses_vector_leg() {
     let scratch = Scratch::new();
@@ -1519,7 +1547,7 @@ fn search_on_lexically_excluded_collection_uses_vector_leg() {
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_lexical_index: true
 fields:
@@ -1562,7 +1590,7 @@ fn search_on_vector_excluded_collection_uses_lexical_leg() {
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_vector_index: true
 fields:
@@ -1581,17 +1609,10 @@ fields:
     collection
         .add("alpha", rec(json!({"title": "kryptonite mineral"})), None)
         .unwrap();
-    collection
-        .replace(
-            "alpha",
-            rec_rep(json!({"title": "kryptonite mineral"})),
-            None,
-        )
-        .unwrap();
     assert_eq!(
         probe.counts(),
         (0, 0),
-        "exclude_vector_index must not call the embedder on add or replace"
+        "exclude_vector_index must not call the embedder on add"
     );
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     assert_eq!(hit_ids(&hits), ["alpha"]);
@@ -1607,7 +1628,7 @@ fn search_with_both_index_legs_excluded_is_unsupported() {
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_lexical_index: true
 exclude_vector_index: true
@@ -1642,7 +1663,7 @@ fn new_field_on_vector_excluded_collection_is_not_embedded() {
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_vector_index: true
 fields:
@@ -1667,7 +1688,7 @@ fields:
         "fold.yaml",
         r#"
 name: fold_docs
-kind: document
+kind: journal
 version: 1
 exclude_vector_index: true
 fields:
@@ -1763,8 +1784,15 @@ fn open_tokens_counting(scratch: &Scratch, embedder: Arc<CountingEmbedder>) -> V
 fn unchanged_record_write_does_not_embed_again() {
     let scratch = Scratch::new();
     let embedder = CountingEmbedder::new("count");
-    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
-    let collection = vault.collection("token_notes").unwrap();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema("slot.yaml", &slot_schema("token_slot", "keep"));
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    let collection = vault.collection("token_slot").unwrap();
     collection
         .add(
             "keep",
@@ -1792,16 +1820,27 @@ fn unchanged_record_write_does_not_embed_again() {
 fn replacing_one_field_embeds_only_that_slot() {
     let scratch = Scratch::new();
     let embedder = CountingEmbedder::new("count");
-    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
-    let collection = vault.collection("token_notes").unwrap();
-    collection
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema("a.yaml", &slot_schema("token_slot_a", "a"));
+    scratch.write_schema("b.yaml", &slot_schema("token_slot_b", "b"));
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    vault
+        .collection("token_slot_a")
+        .unwrap()
         .add(
             "a",
             rec(json!({"title": "alpha mineral", "tag": "red"})),
             None,
         )
         .unwrap();
-    collection
+    vault
+        .collection("token_slot_b")
+        .unwrap()
         .add(
             "b",
             rec(json!({"title": "beta mineral", "tag": "blue"})),
@@ -1810,7 +1849,9 @@ fn replacing_one_field_embeds_only_that_slot() {
         .unwrap();
     let after_add = embedder.slots();
     assert_eq!(after_add, 4);
-    collection
+    vault
+        .collection("token_slot_a")
+        .unwrap()
         .replace(
             "a",
             rec_rep(json!({"title": "alpha mineral", "tag": "green"})),
@@ -1833,31 +1874,53 @@ fn vanished_vector_slot_is_absent_from_search() {
             (String::from("plain title"), vec![0.0, 1.0, 0.0, 0.0]),
         ],
     });
-    let vault = open_tokens(&scratch, Some(embedder));
-    let collection = vault.collection("token_notes").unwrap();
-    collection
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema("hit.yaml", &slot_schema("token_hit", "hit"));
+    scratch.write_schema("keep.yaml", &slot_schema("token_keep", "keep"));
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    vault
+        .collection("token_hit")
+        .unwrap()
         .add(
             "hit",
             rec(json!({"title": "plain title", "tag": "unique-slot-token"})),
             None,
         )
         .unwrap();
-    collection
+    vault
+        .collection("token_keep")
+        .unwrap()
         .add("keep", rec(json!({"title": "unique-slot-token"})), None)
         .unwrap();
-    let before = collection
-        .search(&q("unique-slot-token", 5).with_lexical_weight(0.0), None)
+    let names = ["token_hit", "token_keep"];
+    let before = vault
+        .search(
+            &names,
+            &q("unique-slot-token", 5).with_lexical_weight(0.0),
+            None,
+        )
         .unwrap();
     assert!(
         hit_ids(&before).contains(&"hit"),
         "tag slot must be searchable before it vanishes: {:?}",
         hit_ids(&before)
     );
-    collection
+    vault
+        .collection("token_hit")
+        .unwrap()
         .replace("hit", rec_rep(json!({"title": "plain title"})), None)
         .unwrap();
-    let after = collection
-        .search(&q("unique-slot-token", 1).with_lexical_weight(0.0), None)
+    let after = vault
+        .search(
+            &names,
+            &q("unique-slot-token", 1).with_lexical_weight(0.0),
+            None,
+        )
         .unwrap();
     let ids = hit_ids(&after);
     assert_eq!(
@@ -1865,8 +1928,12 @@ fn vanished_vector_slot_is_absent_from_search() {
         ["keep"],
         "vanished tag vector must not outrank or replace the remaining exact match: {ids:?}"
     );
-    let wide = collection
-        .search(&q("unique-slot-token", 5).with_lexical_weight(0.0), None)
+    let wide = vault
+        .search(
+            &names,
+            &q("unique-slot-token", 5).with_lexical_weight(0.0),
+            None,
+        )
         .unwrap();
     let keep_score = wide
         .hits
@@ -1922,7 +1989,7 @@ fn reindex_drops_vectors_for_records_that_are_gone() {
         .add("keep", rec(json!({"title": "unique-keep-token"})), None)
         .unwrap();
     let after_add = embedder.slots();
-    fs::remove_file(scratch.vault().join("token_notes").join("gone.md")).unwrap();
+    drop_journal_id(&scratch.vault(), "token_notes", "gone");
     vault.reindex().unwrap();
     assert_eq!(
         embedder.slots(),
@@ -1982,9 +2049,16 @@ fn different_model_id_reembeds_every_slot() {
 fn vector_digest_is_stable_across_runs() {
     let scratch = Scratch::new();
     let embedder = CountingEmbedder::new("count");
-    let vault = open_tokens_counting(&scratch, Arc::clone(&embedder));
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema("slot.yaml", &slot_schema("token_slot", "keep"));
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+    )
+    .unwrap();
     vault
-        .collection("token_notes")
+        .collection("token_slot")
         .unwrap()
         .add(
             "keep",
@@ -1995,7 +2069,7 @@ fn vector_digest_is_stable_across_runs() {
     let after_add = embedder.slots();
     vault.reindex().unwrap();
     vault
-        .collection("token_notes")
+        .collection("token_slot")
         .unwrap()
         .replace(
             "keep",

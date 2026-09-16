@@ -7,12 +7,11 @@ use std::fs;
 #[cfg(not(feature = "search"))]
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
-use std::process;
 #[cfg(not(feature = "search"))]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, OpenOptions, Record, RecordAdd, RecordReplace, Schema, Vault};
+use scheda::{Code, OpenOptions, Record, Schema, Vault};
 #[cfg(not(feature = "search"))]
 use scheda::{Embedder, Error};
 use serde_json::{Map, Value, json};
@@ -27,9 +26,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-thin-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-thin", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -78,12 +77,12 @@ impl Embedder for StubEmbedder {
     }
 }
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
-fn rec_rep(fields: Value) -> RecordReplace {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec_rep(fields: Value) -> Vec<u8> {
+    rec(fields)
 }
 
 #[cfg(not(feature = "find"))]
@@ -96,8 +95,8 @@ fn live_index(vault: &Vault) -> PathBuf {
 }
 
 fn fields_of(record: &Record) -> Map<String, Value> {
-    match serde_json::to_value(record).unwrap().get("fields") {
-        Some(Value::Object(map)) => map.clone(),
+    match serde_json::from_slice(record.raw.as_deref().unwrap_or(&[])) {
+        Ok(Value::Object(map)) => map,
         _ => Map::new(),
     }
 }
@@ -120,7 +119,6 @@ fn add_get_round_trip_without_lexical_index() {
         .unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(fields_of(&got)["title"], "Keep");
-    assert_eq!(got.valid, Some(true));
 }
 
 #[test]
@@ -128,7 +126,7 @@ fn isolated_round_trip_and_documents_without_find() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let mut schema = Schema::default().with_version(1).with_isolated(true);
+    let mut schema = Schema::default().with_isolated(true);
     schema.kind = scheda::Body::default().into();
     schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
     vault
@@ -140,7 +138,7 @@ fn isolated_round_trip_and_documents_without_find() {
         .unwrap();
     let got = collection.get("secret").unwrap();
     assert_eq!(fields_of(&got)["title"], "nested");
-    assert_eq!(got.path.as_deref(), Some(".isolated/thin_sealed/secret.md"));
+    assert_eq!(got.id.as_deref(), Some("secret"));
     let ids: Vec<_> = collection
         .documents()
         .unwrap()
@@ -185,8 +183,7 @@ fn add_marks_index_stale_and_check_ignores_it() {
         .unwrap();
     assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
-    let got = collection.get("alpha").unwrap();
-    assert_eq!(got.valid, Some(true));
+    let _got = collection.get("alpha").unwrap();
 }
 
 #[test]
@@ -221,13 +218,7 @@ fn remove_uses_the_record_file() {
         collection.get("alpha").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(
-        !scratch
-            .vault()
-            .join("thin_notes")
-            .join("alpha.md")
-            .is_file()
-    );
+    assert!(!scratch.vault().join("thin_notes").join("alpha").is_file());
     let err = collection.remove("missing", None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
@@ -252,7 +243,7 @@ fn replace_of_on_disk_file_does_not_need_the_index() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
-    let path = scratch.vault().join("thin_notes").join("orphan.md");
+    let path = scratch.vault().join("thin_notes").join("orphan");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
     collection
         .replace("orphan", rec_rep(json!({"title": "New"})), None)
@@ -337,7 +328,7 @@ fn create_encrypted_collection_is_unsupported_encryption() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     vault.begin().unwrap();
-    let mut schema = Schema::default().with_version(1).with_encrypted(true);
+    let mut schema = Schema::default().with_encrypted(true);
     schema.kind = Body::default().into();
     schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
     let err = vault

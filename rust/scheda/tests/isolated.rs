@@ -6,10 +6,10 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, RecordAdd, RecordReplace, Schema, Vault};
+use scheda::{Code, Filter, OpenOptions, Schema, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -22,9 +22,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-p4-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-p4", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -50,12 +50,12 @@ const WEST: &str = include_str!("../testdata/schema/west.yaml");
 const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
 const SEALED_LOG: &str = include_str!("../testdata/isolated/log.yaml");
 
-fn rec(fields: Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
-fn rec_rep(fields: Value) -> RecordReplace {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec_rep(fields: Value) -> Vec<u8> {
+    rec(fields)
 }
 
 fn live_index_at(vault: &Path) -> PathBuf {
@@ -128,7 +128,7 @@ fn term(field: &str, value: &str) -> scheda::FindQuery {
 fn title_schema(isolated: bool) -> Schema {
     let mut value = json!({
         "version": 1,
-        "document": {},
+        "journal": {},
         "fields": [{"name": "title", "string": {}}]
     });
     if isolated {
@@ -198,7 +198,7 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
     let got = collection.get("a").unwrap();
     assert_eq!(got.id.as_deref(), Some("a"));
     let expected = format!(".isolated/sealed_log/{:08x}-{}.jsonl", 1, vault.writer());
-    assert_eq!(got.path.as_deref(), Some(expected.as_str()));
+    assert!(scratch.vault().join(&expected).is_file(), "{expected}");
     let ids: Vec<_> = collection
         .lines()
         .unwrap()
@@ -430,7 +430,7 @@ fn isolated_remove_uses_nested_git() {
             .vault()
             .join(".isolated")
             .join("west_isolated")
-            .join("secret.md")
+            .join("secret")
             .is_file()
     );
     assert_eq!(log_len(&nested), before + 1);
@@ -502,15 +502,15 @@ fn vault_push_leaves_nested_remote_untouched() {
     let nested_head = head_id(&nested_bare);
     vault.push().unwrap();
     assert_eq!(head_id(&nested_bare), nested_head);
-    assert!(!tree_contains(&main_bare, "later.md"));
-    assert!(!tree_contains(&main_bare, "secret.md"));
-    assert!(!tree_contains(&nested_bare, "later.md"));
+    assert!(!tree_contains(&main_bare, "later"));
+    assert!(!tree_contains(&main_bare, "secret"));
+    assert!(!tree_contains(&nested_bare, "later"));
 
     vault.push_isolated().unwrap();
     assert_ne!(head_id(&nested_bare), nested_head);
-    assert!(tree_contains(&nested_bare, "later.md"));
-    assert!(tree_contains(&nested_bare, "secret.md"));
-    assert!(!tree_contains(&main_bare, "later.md"));
+    assert!(tree_contains(&nested_bare, "later"));
+    assert!(tree_contains(&nested_bare, "secret"));
+    assert!(!tree_contains(&main_bare, "later"));
     assert_eq!(origin_url(&nested), nested_url);
 }
 

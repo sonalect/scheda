@@ -20,39 +20,10 @@ pub struct Record {
     /// Field 2: `id`
     #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
     pub id: ::core::option::Option<::buffa::alloc::string::String>,
-    /// JSON object: missing keys stay missing, JSON `null` stays null.
+    /// Document / singleton: file bytes. Journal: the JSONL line until the
+    /// envelope lands. Encrypted isolated: decrypted plaintext.
     ///
-    /// Field 3: `fields`
-    #[serde(
-        rename = "fields",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
-    )]
-    pub fields: ::buffa::MessageField<
-        ::buffa_types::google::protobuf::Struct,
-        ::buffa::Inline<::buffa_types::google::protobuf::Struct>,
-    >,
-    /// Markdown body when Schema allows. Empty = none. `journal`: always empty.
-    ///
-    /// Field 4: `body`
-    #[serde(rename = "body", skip_serializing_if = "::core::option::Option::is_none")]
-    pub body: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Vault-relative POSIX path of the file (`journal`: the segment).
-    /// Library-derived. Output only; the caller never sets this.
-    ///
-    /// Field 5: `path`
-    #[serde(rename = "path", skip_serializing_if = "::core::option::Option::is_none")]
-    pub path: ::core::option::Option<::buffa::alloc::string::String>,
-    /// `true` if the file matches current Schema. `false` if it exists but
-    /// fails it.
-    ///
-    /// Field 6: `valid`
-    #[serde(rename = "valid", skip_serializing_if = "::core::option::Option::is_none")]
-    pub valid: ::core::option::Option<bool>,
-    /// Bytes of that Record as stored (`document` / `singleton`: the file;
-    /// `journal`: the JSONL line). Encrypted isolated: decrypted plaintext
-    /// (**later**).
-    ///
-    /// Field 7: `raw`
+    /// Field 3: `raw`
     #[serde(
         rename = "raw",
         with = "::buffa::json_helpers::opt_bytes",
@@ -68,10 +39,6 @@ impl ::core::fmt::Debug for Record {
         f.debug_struct("Record")
             .field("collection", &self.collection)
             .field("id", &self.id)
-            .field("fields", &self.fields)
-            .field("body", &self.body)
-            .field("path", &self.path)
-            .field("valid", &self.valid)
             .field("raw", &self.raw)
             .finish()
     }
@@ -103,33 +70,6 @@ impl Record {
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
-    ///Sets [`Self::body`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_body(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.body = Some(value.into());
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::path`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_path(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.path = Some(value.into());
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::valid`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_valid(mut self, value: bool) -> Self {
-        self.valid = Some(value);
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
     ///Sets [`Self::raw`] to `Some(value)`, consuming and returning `self`.
     pub fn with_raw(mut self, value: impl Into<::buffa::alloc::vec::Vec<u8>>) -> Self {
         self.raw = Some(value.into());
@@ -152,7 +92,7 @@ impl ::buffa::Message for Record {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
@@ -162,23 +102,6 @@ impl ::buffa::Message for Record {
         if let Some(ref v) = self.id {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.fields.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.fields.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
-        }
-        if let Some(ref v) = self.body {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        if let Some(ref v) = self.path {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        if self.valid.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
         if let Some(ref v) = self.raw {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
@@ -187,7 +110,7 @@ impl ::buffa::Message for Record {
     }
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
@@ -198,25 +121,8 @@ impl ::buffa::Message for Record {
         if let Some(ref v) = self.id {
             ::buffa::types::put_string_field(2u32, v, buf);
         }
-        if self.fields.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                3u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.fields.write_to(__cache, buf);
-        }
-        if let Some(ref v) = self.body {
-            ::buffa::types::put_string_field(4u32, v, buf);
-        }
-        if let Some(ref v) = self.path {
-            ::buffa::types::put_string_field(5u32, v, buf);
-        }
-        if let Some(v) = self.valid {
-            ::buffa::types::put_bool_field(6u32, v, buf);
-        }
         if let Some(ref v) = self.raw {
-            ::buffa::types::put_shared_bytes_field(7u32, v, buf);
+            ::buffa::types::put_shared_bytes_field(3u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -258,46 +164,6 @@ impl ::buffa::Message for Record {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.fields.get_or_insert_default(),
-                    buf,
-                    ctx,
-                )?;
-            }
-            4u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(
-                    self.body.get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
-            }
-            5u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(
-                    self.path.get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
-            }
-            6u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                self.valid = ::core::option::Option::Some(
-                    ::buffa::types::decode_bool(buf)?,
-                );
-            }
-            7u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
                 ::buffa::types::merge_bytes(
                     self.raw.get_or_insert_with(::buffa::alloc::vec::Vec::new),
                     buf,
@@ -313,10 +179,6 @@ impl ::buffa::Message for Record {
     fn clear(&mut self) {
         self.collection = ::core::option::Option::None;
         self.id = ::core::option::Option::None;
-        self.fields = ::buffa::MessageField::none();
-        self.body = ::core::option::Option::None;
-        self.path = ::core::option::Option::None;
-        self.valid = ::core::option::Option::None;
         self.raw = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
@@ -348,362 +210,5 @@ pub const __RECORD_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::typ
     type_url: "type.googleapis.com/api.v1.Record",
     to_json: ::buffa::type_registry::any_to_json::<Record>,
     from_json: ::buffa::type_registry::any_from_json::<Record>,
-    is_wkt: false,
-};
-/// `add` input. `id` is the method argument, not a field here.
-#[derive(Clone, PartialEq, Default)]
-#[derive(::serde::Serialize, ::serde::Deserialize)]
-#[serde(default)]
-pub struct RecordAdd {
-    /// Empty is allowed; Schema required keys are not a proto rule.
-    ///
-    /// Field 1: `fields`
-    #[serde(
-        rename = "fields",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
-    )]
-    pub fields: ::buffa::MessageField<
-        ::buffa_types::google::protobuf::Struct,
-        ::buffa::Inline<::buffa_types::google::protobuf::Struct>,
-    >,
-    /// Empty = none. `journal` rejects a non-empty body.
-    ///
-    /// Field 2: `body`
-    #[serde(rename = "body", skip_serializing_if = "::core::option::Option::is_none")]
-    pub body: ::core::option::Option<::buffa::alloc::string::String>,
-    #[serde(skip)]
-    #[doc(hidden)]
-    pub __buffa_unknown_fields: ::buffa::UnknownFields,
-}
-impl ::core::fmt::Debug for RecordAdd {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("RecordAdd")
-            .field("fields", &self.fields)
-            .field("body", &self.body)
-            .finish()
-    }
-}
-impl RecordAdd {
-    /// Protobuf type URL for this message, for use with `Any::pack` and
-    /// `Any::unpack_if`.
-    ///
-    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
-    pub const TYPE_URL: &'static str = "type.googleapis.com/api.v1.RecordAdd";
-}
-impl RecordAdd {
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::body`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_body(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.body = Some(value.into());
-        self
-    }
-}
-::buffa::impl_default_instance!(RecordAdd);
-impl ::buffa::MessageName for RecordAdd {
-    const PACKAGE: &'static str = "api.v1";
-    const NAME: &'static str = "RecordAdd";
-    const FULL_NAME: &'static str = "api.v1.RecordAdd";
-    const TYPE_URL: &'static str = "type.googleapis.com/api.v1.RecordAdd";
-}
-impl ::buffa::Message for RecordAdd {
-    /// Returns the total encoded size in bytes.
-    ///
-    /// Accumulates in `u64` (which cannot overflow for in-memory
-    /// data) and saturates to `u32` at return, so a message whose
-    /// encoded size exceeds the 2 GiB protobuf limit yields a value
-    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
-    /// points reject, never a silently wrapped size.
-    #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        let mut size = 0u64;
-        if self.fields.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.fields.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
-        }
-        if let Some(ref v) = self.body {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        size += self.__buffa_unknown_fields.encoded_len() as u64;
-        ::buffa::saturate_size(size)
-    }
-    fn write_to(
-        &self,
-        __cache: &mut ::buffa::SizeCache,
-        buf: &mut impl ::buffa::EncodeSink,
-    ) {
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        if self.fields.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.fields.write_to(__cache, buf);
-        }
-        if let Some(ref v) = self.body {
-            ::buffa::types::put_string_field(2u32, v, buf);
-        }
-        self.__buffa_unknown_fields.write_to(buf);
-    }
-    fn merge_field(
-        &mut self,
-        tag: ::buffa::encoding::Tag,
-        buf: &mut impl ::buffa::bytes::Buf,
-        ctx: ::buffa::DecodeContext<'_>,
-    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
-        #[allow(unused_imports)]
-        use ::buffa::bytes::Buf as _;
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        match tag.field_number() {
-            1u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.fields.get_or_insert_default(),
-                    buf,
-                    ctx,
-                )?;
-            }
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(
-                    self.body.get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
-            }
-            _ => {
-                self.__buffa_unknown_fields
-                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
-            }
-        }
-        ::core::result::Result::Ok(())
-    }
-    fn clear(&mut self) {
-        self.fields = ::buffa::MessageField::none();
-        self.body = ::core::option::Option::None;
-        self.__buffa_unknown_fields.clear();
-    }
-}
-impl ::buffa::ExtensionSet for RecordAdd {
-    const PROTO_FQN: &'static str = "api.v1.RecordAdd";
-    fn unknown_fields(&self) -> &::buffa::UnknownFields {
-        &self.__buffa_unknown_fields
-    }
-    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
-        &mut self.__buffa_unknown_fields
-    }
-}
-impl ::buffa::json_helpers::ProtoElemJson for RecordAdd {
-    fn serialize_proto_json<S: ::serde::Serializer>(
-        v: &Self,
-        s: S,
-    ) -> ::core::result::Result<S::Ok, S::Error> {
-        ::serde::Serialize::serialize(v, s)
-    }
-    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
-        d: D,
-    ) -> ::core::result::Result<Self, D::Error> {
-        <Self as ::serde::Deserialize>::deserialize(d)
-    }
-}
-#[doc(hidden)]
-pub const __RECORD_ADD_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
-    type_url: "type.googleapis.com/api.v1.RecordAdd",
-    to_json: ::buffa::type_registry::any_to_json::<RecordAdd>,
-    from_json: ::buffa::type_registry::any_from_json::<RecordAdd>,
-    is_wkt: false,
-};
-/// `replace` input. `id` is the method argument, not a field here.
-/// Whole `document` / `singleton` only (`journal` → `unsupported`).
-#[derive(Clone, PartialEq, Default)]
-#[derive(::serde::Serialize, ::serde::Deserialize)]
-#[serde(default)]
-pub struct RecordReplace {
-    /// Field 1: `fields`
-    #[serde(
-        rename = "fields",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
-    )]
-    pub fields: ::buffa::MessageField<
-        ::buffa_types::google::protobuf::Struct,
-        ::buffa::Inline<::buffa_types::google::protobuf::Struct>,
-    >,
-    /// Field 2: `body`
-    #[serde(rename = "body", skip_serializing_if = "::core::option::Option::is_none")]
-    pub body: ::core::option::Option<::buffa::alloc::string::String>,
-    #[serde(skip)]
-    #[doc(hidden)]
-    pub __buffa_unknown_fields: ::buffa::UnknownFields,
-}
-impl ::core::fmt::Debug for RecordReplace {
-    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("RecordReplace")
-            .field("fields", &self.fields)
-            .field("body", &self.body)
-            .finish()
-    }
-}
-impl RecordReplace {
-    /// Protobuf type URL for this message, for use with `Any::pack` and
-    /// `Any::unpack_if`.
-    ///
-    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
-    pub const TYPE_URL: &'static str = "type.googleapis.com/api.v1.RecordReplace";
-}
-impl RecordReplace {
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::body`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_body(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.body = Some(value.into());
-        self
-    }
-}
-::buffa::impl_default_instance!(RecordReplace);
-impl ::buffa::MessageName for RecordReplace {
-    const PACKAGE: &'static str = "api.v1";
-    const NAME: &'static str = "RecordReplace";
-    const FULL_NAME: &'static str = "api.v1.RecordReplace";
-    const TYPE_URL: &'static str = "type.googleapis.com/api.v1.RecordReplace";
-}
-impl ::buffa::Message for RecordReplace {
-    /// Returns the total encoded size in bytes.
-    ///
-    /// Accumulates in `u64` (which cannot overflow for in-memory
-    /// data) and saturates to `u32` at return, so a message whose
-    /// encoded size exceeds the 2 GiB protobuf limit yields a value
-    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
-    /// points reject, never a silently wrapped size.
-    #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        let mut size = 0u64;
-        if self.fields.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.fields.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
-        }
-        if let Some(ref v) = self.body {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        size += self.__buffa_unknown_fields.encoded_len() as u64;
-        ::buffa::saturate_size(size)
-    }
-    fn write_to(
-        &self,
-        __cache: &mut ::buffa::SizeCache,
-        buf: &mut impl ::buffa::EncodeSink,
-    ) {
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        if self.fields.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.fields.write_to(__cache, buf);
-        }
-        if let Some(ref v) = self.body {
-            ::buffa::types::put_string_field(2u32, v, buf);
-        }
-        self.__buffa_unknown_fields.write_to(buf);
-    }
-    fn merge_field(
-        &mut self,
-        tag: ::buffa::encoding::Tag,
-        buf: &mut impl ::buffa::bytes::Buf,
-        ctx: ::buffa::DecodeContext<'_>,
-    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
-        #[allow(unused_imports)]
-        use ::buffa::bytes::Buf as _;
-        #[allow(unused_imports)]
-        use ::buffa::Enumeration as _;
-        match tag.field_number() {
-            1u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.fields.get_or_insert_default(),
-                    buf,
-                    ctx,
-                )?;
-            }
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(
-                    self.body.get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
-            }
-            _ => {
-                self.__buffa_unknown_fields
-                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
-            }
-        }
-        ::core::result::Result::Ok(())
-    }
-    fn clear(&mut self) {
-        self.fields = ::buffa::MessageField::none();
-        self.body = ::core::option::Option::None;
-        self.__buffa_unknown_fields.clear();
-    }
-}
-impl ::buffa::ExtensionSet for RecordReplace {
-    const PROTO_FQN: &'static str = "api.v1.RecordReplace";
-    fn unknown_fields(&self) -> &::buffa::UnknownFields {
-        &self.__buffa_unknown_fields
-    }
-    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
-        &mut self.__buffa_unknown_fields
-    }
-}
-impl ::buffa::json_helpers::ProtoElemJson for RecordReplace {
-    fn serialize_proto_json<S: ::serde::Serializer>(
-        v: &Self,
-        s: S,
-    ) -> ::core::result::Result<S::Ok, S::Error> {
-        ::serde::Serialize::serialize(v, s)
-    }
-    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
-        d: D,
-    ) -> ::core::result::Result<Self, D::Error> {
-        <Self as ::serde::Deserialize>::deserialize(d)
-    }
-}
-#[doc(hidden)]
-pub const __RECORD_REPLACE_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
-    type_url: "type.googleapis.com/api.v1.RecordReplace",
-    to_json: ::buffa::type_registry::any_to_json::<RecordReplace>,
-    from_json: ::buffa::type_registry::any_from_json::<RecordReplace>,
     is_wkt: false,
 };

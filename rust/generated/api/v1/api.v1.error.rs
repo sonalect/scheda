@@ -17,8 +17,8 @@ pub struct Error {
     /// Field 2: `message`
     #[serde(rename = "message", skip_serializing_if = "::core::option::Option::is_none")]
     pub message: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Vault-relative POSIX path of the file this failure is about, same
-    /// meaning as `Record.path`. Unset when there is no such file.
+    /// Vault-relative POSIX path of the file this failure is about.
+    /// Unset when there is no such file.
     ///
     /// Field 3: `path`
     #[serde(rename = "path", skip_serializing_if = "::core::option::Option::is_none")]
@@ -292,10 +292,9 @@ pub mod error {
         CODE_NOT_UTF8 = 202i32,
         /// Writes / remotes / encryption this handle cannot do.
         CODE_UNSUPPORTED = 301i32,
-        CODE_UNSUPPORTED_REMOTE = 302i32,
-        CODE_LOCKED = 303i32,
+        CODE_LOCKED = 302i32,
         /// This build cannot encrypt; encryption is not available.
-        CODE_UNSUPPORTED_ENCRYPTION = 304i32,
+        CODE_UNSUPPORTED_ENCRYPTION = 303i32,
         /// Filesystem / OS: one code per stable `std::io::ErrorKind`.
         /// `CODE_IO_OTHER` is `ErrorKind::Other` and any future/unstable kind.
         CODE_IO_NOT_FOUND = 401i32,
@@ -344,31 +343,16 @@ pub mod error {
         CODE_GIT_GENERIC = 502i32,
         CODE_GIT_NOT_FOUND = 503i32,
         CODE_GIT_EXISTS = 504i32,
-        CODE_GIT_AMBIGUOUS = 505i32,
-        CODE_GIT_BUF_SIZE = 506i32,
-        CODE_GIT_USER = 507i32,
-        CODE_GIT_BARE_REPO = 508i32,
-        CODE_GIT_UNBORN_BRANCH = 509i32,
-        CODE_GIT_UNMERGED = 510i32,
-        CODE_GIT_INVALID_SPEC = 511i32,
-        CODE_GIT_CONFLICT = 512i32,
-        CODE_GIT_LOCKED = 513i32,
-        CODE_GIT_MODIFIED = 514i32,
-        CODE_GIT_AUTH = 515i32,
-        CODE_GIT_CERTIFICATE = 516i32,
-        CODE_GIT_APPLIED = 517i32,
-        CODE_GIT_PEEL = 518i32,
-        CODE_GIT_EOF = 519i32,
-        CODE_GIT_INVALID = 520i32,
-        CODE_GIT_UNCOMMITTED = 521i32,
-        CODE_GIT_DIRECTORY = 522i32,
-        CODE_GIT_MERGE_CONFLICT = 523i32,
-        CODE_GIT_HASHSUM_MISMATCH = 524i32,
-        CODE_GIT_INDEX_DIRTY = 525i32,
-        CODE_GIT_APPLY_FAIL = 526i32,
-        CODE_GIT_OWNER = 527i32,
-        CODE_GIT_TIMEOUT = 528i32,
-        CODE_GIT_HEAD = 529i32,
+        CODE_GIT_BARE_REPO = 505i32,
+        CODE_GIT_UNBORN_BRANCH = 506i32,
+        CODE_GIT_CONFLICT = 507i32,
+        CODE_GIT_LOCKED = 508i32,
+        CODE_GIT_AUTH = 509i32,
+        CODE_GIT_CERTIFICATE = 510i32,
+        CODE_GIT_UNCOMMITTED = 511i32,
+        CODE_GIT_MERGE_CONFLICT = 512i32,
+        CODE_GIT_TIMEOUT = 513i32,
+        CODE_GIT_HEAD = 514i32,
         /// Derived Index, not Vault text.
         CODE_INDEX_MISSING = 601i32,
         CODE_INDEX_VERSION = 602i32,
@@ -401,9 +385,6 @@ pub mod error {
         ///Idiomatic alias for [`Self::CODE_UNSUPPORTED`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const Unsupported: Self = Self::CODE_UNSUPPORTED;
-        ///Idiomatic alias for [`Self::CODE_UNSUPPORTED_REMOTE`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const UnsupportedRemote: Self = Self::CODE_UNSUPPORTED_REMOTE;
         ///Idiomatic alias for [`Self::CODE_LOCKED`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const Locked: Self = Self::CODE_LOCKED;
@@ -539,75 +520,30 @@ pub mod error {
         ///Idiomatic alias for [`Self::CODE_GIT_EXISTS`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitExists: Self = Self::CODE_GIT_EXISTS;
-        ///Idiomatic alias for [`Self::CODE_GIT_AMBIGUOUS`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitAmbiguous: Self = Self::CODE_GIT_AMBIGUOUS;
-        ///Idiomatic alias for [`Self::CODE_GIT_BUF_SIZE`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitBufSize: Self = Self::CODE_GIT_BUF_SIZE;
-        ///Idiomatic alias for [`Self::CODE_GIT_USER`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitUser: Self = Self::CODE_GIT_USER;
         ///Idiomatic alias for [`Self::CODE_GIT_BARE_REPO`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitBareRepo: Self = Self::CODE_GIT_BARE_REPO;
         ///Idiomatic alias for [`Self::CODE_GIT_UNBORN_BRANCH`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitUnbornBranch: Self = Self::CODE_GIT_UNBORN_BRANCH;
-        ///Idiomatic alias for [`Self::CODE_GIT_UNMERGED`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitUnmerged: Self = Self::CODE_GIT_UNMERGED;
-        ///Idiomatic alias for [`Self::CODE_GIT_INVALID_SPEC`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitInvalidSpec: Self = Self::CODE_GIT_INVALID_SPEC;
         ///Idiomatic alias for [`Self::CODE_GIT_CONFLICT`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitConflict: Self = Self::CODE_GIT_CONFLICT;
         ///Idiomatic alias for [`Self::CODE_GIT_LOCKED`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitLocked: Self = Self::CODE_GIT_LOCKED;
-        ///Idiomatic alias for [`Self::CODE_GIT_MODIFIED`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitModified: Self = Self::CODE_GIT_MODIFIED;
         ///Idiomatic alias for [`Self::CODE_GIT_AUTH`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitAuth: Self = Self::CODE_GIT_AUTH;
         ///Idiomatic alias for [`Self::CODE_GIT_CERTIFICATE`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitCertificate: Self = Self::CODE_GIT_CERTIFICATE;
-        ///Idiomatic alias for [`Self::CODE_GIT_APPLIED`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitApplied: Self = Self::CODE_GIT_APPLIED;
-        ///Idiomatic alias for [`Self::CODE_GIT_PEEL`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitPeel: Self = Self::CODE_GIT_PEEL;
-        ///Idiomatic alias for [`Self::CODE_GIT_EOF`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitEof: Self = Self::CODE_GIT_EOF;
-        ///Idiomatic alias for [`Self::CODE_GIT_INVALID`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitInvalid: Self = Self::CODE_GIT_INVALID;
         ///Idiomatic alias for [`Self::CODE_GIT_UNCOMMITTED`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitUncommitted: Self = Self::CODE_GIT_UNCOMMITTED;
-        ///Idiomatic alias for [`Self::CODE_GIT_DIRECTORY`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitDirectory: Self = Self::CODE_GIT_DIRECTORY;
         ///Idiomatic alias for [`Self::CODE_GIT_MERGE_CONFLICT`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitMergeConflict: Self = Self::CODE_GIT_MERGE_CONFLICT;
-        ///Idiomatic alias for [`Self::CODE_GIT_HASHSUM_MISMATCH`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitHashsumMismatch: Self = Self::CODE_GIT_HASHSUM_MISMATCH;
-        ///Idiomatic alias for [`Self::CODE_GIT_INDEX_DIRTY`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitIndexDirty: Self = Self::CODE_GIT_INDEX_DIRTY;
-        ///Idiomatic alias for [`Self::CODE_GIT_APPLY_FAIL`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitApplyFail: Self = Self::CODE_GIT_APPLY_FAIL;
-        ///Idiomatic alias for [`Self::CODE_GIT_OWNER`]; `Debug` prints the variant name.
-        #[allow(non_upper_case_globals)]
-        pub const GitOwner: Self = Self::CODE_GIT_OWNER;
         ///Idiomatic alias for [`Self::CODE_GIT_TIMEOUT`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const GitTimeout: Self = Self::CODE_GIT_TIMEOUT;
@@ -734,9 +670,8 @@ pub mod error {
                 201i32 => ::core::option::Option::Some(Self::CODE_INVALID),
                 202i32 => ::core::option::Option::Some(Self::CODE_NOT_UTF8),
                 301i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED),
-                302i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED_REMOTE),
-                303i32 => ::core::option::Option::Some(Self::CODE_LOCKED),
-                304i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED_ENCRYPTION),
+                302i32 => ::core::option::Option::Some(Self::CODE_LOCKED),
+                303i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED_ENCRYPTION),
                 401i32 => ::core::option::Option::Some(Self::CODE_IO_NOT_FOUND),
                 402i32 => ::core::option::Option::Some(Self::CODE_IO_PERMISSION),
                 403i32 => ::core::option::Option::Some(Self::CODE_IO_CONNECTION_REFUSED),
@@ -788,31 +723,16 @@ pub mod error {
                 502i32 => ::core::option::Option::Some(Self::CODE_GIT_GENERIC),
                 503i32 => ::core::option::Option::Some(Self::CODE_GIT_NOT_FOUND),
                 504i32 => ::core::option::Option::Some(Self::CODE_GIT_EXISTS),
-                505i32 => ::core::option::Option::Some(Self::CODE_GIT_AMBIGUOUS),
-                506i32 => ::core::option::Option::Some(Self::CODE_GIT_BUF_SIZE),
-                507i32 => ::core::option::Option::Some(Self::CODE_GIT_USER),
-                508i32 => ::core::option::Option::Some(Self::CODE_GIT_BARE_REPO),
-                509i32 => ::core::option::Option::Some(Self::CODE_GIT_UNBORN_BRANCH),
-                510i32 => ::core::option::Option::Some(Self::CODE_GIT_UNMERGED),
-                511i32 => ::core::option::Option::Some(Self::CODE_GIT_INVALID_SPEC),
-                512i32 => ::core::option::Option::Some(Self::CODE_GIT_CONFLICT),
-                513i32 => ::core::option::Option::Some(Self::CODE_GIT_LOCKED),
-                514i32 => ::core::option::Option::Some(Self::CODE_GIT_MODIFIED),
-                515i32 => ::core::option::Option::Some(Self::CODE_GIT_AUTH),
-                516i32 => ::core::option::Option::Some(Self::CODE_GIT_CERTIFICATE),
-                517i32 => ::core::option::Option::Some(Self::CODE_GIT_APPLIED),
-                518i32 => ::core::option::Option::Some(Self::CODE_GIT_PEEL),
-                519i32 => ::core::option::Option::Some(Self::CODE_GIT_EOF),
-                520i32 => ::core::option::Option::Some(Self::CODE_GIT_INVALID),
-                521i32 => ::core::option::Option::Some(Self::CODE_GIT_UNCOMMITTED),
-                522i32 => ::core::option::Option::Some(Self::CODE_GIT_DIRECTORY),
-                523i32 => ::core::option::Option::Some(Self::CODE_GIT_MERGE_CONFLICT),
-                524i32 => ::core::option::Option::Some(Self::CODE_GIT_HASHSUM_MISMATCH),
-                525i32 => ::core::option::Option::Some(Self::CODE_GIT_INDEX_DIRTY),
-                526i32 => ::core::option::Option::Some(Self::CODE_GIT_APPLY_FAIL),
-                527i32 => ::core::option::Option::Some(Self::CODE_GIT_OWNER),
-                528i32 => ::core::option::Option::Some(Self::CODE_GIT_TIMEOUT),
-                529i32 => ::core::option::Option::Some(Self::CODE_GIT_HEAD),
+                505i32 => ::core::option::Option::Some(Self::CODE_GIT_BARE_REPO),
+                506i32 => ::core::option::Option::Some(Self::CODE_GIT_UNBORN_BRANCH),
+                507i32 => ::core::option::Option::Some(Self::CODE_GIT_CONFLICT),
+                508i32 => ::core::option::Option::Some(Self::CODE_GIT_LOCKED),
+                509i32 => ::core::option::Option::Some(Self::CODE_GIT_AUTH),
+                510i32 => ::core::option::Option::Some(Self::CODE_GIT_CERTIFICATE),
+                511i32 => ::core::option::Option::Some(Self::CODE_GIT_UNCOMMITTED),
+                512i32 => ::core::option::Option::Some(Self::CODE_GIT_MERGE_CONFLICT),
+                513i32 => ::core::option::Option::Some(Self::CODE_GIT_TIMEOUT),
+                514i32 => ::core::option::Option::Some(Self::CODE_GIT_HEAD),
                 601i32 => ::core::option::Option::Some(Self::CODE_INDEX_MISSING),
                 602i32 => ::core::option::Option::Some(Self::CODE_INDEX_VERSION),
                 603i32 => ::core::option::Option::Some(Self::CODE_INDEX_LEXICAL),
@@ -834,7 +754,6 @@ pub mod error {
                 Self::CODE_INVALID => "CODE_INVALID",
                 Self::CODE_NOT_UTF8 => "CODE_NOT_UTF8",
                 Self::CODE_UNSUPPORTED => "CODE_UNSUPPORTED",
-                Self::CODE_UNSUPPORTED_REMOTE => "CODE_UNSUPPORTED_REMOTE",
                 Self::CODE_LOCKED => "CODE_LOCKED",
                 Self::CODE_UNSUPPORTED_ENCRYPTION => "CODE_UNSUPPORTED_ENCRYPTION",
                 Self::CODE_IO_NOT_FOUND => "CODE_IO_NOT_FOUND",
@@ -882,29 +801,14 @@ pub mod error {
                 Self::CODE_GIT_GENERIC => "CODE_GIT_GENERIC",
                 Self::CODE_GIT_NOT_FOUND => "CODE_GIT_NOT_FOUND",
                 Self::CODE_GIT_EXISTS => "CODE_GIT_EXISTS",
-                Self::CODE_GIT_AMBIGUOUS => "CODE_GIT_AMBIGUOUS",
-                Self::CODE_GIT_BUF_SIZE => "CODE_GIT_BUF_SIZE",
-                Self::CODE_GIT_USER => "CODE_GIT_USER",
                 Self::CODE_GIT_BARE_REPO => "CODE_GIT_BARE_REPO",
                 Self::CODE_GIT_UNBORN_BRANCH => "CODE_GIT_UNBORN_BRANCH",
-                Self::CODE_GIT_UNMERGED => "CODE_GIT_UNMERGED",
-                Self::CODE_GIT_INVALID_SPEC => "CODE_GIT_INVALID_SPEC",
                 Self::CODE_GIT_CONFLICT => "CODE_GIT_CONFLICT",
                 Self::CODE_GIT_LOCKED => "CODE_GIT_LOCKED",
-                Self::CODE_GIT_MODIFIED => "CODE_GIT_MODIFIED",
                 Self::CODE_GIT_AUTH => "CODE_GIT_AUTH",
                 Self::CODE_GIT_CERTIFICATE => "CODE_GIT_CERTIFICATE",
-                Self::CODE_GIT_APPLIED => "CODE_GIT_APPLIED",
-                Self::CODE_GIT_PEEL => "CODE_GIT_PEEL",
-                Self::CODE_GIT_EOF => "CODE_GIT_EOF",
-                Self::CODE_GIT_INVALID => "CODE_GIT_INVALID",
                 Self::CODE_GIT_UNCOMMITTED => "CODE_GIT_UNCOMMITTED",
-                Self::CODE_GIT_DIRECTORY => "CODE_GIT_DIRECTORY",
                 Self::CODE_GIT_MERGE_CONFLICT => "CODE_GIT_MERGE_CONFLICT",
-                Self::CODE_GIT_HASHSUM_MISMATCH => "CODE_GIT_HASHSUM_MISMATCH",
-                Self::CODE_GIT_INDEX_DIRTY => "CODE_GIT_INDEX_DIRTY",
-                Self::CODE_GIT_APPLY_FAIL => "CODE_GIT_APPLY_FAIL",
-                Self::CODE_GIT_OWNER => "CODE_GIT_OWNER",
                 Self::CODE_GIT_TIMEOUT => "CODE_GIT_TIMEOUT",
                 Self::CODE_GIT_HEAD => "CODE_GIT_HEAD",
                 Self::CODE_INDEX_MISSING => "CODE_INDEX_MISSING",
@@ -931,9 +835,6 @@ pub mod error {
                 "CODE_NOT_UTF8" => ::core::option::Option::Some(Self::CODE_NOT_UTF8),
                 "CODE_UNSUPPORTED" => {
                     ::core::option::Option::Some(Self::CODE_UNSUPPORTED)
-                }
-                "CODE_UNSUPPORTED_REMOTE" => {
-                    ::core::option::Option::Some(Self::CODE_UNSUPPORTED_REMOTE)
                 }
                 "CODE_LOCKED" => ::core::option::Option::Some(Self::CODE_LOCKED),
                 "CODE_UNSUPPORTED_ENCRYPTION" => {
@@ -1064,63 +965,26 @@ pub mod error {
                     ::core::option::Option::Some(Self::CODE_GIT_NOT_FOUND)
                 }
                 "CODE_GIT_EXISTS" => ::core::option::Option::Some(Self::CODE_GIT_EXISTS),
-                "CODE_GIT_AMBIGUOUS" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_AMBIGUOUS)
-                }
-                "CODE_GIT_BUF_SIZE" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_BUF_SIZE)
-                }
-                "CODE_GIT_USER" => ::core::option::Option::Some(Self::CODE_GIT_USER),
                 "CODE_GIT_BARE_REPO" => {
                     ::core::option::Option::Some(Self::CODE_GIT_BARE_REPO)
                 }
                 "CODE_GIT_UNBORN_BRANCH" => {
                     ::core::option::Option::Some(Self::CODE_GIT_UNBORN_BRANCH)
                 }
-                "CODE_GIT_UNMERGED" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_UNMERGED)
-                }
-                "CODE_GIT_INVALID_SPEC" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_INVALID_SPEC)
-                }
                 "CODE_GIT_CONFLICT" => {
                     ::core::option::Option::Some(Self::CODE_GIT_CONFLICT)
                 }
                 "CODE_GIT_LOCKED" => ::core::option::Option::Some(Self::CODE_GIT_LOCKED),
-                "CODE_GIT_MODIFIED" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_MODIFIED)
-                }
                 "CODE_GIT_AUTH" => ::core::option::Option::Some(Self::CODE_GIT_AUTH),
                 "CODE_GIT_CERTIFICATE" => {
                     ::core::option::Option::Some(Self::CODE_GIT_CERTIFICATE)
                 }
-                "CODE_GIT_APPLIED" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_APPLIED)
-                }
-                "CODE_GIT_PEEL" => ::core::option::Option::Some(Self::CODE_GIT_PEEL),
-                "CODE_GIT_EOF" => ::core::option::Option::Some(Self::CODE_GIT_EOF),
-                "CODE_GIT_INVALID" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_INVALID)
-                }
                 "CODE_GIT_UNCOMMITTED" => {
                     ::core::option::Option::Some(Self::CODE_GIT_UNCOMMITTED)
-                }
-                "CODE_GIT_DIRECTORY" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_DIRECTORY)
                 }
                 "CODE_GIT_MERGE_CONFLICT" => {
                     ::core::option::Option::Some(Self::CODE_GIT_MERGE_CONFLICT)
                 }
-                "CODE_GIT_HASHSUM_MISMATCH" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_HASHSUM_MISMATCH)
-                }
-                "CODE_GIT_INDEX_DIRTY" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_INDEX_DIRTY)
-                }
-                "CODE_GIT_APPLY_FAIL" => {
-                    ::core::option::Option::Some(Self::CODE_GIT_APPLY_FAIL)
-                }
-                "CODE_GIT_OWNER" => ::core::option::Option::Some(Self::CODE_GIT_OWNER),
                 "CODE_GIT_TIMEOUT" => {
                     ::core::option::Option::Some(Self::CODE_GIT_TIMEOUT)
                 }
@@ -1153,7 +1017,6 @@ pub mod error {
                 Self::CODE_INVALID,
                 Self::CODE_NOT_UTF8,
                 Self::CODE_UNSUPPORTED,
-                Self::CODE_UNSUPPORTED_REMOTE,
                 Self::CODE_LOCKED,
                 Self::CODE_UNSUPPORTED_ENCRYPTION,
                 Self::CODE_IO_NOT_FOUND,
@@ -1199,29 +1062,14 @@ pub mod error {
                 Self::CODE_GIT_GENERIC,
                 Self::CODE_GIT_NOT_FOUND,
                 Self::CODE_GIT_EXISTS,
-                Self::CODE_GIT_AMBIGUOUS,
-                Self::CODE_GIT_BUF_SIZE,
-                Self::CODE_GIT_USER,
                 Self::CODE_GIT_BARE_REPO,
                 Self::CODE_GIT_UNBORN_BRANCH,
-                Self::CODE_GIT_UNMERGED,
-                Self::CODE_GIT_INVALID_SPEC,
                 Self::CODE_GIT_CONFLICT,
                 Self::CODE_GIT_LOCKED,
-                Self::CODE_GIT_MODIFIED,
                 Self::CODE_GIT_AUTH,
                 Self::CODE_GIT_CERTIFICATE,
-                Self::CODE_GIT_APPLIED,
-                Self::CODE_GIT_PEEL,
-                Self::CODE_GIT_EOF,
-                Self::CODE_GIT_INVALID,
                 Self::CODE_GIT_UNCOMMITTED,
-                Self::CODE_GIT_DIRECTORY,
                 Self::CODE_GIT_MERGE_CONFLICT,
-                Self::CODE_GIT_HASHSUM_MISMATCH,
-                Self::CODE_GIT_INDEX_DIRTY,
-                Self::CODE_GIT_APPLY_FAIL,
-                Self::CODE_GIT_OWNER,
                 Self::CODE_GIT_TIMEOUT,
                 Self::CODE_GIT_HEAD,
                 Self::CODE_INDEX_MISSING,

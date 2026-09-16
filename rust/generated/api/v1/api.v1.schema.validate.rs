@@ -13,67 +13,6 @@ impl ::protovalidate_buffa::Validate for Schema {
         &self,
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if self.version.is_none() {
-            violations
-                .push(::protovalidate_buffa::Violation {
-                    field: ::protovalidate_buffa::FieldPath {
-                        elements: ::std::vec![
-                            ::protovalidate_buffa::FieldPathElement { field_number :
-                            Some(1i32), field_name :
-                            Some(::std::borrow::Cow::Borrowed("version")), field_type :
-                            Some(::protovalidate_buffa::FieldType::Uint32), key_type :
-                            None, value_type : None, subscript : None, },
-                        ],
-                    },
-                    rule: ::protovalidate_buffa::FieldPath {
-                        elements: ::std::vec![
-                            ::protovalidate_buffa::FieldPathElement { field_number :
-                            Some(25i32), field_name :
-                            Some(::std::borrow::Cow::Borrowed("required")), field_type :
-                            Some(::protovalidate_buffa::FieldType::Bool), key_type :
-                            None, value_type : None, subscript : None, },
-                        ],
-                    },
-                    rule_id: ::std::borrow::Cow::Borrowed("required"),
-                    message: ::std::borrow::Cow::Borrowed("value is required"),
-                    for_key: false,
-                });
-        }
-        if self.version.is_some() {
-            if let Some(v) = self.version {
-                if v < 1u32 {
-                    violations
-                        .push(::protovalidate_buffa::Violation {
-                            field: ::protovalidate_buffa::FieldPath {
-                                elements: ::std::vec![
-                                    ::protovalidate_buffa::FieldPathElement { field_number :
-                                    Some(1i32), field_name :
-                                    Some(::std::borrow::Cow::Borrowed("version")), field_type :
-                                    Some(::protovalidate_buffa::FieldType::Uint32), key_type :
-                                    None, value_type : None, subscript : None, },
-                                ],
-                            },
-                            rule: ::protovalidate_buffa::FieldPath {
-                                elements: ::std::vec![
-                                    ::protovalidate_buffa::FieldPathElement { field_number :
-                                    Some(5i32), field_name :
-                                    Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
-                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                    None, value_type : None, subscript : None, },
-                                    ::protovalidate_buffa::FieldPathElement { field_number :
-                                    Some(5i32), field_name :
-                                    Some(::std::borrow::Cow::Borrowed("gte")), field_type :
-                                    Some(::protovalidate_buffa::FieldType::Uint32), key_type :
-                                    None, value_type : None, subscript : None, },
-                                ],
-                            },
-                            rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
-                            message: ::std::borrow::Cow::Borrowed(""),
-                            for_key: false,
-                        });
-                }
-            }
-        }
         for (idx, elem) in self.fields.iter().enumerate() {
             if let Err(sub) = elem.validate() {
                 violations
@@ -87,7 +26,7 @@ impl ::protovalidate_buffa::Validate for Schema {
                                     .insert(
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
-                                            field_number: Some(2i32),
+                                            field_number: Some(1i32),
                                             field_name: Some(::std::borrow::Cow::Borrowed("fields")),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
@@ -116,7 +55,7 @@ impl ::protovalidate_buffa::Validate for Schema {
                                         .insert(
                                             0,
                                             ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(3i32),
+                                                field_number: Some(2i32),
                                                 field_name: Some(::std::borrow::Cow::Borrowed("document")),
                                                 field_type: Some(::protovalidate_buffa::FieldType::Message),
                                                 key_type: None,
@@ -142,7 +81,7 @@ impl ::protovalidate_buffa::Validate for Schema {
                                         .insert(
                                             0,
                                             ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(4i32),
+                                                field_number: Some(3i32),
                                                 field_name: Some(::std::borrow::Cow::Borrowed("journal")),
                                                 field_type: Some(::protovalidate_buffa::FieldType::Message),
                                                 key_type: None,
@@ -168,7 +107,7 @@ impl ::protovalidate_buffa::Validate for Schema {
                                         .insert(
                                             0,
                                             ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(5i32),
+                                                field_number: Some(4i32),
                                                 field_name: Some(::std::borrow::Cow::Borrowed("singleton")),
                                                 field_type: Some(::protovalidate_buffa::FieldType::Message),
                                                 key_type: None,
@@ -236,67 +175,6 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SchemaView<'_> {
         &self,
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if self.version.is_none() {
-            violations
-                .push(::protovalidate_buffa::Violation {
-                    field: ::protovalidate_buffa::FieldPath {
-                        elements: ::std::vec![
-                            ::protovalidate_buffa::FieldPathElement { field_number :
-                            Some(1i32), field_name :
-                            Some(::std::borrow::Cow::Borrowed("version")), field_type :
-                            Some(::protovalidate_buffa::FieldType::Uint32), key_type :
-                            None, value_type : None, subscript : None, },
-                        ],
-                    },
-                    rule: ::protovalidate_buffa::FieldPath {
-                        elements: ::std::vec![
-                            ::protovalidate_buffa::FieldPathElement { field_number :
-                            Some(25i32), field_name :
-                            Some(::std::borrow::Cow::Borrowed("required")), field_type :
-                            Some(::protovalidate_buffa::FieldType::Bool), key_type :
-                            None, value_type : None, subscript : None, },
-                        ],
-                    },
-                    rule_id: ::std::borrow::Cow::Borrowed("required"),
-                    message: ::std::borrow::Cow::Borrowed("value is required"),
-                    for_key: false,
-                });
-        }
-        if self.version.is_some() {
-            if let Some(v) = self.version {
-                if v < 1u32 {
-                    violations
-                        .push(::protovalidate_buffa::Violation {
-                            field: ::protovalidate_buffa::FieldPath {
-                                elements: ::std::vec![
-                                    ::protovalidate_buffa::FieldPathElement { field_number :
-                                    Some(1i32), field_name :
-                                    Some(::std::borrow::Cow::Borrowed("version")), field_type :
-                                    Some(::protovalidate_buffa::FieldType::Uint32), key_type :
-                                    None, value_type : None, subscript : None, },
-                                ],
-                            },
-                            rule: ::protovalidate_buffa::FieldPath {
-                                elements: ::std::vec![
-                                    ::protovalidate_buffa::FieldPathElement { field_number :
-                                    Some(5i32), field_name :
-                                    Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
-                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
-                                    None, value_type : None, subscript : None, },
-                                    ::protovalidate_buffa::FieldPathElement { field_number :
-                                    Some(5i32), field_name :
-                                    Some(::std::borrow::Cow::Borrowed("gte")), field_type :
-                                    Some(::protovalidate_buffa::FieldType::Uint32), key_type :
-                                    None, value_type : None, subscript : None, },
-                                ],
-                            },
-                            rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
-                            message: ::std::borrow::Cow::Borrowed(""),
-                            for_key: false,
-                        });
-                }
-            }
-        }
         for (idx, elem) in self.fields.iter().enumerate() {
             if let Err(sub) = elem.validate() {
                 violations
@@ -310,7 +188,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SchemaView<'_> {
                                     .insert(
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
-                                            field_number: Some(2i32),
+                                            field_number: Some(1i32),
                                             field_name: Some(::std::borrow::Cow::Borrowed("fields")),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
@@ -339,7 +217,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SchemaView<'_> {
                                         .insert(
                                             0,
                                             ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(3i32),
+                                                field_number: Some(2i32),
                                                 field_name: Some(::std::borrow::Cow::Borrowed("document")),
                                                 field_type: Some(::protovalidate_buffa::FieldType::Message),
                                                 key_type: None,
@@ -365,7 +243,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SchemaView<'_> {
                                         .insert(
                                             0,
                                             ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(4i32),
+                                                field_number: Some(3i32),
                                                 field_name: Some(::std::borrow::Cow::Borrowed("journal")),
                                                 field_type: Some(::protovalidate_buffa::FieldType::Message),
                                                 key_type: None,
@@ -391,7 +269,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SchemaView<'_> {
                                         .insert(
                                             0,
                                             ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(5i32),
+                                                field_number: Some(4i32),
                                                 field_name: Some(::std::borrow::Cow::Borrowed("singleton")),
                                                 field_type: Some(::protovalidate_buffa::FieldType::Message),
                                                 key_type: None,

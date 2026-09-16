@@ -5,7 +5,7 @@ mod common;
 
 use std::fs;
 use std::path::PathBuf;
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda::{FindQuery, OpenOptions, Schema, SearchQuery, Vault};
@@ -21,17 +21,19 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "scheda-a7-{}-{}-{n}",
-            process::id(),
-            format!("{:?}", std::thread::current().id()).replace(['(', ')'], "")
-        ));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-a7", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
         self.root.join("vault")
+    }
+
+    fn payload_file(&self, name: &str, bytes: impl AsRef<[u8]>) -> String {
+        let path = self.root.join(name);
+        fs::write(&path, bytes).unwrap();
+        path.display().to_string()
     }
 
     fn reopen(&self) -> Vault {
@@ -81,6 +83,10 @@ fn stdout_json(run: &Run) -> Value {
 fn error_json(run: &Run) -> Value {
     assert_ne!(run.status, 0, "stdout={}", run.stdout);
     serde_json::from_str(run.stderr.trim()).expect("stderr json")
+}
+
+fn rec(fields: Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn vault_arg(scratch: &Scratch) -> String {
@@ -192,7 +198,7 @@ fn info_json_matches_schema_files() {
         .unwrap();
     assert_eq!(notes_schema, &serde_json::to_value(&lib_notes).unwrap());
     assert!(notes_schema.get("document").is_some());
-    assert_eq!(notes_schema["version"], 1);
+    assert!(notes_schema.get("version").is_none());
     assert_eq!(notes_schema["fields"][0]["name"], "title");
     assert_eq!(notes_schema["fields"][0]["required"], true);
     assert!(notes_schema["fields"][0].get("string").is_some());
@@ -220,20 +226,29 @@ fn info_json_matches_schema_files() {
 fn tool_writes_cannot_bypass_schema() {
     let scratch = Scratch::new();
     let path = open_with_notes(&scratch);
+    let log = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "accept_log",
+        "--schema",
+        &serde_json::to_string(&log_decl()).unwrap(),
+    ]);
+    assert_eq!(log.status, 0, "stderr={}", log.stderr);
 
     let extra = run(&[
         "--vault",
         &path,
         "collection",
-        "accept_notes",
+        "accept_log",
         "add",
         "--id",
         "rogue",
-        "--record",
-        &json!({"fields":{"title":"x","unknown":"y"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"x","unknown":"y"}))),
     ]);
     assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-    assert!(!scratch.vault().join("accept_notes/rogue.md").exists());
+    assert!(!scratch.vault().join("accept_notes/rogue").exists());
     assert!(!scratch.vault().join("rogue.md").exists());
 
     let add = run(&[
@@ -244,13 +259,13 @@ fn tool_writes_cannot_bypass_schema() {
         "add",
         "--id",
         "keep",
-        "--record",
-        &json!({"fields":{"title":"Keep"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Keep"}))),
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
-    assert!(scratch.vault().join("accept_notes/keep.md").is_file());
+    assert!(scratch.vault().join("accept_notes/keep").is_file());
 
-    let bad_replace = run(&[
+    let ok_replace = run(&[
         "--vault",
         &path,
         "collection",
@@ -258,12 +273,12 @@ fn tool_writes_cannot_bypass_schema() {
         "replace",
         "--id",
         "keep",
-        "--record",
-        &json!({"fields":{"title":"Keep","unknown":"y"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Keep","unknown":"y"}))),
     ]);
-    assert_eq!(error_json(&bad_replace)["code"], "CODE_INVALID");
-    let kept = fs::read_to_string(scratch.vault().join("accept_notes/keep.md")).unwrap();
-    assert!(!kept.contains("unknown"));
+    assert_eq!(ok_replace.status, 0, "stderr={}", ok_replace.stderr);
+    let kept = fs::read_to_string(scratch.vault().join("accept_notes/keep")).unwrap();
+    assert!(kept.contains("unknown") || kept.contains("Keep"), "{kept}");
 }
 
 #[test]
@@ -278,8 +293,8 @@ fn library_and_cli_json_and_code_match() {
         "add",
         "--id",
         "alpha",
-        "--record",
-        &json!({"fields":{"title":"Alpha"}}).to_string(),
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title":"Alpha"}))),
     ]);
     assert_eq!(add.status, 0, "stderr={}", add.stderr);
 

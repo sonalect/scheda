@@ -107,8 +107,7 @@ pub use json::{schema_from_json, schema_from_value};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
     Author, Body, CollectionInfo, Edge, Encryption, Error, Field, History, Journal, Object,
-    OpenOptions, Record, RecordAdd, RecordReplace, ReindexResult, Schema, Singleton, Text, Unit,
-    VaultInfo, history,
+    OpenOptions, Record, ReindexResult, Schema, Singleton, Text, Unit, VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]

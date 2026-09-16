@@ -5,12 +5,12 @@ mod common;
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{self, Command};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 
-use scheda::{Code, Filter, FindQuery, OpenOptions, RecordAdd, RecordReplace, Repeat, Vault};
+use scheda::{Code, Filter, FindQuery, OpenOptions, Repeat, Vault};
 use serde_json::json;
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -23,9 +23,9 @@ impl Scratch {
     fn new() -> Self {
         common::isolate_test_git_env();
         let n = NEXT_SCRATCH.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!("scheda-c4-{}-{n}", process::id()));
-        fs::create_dir_all(&root).unwrap();
-        Self { root }
+        Self {
+            root: common::scratch_root("scheda-c4", n),
+        }
     }
 
     fn vault(&self) -> PathBuf {
@@ -77,22 +77,16 @@ const LOG: &str = include_str!("../testdata/journal/log.yaml");
 const LINES: &str = include_str!("../testdata/journal/lines.yaml");
 const ALPHA_JSONL: &str = include_str!("../testdata/journal/alpha.jsonl");
 
-fn rec(msg: &str) -> RecordAdd {
-    serde_json::from_value(json!({
-        "fields": { "msg": msg },
-    }))
-    .unwrap()
+fn rec(msg: &str) -> Vec<u8> {
+    rec_fields(json!({ "msg": msg }))
 }
 
-fn rec_rep(msg: &str) -> RecordReplace {
-    serde_json::from_value(json!({
-        "fields": { "msg": msg },
-    }))
-    .unwrap()
+fn rec_rep(msg: &str) -> Vec<u8> {
+    rec(msg)
 }
 
-fn rec_fields(fields: serde_json::Value) -> RecordAdd {
-    serde_json::from_value(json!({ "fields": fields })).unwrap()
+fn rec_fields(fields: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&fields).unwrap()
 }
 
 fn open_log(scratch: &Scratch) -> Vault {
@@ -207,17 +201,14 @@ fn find_one_uses_collection_and_id_not_segment_name() {
     let got = collection.get("c").unwrap();
     assert_eq!(got.id.as_deref(), Some("c"));
     assert_eq!(got.collection.as_deref(), Some("south_log"));
-    assert_eq!(got.valid, Some(true));
-    let path = got.path.as_deref().expect("journal path");
-    assert!(path.ends_with(".jsonl"), "{path}");
-    let file = path.rsplit('/').next().unwrap_or(path);
-    assert_ne!(
-        file, "c.jsonl",
-        "get must use the segment path, not id.jsonl: {path}"
+    let names = jsonl_names(&scratch.log_dir());
+    assert!(
+        names.iter().any(|name| name.ends_with("-c.jsonl")),
+        "writer c must appear in the segment name: {names:?}"
     );
     assert!(
-        file.ends_with("-c.jsonl"),
-        "writer c must appear in the segment name: {path}"
+        !names.iter().any(|name| name == "c.jsonl"),
+        "get must use the segment path, not id.jsonl: {names:?}"
     );
     let err = collection.get("missing").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
@@ -229,7 +220,7 @@ fn get_missing_segment_file_is_io_not_found_with_path() {
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
-    let rel = collection.get("a").unwrap().path.expect("journal path");
+    let rel = format!("south_log/{}", seq_jsonl(&vault, 1));
     fs::remove_file(scratch.vault().join(&rel)).unwrap();
     let err = collection.get("a").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IoNotFound));
@@ -316,7 +307,7 @@ fn fixture_jsonl_is_utf8_text() {
     fs::write(scratch.log_dir().join("00000001.jsonl"), ALPHA_JSONL).unwrap();
     let vault = scratch.reopen();
     let got = vault.collection("south_log").unwrap().get("alpha").unwrap();
-    assert_eq!(got.valid, Some(true));
+    assert_eq!(got.id.as_deref(), Some("alpha"));
     vault.check().unwrap();
 }
 
@@ -324,8 +315,7 @@ fn fixture_jsonl_is_utf8_text() {
 fn journal_rejects_markdown_body() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
-    let mut record = rec("x");
-    record.body = Some(String::from("nope"));
+    let record = rec_fields(json!({"msg": "x", "body": "nope"}));
     let err = vault
         .collection("south_log")
         .unwrap()
@@ -351,7 +341,6 @@ fn integer_field_round_trips_as_integer_not_1_0() {
     assert_eq!(fs::read(&path).unwrap(), before);
     let got = collection.get("a").unwrap();
     assert_eq!(got.raw.as_deref(), Some(before.as_slice()));
-    assert_eq!(got.valid, Some(true));
 }
 
 #[test]

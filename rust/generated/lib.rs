@@ -32,9 +32,9 @@ mod validate {
             )]
             use crate::generated::api::v1::{
                 Author, Body, CollectionInfo, Edge, Encryption, Error, Field, Filter, FindQuery,
-                FindResult, History, Journal, Object, OpenOptions, Record, RecordAdd,
-                RecordReplace, ReindexResult, Schema, SearchHits, SearchQuery, Singleton, Text,
-                Unit, VaultInfo, filter, history, search_hits,
+                FindResult, History, Journal, Object, OpenOptions, Record, ReindexResult, Schema,
+                SearchHits, SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history,
+                search_hits,
             };
 
             pub mod __buffa {
@@ -50,8 +50,7 @@ mod validate {
                         FieldOwnedView, FieldView, FilterOwnedView, FilterView, FindQueryOwnedView,
                         FindQueryView, FindResultOwnedView, FindResultView, HistoryOwnedView,
                         HistoryView, JournalOwnedView, JournalView, ObjectOwnedView, ObjectView,
-                        OpenOptionsOwnedView, OpenOptionsView, RecordAddOwnedView, RecordAddView,
-                        RecordOwnedView, RecordReplaceOwnedView, RecordReplaceView, RecordView,
+                        OpenOptionsOwnedView, OpenOptionsView, RecordOwnedView, RecordView,
                         ReindexResultOwnedView, ReindexResultView, SchemaOwnedView, SchemaView,
                         SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView, SearchQueryView,
                         SingletonOwnedView, SingletonView, TextOwnedView, TextView, UnitOwnedView,
@@ -161,11 +160,9 @@ impl api::v1::Error {
             | Code::IoOther
             | Code::GitGeneric
             | Code::GitNotFound
-            | Code::GitBufSize
             | Code::GitLocked
             | Code::GitAuth
             | Code::GitCertificate
-            | Code::GitEof
             | Code::GitTimeout
             | Code::IndexMissing
             | Code::IndexVersion
@@ -179,7 +176,6 @@ impl api::v1::Error {
             | Code::Invalid
             | Code::NotUtf8
             | Code::Unsupported
-            | Code::UnsupportedRemote
             | Code::UnsupportedEncryption
             | Code::Crypto
             | Code::IoAlreadyExists
@@ -196,24 +192,11 @@ impl api::v1::Error {
             | Code::IoUnsupported
             | Code::NotFastForward
             | Code::GitExists
-            | Code::GitAmbiguous
-            | Code::GitUser
             | Code::GitBareRepo
             | Code::GitUnbornBranch
-            | Code::GitUnmerged
-            | Code::GitInvalidSpec
             | Code::GitConflict
-            | Code::GitModified
-            | Code::GitApplied
-            | Code::GitPeel
-            | Code::GitInvalid
             | Code::GitUncommitted
-            | Code::GitDirectory
             | Code::GitMergeConflict
-            | Code::GitHashsumMismatch
-            | Code::GitIndexDirty
-            | Code::GitApplyFail
-            | Code::GitOwner
             | Code::GitHead => Repeat::Forbidden,
         }
     }
@@ -233,7 +216,6 @@ impl api::v1::Error {
         invalid => Invalid,
         not_utf8 => NotUtf8,
         unsupported => Unsupported,
-        unsupported_remote => UnsupportedRemote,
         unsupported_encryption => UnsupportedEncryption,
         crypto => Crypto,
         locked => Locked,
@@ -280,29 +262,14 @@ impl api::v1::Error {
         git_generic => GitGeneric,
         git_not_found => GitNotFound,
         git_exists => GitExists,
-        git_ambiguous => GitAmbiguous,
-        git_buf_size => GitBufSize,
-        git_user => GitUser,
         git_bare_repo => GitBareRepo,
         git_unborn_branch => GitUnbornBranch,
-        git_unmerged => GitUnmerged,
-        git_invalid_spec => GitInvalidSpec,
         git_conflict => GitConflict,
         git_locked => GitLocked,
-        git_modified => GitModified,
         git_auth => GitAuth,
         git_certificate => GitCertificate,
-        git_applied => GitApplied,
-        git_peel => GitPeel,
-        git_eof => GitEof,
-        git_invalid => GitInvalid,
         git_uncommitted => GitUncommitted,
-        git_directory => GitDirectory,
         git_merge_conflict => GitMergeConflict,
-        git_hashsum_mismatch => GitHashsumMismatch,
-        git_index_dirty => GitIndexDirty,
-        git_apply_fail => GitApplyFail,
-        git_owner => GitOwner,
         git_timeout => GitTimeout,
         git_head => GitHead,
         index_missing => IndexMissing,
@@ -516,20 +483,6 @@ impl api::v1::Record {
     }
 }
 
-impl api::v1::RecordAdd {
-    /// Fail if this message does not satisfy `api/v1` field rules.
-    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
-        require_valid(self)
-    }
-}
-
-impl api::v1::RecordReplace {
-    /// Fail if this message does not satisfy `api/v1` field rules.
-    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
-        require_valid(self)
-    }
-}
-
 impl api::v1::SearchQuery {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
@@ -723,12 +676,17 @@ mod tests {
     }
 
     #[test]
-    fn record_fields_are_a_json_object() {
-        let record = Record::default().with_id("alpha").with_valid(true);
+    fn record_raw_is_base64_bytes() {
+        let record = Record::default()
+            .with_id("alpha")
+            .with_raw(b"hello".to_vec());
         let json = serde_json::to_value(&record).expect("json");
         assert_eq!(json["id"], "alpha");
         assert!(json.get("collection").is_none());
-        assert_eq!(json["valid"], true);
+        assert!(json.get("fields").is_none());
+        assert!(json.get("body").is_none());
+        assert!(json.get("valid").is_none());
+        assert_eq!(json["raw"], "aGVsbG8=");
     }
 
     #[test]
@@ -841,33 +799,29 @@ mod tests {
     }
 
     #[test]
-    fn version_and_kind_are_required() {
+    fn kind_is_required() {
         assert!(Schema::default().validate().is_err());
-        let err = Schema::default()
-            .require_valid()
-            .expect_err("missing version and kind");
+        let err = Schema::default().require_valid().expect_err("missing kind");
         assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let mut ok = Schema::default().with_version(1);
-        ok.kind = Body::default().into();
+        let ok = Schema {
+            kind: Body::default().into(),
+            ..Schema::default()
+        };
         assert!(ok.require_valid().is_ok());
         let json = serde_json::to_value(&ok).expect("json");
-        assert_eq!(json["version"], 1);
+        assert!(json.get("version").is_none());
         assert!(json.get("document").is_some());
-        let err = Schema::default()
-            .with_version(0)
-            .require_valid()
-            .expect_err("version 0");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
     }
 
     #[test]
     fn journal_may_exclude_either_index_leg() {
         for (lexical, vector) in [(true, false), (false, true), (true, true)] {
-            let mut schema = Schema::default()
-                .with_version(1)
-                .with_exclude_lexical_index(lexical)
-                .with_exclude_vector_index(vector);
-            schema.kind = Journal::default().into();
+            let schema = Schema {
+                kind: Journal::default().into(),
+                ..Schema::default()
+            }
+            .with_exclude_lexical_index(lexical)
+            .with_exclude_vector_index(vector);
             assert!(
                 schema.require_valid().is_ok(),
                 "journal lexical={lexical} vector={vector}"
@@ -899,9 +853,11 @@ mod tests {
             "object": {"values": {"name": "axis", "integer": {}}}
         }))
         .expect("field json");
-        let mut schema = Schema::default().with_version(1);
-        schema.kind = Body::default().into();
-        schema.fields.push(ok);
+        let schema = Schema {
+            kind: Body::default().into(),
+            fields: vec![ok],
+            ..Schema::default()
+        };
         assert!(schema.require_valid().is_ok());
 
         for values in [
@@ -914,9 +870,11 @@ mod tests {
                 "object": {"values": values}
             }))
             .expect("field json");
-            let mut schema = Schema::default().with_version(1);
-            schema.kind = Body::default().into();
-            schema.fields.push(field);
+            let schema = Schema {
+                kind: Body::default().into(),
+                fields: vec![field],
+                ..Schema::default()
+            };
             let err = schema.require_valid().expect_err("values flag");
             assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         }

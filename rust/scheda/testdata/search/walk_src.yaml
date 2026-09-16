@@ -1,5 +1,5 @@
 name: walk_src
-kind: document
+kind: journal
 version: 1
 fields:
   - name: title

@@ -299,7 +299,6 @@ struct EdgeIndex {
 struct LegHit {
     collection: String,
     id: String,
-    path: String,
     score: f64,
 }
 
@@ -480,14 +479,12 @@ impl SearchEngine {
                     }
                     stats.segments_seen += crate::journal::segment_count(vault, decl)?;
                     let mut ids = BTreeMap::new();
-                    crate::journal::for_each_record(vault, decl, |record| {
+                    crate::journal::for_each_record(vault, decl, |record, rel| {
                         stats.records_read += 1;
-                        if let (Some(id), Some(rel)) =
-                            (record.id.as_deref(), record.path.as_deref())
-                        {
+                        if let Some(id) = record.id.as_deref() {
                             ids.insert(id.to_owned(), rel.to_owned());
                         }
-                        if record.valid != Some(true) {
+                        if !store::record_indexable(decl, &record) {
                             stats.skipped_invalid += 1;
                             return Ok(true);
                         }
@@ -522,7 +519,7 @@ impl SearchEngine {
                             Err(err) => return Err(err),
                         };
                         stats.records_read += 1;
-                        if record.valid != Some(true) {
+                        if !store::record_indexable(decl, &record) {
                             stats.skipped_invalid += 1;
                             continue;
                         }
@@ -1240,25 +1237,24 @@ fn index_lexical(
     let Some(id) = record.id.as_deref() else {
         return Ok(());
     };
-    let path = record.path.as_deref().unwrap_or("");
+    let path = indexed_rel(decl, id)?;
     let key = doc_key(&decl.name, id);
     writer.delete_term(Term::from_field_text(lexical.f_key, &key));
     let mut doc = TantivyDocument::default();
     doc.add_text(lexical.f_key, &key);
     doc.add_text(lexical.f_collection, &decl.name);
     doc.add_text(lexical.f_id, id);
-    doc.add_text(lexical.f_path, path);
+    doc.add_text(lexical.f_path, &path);
     doc.add_u64(lexical.f_ord, ord);
     if !text.is_empty() {
         doc.add_text(lexical.f_text, text);
     }
-    let values = store::fields_map(record)?;
+    let values = store::fields_from_record(decl, record)?;
     let mut analyzer = lexical.index.tokenizer_for_field(lexical.f_tok).context(
         Code::IndexLexical,
         "[SearchEngine::index_lexical] tokenizer",
     )?;
     index_find_fields(lexical, &mut doc, &decl.fields, &values, &mut analyzer)?;
-    index_find_body(lexical, &mut doc, decl, record, &mut analyzer)?;
     writer.add_document(doc).context(
         Code::IndexLexical,
         "[SearchEngine::index_lexical] add document",
@@ -1303,27 +1299,6 @@ fn index_find_fields(
             _ => {}
         }
     }
-    Ok(())
-}
-
-fn index_find_body(
-    lexical: &Lexical,
-    doc: &mut TantivyDocument,
-    decl: &CollectionDecl,
-    record: &Record,
-    analyzer: &mut tantivy::tokenizer::TextAnalyzer,
-) -> Result<(), Error> {
-    let Some(body) = decl.body.as_ref() else {
-        return Ok(());
-    };
-    if !body.allowed || !body.fts {
-        return Ok(());
-    }
-    let Some(text) = record.body.as_deref().filter(|text| !text.is_empty()) else {
-        return Ok(());
-    };
-    doc.add_text(lexical.f_exists, "body");
-    query::add_field_tokens(doc, lexical.f_tok, "body", text, analyzer)?;
     Ok(())
 }
 
@@ -1631,7 +1606,7 @@ fn upsert_vector(
     let Some(id) = record.id.as_deref() else {
         return Ok(());
     };
-    let path = record.path.clone().unwrap_or_default();
+    let path = indexed_rel(decl, id)?;
     let dimensions = embedder.dimensions().get();
     let model_id = embedder.model_id();
     if inner.vector.is_none() {
@@ -1739,15 +1714,9 @@ fn field_vector_texts(
     decl: &CollectionDecl,
     record: &Record,
 ) -> Result<Vec<(String, String)>, Error> {
-    let values = store::fields_map(record)?;
+    let values = store::fields_from_record(decl, record)?;
     let mut out = Vec::new();
     collect_vector_texts(&decl.fields, &values, &mut out);
-    if let Some(body) = &decl.body
-        && body.vector
-        && let Some(text) = record.body.as_deref().filter(|text| !text.is_empty())
-    {
-        out.push((String::from("body"), text.to_owned()));
-    }
     Ok(out)
 }
 
@@ -1873,7 +1842,6 @@ fn lexical_search(
         hits.push(LegHit {
             collection,
             id,
-            path: stored_str(&doc, lexical.f_path).unwrap_or_default(),
             score: f64::from(score),
         });
     }
@@ -1935,13 +1903,11 @@ fn vector_search(
             .and_modify(|hit| {
                 if score > hit.score {
                     hit.score = score;
-                    hit.path = doc.path.clone();
                 }
             })
             .or_insert_with(|| LegHit {
                 collection: doc.collection.clone(),
                 id: doc.id.clone(),
-                path: doc.path.clone(),
                 score,
             });
     }
@@ -1962,7 +1928,6 @@ struct FusedScores {
     rrf: f64,
     lexical: Option<f64>,
     vector: Option<f64>,
-    path: String,
 }
 
 /// Fuse the two Index legs.
@@ -1999,13 +1964,9 @@ fn fuse<'a>(
                     rrf: 0.0,
                     lexical: None,
                     vector: None,
-                    path: hit.path.clone(),
                 });
             entry.rrf += rrf;
             entry.lexical = Some(hit.score);
-            if entry.path.is_empty() {
-                entry.path = hit.path.clone();
-            }
         }
     }
     if vector_weight > 0.0 {
@@ -2017,13 +1978,9 @@ fn fuse<'a>(
                     rrf: 0.0,
                     lexical: None,
                     vector: None,
-                    path: hit.path.clone(),
                 });
             entry.rrf += rrf;
             entry.vector = Some(hit.score);
-            if entry.path.is_empty() {
-                entry.path = hit.path.clone();
-            }
         }
     }
     if has_reranker {
@@ -2088,7 +2045,6 @@ fn hit_from_fused(collection: &str, id: &str, fused: FusedScores) -> search_hits
     let mut hit = search_hits::Hit::default()
         .with_id(id)
         .with_collection(collection)
-        .with_path(fused.path)
         .with_rrf_score(fused.rrf);
     if let Some(score) = fused.lexical {
         hit = hit.with_lexical_score(score);
@@ -2175,6 +2131,13 @@ fn ids_from_addrs(
 fn stored_str(doc: &TantivyDocument, field: Field) -> Option<String> {
     doc.get_first(field)
         .and_then(|value| TantivyValue::as_str(&value).map(str::to_owned))
+}
+
+fn indexed_rel(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
+    match decl.kind {
+        Kind::Journal => Ok(String::new()),
+        Kind::Document | Kind::Singleton => store::record_rel(decl, id),
+    }
 }
 
 fn lexical_schema() -> TantivySchema {
@@ -2397,7 +2360,7 @@ fn add_edges(edges: &mut EdgeIndex, decl: &CollectionDecl, record: &Record) -> R
     let Some(id) = record.id.as_deref() else {
         return Ok(());
     };
-    let fields = store::fields_map(record)?;
+    let fields = store::fields_from_record(decl, record)?;
     collect_edges(&decl.fields, &fields, &decl.name, id, edges);
     Ok(())
 }
@@ -2439,20 +2402,10 @@ pub(crate) fn marked_text(
     decl: &CollectionDecl,
     record: &Record,
 ) -> Result<(String, String), Error> {
-    let fields = store::fields_map(record)?;
+    let fields = store::fields_from_record(decl, record)?;
     let mut fts = Vec::new();
     let mut vector = Vec::new();
     collect_marked(&decl.fields, &fields, &mut fts, &mut vector);
-    if let Some(body) = &decl.body
-        && let Some(text) = record.body.as_deref().filter(|text| !text.is_empty())
-    {
-        if body.fts {
-            fts.push(text.to_owned());
-        }
-        if body.vector {
-            vector.push(text.to_owned());
-        }
-    }
     Ok((fts.join("\n"), vector.join("\n")))
 }
 

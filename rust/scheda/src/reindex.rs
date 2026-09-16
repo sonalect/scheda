@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
@@ -76,12 +77,22 @@ struct QueueEntry {
 }
 
 /// `{vault}/.scheda/reindex.lock` as a `try_lock` flock. Not a pid-file.
+///
+/// A few short retries absorb a stale `WouldBlock` after the previous
+/// holder closed the fd (overlay / WSL). A second live `reindex` still
+/// holds the lock for the whole walk, so these retries still end `locked`.
 pub(crate) fn acquire_lock(vault: &Path) -> Result<File, Error> {
-    match try_lock(vault)? {
-        Some(file) => Ok(file),
-        None => Err(Error::locked("vault reindex lock is held")
-            .context("[Vault::reindex] acquire reindex lock")),
+    const ATTEMPTS: u32 = 8;
+    const RETRY: Duration = Duration::from_millis(10);
+    for attempt in 0..ATTEMPTS {
+        match try_lock(vault)? {
+            Some(file) => return Ok(file),
+            None if attempt + 1 < ATTEMPTS => thread::sleep(RETRY),
+            None => break,
+        }
     }
+    Err(Error::locked("vault reindex lock is held")
+        .context("[Vault::reindex] acquire reindex lock"))
 }
 
 /// `try_lock` of `reindex.lock`. `None` if another `reindex` holds it.
@@ -375,13 +386,13 @@ fn ids_from_restored(
     };
     match decl.kind {
         Kind::Document => {
-            let Some(id) = file.strip_suffix(".md") else {
-                return Ok(Vec::new());
-            };
-            if id::require_document_id(id).is_err() {
+            if file.starts_with('.') {
                 return Ok(Vec::new());
             }
-            Ok(vec![(decl.name.clone(), id.to_owned())])
+            if id::require_document_id(file).is_err() {
+                return Ok(Vec::new());
+            }
+            Ok(vec![(decl.name.clone(), file.to_owned())])
         }
         Kind::Singleton => {
             if file != "record.yaml" {
@@ -421,8 +432,11 @@ mod tests {
         fn new() -> Self {
             crate::git::isolate_test_git_env();
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
-            let root =
-                std::env::temp_dir().join(format!("scheda-reindex-{}-{n}", std::process::id()));
+            let base = std::env::var_os("TEST_TMPDIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(std::env::temp_dir);
+            let tid = format!("{:?}", std::thread::current().id()).replace(['(', ')'], "");
+            let root = base.join(format!("scheda-reindex-{}-{n}-{tid}", std::process::id()));
             fs::create_dir_all(root.join(".scheda")).unwrap();
             Self { root }
         }

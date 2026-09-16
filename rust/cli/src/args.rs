@@ -190,12 +190,12 @@ pub enum Command {
 pub enum CollectionCommand {
     /// Collection Schema as Protobuf JSON.
     Schema,
-    /// Create a Record. `--record` is Protobuf JSON `RecordAdd`.
+    /// Create a Record. `--file` is UTF-8 bytes, or stdin when omitted.
     Add {
         #[arg(long)]
         id: String,
         #[arg(long)]
-        record: Option<String>,
+        file: Option<PathBuf>,
         /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
         #[arg(long)]
         message: Option<String>,
@@ -214,12 +214,12 @@ pub enum CollectionCommand {
         #[arg(long)]
         count: u32,
     },
-    /// Replace a `document` or `singleton`. `--record` is Protobuf JSON `RecordReplace`.
+    /// Replace a `document` or `singleton`. `--file` is UTF-8 bytes, or stdin when omitted.
     Replace {
         #[arg(long)]
         id: String,
         #[arg(long)]
-        record: Option<String>,
+        file: Option<PathBuf>,
         /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
         #[arg(long)]
         message: Option<String>,

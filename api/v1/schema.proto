@@ -4,7 +4,8 @@
 // stay YAML. Field names are Schema field names as declared on `Field`.
 //
 // The caller never supplies a Record file path. Only `Vault.open` takes a
-// filesystem path (the Vault root). Record paths are fixed by kind.
+// filesystem path (the Vault root). Collection generation `version` lives
+// on the YAML/JSON file, not on this message.
 
 edition = "2024";
 
@@ -14,45 +15,39 @@ import "buf/validate/validate.proto";
 import "google/protobuf/struct.proto";
 
 message Schema {
-  // Integer ≥ 1. Same key on disk and in `create_collection`. Writes
-  // must use the current version.
-  uint32 version = 1 [(buf.validate.field) = {
-    required: true
-    uint32: {gte: 1}
-  }];
   // Field declarations. May be empty.
-  repeated Field fields = 2;
+  repeated Field fields = 1;
   // Exactly one kind. The set arm is the kind (`document` | `journal` |
   // `singleton`).
   oneof kind {
     option (buf.validate.oneof).required = true;
-    // `document`. Empty Body: allowed and indexed. File: `{name}/{id}.md`.
-    Body document = 3;
-    Journal journal = 4;
-    Singleton singleton = 5;
+    // `document`. Empty Body: allowed and indexed. File: `{name}/{id}`.
+    Body document = 2;
+    Journal journal = 3;
+    Singleton singleton = 4;
   }
   // Later. Default false. `true`: Record files live under
   // `{vault}/.isolated/{name}/` (gitignored nested git). Schema file
   // stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
   // collections does not read it.
-  bool isolated = 6;
+  bool isolated = 5;
   // Record files of this collection are age armor on disk. Independent
   // of `isolated`. I/O requires the handle secret. `journal` may not
   // set it.
-  bool encrypted = 7;
+  bool encrypted = 6;
   // Default false: Records enter the Tantivy Index (`find`, filters,
   // BM25). `true`: no Record of this collection is written there.
   // `find` that names it is refused, not an empty hit list. The journal
   // id map is a separate JSONL file and is still written. Redundant on
   // `encrypted` (ciphertext is never indexed) and allowed. A `journal`
   // may set it.
-  bool exclude_lexical_index = 8;
+  bool exclude_lexical_index = 7;
   // Default false: eligible fields are embedded on write. `true`: no
   // Record of this collection is embedded or stored in the vector
   // Index; `add` / `replace` do not call the embedder. `search` then
   // uses the lexical leg only. Redundant on `encrypted` and allowed.
   // A `journal` may set it.
-  bool exclude_vector_index = 9;
+  bool exclude_vector_index = 8;
 }
 
 // `journal` segment cap. Size-first: a cap hit closes the segment even
