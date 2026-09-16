@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
@@ -31,10 +31,11 @@ use tantivy::{
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
+use crate::projector::{self, IndexDoc, IndexValue, ProjectorDump};
 use crate::query::{self, FindFields};
 use crate::schema::{self, CollectionDecl, FieldDecl, Kind, Schema};
 use crate::store;
-use crate::{Embedder, Error, Filter, Record};
+use crate::{Embedder, Error, Filter, IndexSchema, Record};
 #[cfg(feature = "search")]
 use crate::{SearchHits, SearchQuery, search_hits};
 
@@ -42,6 +43,7 @@ use crate::{SearchHits, SearchQuery, search_hits};
 use crate::ann::AnnIndex;
 
 const LEXICAL_DIR: &str = "lexical";
+const PROJECTOR_FILE: &str = "projector";
 #[cfg(feature = "search")]
 const VECTOR_DIR: &str = "vector";
 #[cfg(feature = "search")]
@@ -71,6 +73,7 @@ const FUSION_POOL_FLOOR: usize = 50;
 pub(crate) struct SearchEngine {
     index_dir: RwLock<PathBuf>,
     inner: RwLock<Inner>,
+    projector: Option<Arc<dyn crate::Projector>>,
 }
 
 /// Counts and journal maps from one file walk that also fills this engine.
@@ -324,7 +327,11 @@ fn allowed_has(allowed: &BTreeMap<String, BTreeSet<String>>, collection: &str, i
 }
 
 impl SearchEngine {
-    pub(crate) fn open(index_dir: &Path, can_write: bool) -> Result<Self, Error> {
+    pub(crate) fn open(
+        index_dir: &Path,
+        can_write: bool,
+        projector: Option<Arc<dyn crate::Projector>>,
+    ) -> Result<Self, Error> {
         let inner = Inner {
             lexical: open_lexical(index_dir).ok().flatten(),
             #[cfg(feature = "search")]
@@ -339,6 +346,7 @@ impl SearchEngine {
         Ok(Self {
             index_dir: RwLock::new(index_dir.to_path_buf()),
             inner: RwLock::new(inner),
+            projector,
         })
     }
 
@@ -368,6 +376,7 @@ impl SearchEngine {
                 #[cfg(test)]
                 writer_opens: 0,
             }),
+            projector: None,
         }
     }
 
@@ -461,6 +470,13 @@ impl SearchEngine {
         let index_dir = self.dir()?;
         if can_write {
             index::ensure_format(&index_dir)?;
+            write_projector_dump(
+                &index_dir,
+                &projector::encode_dump(
+                    self.projector.as_deref(),
+                    schema.collections().map(|decl| decl.name.as_str()),
+                )?,
+            )?;
         }
         #[cfg(feature = "search")]
         {
@@ -491,7 +507,6 @@ impl SearchEngine {
                         index_one_rebuild_record(
                             self,
                             &index_dir,
-                            can_write,
                             decl,
                             &record,
                             embedder,
@@ -526,7 +541,6 @@ impl SearchEngine {
                         index_one_rebuild_record(
                             self,
                             &index_dir,
-                            can_write,
                             decl,
                             &record,
                             embedder,
@@ -564,7 +578,7 @@ impl SearchEngine {
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
-        match index::format_version(&index_dir)? {
+        let first_write = match index::format_version(&index_dir)? {
             Some(v) if v != index::FORMAT_VERSION => {
                 return Err(Error::index_version(format!(
                     "index format {v} is not {}",
@@ -572,9 +586,20 @@ impl SearchEngine {
                 ))
                 .context("[SearchEngine::upsert] check version"));
             }
-            _ => index::ensure_format(&index_dir)?,
-        }
-        upsert_record(&mut inner, &index_dir, true, decl, record, embedder, &batch)?;
+            Some(_) => false,
+            None => true,
+        };
+        index::ensure_format(&index_dir)?;
+        self.ensure_projector_dump(&index_dir, first_write, &decl.name)?;
+        upsert_record(
+            &mut inner,
+            &index_dir,
+            decl,
+            record,
+            embedder,
+            &batch,
+            self.projector.as_deref(),
+        )?;
         Ok(())
     }
 
@@ -599,6 +624,107 @@ impl SearchEngine {
         }
         forget_record(&mut inner, &decl.name, id)?;
         Ok(())
+    }
+
+    fn require_projector_dump(&self, index_dir: &Path) -> Result<(), Error> {
+        match read_projector_dump(index_dir)? {
+            None => {
+                if self.projector.is_some() {
+                    return Err(
+                        Error::index_version("index was built without this projector")
+                            .context("[SearchEngine] projector dump"),
+                    );
+                }
+                Ok(())
+            }
+            Some(dump) => self.match_stored_dump(&dump),
+        }
+    }
+
+    fn ensure_projector_dump(
+        &self,
+        index_dir: &Path,
+        first_write: bool,
+        collection: &str,
+    ) -> Result<(), Error> {
+        match read_projector_dump(index_dir)? {
+            None if self.projector.is_none() => Ok(()),
+            None if first_write => {
+                let dump = match self.projector.as_deref() {
+                    None => projector::IDENTITY_DUMP.to_owned(),
+                    Some(projector) => {
+                        match projector::collection_dump_line(projector, collection)? {
+                            Some(line) => format!("{line}\n"),
+                            None => String::new(),
+                        }
+                    }
+                };
+                write_projector_dump(index_dir, &dump)
+            }
+            None => Err(
+                Error::index_version("index was built without this projector")
+                    .context("[SearchEngine] projector dump"),
+            ),
+            Some(ProjectorDump::Identity) if self.projector.is_some() => Err(Error::index_version(
+                "index was built without this projector",
+            )
+            .context("[SearchEngine] projector dump")),
+            Some(ProjectorDump::Identity) => Ok(()),
+            Some(_) if self.projector.is_none() => {
+                Err(Error::index_version("index was built with a projector")
+                    .context("[SearchEngine] projector dump"))
+            }
+            Some(mut dump) => {
+                let Some(projector) = self.projector.as_deref() else {
+                    return Ok(());
+                };
+                let current = projector::collection_dump_line(projector, collection)?;
+                match (dump.line(collection), current.as_deref()) {
+                    (Some(stored), Some(current)) if stored == current => Ok(()),
+                    (Some(_), _) => Err(Error::index_version(format!(
+                        "projector schema for {collection} changed"
+                    ))
+                    .context("[SearchEngine] projector dump")),
+                    (None, Some(current)) => {
+                        dump.insert_line(collection.to_owned(), current.to_owned());
+                        write_projector_dump(index_dir, &dump.to_text())
+                    }
+                    (None, None) => Ok(()),
+                }
+            }
+        }
+    }
+
+    fn match_stored_dump(&self, dump: &ProjectorDump) -> Result<(), Error> {
+        match dump {
+            ProjectorDump::Identity if self.projector.is_some() => Err(Error::index_version(
+                "index was built without this projector",
+            )
+            .context("[SearchEngine] projector dump")),
+            ProjectorDump::Identity => Ok(()),
+            ProjectorDump::Collections(_) if self.projector.is_none() => {
+                Err(Error::index_version("index was built with a projector")
+                    .context("[SearchEngine] projector dump"))
+            }
+            ProjectorDump::Collections(map) => {
+                let Some(projector) = self.projector.as_deref() else {
+                    return Ok(());
+                };
+                for (name, stored) in map {
+                    let current = projector::collection_dump_line(projector, name)?;
+                    match current {
+                        Some(current) if current == *stored => {}
+                        _ => {
+                            return Err(Error::index_version(format!(
+                                "projector schema for {name} changed"
+                            ))
+                            .context("[SearchEngine] projector dump"));
+                        }
+                    }
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Mark this engine as writable. The Tantivy writer is not opened
@@ -832,6 +958,7 @@ impl SearchEngine {
         let index_dir = self.dir()?;
         index::require_fresh(&index_dir)?;
         index::require_current_format(&index_dir)?;
+        self.require_projector_dump(&index_dir)?;
         self.with_query(&index_dir, "[SearchEngine::with_find] lock", |inner| {
             let Some(lexical) = inner.lexical.as_ref() else {
                 return Ok(None);
@@ -996,7 +1123,6 @@ fn empty_inner(can_write: bool) -> Inner {
 fn index_one_rebuild_record(
     engine: &SearchEngine,
     index_dir: &Path,
-    can_write: bool,
     decl: &CollectionDecl,
     record: &Record,
     embedder: Option<&dyn Embedder>,
@@ -1008,7 +1134,13 @@ fn index_one_rebuild_record(
     let batch = VectorBatch::empty();
     let mut inner = crate::error::rw_write(&engine.inner, "[SearchEngine::rebuild] lock")?;
     upsert_record(
-        &mut inner, index_dir, can_write, decl, record, embedder, &batch,
+        &mut inner,
+        index_dir,
+        decl,
+        record,
+        embedder,
+        &batch,
+        engine.projector.as_deref(),
     )?;
     #[cfg(feature = "search")]
     if decl.vector_indexed()
@@ -1149,19 +1281,54 @@ fn embed_changed_slots(
     Ok(VectorBatch { pieces, vectors })
 }
 
+fn write_projector_dump(index_dir: &Path, dump: &str) -> Result<(), Error> {
+    fs::write(index_dir.join(PROJECTOR_FILE), dump)
+        .context("[SearchEngine] write projector dump")?;
+    index::restrict_index_tree(index_dir)
+}
+
+fn read_projector_dump(index_dir: &Path) -> Result<Option<ProjectorDump>, Error> {
+    match fs::read_to_string(index_dir.join(PROJECTOR_FILE)) {
+        Ok(text) => Ok(Some(ProjectorDump::parse(&text))),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).context("[SearchEngine] read projector dump"),
+    }
+}
+
 fn upsert_record(
     inner: &mut Inner,
     index_dir: &Path,
-    can_write: bool,
     decl: &CollectionDecl,
     record: &Record,
     embedder: Option<&dyn Embedder>,
     batch: &VectorBatch,
+    projector: Option<&dyn crate::Projector>,
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref().filter(|id| !id.is_empty()) else {
         return Ok(());
     };
     let (fts_text, _vector_text) = marked_text(decl, record)?;
+    let raw = match record.raw.as_deref() {
+        Some(raw) => raw,
+        None => &[],
+    };
+    let projected = match projector {
+        None => Some(IndexDoc::default()),
+        Some(projector) => match projector.project(&decl.name, id, raw) {
+            Ok(doc) if doc.values.is_empty() => None,
+            Ok(doc) => Some(doc),
+            Err(_) => None,
+        },
+    };
+    let can_write = inner.can_write;
+    if projected.is_none() {
+        if can_write {
+            forget_record(inner, &decl.name, id)?;
+        }
+        #[cfg(not(feature = "search"))]
+        let _ = (embedder, batch);
+        return Ok(());
+    }
     if decl.lexical_indexed() {
         forget_source(&mut inner.edges, &decl.name, id);
         add_edges(&mut inner.edges, decl, record)?;
@@ -1177,7 +1344,25 @@ fn upsert_record(
                 .next_ord
                 .insert(decl.name.clone(), ord.saturating_add(1));
             if let Some(lexical) = inner.lexical.as_mut() {
-                index_lexical(lexical, decl, record, &fts_text, ord)?;
+                let find_schema = match projector {
+                    Some(projector) => match projector.schema(&decl.name) {
+                        Ok(schema) => {
+                            schema.require_valid()?;
+                            Some(schema)
+                        }
+                        Err(_) => None,
+                    },
+                    None => None,
+                };
+                index_lexical(
+                    lexical,
+                    decl,
+                    record,
+                    &fts_text,
+                    ord,
+                    projected.as_ref(),
+                    find_schema.as_ref(),
+                )?;
                 inner.dirty = true;
             }
         }
@@ -1229,6 +1414,8 @@ fn index_lexical(
     record: &Record,
     text: &str,
     ord: u64,
+    index_doc: Option<&IndexDoc>,
+    index_schema: Option<&IndexSchema>,
 ) -> Result<(), Error> {
     let slot = crate::error::mutex(&lexical.writer, "[SearchEngine::index_lexical] writer")?;
     let Some(writer) = slot.as_ref() else {
@@ -1249,12 +1436,13 @@ fn index_lexical(
     if !text.is_empty() {
         doc.add_text(lexical.f_text, text);
     }
-    let values = store::fields_from_record(decl, record)?;
     let mut analyzer = lexical.index.tokenizer_for_field(lexical.f_tok).context(
         Code::IndexLexical,
         "[SearchEngine::index_lexical] tokenizer",
     )?;
-    index_find_fields(lexical, &mut doc, &decl.fields, &values, &mut analyzer)?;
+    if let (Some(index_doc), Some(index_schema)) = (index_doc, index_schema) {
+        index_find_fields(lexical, &mut doc, index_schema, index_doc, &mut analyzer)?;
+    }
     writer.add_document(doc).context(
         Code::IndexLexical,
         "[SearchEngine::index_lexical] add document",
@@ -1265,51 +1453,34 @@ fn index_lexical(
 fn index_find_fields(
     lexical: &Lexical,
     doc: &mut TantivyDocument,
-    decls: &[FieldDecl],
-    values: &serde_json::Map<String, Value>,
+    schema: &IndexSchema,
+    values: &IndexDoc,
     analyzer: &mut tantivy::tokenizer::TextAnalyzer,
 ) -> Result<(), Error> {
-    for field in decls {
-        if field.filter {
-            match values.get(&field.name) {
-                None => {}
-                Some(Value::Null) => {
-                    doc.add_text(lexical.f_null, &field.name);
-                }
-                Some(value) => {
-                    doc.add_text(lexical.f_exists, &field.name);
-                    for text in eq_values(value) {
-                        doc.add_text(lexical.f_eq, query::eq_term(&field.name, &text)?);
-                        query::add_field_tokens(doc, lexical.f_tok, &field.name, &text, analyzer)?;
-                    }
-                }
-            }
+    for column in &schema.columns {
+        if !column.find.unwrap_or(false) {
+            continue;
         }
-        match values.get(&field.name) {
-            Some(Value::Object(map)) => {
-                index_find_fields(lexical, doc, &field.fields, map, analyzer)?;
+        let name = column.name.as_deref().unwrap_or("");
+        match values.values.get(name) {
+            None => {}
+            Some(IndexValue::Null) => {
+                doc.add_text(lexical.f_null, name);
             }
-            Some(Value::Array(items)) => {
-                for item in items {
-                    if let Some(map) = item.as_object() {
-                        index_find_fields(lexical, doc, &field.fields, map, analyzer)?;
-                    }
+            Some(value) => {
+                let texts = projector::eq_texts_owned(value);
+                if texts.is_empty() {
+                    continue;
+                }
+                doc.add_text(lexical.f_exists, name);
+                for text in &texts {
+                    doc.add_text(lexical.f_eq, query::eq_term(name, text)?);
+                    query::add_field_tokens(doc, lexical.f_tok, name, text, analyzer)?;
                 }
             }
-            _ => {}
         }
     }
     Ok(())
-}
-
-fn eq_values(value: &Value) -> Vec<String> {
-    match value {
-        Value::String(text) => vec![text.clone()],
-        Value::Number(n) => vec![n.to_string()],
-        Value::Bool(b) => vec![b.to_string()],
-        Value::Array(items) => items.iter().flat_map(eq_values).collect(),
-        _ => Vec::new(),
-    }
 }
 
 /// SHA-1 git blob object id of `bytes` (`blob <len>\0` + content).

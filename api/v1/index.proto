@@ -1,15 +1,83 @@
-// Index rebuild result. Bindings and the CLI encode these messages as
-// Protobuf JSON, not binary protobuf. Vault files stay YAML / JSONL. The
-// Index lives under `{vault}/.scheda/`; isolated Index under
-// `{vault}/.isolated/.scheda/`.
+// Index rebuild result and Projector column schema. Bindings and the
+// CLI encode these messages as Protobuf JSON, not binary protobuf. Vault
+// files stay YAML / JSONL. The Index lives under `{vault}/.scheda/`;
+// isolated Index under `{vault}/.isolated/.scheda/`.
+//
+// `IndexSchema` is the return of `Projector.schema`. The Projector
+// trait and `IndexDoc` are not proto.
 
 edition = "2024";
 
 package api.v1;
+
+import "buf/validate/validate.proto";
 
 // Written by `reindex` from Vault files, not from a previous Index.
 message ReindexResult {
   uint64 records_read = 1;
   uint64 skipped_invalid = 2;
   uint64 segments_seen = 3;
+}
+
+// Kind of one Index column declared by `Projector.schema`.
+enum ColumnKind {
+  COLUMN_KIND_UNSPECIFIED = 0;
+  COLUMN_KIND_TEXT = 1;
+  COLUMN_KIND_INTEGER = 2;
+  COLUMN_KIND_NUMBER = 3;
+  COLUMN_KIND_BOOLEAN = 4;
+  COLUMN_KIND_TEXT_LIST = 5;
+}
+
+// One column in a Projector schema.
+message IndexColumn {
+  // Filter field name. Not empty, not `id` or `collection`.
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+    cel: [
+      {
+        id: "index_column.name.not_identity"
+        message: "name must not be id or collection"
+        expression: 'this != "id" && this != "collection"'
+      }
+    ]
+  }];
+  // Declared value kind. Not `COLUMN_KIND_UNSPECIFIED`.
+  ColumnKind kind = 2 [(buf.validate.field) = {
+    required: true
+    enum: {
+      defined_only: true
+      not_in: [0]
+    }
+    cel: [
+      {
+        id: "index_column.kind.not_unspecified"
+        message: "kind must not be unspecified"
+        expression: "this != 0"
+      }
+    ]
+  }];
+  // Whether this column is a `find` / Filter key.
+  bool find = 3;
+  // Whether this column is a BM25 slot.
+  bool fts = 4;
+  // Whether this column is a vector slot.
+  bool vector = 5;
+}
+
+// Columns `Projector.schema` exposes for one collection.
+message IndexSchema {
+  // Column declarations, in projector order. Names must be unique.
+  repeated IndexColumn columns = 1 [(buf.validate.field) = {
+    cel: [
+      {
+        id: "index_schema.columns.unique_names"
+        message: "column names must be unique"
+        // protovalidate-buffa cannot transpile `.unique()` over repeated
+        // messages; `all` + `filter` is the equivalent uniqueness check.
+        expression: "this.all(c, this.filter(other, other.name == c.name).size() == 1)"
+      }
+    ]
+  }];
 }

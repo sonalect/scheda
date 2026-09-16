@@ -19,8 +19,9 @@ use tantivy::schema::{Field, IndexRecordOption, OwnedValue};
 use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
 
 use crate::error::{Code, ContextAs, bail};
+use crate::projector::find_marked_column;
 use crate::schema::{CollectionDecl, FieldDecl};
-use crate::{Error, Filter};
+use crate::{ColumnKind, Error, Filter, IndexSchema, Projector};
 
 pub(crate) struct FindFields {
     pub id: Field,
@@ -51,77 +52,146 @@ pub(crate) fn uses_score(filter: &Filter) -> bool {
     }
 }
 
-pub(crate) fn validate(decl: &CollectionDecl, filter: &Filter) -> Result<(), Error> {
-    check_fields(decl, filter)
+pub(crate) fn validate(
+    decl: &CollectionDecl,
+    filter: &Filter,
+    projector: Option<&dyn Projector>,
+) -> Result<(), Error> {
+    check_fields(decl, filter, projector)
 }
 
-fn check_fields(decl: &CollectionDecl, filter: &Filter) -> Result<(), Error> {
+fn check_fields(
+    decl: &CollectionDecl,
+    filter: &Filter,
+    projector: Option<&dyn Projector>,
+) -> Result<(), Error> {
     let Some(kind) = filter.kind.as_ref() else {
         bail!(Error::invalid("filter kind is required"));
     };
     match kind {
         Kind::All(_) | Kind::Empty(_) => Ok(()),
-        Kind::Term(term) => check_leaf(decl, term.field.as_deref().unwrap_or("")),
-        Kind::TermSet(term) => check_leaf(decl, term.field.as_deref().unwrap_or("")),
-        Kind::Phrase(term) => check_token_field(decl, term.field.as_deref().unwrap_or("")),
-        Kind::PhrasePrefix(term) => check_token_field(decl, term.field.as_deref().unwrap_or("")),
-        Kind::Fuzzy(term) => check_token_field(decl, term.field.as_deref().unwrap_or("")),
-        Kind::Regex(term) => check_token_field(decl, term.field.as_deref().unwrap_or("")),
-        Kind::RegexPhrase(term) => check_token_field(decl, term.field.as_deref().unwrap_or("")),
-        Kind::Range(term) => check_leaf(decl, term.field.as_deref().unwrap_or("")),
-        Kind::Exists(term) => check_leaf(decl, term.field.as_deref().unwrap_or("")),
+        Kind::Term(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
+        Kind::TermSet(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
+        Kind::Phrase(term) => {
+            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
+        }
+        Kind::PhrasePrefix(term) => {
+            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
+        }
+        Kind::Fuzzy(term) => {
+            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
+        }
+        Kind::Regex(term) => {
+            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
+        }
+        Kind::RegexPhrase(term) => {
+            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
+        }
+        Kind::Range(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
+        Kind::Exists(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
         Kind::Boolean(boolean) => {
             for clause in &boolean.clauses {
-                check_fields(decl, &clause.query)?;
+                check_fields(decl, &clause.query, projector)?;
             }
             Ok(())
         }
-        Kind::Boost(boost) => check_fields(decl, &boost.query),
-        Kind::ConstScore(inner) => check_fields(decl, &inner.query),
+        Kind::Boost(boost) => check_fields(decl, &boost.query, projector),
+        Kind::ConstScore(inner) => check_fields(decl, &inner.query, projector),
         Kind::DisjunctionMax(inner) => {
             for nested in &inner.queries {
-                check_fields(decl, nested)?;
+                check_fields(decl, nested, projector)?;
             }
             Ok(())
         }
-        Kind::MoreLikeThis(mlt) => check_more_like_this(decl, mlt),
+        Kind::MoreLikeThis(mlt) => check_more_like_this(decl, projector, mlt),
     }
 }
 
-fn check_more_like_this(decl: &CollectionDecl, mlt: &filter::MoreLikeThis) -> Result<(), Error> {
+fn check_more_like_this(
+    decl: &CollectionDecl,
+    projector: Option<&dyn Projector>,
+    mlt: &filter::MoreLikeThis,
+) -> Result<(), Error> {
     match mlt.source.as_ref() {
         Some(Source::Id(_)) | None => Ok(()),
         Some(Source::Fields(fields)) => {
             for field in &fields.fields {
-                check_token_field(decl, field.field.as_deref().unwrap_or(""))?;
+                check_token_field(decl, projector, field.field.as_deref().unwrap_or(""))?;
             }
             Ok(())
         }
     }
 }
 
-fn check_token_field(decl: &CollectionDecl, field: &str) -> Result<(), Error> {
-    check_leaf(decl, field)?;
+fn check_token_field(
+    decl: &CollectionDecl,
+    projector: Option<&dyn Projector>,
+    field: &str,
+) -> Result<(), Error> {
+    check_leaf(decl, projector, field)?;
     if field == "id" {
         bail!(Error::invalid("this Filter kind cannot use field id"));
     }
-    Ok(())
+    let Some(schema) = load_index_schema(decl, projector, field)? else {
+        return Ok(());
+    };
+    let Some(column) = find_marked_column(&schema, field) else {
+        return Ok(());
+    };
+    match column.kind.as_ref().and_then(|kind| kind.as_known()) {
+        Some(ColumnKind::Text) | Some(ColumnKind::TextList) => Ok(()),
+        Some(ColumnKind::Integer) | Some(ColumnKind::Number) | Some(ColumnKind::Boolean) => {
+            bail!(Error::invalid(format!(
+                "this Filter kind cannot use field {field} on {}",
+                decl.name
+            )));
+        }
+        Some(ColumnKind::Unspecified) | None => unreachable!(),
+    }
 }
 
-fn check_leaf(decl: &CollectionDecl, field: &str) -> Result<(), Error> {
+fn check_leaf(
+    decl: &CollectionDecl,
+    projector: Option<&dyn Projector>,
+    field: &str,
+) -> Result<(), Error> {
     if field.is_empty() {
         bail!(Error::invalid("filter field is required"));
     }
     if field == "id" {
         return Ok(());
     }
-    if !decl.filter_keys.contains(field) {
-        bail!(Error::invalid(format!(
+    match load_index_schema(decl, projector, field)? {
+        Some(schema) if find_marked_column(&schema, field).is_some() => Ok(()),
+        _ => bail!(Error::invalid(format!(
             "field {field} is not a find key on {}",
             decl.name
-        )));
+        ))),
     }
-    Ok(())
+}
+
+fn load_index_schema(
+    decl: &CollectionDecl,
+    projector: Option<&dyn Projector>,
+    field: &str,
+) -> Result<Option<IndexSchema>, Error> {
+    let Some(projector) = projector else {
+        return Ok(None);
+    };
+    let schema = match projector.schema(&decl.name) {
+        Ok(schema) => schema,
+        Err(err) => {
+            if err.known_code().is_some() {
+                return Err(err);
+            }
+            bail!(Error::invalid(format!(
+                "field {field} is not a find key on {}",
+                decl.name
+            )));
+        }
+    };
+    schema.require_valid()?;
+    Ok(Some(schema))
 }
 
 pub(crate) fn compile(

@@ -683,7 +683,13 @@ fn isolated_write_has_no_nested_scheda_and_reindex_counts_it() {
 fn term_query_over_isolated_and_plain_returns_both() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    let vault = scratch.reopen();
+    let vault = Vault::open_with(
+        scratch.vault(),
+        scratch.options(),
+        None,
+        Some(common::json_text_projector(&["title"])),
+    )
+    .unwrap();
     vault
         .create_collection("plain_notes", title_schema(false), None)
         .unwrap();

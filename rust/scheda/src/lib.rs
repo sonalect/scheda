@@ -85,6 +85,7 @@ mod index;
 mod isolated;
 mod journal;
 mod json;
+mod projector;
 #[cfg(feature = "find")]
 mod query;
 mod reindex;
@@ -104,10 +105,12 @@ pub use error::redact_remote_text;
 pub use error::{Code, Repeat};
 pub use journal::JournalLines;
 pub use json::{schema_from_json, schema_from_value};
+pub use projector::{IndexDoc, IndexValue, Projector};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Author, Body, CollectionInfo, Edge, Encryption, Error, Field, History, Journal, Object,
-    OpenOptions, Record, ReindexResult, Schema, Singleton, Text, Unit, VaultInfo, history,
+    Author, Body, CollectionInfo, ColumnKind, Edge, Encryption, Error, Field, History, IndexColumn,
+    IndexSchema, Journal, Object, OpenOptions, Record, ReindexResult, Schema, Singleton, Text, Unit,
+    VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]

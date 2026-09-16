@@ -2,7 +2,7 @@
 
 Document 13 of the Scheda package. Version 0.40, 16 September 2026.
 
-How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`. Index columns: `Projector.schema(collection)` at `open`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat `search` as a query string only, are wrong.
+How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`, `api/v1/index.proto`. Index columns: `Projector.schema(collection)` at `open`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat `search` as a query string only, are wrong.
 
 Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignored). Wipe it, `reindex`, same Records.
 
@@ -43,7 +43,7 @@ First write or `reindex` creates the engines if missing. `add` / `replace` updat
 Not a model inside the library. Not an `api/v1` field. Same injection class as Embedder: the program that links the library passes it at `open`.
 
 ```text
-schema(collection) → IndexSchema   // columns of that collection:
+schema(collection) → api.v1.IndexSchema   // columns of that collection:
                                    // name, kind (text / integer / number /
                                    // boolean / text list), find / fts /
                                    // vector marks

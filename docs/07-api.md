@@ -132,4 +132,6 @@ as proto field names and LIB-2 operation names hold. The Rust type of the
 Projector option on `open` is the binding's affair.
 
 Isolated `encryption` / age armor — `09` (**later**).
-`Projector.schema` / `project` and Filter column names — `06` / `13`.
+`Projector.schema` returns `api.v1.IndexSchema` (`index.proto`). The
+Projector trait is still a caller callback, not proto. Filter column names —
+`06` / `13`.

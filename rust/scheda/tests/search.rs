@@ -155,10 +155,18 @@ fn hit_ids(hits: &scheda::SearchHits) -> Vec<&str> {
         .collect()
 }
 
+fn search_projector() -> Arc<dyn scheda::Projector> {
+    common::json_text_projector(&["title", "tag", "target", "extra"])
+}
+
+fn open_proj(path: impl AsRef<Path>, embedder: Option<Arc<dyn Embedder>>) -> Vault {
+    Vault::open_with(path, OpenOptions::new(), embedder, Some(search_projector())).unwrap()
+}
+
 fn open_tokens(scratch: &Scratch, embedder: Option<Arc<dyn Embedder>>) -> Vault {
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("tokens.yaml", TOKENS);
-    Vault::open(scratch.vault(), OpenOptions::new(), embedder).unwrap()
+    open_proj(scratch.vault(), embedder)
 }
 
 #[test]
@@ -267,10 +275,10 @@ fn remove_leaves_search() {
 #[test]
 fn vault_search_scopes_collections() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("tokens.yaml", TOKENS);
     scratch.write_schema("extra.yaml", TOKEN_EXTRA);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     vault
         .collection("token_notes")
         .unwrap()
@@ -1131,7 +1139,7 @@ fn invalid_record_is_omitted_from_search() {
         "tokens.yaml",
         "name: token_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
     );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     let collection = vault.collection("token_notes").unwrap();
     collection.get("old").unwrap();
     vault.reindex().unwrap();
@@ -1318,17 +1326,15 @@ fn embed_uses_single_or_many_by_limit() {
 
     let leftover = ProbeEmbedder::new(2);
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(
         "tokens.yaml",
         "name: token_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n  - name: extra\n    string: {}\n",
     );
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&leftover) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("token_notes")
         .unwrap()
@@ -1395,7 +1401,7 @@ fn corrupt_lexical_index_fails_closed() {
         "not-tantivy",
     )
     .unwrap();
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     let collection = vault.collection("token_notes").unwrap();
     collection.get("a").unwrap();
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
@@ -1405,10 +1411,10 @@ fn corrupt_lexical_index_fails_closed() {
 #[test]
 fn edge_field_read_matches_hand_list() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("src.yaml", WALK_SRC);
     scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     let src = vault.collection("walk_src").unwrap();
     let dst = vault.collection("walk_dst").unwrap();
     dst.add("alpha", rec(json!({"title": "A"})), None).unwrap();
@@ -1458,10 +1464,10 @@ fn edge_field_read_matches_hand_list() {
 #[test]
 fn strict_edge_rejects_missing_target() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("src.yaml", WALK_STRICT);
     scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     let src = vault.collection("walk_strict").unwrap();
     src.add("bad", rec(json!({"target": "nope"})), None)
         .unwrap();
@@ -1477,10 +1483,10 @@ fn strict_edge_rejects_missing_target() {
 #[test]
 fn find_by_edge_target_does_not_scan_unrelated() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("src.yaml", WALK_SRC);
     scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     let src = vault.collection("walk_src").unwrap();
     let dst = vault.collection("walk_dst").unwrap();
     dst.add("t", rec(json!({"title": "T"})), None).unwrap();
@@ -1543,7 +1549,7 @@ fn live_index_at(root: &Path) -> PathBuf {
 #[test]
 fn search_on_lexically_excluded_collection_uses_vector_leg() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(
         "fold.yaml",
         r#"
@@ -1562,12 +1568,10 @@ fields:
             (String::from("fold-vector-other"), vec![0.0, 1.0, 0.0, 0.0]),
         ],
     });
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     let collection = vault.collection("fold_docs").unwrap();
     collection
         .add("alpha", rec(json!({"title": "fold-vector-alpha"})), None)
@@ -1586,7 +1590,7 @@ fields:
 #[test]
 fn search_on_vector_excluded_collection_uses_lexical_leg() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(
         "fold.yaml",
         r#"
@@ -1600,12 +1604,10 @@ fields:
 "#,
     );
     let probe = ProbeEmbedder::new(32);
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&probe) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     let collection = vault.collection("fold_docs").unwrap();
     collection
         .add("alpha", rec(json!({"title": "kryptonite mineral"})), None)
@@ -1624,7 +1626,7 @@ fields:
 #[test]
 fn search_with_both_index_legs_excluded_is_unsupported() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(
         "fold.yaml",
         r#"
@@ -1638,7 +1640,7 @@ fields:
     string: {}
 "#,
     );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_proj(scratch.vault(), None);
     let collection = vault.collection("fold_docs").unwrap();
     collection
         .add("alpha", rec(json!({"title": "kryptonite"})), None)
@@ -1659,7 +1661,7 @@ fields:
 #[test]
 fn new_field_on_vector_excluded_collection_is_not_embedded() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(
         "fold.yaml",
         r#"
@@ -1673,12 +1675,10 @@ fields:
 "#,
     );
     let probe = ProbeEmbedder::new(32);
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&probe) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("fold_docs")
         .unwrap()
@@ -1699,12 +1699,10 @@ fields:
     string: {}
 "#,
     );
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&probe) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("fold_docs")
         .unwrap()
@@ -1785,14 +1783,12 @@ fn open_tokens_counting(scratch: &Scratch, embedder: Arc<CountingEmbedder>) -> V
 fn unchanged_record_write_does_not_embed_again() {
     let scratch = Scratch::new();
     let embedder = CountingEmbedder::new("count");
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("slot.yaml", &slot_schema("token_slot", "keep"));
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     let collection = vault.collection("token_slot").unwrap();
     collection
         .add(
@@ -1821,15 +1817,13 @@ fn unchanged_record_write_does_not_embed_again() {
 fn replacing_one_field_embeds_only_that_slot() {
     let scratch = Scratch::new();
     let embedder = CountingEmbedder::new("count");
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("a.yaml", &slot_schema("token_slot_a", "a"));
     scratch.write_schema("b.yaml", &slot_schema("token_slot_b", "b"));
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("token_slot_a")
         .unwrap()
@@ -1875,15 +1869,13 @@ fn vanished_vector_slot_is_absent_from_search() {
             (String::from("plain title"), vec![0.0, 1.0, 0.0, 0.0]),
         ],
     });
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("hit.yaml", &slot_schema("token_hit", "hit"));
     scratch.write_schema("keep.yaml", &slot_schema("token_keep", "keep"));
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("token_hit")
         .unwrap()
@@ -2032,12 +2024,10 @@ fn different_model_id_reembeds_every_slot() {
     assert_eq!(first.slots(), 2);
     drop(vault);
     let second = CountingEmbedder::new("model-b");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&second) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault.reindex().unwrap();
     assert_eq!(
         second.slots(),
@@ -2050,14 +2040,12 @@ fn different_model_id_reembeds_every_slot() {
 fn vector_digest_is_stable_across_runs() {
     let scratch = Scratch::new();
     let embedder = CountingEmbedder::new("count");
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema("slot.yaml", &slot_schema("token_slot", "keep"));
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("token_slot")
         .unwrap()

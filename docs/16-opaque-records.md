@@ -6,9 +6,9 @@ Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F1–F8 have closed; codes and
+and `search` learn columns and text. F0–F12 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F9–F19.
+This file remains the work order for F13–F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -69,7 +69,7 @@ it is unused; wiring is F12–F13.
 | [F9](#f9-document-bytes) | done | `document` I/O is bytes; path is `id` |
 | [F10](#f10-singleton-bytes) | done | `singleton` I/O is bytes; file is the declared `id` |
 | [F11](#f11-journal-envelope) | done | Journal line envelope; payload opaque |
-| [F12](#f12-projector-and-find) | not started | `Projector` wired into the lexical Index and `find` |
+| [F12](#f12-projector-and-find) | done | `Projector` wired into the lexical Index and `find` |
 | [F13](#f13-projector-and-search) | not started | BM25 / vectors from Projector slots |
 | [F14](#f14-drop-field-schema) | not started | No `Field` / edges in proto, disk, or `src/` |
 | [F15](#f15-cli) | not started | CLI `--file`; default whole-file Projector |
@@ -585,27 +585,29 @@ Close only after F10.
 
 ## F12. Projector and `find`
 
-**Status:** not started
+**Status:** done
 
 **Codes:** IDX-8 analogue for Projector, QRY-2, QRY-7, LIB-10, `13` §3.
 
-Close only after F11. Implement the trait in handwritten `src/` (not
-proto). Wire `add` / `replace` / `remove` / `reindex` / `find`.
+Close only after F11. The `Projector` trait stays handwritten in `src/`.
+`Projector.schema` returns `api.v1.IndexSchema` (`index.proto`). `IndexDoc`
+stays a Rust ingest type. Wire `add` / `replace` / `remove` / `reindex` /
+`find`.
 
-- [ ] `Projector` is exported next to `Embedder`. `open` accepts
+- [x] `Projector` is exported next to `Embedder`. `open` accepts
       `Option<Arc<dyn Projector>>` (or the binding's equivalent).
-- [ ] Tantivy schema is library identity columns plus `Projector.schema()`.
+- [x] Tantivy schema is library identity columns plus `Projector.schema()`.
       Changing Projector schema is an Index format change (`reindex`).
-- [ ] `project` runs on index, not as a write gate. Failure → omit from
+- [x] `project` runs on index, not as a write gate. Failure → omit from
       lexical Index; file remains; journal id map still updated.
-- [ ] `Filter` on a name absent from Projector schema + identity →
+- [x] `Filter` on a name absent from Projector schema + identity →
       `invalid`. Typed leaves match the declared kind (range on text is
       `invalid` unless `13` already allowed it for that Tantivy type).
-- [ ] Fixture: two Records, Projector that exposes one string column;
+- [x] Fixture: two Records, Projector that exposes one string column;
       `term` on that column hits one; `term` on `id` still hits; unknown
       column → `invalid`.
-- [ ] No Projector: `all` / `id` still work; other columns `invalid`.
-- [ ] `bazel test //...` green. Owner has reviewed the diff.
+- [x] No Projector: `all` / `id` still work; other columns `invalid`.
+- [x] `bazel test //...` green. Owner has reviewed the diff.
 
 **Review:** `Projector` + `find`. Stop. Do not wire `search` in this stage.
 

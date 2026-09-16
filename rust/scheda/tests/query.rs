@@ -37,13 +37,14 @@ impl Scratch {
     }
 
     fn init(&self) -> Vault {
-        let vault = Vault::open(self.vault(), self.options(), None).unwrap();
+        let vault =
+            Vault::open_with(self.vault(), self.options(), None, Some(query_projector())).unwrap();
         vault.begin().unwrap();
         vault
     }
 
     fn reopen(&self) -> Vault {
-        Vault::open(self.vault(), self.options(), None).unwrap()
+        Vault::open_with(self.vault(), self.options(), None, Some(query_projector())).unwrap()
     }
 
     fn write_schema(&self, file: &str, body: &str) {
@@ -71,6 +72,16 @@ const LOG: &str = include_str!("../testdata/query/log.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
+}
+
+fn query_projector() -> Arc<dyn scheda::Projector> {
+    common::json_text_projector(&[
+        "title", "tag", "secret", "project", "city", "meta", "aside", "body",
+    ])
+}
+
+fn open_query(path: impl AsRef<Path>) -> Vault {
+    Vault::open_with(path, OpenOptions::new(), None, Some(query_projector())).unwrap()
 }
 
 fn filter(value: Value) -> FindQuery {
@@ -246,9 +257,9 @@ fn vault_find_empty_names_is_all_collections() {
                 0,
                 10
             )
-            .unwrap_err()
-            .known_code(),
-        Some(Code::Invalid)
+            .unwrap()
+            .total,
+        Some(0)
     );
 }
 
@@ -314,7 +325,7 @@ fn unmarked_field_is_invalid() {
     let collection = vault.collection("query_notes").unwrap();
     let err = collection
         .find(
-            &filter(json!({"term":{"field":"secret","value":"x"}})),
+            &filter(json!({"term":{"field":"unknown","value":"x"}})),
             0,
             100,
         )
@@ -882,7 +893,7 @@ fields:
         .unwrap();
     let err = collection
         .find(
-            &filter(json!({"regex":{"field":"aside","pattern":"bamboo"}})),
+            &filter(json!({"regex":{"field":"hidden","pattern":"bamboo"}})),
             0,
             10,
         )
@@ -901,7 +912,7 @@ fn journal_rejects_body_filter() {
         .add("a", rec(json!({"tag": "one"})), None)
         .unwrap();
     let err = collection
-        .find(&filter(json!({"exists":{"field":"body"}})), 0, 10)
+        .find(&filter(json!({"exists":{"field":"payload"}})), 0, 10)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -945,7 +956,7 @@ fn reader_opened_before_reindex_keeps_find_results() {
     collection
         .add("b", rec(json!({"title": "Other"})), None)
         .unwrap();
-    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let reader = open_query(scratch.vault());
     let before = reader
         .collection("query_notes")
         .unwrap()
@@ -974,7 +985,7 @@ fn reader_opened_after_reindex_uses_new_generation() {
     writer.reindex().unwrap();
     let second = live_index(&writer);
     assert_ne!(first, second);
-    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let reader = open_query(scratch.vault());
     assert_eq!(live_index(&reader), second);
     let page = reader
         .collection("query_notes")
@@ -996,7 +1007,7 @@ fn crashed_reindex_leaves_old_generation_and_open_drops_orphan() {
     writer.reindex().unwrap();
     let live = fs::read_to_string(writer.index_dir().join("current")).unwrap();
     let live = live.trim().to_owned();
-    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let reader = open_query(scratch.vault());
     let orphan = writer.index_dir().join("99");
     fs::create_dir_all(orphan.join("lexical")).unwrap();
     fs::write(orphan.join("format"), "4\n").unwrap();
@@ -1015,7 +1026,7 @@ fn crashed_reindex_leaves_old_generation_and_open_drops_orphan() {
     );
     drop(writer);
     drop(reader);
-    let reopened = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let reopened = open_query(scratch.vault());
     assert!(
         !orphan.exists(),
         "orphan generation must be removed on open"
@@ -1109,7 +1120,7 @@ fn incremental_write_is_visible_to_handle_opened_afterwards() {
         .unwrap()
         .add("a", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let reader = open_query(scratch.vault());
     let page = reader
         .collection("query_notes")
         .unwrap()
@@ -1132,7 +1143,7 @@ fn legacy_format_3_is_index_version_until_reindex() {
     let root = scratch.vault().join(".scheda").join("index");
     let _ = fs::remove_file(root.join("current"));
     fs::write(root.join("format"), "3\n").unwrap();
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let vault = open_query(scratch.vault());
     let err = vault
         .collection("query_notes")
         .unwrap()

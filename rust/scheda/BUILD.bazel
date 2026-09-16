@@ -113,7 +113,10 @@ rust_test(
     srcs = ["tests/ann.rs"] + _TEST_COMMON,
     crate_root = "tests/ann.rs",
     visibility = ["//rust:__pkg__"],
-    deps = [":scheda"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
 )
 
 rust_test(
@@ -122,6 +125,17 @@ rust_test(
     srcs = ["tests/ops.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/ops.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "projector_test",
+    srcs = ["tests/projector.rs"] + _TEST_COMMON,
+    crate_root = "tests/projector.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",

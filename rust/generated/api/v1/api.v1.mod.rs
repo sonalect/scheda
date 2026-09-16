@@ -98,6 +98,8 @@ pub mod __buffa {
         reg.register_json_any(super::__HISTORY_JSON_ANY);
         reg.register_json_any(super::history::__ENTRY_JSON_ANY);
         reg.register_json_any(super::__REINDEX_RESULT_JSON_ANY);
+        reg.register_json_any(super::__INDEX_COLUMN_JSON_ANY);
+        reg.register_json_any(super::__INDEX_SCHEMA_JSON_ANY);
         reg.register_json_any(super::__OPEN_OPTIONS_JSON_ANY);
         reg.register_json_any(super::__SEARCH_QUERY_JSON_ANY);
         reg.register_json_any(super::__SEARCH_HITS_JSON_ANY);
@@ -181,6 +183,14 @@ pub use self::__buffa::view::HistoryOwnedView;
 pub use self::__buffa::view::ReindexResultView;
 #[doc(inline)]
 pub use self::__buffa::view::ReindexResultOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::IndexColumnView;
+#[doc(inline)]
+pub use self::__buffa::view::IndexColumnOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::IndexSchemaView;
+#[doc(inline)]
+pub use self::__buffa::view::IndexSchemaOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::OpenOptionsView;
 #[doc(inline)]

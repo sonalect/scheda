@@ -31,10 +31,10 @@ mod validate {
                 reason = "module exists to include protovalidate output"
             )]
             use crate::generated::api::v1::{
-                Author, Body, CollectionInfo, Edge, Encryption, Error, Field, Filter, FindQuery,
-                FindResult, History, Journal, Object, OpenOptions, Record, ReindexResult, Schema,
-                SearchHits, SearchQuery, Singleton, Text, Unit, VaultInfo, filter, history,
-                search_hits,
+                Author, Body, CollectionInfo, ColumnKind, Edge, Encryption, Error, Field, Filter,
+                FindQuery, FindResult, History, IndexColumn, IndexSchema, Journal, Object,
+                OpenOptions, Record, ReindexResult, Schema, SearchHits, SearchQuery, Singleton,
+                Text, Unit, VaultInfo, filter, history, search_hits,
             };
 
             pub mod __buffa {
@@ -49,7 +49,8 @@ mod validate {
                         EncryptionOwnedView, EncryptionView, ErrorOwnedView, ErrorView,
                         FieldOwnedView, FieldView, FilterOwnedView, FilterView, FindQueryOwnedView,
                         FindQueryView, FindResultOwnedView, FindResultView, HistoryOwnedView,
-                        HistoryView, JournalOwnedView, JournalView, ObjectOwnedView, ObjectView,
+                        HistoryView, IndexColumnOwnedView, IndexColumnView, IndexSchemaOwnedView,
+                        IndexSchemaView, JournalOwnedView, JournalView, ObjectOwnedView, ObjectView,
                         OpenOptionsOwnedView, OpenOptionsView, RecordOwnedView, RecordView,
                         ReindexResultOwnedView, ReindexResultView, SchemaOwnedView, SchemaView,
                         SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView, SearchQueryView,
@@ -504,6 +505,20 @@ impl api::v1::Field {
     }
 }
 
+impl api::v1::IndexSchema {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::IndexColumn {
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
 impl api::v1::history::Entry {
     /// UTC commit instant. Git `Time.seconds` is already seconds since epoch.
     #[must_use]
@@ -518,8 +533,8 @@ mod tests {
     use protovalidate_buffa::Validate;
 
     use super::api::v1::{
-        Author, Body, Encryption, Error, Field, Filter, FindQuery, Journal, OpenOptions, Record,
-        Schema, SearchQuery, history,
+        Author, Body, ColumnKind, Encryption, Error, Field, Filter, FindQuery, IndexColumn,
+        IndexSchema, Journal, OpenOptions, Record, Schema, SearchQuery, history,
     };
 
     #[test]
@@ -878,5 +893,60 @@ mod tests {
             let err = schema.require_valid().expect_err("values flag");
             assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         }
+    }
+
+    #[test]
+    fn index_schema_column_rules() {
+        assert!(IndexSchema::default().require_valid().is_ok());
+        let ok = IndexSchema {
+            columns: vec![
+                IndexColumn::default()
+                    .with_name("title")
+                    .with_kind(ColumnKind::Text)
+                    .with_find(true),
+            ],
+            ..IndexSchema::default()
+        };
+        assert!(ok.require_valid().is_ok());
+
+        let dup = IndexSchema {
+            columns: vec![
+                IndexColumn::default()
+                    .with_name("title")
+                    .with_kind(ColumnKind::Text),
+                IndexColumn::default()
+                    .with_name("title")
+                    .with_kind(ColumnKind::Integer),
+            ],
+            ..IndexSchema::default()
+        };
+        let err = dup.require_valid().expect_err("duplicate names");
+        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
+
+        let reserved = IndexSchema {
+            columns: vec![
+                IndexColumn::default()
+                    .with_name("id")
+                    .with_kind(ColumnKind::Text),
+            ],
+            ..IndexSchema::default()
+        };
+        assert!(reserved.require_valid().is_err());
+
+        let missing_kind = IndexSchema {
+            columns: vec![IndexColumn::default().with_name("title")],
+            ..IndexSchema::default()
+        };
+        assert!(missing_kind.require_valid().is_err());
+
+        let unspecified = IndexSchema {
+            columns: vec![
+                IndexColumn::default()
+                    .with_name("title")
+                    .with_kind(ColumnKind::Unspecified),
+            ],
+            ..IndexSchema::default()
+        };
+        assert!(unspecified.require_valid().is_err());
     }
 }

@@ -21,7 +21,8 @@ use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 use crate::search::{SearchEngine, marked_text};
 use crate::store;
 use crate::{
-    Embedder, Encryption, Error, History, OpenOptions, Record, ReindexResult, Schema, VaultInfo,
+    Embedder, Encryption, Error, History, OpenOptions, Projector, Record, ReindexResult, Schema,
+    VaultInfo,
 };
 #[cfg(feature = "find")]
 use crate::{Filter, FindQuery, FindResult};
@@ -67,6 +68,7 @@ pub struct Vault {
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
+    projector: Option<Arc<dyn Projector>>,
     identity: Arc<git::CommitIdentity>,
     encryption: Option<Encryption>,
     #[cfg(all(test, feature = "find"))]
@@ -89,6 +91,7 @@ pub struct Collection {
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     embedder: Option<Arc<dyn Embedder>>,
+    projector: Option<Arc<dyn Projector>>,
     identity: Arc<git::CommitIdentity>,
     encryption: Option<Encryption>,
 }
@@ -105,6 +108,11 @@ impl Vault {
     /// Without the `search` crate feature, a `Some` value fails
     /// (`index_vector`): that leg is absent. The signature is the same in
     /// every build.
+    ///
+    /// No projector: the Index holds identity only. `find` `all` and `term`
+    /// on `id` work; any other Filter field is `invalid`. `add` does not
+    /// call `project` to accept or reject the write. Same as
+    /// [`open_with`](Self::open_with) with `projector` `None`.
     ///
     /// `OpenOptions.author` is the git author and committer for every commit
     /// on this handle (main tree and `{vault}/.isolated/`). Unset `name` or
@@ -128,6 +136,24 @@ impl Vault {
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
     ) -> Result<Self, Error> {
+        Self::open_with(path, options, embedder, None)
+    }
+
+    /// Open, create, or clone a Vault, with an optional caller [`Projector`].
+    ///
+    /// Path, options, and embedder are the same as [`open`](Self::open).
+    /// Optional caller projector: `find` columns come from
+    /// [`Projector::schema`] / [`Projector::project`], not collection-declaration
+    /// fields. Without it the Index holds identity only; `find` `all` and
+    /// `term` on `id` work; any other Filter field is `invalid`. `add` does
+    /// not call `project` to accept or reject the write. Changing projector
+    /// schema is an Index format change (`index_version` until `reindex`).
+    pub fn open_with(
+        path: impl AsRef<Path>,
+        options: OpenOptions,
+        embedder: Option<Arc<dyn Embedder>>,
+        projector: Option<Arc<dyn Projector>>,
+    ) -> Result<Self, Error> {
         options.require_valid()?;
         #[cfg(not(feature = "encrypt"))]
         if options.encryption.is_set() {
@@ -146,25 +172,26 @@ impl Vault {
             }
             require_matching_origin(path, &options)?;
             let identity = git::identity_from_open(&options, path)?;
-            return Self::open_existing(path, options, embedder, identity);
+            return Self::open_existing(path, options, embedder, projector, identity);
         }
         let remote = remote_repo_url(&options).map(str::to_owned);
         if let Some(url) = remote {
-            return Self::clone_into(&url, path, options, embedder);
+            return Self::clone_into(&url, path, options, embedder, projector);
         }
-        Self::init_at(path, options, embedder)
+        Self::init_at(path, options, embedder, projector)
     }
 
     fn init_at(
         path: &Path,
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
+        projector: Option<Arc<dyn Projector>>,
     ) -> Result<Self, Error> {
         prepare_new_work_tree(path)?;
         git::init(path)?;
         let identity = git::identity_from_open(&options, path)?;
         commit_gitignore_if_needed(path, &identity)?;
-        Self::open_existing(path, options, embedder, identity)
+        Self::open_existing(path, options, embedder, projector, identity)
     }
 
     fn clone_into(
@@ -172,6 +199,7 @@ impl Vault {
         path: &Path,
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
+        projector: Option<Arc<dyn Projector>>,
     ) -> Result<Self, Error> {
         let url = url.trim();
         if url.is_empty() {
@@ -181,13 +209,20 @@ impl Vault {
         git::clone(url, path)?;
         let identity = git::identity_from_open(&options, path)?;
         commit_gitignore_if_needed(path, &identity)?;
-        Self::open_existing(path, without_remote_repo(options), embedder, identity)
+        Self::open_existing(
+            path,
+            without_remote_repo(options),
+            embedder,
+            projector,
+            identity,
+        )
     }
 
     fn open_existing(
         path: &Path,
         options: OpenOptions,
         embedder: Option<Arc<dyn Embedder>>,
+        projector: Option<Arc<dyn Projector>>,
         identity: git::CommitIdentity,
     ) -> Result<Self, Error> {
         #[cfg(not(feature = "search"))]
@@ -224,7 +259,7 @@ impl Vault {
         )?);
         let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
         #[cfg(feature = "find")]
-        let search = Arc::new(SearchEngine::open(&generation, false)?);
+        let search = Arc::new(SearchEngine::open(&generation, false, projector.clone())?);
         let encryption = options.encryption.as_option().cloned();
         let vault = Self {
             path,
@@ -240,6 +275,7 @@ impl Vault {
             #[cfg(feature = "find")]
             search,
             embedder,
+            projector,
             identity: Arc::new(identity),
             encryption,
             #[cfg(all(test, feature = "find"))]
@@ -376,6 +412,7 @@ impl Vault {
             #[cfg(feature = "find")]
             search: Arc::clone(&self.search),
             embedder: self.embedder.clone(),
+            projector: self.projector.clone(),
             identity: Arc::clone(&self.identity),
             encryption: self.encryption.clone(),
         })
@@ -393,6 +430,9 @@ impl Vault {
     /// a collection; two Records in different collections that share both
     /// score and `ord` stay unordered relative to each other. One `journal`
     /// collection uses append order instead.
+    ///
+    /// Filter field names are [`Projector`] find-columns plus identity `id`.
+    /// Without a projector, only `all` and Filter on `id` are valid.
     #[cfg(feature = "find")]
     pub fn find(
         &self,
@@ -407,6 +447,7 @@ impl Vault {
             schema: &schema,
             vault: &self.path,
             journal_ids: &self.journal_ids,
+            projector: self.projector.as_deref(),
         }
         .find(collections, query, offset, count)
     }
@@ -453,6 +494,7 @@ impl Vault {
             schema: &schema,
             vault: &self.path,
             journal_ids: &self.journal_ids,
+            projector: self.projector.as_deref(),
         }
         .search(self.embedder.as_deref(), collections, query, reranker)
     }
@@ -918,7 +960,7 @@ impl Vault {
         let counts = {
             let hook = self.walk_hook();
             let hook_ref = hook.as_deref();
-            let rebuilder = SearchEngine::open(&new_dir, true)?;
+            let rebuilder = SearchEngine::open(&new_dir, true, self.projector.clone())?;
             let walk = rebuilder.rebuild_online(
                 &self.path,
                 &schema,
@@ -1292,7 +1334,7 @@ impl Vault {
                 crate::search::copy_vector_dump(&previous, &new_dir, self.embedder.as_deref())?;
             }
             index::rebuild(&self.path, &schema, &new_dir)?;
-            let rebuilder = SearchEngine::open(&new_dir, true)?;
+            let rebuilder = SearchEngine::open(&new_dir, true, self.projector.clone())?;
             rebuilder.rebuild_online(&self.path, &schema, self.embedder.as_deref(), None)?;
             drop(rebuilder);
             Ok(new_dir)
@@ -1305,6 +1347,7 @@ impl std::fmt::Debug for Vault {
         f.debug_struct("Vault")
             .field("path", &self.path)
             .field("index_dir", &self.index.root)
+            .field("has_projector", &self.projector.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -1313,6 +1356,7 @@ impl std::fmt::Debug for Collection {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Collection")
             .field("name", &self.decl.name)
+            .field("has_projector", &self.projector.is_some())
             .finish_non_exhaustive()
     }
 }
@@ -1381,6 +1425,7 @@ impl Collection {
             #[cfg(feature = "find")]
             search: Arc::new(SearchEngine::empty()),
             embedder: None,
+            projector: None,
             identity: Arc::new(git::CommitIdentity::fallback()),
             encryption: None,
         }
@@ -1972,6 +2017,9 @@ impl Collection {
     /// a collection; two Records in different collections that share both
     /// score and `ord` stay unordered relative to each other. One `journal`
     /// collection uses append order instead.
+    ///
+    /// Filter field names are [`Projector`] find-columns plus identity `id`.
+    /// Without a projector, only `all` and Filter on `id` are valid.
     #[cfg(feature = "find")]
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
         if self.decl.encrypted {
@@ -1992,6 +2040,7 @@ impl Collection {
             schema: &self.schema,
             vault: &self.vault,
             journal_ids: &self.journal_ids,
+            projector: self.projector.as_deref(),
         }
         .find(&[name], query, offset, count)
     }
@@ -2036,6 +2085,7 @@ impl Collection {
             schema: &self.schema,
             vault: &self.vault,
             journal_ids: &self.journal_ids,
+            projector: self.projector.as_deref(),
         }
         .search(self.embedder.as_deref(), &[name], query, reranker)
     }
@@ -2248,16 +2298,17 @@ fn apply_filter_schema(
     decls: Vec<schema::CollectionDecl>,
     filter: &Filter,
     explicit: bool,
+    projector: Option<&dyn crate::Projector>,
 ) -> Result<Vec<schema::CollectionDecl>, Error> {
     if explicit {
         for decl in &decls {
-            query::validate(decl, filter)?;
+            query::validate(decl, filter, projector)?;
         }
         return Ok(decls);
     }
     Ok(decls
         .into_iter()
-        .filter(|decl| query::validate(decl, filter).is_ok())
+        .filter(|decl| query::validate(decl, filter, projector).is_ok())
         .collect())
 }
 
@@ -2332,6 +2383,7 @@ struct QueryCtx<'a> {
     schema: &'a LoadedSchema,
     vault: &'a Path,
     journal_ids: &'a Mutex<JournalIdMaps>,
+    projector: Option<&'a dyn crate::Projector>,
 }
 
 #[cfg(feature = "find")]
@@ -2350,8 +2402,12 @@ impl QueryCtx<'_> {
         let filter = &*query.filter;
         let include_raw = query.include_raw == Some(true);
         let explicit = !names.is_empty();
-        let decls =
-            apply_filter_schema(resolve_collections(self.schema, names)?, filter, explicit)?;
+        let decls = apply_filter_schema(
+            resolve_collections(self.schema, names)?,
+            filter,
+            explicit,
+            self.projector,
+        )?;
         if decls.is_empty() {
             return Ok(FindResult {
                 total: Some(0),
@@ -2401,7 +2457,7 @@ impl QueryCtx<'_> {
         let filter = &*query.filter;
         let mut decls = resolve_search_collections(self.schema, names)?;
         if filter.kind.is_some() {
-            decls = apply_filter_schema(decls, filter, explicit)?;
+            decls = apply_filter_schema(decls, filter, explicit, self.projector)?;
         }
         if decls.is_empty() {
             return Ok(SearchHits::default());

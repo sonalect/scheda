@@ -307,3 +307,651 @@ impl ::serde::Serialize for ReindexResultOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
+/// One column in a Projector schema.
+#[derive(Clone, Debug, Default)]
+pub struct IndexColumnView<'a> {
+    /// Filter field name. Not empty, not `id` or `collection`.
+    ///
+    /// Field 1: `name`
+    pub name: ::core::option::Option<&'a str>,
+    /// Declared value kind. Not `COLUMN_KIND_UNSPECIFIED`.
+    ///
+    /// Field 2: `kind`
+    pub kind: ::core::option::Option<::buffa::EnumValue<super::super::ColumnKind>>,
+    /// Whether this column is a `find` / Filter key.
+    ///
+    /// Field 3: `find`
+    pub find: ::core::option::Option<bool>,
+    /// Whether this column is a BM25 slot.
+    ///
+    /// Field 4: `fts`
+    pub fts: ::core::option::Option<bool>,
+    /// Whether this column is a vector slot.
+    ///
+    /// Field 5: `vector`
+    pub vector: ::core::option::Option<bool>,
+    pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+}
+impl<'a> ::buffa::MessageView<'a> for IndexColumnView<'a> {
+    type Owned = super::super::IndexColumn;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.name = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.kind = Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(&mut cur)?),
+                );
+            }
+            3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.find = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.fts = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
+            5u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.vector = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                let span_len = before_tag.len() - cur.len();
+                view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::IndexColumn, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::IndexColumn, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::IndexColumn {
+            name: self.name.map(|s| s.to_string()),
+            kind: self.kind,
+            find: self.find,
+            fts: self.fts,
+            vector: self.vector,
+            __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for IndexColumnView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.name {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.kind {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
+        if self.find.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        if self.fts.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        if self.vector.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.name {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.kind {
+            ::buffa::types::put_int32_field(2u32, v.to_i32(), buf);
+        }
+        if let Some(v) = self.find {
+            ::buffa::types::put_bool_field(3u32, v, buf);
+        }
+        if let Some(v) = self.fts {
+            ::buffa::types::put_bool_field(4u32, v, buf);
+        }
+        if let Some(v) = self.vector {
+            ::buffa::types::put_bool_field(5u32, v, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+}
+/// Serializes this view as protobuf JSON.
+///
+/// Implicit-presence fields with default values are omitted, `required`
+/// fields are always emitted, explicit-presence (`optional`) fields are
+/// emitted only when set, bytes fields are base64-encoded, and enum
+/// values are their proto name strings.
+///
+/// This impl uses `serialize_map(None)` because the number of emitted
+/// fields depends on default-omission rules; serializers that require
+/// known map lengths (e.g. `bincode`) will return a runtime error.
+/// Use the owned message type for those formats.
+impl<'__a> ::serde::Serialize for IndexColumnView<'__a> {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        use ::serde::ser::SerializeMap as _;
+        let mut __map = __s.serialize_map(::core::option::Option::None)?;
+        if let ::core::option::Option::Some(__v) = self.name {
+            __map.serialize_entry("name", __v)?;
+        }
+        if let ::core::option::Option::Some(ref __v) = self.kind {
+            __map.serialize_entry("kind", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.find {
+            __map.serialize_entry("find", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.fts {
+            __map.serialize_entry("fts", &__v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.vector {
+            __map.serialize_entry("vector", &__v)?;
+        }
+        __map.end()
+    }
+}
+impl<'a> ::buffa::MessageName for IndexColumnView<'a> {
+    const PACKAGE: &'static str = "api.v1";
+    const NAME: &'static str = "IndexColumn";
+    const FULL_NAME: &'static str = "api.v1.IndexColumn";
+    const TYPE_URL: &'static str = "type.googleapis.com/api.v1.IndexColumn";
+}
+::buffa::impl_default_view_instance!(IndexColumnView);
+::buffa::impl_view_reborrow!(IndexColumnView);
+/** Self-contained, `'static` owned view of a `IndexColumn` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`IndexColumnView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`IndexColumnView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct IndexColumnOwnedView(::buffa::OwnedView<IndexColumnView<'static>>);
+impl IndexColumnOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            IndexColumnOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            IndexColumnOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::IndexColumn,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            IndexColumnOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`IndexColumnView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &IndexColumnView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::IndexColumn {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// Filter field name. Not empty, not `id` or `collection`.
+    ///
+    /// Field 1: `name`
+    #[must_use]
+    pub fn name(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().name
+    }
+    /// Declared value kind. Not `COLUMN_KIND_UNSPECIFIED`.
+    ///
+    /// Field 2: `kind`
+    #[must_use]
+    pub fn kind(
+        &self,
+    ) -> ::core::option::Option<::buffa::EnumValue<super::super::ColumnKind>> {
+        self.0.reborrow().kind
+    }
+    /// Whether this column is a `find` / Filter key.
+    ///
+    /// Field 3: `find`
+    #[must_use]
+    pub fn find(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().find
+    }
+    /// Whether this column is a BM25 slot.
+    ///
+    /// Field 4: `fts`
+    #[must_use]
+    pub fn fts(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().fts
+    }
+    /// Whether this column is a vector slot.
+    ///
+    /// Field 5: `vector`
+    #[must_use]
+    pub fn vector(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().vector
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<IndexColumnView<'static>>>
+for IndexColumnOwnedView {
+    fn from(inner: ::buffa::OwnedView<IndexColumnView<'static>>) -> Self {
+        IndexColumnOwnedView(inner)
+    }
+}
+impl ::core::convert::From<IndexColumnOwnedView>
+for ::buffa::OwnedView<IndexColumnView<'static>> {
+    fn from(wrapper: IndexColumnOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<IndexColumnView<'static>>>
+for IndexColumnOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<IndexColumnView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::IndexColumn {
+    type View<'a> = IndexColumnView<'a>;
+    type ViewHandle = IndexColumnOwnedView;
+}
+impl ::serde::Serialize for IndexColumnOwnedView {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        ::serde::Serialize::serialize(&self.0, __s)
+    }
+}
+/// Columns `Projector.schema` exposes for one collection.
+#[derive(Clone, Debug, Default)]
+pub struct IndexSchemaView<'a> {
+    /// Column declarations, in projector order. Names must be unique.
+    ///
+    /// Field 1: `columns`
+    pub columns: ::buffa::RepeatedView<
+        'a,
+        super::super::__buffa::view::IndexColumnView<'a>,
+    >,
+    pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+}
+impl<'a> ::buffa::MessageView<'a> for IndexSchemaView<'a> {
+    type Owned = super::super::IndexSchema;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                let __sub_ctx = ctx.descend()?;
+                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
+                ctx.register_element_memory(
+                    ::core::mem::size_of::<
+                        super::super::__buffa::view::IndexColumnView,
+                    >(),
+                )?;
+                view.columns
+                    .push(
+                        <super::super::__buffa::view::IndexColumnView as ::buffa::MessageView>::decode_view_ctx(
+                            sub,
+                            __sub_ctx,
+                        )?,
+                    );
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                let span_len = before_tag.len() - cur.len();
+                view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::IndexSchema, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::IndexSchema, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::IndexSchema {
+            columns: self
+                .columns
+                .iter()
+                .map(|v| v.to_owned_from_source(__buffa_src))
+                .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
+            __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for IndexSchemaView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        for v in &self.columns {
+            let __slot = __cache.reserve();
+            let inner_size = v.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        __cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        for v in &self.columns {
+            ::buffa::types::put_len_delimited_header(
+                1u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            v.write_to(__cache, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+}
+/// Serializes this view as protobuf JSON.
+///
+/// Implicit-presence fields with default values are omitted, `required`
+/// fields are always emitted, explicit-presence (`optional`) fields are
+/// emitted only when set, bytes fields are base64-encoded, and enum
+/// values are their proto name strings.
+///
+/// This impl uses `serialize_map(None)` because the number of emitted
+/// fields depends on default-omission rules; serializers that require
+/// known map lengths (e.g. `bincode`) will return a runtime error.
+/// Use the owned message type for those formats.
+impl<'__a> ::serde::Serialize for IndexSchemaView<'__a> {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        use ::serde::ser::SerializeMap as _;
+        let mut __map = __s.serialize_map(::core::option::Option::None)?;
+        if !self.columns.is_empty() {
+            __map.serialize_entry("columns", &*self.columns)?;
+        }
+        __map.end()
+    }
+}
+impl<'a> ::buffa::MessageName for IndexSchemaView<'a> {
+    const PACKAGE: &'static str = "api.v1";
+    const NAME: &'static str = "IndexSchema";
+    const FULL_NAME: &'static str = "api.v1.IndexSchema";
+    const TYPE_URL: &'static str = "type.googleapis.com/api.v1.IndexSchema";
+}
+::buffa::impl_default_view_instance!(IndexSchemaView);
+::buffa::impl_view_reborrow!(IndexSchemaView);
+/** Self-contained, `'static` owned view of a `IndexSchema` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`IndexSchemaView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`IndexSchemaView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct IndexSchemaOwnedView(::buffa::OwnedView<IndexSchemaView<'static>>);
+impl IndexSchemaOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            IndexSchemaOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            IndexSchemaOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::IndexSchema,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            IndexSchemaOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`IndexSchemaView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &IndexSchemaView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::IndexSchema {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// Column declarations, in projector order. Names must be unique.
+    ///
+    /// Field 1: `columns`
+    #[must_use]
+    pub fn columns(
+        &self,
+    ) -> &::buffa::RepeatedView<'_, super::super::__buffa::view::IndexColumnView<'_>> {
+        &self.0.reborrow().columns
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<IndexSchemaView<'static>>>
+for IndexSchemaOwnedView {
+    fn from(inner: ::buffa::OwnedView<IndexSchemaView<'static>>) -> Self {
+        IndexSchemaOwnedView(inner)
+    }
+}
+impl ::core::convert::From<IndexSchemaOwnedView>
+for ::buffa::OwnedView<IndexSchemaView<'static>> {
+    fn from(wrapper: IndexSchemaOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<IndexSchemaView<'static>>>
+for IndexSchemaOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<IndexSchemaView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::IndexSchema {
+    type View<'a> = IndexSchemaView<'a>;
+    type ViewHandle = IndexSchemaOwnedView;
+}
+impl ::serde::Serialize for IndexSchemaOwnedView {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        ::serde::Serialize::serialize(&self.0, __s)
+    }
+}
