@@ -40,7 +40,8 @@ pub(crate) fn scratch_root(prefix: &str, n: u64) -> PathBuf {
     root
 }
 
-/// Test projector: named JSON object keys as find `Text` columns.
+/// Test projector: named JSON object keys as find + fts + vector `Text`
+/// columns.
 ///
 /// Walks nested objects so a column such as `city` under `meta` is found.
 /// Non-JSON or a non-object root yields an empty [`IndexDoc`].
@@ -65,6 +66,8 @@ impl Projector for JsonTextProjector {
                         .with_name(name.clone())
                         .with_kind(ColumnKind::Text)
                         .with_find(true)
+                        .with_fts(true)
+                        .with_vector(true)
                 })
                 .collect(),
             ..IndexSchema::default()

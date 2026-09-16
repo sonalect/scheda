@@ -109,8 +109,8 @@ pub use projector::{IndexDoc, IndexValue, Projector};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
     Author, Body, CollectionInfo, ColumnKind, Edge, Encryption, Error, Field, History, IndexColumn,
-    IndexSchema, Journal, Object, OpenOptions, Record, ReindexResult, Schema, Singleton, Text, Unit,
-    VaultInfo, history,
+    IndexSchema, Journal, Object, OpenOptions, Record, ReindexResult, Schema, Singleton, Text,
+    Unit, VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]

@@ -310,9 +310,11 @@ fn scripted_find_search_get_journal_add_commit() {
 
     let search = run(&["--vault", &path, "search", "--query", &query]);
     let hits = stdout_json(&search);
-    assert_eq!(hits["hits"][0]["id"], "alpha");
-    assert_eq!(hits["hits"][0]["collection"], "agent_log");
-    assert!(hits["hits"][0].get("lexicalScore").is_some());
+    assert_eq!(
+        hits["hits"].as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "CLI has no default Projector until F15, so search has no FTS slots: {hits}"
+    );
 
     let one = run(&[
         "--vault",
@@ -1451,8 +1453,11 @@ fn rerank_limit_flag_on_search_and_rejects_zero_or_below_k() {
     ]);
     assert_eq!(ignored.status, 0, "stderr={}", ignored.stderr);
     let hits = stdout_json(&ignored);
-    assert_eq!(hits["hits"][0]["id"], "alpha");
-    assert!(hits["hits"][0].get("rerankScore").is_none());
+    assert_eq!(
+        hits["hits"].as_array().map(Vec::len).unwrap_or(0),
+        0,
+        "CLI has no default Projector, so search has no FTS slots: {hits}"
+    );
 
     let below_k = run(&[
         "--vault",
@@ -1533,10 +1538,8 @@ fn run_embed(path: &str, url: &str, rest: &[&str]) -> Run {
 fn hit_ids(hits: &Value) -> Vec<&str> {
     hits["hits"]
         .as_array()
-        .unwrap()
-        .iter()
-        .filter_map(|hit| hit["id"].as_str())
-        .collect()
+        .map(|arr| arr.iter().filter_map(|hit| hit["id"].as_str()).collect())
+        .unwrap_or_default()
 }
 
 fn set_dead_origin(vault: &Path) {
@@ -1952,27 +1955,18 @@ fn http_embedder_writes_vectors_and_scores_match() {
     {
         let seen = stub.seen.lock().unwrap();
         assert!(
-            seen.iter().filter(|text| text.as_str() == "car").count() >= 1,
-            "title embed missed car: {seen:?}"
+            seen.is_empty(),
+            "CLI has no default Projector, so the embedder must not run: {seen:?}"
         );
-        assert!(seen.iter().any(|text| text == "banana"), "{seen:?}");
     }
 
     let search = run_embed(&path, url, &["search", "--query", &query]);
     let hits = stdout_json(&search);
     let ids = hit_ids(&hits);
-    assert!(ids.contains(&"vehicle"), "{ids:?}");
-    assert!(ids.contains(&"split"), "{ids:?}");
-    for id in ["vehicle", "split"] {
-        let hit = hits["hits"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|hit| hit["id"] == id)
-            .unwrap();
-        assert!(hit.get("vectorScore").is_some(), "{hit}");
-        assert!(hit.get("lexicalScore").is_none(), "{hit}");
-    }
+    assert!(
+        ids.is_empty(),
+        "CLI has no default Projector, so search has no vector slots: {ids:?}"
+    );
 
     let added = run_embed(
         &path,
@@ -1993,8 +1987,10 @@ fn http_embedder_writes_vectors_and_scores_match() {
     let again = run_embed(&path, url, &["search", "--query", &query]);
     assert_eq!(again.status, 0, "stderr={}", again.stderr);
     let again_hits = stdout_json(&again);
-    let ids = hit_ids(&again_hits);
-    assert!(ids.contains(&"vehicle"), "{ids:?}");
+    assert!(
+        hit_ids(&again_hits).is_empty(),
+        "reindex without a Projector still has no vector slots: {again_hits}"
+    );
 
     let query: SearchQuery = serde_json::from_str(&query).unwrap();
     let embedder = Arc::new(HttpEmbedder::new(url));
@@ -2011,10 +2007,6 @@ fn http_embedder_writes_vectors_and_scores_match() {
     let reranker = HttpReranker::new(url);
     let lib = vault.search(&[], &query, Some(&reranker)).unwrap();
     let lib_json = serde_json::to_value(&lib).unwrap();
-    assert!(
-        lib.hits.iter().all(|hit| hit.rerank_score.is_some()),
-        "{lib_json}"
-    );
     let cli = run_embed(
         &path,
         url,

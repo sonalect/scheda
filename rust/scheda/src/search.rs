@@ -1048,7 +1048,11 @@ impl SearchEngine {
         let lexical_weight = query.lexical_weight.unwrap_or(1.0);
         let vector_weight = query.vector_weight.unwrap_or(1.0);
         let pool = fusion_pool(k, query.rerank_limit.filter(|_| has_reranker));
-        let query_vec = if vector_weight > 0.0 && !vector_names.is_empty() {
+        let vector_on = self.projector.is_some()
+            && vector_weight > 0.0
+            && !vector_names.is_empty()
+            && projector_has_vector_column(self.projector.as_deref(), decls);
+        let query_vec = if vector_on {
             match embedder {
                 Some(embedder) => Some(embedder.embed_query(text)?),
                 None => None,
@@ -1062,7 +1066,7 @@ impl SearchEngine {
             } else {
                 Vec::new()
             };
-            let vector_hits = if vector_weight > 0.0 && !vector_names.is_empty() {
+            let vector_hits = if vector_on {
                 vector_search(
                     inner,
                     &vector_names,
@@ -1266,7 +1270,23 @@ fn embed_changed_slots(
     if !decl.vector_indexed() {
         return Ok(VectorBatch::empty());
     }
-    let pieces = field_vector_texts(decl, record)?;
+    let Some(projector) = engine.projector.as_deref() else {
+        return Ok(VectorBatch::empty());
+    };
+    let schema = match projector.schema(&decl.name) {
+        Ok(schema) => {
+            schema.require_valid()?;
+            schema
+        }
+        Err(_) => return Ok(VectorBatch::empty()),
+    };
+    let raw = record.raw.as_deref().unwrap_or(&[]);
+    let id = record.id.as_deref().unwrap_or("");
+    let doc = match projector.project(&decl.name, id, raw) {
+        Ok(doc) if !doc.values.is_empty() => doc,
+        _ => return Ok(VectorBatch::empty()),
+    };
+    let pieces = projector::vector_pieces(&schema, &doc);
     let to_embed = {
         let inner = crate::error::rw_read(&engine.inner, "[SearchEngine] lock vector store")?;
         slots_needing_embed(
@@ -1307,7 +1327,6 @@ fn upsert_record(
     let Some(id) = record.id.as_deref().filter(|id| !id.is_empty()) else {
         return Ok(());
     };
-    let (fts_text, _vector_text) = marked_text(decl, record)?;
     let raw = match record.raw.as_deref() {
         Some(raw) => raw,
         None => &[],
@@ -1329,6 +1348,20 @@ fn upsert_record(
         let _ = (embedder, batch);
         return Ok(());
     }
+    let find_schema = match projector {
+        Some(projector) => match projector.schema(&decl.name) {
+            Ok(schema) => {
+                schema.require_valid()?;
+                Some(schema)
+            }
+            Err(_) => None,
+        },
+        None => None,
+    };
+    let fts_text = match (projected.as_ref(), find_schema.as_ref()) {
+        (Some(doc), Some(schema)) => projector::fts_blob(schema, doc),
+        _ => String::new(),
+    };
     if decl.lexical_indexed() {
         forget_source(&mut inner.edges, &decl.name, id);
         add_edges(&mut inner.edges, decl, record)?;
@@ -1344,16 +1377,6 @@ fn upsert_record(
                 .next_ord
                 .insert(decl.name.clone(), ord.saturating_add(1));
             if let Some(lexical) = inner.lexical.as_mut() {
-                let find_schema = match projector {
-                    Some(projector) => match projector.schema(&decl.name) {
-                        Ok(schema) => {
-                            schema.require_valid()?;
-                            Some(schema)
-                        }
-                        Err(_) => None,
-                    },
-                    None => None,
-                };
                 index_lexical(
                     lexical,
                     decl,
@@ -1368,9 +1391,14 @@ fn upsert_record(
         }
         #[cfg(feature = "search")]
         if decl.vector_indexed()
+            && projector.is_some()
             && let Some(embedder) = embedder
         {
-            upsert_vector(inner, embedder, decl, record, batch)?;
+            let names = find_schema
+                .as_ref()
+                .map(projector::vector_slot_names)
+                .unwrap_or_default();
+            upsert_vector(inner, embedder, decl, record, batch, &names)?;
             inner.dirty = true;
         }
     }
@@ -1773,6 +1801,7 @@ fn upsert_vector(
     decl: &CollectionDecl,
     record: &Record,
     batch: &VectorBatch,
+    vector_names: &BTreeSet<String>,
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref() else {
         return Ok(());
@@ -1854,7 +1883,7 @@ fn upsert_vector(
         }
     }
     refresh_field_ids(store);
-    store.field_ids.extend(vector_slots(decl));
+    store.field_ids.extend(vector_names.iter().cloned());
     Ok(())
 }
 
@@ -1881,68 +1910,25 @@ fn embed_field_vectors(
 }
 
 #[cfg(feature = "search")]
-fn field_vector_texts(
-    decl: &CollectionDecl,
-    record: &Record,
-) -> Result<Vec<(String, String)>, Error> {
-    let values = store::fields_from_record(decl, record)?;
-    let mut out = Vec::new();
-    collect_vector_texts(&decl.fields, &values, &mut out);
-    Ok(out)
-}
-
-#[cfg(feature = "search")]
-fn collect_vector_texts(
-    decls: &[FieldDecl],
-    values: &serde_json::Map<String, Value>,
-    out: &mut Vec<(String, String)>,
-) {
-    for field in decls {
-        if field.vector
-            && let Some(value) = values.get(&field.name)
-        {
-            let mut parts = Vec::new();
-            push_strings(value, &mut parts);
-            if !parts.is_empty() {
-                out.push((field.name.clone(), parts.join("\n")));
-            }
+fn projector_has_vector_column(
+    projector: Option<&dyn crate::Projector>,
+    decls: &[CollectionDecl],
+) -> bool {
+    let Some(projector) = projector else {
+        return false;
+    };
+    decls.iter().any(|decl| {
+        if !decl.vector_indexed() {
+            return false;
         }
-        match values.get(&field.name) {
-            Some(Value::Object(map)) => collect_vector_texts(&field.fields, map, out),
-            Some(Value::Array(items)) => {
-                for item in items {
-                    if let Some(map) = item.as_object() {
-                        collect_vector_texts(&field.fields, map, out);
-                    }
-                }
-            }
-            _ => {}
+        match projector.schema(&decl.name) {
+            Ok(schema) => schema
+                .columns
+                .iter()
+                .any(|column| column.vector.unwrap_or(false)),
+            Err(_) => false,
         }
-    }
-}
-
-#[cfg(feature = "search")]
-fn vector_slots(decl: &CollectionDecl) -> BTreeSet<String> {
-    let mut slots = BTreeSet::new();
-    collect_vector_slots(&decl.fields, &mut slots);
-    if let Some(body) = &decl.body
-        && body.vector
-    {
-        slots.insert(body.field_id.clone());
-    }
-    slots
-}
-
-#[cfg(feature = "search")]
-fn collect_vector_slots(fields: &[FieldDecl], slots: &mut BTreeSet<String>) {
-    for field in fields {
-        if field.vector
-            && let Some(id) = &field.field_id
-        {
-            slots.insert(id.clone());
-        }
-        collect_vector_slots(&field.fields, slots);
-    }
+    })
 }
 
 /// Depth each Index leg retrieves, and the fused list length, before any
@@ -2566,60 +2552,6 @@ fn collect_edges(
             }
             _ => {}
         }
-    }
-}
-
-pub(crate) fn marked_text(
-    decl: &CollectionDecl,
-    record: &Record,
-) -> Result<(String, String), Error> {
-    let fields = store::fields_from_record(decl, record)?;
-    let mut fts = Vec::new();
-    let mut vector = Vec::new();
-    collect_marked(&decl.fields, &fields, &mut fts, &mut vector);
-    Ok((fts.join("\n"), vector.join("\n")))
-}
-
-fn collect_marked(
-    decls: &[FieldDecl],
-    values: &serde_json::Map<String, Value>,
-    fts: &mut Vec<String>,
-    vector: &mut Vec<String>,
-) {
-    for field in decls {
-        if let Some(value) = values.get(&field.name) {
-            if field.fts {
-                push_strings(value, fts);
-            }
-            if field.vector {
-                push_strings(value, vector);
-            }
-            match value {
-                Value::Object(map) => collect_marked(&field.fields, map, fts, vector),
-                Value::Array(items) => {
-                    for item in items {
-                        if let Some(map) = item.as_object() {
-                            collect_marked(&field.fields, map, fts, vector);
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-}
-
-fn push_strings(value: &Value, out: &mut Vec<String>) {
-    match value {
-        Value::String(text) if !text.is_empty() => out.push(text.clone()),
-        Value::Array(items) => {
-            for item in items {
-                if let Some(text) = item.as_str().filter(|text| !text.is_empty()) {
-                    out.push(text.to_owned());
-                }
-            }
-        }
-        _ => {}
     }
 }
 

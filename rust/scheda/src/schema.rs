@@ -258,8 +258,6 @@ pub(crate) struct BodyDecl {
     pub allowed: bool,
     pub fts: bool,
     pub vector: bool,
-    #[cfg(feature = "search")]
-    pub field_id: String,
 }
 
 #[derive(Clone, Debug)]
@@ -271,8 +269,6 @@ pub(crate) struct FieldDecl {
     pub filter: bool,
     pub fts: bool,
     pub vector: bool,
-    #[cfg(feature = "search")]
-    pub field_id: Option<String>,
     pub edge: Option<EdgeDecl>,
     pub default: Option<serde_json::Value>,
     pub fields: Vec<FieldDecl>,
@@ -529,8 +525,6 @@ fn finish_collection(raw: RawCollection, path: &Path) -> Result<CollectionDecl, 
             allowed: true,
             fts: true,
             vector: true,
-            #[cfg(feature = "search")]
-            field_id: String::from("body"),
         }),
         (Kind::Document, Some(body)) => Some(finish_body(body)),
         (_, None) => None,
@@ -565,8 +559,6 @@ fn finish_body(raw: RawBody) -> BodyDecl {
         allowed: raw.allowed.unwrap_or(true),
         fts: !raw.exclude_fts,
         vector: !raw.exclude_vector,
-        #[cfg(feature = "search")]
-        field_id: String::from("body"),
     }
 }
 
@@ -640,8 +632,6 @@ fn finish_fields_as(
                 (type_, Vec::new(), None, Some(edge), fts, vector)
             }
         };
-        #[cfg(feature = "search")]
-        let field_id = vector.then(|| field.name.clone());
         out.push(FieldDecl {
             name: field.name,
             type_,
@@ -650,8 +640,6 @@ fn finish_fields_as(
             filter: !field.exclude_find,
             fts,
             vector,
-            #[cfg(feature = "search")]
-            field_id,
             edge,
             default: field.default,
             fields: nested,
@@ -1094,8 +1082,6 @@ fn body_from_proto(body: &Body) -> BodyDecl {
         allowed: !body.no_body.unwrap_or(false),
         fts: !exclude_fts,
         vector: !exclude_vector,
-        #[cfg(feature = "search")]
-        field_id: String::from("body"),
     }
 }
 
@@ -1193,8 +1179,6 @@ fn fields_from_proto_as(fields: &[Field], role: NameRole) -> Result<Vec<FieldDec
             }
             None => bail!(Error::invalid(format!("schema: field {name} has no spec"))),
         };
-        #[cfg(feature = "search")]
-        let field_id = vector.then(|| name.to_owned());
         out.push(FieldDecl {
             name: name.to_owned(),
             type_,
@@ -1203,8 +1187,6 @@ fn fields_from_proto_as(fields: &[Field], role: NameRole) -> Result<Vec<FieldDec
             filter: !field.exclude_find.unwrap_or(false),
             fts,
             vector,
-            #[cfg(feature = "search")]
-            field_id,
             edge,
             default,
             fields: nested,
@@ -1721,13 +1703,9 @@ mod tests {
         assert!(body.allowed);
         assert!(body.fts);
         assert!(body.vector);
-        #[cfg(feature = "search")]
-        assert_eq!(body.field_id, "body");
         assert!(decl.filter_keys.contains("body"));
         assert!(decl.fields[0].fts);
         assert!(decl.fields[0].vector);
-        #[cfg(feature = "search")]
-        assert_eq!(decl.fields[0].field_id.as_deref(), Some("title"));
         assert!(!decl.fields[1].fts);
         assert!(!decl.fields[1].vector);
     }

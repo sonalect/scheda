@@ -250,10 +250,20 @@ impl Embedder for LatchEmbedder {
     }
 }
 
+fn open_proj(path: impl AsRef<std::path::Path>, embedder: Option<Arc<dyn Embedder>>) -> Vault {
+    Vault::open_with(
+        path,
+        OpenOptions::new(),
+        embedder,
+        Some(common::json_text_projector(&["title", "tag"])),
+    )
+    .unwrap()
+}
+
 fn open_tokens(scratch: &Scratch, embedder: Option<Arc<dyn Embedder>>) -> Vault {
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(TOKENS);
-    Vault::open(scratch.vault(), OpenOptions::new(), embedder).unwrap()
+    open_proj(scratch.vault(), embedder)
 }
 
 #[test]
@@ -268,13 +278,11 @@ fn writer_during_rebuild_is_found_and_searched_after_publish() {
         .unwrap();
     drop(vault);
     let latch = LatchEmbedder::new("model-b");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
-    )
-    .unwrap();
-    let other = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    );
+    let other = open_proj(scratch.vault(), None);
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
@@ -292,12 +300,10 @@ fn writer_during_rebuild_is_found_and_searched_after_publish() {
     assert_eq!(ids, ["fresh", "keep"]);
     let hits = search_ids(&vault, "token_notes", "fresh mineral");
     assert!(hits.contains(&"fresh".to_owned()), "{hits:?}");
-    let reopened = Vault::open(
+    let reopened = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     let mut ids = find_ids(&reopened, "token_notes");
     ids.sort();
     assert_eq!(ids, ["fresh", "keep"]);
@@ -320,12 +326,10 @@ fn remove_during_rebuild_is_absent_after_publish() {
         .unwrap();
     drop(vault);
     let latch = LatchEmbedder::new("model-b");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
@@ -385,18 +389,14 @@ fn different_model_reembeds_queued_add() {
         .unwrap();
     drop(vault);
     let latch = LatchEmbedder::new("model-b");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
-    )
-    .unwrap();
-    let other = Vault::open(
+    );
+    let other = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(CountingEmbedder::new("model-b") as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
@@ -441,12 +441,7 @@ fn failing_embedder_leaves_current_on_old_generation() {
             Err(scheda::Error::invalid("embed failed"))
         }
     }
-    let vault = Vault::open(
-        scratch.vault(),
-        OpenOptions::new(),
-        Some(Arc::new(Boom) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    let vault = open_proj(scratch.vault(), Some(Arc::new(Boom) as Arc<dyn Embedder>));
     let err = vault.reindex().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert_eq!(live_generation(&vault), live);
@@ -474,12 +469,10 @@ fn open_during_mismatch_rebuild_does_not_prune() {
     let live = live_generation(&vault);
     drop(vault);
     let latch = LatchEmbedder::new("model-b");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     let next = {
         let n: u64 = live.parse().unwrap();
         scratch
@@ -491,7 +484,7 @@ fn open_during_mismatch_rebuild_does_not_prune() {
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
-            let opened = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+            let opened = open_proj(scratch.vault(), None);
             assert!(next.is_dir());
             assert_eq!(live_generation(&opened), live);
             latch.resume();
@@ -505,16 +498,14 @@ fn open_during_mismatch_rebuild_does_not_prune() {
 #[test]
 fn journal_queued_line_is_gettable_after_publish() {
     let scratch = Scratch::new();
-    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    drop(open_proj(scratch.vault(), None));
     scratch.write_schema(LOG);
     scratch.write_schema(TOKENS);
     let first = CountingEmbedder::new("model-a");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&first) as Arc<dyn Embedder>),
-    )
-    .unwrap();
+    );
     vault
         .collection("token_notes")
         .unwrap()
@@ -527,13 +518,11 @@ fn journal_queued_line_is_gettable_after_publish() {
         .unwrap();
     drop(vault);
     let latch = LatchEmbedder::new("model-b");
-    let vault = Vault::open(
+    let vault = open_proj(
         scratch.vault(),
-        OpenOptions::new(),
         Some(Arc::clone(&latch) as Arc<dyn Embedder>),
-    )
-    .unwrap();
-    let other = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    );
+    let other = open_proj(scratch.vault(), None);
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();

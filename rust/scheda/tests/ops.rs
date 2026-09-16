@@ -10,6 +10,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use std::sync::Arc;
+
 use scheda::{Code, Embedder, OpenOptions, SearchQuery, Vault};
 use serde_json::json;
 
@@ -194,10 +196,11 @@ fn ops_fixture_find_and_insert_and_reindex() {
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     scratch.write_schema("log.yaml", OPS_LOG);
     scratch.write_schema("notes.yaml", OPS_NOTES);
-    let vault = Vault::open(
+    let vault = Vault::open_with(
         scratch.vault(),
         OpenOptions::new(),
-        Some(std::sync::Arc::new(OpsEmbedder)),
+        Some(Arc::new(OpsEmbedder)),
+        Some(common::json_text_projector(&["title", "msg"])),
     )
     .unwrap();
     // One transaction: the check is Index / get / reindex / search on this

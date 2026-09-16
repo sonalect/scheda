@@ -3,10 +3,12 @@
 //! Handles live in [`crate::vault`]. The trait is not an `api/v1` field.
 
 use std::collections::BTreeMap;
+#[cfg(feature = "search")]
+use std::collections::BTreeSet;
 
-use crate::{Error, IndexSchema};
 #[cfg(feature = "find")]
 use crate::{ColumnKind, IndexColumn};
+use crate::{Error, IndexSchema};
 
 /// Caller-supplied mapping from Record bytes to Index columns. Not an `api/v1`
 /// field.
@@ -15,9 +17,10 @@ use crate::{ColumnKind, IndexColumn};
 /// `project` fills those columns from `{collection, id, raw}`. Scheda does not
 /// parse consumer contents. No projector → the Index holds identity only:
 /// `find` `all` and `term` on `id` still work; any other Filter field is
-/// `invalid`. `add` / `replace` do not call [`project`](Self::project) to
-/// accept or reject the write. A `project` error or empty [`IndexDoc`] omits
-/// that Record from the lexical Index; the file remains.
+/// `invalid`; `search` has no FTS or vector slots and the embedder is not
+/// called on write. `add` / `replace` do not call [`project`](Self::project)
+/// to accept or reject the write. A `project` error or empty [`IndexDoc`]
+/// omits that Record from the lexical Index; the file remains.
 pub trait Projector: Send + Sync {
     /// Columns this projector exposes for `collection`.
     ///
@@ -41,9 +44,10 @@ pub(crate) fn find_marked_column<'a>(
     schema: &'a IndexSchema,
     name: &str,
 ) -> Option<&'a IndexColumn> {
-    schema.columns.iter().find(|column| {
-        column.find.unwrap_or(false) && column.name.as_deref() == Some(name)
-    })
+    schema
+        .columns
+        .iter()
+        .find(|column| column.find.unwrap_or(false) && column.name.as_deref() == Some(name))
 }
 
 /// One projected column value.
@@ -215,6 +219,75 @@ impl ProjectorDump {
             Self::Collections(map) => join_dump_lines(map),
         }
     }
+}
+
+/// Concatenate `fts`-marked columns for BM25 / `moreLikeThis`.
+#[cfg(feature = "find")]
+pub(crate) fn fts_blob(schema: &IndexSchema, doc: &IndexDoc) -> String {
+    column_texts(schema, doc, |column| column.fts.unwrap_or(false)).join("\n")
+}
+
+/// One vector slot per `vector`-marked column. List values join with `\n`.
+#[cfg(feature = "search")]
+pub(crate) fn vector_pieces(schema: &IndexSchema, doc: &IndexDoc) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for (name, text) in named_column_texts(schema, doc, |column| column.vector.unwrap_or(false)) {
+        if !text.is_empty() {
+            out.push((name, text));
+        }
+    }
+    out
+}
+
+/// Names of `vector`-marked columns, including empty ones.
+#[cfg(feature = "search")]
+pub(crate) fn vector_slot_names(schema: &IndexSchema) -> BTreeSet<String> {
+    schema
+        .columns
+        .iter()
+        .filter(|column| column.vector.unwrap_or(false))
+        .filter_map(|column| column.name.clone())
+        .collect()
+}
+
+#[cfg(feature = "find")]
+fn column_texts(
+    schema: &IndexSchema,
+    doc: &IndexDoc,
+    marked: impl Fn(&IndexColumn) -> bool,
+) -> Vec<String> {
+    named_column_texts(schema, doc, marked)
+        .into_iter()
+        .map(|(_, text)| text)
+        .filter(|text| !text.is_empty())
+        .collect()
+}
+
+#[cfg(feature = "find")]
+fn named_column_texts(
+    schema: &IndexSchema,
+    doc: &IndexDoc,
+    marked: impl Fn(&IndexColumn) -> bool,
+) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for column in &schema.columns {
+        if !marked(column) {
+            continue;
+        }
+        let name = column.name.as_deref().unwrap_or("");
+        let Some(value) = doc.values.get(name) else {
+            continue;
+        };
+        let texts: Vec<String> = eq_texts_owned(value)
+            .into_iter()
+            .filter(|text| !text.is_empty())
+            .collect();
+        if texts.is_empty() {
+            continue;
+        }
+        out.push((name.to_owned(), texts.join("\n")));
+    }
+    out
 }
 
 /// Eq texts for a projected value. `Null` and non-finite numbers yield none.

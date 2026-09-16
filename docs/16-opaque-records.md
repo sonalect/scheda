@@ -1,14 +1,14 @@
 # 16. Opaque records
 
-Document 16 of the Scheda package. Version 0.4, 16 September 2026.
+Document 16 of the Scheda package. Version 0.5, 16 September 2026.
 
 Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F12 are done; codes and
+and `search` learn columns and text. F0–F13 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F13–F19.
+This file remains the work order for F14–F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -70,7 +70,7 @@ it is unused; wiring is F12–F13.
 | [F10](#f10-singleton-bytes) | done | `singleton` I/O is bytes; file is the declared `id` |
 | [F11](#f11-journal-envelope) | done | Journal line envelope; payload opaque |
 | [F12](#f12-projector-and-find) | done | `Projector` wired into the lexical Index and `find` |
-| [F13](#f13-projector-and-search) | not started | BM25 / vectors from Projector slots |
+| [F13](#f13-projector-and-search) | done | BM25 / vectors from Projector slots |
 | [F14](#f14-drop-field-schema) | not started | No `Field` / edges in proto, disk, or `src/` |
 | [F15](#f15-cli) | not started | CLI `--file`; default whole-file Projector |
 | [F16](#f16-agent-surface) | not started | `info` / `create_collection` without fields |
@@ -615,21 +615,21 @@ stays a Rust ingest type. Wire `add` / `replace` / `remove` / `reindex` /
 
 ## F13. Projector and `search`
 
-**Status:** not started
+**Status:** done
 
 **Codes:** IDX-6–9, QRY-3, QRY-6, LIB-11, `13` §5–6.
 
 Close only after F12.
 
-- [ ] FTS columns are Projector slots marked fts, not Schema `exclude_fts`.
-- [ ] Vector slots are Projector slots marked vector; one slot, one vector;
+- [x] FTS columns are Projector slots marked fts, not Schema `exclude_fts`.
+- [x] Vector slots are Projector slots marked vector; one slot, one vector;
       digest skip unchanged. No Projector → no vector slots; embedder is
       not called on write.
-- [ ] Optional `Filter` on `search` uses the same column rules as `find`.
-- [ ] Reranker still receives `Record`; it now has `raw`, not `fields`.
-- [ ] Fixture: token query hits FTS slot; synonym query hits vector slot
+- [x] Optional `Filter` on `search` uses the same column rules as `find`.
+- [x] Reranker still receives `Record`; it now has `raw`, not `fields`.
+- [x] Fixture: token query hits FTS slot; synonym query hits vector slot
       when an embedder is present (existing C9 quality class).
-- [ ] `bazel test //...` green. Owner has reviewed the diff.
+- [x] `bazel test //...` green. Owner has reviewed the diff.
 
 **Review:** `search`. Stop.
 

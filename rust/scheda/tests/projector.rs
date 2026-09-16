@@ -1,4 +1,5 @@
 //! F12: Projector wired into the lexical Index and `find`.
+//! F13: FTS / vector slots from Projector marks, not Schema field flags.
 
 mod common;
 

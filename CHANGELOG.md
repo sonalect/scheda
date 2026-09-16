@@ -13,13 +13,14 @@ API or on-disk format changes bump the minor.
 - **`api.v1.IndexSchema` / `IndexColumn` / `ColumnKind` (`index.proto`).**
   `Projector.schema` returns that message. The Projector trait is still a
   caller callback, not proto. `IndexDoc` stays a Rust ingest type.
-- **`Projector` callback on `open` / `open_with`.** `find` columns come from
-  `Projector.schema` / `project`, not collection-declaration fields. No
-  Projector: identity only (`all`, `term` on `id`). `project` error or empty
-  omits the Record from the lexical Index; the file remains. Changing
-  projector schema is an Index format change (`index_version` until
-  `reindex`). `search` FTS/vector slots are still Schema-marked until a later
-  stage.
+- **`Projector` callback on `open` / `open_with`.** `find` columns and
+  `search` FTS / vector slots come from `Projector.schema` / `project`, not
+  collection-declaration fields. No Projector: identity only (`all`,
+  `term` on `id`); `search` has no FTS or vector slots and the embedder is
+  not called on write. `project` error or empty omits the Record from the
+  lexical Index; the file remains. Changing projector schema is an Index
+  format change (`index_version` until `reindex`). One vector slot per
+  `vector` column; digest skip unchanged.
 
 ### Changed
 

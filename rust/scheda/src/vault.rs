@@ -18,7 +18,7 @@ use crate::journal;
 use crate::query;
 use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 #[cfg(feature = "find")]
-use crate::search::{SearchEngine, marked_text};
+use crate::search::SearchEngine;
 use crate::store;
 use crate::{
     Embedder, Encryption, Error, History, OpenOptions, Projector, Record, ReindexResult, Schema,
@@ -110,8 +110,9 @@ impl Vault {
     /// every build.
     ///
     /// No projector: the Index holds identity only. `find` `all` and `term`
-    /// on `id` work; any other Filter field is `invalid`. `add` does not
-    /// call `project` to accept or reject the write. Same as
+    /// on `id` work; any other Filter field is `invalid`. `search` has no
+    /// FTS or vector slots; the embedder is not called on write. `add` does
+    /// not call `project` to accept or reject the write. Same as
     /// [`open_with`](Self::open_with) with `projector` `None`.
     ///
     /// `OpenOptions.author` is the git author and committer for every commit
@@ -142,12 +143,14 @@ impl Vault {
     /// Open, create, or clone a Vault, with an optional caller [`Projector`].
     ///
     /// Path, options, and embedder are the same as [`open`](Self::open).
-    /// Optional caller projector: `find` columns come from
-    /// [`Projector::schema`] / [`Projector::project`], not collection-declaration
-    /// fields. Without it the Index holds identity only; `find` `all` and
-    /// `term` on `id` work; any other Filter field is `invalid`. `add` does
-    /// not call `project` to accept or reject the write. Changing projector
-    /// schema is an Index format change (`index_version` until `reindex`).
+    /// Optional caller projector: `find` columns and `search` FTS / vector
+    /// slots come from [`Projector::schema`] / [`Projector::project`], not
+    /// collection-declaration fields. Without it the Index holds identity
+    /// only; `find` `all` and `term` on `id` work; any other Filter field is
+    /// `invalid`; `search` has no FTS or vector slots and the embedder is not
+    /// called on write. `add` does not call `project` to accept or reject the
+    /// write. Changing projector schema is an Index format change
+    /// (`index_version` until `reindex`).
     pub fn open_with(
         path: impl AsRef<Path>,
         options: OpenOptions,
@@ -2373,8 +2376,22 @@ fn more_like_this_source_text(
         }
         Err(err) => return Err(err),
     };
-    let (fts, _) = marked_text(decl, &record)?;
-    Ok(fts)
+    let Some(projector) = ctx.projector else {
+        return Ok(String::new());
+    };
+    let schema = match projector.schema(&decl.name) {
+        Ok(schema) => {
+            schema.require_valid()?;
+            schema
+        }
+        Err(_) => return Ok(String::new()),
+    };
+    let raw = record.raw.as_deref().unwrap_or(&[]);
+    let doc = match projector.project(&decl.name, id, raw) {
+        Ok(doc) if !doc.values.is_empty() => doc,
+        _ => return Ok(String::new()),
+    };
+    Ok(crate::projector::fts_blob(&schema, &doc))
 }
 
 #[cfg(feature = "find")]
@@ -3414,6 +3431,59 @@ mod tests {
     }
 
     #[cfg(feature = "search")]
+    struct TagProjector;
+
+    #[cfg(feature = "search")]
+    impl crate::Projector for TagProjector {
+        fn schema(&self, _collection: &str) -> Result<crate::IndexSchema, Error> {
+            Ok(crate::IndexSchema {
+                columns: vec![
+                    crate::IndexColumn::default()
+                        .with_name("tag".to_owned())
+                        .with_kind(crate::ColumnKind::Text)
+                        .with_find(true)
+                        .with_fts(true)
+                        .with_vector(true),
+                ],
+                ..crate::IndexSchema::default()
+            })
+        }
+
+        fn project(
+            &self,
+            _collection: &str,
+            _id: &str,
+            raw: &[u8],
+        ) -> Result<crate::IndexDoc, Error> {
+            let Ok(text) = std::str::from_utf8(raw) else {
+                return Ok(crate::IndexDoc::default());
+            };
+            let Ok(serde_json::Value::Object(map)) = serde_json::from_str(text) else {
+                return Ok(crate::IndexDoc::default());
+            };
+            let mut values = std::collections::BTreeMap::new();
+            if let Some(serde_json::Value::String(tag)) = map.get("tag") {
+                values.insert("tag".to_owned(), crate::IndexValue::Text(tag.clone()));
+            }
+            Ok(crate::IndexDoc { values })
+        }
+    }
+
+    #[cfg(feature = "search")]
+    fn tag_projector() -> Arc<dyn crate::Projector> {
+        Arc::new(TagProjector)
+    }
+
+    #[cfg(feature = "search")]
+    fn open_search(
+        path: impl AsRef<Path>,
+        options: OpenOptions,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Vault {
+        Vault::open_with(path, options, embedder, Some(tag_projector())).unwrap()
+    }
+
+    #[cfg(feature = "search")]
     fn counting_vector(text: &str) -> Vec<f32> {
         let mut acc = [0.0f32; 4];
         for (i, b) in text.as_bytes().iter().enumerate() {
@@ -4006,12 +4076,11 @@ mod tests {
     fn same_model_catch_up_copies_queued_vectors() {
         let scratch = Scratch::new();
         let embedder = CountingEmbedder::new("model-x");
-        let vault = Vault::open(
+        let vault = open_search(
             scratch.vault(),
             scratch.options(),
             Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
-        )
-        .unwrap();
+        );
         vault.begin().unwrap();
         vault
             .create_collection("c", journal_vector_schema(), None)
@@ -4023,12 +4092,11 @@ mod tests {
             .add("keep", rec_tag("alpha mineral"), None)
             .unwrap();
         let after_add = embedder.slots();
-        let other = Vault::open(
+        let other = open_search(
             scratch.vault(),
             scratch.options(),
             Some(CountingEmbedder::new("model-x") as Arc<dyn Embedder>),
-        )
-        .unwrap();
+        );
         let start = std::sync::Arc::new(std::sync::Barrier::new(2));
         let done = std::sync::Arc::new(std::sync::Barrier::new(2));
         vault
@@ -4083,12 +4151,11 @@ mod tests {
     #[test]
     fn catch_up_without_embedder_does_not_create_vector_table() {
         let scratch = Scratch::new();
-        let seeded = Vault::open(
+        let seeded = open_search(
             scratch.vault(),
             scratch.options(),
             Some(CountingEmbedder::new("model-x") as Arc<dyn Embedder>),
-        )
-        .unwrap();
+        );
         seeded.begin().unwrap();
         seeded
             .create_collection("c", journal_vector_schema(), None)
@@ -4100,13 +4167,12 @@ mod tests {
             .add("keep", rec_tag("alpha mineral"), None)
             .unwrap();
         drop(seeded);
-        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
-        let other = Vault::open(
+        let vault = open_search(scratch.vault(), scratch.options(), None);
+        let other = open_search(
             scratch.vault(),
             scratch.options(),
             Some(CountingEmbedder::new("model-x") as Arc<dyn Embedder>),
-        )
-        .unwrap();
+        );
         let start = std::sync::Arc::new(std::sync::Barrier::new(2));
         let done = std::sync::Arc::new(std::sync::Barrier::new(2));
         vault

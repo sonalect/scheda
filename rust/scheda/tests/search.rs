@@ -209,6 +209,43 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
 }
 
 #[test]
+fn no_projector_skips_embedder_and_search_slots() {
+    let scratch = Scratch::new();
+    let embedder = CountingEmbedder::new("count");
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    scratch.write_schema("tokens.yaml", TOKENS);
+    let vault = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(Arc::clone(&embedder) as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add(
+            "hit",
+            rec(json!({"title": "kryptonite mineral", "tag": "red"})),
+            None,
+        )
+        .unwrap();
+    assert_eq!(embedder.slots(), 0, "no projector must not call embedder");
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
+    assert!(
+        hit_ids(&hits).is_empty(),
+        "no projector has no FTS slots: {ids:?}",
+        ids = hit_ids(&hits)
+    );
+    let vector = collection
+        .search(&q("kryptonite", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    assert!(
+        hit_ids(&vector).is_empty(),
+        "no projector has no vector slots: {ids:?}",
+        ids = hit_ids(&vector)
+    );
+}
+
+#[test]
 fn concurrent_search_on_one_handle() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);

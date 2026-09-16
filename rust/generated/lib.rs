@@ -50,12 +50,13 @@ mod validate {
                         FieldOwnedView, FieldView, FilterOwnedView, FilterView, FindQueryOwnedView,
                         FindQueryView, FindResultOwnedView, FindResultView, HistoryOwnedView,
                         HistoryView, IndexColumnOwnedView, IndexColumnView, IndexSchemaOwnedView,
-                        IndexSchemaView, JournalOwnedView, JournalView, ObjectOwnedView, ObjectView,
-                        OpenOptionsOwnedView, OpenOptionsView, RecordOwnedView, RecordView,
-                        ReindexResultOwnedView, ReindexResultView, SchemaOwnedView, SchemaView,
-                        SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView, SearchQueryView,
-                        SingletonOwnedView, SingletonView, TextOwnedView, TextView, UnitOwnedView,
-                        UnitView, VaultInfoOwnedView, VaultInfoView, filter, history, search_hits,
+                        IndexSchemaView, JournalOwnedView, JournalView, ObjectOwnedView,
+                        ObjectView, OpenOptionsOwnedView, OpenOptionsView, RecordOwnedView,
+                        RecordView, ReindexResultOwnedView, ReindexResultView, SchemaOwnedView,
+                        SchemaView, SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView,
+                        SearchQueryView, SingletonOwnedView, SingletonView, TextOwnedView,
+                        TextView, UnitOwnedView, UnitView, VaultInfoOwnedView, VaultInfoView,
+                        filter, history, search_hits,
                     };
                     pub mod oneof {
                         pub use crate::generated::api::v1::__buffa::view::oneof::filter::more_like_this;
