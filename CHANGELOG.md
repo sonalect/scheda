@@ -23,6 +23,11 @@ API or on-disk format changes bump the minor.
   applied. Method `id` must equal the declared id (`invalid` otherwise).
   Second `add` is still `duplicate_id`. `get` / `remove` / `history` /
   `documents` / `ids` use that path.
+- **`journal` `add` writes `{id}: {payload}\n`.** Colon U+003A then space
+  U+0020. `get` / `lines` `raw` is the payload, not the envelope. Identity is
+  the envelope `id`, not a JSON key in the payload. Payload with CR or LF
+  is `invalid` and writes no line. Non-UTF-8 is `not_utf8`. `replace` /
+  `remove` stay `unsupported`. The IDX-5 id map is rebuilt from envelopes.
 - **Collection declaration `version` is the collection generation**, required
   on the YAML/JSON file, with no default. Only generation `1` is implemented.
   `create_collection` always writes `version: 1`. Missing, `0`, or any other
@@ -31,8 +36,10 @@ API or on-disk format changes bump the minor.
 ### Removed
 
 - **`Record.fields`, `Record.body`, and `Record.valid`.** Callers pass UTF-8
-  `raw`. Journal on-disk shape is unchanged until a later stage: pass the
-  old JSON as `raw`.
+  `raw`. Journal `add` writes `{id}: {payload}\n`; `get` / `lines` `raw` is
+  the payload.
+- **RFC 8785 canonical JSON of journal lines (LIB-18).** The library no
+  longer rewrites consumer fields. Payload bytes are stored as given.
 - **`api.v1` `RecordAdd` and `RecordReplace`.** Write is method `raw` bytes.
   Proto `Record` is output-only (`get` / `find` / `search`).
 - **`CODE_UNSUPPORTED_REMOTE`.** The compile-time remote-git gate is gone; a

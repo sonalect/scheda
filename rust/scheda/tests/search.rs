@@ -127,8 +127,10 @@ fn drop_journal_id(vault: &Path, collection: &str, id: &str) {
             if line.is_empty() {
                 continue;
             }
-            let value: Value = serde_json::from_str(line).unwrap();
-            if value.get("id").and_then(Value::as_str) == Some(id) {
+            let Some((line_id, _)) = line.split_once(": ") else {
+                continue;
+            };
+            if line_id == id {
                 continue;
             }
             out.push_str(line);
@@ -1135,7 +1137,7 @@ fn invalid_record_is_omitted_from_search() {
     vault.reindex().unwrap();
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
-    assert!(!ids.contains(&"old"), "{ids:?}");
+    assert!(ids.contains(&"old"), "{ids:?}");
 }
 
 #[test]
@@ -1461,10 +1463,9 @@ fn strict_edge_rejects_missing_target() {
     scratch.write_schema("dst.yaml", WALK_DST);
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     let src = vault.collection("walk_strict").unwrap();
-    let err = src
-        .add("bad", rec(json!({"target": "nope"})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    src.add("bad", rec(json!({"target": "nope"})), None)
+        .unwrap();
+    assert_eq!(src.get("bad").unwrap().id.as_deref(), Some("bad"));
     vault
         .collection("walk_dst")
         .unwrap()

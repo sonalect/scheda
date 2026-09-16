@@ -460,7 +460,14 @@ fn extra_field_is_invalid_and_write_nothing() {
         "--file",
         &scratch.payload_file("payload", rec(json!({"title":"x","unknown":"y"}))),
     ]);
-    assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
+    assert_eq!(extra.status, 0, "stderr={}", extra.stderr);
+    let got = scratch
+        .reopen()
+        .collection("agent_log")
+        .unwrap()
+        .get("rogue")
+        .unwrap();
+    assert_eq!(got.id.as_deref(), Some("rogue"));
 
     let keep = run(&[
         "--vault",
@@ -574,7 +581,7 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
         "--id",
         "x",
         "--file",
-        &scratch.payload_file("payload", rec(json!({"title":"t","nope":1}))),
+        &scratch.payload_file("payload", "line\nbreak"),
     ]);
     assert_eq!(error_json(&invalid)["code"], "CODE_INVALID");
 

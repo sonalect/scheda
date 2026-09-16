@@ -543,7 +543,7 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
         .join("north_log")
         .join(format!("00000001-{}.jsonl", vault.writer()));
     let mut text = fs::read_to_string(&path).unwrap();
-    text.push_str(r#"{"id":"partial"}"#);
+    text.push_str(r#"partial: {}"#);
     fs::write(&path, &text).unwrap();
     assert_eq!(log_len(vault.path()), before);
     drop(collection);
@@ -559,7 +559,7 @@ fn killed_mid_batch_keeps_complete_journal_lines() {
     assert!(
         fs::read_to_string(&path)
             .unwrap()
-            .ends_with(r#"{"id":"partial"}"#)
+            .ends_with(r#"partial: {}"#)
     );
     assert_eq!(log_len(vault.path()), before);
 }

@@ -940,7 +940,10 @@ fn singleton_bytes_are_opaque_utf8() {
     let text = fs::read_to_string(scratch.coll_file("north_inbox", "inbox")).unwrap();
     assert_eq!(text, "key = \"toml\"\n");
     collection.replace("inbox", b"", None).unwrap();
-    assert_eq!(collection.get("inbox").unwrap().raw.as_deref(), Some(&b""[..]));
+    assert_eq!(
+        collection.get("inbox").unwrap().raw.as_deref(),
+        Some(&b""[..])
+    );
 }
 
 #[test]

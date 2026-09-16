@@ -1,14 +1,11 @@
-//! On-disk `journal` JSONL segments.
+//! On-disk `journal` segments: one `{id}: {payload}\n` line per Record.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt::Write;
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write as IoWrite};
 use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
@@ -24,7 +21,7 @@ pub(crate) struct JournalRollback {
 /// Append-order walk of one `journal` collection.
 ///
 /// Yields one Record at a time from segment files. Does not open the Index.
-/// `raw` is the line bytes including the trailing newline.
+/// `raw` is the envelope payload, not the `{id}: ` prefix or the newline.
 pub struct JournalLines {
     vault: PathBuf,
     decl: CollectionDecl,
@@ -93,7 +90,7 @@ impl JournalLines {
                 )));
             }
             let parsed = parse_line(line).map_err(|err| {
-                Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
+                Error::invalid(format!("{rel} has a broken journal envelope: {err}"))
             })?;
             return Ok(Some(record_from_parsed(&self.decl, parsed)));
         }
@@ -149,7 +146,7 @@ pub(crate) fn insert_journal(
     maps: &mut JournalIdMaps,
     writer: &str,
 ) -> Result<(String, String, JournalRollback), Error> {
-    let (id, line) = prepare_line(decl, record)?;
+    let (id, line) = prepare_line(record)?;
     match maps.contains(&decl.name, &id) {
         Some(true) => {
             bail!(Error::duplicate_id(format!(
@@ -341,7 +338,7 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
             }
             for line in complete {
                 let parsed = parse_line(line).map_err(|err| {
-                    Error::invalid(format!("{rel} has a line that is not a JSON object: {err}"))
+                    Error::invalid(format!("{rel} has a broken journal envelope: {err}"))
                 })?;
                 if !seen.insert(parsed.id.clone()) {
                     bail!(Error::duplicate_id(format!(
@@ -349,161 +346,33 @@ pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error>
                         parsed.id, decl.name
                     )));
                 }
-                if let Err(err) = store::validate_fields(&parsed.fields, &decl.fields, true, false)
-                {
-                    bail!(Error::invalid(format!("{rel}: {err}")));
-                }
             }
         }
     }
     Ok(())
 }
 
+#[derive(Debug)]
 struct ParsedLine {
     id: String,
-    fields: Map<String, Value>,
     raw: Vec<u8>,
 }
 
-fn prepare_line(decl: &CollectionDecl, record: &Record) -> Result<(String, Vec<u8>), Error> {
+fn prepare_line(record: &Record) -> Result<(String, Vec<u8>), Error> {
     let Some(id) = record.id.as_deref() else {
         bail!(Error::invalid("record id is required"));
     };
     crate::id::require_slug("id", id)?;
-    let mut fields = store::fields_map(record)?;
-    if let Some(Value::String(body)) = fields.get("body")
-        && !body.is_empty()
-    {
-        bail!(Error::invalid(format!(
-            "journal {} does not allow a Markdown body",
-            decl.name
-        )));
+    let payload = store::utf8_raw(record, "[Journal::insert] decode UTF-8")?;
+    if payload.iter().any(|&b| b == b'\n' || b == b'\r') {
+        bail!(Error::invalid("journal payload must not contain CR or LF"));
     }
-    store::apply_defaults(&mut fields, &decl.fields);
-    store::inject_id(&mut fields, id)?;
-    store::validate_fields(&fields, &decl.fields, true, false)?;
-    let mut line = canonical_json(&Value::Object(fields))?;
+    let mut line = Vec::with_capacity(id.len() + 2 + payload.len() + 1);
+    line.extend_from_slice(id.as_bytes());
+    line.extend_from_slice(b": ");
+    line.extend_from_slice(payload);
     line.push(b'\n');
     Ok((id.to_owned(), line))
-}
-
-fn canonical_json(value: &Value) -> Result<Vec<u8>, Error> {
-    let mut out = String::new();
-    write_canonical(value, &mut out)?;
-    Ok(out.into_bytes())
-}
-
-fn write_canonical(value: &Value, out: &mut String) -> Result<(), Error> {
-    match value {
-        Value::Null => out.push_str("null"),
-        Value::Bool(true) => out.push_str("true"),
-        Value::Bool(false) => out.push_str("false"),
-        Value::Number(n) => {
-            let Some(number) = n.as_f64() else {
-                bail!(Error::invalid("JSON number must be finite"));
-            };
-            write_es6_number(number, out)?;
-        }
-        Value::String(s) => write_json_string(s, out),
-        Value::Array(items) => {
-            out.push('[');
-            for (i, item) in items.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_canonical(item, out)?;
-            }
-            out.push(']');
-        }
-        Value::Object(map) => {
-            out.push('{');
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort_unstable_by(|a, b| a.encode_utf16().cmp(b.encode_utf16()));
-            for (i, key) in keys.iter().enumerate() {
-                if i > 0 {
-                    out.push(',');
-                }
-                write_json_string(key, out);
-                out.push(':');
-                let Some(value) = map.get(*key) else {
-                    unreachable!("key came from the same map");
-                };
-                write_canonical(value, out)?;
-            }
-            out.push('}');
-        }
-    }
-    Ok(())
-}
-
-/// ECMAScript `NumberToString` as required by RFC 8785. `-0` is `0`.
-fn write_es6_number(n: f64, out: &mut String) -> Result<(), Error> {
-    if !n.is_finite() {
-        bail!(Error::invalid("JSON number must be finite"));
-    }
-    if n == 0.0 {
-        out.push('0');
-        return Ok(());
-    }
-    if n < 0.0 {
-        out.push('-');
-    }
-    let abs = n.abs();
-    if (1e-6..1e21).contains(&abs) {
-        write!(out, "{abs}").map_err(|_| Error::invalid("cannot format JSON number"))?;
-    } else {
-        write_es6_scientific(abs, out);
-    }
-    Ok(())
-}
-
-fn write_es6_scientific(abs: f64, out: &mut String) {
-    let sci = format!("{abs:e}");
-    let Some((mant, exp)) = sci.split_once('e') else {
-        out.push_str(&sci);
-        return;
-    };
-    out.push_str(mant);
-    out.push('e');
-    if let Some(rest) = exp.strip_prefix('-') {
-        out.push('-');
-        out.push_str(strip_leading_zeros(rest));
-    } else {
-        out.push('+');
-        let rest = exp.strip_prefix('+').unwrap_or(exp);
-        out.push_str(strip_leading_zeros(rest));
-    }
-}
-
-fn strip_leading_zeros(s: &str) -> &str {
-    let trimmed = s.trim_start_matches('0');
-    if trimmed.is_empty() { "0" } else { trimmed }
-}
-
-/// RFC 8785 string: only `"`, `\`, and U+0000–U+001F are escaped. UTF-8
-/// `str` cannot hold a lone surrogate, which the RFC would reject.
-fn write_json_string(s: &str, out: &mut String) {
-    out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{08}' => out.push_str("\\b"),
-            '\t' => out.push_str("\\t"),
-            '\n' => out.push_str("\\n"),
-            '\u{0C}' => out.push_str("\\f"),
-            '\r' => out.push_str("\\r"),
-            c if (c as u32) <= 0x1F => {
-                const HEX: &[u8; 16] = b"0123456789abcdef";
-                let n = c as u32;
-                out.push_str("\\u00");
-                out.push(HEX[(n >> 4) as usize] as char);
-                out.push(HEX[(n & 0xF) as usize] as char);
-            }
-            c => out.push(c),
-        }
-    }
-    out.push('"');
 }
 
 fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
@@ -945,20 +814,16 @@ fn parse_line(line: &str) -> Result<ParsedLine, Error> {
     if line.is_empty() {
         bail!(Error::invalid("empty journal line"));
     }
-    let value: Value =
-        serde_json::from_str(line).context(Code::Invalid, "[Journal::parse_line] decode JSON")?;
-    let Value::Object(fields) = value else {
-        bail!(Error::invalid("journal line must be a JSON object"));
+    let Some((id, payload)) = line.split_once(": ") else {
+        bail!(Error::invalid("journal line is missing ': ' delimiter"));
     };
-    let id = match fields.get(crate::id::FIELD) {
-        Some(Value::String(s)) if !s.is_empty() => s.clone(),
-        _ => {
-            bail!(Error::invalid("journal object id is missing"));
-        }
-    };
-    let mut raw = line.as_bytes().to_vec();
-    raw.push(b'\n');
-    Ok(ParsedLine { id, fields, raw })
+    if id.is_empty() {
+        bail!(Error::invalid("journal envelope id is empty"));
+    }
+    Ok(ParsedLine {
+        id: id.to_owned(),
+        raw: payload.as_bytes().to_vec(),
+    })
 }
 
 fn record_from_parsed(decl: &CollectionDecl, parsed: ParsedLine) -> Record {
@@ -1001,73 +866,32 @@ pub(crate) fn segment_rel(
 
 #[cfg(test)]
 mod tests {
-    use super::{canonical_json, civil_from_unix_days, write_canonical};
-    use serde_json::{Number, Value, json};
+    use super::{civil_from_unix_days, parse_line};
+    use crate::error::Code;
     use std::path::PathBuf;
 
     #[test]
-    fn canonical_json_sorts_object_keys() {
-        let bytes = canonical_json(&json!({"b": 1, "a": 2})).unwrap();
-        assert_eq!(bytes, br#"{"a":2,"b":1}"#);
+    fn envelope_splits_on_colon_space() {
+        let parsed = parse_line(r#"alpha: {"msg":"hello"}"#).unwrap();
+        assert_eq!(parsed.id, "alpha");
+        assert_eq!(parsed.raw, br#"{"msg":"hello"}"#);
+        let empty = parse_line("p: ").unwrap();
+        assert_eq!(empty.id, "p");
+        assert!(empty.raw.is_empty());
+        assert_eq!(
+            parse_line("no-delimiter").unwrap_err().known_code(),
+            Some(Code::Invalid)
+        );
+        assert_eq!(
+            parse_line(": payload").unwrap_err().known_code(),
+            Some(Code::Invalid)
+        );
     }
 
     #[test]
     fn unix_epoch_is_1970_01_01() {
         assert_eq!(civil_from_unix_days(0), (1970, 1, 1));
         assert_eq!(civil_from_unix_days(19_782), (2024, 2, 29));
-    }
-
-    #[test]
-    fn write_canonical_compact_array() {
-        let mut out = String::new();
-        write_canonical(&json!([true, null, "x"]), &mut out).unwrap();
-        assert_eq!(out, r#"[true,null,"x"]"#);
-    }
-
-    #[test]
-    fn rfc8785_float_one_prints_as_integer() {
-        let n = Number::from_f64(1.0).unwrap();
-        assert_eq!(canonical_json(&Value::Number(n)).unwrap(), b"1");
-    }
-
-    #[test]
-    fn rfc8785_minus_zero_prints_as_zero() {
-        let n = Number::from_f64(-0.0).unwrap();
-        assert_eq!(canonical_json(&Value::Number(n)).unwrap(), b"0");
-    }
-
-    #[test]
-    fn rfc8785_sample_object() {
-        let mut string = String::from("€$");
-        string.push('\u{000F}');
-        string.push('\n');
-        string.push_str("A'B");
-        string.push('"');
-        string.push('\\');
-        string.push('\\');
-        string.push('"');
-        string.push('/');
-        let value = json!({
-            "numbers": [333_333_333.333_333_3, 1e30, 4.50, 2e-3, 1e-27],
-            "string": string,
-            "literals": [null, true, false],
-        });
-        let bytes = canonical_json(&value).unwrap();
-        let expected = "{\"literals\":[null,true,false],\"numbers\":[333333333.3333333,1e+30,4.5,0.002,1e-27],\"string\":\"€$\\u000f\\nA'B\\\"\\\\\\\\\\\"/\"}";
-        assert_eq!(String::from_utf8(bytes).unwrap(), expected);
-    }
-
-    #[test]
-    fn rfc8785_keys_sort_by_utf16_code_unit() {
-        let value = json!({
-            "\u{FB33}": 1,
-            "\u{1F600}": 2,
-        });
-        let bytes = canonical_json(&value).unwrap();
-        let text = String::from_utf8(bytes).unwrap();
-        let grin = text.find('\u{1F600}').unwrap();
-        let hebrew = text.find('\u{FB33}').unwrap();
-        assert!(grin < hebrew, "{text}");
     }
 
     #[test]

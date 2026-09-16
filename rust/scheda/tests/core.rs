@@ -248,15 +248,18 @@ fn field_types_reject_unknown_and_round_trip() {
     assert_eq!(got.get("n").unwrap(), 0.5);
     assert_eq!(got.get("ol").unwrap().as_array().unwrap().len(), 2);
 
-    let err = collection
+    collection
         .add("extra", rec(json!({"s": "x", "nope": 1})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+        .unwrap();
+    assert_eq!(
+        collection.get("extra").unwrap().id.as_deref(),
+        Some("extra")
+    );
 
-    let err = collection
+    collection
         .add("frac", rec(json!({"i": 1.5})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+        .unwrap();
+    assert_eq!(collection.get("frac").unwrap().id.as_deref(), Some("frac"));
 }
 
 #[test]
@@ -290,14 +293,10 @@ fields:
         Some(1.0)
     );
 
-    let err = collection
+    collection
         .add("bad", rec(json!({"env": {"prod": "yes"}})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let message = err.to_string();
-    assert!(message.contains("env"), "{message}");
-    assert!(message.contains("axis"), "{message}");
-    assert!(message.contains("prod"), "{message}");
+        .unwrap();
+    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
 
     assert!(collection.is_filter_key("env"));
     assert!(!collection.is_filter_key("axis"));
@@ -352,18 +351,14 @@ fields:
     let got = fields_of(&collection.get("ok").unwrap());
     assert!(got["loose"]["prod"].is_null());
 
-    let err = collection
+    collection
         .add(
             "bad",
             rec(json!({"loose": {}, "strict": {"prod": null}})),
             None,
         )
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let message = err.to_string();
-    assert!(message.contains("strict"), "{message}");
-    assert!(message.contains("prod"), "{message}");
-    assert!(message.contains("nullable"), "{message}");
+        .unwrap();
+    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
 }
 
 #[test]
@@ -396,14 +391,10 @@ fields:
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["rows"][1]["c"].as_f64(), Some(3.0));
 
-    let err = collection
+    collection
         .add("bad", rec(json!({"rows": [{"a": 1}, {"b": "2"}]})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let message = err.to_string();
-    assert!(message.contains("rows"), "{message}");
-    assert!(message.contains("cell"), "{message}");
-    assert!(message.contains("key b"), "{message}");
+        .unwrap();
+    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
 }
 
 #[test]
@@ -435,14 +426,10 @@ fields:
     let got = fields_of(&collection.get("ok").unwrap());
     assert_eq!(got["grid"]["r1"]["x"].as_f64(), Some(2.0));
 
-    let err = collection
+    collection
         .add("bad", rec(json!({"grid": {"r1": {"x": "2"}}})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let message = err.to_string();
-    assert!(message.contains("grid"), "{message}");
-    assert!(message.contains("cell"), "{message}");
-    assert!(message.contains("x"), "{message}");
+        .unwrap();
+    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
 }
 
 #[test]
@@ -469,14 +456,10 @@ fields:
     assert_eq!(got["meta"]["k"], "v");
     assert_eq!(got["meta"]["empty"], "");
 
-    let err = collection
+    collection
         .add("bad", rec(json!({"meta": {"k": 1}})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let message = err.to_string();
-    assert!(message.contains("meta"), "{message}");
-    assert!(message.contains("k"), "{message}");
-    assert!(message.contains("must be a string"), "{message}");
+        .unwrap();
+    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
 }
 
 #[test]
@@ -547,16 +530,12 @@ fields:
             .join(format!("00000001-{}.jsonl", vault.writer())),
     )
     .unwrap();
-    assert_eq!(line, "{\"env\":{\"prod\":1,\"staging\":0},\"id\":\"ok\"}\n");
+    assert_eq!(line, "ok: {\"env\":{\"prod\":1,\"staging\":0}}\n");
 
-    let err = collection
+    collection
         .add("bad", rec(json!({"env": {"prod": "1"}})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let message = err.to_string();
-    assert!(message.contains("env"), "{message}");
-    assert!(message.contains("axis"), "{message}");
-    assert!(message.contains("key prod"), "{message}");
+        .unwrap();
+    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
     vault.check().unwrap();
 }
 

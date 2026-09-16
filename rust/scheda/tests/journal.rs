@@ -119,7 +119,7 @@ fn seq_jsonl(vault: &Vault, n: u32) -> String {
 }
 
 #[test]
-fn insert_appends_canonical_json_line() {
+fn insert_appends_envelope_line() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
@@ -130,8 +130,8 @@ fn insert_appends_canonical_json_line() {
     let a = lines.next().unwrap();
     let b = lines.next().unwrap();
     assert!(text.ends_with('\n'));
-    assert_eq!(a, r#"{"id":"p","msg":"m"}"#);
-    assert_eq!(b, r#"{"id":"q","msg":"m"}"#);
+    assert_eq!(a, r#"p: {"msg":"m"}"#);
+    assert_eq!(b, r#"q: {"msg":"m"}"#);
     assert_eq!(a.replace("p", "q"), b);
 }
 
@@ -172,7 +172,7 @@ fn size_cap_closes_segment_without_rewriting_it() {
     let before = fs::read(&first).unwrap();
     collection.add("c", rec("x"), None).unwrap();
     assert_eq!(fs::read(&first).unwrap(), before);
-    assert!(before.len() as u64 <= 45);
+    assert!(before.len() as u64 <= 32);
     assert!(scratch.log_dir().join(seq_jsonl(&vault, 2)).is_file());
     let ids: Vec<_> = collection
         .find(&Filter::all().into(), 0, 1000)
@@ -263,7 +263,7 @@ fn mid_segment_corruption_fails_check_and_is_not_rewritten() {
     let path = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let original = fs::read_to_string(&path).unwrap();
     let first = original.split_once('\n').unwrap().0;
-    let damaged = format!("{first}\nthis is not a json object\n");
+    let damaged = format!("{first}\nthis is not an envelope\n");
     fs::write(&path, &damaged).unwrap();
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -282,7 +282,7 @@ fn tail_without_newline_is_not_a_record() {
     collection.add("a", rec("x"), None).unwrap();
     let path = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let mut text = fs::read_to_string(&path).unwrap();
-    text.push_str(r#"{"id":"b","msg":"x"}"#);
+    text.push_str(r#"b: {"msg":"x"}"#);
     fs::write(&path, &text).unwrap();
     let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
@@ -292,7 +292,7 @@ fn tail_without_newline_is_not_a_record() {
     assert!(
         fs::read_to_string(&path)
             .unwrap()
-            .ends_with(r#"{"id":"b","msg":"x"}"#)
+            .ends_with(r#"b: {"msg":"x"}"#)
     );
 }
 
@@ -308,20 +308,70 @@ fn fixture_jsonl_is_utf8_text() {
     let vault = scratch.reopen();
     let got = vault.collection("south_log").unwrap().get("alpha").unwrap();
     assert_eq!(got.id.as_deref(), Some("alpha"));
+    assert_eq!(got.raw.as_deref(), Some(br#"{"msg":"hello"}"#.as_slice()));
     vault.check().unwrap();
 }
 
 #[test]
-fn journal_rejects_markdown_body() {
+fn journal_accepts_opaque_payload_with_extra_keys() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let record = rec_fields(json!({"msg": "x", "body": "nope"}));
+    vault
+        .collection("south_log")
+        .unwrap()
+        .add("a", &record, None)
+        .unwrap();
+    let got = vault.collection("south_log").unwrap().get("a").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(record.as_slice()));
+}
+
+#[test]
+fn journal_payload_must_not_contain_cr_or_lf() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    let err = collection.add("a", "line\nbreak", None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = collection.add("b", "line\rbreak", None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(jsonl_names(&scratch.log_dir()).is_empty());
+}
+
+#[test]
+fn journal_non_utf8_writes_no_file() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
     let err = vault
         .collection("south_log")
         .unwrap()
-        .add("a", record, None)
+        .add("a", [0xff, 0xfe], None)
         .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(err.known_code(), Some(Code::NotUtf8));
+    assert!(jsonl_names(&scratch.log_dir()).is_empty());
+}
+
+#[test]
+fn journal_identity_is_envelope_id_not_json_key() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    let payload = rec_fields(json!({"id": "other", "msg": "hello"}));
+    collection.add("alpha", &payload, None).unwrap();
+    let text = fs::read_to_string(scratch.log_dir().join(seq_jsonl(&vault, 1))).unwrap();
+    assert!(text.starts_with("alpha: "), "{text}");
+    assert_eq!(
+        collection.get("alpha").unwrap().id.as_deref(),
+        Some("alpha")
+    );
+    assert_eq!(
+        collection.get("alpha").unwrap().raw.as_deref(),
+        Some(payload.as_slice())
+    );
+    assert_eq!(
+        collection.get("other").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
 }
 
 #[test]
@@ -335,36 +385,35 @@ fn integer_field_round_trips_as_integer_not_1_0() {
     let path = scratch.lines_dir().join(seq_jsonl(&vault, 1));
     let before = fs::read(&path).unwrap();
     let text = str::from_utf8(&before).unwrap();
-    assert!(text.contains(r#""n":1"#), "{text}");
-    assert!(!text.contains(r#""n":1.0"#), "{text}");
+    assert_eq!(text, "a: {\"n\":1}\n");
     vault.reindex().unwrap();
     assert_eq!(fs::read(&path).unwrap(), before);
     let got = collection.get("a").unwrap();
-    assert_eq!(got.raw.as_deref(), Some(before.as_slice()));
+    assert_eq!(got.raw.as_deref(), Some(br#"{"n":1}"#.as_slice()));
 }
 
 #[test]
-fn get_and_find_include_raw_match_segment_line() {
+fn get_and_find_include_raw_match_payload() {
     let scratch = Scratch::new();
     let vault = open_lines(&scratch);
     let collection = vault.collection("south_lines").unwrap();
-    collection
-        .add("a", rec_fields(json!({"n": 1})), None)
-        .unwrap();
-    let line = fs::read(scratch.lines_dir().join(seq_jsonl(&vault, 1))).unwrap();
+    let payload = rec_fields(json!({"n": 1}));
+    collection.add("a", &payload, None).unwrap();
+    let file = fs::read_to_string(scratch.lines_dir().join(seq_jsonl(&vault, 1))).unwrap();
+    assert_eq!(file, "a: {\"n\":1}\n");
     let got = collection.get("a").unwrap();
-    assert_eq!(got.raw.as_deref(), Some(line.as_slice()));
+    assert_eq!(got.raw.as_deref(), Some(payload.as_slice()));
     let found = collection
         .find(&FindQuery::all().with_include_raw(true), 0, 10)
         .unwrap();
     assert_eq!(found.records.len(), 1);
-    assert_eq!(found.records[0].raw.as_deref(), Some(line.as_slice()));
+    assert_eq!(found.records[0].raw.as_deref(), Some(payload.as_slice()));
     let omitted = collection.find(&Filter::all().into(), 0, 10).unwrap();
     assert!(omitted.records[0].raw.is_none());
 }
 
 #[test]
-fn journal_line_round_trip_fixture_is_rfc_8785() {
+fn journal_line_round_trip_preserves_payload_and_envelope_id() {
     let scratch = Scratch::new();
     let vault = open_lines(&scratch);
     let collection = vault.collection("south_lines").unwrap();
@@ -379,44 +428,55 @@ fn journal_line_round_trip_fixture_is_rfc_8785() {
             "\u{FB33}": "he",
         },
     });
-    collection
-        .add("one", rec_fields(fields.clone()), None)
-        .unwrap();
+    let payload = rec_fields(fields.clone());
+    collection.add("one", &payload, None).unwrap();
     let path = scratch.lines_dir().join(seq_jsonl(&vault, 1));
     let line = fs::read_to_string(&path).unwrap();
-    let expected = "{\"id\":\"one\",\"meta\":{\"z\":\"ascii\",\"\u{1F600}\":\"grin\",\"\u{FB33}\":\"he\"},\"n\":1,\"neg\":-42,\"tags\":[\"a\",\"b\"],\"x\":0.5}\n";
-    assert_eq!(line, expected);
+    assert_eq!(
+        line,
+        format!("one: {}\n", str::from_utf8(&payload).unwrap())
+    );
 
     let got = collection.get("one").unwrap();
-    assert_eq!(got.raw.as_deref(), Some(line.as_bytes()));
+    assert_eq!(got.raw.as_deref(), Some(payload.as_slice()));
 
     let mut again = fields;
     if let serde_json::Value::Object(map) = &mut again {
-        map.insert(String::from("id"), json!("two"));
+        map.insert(String::from("id"), json!("other"));
     }
-    collection.add("two", rec_fields(again), None).unwrap();
-    let text = fs::read_to_string(&path).unwrap();
-    let mut lines = text.lines();
-    let first = lines.next().unwrap();
-    let second = lines.next().unwrap();
-    assert_eq!(second, first.replace("one", "two"));
+    let second = rec_fields(again);
+    collection.add("two", &second, None).unwrap();
+    assert_eq!(collection.get("two").unwrap().id.as_deref(), Some("two"));
+    assert_eq!(
+        collection.get("other").unwrap_err().known_code(),
+        Some(Code::NotFound)
+    );
+    assert_eq!(
+        collection.get("two").unwrap().raw.as_deref(),
+        Some(second.as_slice())
+    );
 }
 
 #[test]
-fn non_integral_integer_field_is_invalid() {
+fn non_integral_number_payload_is_opaque() {
     let scratch = Scratch::new();
     let vault = open_lines(&scratch);
-    let err = vault
+    let payload = rec_fields(json!({"n": 1.5}));
+    vault
         .collection("south_lines")
         .unwrap()
-        .add("frac", rec_fields(json!({"n": 1.5})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    assert!(!scratch.lines_dir().join(seq_jsonl(&vault, 1)).is_file());
+        .add("frac", &payload, None)
+        .unwrap();
+    let got = vault
+        .collection("south_lines")
+        .unwrap()
+        .get("frac")
+        .unwrap();
+    assert_eq!(got.raw.as_deref(), Some(payload.as_slice()));
 }
 
 #[test]
-fn integer_above_2_pow_53_is_invalid() {
+fn integer_above_2_pow_53_is_opaque_payload() {
     let scratch = Scratch::new();
     let vault = open_lines(&scratch);
     let collection = vault.collection("south_lines").unwrap();
@@ -428,15 +488,16 @@ fn integer_above_2_pow_53_is_invalid() {
         )
         .unwrap();
     let text = fs::read_to_string(scratch.lines_dir().join(seq_jsonl(&vault, 1))).unwrap();
+    assert!(text.starts_with("edge: "), "{text}");
     assert!(text.contains(r#""n":9007199254740992"#), "{text}");
-    let err = collection
+    collection
         .add(
             "wide",
             rec_fields(json!({"n": 18_014_398_509_481_984_u64})),
             None,
         )
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+        .unwrap();
+    assert_eq!(collection.get("wide").unwrap().id.as_deref(), Some("wide"));
 }
 
 #[test]
@@ -470,11 +531,17 @@ fn lines_matches_find_append_order_and_raw_across_rotate() {
     }
     assert_eq!(walked, find_ids);
 
-    let mut file_concat = Vec::new();
+    let mut file_payloads = Vec::new();
     for name in jsonl_names(&scratch.log_dir()) {
-        file_concat.extend(fs::read(scratch.log_dir().join(name)).unwrap());
+        let text = fs::read_to_string(scratch.log_dir().join(name)).unwrap();
+        for line in text.lines() {
+            let Some((_, payload)) = line.split_once(": ") else {
+                panic!("missing envelope delimiter: {line}");
+            };
+            file_payloads.extend_from_slice(payload.as_bytes());
+        }
     }
-    assert_eq!(raw_concat, file_concat);
+    assert_eq!(raw_concat, file_payloads);
 }
 
 #[test]
@@ -535,7 +602,7 @@ fn lines_truncated_tail_is_invalid() {
     collection.add("a", rec("x"), None).unwrap();
     let path = scratch.log_dir().join(seq_jsonl(&vault, 1));
     let mut text = fs::read_to_string(&path).unwrap();
-    text.push_str(r#"{"id":"b","msg":"x"}"#);
+    text.push_str(r#"b: {"msg":"x"}"#);
     fs::write(&path, &text).unwrap();
     let err = collection
         .lines()
@@ -710,7 +777,7 @@ fn writerless_segment_is_read_and_not_appended() {
     fs::create_dir_all(scratch.log_dir()).unwrap();
     fs::write(
         scratch.log_dir().join("00000001.jsonl"),
-        "{\"id\":\"old\",\"msg\":\"kept\"}\n",
+        "old: {\"msg\":\"kept\"}\n",
     )
     .unwrap();
     let vault = scratch.reopen();
@@ -745,7 +812,7 @@ fn rotation_caps_are_per_writer() {
     fs::create_dir_all(scratch.log_dir()).unwrap();
     fs::write(
         scratch.log_dir().join("00000001-bob.jsonl"),
-        "{\"id\":\"bob-line\",\"msg\":\"x\"}\n",
+        "bob-line: {\"msg\":\"x\"}\n",
     )
     .unwrap();
     let vault = Vault::open(scratch.vault(), OpenOptions::new().writer("alice"), None).unwrap();

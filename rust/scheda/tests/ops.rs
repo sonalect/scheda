@@ -164,7 +164,7 @@ fn writer_updates_map_human_edit_needs_reindex() {
         .join("south_log")
         .join(format!("00000001-{}.jsonl", vault.writer()));
     let mut text = fs::read_to_string(&log).unwrap();
-    text.push_str(r#"{"id":"human","msg":"edit"}"#);
+    text.push_str(r#"human: {"msg":"edit"}"#);
     text.push('\n');
     fs::write(&log, text).unwrap();
     let err = collection.get("human").unwrap_err();

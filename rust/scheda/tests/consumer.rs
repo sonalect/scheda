@@ -259,6 +259,22 @@ fn assert_raw_eq_file(vault: &Vault, collection: &str, id: &str, rel: &[&str]) {
         path.push(part);
     }
     let on_disk = fs::read(&path).unwrap();
+    if path.extension().and_then(|s| s.to_str()) == Some("jsonl") {
+        let text = str::from_utf8(&on_disk).unwrap();
+        let line = text.strip_suffix('\n').unwrap_or(text);
+        let Some((envelope_id, payload)) = line.split_once(": ") else {
+            panic!("{} is not a journal envelope", rel.join("/"));
+        };
+        assert_eq!(got.id.as_deref(), Some(id), "{} {id}", rel.join("/"));
+        assert_eq!(envelope_id, id, "{} {id}", rel.join("/"));
+        assert_eq!(
+            got.raw.as_deref(),
+            Some(payload.as_bytes()),
+            "{} {id}",
+            rel.join("/")
+        );
+        return;
+    }
     assert_eq!(
         got.raw.as_deref(),
         Some(on_disk.as_slice()),
@@ -296,12 +312,7 @@ fn fixture_raw_matches(vault: &Vault) {
         "alpha",
         &["artifact_reachability", "00000001.jsonl"],
     );
-    assert_raw_eq_file(
-        vault,
-        "chain_heads",
-        "heads",
-        &["chain_heads", "heads"],
-    );
+    assert_raw_eq_file(vault, "chain_heads", "heads", &["chain_heads", "heads"]);
     assert_raw_eq_file(vault, "run_heads", "cursor", &["run_heads", "cursor"]);
     let bound = vault
         .collection("alias_bindings")
@@ -309,8 +320,14 @@ fn fixture_raw_matches(vault: &Vault) {
         .get("bound")
         .unwrap();
     let dir = vault.path().join(".isolated").join("alias_bindings");
-    let on_disk = fs::read(unique_jsonl(&dir)).unwrap();
-    assert_eq!(bound.raw.as_deref(), Some(on_disk.as_slice()));
+    let text = fs::read_to_string(unique_jsonl(&dir)).unwrap();
+    let line = text.strip_suffix('\n').unwrap_or(&text);
+    let Some((envelope_id, payload)) = line.split_once(": ") else {
+        panic!("alias_bindings is not a journal envelope: {line}");
+    };
+    assert_eq!(bound.id.as_deref(), Some("bound"));
+    assert_eq!(envelope_id, "bound");
+    assert_eq!(bound.raw.as_deref(), Some(payload.as_bytes()));
 }
 
 fn unique_jsonl(dir: &Path) -> PathBuf {

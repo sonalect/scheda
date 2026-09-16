@@ -68,7 +68,7 @@ it is unused; wiring is F12–F13.
 | [F8](#f8-files-and-perimeter) | done | `04` / `09` opaque UTF-8; encryption still whole-file |
 | [F9](#f9-document-bytes) | done | `document` I/O is bytes; path is `id` |
 | [F10](#f10-singleton-bytes) | done | `singleton` I/O is bytes; file is the declared `id` |
-| [F11](#f11-journal-envelope) | not started | Journal line envelope; payload opaque |
+| [F11](#f11-journal-envelope) | done | Journal line envelope; payload opaque |
 | [F12](#f12-projector-and-find) | not started | `Projector` wired into the lexical Index and `find` |
 | [F13](#f13-projector-and-search) | not started | BM25 / vectors from Projector slots |
 | [F14](#f14-drop-field-schema) | not started | No `Field` / edges in proto, disk, or `src/` |
@@ -561,23 +561,23 @@ Close only after F9.
 
 ## F11. Journal envelope
 
-**Status:** not started
+**Status:** done
 
 **Codes:** MOD-9, MOD-10, MOD-16, SCH-14, LIB-18 (retired), LIB-19, IDX-5.
 
 Close only after F10.
 
-- [ ] `add(id, payload)` appends `{id}: {payload}\n` to the open segment.
+- [x] `add(id, payload)` appends `{id}: {payload}\n` to the open segment.
       Payload with `\n` / `\r` or non-UTF-8 → `invalid`.
-- [ ] `get` / `lines`:`raw` is the payload. Wipe `{vault}/.scheda/`:
+- [x] `get` / `lines`:`raw` is the payload. Wipe `{vault}/.scheda/`:
       `get` still finds the line by scanning the envelope (IDX-1);
       `lines` still yields every payload in append order.
-- [ ] Duplicate `id` across segments → `duplicate_id`. The library reads
+- [x] Duplicate `id` across segments → `duplicate_id`. The library reads
       `id` from the envelope, not from JSON keys in the payload.
-- [ ] `replace` / `remove` remain `unsupported`. Rotation caps unchanged.
-- [ ] IDX-5 map still `(collection, id) →` segment path. After F11 it is
+- [x] `replace` / `remove` remain `unsupported`. Rotation caps unchanged.
+- [x] IDX-5 map still `(collection, id) →` segment path. After F11 it is
       rebuilt from envelopes, not from JSON `id` fields.
-- [ ] `bazel test //...` green. Owner has reviewed the diff.
+- [x] `bazel test //...` green. Owner has reviewed the diff.
 
 **Review:** journal I/O. Stop.
 

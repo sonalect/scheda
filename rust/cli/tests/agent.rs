@@ -247,9 +247,14 @@ fn tool_writes_cannot_bypass_schema() {
         "--file",
         &scratch.payload_file("payload", rec(json!({"title":"x","unknown":"y"}))),
     ]);
-    assert_eq!(error_json(&extra)["code"], "CODE_INVALID");
-    assert!(!scratch.vault().join("accept_notes/rogue").exists());
-    assert!(!scratch.vault().join("rogue.md").exists());
+    assert_eq!(extra.status, 0, "stderr={}", extra.stderr);
+    let got = scratch
+        .reopen()
+        .collection("accept_log")
+        .unwrap()
+        .get("rogue")
+        .unwrap();
+    assert_eq!(got.id.as_deref(), Some("rogue"));
 
     let add = run(&[
         "--vault",

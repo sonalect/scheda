@@ -10,8 +10,8 @@ use crate::error::{Code, Context, ContextAs, ContextIo, bail};
 use crate::id::require_slug;
 use crate::store;
 use crate::{
-    Body, CollectionInfo, Edge, Error, Field, Journal, Object, Record, Schema as ApiSchema,
-    Singleton, Text, Unit, VaultInfo,
+    Body, CollectionInfo, Edge, Error, Field, Journal, Object, Schema as ApiSchema, Singleton,
+    Text, Unit, VaultInfo,
 };
 
 const MIB: u64 = 1024 * 1024;
@@ -1526,62 +1526,7 @@ pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
     Ok(out)
 }
 
-pub(crate) fn check_strict_edges(
-    schema: &Schema,
-    decl: &CollectionDecl,
-    record: &Record,
-    lookup: impl Fn(&str, &str) -> Result<Record, Error>,
-) -> Result<(), Error> {
-    let fields = store::fields_from_record(decl, record)?;
-    check_strict_fields(&decl.fields, &fields, schema, &lookup)
-}
-
-fn check_strict_fields(
-    decls: &[FieldDecl],
-    values: &serde_json::Map<String, serde_json::Value>,
-    schema: &Schema,
-    lookup: &impl Fn(&str, &str) -> Result<Record, Error>,
-) -> Result<(), Error> {
-    for field in decls {
-        if let Some(edge) = &field.edge
-            && edge.dangling == Dangling::Strict
-        {
-            if schema.get(&edge.collection).is_none() {
-                bail!(Error::invalid(format!(
-                    "edge {} targets unknown collection {}",
-                    field.name, edge.collection
-                )));
-            }
-            for id in edge_target_ids(values.get(&field.name)) {
-                match lookup(&edge.collection, &id) {
-                    Ok(_) => {}
-                    Err(err) if err.known_code() == Some(crate::Code::NotFound) => {
-                        bail!(Error::invalid(format!(
-                            "strict edge {} target {id} is missing",
-                            field.name
-                        )));
-                    }
-                    Err(err) => bail!(err),
-                }
-            }
-        }
-        match values.get(&field.name) {
-            Some(serde_json::Value::Object(map)) => {
-                check_strict_fields(&field.fields, map, schema, lookup)?;
-            }
-            Some(serde_json::Value::Array(items)) => {
-                for item in items {
-                    if let Some(map) = item.as_object() {
-                        check_strict_fields(&field.fields, map, schema, lookup)?;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(())
-}
-
+#[cfg(feature = "find")]
 pub(crate) fn edge_target_ids(value: Option<&serde_json::Value>) -> Vec<String> {
     match value {
         Some(serde_json::Value::String(id)) if !id.is_empty() => vec![id.clone()],

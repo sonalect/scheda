@@ -77,8 +77,10 @@ fn drop_journal_id(vault: &std::path::Path, collection: &str, id: &str) {
             if line.is_empty() {
                 continue;
             }
-            let value: Value = serde_json::from_str(line).unwrap();
-            if value.get("id").and_then(Value::as_str) == Some(id) {
+            let Some((line_id, _)) = line.split_once(": ") else {
+                continue;
+            };
+            if line_id == id {
                 continue;
             }
             out.push_str(line);

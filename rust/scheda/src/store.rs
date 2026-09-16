@@ -7,19 +7,16 @@ use std::iter::FusedIterator;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+#[cfg(feature = "find")]
 use serde_json::{Map, Value};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
-use crate::schema::{CollectionDecl, FieldDecl, FieldType, Kind, Schema};
+use crate::schema::{CollectionDecl, Kind, Schema};
 use crate::{Encryption, Error, Record};
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
 
 const FS_NAME_MAX: usize = 255;
-
-/// Consecutive integers in IEEE 754 binary64. `google.protobuf.Value`
-/// `number_value` is that type; an `integer` field beyond this is not exact.
-const BINARY64_EXACT_INT_MAGNITUDE: u64 = 1 << 53;
 
 pub(crate) fn insert_document(
     vault: &Path,
@@ -576,173 +573,6 @@ pub(crate) fn read_file(
         .with_raw(raw))
 }
 
-pub(crate) fn apply_defaults(fields: &mut Map<String, Value>, decls: &[FieldDecl]) {
-    for decl in decls {
-        if let Some(default) = &decl.default {
-            fields
-                .entry(decl.name.clone())
-                .or_insert_with(|| default.clone());
-        }
-    }
-}
-
-pub(crate) fn validate_fields(
-    fields: &Map<String, Value>,
-    decls: &[FieldDecl],
-    skip_id: bool,
-    open: bool,
-) -> Result<(), Error> {
-    if open {
-        for (key, value) in fields {
-            if !value.is_string() && !value.is_null() {
-                bail!(Error::invalid(format!(
-                    "open object key {key} must be a string"
-                )));
-            }
-        }
-        return Ok(());
-    }
-    for key in fields.keys() {
-        if skip_id && key == crate::id::FIELD {
-            continue;
-        }
-        if !decls.iter().any(|decl| decl.name == *key) {
-            bail!(Error::invalid(format!("unknown field {key}")));
-        }
-    }
-    for decl in decls {
-        match fields.get(&decl.name) {
-            None => {
-                if decl.required {
-                    bail!(Error::invalid(format!(
-                        "required field {} is missing",
-                        decl.name
-                    )));
-                }
-            }
-            Some(Value::Null) => {
-                if !decl.nullable {
-                    bail!(Error::invalid(format!(
-                        "field {} is not nullable",
-                        decl.name
-                    )));
-                }
-            }
-            Some(value) => check_type_at(value, decl, &format!("field {}", decl.name))?,
-        }
-    }
-    Ok(())
-}
-
-fn check_type_at(value: &Value, decl: &FieldDecl, loc: &str) -> Result<(), Error> {
-    match decl.type_ {
-        FieldType::String => {
-            if !value.is_string() {
-                bail!(Error::invalid(format!("{loc} must be a string")));
-            }
-        }
-        FieldType::Boolean => {
-            if !value.is_boolean() {
-                bail!(Error::invalid(format!("{loc} must be a boolean")));
-            }
-        }
-        FieldType::Integer => {
-            if !is_integer(value) {
-                bail!(Error::invalid(format!("{loc} must be an integer")));
-            }
-        }
-        FieldType::Number => {
-            if !is_finite_number(value) {
-                bail!(Error::invalid(format!("{loc} must be a finite number")));
-            }
-        }
-        FieldType::StringList => {
-            let Some(items) = value.as_array() else {
-                bail!(Error::invalid(format!("{loc} must be a string_list")));
-            };
-            if items.iter().any(|item| !item.is_string()) {
-                bail!(Error::invalid(format!("{loc} must be a string_list")));
-            }
-        }
-        FieldType::Object => {
-            let Some(map) = value.as_object() else {
-                bail!(Error::invalid(format!("{loc} must be an object")));
-            };
-            validate_object(map, decl, loc)?;
-        }
-        FieldType::ObjectList => {
-            let Some(items) = value.as_array() else {
-                bail!(Error::invalid(format!("{loc} must be an object_list")));
-            };
-            for item in items {
-                let Some(map) = item.as_object() else {
-                    bail!(Error::invalid(format!("{loc} must be an object_list")));
-                };
-                validate_object(map, decl, loc)?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn validate_object(map: &Map<String, Value>, decl: &FieldDecl, loc: &str) -> Result<(), Error> {
-    if let Some(values) = &decl.values {
-        for (key, value) in map {
-            let entry = format!("{loc} values {} key {key}", values.name);
-            match value {
-                Value::Null if values.nullable => {}
-                Value::Null => {
-                    bail!(Error::invalid(format!("{entry} is not nullable")));
-                }
-                value => check_type_at(value, values, &entry)?,
-            }
-        }
-        return Ok(());
-    }
-    if decl.fields.is_empty() {
-        for (key, value) in map {
-            if !value.is_string() && !value.is_null() {
-                bail!(Error::invalid(format!(
-                    "open object {} key {key} must be a string",
-                    decl.name
-                )));
-            }
-        }
-        return Ok(());
-    }
-    for key in map.keys() {
-        if !decl.fields.iter().any(|f| &f.name == key) {
-            bail!(Error::invalid(format!(
-                "unknown field {key} on {}",
-                decl.name
-            )));
-        }
-    }
-    validate_fields(map, &decl.fields, false, false)
-}
-
-fn is_integer(value: &Value) -> bool {
-    let Value::Number(n) = value else {
-        return false;
-    };
-    if let Some(u) = n.as_u64() {
-        return u <= BINARY64_EXACT_INT_MAGNITUDE;
-    }
-    if let Some(i) = n.as_i64() {
-        return i.unsigned_abs() <= BINARY64_EXACT_INT_MAGNITUDE;
-    }
-    n.as_f64().is_some_and(|f| {
-        f.is_finite() && f.fract() == 0.0 && f.abs() <= BINARY64_EXACT_INT_MAGNITUDE as f64
-    })
-}
-
-fn is_finite_number(value: &Value) -> bool {
-    match value {
-        Value::Number(n) => n.as_f64().is_some_and(f64::is_finite) || n.is_i64() || n.is_u64(),
-        _ => false,
-    }
-}
-
 pub(crate) fn record_raw(record: &Record) -> &[u8] {
     record.raw.as_deref().unwrap_or(&[])
 }
@@ -753,22 +583,7 @@ pub(crate) fn utf8_raw<'a>(record: &'a Record, frame: &'static str) -> Result<&'
     Ok(raw)
 }
 
-pub(crate) fn inject_id(fields: &mut Map<String, Value>, id: &str) -> Result<(), Error> {
-    match fields.get(crate::id::FIELD) {
-        Some(Value::String(existing)) if existing == id => Ok(()),
-        Some(Value::Null) | None => {
-            fields.insert(String::from(crate::id::FIELD), Value::String(id.to_owned()));
-            Ok(())
-        }
-        Some(_) => {
-            bail!(Error::invalid(format!(
-                "header {} must equal record id {id}",
-                crate::id::FIELD
-            )));
-        }
-    }
-}
-
+#[cfg(feature = "find")]
 fn yaml_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
     let text = str::from_utf8(record_raw(record)).context(Code::NotUtf8, "[store] decode UTF-8")?;
     if text.trim().is_empty() {
@@ -781,6 +596,7 @@ fn yaml_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
     Ok(fields)
 }
 
+#[cfg(feature = "find")]
 fn json_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
     let text = str::from_utf8(record_raw(record)).context(Code::NotUtf8, "[store] decode UTF-8")?;
     let text = text.trim_end_matches('\n').trim_end_matches('\r');
@@ -795,15 +611,20 @@ fn json_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
 }
 
 /// Field map for Index columns still declared on Schema. Documents do not
-/// populate those columns. Singleton is opaque: YAML-shaped bytes may fill
-/// columns until Projector lands; other UTF-8 yields an empty map.
+/// populate those columns. Journal JSON and singleton YAML are best-effort:
+/// matching bytes may fill columns until Projector lands; other UTF-8 yields
+/// an empty map.
+#[cfg(feature = "find")]
 pub(crate) fn fields_from_record(
     decl: &CollectionDecl,
     record: &Record,
 ) -> Result<Map<String, Value>, Error> {
     match decl.kind {
         Kind::Document => Ok(Map::new()),
-        Kind::Journal => json_object_from_raw(record),
+        Kind::Journal => match json_object_from_raw(record) {
+            Ok(fields) => Ok(fields),
+            Err(_) => Ok(Map::new()),
+        },
         Kind::Singleton => match yaml_object_from_raw(record) {
             Ok(fields) => Ok(fields),
             Err(_) => Ok(Map::new()),
@@ -811,21 +632,12 @@ pub(crate) fn fields_from_record(
     }
 }
 
-/// Whether this Record should enter the Index. Documents and singletons are
-/// present when the file was read. Journal keeps Schema-field validation
-/// until the envelope lands.
-pub(crate) fn record_indexable(decl: &CollectionDecl, record: &Record) -> bool {
+/// Whether this Record should enter the Index. Documents, singletons, and
+/// journal envelopes are present when the file / line was read.
+pub(crate) fn record_indexable(decl: &CollectionDecl, _record: &Record) -> bool {
     match decl.kind {
-        Kind::Document | Kind::Singleton => true,
-        Kind::Journal => match fields_from_record(decl, record) {
-            Ok(fields) => validate_fields(&fields, &decl.fields, true, false).is_ok(),
-            Err(_) => false,
-        },
+        Kind::Document | Kind::Singleton | Kind::Journal => true,
     }
-}
-
-pub(crate) fn fields_map(record: &Record) -> Result<Map<String, Value>, Error> {
-    json_object_from_raw(record)
 }
 
 fn encode_record_file<'a>(

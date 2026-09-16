@@ -9,9 +9,6 @@ use crate::error::bail;
 
 const MAX_BYTES: usize = 255;
 
-/// YAML/JSON key for Record identity. Always `id`.
-pub(crate) const FIELD: &str = "id";
-
 static SLUG: LazyLock<Regex> =
     LazyLock::new(
         || match Regex::new(r"^[\p{L}\p{N}][\p{L}\p{N}\p{M}._+\-() @]*$") {

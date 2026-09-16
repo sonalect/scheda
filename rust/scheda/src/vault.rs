@@ -1711,9 +1711,10 @@ impl Collection {
     ///
     /// For `document`, `id` may be `/`-separated slugs (`work/meeting.toml` is
     /// `{name}/work/meeting.toml`). The library does not append `.md`. `journal`
-    /// and `singleton` remain one slug. A `singleton` file is `{name}/{declared
-    /// id}` (an extension, if any, is part of that id); contents are the caller
-    /// bytes and are not parsed as YAML.
+    /// and `singleton` remain one slug. A `journal` `add` appends
+    /// `{id}: {payload}\n`; `get` / `lines` `raw` is the payload. A `singleton`
+    /// file is `{name}/{declared id}` (an extension, if any, is part of that
+    /// id); contents are the caller bytes and are not parsed as YAML.
     ///
     /// Encrypted collections write age armor after the UTF-8 plaintext
     /// is built. A missing secret is `crypto`. The temp file never holds
@@ -1737,11 +1738,6 @@ impl Collection {
         self.conclude_write((|| {
             self.drain_abandoned()?;
             self.prepare_isolated_write()?;
-            if self.decl.kind == Kind::Journal {
-                schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
-                    self.lookup(collection, id)
-                })?;
-            }
             match self.decl.kind {
                 Kind::Journal => {
                     let mut maps = crate::error::mutex(
@@ -1894,11 +1890,6 @@ impl Collection {
                 )));
             }
             self.prepare_isolated_write()?;
-            if self.decl.kind == Kind::Journal {
-                schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
-                    self.lookup(collection, id)
-                })?;
-            }
             let (_id, rel) = store::replace_document(
                 &self.vault,
                 &self.decl,
@@ -2147,15 +2138,6 @@ impl Collection {
         if rollback.previous_len == 0 {
             let _ = self.unnote_write(rel);
         }
-    }
-
-    fn lookup(&self, collection: &str, id: &str) -> Result<Record, Error> {
-        let Some(decl) = self.schema.get(collection) else {
-            bail!(Error::not_found(format!(
-                "collection {collection} is not in Schema"
-            )));
-        };
-        self.lookup_decl(decl, id)
     }
 
     fn lookup_decl(&self, decl: &CollectionDecl, id: &str) -> Result<Record, Error> {
