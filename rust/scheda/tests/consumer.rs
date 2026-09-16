@@ -227,9 +227,9 @@ fn plant_main_tree(vault: &Path) {
         REACHABILITY_JSONL,
     );
     write_rel(vault, &["chain_heads", ".schema.yaml"], HEADS_SCHEMA);
-    write_rel(vault, &["chain_heads", "record.yaml"], HEADS_YAML);
+    write_rel(vault, &["chain_heads", "heads"], HEADS_YAML);
     write_rel(vault, &["run_heads", ".schema.yaml"], RUN_HEADS_SCHEMA);
-    write_rel(vault, &["run_heads", "record.yaml"], RUN_HEADS_YAML);
+    write_rel(vault, &["run_heads", "cursor"], RUN_HEADS_YAML);
     write_rel(vault, &["alias_bindings", ".schema.yaml"], ALIAS_SCHEMA);
 }
 
@@ -300,9 +300,9 @@ fn fixture_raw_matches(vault: &Vault) {
         vault,
         "chain_heads",
         "heads",
-        &["chain_heads", "record.yaml"],
+        &["chain_heads", "heads"],
     );
-    assert_raw_eq_file(vault, "run_heads", "cursor", &["run_heads", "record.yaml"]);
+    assert_raw_eq_file(vault, "run_heads", "cursor", &["run_heads", "cursor"]);
     let bound = vault
         .collection("alias_bindings")
         .unwrap()
@@ -352,7 +352,7 @@ fn hand_tally(vault: &Path) -> (u64, u64) {
     let mut segments = 0u64;
     for path in walk_files(vault) {
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if name.ends_with(".md") || name == "record.yaml" {
+        if name.ends_with(".md") || name == "heads" || name == "cursor" {
             records += 1;
         } else if name.ends_with(".jsonl") {
             segments += 1;

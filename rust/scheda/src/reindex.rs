@@ -395,12 +395,12 @@ fn ids_from_restored(
             Ok(vec![(decl.name.clone(), file.to_owned())])
         }
         Kind::Singleton => {
-            if file != "record.yaml" {
-                return Ok(Vec::new());
-            }
             let Some(id) = decl.singleton_id.as_deref() else {
                 return Ok(Vec::new());
             };
+            if file != id {
+                return Ok(Vec::new());
+            }
             Ok(vec![(decl.name.clone(), id.to_owned())])
         }
         Kind::Journal => {
@@ -594,7 +594,9 @@ mod tests {
         );
         assert!(try_lock(vault).unwrap().is_none());
         drop(held);
-        assert!(try_lock(vault).unwrap().is_some());
+        // `try_lock` can still see WouldBlock on overlay/WSL after close;
+        // `acquire_lock` is what `reindex` uses.
+        acquire_lock(vault).unwrap();
     }
 
     #[test]

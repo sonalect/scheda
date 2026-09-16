@@ -72,7 +72,7 @@ message Journal {
 }
 
 // `singleton`: the one Record `id`. Slug checked in the library.
-// File is always `{name}/record.yaml` (or `.isolated/{name}/record.yaml`).
+// File is `{name}/{id}` (or `.isolated/{name}/{id}`).
 message Singleton {
   string id = 1 [(buf.validate.field) = {
     required: true

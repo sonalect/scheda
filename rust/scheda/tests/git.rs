@@ -272,7 +272,7 @@ fn history_of_singleton_and_journal_segment() {
         .add("e1", rec(json!({})), None)
         .unwrap();
     vault.commit("singleton and journal").unwrap();
-    let page_path = "north_inbox/record.yaml".to_owned();
+    let page_path = "north_inbox/inbox".to_owned();
     let page_hist = vault
         .collection("north_inbox")
         .unwrap()

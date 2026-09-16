@@ -67,7 +67,7 @@ it is unused; wiring is F12–F13.
 | [F7](#f7-agent-and-cli-spec) | done | `08` / `14` no field catalog; `--file` |
 | [F8](#f8-files-and-perimeter) | done | `04` / `09` opaque UTF-8; encryption still whole-file |
 | [F9](#f9-document-bytes) | done | `document` I/O is bytes; path is `id` |
-| [F10](#f10-singleton-bytes) | not started | `singleton` I/O is bytes; file is the declared `id` |
+| [F10](#f10-singleton-bytes) | done | `singleton` I/O is bytes; file is the declared `id` |
 | [F11](#f11-journal-envelope) | not started | Journal line envelope; payload opaque |
 | [F12](#f12-projector-and-find) | not started | `Projector` wired into the lexical Index and `find` |
 | [F13](#f13-projector-and-search) | not started | BM25 / vectors from Projector slots |
@@ -541,19 +541,19 @@ is not on the proto; the library writes generation `1` on disk.
 
 ## F10. Singleton bytes
 
-**Status:** not started
+**Status:** done
 
 **Codes:** MOD-7, MOD-8, MOD-17.
 
 Close only after F9.
 
-- [ ] Singleton file is `{name}/{declaration.id}`, not always
+- [x] Singleton file is `{name}/{declaration.id}`, not always
       `record.yaml`. `add` / `replace` / `remove` / `get` / `history` /
       `documents` / `ids` use that name.
-- [ ] Contents are opaque UTF-8. No Schema field validation.
-- [ ] Second `add` still `duplicate_id`. `id` on the method must equal
+- [x] Contents are opaque UTF-8. No Schema field validation.
+- [x] Second `add` still `duplicate_id`. `id` on the method must equal
       the declared singleton `id` (`invalid` otherwise).
-- [ ] `bazel test //...` green. Owner has reviewed the diff.
+- [x] `bazel test //...` green. Owner has reviewed the diff.
 
 **Review:** singleton I/O. Stop.
 

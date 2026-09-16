@@ -17,6 +17,12 @@ API or on-disk format changes bump the minor.
   CLI `add` / `replace` take `--file` or stdin, not Protobuf JSON.
   `get` returns those bytes without parsing YAML. `documents` / `ids`
   list regular files of any extension and skip dotfiles.
+- **`singleton` file is `{name}/{declared id}`.** Not always `record.yaml`.
+  An extension may be part of that id (`inbox.toml`). Contents are opaque
+  UTF-8: `add` / `replace` write the caller bytes; Schema fields are not
+  applied. Method `id` must equal the declared id (`invalid` otherwise).
+  Second `add` is still `duplicate_id`. `get` / `remove` / `history` /
+  `documents` / `ids` use that path.
 - **Collection declaration `version` is the collection generation**, required
   on the YAML/JSON file, with no default. Only generation `1` is implemented.
   `create_collection` always writes `version: 1`. Missing, `0`, or any other
@@ -25,8 +31,8 @@ API or on-disk format changes bump the minor.
 ### Removed
 
 - **`Record.fields`, `Record.body`, and `Record.valid`.** Callers pass UTF-8
-  `raw`. Journal and singleton on-disk shape is unchanged until later stages:
-  pass the old JSON/YAML as `raw`.
+  `raw`. Journal on-disk shape is unchanged until a later stage: pass the
+  old JSON as `raw`.
 - **`api.v1` `RecordAdd` and `RecordReplace`.** Write is method `raw` bytes.
   Proto `Record` is output-only (`get` / `find` / `search`).
 - **`CODE_UNSUPPORTED_REMOTE`.** The compile-time remote-git gate is gone; a

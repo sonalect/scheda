@@ -809,7 +809,7 @@ pub const __JOURNAL_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::ty
     is_wkt: false,
 };
 /// `singleton`: the one Record `id`. Slug checked in the library.
-/// File is always `{name}/record.yaml` (or `.isolated/{name}/record.yaml`).
+/// File is `{name}/{id}` (or `.isolated/{name}/{id}`).
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]

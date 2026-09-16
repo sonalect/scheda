@@ -194,12 +194,6 @@ pub(crate) fn check_documents(
             if expected != rel {
                 bail!(Error::invalid(format!("{rel} path does not match id {id}")));
             }
-            if decl.kind == Kind::Singleton {
-                let parsed = parse_file(text)?;
-                if let Err(err) = validate_fields(&parsed.fields, &decl.fields, true, false) {
-                    bail!(Error::invalid(format!("{rel}: {err}")));
-                }
-            }
         }
     }
     Ok(())
@@ -209,10 +203,6 @@ struct Prepared {
     id: String,
     path: PathBuf,
     bytes: Vec<u8>,
-}
-
-struct ParsedFile {
-    fields: Map<String, Value>,
 }
 
 fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result<Prepared, Error> {
@@ -246,13 +236,8 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
     let dir = crate::isolated::records_dir(vault, decl)?;
     let path = crate::schema::join_inside(&dir, &rel)?;
     let bytes = match decl.kind {
-        Kind::Document => utf8_raw(record, "[store::prepare_write] decode UTF-8")?.to_vec(),
-        Kind::Singleton => {
-            let mut fields = yaml_object_from_raw(record)?;
-            apply_defaults(&mut fields, &decl.fields);
-            inject_id(&mut fields, id)?;
-            validate_fields(&fields, &decl.fields, true, false)?;
-            encode_file(&fields)?
+        Kind::Document | Kind::Singleton => {
+            utf8_raw(record, "[store::prepare_write] decode UTF-8")?.to_vec()
         }
         Kind::Journal => unreachable!("journal write is refused above"),
     };
@@ -278,7 +263,15 @@ fn record_file(decl: &CollectionDecl, id: &str) -> Result<String, Error> {
             }
             Ok(id.to_owned())
         }
-        Kind::Singleton => Ok(String::from("record.yaml")),
+        Kind::Singleton => {
+            crate::id::require_slug("id", id)?;
+            if id.len() > FS_NAME_MAX {
+                bail!(Error::invalid(format!(
+                    "record file name exceeds {FS_NAME_MAX} bytes"
+                )));
+            }
+            Ok(id.to_owned())
+        }
         Kind::Journal => bail!(Error::invalid("document path used on a journal collection",)),
     }
 }
@@ -406,7 +399,14 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
     }
     match decl.kind {
         Kind::Singleton => {
-            let path = dir.join("record.yaml");
+            let Some(id) = decl.singleton_id.as_deref() else {
+                bail!(Error::invalid(format!(
+                    "collection {} is missing singleton_id",
+                    decl.name
+                )));
+            };
+            let file = record_file(decl, id)?;
+            let path = crate::schema::join_inside(&dir, &file)?;
             Ok(path.is_file().then_some(path).into_iter().collect())
         }
         Kind::Document => list_document_files(&dir),
@@ -574,59 +574,6 @@ pub(crate) fn read_file(
         .with_collection(decl.name.as_str())
         .with_id(id)
         .with_raw(raw))
-}
-
-fn parse_file(text: &str) -> Result<ParsedFile, Error> {
-    let (yaml, _body) = split_frontmatter(text);
-    let value: Value =
-        yaml_serde::from_str(yaml).context(Code::Invalid, "[store::parse_file] decode YAML")?;
-    let Value::Object(fields) = value else {
-        bail!(Error::invalid("YAML header must be a mapping"));
-    };
-    match fields.get(crate::id::FIELD) {
-        Some(Value::String(s)) if !s.is_empty() => {}
-        _ => {
-            bail!(Error::invalid("header id is missing"));
-        }
-    };
-    Ok(ParsedFile { fields })
-}
-
-fn split_frontmatter(text: &str) -> (&str, Option<String>) {
-    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
-    let Some(rest) = text.strip_prefix("---") else {
-        return (text, None);
-    };
-    let rest = rest.strip_prefix('\r').unwrap_or(rest);
-    let Some(rest) = rest.strip_prefix('\n') else {
-        return (text, None);
-    };
-    let closer = if let Some(i) = rest.find("\n---\n") {
-        Some((i, 5usize))
-    } else if let Some(i) = rest.find("\n---\r\n") {
-        Some((i, 6))
-    } else if rest.ends_with("\n---") {
-        Some((rest.len() - 4, 4))
-    } else {
-        None
-    };
-    let Some((i, n)) = closer else {
-        return (text, None);
-    };
-    let yaml = &rest[..i];
-    let body = rest[i + n..].to_owned();
-    if body.is_empty() {
-        (yaml, None)
-    } else {
-        (yaml, Some(body))
-    }
-}
-
-fn encode_file(fields: &Map<String, Value>) -> Result<Vec<u8>, Error> {
-    let yaml =
-        yaml_serde::to_string(fields).context(Code::Invalid, "[store::encode_file] encode YAML")?;
-    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-    Ok(yaml.as_bytes().to_vec())
 }
 
 pub(crate) fn apply_defaults(fields: &mut Map<String, Value>, decls: &[FieldDecl]) {
@@ -847,8 +794,9 @@ fn json_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
     Ok(fields)
 }
 
-/// Field map for journal/singleton indexing and Schema checks. Documents
-/// do not populate Schema columns.
+/// Field map for Index columns still declared on Schema. Documents do not
+/// populate those columns. Singleton is opaque: YAML-shaped bytes may fill
+/// columns until Projector lands; other UTF-8 yields an empty map.
 pub(crate) fn fields_from_record(
     decl: &CollectionDecl,
     record: &Record,
@@ -856,17 +804,20 @@ pub(crate) fn fields_from_record(
     match decl.kind {
         Kind::Document => Ok(Map::new()),
         Kind::Journal => json_object_from_raw(record),
-        Kind::Singleton => yaml_object_from_raw(record),
+        Kind::Singleton => match yaml_object_from_raw(record) {
+            Ok(fields) => Ok(fields),
+            Err(_) => Ok(Map::new()),
+        },
     }
 }
 
-/// Whether this Record should enter the Index. Documents are present when
-/// the file was read. Journal/singleton keep Schema-field validation until
-/// those kinds become opaque.
+/// Whether this Record should enter the Index. Documents and singletons are
+/// present when the file was read. Journal keeps Schema-field validation
+/// until the envelope lands.
 pub(crate) fn record_indexable(decl: &CollectionDecl, record: &Record) -> bool {
     match decl.kind {
-        Kind::Document => true,
-        Kind::Journal | Kind::Singleton => match fields_from_record(decl, record) {
+        Kind::Document | Kind::Singleton => true,
+        Kind::Journal => match fields_from_record(decl, record) {
             Ok(fields) => validate_fields(&fields, &decl.fields, true, false).is_ok(),
             Err(_) => false,
         },
@@ -1176,7 +1127,11 @@ mod tests {
         );
         assert_eq!(
             record_file(&decl(Kind::Singleton), "inbox").unwrap(),
-            "record.yaml"
+            "inbox"
+        );
+        assert_eq!(
+            record_file(&decl(Kind::Singleton), "inbox.toml").unwrap(),
+            "inbox.toml"
         );
     }
 }

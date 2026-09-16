@@ -1711,7 +1711,9 @@ impl Collection {
     ///
     /// For `document`, `id` may be `/`-separated slugs (`work/meeting.toml` is
     /// `{name}/work/meeting.toml`). The library does not append `.md`. `journal`
-    /// and `singleton` remain one slug.
+    /// and `singleton` remain one slug. A `singleton` file is `{name}/{declared
+    /// id}` (an extension, if any, is part of that id); contents are the caller
+    /// bytes and are not parsed as YAML.
     ///
     /// Encrypted collections write age armor after the UTF-8 plaintext
     /// is built. A missing secret is `crypto`. The temp file never holds
@@ -1735,7 +1737,7 @@ impl Collection {
         self.conclude_write((|| {
             self.drain_abandoned()?;
             self.prepare_isolated_write()?;
-            if self.decl.kind != Kind::Document {
+            if self.decl.kind == Kind::Journal {
                 schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
                     self.lookup(collection, id)
                 })?;
@@ -1892,7 +1894,7 @@ impl Collection {
                 )));
             }
             self.prepare_isolated_write()?;
-            if self.decl.kind != Kind::Document {
+            if self.decl.kind == Kind::Journal {
                 schema::check_strict_edges(&self.schema, &self.decl, &record, |collection, id| {
                     self.lookup(collection, id)
                 })?;

@@ -385,8 +385,8 @@ fn singleton_second_insert_then_replace() {
     let got = collection.get("inbox").unwrap();
     let text = String::from_utf8(got.raw.clone().unwrap()).unwrap();
     assert!(text.contains("Second"), "{text}");
-    assert!(scratch.coll_file("north_inbox", "record.yaml").is_file());
-    let text = fs::read_to_string(scratch.coll_file("north_inbox", "record.yaml")).unwrap();
+    assert!(scratch.coll_file("north_inbox", "inbox").is_file());
+    let text = fs::read_to_string(scratch.coll_file("north_inbox", "inbox")).unwrap();
     assert!(text.contains("Second"));
     assert!(!text.contains("First"));
 }
@@ -468,7 +468,7 @@ fn singleton_remove_then_add_again() {
         collection.get("inbox").unwrap_err().known_code(),
         Some(Code::NotFound)
     );
-    assert!(!scratch.coll_file("north_inbox", "record.yaml").exists());
+    assert!(!scratch.coll_file("north_inbox", "inbox").exists());
     collection
         .add("inbox", rec(serde_json::json!({"title": "Again"})), None)
         .unwrap();
@@ -910,6 +910,76 @@ fn singleton_documents_and_ids_empty_then_one() {
         .collect();
     assert_eq!(walked.len(), 1);
     assert_eq!(walked[0].id.as_deref(), Some("inbox"));
+}
+
+#[test]
+fn singleton_method_id_must_equal_declared_id() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("inbox.yaml", INBOX);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_inbox").unwrap();
+    let err = collection
+        .add("other", rec(serde_json::json!({"title": "Nope"})), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert!(!scratch.coll_file("north_inbox", "other").exists());
+    assert!(!scratch.coll_file("north_inbox", "inbox").exists());
+}
+
+#[test]
+fn singleton_bytes_are_opaque_utf8() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("inbox.yaml", INBOX);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_inbox").unwrap();
+    collection.add("inbox", b"key = \"toml\"\n", None).unwrap();
+    let got = collection.get("inbox").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(b"key = \"toml\"\n".as_slice()));
+    let text = fs::read_to_string(scratch.coll_file("north_inbox", "inbox")).unwrap();
+    assert_eq!(text, "key = \"toml\"\n");
+    collection.replace("inbox", b"", None).unwrap();
+    assert_eq!(collection.get("inbox").unwrap().raw.as_deref(), Some(&b""[..]));
+}
+
+#[test]
+fn singleton_non_utf8_writes_no_file() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("inbox.yaml", INBOX);
+    let vault = scratch.reopen();
+    let collection = vault.collection("north_inbox").unwrap();
+    let err = collection.add("inbox", [0xff, 0xfe], None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotUtf8));
+    assert!(!scratch.coll_file("north_inbox", "inbox").exists());
+}
+
+#[test]
+fn singleton_declared_id_may_include_extension() {
+    const SCHEMA: &str = "\
+name: box_toml
+kind: singleton
+version: 1
+singleton:
+  id: inbox.toml
+fields: []
+";
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("box.yaml", SCHEMA);
+    let vault = scratch.reopen();
+    let collection = vault.collection("box_toml").unwrap();
+    collection
+        .add("inbox.toml", b"[pkg]\nname = \"x\"\n", None)
+        .unwrap();
+    assert!(scratch.coll_file("box_toml", "inbox.toml").is_file());
+    assert!(!scratch.coll_file("box_toml", "record.yaml").exists());
+    assert_eq!(collection.ids().unwrap(), ["inbox.toml"]);
+    assert_eq!(
+        collection.get("inbox.toml").unwrap().raw.as_deref(),
+        Some(b"[pkg]\nname = \"x\"\n".as_slice())
+    );
 }
 
 #[test]

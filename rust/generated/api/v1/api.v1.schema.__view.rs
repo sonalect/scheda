@@ -976,7 +976,7 @@ impl ::serde::Serialize for JournalOwnedView {
     }
 }
 /// `singleton`: the one Record `id`. Slug checked in the library.
-/// File is always `{name}/record.yaml` (or `.isolated/{name}/record.yaml`).
+/// File is `{name}/{id}` (or `.isolated/{name}/{id}`).
 #[derive(Clone, Debug, Default)]
 pub struct SingletonView<'a> {
     /// Field 1: `id`
