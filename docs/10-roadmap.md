@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.51, 10 September 2026.
+Document 10 of the Scheda package. Version 0.52, 17 September 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -15,8 +15,8 @@ Four labels appear on requirements:
 | Phase | Meaning |
 |---|---|
 | **core** | Files are truth, writes are safe, one writer, autocommit or `begin`/`commit`/`discard`, `get` / `find`. No network unless opted in. A consumer can store and retrieve Records with no embedder, no agent transport, and no isolated collections. |
-| **search** | Hybrid `search` that an agent can recall from: ranked BM25, in-process ANN, RRF fusion, Schema-marked fields only, one-step and inverse edge walks. Must not be required to `add` a journal line or `replace` a document. Grep is not this phase. |
-| **agent** | Schema listing (`info`) and a thin encoding of the same API (`08`). Does not block **core**. |
+| **search** | Hybrid `search` that an agent can recall from: ranked BM25, in-process ANN, RRF fusion, Projector columns only. Must not be required to `add` a journal line or `replace` a document. Grep is not this phase. |
+| **agent** | Collection listing (`info`) and a thin encoding of the same API (`08`). Does not block **core**. |
 | **later** | Isolated collections and their encryption, scale, extra writers, extra walks, conveniences. Must not leak into **core** as hidden dependencies. |
 
 A binding may ship **search** before **agent**. Isolated collections are **later**: they must not be required to pass **core**, **search**, or **agent**. Nested `{vault}/.isolated/` I/O is not a gate of **agent**.
@@ -27,11 +27,11 @@ The first implementation is the Rust crate `scheda`. Other languages (Python, Ja
 
 The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` must not scan unrelated segments (`03` §6). `scheda` has that map.
 
-Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and omits `schema.fields` (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
+The collection declaration already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and has no field list (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** Consumer readiness P0–P16 is in (`12` §4). Age encryption shipped as `0.6.0` (`12` P14): it is a Schema key on any one collection, behind the `encrypt` feature. The CLI can open an encrypted Vault from an environment variable or an identity file, and the nested isolated tree may have a Remote of its own (`12` P16). The next crate work is `16` (opaque Records). Do not start other language bindings until `16` is accepted or the owner waives it.
+**Next in `scheda`.** Consumer readiness P0–P16 is in (`12` §4). Age encryption shipped as `0.6.0` (`12` P14): it is a declaration key on any one collection, behind the `encrypt` feature. The CLI can open an encrypted Vault from an environment variable or an identity file, and the nested isolated tree may have a Remote of its own (`12` P16). Opaque Records (`16` F0–F18) are in. The next crate work is `16` F19 (acceptance fixture). Do not start other language bindings until `16` is accepted or the owner waives it.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, P9, P10, P11, P12, and P13 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git) is P4; listing a `document` collection without the Index is P13. P14 took encryption out of the isolation flag and made it a Schema key on any one collection, behind the `encrypt` feature; it shipped as `0.6.0`, and the two things it designed without building — a CLI that can carry a secret, and a Remote for the nested tree — shipped as P16. P15 replaced the nested isolated Index with one owner-only Index per Vault, which is what makes an isolated collection searchable at all. `find` and `search` are opt-in crate features (P8); the crate has no default features. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave. P10 is acceptance on that fixture. P11 is an `object` that takes listed keys, a typed open map (`values`), or an open map of `string` values when both arms are omitted. P12 is an optional commit message on each mutating call and a commit identity at `open`.
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, P9, P10, P11, P12, and P13 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git) is P4; listing a `document` collection without the Index is P13. P14 took encryption out of the isolation flag and made it a declaration key on any one collection, behind the `encrypt` feature; it shipped as `0.6.0`, and the two things it designed without building — a CLI that can carry a secret, and a Remote for the nested tree — shipped as P16. P15 replaced the nested isolated Index with one owner-only Index per Vault, which is what makes an isolated collection searchable at all. `find` and `search` are opt-in crate features (P8); the crate has no default features. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave. P10 is acceptance on that fixture. P11's open-map field types were a field-Schema rule and are gone with `16`. P12 is an optional commit message on each mutating call and a commit identity at `open`.
 
 **Still deferred:** file watcher; journal line delete; REL-4; extra language bindings.
 
@@ -43,14 +43,14 @@ Schema already parses `isolated: true` (SCH-15). `Vault.info` lists those collec
 
 - Model: MOD-1–18
 - Files and git: STO-1–5, GIT-1–13
-- Schema: SCH-1–8, SCH-12–14 (SCH-7 stores the body in **core**; indexing the body is **search**; SCH-15 is **later**)
+- Collection declaration: SCH-1–8, SCH-12–14 (SCH-7 body marks are retired; Projector columns are **search**)
 - Index needed for truth and lookup: IDX-1, IDX-2, IDX-5
 - Point read and filter: QRY-1, QRY-2, QRY-7
 - Library: LIB-1–10, LIB-12–19, LIB-24 (`search` itself is LIB-11; isolated/`encryption` clauses on those ops are **later**)
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-IDX-2 stays **core** for the Index format and for methods that resolve `id` through the Index (`find`, `search`, `replace`). A sequential journal read is not one of those methods. **Core** also has `lines` (LIB-19): it walks journal segments in Schema sequence and does not open the Index. QRY-7 remains the order of `find` when the Index is present. The crate has no default features. `find`, `search`, `simd`, and `encrypt` are opt-in; Bazel CI still links them. A crate without `find`, `search`, or `simd` is the same library with those legs off, not a second product. `encrypt` degrades further and the contract says so: without it an encrypted collection cannot be read at all, so the handle refuses it by code and `check` fails with `unsupported_encryption`, rather than returning ciphertext as a Record or reporting health it never verified (SCH-16, ISO-5). Phases grade a build with `find` and `search` on.
+IDX-2 stays **core** for the Index format and for methods that resolve `id` through the Index (`find`, `search`, `replace`). A sequential journal read is not one of those methods. **Core** also has `lines` (LIB-19): it walks journal segments in declaration sequence and does not open the Index. QRY-7 remains the order of `find` when the Index is present. The crate has no default features. `find`, `search`, `simd`, and `encrypt` are opt-in; Bazel CI still links them. A crate without `find`, `search`, or `simd` is the same library with those legs off, not a second product. `encrypt` degrades further and the contract says so: without it an encrypted collection cannot be read at all, so the handle refuses it by code and `check` fails with `unsupported_encryption`, rather than returning ciphertext as a Record or reporting health it never verified (SCH-16, ISO-5). Phases grade a build with `find` and `search` on.
 
 **Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse, ISO-3 listing, and the unencrypted isolated slice (ISO-2 nested git, ISO-6, IDX-4) are in (`12` P4), with ISO-4 and IDX-4 in their P15 form: one owner-only Index per Vault, ISO-10 retired. ISO-5, ISO-7–9, and ISO-11 are in with encryption (`12` P14). The ISO-6 nested Remote relaxation shipped as P16.
 
@@ -64,22 +64,22 @@ IDX-2 stays **core** for the Index format and for methods that resolve `id` thro
 
 **Rust `scheda`:** those five gates pass (`11` C10; tests in `rust/scheda/tests/core.rs` and the C0–C8 suites). **core** is accepted for this binding.
 
-Order used in `scheda` (not a second spec): working tree + lock → Schema + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance → agent → unencrypted isolated nested git. Remote operations are **core** but landed after local `commit`. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
+Order used in `scheda` (not a second spec): working tree + lock → collection declaration + `document` / `singleton` → `journal` segments → `commit` / Remote → journal `id` map → hybrid `search` → core acceptance → agent → unencrypted isolated nested git. Remote operations are **core** but landed after local `commit`. The stage checklist is `11`; it does not add requirements. **search** codes stay out of this section; `11` ran C9 before C10.
 
 ---
 
 ## 3. Search
 
-**In:** SCH-9–11, IDX-3, IDX-6–9, QRY-3–6, REL-1–3, LIB-11, OPS-2, OPS-4.
+**In:** IDX-3, IDX-6–9, QRY-3–6, LIB-11, OPS-2, OPS-4. SCH-9–11 and REL-* were field-Schema rules; Projector column marks replace them.
 
 Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (HNSW or equivalent) at OPS-1, RRF hybrid when both legs are on, injected embedder, no LLM or ranking model in the library (optional caller reranker on `search` is `13`). Substring search and brute-force vector scan at OPS-1 do not accept this phase.
 
 **Search is accepted** when those codes pass and:
 
 1. `add` / `replace` / `get` still work with no embedder (IDX-8).
-2. `exclude_fts` / `exclude_vector` fields are absent from the corresponding `search` leg (SCH-9).
+2. Columns without `fts` / `vector` marks are absent from the corresponding `search` leg (Projector `schema`).
 3. Corrupt Index fails closed (QRY-4).
-4. One-step and inverse walks match fixtures (REL-2, REL-3). Multi-step (REL-4) is not required.
+4. Edge walks (REL-*) are retired with field Schema; search acceptance does not require them.
 5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
 6. Hybrid `search` on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
@@ -93,7 +93,7 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 
 ISO-3 applies when isolated collections exist and **agent** is on. Nested `{vault}/.isolated/` I/O is not required to accept **agent**.
 
-**Agent is accepted** when `info` JSON matches Schema files, `create_collection` writes declarations without a raw path tool, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
+**Agent is accepted** when `info` JSON matches collection declaration files, `create_collection` writes declarations without a raw path tool, tool writes cannot bypass SCH-12, and library vs transport JSON (and `code`) match on one Vault.
 
 Which transport a binding ships (CLI, MCP, HTTP) is that binding's choice. Shipping none does not fail **core** or **search**. **Agent** acceptance needs at least one thin encoding of `07` (including `info` and `create_collection`). MCP stays an example, not a requirement (`08`).
 
@@ -115,7 +115,7 @@ ISO-1 stays **core**. The main Vault is never encrypted.
 
 Unencrypted isolated (`encryption` unset, `0600`, nested Remote optional) is valid; encryption is optional on top.
 
-**Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-6 with a nested Remote of its own (`12` P16); ISO-4 and IDX-4 in their P15 form — one owner-only Index per Vault that holds isolated collections and no encrypted one, and no nested Index (ISO-10 retired). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; naming an isolated collection is an ordinary query. `check` covers the nested tree. ISO-5, ISO-7–9, and ISO-11 shipped as collection encryption (`12` P14): `OpenOptions.encryption` is read, `encrypted: true` is a Schema key on any one collection, and the Schema is the marker (no `.encrypted` file). The CLI can carry the encryption secret (`14`), and the nested tree may have a Remote of its own (`12` P16).
+**Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-6 with a nested Remote of its own (`12` P16); ISO-4 and IDX-4 in their P15 form — one owner-only Index per Vault that holds isolated collections and no encrypted one, and no nested Index (ISO-10 retired). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; naming an isolated collection is an ordinary query. `check` covers the nested tree. ISO-5, ISO-7–9, and ISO-11 shipped as collection encryption (`12` P14): `OpenOptions.encryption` is read, `encrypted: true` is a declaration key on any one collection, and the declaration is the marker (no `.encrypted` file). The CLI can carry the encryption secret (`14`), and the nested tree may have a Remote of its own (`12` P16).
 
 Online `reindex` (writers during the Index walk) is not P16. The work order is `15`.
 
@@ -124,7 +124,7 @@ Online `reindex` (writers during the Index walk) is not P16. The work order is `
 1. A fixture with gitignored `{vault}/.isolated/`: queries on non-isolated collections return no isolated Records and do not require `.isolated/` (ISO-2, SCH-15).
 2. Nested git: local `commit` / `history` of isolated paths; `push` does not upload `.isolated/`; `check` fails if the parent tracks `.isolated/`; a nested Remote of its own is not a defect (ISO-6).
 3. Encryption of a collection (P14): `add` / `get` round-trip with the handle secret; I/O without it is `crypto`; files decrypt with `age -d`; flipping `encrypted` on a non-empty collection is `invalid` (ISO-5–9, ISO-11). Independent of `isolated`.
-4. No Index holds a fixture string from an encrypted collection (ISO-4, IDX-4). Isolated field values sit in the owner-only Index.
+4. No Index holds a fixture string from an encrypted collection (ISO-4, IDX-4). Isolated Projector-derived values sit in the owner-only Index.
 5. If **agent** is on: default tools never return that sealed value (ISO-3).
 
 Gates 1–5 hold in `scheda` today. The nested Remote and the CLI secret shipped as P16; they do not reopen these gates.
@@ -141,7 +141,7 @@ Not required of **core**, **search**, or **agent**:
 - Two vector generations at once on embedder change (SCH-10: rebuild is enough).
 - Server-side Index for tens of millions of Records: a new Index implementation behind `07`, not a new primary layer. Callers still must not speak SQL.
 - Multi-master without STO-4. CRDTs. Custom YAML merge. Git LFS.
-- Schema-named `[[wiki-link]]` extractor if an implementation never ships one (SCH-3: silence is not an extractor).
+- A `[[wiki-link]]` extractor if an implementation never ships one (silence is not an extractor).
 - Argon2id instead of age scrypt (ISO-8).
 - Encrypting the **main** Vault. KMS / Tink / AWS Encryption SDK as the on-disk format.
 - Second and further language bindings (they follow this package; they are not **later** in the CRDT sense — they are extra implementations).
@@ -170,13 +170,13 @@ Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A futu
 
 **When a human edits a file.** Default is `reindex` / `check`. A watcher is **later**. Not decided: whether `open` should refuse a dirty Index (mtime/hash mismatch) or only warn via `check`.
 
-**Exact Schema YAML key names.** Closed in `05` §8. Pretty-print is still free.
+**Exact declaration YAML key names.** Closed in `05` §8. Pretty-print is still free.
 
 **Passphrase vs identity in fixtures (**later**).** Both are required by ISO-7. Tests should cover each; not decided which the README example leads with.
 
 **Hooks.** `04` already: Vault hooks are the consumer's and must not recurse into the same write lock. Worth a binding note when a CLI lands.
 
-Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`); encryption marker path (no — ISO-11 is the Schema key `encrypted`, not a file). Main-tree `push` / `pull` / `sync` never publish `.isolated/`; a nested Remote is reached only by `push_isolated` / `pull_isolated` / `sync_isolated` (ISO-6).
+Already closed in this package (not open): SQL as caller API (no); merge on `open` (no); homemade ciphertext (no); Git LFS (no); library API field names invented per binding (no — `api/v1`); encryption marker path (no — ISO-11 is the declaration key `encrypted`, not a file). Main-tree `push` / `pull` / `sync` never publish `.isolated/`; a nested Remote is reached only by `push_isolated` / `pull_isolated` / `sync_isolated` (ISO-6).
 
 ---
 

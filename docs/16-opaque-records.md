@@ -6,9 +6,9 @@ Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F17 are done; codes and
+and `search` learn columns and text. F0–F18 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F18–F19.
+This file remains the work order for F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -75,7 +75,7 @@ it is unused; wiring is F12–F13.
 | [F15](#f15-cli) | done | CLI `--file`; default whole-file Projector |
 | [F16](#f16-agent-surface) | done | `info` / `create_collection` without fields |
 | [F17](#f17-check-reindex-dead-code) | done | `check` / `reindex` / YAML codec gone |
-| [F18](#f18-documents-once) | not started | One consistency pass over `docs/` + README |
+| [F18](#f18-documents-once) | done | One consistency pass over `docs/` + README |
 | [F19](#f19-acceptance) | not started | Mixed-format fixture; wipe Index; same files |
 
 ---
@@ -725,19 +725,19 @@ Close only after F16.
 
 ## F18. Documents once
 
-**Status:** not started
+**Status:** done
 
 Close only after F17 and green tests. One pass over documents that still
 contradict the code. Do not polish twice.
 
-- [ ] `01`–`10`, `13`, `14`, README, this file's dashboard statuses, and
+- [x] `01`–`10`, `13`, `14`, README, this file's dashboard statuses, and
       glossary terms match shipped behaviour (filenames, method names,
       error `code`s, defaults).
-- [ ] CHANGELOG `## [Unreleased]` states the break (opaque Records,
+- [x] CHANGELOG `## [Unreleased]` states the break (opaque Records,
       collection declaration, Projector, no field Schema) when this work is
       committed; this box is the note, not a separate changelog-only
       commit.
-- [ ] Owner has reviewed the docs diff.
+- [x] Owner has reviewed the docs diff.
 
 **Review:** document consistency. Stop.
 
@@ -770,20 +770,17 @@ Close only after F18.
 ## 5. What this plan does not decide
 
 - Crate version number for the break (`versioning` skill at release).
-- Whether `open`'s Rust signature adds a fourth argument or a builder.
-  F5 names the option; F12 picks the shape and rustdoc.
-- Whether the collection declaration proto message is still called
-  `Schema` until F14 or is renamed in F9. F14 is the rename gate.
-- Default column name for the CLI whole-file Projector: F7 locked
-  `body`. F15 implements that name.
+
+F12 wired `Projector` at `open`. F14 renamed the proto to `Declaration`.
+F15 locked the CLI whole-file column `body`.
 
 ---
 
 ## 6. Open questions
 
-None that block F9. Spec F1–F8 is closed. Remaining items in §5 are
-implementation choices for later F stages. If the owner rejects a locked
-decision in §3, amend §3 and this file before that later stage.
+None that block F19. Spec F1–F8 and implementation F9–F18 are closed. If
+the owner rejects a locked decision in §3, amend §3 and this file before
+F19.
 
 ---
 

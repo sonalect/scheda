@@ -7,11 +7,13 @@ hosted product.
 
 **What it is.** Records live as ordinary UTF-8 files in a **Vault** — a git
 working tree a person can open in an editor and in `git` without this
-library. Collections are `document` (one file per record), `journal`
-(append-only JSONL segments), or `singleton`. Schema in the Vault names
-fields, search marks, and edges; the library does not know a consumer's
-types. The **Index** is derived, lives under `{vault}/.scheda/` (gitignored),
-and can be deleted and rebuilt from files. The public API is CRUD-shaped
+library. Collections are `document` (one file per record; path is the `id`),
+`journal` (append-only envelope lines), or `singleton`. A **collection
+declaration** in the Vault names write mode and perimeter, not Record
+fields. Columns for `find` / `search` come from a caller **Projector** at
+`open`. The library does not know a consumer's types or file format. The
+**Index** is derived, lives under `{vault}/.scheda/` (gitignored), and can
+be deleted and rebuilt from files. The public API is CRUD-shaped
 (`open`, `add`, `get`, `replace`, `remove`, `find`, `search`, `begin`, `commit`,
 `discard`). The CLI encodes those operations except `begin` / `commit` /
 `discard` (each mutating CLI command autocommits). It is not a compatibility layer for MongoDB, CouchDB, or SQL.
@@ -19,7 +21,7 @@ The first implementation is Rust; others (Python, Java, Go, TypeScript, and
 more) may follow.
 
 **Why it exists.** Work that matters still lands as text: notes, configs,
-journals, Markdown with a YAML header. Git already versions that text. The
+journals, Markdown, YAML, TOML. Git already versions that text. The
 moment those files need to be queried — by field, by words, by meaning — the
 usual move is a document database plus a vector database. The files become
 an export. The human and the AI agent no longer share one tree: the agent
@@ -31,17 +33,17 @@ library gives structured access and search without inventing a second store.
 **How it is useful.** A program can `find` and `search` (BM25, in-process
 ANN, RRF) and write records without treating the index as the database:
 wipe the Index, rebuild, get the same files back. An AI agent gets the same
-operations as the library (plus `info` from Schema and `create_collection`),
+operations as the library (plus `info` from collection declarations and `create_collection`),
 not a looser “write any Markdown anywhere” path. A person still diffs a
 field as text and recovers last week's bytes with git. Embedding weights,
 if any, stay in the caller's install; without an embedder, vector search is
 off and the rest still works. The library does not score records for a UI,
 does not call a language model, and does not know a profession.
 
-**Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, Schema, `find` /
+**Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, collection declaration, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
-RRF), core acceptance, Schema catalog via `Vault.info`, `create_collection`, a CLI encoding
-of `07`, HTTP embedder/reranker, and agent tools that omit isolated sealed values. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, an open map whose values are declared instead of being strings, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. CLI mutations autocommit; batch writes are in-process.
+RRF from Projector slots), core acceptance, listing via `Vault.info`, `create_collection`, a CLI encoding
+of `07` (default whole-file Projector column `body`), HTTP embedder/reranker, and agent tools that omit isolated sealed values. Opaque Records (`16` F0–F18) are in; F19 (acceptance fixture) is not. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. CLI mutations autocommit; batch writes are in-process.
 
 ## Documents
 
@@ -50,21 +52,21 @@ The design is a numbered package in `docs/`, in English.
 | File                                                  | Contents                                                                                                              |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | [01-concept.md](docs/01-concept.md)                   | Why Scheda exists, what a Vault is, what the library refuses to be                                                    |
-| [02-glossary.md](docs/02-glossary.md)                 | Normative vocabulary: Vault, Collection, Record, Schema, Index, kinds, API names                                      |
-| [03-model.md](docs/03-model.md)                       | Collection kinds, Record `id` and paths, fields and body, journal segments                                            |
+| [02-glossary.md](docs/02-glossary.md)                 | Normative vocabulary: Vault, Collection, Record, collection declaration, Projector, Index, kinds, API names           |
+| [03-model.md](docs/03-model.md)                       | Collection kinds, Record `id` and paths, opaque bytes, journal envelope                                               |
 | [04-files-and-git.md](docs/04-files-and-git.md)       | Files as truth, write lock, commit, `auto_sync`, `sync`, clone, no LFS                                                |
-| [05-schema.md](docs/05-schema.md)                     | Schema as Vault data: fields, versions, index marks, edges, journal size cap                                          |
+| [05-schema.md](docs/05-schema.md)                     | Collection declaration: write mode, perimeter, generation `version`, journal caps                                     |
 | [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, `get`                                                                                               |
-| [13-find-and-search.md](docs/13-find-and-search.md)   | Target `find` / `search`: Tantivy Query, hybrid BM25 + USearch, per-field vectors, optional reranker                  |
+| [13-find-and-search.md](docs/13-find-and-search.md)   | Target `find` / `search`: Tantivy Query, hybrid BM25 + USearch, Projector columns, optional reranker                   |
 | [14-cli.md](docs/14-cli.md)                           | Target `scheda` CLI argv (`07`; `--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url` on `search`) |
 | [07-api.md](docs/07-api.md)                           | Language-neutral library operations; message fields in `api/v1`                                                       |
-| [08-agent.md](docs/08-agent.md)                       | Same operations for an AI agent, Schema catalog, thin transport                                                       |
+| [08-agent.md](docs/08-agent.md)                       | Same operations for an AI agent, declaration listing, thin transport                                                  |
 | [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated git root and age encryption (**later**, in this crate)                      |
 | [10-roadmap.md](docs/10-roadmap.md)                   | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
 | [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in (`14` secret flags, nested Remote) |
 | [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8) |
-| [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F17 done; F18–F19 not started). |
+| [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F18 done; F19 not started). |
 
 ## Layout
 
@@ -242,24 +244,25 @@ bazel run //python/cli:cli_LLMs -- reindex
 ```
 
 `import` `open`s `.vault-test-LLMs` if needed, `create-collection` from
-each `.schema.yaml`, then `add`s missing Markdown documents. Embedder
+each `.collection.yaml`, then `add`s missing document files. Embedder
 flags go on `add` / `reindex` / `search`, so `add` writes `index/vector/`.
 `reindex` rebuilds lexical and vector indexes from files (use it after
 an Index format change, or if you imported without the embedder).
-Stdout of `reindex` is `ReindexResult` YAML.
+Stdout of `reindex` is `ReindexResult` YAML. The CLI default Projector
+is one text column `body` (the whole UTF-8 Record).
 
 #### 2. `find`
 
-Structured `Filter` on Schema fields, Record `id`, and Markdown `body`
-(unless `exclude_fts`). Not meaning. `term` is the whole field value. A
-word in title or body is `phrase` / `regex`, or `search`. Stdout is YAML:
+Structured `Filter` on Record `id` and the CLI column `body`. Not meaning.
+`term` is the whole field value. A word in the file is `phrase` / `regex`
+on `body`, or `search`. Other field names are `invalid`. Stdout is YAML:
 `total` then each Record, `---` between documents (`raw` only with
 `--include-raw`).
 
 ```bash
 bazel run //python/cli:cli_LLMs -- find
 bazel run //python/cli:cli_LLMs -- find --collection mammals
-bazel run //python/cli:cli_LLMs -- find --filter '{"phrase":{"field":"title","terms":["giant","panda"]}}'
+bazel run //python/cli:cli_LLMs -- find --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
 bazel run //python/cli:cli_LLMs -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
 bazel run //python/cli:cli_LLMs -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
 ```
@@ -345,24 +348,25 @@ bazel run //python/cli:cli_model2vec -- reindex
 ```
 
 `import` `open`s `.vault-test-model2vec` if needed, `create-collection`
-from each `.schema.yaml`, then `add`s missing Markdown documents. It
+from each `.collection.yaml`, then `add`s missing document files. It
 does not load Model2Vec. `reindex` downloads the cache if needed, loads
 the embedder once, and fills `index/vector/`. A later `reindex` rebuilds
 lexical and vector indexes after an Index format change. Stdout of
-`reindex` is `ReindexResult` YAML.
+`reindex` is `ReindexResult` YAML. The CLI default Projector is one text
+column `body` (the whole UTF-8 Record).
 
 #### 2. `find`
 
-Structured `Filter` on Schema fields, Record `id`, and Markdown `body`
-(unless `exclude_fts`). Not meaning. `term` is the whole field value. A
-word in title or body is `phrase` / `regex`, or `search`. Stdout is YAML:
+Structured `Filter` on Record `id` and the CLI column `body`. Not meaning.
+`term` is the whole field value. A word in the file is `phrase` / `regex`
+on `body`, or `search`. Other field names are `invalid`. Stdout is YAML:
 `total` then each Record, `---` between documents (`raw` only with
 `--include-raw`).
 
 ```bash
 bazel run //python/cli:cli_model2vec -- find
 bazel run //python/cli:cli_model2vec -- find --collection mammals
-bazel run //python/cli:cli_model2vec -- find --filter '{"phrase":{"field":"title","terms":["giant","panda"]}}'
+bazel run //python/cli:cli_model2vec -- find --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
 bazel run //python/cli:cli_model2vec -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
 bazel run //python/cli:cli_model2vec -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
 ```

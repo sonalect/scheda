@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.56, 16 September 2026.
+Document 2 of the Scheda package. Version 0.57, 17 September 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -116,7 +116,7 @@ Built from Vault files. Stored under `{vault}/.scheda/` (gitignored), not commit
 
 Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win for `get` and `history`. Other methods trust the Index for which `id`s exist, then read those files.
 
-Identity columns (`collection`, `id`, path, ordinal) are the library's. Every other column comes from a **Projector**.
+Identity columns (`collection`, `id`, ordinal) are the library's. Every other column comes from a **Projector**.
 
 **Projector** — a caller-supplied callback at `open` that declares Index columns and fills them from Record bytes.
 

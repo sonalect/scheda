@@ -1,6 +1,6 @@
 # 08. Agent surface
 
-Document 8 of the Scheda package. Version 0.31, 17 September 2026.
+Document 8 of the Scheda package. Version 0.32, 17 September 2026.
 
 How an AI agent uses Scheda: the same operations as `07`, over a thin
 transport. Collection listing is `info` (AGT-1). The agent is not a
@@ -25,7 +25,7 @@ Include when a Remote exists: `push`, `pull`, `sync`, and `auto_sync` as an `ope
 
 **AGT-4. Transport is a shell.** CLI, MCP, HTTP, or another agent protocol is a thin encoding of `07` (including `info` and `create_collection`). It must not add product rules, scoring, or collection-specific behaviour. JSON of Records, listing, and errors is the Protobuf JSON mapping of `api/v1` messages, except CLI `get`, which writes `Record.raw` bytes (`14`). *Check:* the same Vault, same operation, library call vs CLI/MCP: JSON of `info`, `find`, and one `search` match, and error `code`s match. CLI `get` stdout bytes equal library `Record.raw`.
 
-**AGT-5. Machine-readable results.** Each tool result includes, as applicable: `id`, collection, path, `raw` (when requested or when the transport is CLI `get`), search scores, and on failure a `code` from LIB-5 (plus `not_fast_forward` where `04` says; **later:** `crypto` where `09` says). There is no `valid` flag (it meant Schema match). A human message is optional and must not replace `code`. *Check:* contract tests for `not_found`, `invalid`, `locked`, `index_version`. *Check (**later**):* `crypto`.
+**AGT-5. Machine-readable results.** Each tool result includes, as applicable: `id`, collection, `raw` (when requested or when the transport is CLI `get`), search scores, and on failure a `code` from LIB-5 (plus `not_fast_forward` where `04` says; **later:** `crypto` where `09` says). `Error.path` names a Vault file when `check` / IO is about one. There is no Record path field and no `valid` flag (it meant Schema match). A human message is optional and must not replace `code`. *Check:* contract tests for `not_found`, `invalid`, `locked`, `index_version`. *Check (**later**):* `crypto`.
 
 `collection(name)` for an isolated collection reaches those Records. Default tools on the Vault must not return sealed values (ISO-3). **Later:** an encrypted collection is listed as encrypted by `info`, and the agent's I/O on it uses the same `encryption` secret as `OpenOptions` (LIB-13); without it those tools fail with `crypto` rather than returning armor bytes as a Record.
 
