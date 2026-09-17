@@ -43,7 +43,7 @@ does not call a language model, and does not know a profession.
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, collection declaration, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
 RRF from Projector slots), core acceptance, listing via `Vault.info`, `create_collection`, a CLI encoding
-of `07` (default whole-file Projector column `body`), HTTP embedder/reranker, and agent tools that omit isolated sealed values. Opaque Records (`16` F0–F18) are in; F19 (acceptance fixture) is not. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. CLI mutations autocommit; batch writes are in-process.
+of `07` (default whole-file Projector column `body`), HTTP embedder/reranker, and agent tools that omit isolated sealed values. Opaque Records (`16` F0–F19) are in. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. CLI mutations autocommit; batch writes are in-process.
 
 ## Documents
 
@@ -66,7 +66,7 @@ The design is a numbered package in `docs/`, in English.
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
 | [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in (`14` secret flags, nested Remote) |
 | [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8) |
-| [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F18 done; F19 not started). |
+| [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F19 done). |
 
 ## Layout
 

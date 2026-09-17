@@ -6,9 +6,9 @@ Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F18 are done; codes and
+and `search` learn columns and text. F0–F19 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F19.
+This file is the closed work order.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -76,7 +76,7 @@ it is unused; wiring is F12–F13.
 | [F16](#f16-agent-surface) | done | `info` / `create_collection` without fields |
 | [F17](#f17-check-reindex-dead-code) | done | `check` / `reindex` / YAML codec gone |
 | [F18](#f18-documents-once) | done | One consistency pass over `docs/` + README |
-| [F19](#f19-acceptance) | not started | Mixed-format fixture; wipe Index; same files |
+| [F19](#f19-acceptance) | done | Mixed-format fixture; wipe Index; same files |
 
 ---
 
@@ -745,23 +745,23 @@ contradict the code. Do not polish twice.
 
 ## F19. Acceptance
 
-**Status:** not started
+**Status:** done
 
 Close only after F18.
 
-- [ ] Fixture collection with four `document` files: `.yaml`, `.md`,
+- [x] Fixture collection with four `document` files: `.yaml`, `.md`,
       `.toml`, `.txt`. `add` / `get` / `ids` round-trip. `git diff` after
       `replace` of one file shows that file's text.
-- [ ] Delete `.scheda/`:`get` / `history` / `lines` / `documents` still
+- [x] Delete `.scheda/`:`get` / `history` / `lines` / `documents` still
       match the files; `find` / `search` fail closed until `reindex`.
-- [ ] With an `Projector` that exposes one string column from a YAML key,
+- [x] With an `Projector` that exposes one string column from a YAML key,
       `find` hits that Record; a `.txt` file in the same collection is
       omitted from that column and still `get`s.
-- [ ] CLI default Projector: `search` text finds a token in the `.txt`
+- [x] CLI default Projector: `search` text finds a token in the `.txt`
       file.
-- [ ] Encrypted and isolated collections still round-trip as after P16.
+- [x] Encrypted and isolated collections still round-trip as after P16.
       `find` naming encrypted is `unsupported`.
-- [ ] `bazel test //...` green. Owner has reviewed the fixture tests.
+- [x] `bazel test //...` green. Owner has reviewed the fixture tests.
 
 **Review:** acceptance. After this, `16` is done for the crate.
 

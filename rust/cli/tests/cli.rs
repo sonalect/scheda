@@ -2138,6 +2138,39 @@ fn cli_search_finds_token_only_in_file_bytes() {
 }
 
 #[test]
+fn cli_search_finds_txt_token_in_mixed_extension_collection() {
+    let scratch = Scratch::new();
+    let path = cli_open_notes(&scratch);
+    for (id, body) in [
+        ("note.yaml", "title: yaml-only\n"),
+        ("note.md", "# heading\nmd-only-token\n"),
+        ("note.toml", "name = \"toml-only\"\n"),
+        ("note.txt", "plain f19-cli-txt-token trailer\n"),
+    ] {
+        let add = run(&[
+            "--vault",
+            &path,
+            "collection",
+            "agent_notes",
+            "add",
+            "--id",
+            id,
+            "--file",
+            &scratch.payload_file(id, body.as_bytes()),
+        ]);
+        assert_eq!(add.status, 0, "stderr={}", add.stderr);
+    }
+    let hits = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query("f19-cli-txt-token"),
+    ]));
+    assert_eq!(hits["hits"][0]["id"], "note.txt", "{hits}");
+}
+
+#[test]
 fn cli_collection_find_on_body_rejects_unknown_field() {
     let scratch = Scratch::new();
     let path = cli_open_notes(&scratch);

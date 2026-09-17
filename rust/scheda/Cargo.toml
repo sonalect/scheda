@@ -86,3 +86,7 @@ required-features = ["search"]
 [[test]]
 name = "reindex"
 required-features = ["search"]
+
+[[test]]
+name = "opaque"
+required-features = ["search"]

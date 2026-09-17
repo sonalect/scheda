@@ -144,6 +144,18 @@ rust_test(
 )
 
 rust_test(
+    name = "opaque_test",
+    srcs = ["tests/opaque.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/opaque.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "remote_test",
     srcs = ["tests/remote.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),

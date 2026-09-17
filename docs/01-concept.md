@@ -108,7 +108,7 @@ Ready-made experiments that keep text files under git and hang a search index on
 
 A store that only searches is a demo. A store that cannot be opened as files is a database. Day one is the core: files are truth, Records are opaque UTF-8, the library writes them safely, one writer, autocommit or `begin`/`commit`/`discard`, `get` by id, `find` (`journal` in append order; other kinds by Tantivy score). Isolated collections under `{vault}/.isolated/` and encrypted collections stay a **later** phase (`09`, `10`); neither is required to accept **core**, **search**, or **agent**.
 
-The crate `scheda` accepted **core**, **search**, and **agent** first on YAML/Markdown files and field Schema. Opaque Records (`16` F0–F18) are in: UTF-8 bytes, collection declaration without a field list, Projector at `open`. The on-disk store and `api/v1` follow `03`–`09` as they read today. F19 (mixed-format acceptance fixture) is not started.
+The crate `scheda` accepted **core**, **search**, and **agent** first on YAML/Markdown files and field Schema. Opaque Records (`16` F0–F19) are in: UTF-8 bytes, collection declaration without a field list, Projector at `open`, mixed-format acceptance fixture. The on-disk store and `api/v1` follow `03`–`09` as they read today.
 
 Hybrid `search` is accepted in `scheda` (`10` §3, `11` C9). It must be **strong retrieval**, not a grep demo: ranked BM25, in-process ANN (HNSW-class), Reciprocal Rank Fusion of both legs, injected embedder, no LLM in this library (`06`). After `16`, BM25 and vector slots come from the Projector, not from field marks in a Schema file. It must not be required to insert a journal line or replace a document.
 
@@ -137,7 +137,7 @@ What is deliberately later after those slices: binary Records; field-level encry
 | `13` | `find` and `search` (Tantivy Query, hybrid BM25 + USearch, Projector columns) |
 | `14` | CLI |
 | `15` | Online reindex |
-| `16` | Opaque Records (work order; F0–F18 done, F19 not started) |
+| `16` | Opaque Records (work order; F0–F19 done) |
 
 Checkable requirements live in `03`–`09` and `13`, and are gathered with phases in `10`. This document does not list them.
 
@@ -145,6 +145,6 @@ Checkable requirements live in `03`–`09` and `13`, and are gathered with phase
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Unencrypted isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); the crate has no default features. Consumer readiness P0–P16 is in (`12` §4). Age encryption of a collection shipped as `0.6.0` (`12` P14), one Index for the Vault is in (`12` P15), and a secret in the CLI plus a Remote for the nested tree shipped as `12` P16. Extra language bindings and the rest of `10` §5 stay deferred. Opaque Records (`16` F0–F18) are in; F19 is not started. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Unencrypted isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); the crate has no default features. Consumer readiness P0–P16 is in (`12` §4). Age encryption of a collection shipped as `0.6.0` (`12` P14), one Index for the Vault is in (`12` P15), and a secret in the CLI plus a Remote for the nested tree shipped as `12` P16. Extra language bindings and the rest of `10` §5 stay deferred. Opaque Records (`16` F0–F19) are in. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.
