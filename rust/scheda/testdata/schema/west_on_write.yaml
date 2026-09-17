@@ -1,5 +1,4 @@
 name: west_docs
 kind: document
 version: 1
-fields: []
 on_write: echo hi

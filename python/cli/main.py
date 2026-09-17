@@ -25,7 +25,7 @@ _LOG = logging.getLogger("python.cli")
 
 _FRONT_MATTER = "---"
 _NOT_FOUND = "CODE_NOT_FOUND"
-_SCHEMA_NAME = ".schema.yaml"
+_SCHEMA_NAME = ".collection.yaml"
 _TOPICS_NAME = "topics.yaml"
 _ENV_BACKEND = "SCHEDA_CLI_BACKEND"
 _DEFAULT_VAULT_LLMS = ".vault-test-LLMs"
@@ -1296,7 +1296,7 @@ def _split_front_matter(text: str, path: Path) -> tuple[dict[str, Any], str]:
 
 
 def load_schema_json(path: Path) -> str:
-    """Load fixture `.schema.yaml` as Protobuf JSON `Schema`."""
+    """Load fixture `.collection.yaml` as Protobuf JSON `Declaration`."""
     data = load_yaml_subset(path.read_text(encoding="utf-8"), path)
     if not isinstance(data, dict):
         msg = f"schema must be a mapping: {path}"

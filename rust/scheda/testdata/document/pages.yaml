@@ -1,9 +1,3 @@
 name: north_pages
 kind: document
 version: 1
-fields:
-  - name: title
-    required: true
-    string: {}
-  - name: project
-    string: {}

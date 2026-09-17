@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, OpenOptions, Record, Schema, Vault};
+use scheda::{Code, Declaration, OpenOptions, Record, Vault};
 #[cfg(not(feature = "search"))]
 use scheda::{Embedder, Error};
 use serde_json::{Map, Value, json};
@@ -45,10 +45,6 @@ impl Drop for Scratch {
 const NOTES: &str = r#"name: thin_notes
 kind: document
 version: 1
-fields:
-  - name: title
-    required: true
-    string: {}
 "#;
 
 #[cfg(not(feature = "search"))]
@@ -105,7 +101,7 @@ fn open_notes(scratch: &Scratch) -> Vault {
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     let dir = scratch.vault().join("thin_notes");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
+    fs::write(dir.join(".collection.yaml"), NOTES).unwrap();
     Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap()
 }
 
@@ -126,9 +122,8 @@ fn isolated_round_trip_and_documents_without_find() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let mut schema = Schema::default().with_isolated(true);
-    schema.kind = scheda::Body::default().into();
-    schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
+    let mut schema = Declaration::default().with_isolated(true);
+    schema.kind = scheda::Unit::default().into();
     vault
         .create_collection("thin_sealed", schema, None)
         .unwrap();
@@ -304,8 +299,8 @@ fn vault_with_encrypted_collection_opens_plain_collections() {
     let dir = scratch.vault().join("sealed_thin");
     fs::create_dir_all(&dir).unwrap();
     fs::write(
-        dir.join(".schema.yaml"),
-        "name: sealed_thin\nkind: document\nversion: 1\nencrypted: true\nfields:\n  - name: title\n    string: {}\n",
+        dir.join(".collection.yaml"),
+        "name: sealed_thin\nkind: document\nversion: 1\nencrypted: true\n",
     )
     .unwrap();
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
@@ -324,13 +319,12 @@ fn vault_with_encrypted_collection_opens_plain_collections() {
 #[cfg(not(feature = "encrypt"))]
 #[test]
 fn create_encrypted_collection_is_unsupported_encryption() {
-    use scheda::{Body, Schema};
+    use scheda::{Declaration, Unit};
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     vault.begin().unwrap();
-    let mut schema = Schema::default().with_encrypted(true);
-    schema.kind = Body::default().into();
-    schema.fields = vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()];
+    let mut schema = Declaration::default().with_encrypted(true);
+    schema.kind = Unit::default().into();
     let err = vault
         .create_collection("sealed_thin", schema, None)
         .unwrap_err();
@@ -339,7 +333,7 @@ fn create_encrypted_collection_is_unsupported_encryption() {
         !scratch
             .vault()
             .join("sealed_thin")
-            .join(".schema.yaml")
+            .join(".collection.yaml")
             .is_file()
     );
 }

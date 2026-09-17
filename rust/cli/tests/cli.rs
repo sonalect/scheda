@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use scheda::{
-    Embedder, Encryption, Filter, OpenOptions, Record, Reranker, Schema, SearchQuery, Vault,
+    Declaration, Embedder, Encryption, Filter, OpenOptions, Record, Reranker, SearchQuery, Vault,
 };
 use serde_json::{Value, json};
 
@@ -53,9 +53,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -133,26 +133,21 @@ fn rec(fields: Value) -> Vec<u8> {
 }
 
 fn notes_schema() -> &'static str {
-    "name: agent_notes\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n"
+    "name: agent_notes\nkind: document\nversion: 1\n"
 }
 
-fn notes_decl() -> Schema {
+fn notes_decl() -> Declaration {
     serde_json::from_value(json!({
         "version": 1,
         "document": {},
-        "fields": [
-            {"name": "title", "required": true, "string": {}},
-            {"name": "tag", "string": {}}
-        ]
     }))
     .unwrap()
 }
 
-fn log_decl() -> Schema {
+fn log_decl() -> Declaration {
     serde_json::from_value(json!({
         "version": 1,
         "journal": {},
-        "fields": [{"name": "title", "string": {}}]
     }))
     .unwrap()
 }
@@ -445,10 +440,7 @@ fn extra_field_is_invalid_and_write_nothing() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema("notes.yaml", notes_schema());
-    scratch.write_schema(
-        "log.yaml",
-        "name: agent_log\nkind: journal\nversion: 1\nfields:\n  - name: title\n    string: {}\n",
-    );
+    scratch.write_schema("log.yaml", "name: agent_log\nkind: journal\nversion: 1\n");
     let path = vault_arg(&scratch);
 
     let extra = run(&[
@@ -617,10 +609,14 @@ fn auto_sync_off_local_info_get_add_commit() {
     assert!(declared.get("document").is_some());
     assert!(declared.get("version").is_none());
     let on_disk =
-        fs::read_to_string(scratch.vault().join("agent_notes").join(".schema.yaml")).unwrap();
+        fs::read_to_string(scratch.vault().join("agent_notes").join(".collection.yaml")).unwrap();
     assert!(
         on_disk.contains("version: 1"),
         "create_collection must write generation 1: {on_disk}"
+    );
+    assert!(
+        !on_disk.contains("fields:"),
+        "create_collection must not write fields: {on_disk}"
     );
 
     let info = run(&["--vault", &path, "info"]);
@@ -730,12 +726,11 @@ const CLI_PASS: &str = "p16-cli-passphrase-never-on-disk";
 const CLI_IDENTITY: &str =
     "AGE-SECRET-KEY-1GQ9778VQXMMJVE8SK7J6VT8UJ4HDQAJUVSFCWCM02D8GEWQ72PVQ2Y5J33";
 
-fn encrypted_decl() -> Schema {
+fn encrypted_decl() -> Declaration {
     serde_json::from_value(json!({
         "version": 1,
         "encrypted": true,
         "document": {},
-        "fields": [{"name": "title", "required": true, "string": {}}]
     }))
     .unwrap()
 }
@@ -761,7 +756,6 @@ fn create_collection_rejects_layout_json_key() {
     let schema = json!({
         "document": {},
         "layout": ["c/{id}.md"],
-        "fields": [{"name": "title", "string": {}}]
     })
     .to_string();
     let err = run(&[
@@ -777,7 +771,7 @@ fn create_collection_rejects_layout_json_key() {
         !scratch
             .vault()
             .join("agent_notes")
-            .join(".schema.yaml")
+            .join(".collection.yaml")
             .is_file()
     );
 }
@@ -926,7 +920,7 @@ const TREE_SEALED: &str = "agent-sealed-tree-token";
 const NESTED_SEALED: &str = "agent-sealed-nested-token";
 
 fn isolated_schema_yaml() -> &'static str {
-    "name: agent_sealed\nkind: document\nversion: 1\nisolated: true\nfields:\n  - name: agent_pass\n    required: true\n    string: {}\n"
+    "name: agent_sealed\nkind: document\nversion: 1\nisolated: true\n"
 }
 
 fn sealed_document(token: &str) -> String {
@@ -936,7 +930,7 @@ fn sealed_document(token: &str) -> String {
 fn plant_isolated_sealed(scratch: &Scratch) {
     let dir = scratch.vault().join("agent_sealed");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), isolated_schema_yaml()).unwrap();
+    fs::write(dir.join(".collection.yaml"), isolated_schema_yaml()).unwrap();
     fs::write(dir.join("sealed.md"), sealed_document(TREE_SEALED)).unwrap();
     let nested = scratch.vault().join(".isolated").join("agent_sealed");
     fs::create_dir_all(&nested).unwrap();
@@ -973,8 +967,8 @@ fn cli_omits_isolated_sealed_values() {
         .iter()
         .find(|col| col["name"] == "agent_sealed")
         .unwrap();
-    assert_eq!(isolated["schema"]["isolated"], true);
-    assert!(isolated["schema"].get("fields").is_none());
+    assert_eq!(isolated["declaration"]["isolated"], true);
+    assert!(isolated["declaration"].get("fields").is_none());
     assert_no_sealed(&info.to_string());
 
     let filter = all_filter();

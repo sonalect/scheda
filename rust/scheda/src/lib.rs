@@ -33,7 +33,7 @@
 //! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
 //!   libomp (Linux `libomp-dev`). Not enabled in the Bazel CI build.
 //! - **`encrypt`** — age v1 ASCII-armor Record files for collections whose
-//!   Schema marks `encrypted`. Off by default. A build without it refuses
+//!   declaration marks `encrypted`. Off by default. A build without it refuses
 //!   `OpenOptions.encryption` at `open` (`unsupported_encryption`) and
 //!   refuses `collection` of an encrypted name the same way; other
 //!   collections still work.
@@ -104,13 +104,12 @@ pub use embed::{Embedder, Reranker};
 pub use error::redact_remote_text;
 pub use error::{Code, Repeat};
 pub use journal::JournalLines;
-pub use json::{schema_from_json, schema_from_value};
+pub use json::{declaration_from_json, declaration_from_value};
 pub use projector::{IndexDoc, IndexValue, Projector};
 #[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Author, Body, CollectionInfo, ColumnKind, Edge, Encryption, Error, Field, History, IndexColumn,
-    IndexSchema, Journal, Object, OpenOptions, Record, ReindexResult, Schema, Singleton, Text,
-    Unit, VaultInfo, history,
+    Author, CollectionInfo, ColumnKind, Declaration, Encryption, Error, History, IndexColumn,
+    IndexSchema, Journal, OpenOptions, Record, ReindexResult, Singleton, Unit, VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]

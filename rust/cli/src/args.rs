@@ -125,7 +125,7 @@ pub enum Command {
     },
     /// `api.v1.VaultInfo`: path, Index path, `remote`, `auto_sync`, collections.
     Info,
-    /// Write one collection declaration. `--schema` is Protobuf JSON `Schema`.
+    /// Write one collection declaration. `--schema` is Protobuf JSON `Declaration`.
     #[command(name = "create-collection")]
     CreateCollection {
         name: String,
@@ -141,7 +141,7 @@ pub enum Command {
         #[command(subcommand)]
         command: CollectionCommand,
     },
-    /// Validate Schema, encodings, ids, and conflict markers.
+    /// Validate declarations, encodings, ids, and conflict markers.
     Check,
     /// Rebuild the derived Index.
     Reindex,
@@ -188,7 +188,7 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum CollectionCommand {
-    /// Collection Schema as Protobuf JSON.
+    /// Collection declaration as Protobuf JSON.
     Schema,
     /// Create a Record. `--file` is UTF-8 bytes, or stdin when omitted.
     Add {

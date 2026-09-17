@@ -10,6 +10,14 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
+- **`api.v1.Declaration` replaces `api.v1.Schema`.** Collection declaration
+  has no `Field`, `Edge`, `Body`, `Object`, or `Text`. Kind is a required
+  oneof (`document` as empty `Unit`, `journal`, `singleton`). Perimeter
+  flags (`isolated`, `encrypted`, `exclude_lexical_index`,
+  `exclude_vector_index`) stay on the message. There is no proto `version`
+  (generation lives on the YAML file). `CollectionInfo.declaration` nests
+  that message (JSON key `declaration`). `Collection.decl()` returns it.
+  `Vault::create_collection` takes `Declaration`.
 - **`api.v1.IndexSchema` / `IndexColumn` / `ColumnKind` (`index.proto`).**
   `Projector.schema` returns that message. The Projector trait is still a
   caller callback, not proto. `IndexDoc` stays a Rust ingest type.
@@ -24,6 +32,12 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- **On-disk collection file is `{name}/.collection.yaml` without `fields`.**
+  `create_collection` writes generation `version: 1` and never a field list.
+  `open` / `check` refuse a leftover `{name}/.schema.yaml` (also `.yml` /
+  `.json`) and refuse a leftover `fields` / `body` / `layout` key
+  (`invalid`). Isolated / encrypted / journal caps / exclude_* flags still
+  round-trip.
 - **`document` files are opaque UTF-8 at `{collection}/{id}`.** The library
   no longer appends `.md`. An extension is part of `id` (`foo.md`,
   `work/meeting.toml`). `add` / `replace` take raw bytes (`impl AsRef<[u8]>`
@@ -49,6 +63,10 @@ API or on-disk format changes bump the minor.
 
 ### Removed
 
+- **`api.v1.Schema`, `Field`, `Edge`, `Body`, `Object`, and `Text`.** Field
+  lists, edge graphs, and body marks are not Scheda's. `Collection.schema()`
+  is gone (`decl()` returns `Declaration`). A leftover `.schema.yaml` or
+  `fields` key is `invalid`.
 - **`Record.fields`, `Record.body`, and `Record.valid`.** Callers pass UTF-8
   `raw`. Journal `add` writes `{id}: {payload}\n`; `get` / `lines` `raw` is
   the payload.

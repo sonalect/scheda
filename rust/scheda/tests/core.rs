@@ -42,9 +42,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -58,7 +58,6 @@ impl Drop for Scratch {
 
 const WEST: &str = include_str!("../testdata/schema/west.yaml");
 const EAST: &str = include_str!("../testdata/schema/east.yaml");
-const TYPES: &str = include_str!("../testdata/schema/types.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
@@ -228,41 +227,6 @@ fn writes_and_commit_do_not_need_the_network() {
 }
 
 #[test]
-fn field_types_reject_unknown_and_round_trip() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema("types.yaml", TYPES);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    let fields = json!({
-        "s": "hi",
-        "i": 1,
-        "n": 0.5,
-        "b": true,
-        "sl": ["a"],
-        "o": {"k": "v"},
-        "ol": [{"a": "1"}, {"b": "2"}],
-    });
-    collection.add("ok", rec(fields.clone()), None).unwrap();
-    let got = fields_of(&collection.get("ok").unwrap());
-    assert_eq!(got.get("n").unwrap(), 0.5);
-    assert_eq!(got.get("ol").unwrap().as_array().unwrap().len(), 2);
-
-    collection
-        .add("extra", rec(json!({"s": "x", "nope": 1})), None)
-        .unwrap();
-    assert_eq!(
-        collection.get("extra").unwrap().id.as_deref(),
-        Some("extra")
-    );
-
-    collection
-        .add("frac", rec(json!({"i": 1.5})), None)
-        .unwrap();
-    assert_eq!(collection.get("frac").unwrap().id.as_deref(), Some("frac"));
-}
-
-#[test]
 fn typed_open_map_round_trips_and_names_the_bad_key() {
     let scratch = Scratch::new();
     drop(scratch.init());
@@ -272,15 +236,6 @@ fn typed_open_map_round_trips_and_names_the_bad_key() {
 name: c
 kind: journal
 version: 1
-fields:
-  - name: env
-    object:
-      values:
-        name: axis
-        object:
-          fields:
-            - name: significant
-              integer: {}
 ",
     );
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
@@ -298,10 +253,6 @@ fields:
         .unwrap();
     assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
 
-    assert!(collection.is_filter_key("env"));
-    assert!(!collection.is_filter_key("axis"));
-    assert!(!collection.is_filter_key("prod"));
-    assert!(!collection.is_filter_key("significant"));
     let err = collection
         .find(
             &serde_json::from_value::<Filter>(json!({"term":{"field":"axis","value":"prod"}}))
@@ -312,230 +263,6 @@ fields:
         )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
-    vault.check().unwrap();
-}
-
-#[test]
-fn typed_open_map_honours_nullable_on_the_value() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema(
-        "nullable.yaml",
-        "\
-name: c
-kind: journal
-version: 1
-fields:
-  - name: loose
-    object:
-      values:
-        name: axis
-        nullable: true
-        integer: {}
-  - name: strict
-    object:
-      values:
-        name: axis
-        integer: {}
-",
-    );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    collection
-        .add(
-            "ok",
-            rec(json!({"loose": {"prod": null}, "strict": {}})),
-            None,
-        )
-        .unwrap();
-    let got = fields_of(&collection.get("ok").unwrap());
-    assert!(got["loose"]["prod"].is_null());
-
-    collection
-        .add(
-            "bad",
-            rec(json!({"loose": {}, "strict": {"prod": null}})),
-            None,
-        )
-        .unwrap();
-    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
-}
-
-#[test]
-fn object_list_takes_a_typed_open_map_too() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema(
-        "rows.yaml",
-        "\
-name: c
-kind: journal
-version: 1
-fields:
-  - name: rows
-    object_list:
-      values:
-        name: cell
-        integer: {}
-",
-    );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    collection
-        .add(
-            "ok",
-            rec(json!({"rows": [{"a": 1}, {"b": 2, "c": 3}]})),
-            None,
-        )
-        .unwrap();
-    let got = fields_of(&collection.get("ok").unwrap());
-    assert_eq!(got["rows"][1]["c"].as_f64(), Some(3.0));
-
-    collection
-        .add("bad", rec(json!({"rows": [{"a": 1}, {"b": "2"}]})), None)
-        .unwrap();
-    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
-}
-
-#[test]
-fn nested_open_maps_of_integer_accept_2_and_reject_string() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema(
-        "grid.yaml",
-        "\
-name: c
-kind: journal
-version: 1
-fields:
-  - name: grid
-    object:
-      values:
-        name: row
-        object:
-          values:
-            name: cell
-            integer: {}
-",
-    );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    collection
-        .add("ok", rec(json!({"grid": {"r1": {"x": 2, "y": 3}}})), None)
-        .unwrap();
-    let got = fields_of(&collection.get("ok").unwrap());
-    assert_eq!(got["grid"]["r1"]["x"].as_f64(), Some(2.0));
-
-    collection
-        .add("bad", rec(json!({"grid": {"r1": {"x": "2"}}})), None)
-        .unwrap();
-    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
-}
-
-#[test]
-fn untyped_open_map_accepts_strings_and_rejects_a_number() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema(
-        "open.yaml",
-        "\
-name: c
-kind: journal
-version: 1
-fields:
-  - name: meta
-    object: {}
-",
-    );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    collection
-        .add("ok", rec(json!({"meta": {"k": "v", "empty": ""}})), None)
-        .unwrap();
-    let got = fields_of(&collection.get("ok").unwrap());
-    assert_eq!(got["meta"]["k"], "v");
-    assert_eq!(got["meta"]["empty"], "");
-
-    collection
-        .add("bad", rec(json!({"meta": {"k": 1}})), None)
-        .unwrap();
-    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
-}
-
-#[test]
-fn typed_open_map_may_be_omitted_from_the_record() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema(
-        "maps.yaml",
-        "\
-name: c
-kind: journal
-version: 1
-fields:
-  - name: env
-    object:
-      values:
-        name: axis
-        integer: {}
-  - name: title
-    string: {}
-",
-    );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    collection
-        .add("omit", rec(json!({"title": "none"})), None)
-        .unwrap();
-    let omitted = fields_of(&collection.get("omit").unwrap());
-    assert_eq!(omitted.get("title").unwrap(), "none");
-    assert!(!omitted.contains_key("env"));
-
-    collection
-        .add("empty", rec(json!({"title": "empty", "env": {}})), None)
-        .unwrap();
-    let empty = fields_of(&collection.get("empty").unwrap());
-    assert_eq!(empty["env"], json!({}));
-}
-
-#[test]
-fn journal_takes_a_typed_open_map_too() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema(
-        "log.yaml",
-        "\
-name: c
-kind: journal
-version: 1
-fields:
-  - name: env
-    object:
-      values:
-        name: axis
-        integer: {}
-",
-    );
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let collection = vault.collection("c").unwrap();
-    collection
-        .add("ok", rec(json!({"env": {"prod": 1, "staging": 0}})), None)
-        .unwrap();
-    let got = fields_of(&collection.get("ok").unwrap());
-    assert_eq!(got["env"]["prod"].as_f64(), Some(1.0));
-    let line = fs::read_to_string(
-        scratch
-            .vault()
-            .join("c")
-            .join(format!("00000001-{}.jsonl", vault.writer())),
-    )
-    .unwrap();
-    assert_eq!(line, "ok: {\"env\":{\"prod\":1,\"staging\":0}}\n");
-
-    collection
-        .add("bad", rec(json!({"env": {"prod": "1"}})), None)
-        .unwrap();
-    assert_eq!(collection.get("bad").unwrap().id.as_deref(), Some("bad"));
     vault.check().unwrap();
 }
 

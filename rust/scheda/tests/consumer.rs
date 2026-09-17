@@ -52,29 +52,30 @@ impl Drop for Scratch {
     }
 }
 
-const PERSONAL_SCHEMA: &str = include_str!("../testdata/consumer/lessons_personal/.schema.yaml");
-const PROJECT_SCHEMA: &str = include_str!("../testdata/consumer/lessons_project/.schema.yaml");
+const PERSONAL_SCHEMA: &str =
+    include_str!("../testdata/consumer/lessons_personal/.collection.yaml");
+const PROJECT_SCHEMA: &str = include_str!("../testdata/consumer/lessons_project/.collection.yaml");
 const PERSONAL_MD: &str = include_str!("../testdata/consumer/lessons_personal/shared-note.md");
 const PROJECT_MD: &str = include_str!("../testdata/consumer/lessons_project/shared-note.md");
-const ENTITIES_SCHEMA: &str = include_str!("../testdata/consumer/entities/.schema.yaml");
+const ENTITIES_SCHEMA: &str = include_str!("../testdata/consumer/entities/.collection.yaml");
 const ENTITIES_MD: &str = include_str!("../testdata/consumer/entities/named.md");
-const PROFILES_SCHEMA: &str = include_str!("../testdata/consumer/profiles/.schema.yaml");
+const PROFILES_SCHEMA: &str = include_str!("../testdata/consumer/profiles/.collection.yaml");
 const PROFILES_MD: &str = include_str!("../testdata/consumer/profiles/pilot.md");
-const PENDING_SCHEMA: &str = include_str!("../testdata/consumer/pending_items/.schema.yaml");
+const PENDING_SCHEMA: &str = include_str!("../testdata/consumer/pending_items/.collection.yaml");
 const PENDING_MD: &str = include_str!("../testdata/consumer/pending_items/ticket-one.md");
-const EPISODES_SCHEMA: &str = include_str!("../testdata/consumer/episodes/.schema.yaml");
+const EPISODES_SCHEMA: &str = include_str!("../testdata/consumer/episodes/.collection.yaml");
 const EPISODES_JSONL: &str = include_str!("../testdata/consumer/episodes/00000001.jsonl");
-const EVENTS_SCHEMA: &str = include_str!("../testdata/consumer/events/.schema.yaml");
+const EVENTS_SCHEMA: &str = include_str!("../testdata/consumer/events/.collection.yaml");
 const EVENTS_JSONL: &str = include_str!("../testdata/consumer/events/00000001.jsonl");
 const REACHABILITY_SCHEMA: &str =
-    include_str!("../testdata/consumer/artifact_reachability/.schema.yaml");
+    include_str!("../testdata/consumer/artifact_reachability/.collection.yaml");
 const REACHABILITY_JSONL: &str =
     include_str!("../testdata/consumer/artifact_reachability/00000001.jsonl");
-const HEADS_SCHEMA: &str = include_str!("../testdata/consumer/chain_heads/.schema.yaml");
+const HEADS_SCHEMA: &str = include_str!("../testdata/consumer/chain_heads/.collection.yaml");
 const HEADS_YAML: &str = include_str!("../testdata/consumer/chain_heads/record.yaml");
-const RUN_HEADS_SCHEMA: &str = include_str!("../testdata/consumer/run_heads/.schema.yaml");
+const RUN_HEADS_SCHEMA: &str = include_str!("../testdata/consumer/run_heads/.collection.yaml");
 const RUN_HEADS_YAML: &str = include_str!("../testdata/consumer/run_heads/record.yaml");
-const ALIAS_SCHEMA: &str = include_str!("../testdata/consumer/alias_bindings/.schema.yaml");
+const ALIAS_SCHEMA: &str = include_str!("../testdata/consumer/alias_bindings/.collection.yaml");
 
 const ISOLATED_TOKEN: &str = "consumer-sealed-nested-token";
 
@@ -200,25 +201,33 @@ fn commit_all(dir: &Path, message: &str) {
 fn plant_main_tree(vault: &Path) {
     write_rel(
         vault,
-        &["lessons_personal", ".schema.yaml"],
+        &["lessons_personal", ".collection.yaml"],
         PERSONAL_SCHEMA,
     );
     write_rel(vault, &["lessons_personal", "shared-note.md"], PERSONAL_MD);
-    write_rel(vault, &["lessons_project", ".schema.yaml"], PROJECT_SCHEMA);
+    write_rel(
+        vault,
+        &["lessons_project", ".collection.yaml"],
+        PROJECT_SCHEMA,
+    );
     write_rel(vault, &["lessons_project", "shared-note.md"], PROJECT_MD);
-    write_rel(vault, &["entities", ".schema.yaml"], ENTITIES_SCHEMA);
+    write_rel(vault, &["entities", ".collection.yaml"], ENTITIES_SCHEMA);
     write_rel(vault, &["entities", "named.md"], ENTITIES_MD);
-    write_rel(vault, &["profiles", ".schema.yaml"], PROFILES_SCHEMA);
+    write_rel(vault, &["profiles", ".collection.yaml"], PROFILES_SCHEMA);
     write_rel(vault, &["profiles", "pilot.md"], PROFILES_MD);
-    write_rel(vault, &["pending_items", ".schema.yaml"], PENDING_SCHEMA);
+    write_rel(
+        vault,
+        &["pending_items", ".collection.yaml"],
+        PENDING_SCHEMA,
+    );
     write_rel(vault, &["pending_items", "ticket-one.md"], PENDING_MD);
-    write_rel(vault, &["episodes", ".schema.yaml"], EPISODES_SCHEMA);
+    write_rel(vault, &["episodes", ".collection.yaml"], EPISODES_SCHEMA);
     write_rel(vault, &["episodes", "00000001.jsonl"], EPISODES_JSONL);
-    write_rel(vault, &["events", ".schema.yaml"], EVENTS_SCHEMA);
+    write_rel(vault, &["events", ".collection.yaml"], EVENTS_SCHEMA);
     write_rel(vault, &["events", "00000001.jsonl"], EVENTS_JSONL);
     write_rel(
         vault,
-        &["artifact_reachability", ".schema.yaml"],
+        &["artifact_reachability", ".collection.yaml"],
         REACHABILITY_SCHEMA,
     );
     write_rel(
@@ -226,11 +235,11 @@ fn plant_main_tree(vault: &Path) {
         &["artifact_reachability", "00000001.jsonl"],
         REACHABILITY_JSONL,
     );
-    write_rel(vault, &["chain_heads", ".schema.yaml"], HEADS_SCHEMA);
+    write_rel(vault, &["chain_heads", ".collection.yaml"], HEADS_SCHEMA);
     write_rel(vault, &["chain_heads", "heads"], HEADS_YAML);
-    write_rel(vault, &["run_heads", ".schema.yaml"], RUN_HEADS_SCHEMA);
+    write_rel(vault, &["run_heads", ".collection.yaml"], RUN_HEADS_SCHEMA);
     write_rel(vault, &["run_heads", "cursor"], RUN_HEADS_YAML);
-    write_rel(vault, &["alias_bindings", ".schema.yaml"], ALIAS_SCHEMA);
+    write_rel(vault, &["alias_bindings", ".collection.yaml"], ALIAS_SCHEMA);
 }
 
 fn add_isolated_journal(vault: &Vault) {

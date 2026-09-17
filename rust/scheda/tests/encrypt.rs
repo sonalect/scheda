@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Body, Code, Encryption, Journal, OpenOptions, Schema, Singleton, Vault};
+use scheda::{Code, Declaration, Encryption, Journal, OpenOptions, Singleton, Unit, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -53,11 +53,10 @@ fn passphrase() -> Encryption {
     Encryption::new().passphrase(PASS)
 }
 
-fn document_schema(encrypted: bool, isolated: bool) -> Schema {
-    let mut schema = Schema {
-        kind: Body::default().into(),
-        fields: vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()],
-        ..Schema::default()
+fn document_schema(encrypted: bool, isolated: bool) -> Declaration {
+    let mut schema = Declaration {
+        kind: Unit::default().into(),
+        ..Declaration::default()
     };
     if encrypted {
         schema = schema.with_encrypted(true);
@@ -68,11 +67,10 @@ fn document_schema(encrypted: bool, isolated: bool) -> Schema {
     schema
 }
 
-fn singleton_schema() -> Schema {
-    Schema {
+fn singleton_schema() -> Declaration {
+    Declaration {
         kind: Singleton::default().with_id("inbox").into(),
-        fields: vec![serde_json::from_value(json!({"name": "title", "string": {}})).unwrap()],
-        ..Schema::default()
+        ..Declaration::default()
     }
     .with_encrypted(true)
 }
@@ -250,9 +248,9 @@ fn encrypted_journal_schema_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_encrypted(&scratch, passphrase());
     vault.begin().unwrap();
-    let schema = Schema {
+    let schema = Declaration {
         kind: Journal::default().into(),
-        ..Schema::default()
+        ..Declaration::default()
     }
     .with_encrypted(true);
     let err = vault
@@ -280,8 +278,8 @@ fn info_reports_encrypted_and_omits_fields() {
         .iter()
         .find(|c| c.name.as_deref() == Some("sealed_notes"))
         .expect("listed");
-    assert_eq!(item.schema.encrypted, Some(true));
-    assert!(item.schema.fields.is_empty());
+    assert_eq!(item.declaration.encrypted, Some(true));
+    assert!(item.declaration.kind.is_some());
 }
 
 #[cfg(feature = "search")]

@@ -1,9 +1,0 @@
-name: lessons_project
-kind: document
-version: 1
-fields:
-  - name: title
-    required: true
-    string: {}
-  - name: tag
-    string: {}

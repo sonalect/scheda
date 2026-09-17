@@ -11,7 +11,6 @@ use std::thread;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 #[cfg(feature = "search")]
 use sha1::{Digest, Sha1};
 #[cfg(feature = "search")]
@@ -33,7 +32,7 @@ use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
 use crate::projector::{self, IndexDoc, IndexValue, ProjectorDump};
 use crate::query::{self, FindFields};
-use crate::schema::{self, CollectionDecl, FieldDecl, Kind, Schema};
+use crate::schema::{CollectionDecl, Kind, Schema};
 use crate::store;
 use crate::{Embedder, Error, Filter, IndexSchema, Record};
 #[cfg(feature = "search")]
@@ -1364,7 +1363,6 @@ fn upsert_record(
     };
     if decl.lexical_indexed() {
         forget_source(&mut inner.edges, &decl.name, id);
-        add_edges(&mut inner.edges, decl, record)?;
     }
     if can_write {
         if decl.lexical_indexed() {
@@ -2511,48 +2509,6 @@ fn forget_source(edges: &mut EdgeIndex, src: &str, id: &str) {
         }
         !ids.is_empty()
     });
-}
-
-fn add_edges(edges: &mut EdgeIndex, decl: &CollectionDecl, record: &Record) -> Result<(), Error> {
-    let Some(id) = record.id.as_deref() else {
-        return Ok(());
-    };
-    let fields = store::fields_from_record(decl, record)?;
-    collect_edges(&decl.fields, &fields, &decl.name, id, edges);
-    Ok(())
-}
-
-fn collect_edges(
-    decls: &[FieldDecl],
-    values: &serde_json::Map<String, Value>,
-    src: &str,
-    src_id: &str,
-    edges: &mut EdgeIndex,
-) {
-    for field in decls {
-        if field.edge.is_some() {
-            for dst in schema::edge_target_ids(values.get(&field.name)) {
-                edges
-                    .by_target
-                    .entry((src.to_owned(), field.name.clone(), dst))
-                    .or_default()
-                    .push(src_id.to_owned());
-            }
-        }
-        match values.get(&field.name) {
-            Some(Value::Object(map)) => {
-                collect_edges(&field.fields, map, src, src_id, edges);
-            }
-            Some(Value::Array(items)) => {
-                for item in items {
-                    if let Some(map) = item.as_object() {
-                        collect_edges(&field.fields, map, src, src_id, edges);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 fn doc_key(collection: &str, id: &str) -> String {

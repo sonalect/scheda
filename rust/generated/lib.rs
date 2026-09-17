@@ -31,10 +31,10 @@ mod validate {
                 reason = "module exists to include protovalidate output"
             )]
             use crate::generated::api::v1::{
-                Author, Body, CollectionInfo, ColumnKind, Edge, Encryption, Error, Field, Filter,
-                FindQuery, FindResult, History, IndexColumn, IndexSchema, Journal, Object,
-                OpenOptions, Record, ReindexResult, Schema, SearchHits, SearchQuery, Singleton,
-                Text, Unit, VaultInfo, filter, history, search_hits,
+                Author, CollectionInfo, ColumnKind, Declaration, Encryption, Error, Filter,
+                FindQuery, FindResult, History, IndexColumn, IndexSchema, Journal, OpenOptions,
+                Record, ReindexResult, SearchHits, SearchQuery, Singleton, Unit, VaultInfo, filter,
+                history, search_hits,
             };
 
             pub mod __buffa {
@@ -44,19 +44,17 @@ mod validate {
                         reason = "generated validators may not touch every view"
                     )]
                     pub use crate::generated::api::v1::__buffa::view::{
-                        AuthorOwnedView, AuthorView, BodyOwnedView, BodyView,
-                        CollectionInfoOwnedView, CollectionInfoView, EdgeOwnedView, EdgeView,
-                        EncryptionOwnedView, EncryptionView, ErrorOwnedView, ErrorView,
-                        FieldOwnedView, FieldView, FilterOwnedView, FilterView, FindQueryOwnedView,
+                        AuthorOwnedView, AuthorView, CollectionInfoOwnedView, CollectionInfoView,
+                        DeclarationOwnedView, DeclarationView, EncryptionOwnedView, EncryptionView,
+                        ErrorOwnedView, ErrorView, FilterOwnedView, FilterView, FindQueryOwnedView,
                         FindQueryView, FindResultOwnedView, FindResultView, HistoryOwnedView,
                         HistoryView, IndexColumnOwnedView, IndexColumnView, IndexSchemaOwnedView,
-                        IndexSchemaView, JournalOwnedView, JournalView, ObjectOwnedView,
-                        ObjectView, OpenOptionsOwnedView, OpenOptionsView, RecordOwnedView,
-                        RecordView, ReindexResultOwnedView, ReindexResultView, SchemaOwnedView,
-                        SchemaView, SearchHitsOwnedView, SearchHitsView, SearchQueryOwnedView,
-                        SearchQueryView, SingletonOwnedView, SingletonView, TextOwnedView,
-                        TextView, UnitOwnedView, UnitView, VaultInfoOwnedView, VaultInfoView,
-                        filter, history, search_hits,
+                        IndexSchemaView, JournalOwnedView, JournalView, OpenOptionsOwnedView,
+                        OpenOptionsView, RecordOwnedView, RecordView, ReindexResultOwnedView,
+                        ReindexResultView, SearchHitsOwnedView, SearchHitsView,
+                        SearchQueryOwnedView, SearchQueryView, SingletonOwnedView, SingletonView,
+                        UnitOwnedView, UnitView, VaultInfoOwnedView, VaultInfoView, filter,
+                        history, search_hits,
                     };
                     pub mod oneof {
                         pub use crate::generated::api::v1::__buffa::view::oneof::filter::more_like_this;
@@ -358,7 +356,7 @@ impl api::v1::OpenOptions {
     /// A build without the `encrypt` crate feature refuses a set value
     /// (`unsupported_encryption`) before any directory is created.
     /// With that feature, `open` stores the secret on the handle for
-    /// I/O of collections whose Schema marks `encrypted`.
+    /// I/O of collections whose declaration marks `encrypted`.
     #[must_use]
     pub fn encryption(mut self, encryption: api::v1::Encryption) -> Self {
         self.encryption = ::buffa::MessageField::some(encryption);
@@ -492,14 +490,7 @@ impl api::v1::SearchQuery {
     }
 }
 
-impl api::v1::Schema {
-    /// Fail if this message does not satisfy `api/v1` field rules.
-    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
-        require_valid(self)
-    }
-}
-
-impl api::v1::Field {
+impl api::v1::Declaration {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
@@ -534,8 +525,8 @@ mod tests {
     use protovalidate_buffa::Validate;
 
     use super::api::v1::{
-        Author, Body, ColumnKind, Encryption, Error, Field, Filter, FindQuery, IndexColumn,
-        IndexSchema, Journal, OpenOptions, Record, Schema, SearchQuery, history,
+        Author, ColumnKind, Declaration, Encryption, Error, Filter, FindQuery, IndexColumn,
+        IndexSchema, Journal, OpenOptions, Record, SearchQuery, Unit, history,
     };
 
     #[test]
@@ -816,83 +807,35 @@ mod tests {
 
     #[test]
     fn kind_is_required() {
-        assert!(Schema::default().validate().is_err());
-        let err = Schema::default().require_valid().expect_err("missing kind");
+        assert!(Declaration::default().validate().is_err());
+        let err = Declaration::default()
+            .require_valid()
+            .expect_err("missing kind");
         assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let ok = Schema {
-            kind: Body::default().into(),
-            ..Schema::default()
+        let ok = Declaration {
+            kind: Unit::default().into(),
+            ..Declaration::default()
         };
         assert!(ok.require_valid().is_ok());
         let json = serde_json::to_value(&ok).expect("json");
         assert!(json.get("version").is_none());
         assert!(json.get("document").is_some());
+        assert!(json.get("fields").is_none());
     }
 
     #[test]
     fn journal_may_exclude_either_index_leg() {
         for (lexical, vector) in [(true, false), (false, true), (true, true)] {
-            let schema = Schema {
+            let decl = Declaration {
                 kind: Journal::default().into(),
-                ..Schema::default()
+                ..Declaration::default()
             }
             .with_exclude_lexical_index(lexical)
             .with_exclude_vector_index(vector);
             assert!(
-                schema.require_valid().is_ok(),
+                decl.require_valid().is_ok(),
                 "journal lexical={lexical} vector={vector}"
             );
-        }
-    }
-
-    #[test]
-    fn field_name_and_spec_are_required() {
-        let err = Field::default()
-            .require_valid()
-            .expect_err("missing name and spec");
-        assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
-        let ok: Field = serde_json::from_value(serde_json::json!({
-            "name": "title",
-            "string": {}
-        }))
-        .expect("field json");
-        assert!(ok.require_valid().is_ok());
-        let json = serde_json::to_value(&ok).expect("json");
-        assert_eq!(json["name"], "title");
-        assert!(json.get("string").is_some());
-    }
-
-    #[test]
-    fn object_values_flags_are_invalid() {
-        let ok: Field = serde_json::from_value(serde_json::json!({
-            "name": "env",
-            "object": {"values": {"name": "axis", "integer": {}}}
-        }))
-        .expect("field json");
-        let schema = Schema {
-            kind: Body::default().into(),
-            fields: vec![ok],
-            ..Schema::default()
-        };
-        assert!(schema.require_valid().is_ok());
-
-        for values in [
-            serde_json::json!({"name": "axis", "required": true, "integer": {}}),
-            serde_json::json!({"name": "axis", "excludeFind": true, "integer": {}}),
-            serde_json::json!({"name": "axis", "default": 1, "integer": {}}),
-        ] {
-            let field: Field = serde_json::from_value(serde_json::json!({
-                "name": "env",
-                "object": {"values": values}
-            }))
-            .expect("field json");
-            let schema = Schema {
-                kind: Body::default().into(),
-                fields: vec![field],
-                ..Schema::default()
-            };
-            let err = schema.require_valid().expect_err("values flag");
-            assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         }
     }
 

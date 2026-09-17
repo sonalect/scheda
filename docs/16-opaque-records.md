@@ -1,14 +1,14 @@
 # 16. Opaque records
 
-Document 16 of the Scheda package. Version 0.5, 16 September 2026.
+Document 16 of the Scheda package. Version 0.6, 17 September 2026.
 
 Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F13 are done; codes and
+and `search` learn columns and text. F0–F14 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F14–F19.
+This file remains the work order for F15–F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -71,7 +71,7 @@ it is unused; wiring is F12–F13.
 | [F11](#f11-journal-envelope) | done | Journal line envelope; payload opaque |
 | [F12](#f12-projector-and-find) | done | `Projector` wired into the lexical Index and `find` |
 | [F13](#f13-projector-and-search) | done | BM25 / vectors from Projector slots |
-| [F14](#f14-drop-field-schema) | not started | No `Field` / edges in proto, disk, or `src/` |
+| [F14](#f14-drop-field-schema) | done | No `Field` / edges in proto, disk, or `src/` |
 | [F15](#f15-cli) | not started | CLI `--file`; default whole-file Projector |
 | [F16](#f16-agent-surface) | not started | `info` / `create_collection` without fields |
 | [F17](#f17-check-reindex-dead-code) | not started | `check` / `reindex` / YAML codec gone |
@@ -637,25 +637,25 @@ Close only after F12.
 
 ## F14. Drop field Schema
 
-**Status:** not started
+**Status:** done
 
 **Codes:** SCH-4–13 retired; LIB-21; `api/v1` `Schema` → declaration.
 
 Close only after F13.
 
-- [ ] On disk: `create_collection` writes `.collection.yaml` without
+- [x] On disk: `create_collection` writes `.collection.yaml` without
       `fields`. `open` / `check` refuse `.schema.yaml` and refuse a
       `fields` key (`invalid`).
-- [ ] Proto: collection declaration message without `Field`, `Edge`,
+- [x] Proto: collection declaration message without `Field`, `Edge`,
       `Body`, `Object`, `Text`. `CollectionInfo` nests that message.
       Generate. `Collection.schema()` is renamed or replaced (`decl` /
       the declaration message — pick in this stage, write rustdoc, no
       `docs/` citation in comments).
-- [ ] Grep of `rust/scheda/src` has no YAML frontmatter splitter, no
+- [x] Grep of `rust/scheda/src` has no YAML frontmatter splitter, no
       field-type match, no edge `strict` write check.
-- [ ] Isolated / encrypted / journal caps / exclude_* index flags still
+- [x] Isolated / encrypted / journal caps / exclude_* index flags still
       round-trip on the declaration.
-- [ ] `bazel test //...` green. Owner has reviewed the diff.
+- [x] `bazel test //...` green. Owner has reviewed the diff.
 
 **Review:** Schema removal. Stop.
 

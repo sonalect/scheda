@@ -2,4 +2,3 @@ name: east_log
 kind: journal
 version: 1
 segment_max_bytes: 50331648
-fields: []

@@ -47,9 +47,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -61,7 +61,6 @@ const WEST_JSON: &str = include_str!("../testdata/schema/west.json");
 const WEST_MISSING_KIND: &str = include_str!("../testdata/schema/west_missing_kind.yaml");
 const WEST_MISSING_VERSION: &str = include_str!("../testdata/schema/west_missing_version.yaml");
 const WEST_ON_WRITE: &str = include_str!("../testdata/schema/west_on_write.yaml");
-const WEST_BAD_EDGE: &str = include_str!("../testdata/schema/bad_edge.yaml");
 const WIKI: &str = include_str!("../testdata/schema/wiki.md");
 const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");
 const EAST_LOG_OVERSIZE: &str = include_str!("../testdata/schema/east_log_oversize.yaml");
@@ -82,9 +81,6 @@ fn schema_under_git_is_read_on_open_and_check() {
     let collection = vault.collection("west_docs").unwrap();
     assert_eq!(collection.kind(), Kind::Document);
     assert_eq!(collection.version(), 1);
-    assert_eq!(collection.field_type("title"), Some("string"));
-    assert_eq!(collection.field_is_required("title"), Some(true));
-    assert_eq!(collection.field_is_nullable("title"), Some(false));
     vault.check().unwrap();
 }
 
@@ -110,10 +106,7 @@ fn missing_version_is_rejected_on_open() {
 fn version_2_is_rejected_on_open() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
-        "west.yaml",
-        "name: west_docs\nkind: document\nversion: 2\nfields: []\n",
-    );
+    scratch.write_schema("west.yaml", "name: west_docs\nkind: document\nversion: 2\n");
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -133,9 +126,6 @@ kind: document
 version: 1
 layout:
   - '{id}.md'
-fields:
-  - name: title
-    string: {}
 ";
 
 #[test]
@@ -158,18 +148,39 @@ fn layout_key_is_invalid_on_open_and_check() {
     drop(scratch.init());
     scratch.write_schema(
         "west.json",
-        r#"{"name":"west_docs","kind":"document","version":1,"layout":["x.md"],"fields":[{"name":"title","string":{}}]}"#,
+        r#"{"name":"west_docs","kind":"document","version":1,"layout":["x.md"]}"#,
     );
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 #[test]
-fn unknown_edge_target_is_rejected() {
+fn leftover_fields_key_is_invalid_on_open() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST_BAD_EDGE);
+    scratch.write_schema(
+        "west.yaml",
+        "name: west_docs\nkind: document\nversion: 1\nfields: []\n",
+    );
     let err = scratch.reopen().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn leftover_schema_yaml_is_invalid_on_open_and_check() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    fs::write(scratch.vault().join("west_docs").join(".schema.yaml"), WEST).unwrap();
+    let err = scratch.reopen().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_schema("west.yaml", WEST);
+    let vault = scratch.reopen().unwrap();
+    fs::write(scratch.vault().join("west_docs").join(".schema.yaml"), WEST).unwrap();
+    let err = vault.check().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
@@ -185,18 +196,6 @@ fn unmarked_markdown_is_not_an_extractor() {
 }
 
 #[test]
-fn filter_key_marks_are_honoured() {
-    let scratch = Scratch::new();
-    drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
-    let vault = scratch.reopen().unwrap();
-    let collection = vault.collection("west_docs").unwrap();
-    assert!(collection.is_filter_key("tag"));
-    assert!(collection.is_filter_key("title"));
-    assert!(collection.is_filter_key("body"));
-}
-
-#[test]
 fn journal_default_segment_cap_is_8_mib() {
     let scratch = Scratch::new();
     drop(scratch.init());
@@ -204,7 +203,6 @@ fn journal_default_segment_cap_is_8_mib() {
     let vault = scratch.reopen().unwrap();
     let collection = vault.collection("east_log").unwrap();
     assert_eq!(collection.segment_max_bytes(), Some(8 * 1024 * 1024));
-    assert!(!collection.is_filter_key("body"));
 }
 
 #[test]
@@ -262,7 +260,7 @@ fn collection_dir_must_match_name() {
     drop(scratch.init());
     let dir = scratch.vault().join("aaaaaaaaaaaaaaaa");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), WEST).unwrap();
+    fs::write(dir.join(".collection.yaml"), WEST).unwrap();
     let err = scratch.reopen().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }

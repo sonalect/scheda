@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Filter, OpenOptions, Schema, Vault};
+use scheda::{Code, Declaration, Filter, OpenOptions, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -70,7 +70,7 @@ fn write_schema(scratch: &Scratch, body: &str) {
     let name = peek_schema_name(body);
     let dir = scratch.vault().join(name);
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), body).unwrap();
+    fs::write(dir.join(".collection.yaml"), body).unwrap();
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
@@ -125,11 +125,10 @@ fn term(field: &str, value: &str) -> scheda::FindQuery {
         .into()
 }
 
-fn title_schema(isolated: bool) -> Schema {
+fn title_schema(isolated: bool) -> Declaration {
     let mut value = json!({
         "version": 1,
         "journal": {},
-        "fields": [{"name": "title", "string": {}}]
     });
     if isolated {
         value["isolated"] = json!(true);
@@ -172,11 +171,10 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
     vault.begin().unwrap();
-    let decl: Schema = serde_json::from_value(json!({
+    let decl: Declaration = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 45},
         "isolated": true,
-        "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
     vault.create_collection("sealed_log", decl, None).unwrap();
@@ -213,11 +211,10 @@ fn nested_commit_rolls_back_when_main_commit_fails() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     write_schema(&scratch, WEST);
     let vault = scratch.reopen();
-    let decl: Schema = serde_json::from_value(json!({
+    let decl: Declaration = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 1024},
         "isolated": true,
-        "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
     vault.create_collection("sealed_log", decl, None).unwrap();
@@ -262,11 +259,10 @@ fn isolated_journal_rotates_and_ids_map_is_in_main_index() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
     vault.begin().unwrap();
-    let decl: Schema = serde_json::from_value(json!({
+    let decl: Declaration = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 1024, "segment_max_lines": 1},
         "isolated": true,
-        "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
     vault.create_collection("sealed_log", decl, None).unwrap();
@@ -790,11 +786,10 @@ fn old_nested_isolated_index_is_removed_by_reindex() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
     vault.begin().unwrap();
-    let decl: Schema = serde_json::from_value(json!({
+    let decl: Declaration = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 1024},
         "isolated": true,
-        "fields": [{"name": "msg", "string": {}}]
     }))
     .unwrap();
     vault.create_collection("sealed_log", decl, None).unwrap();
@@ -856,8 +851,8 @@ fn second_schema_claiming_isolated_name_is_invalid() {
     let other = scratch.vault().join("other_docs");
     fs::create_dir_all(&other).unwrap();
     fs::write(
-        other.join(".schema.yaml"),
-        "name: west_isolated\nkind: document\nversion: 1\nfields:\n  - name: title\n    string: {}\n",
+        other.join(".collection.yaml"),
+        "name: west_isolated\nkind: document\nversion: 1\n",
     )
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();

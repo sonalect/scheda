@@ -1,17 +1,16 @@
-//! Strict Protobuf JSON for `api.v1.Schema`.
+//! Strict Protobuf JSON for `api.v1.Declaration`.
 //!
-//! Generated serde drops unknown keys. YAML Schema files already deny them.
+//! Generated serde drops unknown keys. YAML declaration files already deny them.
 //! JSON that a caller or the CLI feeds `create_collection` must fail the same
-//! way, or a leftover `layout` key is written as if it were never there.
+//! way, or a leftover `layout` / `fields` / `version` key is written as if it
+//! were never there.
 
 use serde_json::Value;
 
 use crate::error::bail;
-use crate::{Error, Schema};
+use crate::{Declaration, Error};
 
-const SCHEMA_KEYS: &[&str] = &[
-    "fields",
-    "isolated",
+const DECLARATION_KEYS: &[&str] = &[
     "isolated",
     "encrypted",
     "excludeLexicalIndex",
@@ -21,32 +20,6 @@ const SCHEMA_KEYS: &[&str] = &[
     "document",
     "journal",
     "singleton",
-];
-
-const FIELD_KEYS: &[&str] = &[
-    "name",
-    "required",
-    "nullable",
-    "excludeFind",
-    "exclude_find",
-    "default",
-    "string",
-    "integer",
-    "number",
-    "boolean",
-    "stringList",
-    "string_list",
-    "object",
-    "objectList",
-    "object_list",
-    "edge",
-];
-
-const TEXT_KEYS: &[&str] = &[
-    "excludeFts",
-    "exclude_fts",
-    "excludeVector",
-    "exclude_vector",
 ];
 
 const JOURNAL_KEYS: &[&str] = &[
@@ -59,40 +32,31 @@ const JOURNAL_KEYS: &[&str] = &[
 
 const SINGLETON_KEYS: &[&str] = &["id"];
 
-const OBJECT_KEYS: &[&str] = &["fields", "values"];
-
-const EDGE_KEYS: &[&str] = &["collection", "one", "many", "strict", "text"];
-
-const BODY_KEYS: &[&str] = &["noBody", "no_body", "text"];
-
-/// Parse Protobuf JSON `Schema` and refuse unknown keys.
+/// Parse Protobuf JSON `Declaration` and refuse unknown keys.
 ///
-/// YAML Schema files already deny unknown keys. Generated proto JSON does
-/// not: a leftover `layout` key would be dropped and `create_collection`
-/// would write a file. This parser walks the object first, then deserializes
-/// and runs `require_valid`.
-pub fn schema_from_json(text: &str) -> Result<Schema, Error> {
+/// YAML declaration files already deny unknown keys. Generated proto JSON does
+/// not: a leftover `layout` or `fields` key would be dropped and
+/// `create_collection` would write a file. This parser walks the object first,
+/// then deserializes and runs `require_valid`.
+pub fn declaration_from_json(text: &str) -> Result<Declaration, Error> {
     let value: Value = serde_json::from_str(text).map_err(|err| Error::invalid(err.to_string()))?;
-    schema_from_value(&value)
+    declaration_from_value(&value)
 }
 
-/// Parse a JSON value as `Schema` and refuse unknown keys.
-pub fn schema_from_value(value: &Value) -> Result<Schema, Error> {
-    reject_schema(value)?;
-    let schema: Schema =
+/// Parse a JSON value as `Declaration` and refuse unknown keys.
+pub fn declaration_from_value(value: &Value) -> Result<Declaration, Error> {
+    reject_declaration(value)?;
+    let decl: Declaration =
         serde_json::from_value(value.clone()).map_err(|err| Error::invalid(err.to_string()))?;
-    schema.require_valid()?;
-    Ok(schema)
+    decl.require_valid()?;
+    Ok(decl)
 }
 
-fn reject_schema(value: &Value) -> Result<(), Error> {
-    let map = object(value, "schema")?;
-    reject_keys(map, SCHEMA_KEYS, "schema")?;
-    if let Some(fields) = map.get("fields") {
-        reject_field_list(fields, "schema fields")?;
-    }
+fn reject_declaration(value: &Value) -> Result<(), Error> {
+    let map = object(value, "declaration")?;
+    reject_keys(map, DECLARATION_KEYS, "declaration")?;
     if let Some(document) = map.get("document") {
-        reject_body(document)?;
+        reject_unit(document, "document")?;
     }
     if let Some(journal) = map.get("journal") {
         reject_journal(journal)?;
@@ -103,90 +67,9 @@ fn reject_schema(value: &Value) -> Result<(), Error> {
     Ok(())
 }
 
-fn reject_field_list(value: &Value, what: &str) -> Result<(), Error> {
-    let Some(items) = value.as_array() else {
-        bail!(Error::invalid(format!("{what} must be a JSON array")));
-    };
-    for item in items {
-        reject_field(item)?;
-    }
-    Ok(())
-}
-
-fn reject_field(value: &Value) -> Result<(), Error> {
-    let map = object(value, "field")?;
-    reject_keys(map, FIELD_KEYS, "field")?;
-    if let Some(text) = map.get("string") {
-        reject_text(text, "string")?;
-    }
-    if let Some(text) = map.get("stringList").or_else(|| map.get("string_list")) {
-        reject_text(text, "string_list")?;
-    }
-    if let Some(unit) = map.get("integer") {
-        reject_unit(unit, "integer")?;
-    }
-    if let Some(unit) = map.get("number") {
-        reject_unit(unit, "number")?;
-    }
-    if let Some(unit) = map.get("boolean") {
-        reject_unit(unit, "boolean")?;
-    }
-    if let Some(object) = map.get("object") {
-        reject_object(object)?;
-    }
-    if let Some(object) = map.get("objectList").or_else(|| map.get("object_list")) {
-        reject_object(object)?;
-    }
-    if let Some(edge) = map.get("edge") {
-        reject_edge(edge)?;
-    }
-    Ok(())
-}
-
-fn reject_text(value: &Value, what: &str) -> Result<(), Error> {
-    let map = object(value, what)?;
-    reject_keys(map, TEXT_KEYS, what)
-}
-
 fn reject_unit(value: &Value, what: &str) -> Result<(), Error> {
     let map = object(value, what)?;
     reject_keys(map, &[], what)
-}
-
-fn reject_object(value: &Value) -> Result<(), Error> {
-    let map = object(value, "object")?;
-    reject_keys(map, OBJECT_KEYS, "object")?;
-    if let Some(fields) = map.get("fields") {
-        reject_field_list(fields, "object fields")?;
-    }
-    if let Some(values) = map.get("values") {
-        reject_field(values)?;
-    }
-    Ok(())
-}
-
-fn reject_edge(value: &Value) -> Result<(), Error> {
-    let map = object(value, "edge")?;
-    reject_keys(map, EDGE_KEYS, "edge")?;
-    if let Some(unit) = map.get("one") {
-        reject_unit(unit, "one")?;
-    }
-    if let Some(unit) = map.get("many") {
-        reject_unit(unit, "many")?;
-    }
-    if let Some(text) = map.get("text") {
-        reject_text(text, "edge text")?;
-    }
-    Ok(())
-}
-
-fn reject_body(value: &Value) -> Result<(), Error> {
-    let map = object(value, "document")?;
-    reject_keys(map, BODY_KEYS, "document")?;
-    if let Some(text) = map.get("text") {
-        reject_text(text, "document text")?;
-    }
-    Ok(())
 }
 
 fn reject_journal(value: &Value) -> Result<(), Error> {
@@ -224,39 +107,45 @@ fn reject_keys(
 
 #[cfg(test)]
 mod tests {
-    use super::{schema_from_json, schema_from_value};
+    use super::{declaration_from_json, declaration_from_value};
     use crate::error::Code;
     use serde_json::json;
 
     #[test]
     fn layout_key_is_invalid() {
-        let err =
-            schema_from_json(r#"{"document":{},"layout":["c/{id}.md"],"fields":[]}"#).unwrap_err();
+        let err = declaration_from_json(r#"{"document":{},"layout":["c/{id}.md"]}"#).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("layout"));
     }
 
     #[test]
-    fn nested_unknown_field_key_is_invalid() {
-        let err = schema_from_value(&json!({
+    fn fields_key_is_invalid() {
+        let err = declaration_from_value(&json!({
             "document": {},
-            "fields": [{"name": "title", "string": {}, "layout": true}]
+            "fields": [{"name": "title", "string": {}}]
         }))
         .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(err.message.as_deref().unwrap_or("").contains("fields"));
     }
 
     #[test]
-    fn known_schema_parses() {
-        let schema =
-            schema_from_json(r#"{"document":{},"fields":[{"name":"title","string":{}}]}"#).unwrap();
-        assert!(schema.kind.is_some());
+    fn known_declaration_parses() {
+        let decl = declaration_from_json(r#"{"document":{}}"#).unwrap();
+        assert!(decl.kind.is_some());
     }
 
     #[test]
     fn leftover_version_key_is_invalid() {
-        let err = schema_from_json(r#"{"version":1,"document":{},"fields":[]}"#).unwrap_err();
+        let err = declaration_from_json(r#"{"version":1,"document":{}}"#).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("version"));
+    }
+
+    #[test]
+    fn leftover_body_key_is_invalid() {
+        let err = declaration_from_json(r#"{"document":{},"body":{}}"#).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        assert!(err.message.as_deref().unwrap_or("").contains("body"));
     }
 }

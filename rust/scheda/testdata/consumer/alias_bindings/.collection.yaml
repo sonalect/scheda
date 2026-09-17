@@ -2,7 +2,3 @@ name: alias_bindings
 kind: journal
 version: 1
 isolated: true
-fields:
-  - name: token
-    required: true
-    string: {}

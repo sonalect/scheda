@@ -52,9 +52,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -399,7 +399,7 @@ fn check_reports_schema_failure_with_path() {
     drop(vault);
     scratch.write_schema(
         "notes.yaml",
-        "name: query_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    required: true\n    string: {}\n",
+        "name: query_notes\nkind: journal\nversion: 1\n",
     );
     let vault = scratch.reopen();
     let _got = vault.collection("query_notes").unwrap().get("a").unwrap();
@@ -458,9 +458,6 @@ fn conflict_markers_fail_check() {
 name: query_notes
 kind: document
 version: 1
-fields:
-  - name: title
-    string: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -773,7 +770,7 @@ fn find_score_ties_are_stable_across_reopen_and_pages() {
 }
 
 #[test]
-fn exists_json_subpaths_matches_nested_field() {
+fn exists_json_subpaths_does_not_expand_nested_keys() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_schema(
@@ -782,14 +779,6 @@ fn exists_json_subpaths_matches_nested_field() {
 name: query_notes
 kind: journal
 version: 1
-fields:
-  - name: title
-    string: {}
-  - name: meta
-    object:
-      fields:
-        - name: city
-          string: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -804,6 +793,8 @@ fields:
     collection
         .add("none", rec(json!({"title": "two"})), None)
         .unwrap();
+    // Projector walks nested JSON for a declared Text column (`city`). `json_subpaths`
+    // is ignored: an object column (`meta`) is not expanded into nested names.
     let nested = collection
         .find(&filter(json!({"exists":{"field":"city"}})), 0, 100)
         .unwrap();
@@ -815,7 +806,19 @@ fields:
             100,
         )
         .unwrap();
-    assert_eq!(ids(&with_subpaths), ["paris"]);
+    assert!(
+        with_subpaths.records.is_empty(),
+        "exists on an object column does not expand nested keys: {:?}",
+        ids(&with_subpaths)
+    );
+    let missing = collection
+        .find(
+            &filter(json!({"exists":{"field":"nope","jsonSubpaths":true}})),
+            0,
+            100,
+        )
+        .unwrap_err();
+    assert_eq!(missing.known_code(), Some(Code::Invalid));
 }
 
 #[test]
@@ -873,13 +876,6 @@ fn exclude_fts_body_is_not_a_find_key() {
 name: query_notes
 kind: journal
 version: 1
-fields:
-  - name: title
-    string: {}
-  - name: aside
-    exclude_find: true
-    string:
-      exclude_fts: true
 "#,
     );
     let vault = scratch.reopen();
@@ -1172,9 +1168,6 @@ kind: document
 version: 1
 exclude_lexical_index: true
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
 "#;
 const FOLD_INBOX: &str = r#"
 name: fold_inbox
@@ -1184,9 +1177,6 @@ exclude_lexical_index: true
 exclude_vector_index: true
 singleton:
   id: inbox
-fields:
-  - name: title
-    string: {}
 "#;
 
 fn tree_contains(root: &Path, needle: &str) -> bool {
@@ -1305,11 +1295,6 @@ kind: journal
 version: 1
 exclude_lexical_index: true
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
-  - name: secret
-    string: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -1347,9 +1332,6 @@ kind: journal
 version: 1
 exclude_lexical_index: true
 exclude_vector_index: true
-fields:
-  - name: msg
-    string: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -1374,9 +1356,6 @@ name: fold_docs
 kind: journal
 version: 1
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
 "#,
     );
     let vault = scratch.reopen();

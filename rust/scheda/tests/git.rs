@@ -51,9 +51,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -782,11 +782,10 @@ fn isolated_commit_uses_open_options_identity() {
     let scratch = Scratch::new();
     let options = OpenOptions::new().author(Author::new().name("Ada").email("ada@invalid"));
     let vault = Vault::open(scratch.vault(), options, None).unwrap();
-    let decl: scheda::Schema = serde_json::from_value(json!({
+    let decl: scheda::Declaration = serde_json::from_value(json!({
         "version": 1,
         "document": {},
         "isolated": true,
-        "fields": [{"name": "title", "string": {}}]
     }))
     .unwrap();
     vault.create_collection("north_sealed", decl, None).unwrap();

@@ -43,9 +43,6 @@ const NOTES: &str = "\
 name: proj_notes
 kind: document
 version: 1
-fields:
-  - name: title
-    string: {}
 ";
 
 fn rec(fields: serde_json::Value) -> Vec<u8> {
@@ -67,7 +64,7 @@ fn ids(result: &scheda::FindResult) -> Vec<&str> {
 fn write_notes(scratch: &Scratch) {
     let dir = scratch.vault().join("proj_notes");
     std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
+    std::fs::write(dir.join(".collection.yaml"), NOTES).unwrap();
 }
 
 fn title_projector() -> Arc<dyn Projector> {

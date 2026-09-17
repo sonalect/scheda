@@ -37,7 +37,7 @@ impl Scratch {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join(".schema.yaml"), body).unwrap();
+        fs::write(dir.join(".collection.yaml"), body).unwrap();
     }
 }
 

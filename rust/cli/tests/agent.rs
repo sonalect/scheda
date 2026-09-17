@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{FindQuery, OpenOptions, Schema, SearchQuery, Vault};
+use scheda::{Declaration, FindQuery, OpenOptions, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -93,24 +93,18 @@ fn vault_arg(scratch: &Scratch) -> String {
     scratch.vault().display().to_string()
 }
 
-fn notes_decl() -> Schema {
+fn notes_decl() -> Declaration {
     serde_json::from_value(json!({
         "version": 1,
         "document": {},
-        "fields": [
-            {"name": "title", "required": true, "string": {}},
-            {"name": "tag", "string": {}},
-            {"name": "rank", "integer": {}, "default": 0}
-        ]
     }))
     .unwrap()
 }
 
-fn log_decl() -> Schema {
+fn log_decl() -> Declaration {
     serde_json::from_value(json!({
         "version": 1,
         "journal": {},
-        "fields": [{"name": "title", "string": {}}]
     }))
     .unwrap()
 }
@@ -180,43 +174,39 @@ fn info_json_matches_schema_files() {
     ]);
     assert_eq!(log.status, 0, "stderr={}", log.stderr);
 
-    let notes_yaml = fs::read_to_string(scratch.vault().join("accept_notes/.schema.yaml")).unwrap();
+    let notes_yaml =
+        fs::read_to_string(scratch.vault().join("accept_notes/.collection.yaml")).unwrap();
     assert!(notes_yaml.contains("name: accept_notes"));
     assert!(notes_yaml.contains("kind: document"));
-    let log_yaml = fs::read_to_string(scratch.vault().join("accept_log/.schema.yaml")).unwrap();
+    let log_yaml = fs::read_to_string(scratch.vault().join("accept_log/.collection.yaml")).unwrap();
     assert!(log_yaml.contains("name: accept_log"));
     assert!(log_yaml.contains("kind: journal"));
 
     let info = stdout_json(&run(&["--vault", &path, "info"]));
     let notes = collection(&info, "accept_notes");
-    let notes_schema = &notes["schema"];
+    let notes_schema = &notes["declaration"];
     let lib_notes = scratch
         .reopen()
         .collection("accept_notes")
         .unwrap()
-        .schema()
+        .decl()
         .unwrap();
     assert_eq!(notes_schema, &serde_json::to_value(&lib_notes).unwrap());
     assert!(notes_schema.get("document").is_some());
     assert!(notes_schema.get("version").is_none());
-    assert_eq!(notes_schema["fields"][0]["name"], "title");
-    assert_eq!(notes_schema["fields"][0]["required"], true);
-    assert!(notes_schema["fields"][0].get("string").is_some());
-    assert_eq!(notes_schema["fields"][1]["name"], "tag");
-    assert_eq!(notes_schema["fields"][2]["name"], "rank");
-    assert_eq!(notes_schema["fields"][2]["default"].as_f64(), Some(0.0));
+    assert!(notes_schema.get("fields").is_none());
     assert!(notes_schema.get("isolated").is_none());
 
-    let journal = &collection(&info, "accept_log")["schema"];
+    let journal = &collection(&info, "accept_log")["declaration"];
     let lib_log = scratch
         .reopen()
         .collection("accept_log")
         .unwrap()
-        .schema()
+        .decl()
         .unwrap();
     assert_eq!(journal, &serde_json::to_value(&lib_log).unwrap());
     assert!(journal.get("journal").is_some());
-    assert_eq!(journal["fields"][0]["name"], "title");
+    assert!(journal.get("fields").is_none());
 
     let lib = serde_json::to_value(scratch.reopen().info().unwrap()).unwrap();
     assert_eq!(lib["collections"], info["collections"]);

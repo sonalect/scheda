@@ -1,7 +1,8 @@
 // Collection list item inside `api.v1.VaultInfo` (`Vault.info`). Bindings and
 // the CLI encode these messages as Protobuf JSON, not binary protobuf. This
 // is not a live Collection handle. No field validators on this message: this
-// is info, not a write envelope. Isolated collections may omit `schema.fields`.
+// is info, not a write envelope. Isolated Record files live under
+// `.isolated/{name}/`; the declaration file is `{name}/.collection.yaml`.
 
 edition = "2024";
 
@@ -11,9 +12,9 @@ import "api/v1/schema.proto";
 
 message CollectionInfo {
   // Collection directory. Slug checked in the library (same as Record `id`).
-  // Not a field on `Schema`: `create_collection` takes it as an argument.
+  // Not a field on `Declaration`: `create_collection` takes it as an argument.
   string name = 1;
-  // Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
+  // Declaration (`Vault.create_collection` / `{name}/.collection.yaml` in the
   // main tree). Isolated Record files live under `.isolated/{name}/`.
-  Schema schema = 2;
+  Declaration declaration = 2;
 }

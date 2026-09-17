@@ -59,15 +59,10 @@ pub mod __buffa {
     /// Register this package's `Any` type entries and extension entries.
     pub fn register_types(reg: &mut ::buffa::type_registry::TypeRegistry) {
         reg.register_json_any(super::__AUTHOR_JSON_ANY);
-        reg.register_json_any(super::__SCHEMA_JSON_ANY);
+        reg.register_json_any(super::__DECLARATION_JSON_ANY);
         reg.register_json_any(super::__JOURNAL_JSON_ANY);
         reg.register_json_any(super::__SINGLETON_JSON_ANY);
-        reg.register_json_any(super::__FIELD_JSON_ANY);
-        reg.register_json_any(super::__TEXT_JSON_ANY);
         reg.register_json_any(super::__UNIT_JSON_ANY);
-        reg.register_json_any(super::__OBJECT_JSON_ANY);
-        reg.register_json_any(super::__EDGE_JSON_ANY);
-        reg.register_json_any(super::__BODY_JSON_ANY);
         reg.register_json_any(super::__COLLECTION_INFO_JSON_ANY);
         reg.register_json_any(super::__ENCRYPTION_JSON_ANY);
         reg.register_json_any(super::__ERROR_JSON_ANY);
@@ -112,9 +107,9 @@ pub use self::__buffa::view::AuthorView;
 #[doc(inline)]
 pub use self::__buffa::view::AuthorOwnedView;
 #[doc(inline)]
-pub use self::__buffa::view::SchemaView;
+pub use self::__buffa::view::DeclarationView;
 #[doc(inline)]
-pub use self::__buffa::view::SchemaOwnedView;
+pub use self::__buffa::view::DeclarationOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::JournalView;
 #[doc(inline)]
@@ -124,29 +119,9 @@ pub use self::__buffa::view::SingletonView;
 #[doc(inline)]
 pub use self::__buffa::view::SingletonOwnedView;
 #[doc(inline)]
-pub use self::__buffa::view::FieldView;
-#[doc(inline)]
-pub use self::__buffa::view::FieldOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::TextView;
-#[doc(inline)]
-pub use self::__buffa::view::TextOwnedView;
-#[doc(inline)]
 pub use self::__buffa::view::UnitView;
 #[doc(inline)]
 pub use self::__buffa::view::UnitOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::ObjectView;
-#[doc(inline)]
-pub use self::__buffa::view::ObjectOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::EdgeView;
-#[doc(inline)]
-pub use self::__buffa::view::EdgeOwnedView;
-#[doc(inline)]
-pub use self::__buffa::view::BodyView;
-#[doc(inline)]
-pub use self::__buffa::view::BodyOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::CollectionInfoView;
 #[doc(inline)]

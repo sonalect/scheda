@@ -113,7 +113,7 @@ fn seed_source(path: &Path) {
     drop(Vault::open(path, OpenOptions::new(), None).unwrap());
     let dir = path.join("north_notes");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
+    fs::write(dir.join(".collection.yaml"), NOTES).unwrap();
     let vault = Vault::open(path, OpenOptions::new(), None).unwrap();
     vault
         .collection("north_notes")
@@ -373,7 +373,7 @@ fn writes_and_commit_do_not_need_the_network() {
     drop(Vault::open(&vault_path, OpenOptions::new(), None).unwrap());
     let dir = vault_path.join("north_notes");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), NOTES).unwrap();
+    fs::write(dir.join(".collection.yaml"), NOTES).unwrap();
     let vault = Vault::open(&vault_path, OpenOptions::new(), None).unwrap();
     git_ok(
         vault.path(),

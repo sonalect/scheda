@@ -1,11 +1,3 @@
 name: west_docs
 kind: document
 version: 1
-fields:
-  - name: title
-    required: true
-    string: {}
-  - name: link
-    edge:
-      collection: missing_target
-      one: {}

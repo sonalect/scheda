@@ -6,20 +6,20 @@
 #[serde(default)]
 pub struct CollectionInfo {
     /// Collection directory. Slug checked in the library (same as Record `id`).
-    /// Not a field on `Schema`: `create_collection` takes it as an argument.
+    /// Not a field on `Declaration`: `create_collection` takes it as an argument.
     ///
     /// Field 1: `name`
     #[serde(rename = "name", skip_serializing_if = "::core::option::Option::is_none")]
     pub name: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
+    /// Declaration (`Vault.create_collection` / `{name}/.collection.yaml` in the
     /// main tree). Isolated Record files live under `.isolated/{name}/`.
     ///
-    /// Field 2: `schema`
+    /// Field 2: `declaration`
     #[serde(
-        rename = "schema",
+        rename = "declaration",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
-    pub schema: ::buffa::MessageField<Schema, ::buffa::Inline<Schema>>,
+    pub declaration: ::buffa::MessageField<Declaration, ::buffa::Inline<Declaration>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -28,7 +28,7 @@ impl ::core::fmt::Debug for CollectionInfo {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("CollectionInfo")
             .field("name", &self.name)
-            .field("schema", &self.schema)
+            .field("declaration", &self.declaration)
             .finish()
     }
 }
@@ -74,9 +74,9 @@ impl ::buffa::Message for CollectionInfo {
         if let Some(ref v) = self.name {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.schema.is_set() {
+        if self.declaration.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = self.schema.compute_size(__cache);
+            let inner_size = self.declaration.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -95,13 +95,13 @@ impl ::buffa::Message for CollectionInfo {
         if let Some(ref v) = self.name {
             ::buffa::types::put_string_field(1u32, v, buf);
         }
-        if self.schema.is_set() {
+        if self.declaration.is_set() {
             ::buffa::types::put_len_delimited_header(
                 2u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            self.schema.write_to(__cache, buf);
+            self.declaration.write_to(__cache, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -132,7 +132,7 @@ impl ::buffa::Message for CollectionInfo {
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
                 ::buffa::Message::merge_length_delimited(
-                    self.schema.get_or_insert_default(),
+                    self.declaration.get_or_insert_default(),
                     buf,
                     ctx,
                 )?;
@@ -146,7 +146,7 @@ impl ::buffa::Message for CollectionInfo {
     }
     fn clear(&mut self) {
         self.name = ::core::option::Option::None;
-        self.schema = ::buffa::MessageField::none();
+        self.declaration = ::buffa::MessageField::none();
         self.__buffa_unknown_fields.clear();
     }
 }

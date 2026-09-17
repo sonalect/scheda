@@ -13,7 +13,7 @@ impl ::protovalidate_buffa::Validate for CollectionInfo {
         &self,
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if let Some(inner) = self.schema.as_option() {
+        if let Some(inner) = self.declaration.as_option() {
             if let Err(sub) = inner.validate() {
                 violations
                     .extend(
@@ -27,7 +27,9 @@ impl ::protovalidate_buffa::Validate for CollectionInfo {
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
                                             field_number: Some(2i32),
-                                            field_name: Some(::std::borrow::Cow::Borrowed("schema")),
+                                            field_name: Some(
+                                                ::std::borrow::Cow::Borrowed("declaration"),
+                                            ),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
                                             value_type: None,
@@ -73,7 +75,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::CollectionInfoView<'_> {
         &self,
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if let Some(inner) = self.schema.as_option() {
+        if let Some(inner) = self.declaration.as_option() {
             if let Err(sub) = inner.validate() {
                 violations
                     .extend(
@@ -87,7 +89,9 @@ impl ::protovalidate_buffa::Validate for __buffa::view::CollectionInfoView<'_> {
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
                                             field_number: Some(2i32),
-                                            field_name: Some(::std::borrow::Cow::Borrowed("schema")),
+                                            field_name: Some(
+                                                ::std::borrow::Cow::Borrowed("declaration"),
+                                            ),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
                                             value_type: None,

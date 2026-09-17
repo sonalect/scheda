@@ -51,9 +51,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -708,7 +708,7 @@ fn two_clones_write_disjoint_journal_segments() {
     drop(Vault::open(&source, OpenOptions::new(), None).unwrap());
     let dir = source.join("south_log");
     fs::create_dir_all(&dir).unwrap();
-    fs::write(dir.join(".schema.yaml"), LOG).unwrap();
+    fs::write(dir.join(".collection.yaml"), LOG).unwrap();
     commit_all(&source, "schema");
     let bare = scratch.root.join("bare");
     git_ok(

@@ -2,7 +2,3 @@ name: west_isolated
 kind: document
 version: 1
 isolated: true
-fields:
-  - name: west_pass
-    required: true
-    string: {}

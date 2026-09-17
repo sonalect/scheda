@@ -1,9 +1,3 @@
 name: c
 kind: document
 version: 1
-fields:
-  - name: tagged
-    string: {}
-  - name: prose
-    exclude_find: true
-    string: {}

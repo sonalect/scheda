@@ -40,9 +40,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -59,14 +59,9 @@ const TOKEN_EXTRA: &str = "\
 name: token_extra
 kind: journal
 version: 1
-fields:
-  - name: title
-    required: true
-    string: {}
 ";
 const WALK_SRC: &str = include_str!("../testdata/search/walk_src.yaml");
 const WALK_DST: &str = include_str!("../testdata/search/walk_dst.yaml");
-const WALK_STRICT: &str = include_str!("../testdata/search/walk_strict.yaml");
 
 struct MapEmbedder {
     pairs: Vec<(String, Vec<f32>)>,
@@ -108,9 +103,7 @@ fn rec_rep(fields: Value) -> Vec<u8> {
 }
 
 fn slot_schema(name: &str, id: &str) -> String {
-    format!(
-        "name: {name}\nkind: singleton\nversion: 1\nsingleton:\n  id: {id}\nfields:\n  - name: title\n    required: true\n    string: {{}}\n  - name: tag\n    string: {{}}\n"
-    )
+    format!("name: {name}\nkind: singleton\nversion: 1\nsingleton:\n  id: {id}\n")
 }
 
 fn drop_journal_id(vault: &Path, collection: &str, id: &str) {
@@ -1174,7 +1167,7 @@ fn invalid_record_is_omitted_from_search() {
     drop(vault);
     scratch.write_schema(
         "tokens.yaml",
-        "name: token_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: extra\n    required: true\n    string: {}\n",
+        "name: token_notes\nkind: journal\nversion: 1\n",
     );
     let vault = open_proj(scratch.vault(), None);
     let collection = vault.collection("token_notes").unwrap();
@@ -1366,7 +1359,7 @@ fn embed_uses_single_or_many_by_limit() {
     drop(open_proj(scratch.vault(), None));
     scratch.write_schema(
         "tokens.yaml",
-        "name: token_notes\nkind: journal\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n  - name: tag\n    string: {}\n  - name: extra\n    string: {}\n",
+        "name: token_notes\nkind: journal\nversion: 1\n",
     );
     let vault = open_proj(
         scratch.vault(),
@@ -1499,25 +1492,6 @@ fn edge_field_read_matches_hand_list() {
 }
 
 #[test]
-fn strict_edge_rejects_missing_target() {
-    let scratch = Scratch::new();
-    drop(open_proj(scratch.vault(), None));
-    scratch.write_schema("src.yaml", WALK_STRICT);
-    scratch.write_schema("dst.yaml", WALK_DST);
-    let vault = open_proj(scratch.vault(), None);
-    let src = vault.collection("walk_strict").unwrap();
-    src.add("bad", rec(json!({"target": "nope"})), None)
-        .unwrap();
-    assert_eq!(src.get("bad").unwrap().id.as_deref(), Some("bad"));
-    vault
-        .collection("walk_dst")
-        .unwrap()
-        .add("ok", rec(json!({"title": "t"})), None)
-        .unwrap();
-    src.add("good", rec(json!({"target": "ok"})), None).unwrap();
-}
-
-#[test]
 fn find_by_edge_target_does_not_scan_unrelated() {
     let scratch = Scratch::new();
     drop(open_proj(scratch.vault(), None));
@@ -1594,9 +1568,6 @@ name: fold_docs
 kind: journal
 version: 1
 exclude_lexical_index: true
-fields:
-  - name: title
-    string: {}
 "#,
     );
     let embedder = Arc::new(MapEmbedder {
@@ -1635,9 +1606,6 @@ name: fold_docs
 kind: journal
 version: 1
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
 "#,
     );
     let probe = ProbeEmbedder::new(32);
@@ -1672,9 +1640,6 @@ kind: journal
 version: 1
 exclude_lexical_index: true
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
 "#,
     );
     let vault = open_proj(scratch.vault(), None);
@@ -1706,9 +1671,6 @@ name: fold_docs
 kind: journal
 version: 1
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
 "#,
     );
     let probe = ProbeEmbedder::new(32);
@@ -1729,11 +1691,6 @@ name: fold_docs
 kind: journal
 version: 1
 exclude_vector_index: true
-fields:
-  - name: title
-    string: {}
-  - name: secret
-    string: {}
 "#,
     );
     let vault = open_proj(

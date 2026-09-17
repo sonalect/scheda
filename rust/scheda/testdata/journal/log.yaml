@@ -2,6 +2,3 @@ name: south_log
 kind: journal
 version: 1
 segment_max_bytes: 32
-fields:
-  - name: msg
-    string: {}

@@ -3,6 +3,3 @@ kind: journal
 version: 1
 isolated: true
 segment_max_bytes: 45
-fields:
-  - name: msg
-    string: {}

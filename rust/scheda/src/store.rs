@@ -7,9 +7,6 @@ use std::iter::FusedIterator;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-#[cfg(feature = "find")]
-use serde_json::{Map, Value};
-
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::schema::{CollectionDecl, Kind, Schema};
 use crate::{Encryption, Error, Record};
@@ -583,55 +580,6 @@ pub(crate) fn utf8_raw<'a>(record: &'a Record, frame: &'static str) -> Result<&'
     Ok(raw)
 }
 
-#[cfg(feature = "find")]
-fn yaml_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
-    let text = str::from_utf8(record_raw(record)).context(Code::NotUtf8, "[store] decode UTF-8")?;
-    if text.trim().is_empty() {
-        return Ok(Map::new());
-    }
-    let value: Value = yaml_serde::from_str(text).context(Code::Invalid, "[store] decode YAML")?;
-    let Value::Object(fields) = value else {
-        bail!(Error::invalid("YAML header must be a mapping"));
-    };
-    Ok(fields)
-}
-
-#[cfg(feature = "find")]
-fn json_object_from_raw(record: &Record) -> Result<Map<String, Value>, Error> {
-    let text = str::from_utf8(record_raw(record)).context(Code::NotUtf8, "[store] decode UTF-8")?;
-    let text = text.trim_end_matches('\n').trim_end_matches('\r');
-    if text.is_empty() {
-        return Ok(Map::new());
-    }
-    let value: Value = serde_json::from_str(text).context(Code::Invalid, "[store] decode JSON")?;
-    let Value::Object(fields) = value else {
-        bail!(Error::invalid("JSON must be an object"));
-    };
-    Ok(fields)
-}
-
-/// Field map for Index columns still declared on Schema. Documents do not
-/// populate those columns. Journal JSON and singleton YAML are best-effort:
-/// matching bytes may fill columns until Projector lands; other UTF-8 yields
-/// an empty map.
-#[cfg(feature = "find")]
-pub(crate) fn fields_from_record(
-    decl: &CollectionDecl,
-    record: &Record,
-) -> Result<Map<String, Value>, Error> {
-    match decl.kind {
-        Kind::Document => Ok(Map::new()),
-        Kind::Journal => match json_object_from_raw(record) {
-            Ok(fields) => Ok(fields),
-            Err(_) => Ok(Map::new()),
-        },
-        Kind::Singleton => match yaml_object_from_raw(record) {
-            Ok(fields) => Ok(fields),
-            Err(_) => Ok(Map::new()),
-        },
-    }
-}
-
 /// Whether this Record should enter the Index. Documents, singletons, and
 /// journal envelopes are present when the file / line was read.
 pub(crate) fn record_indexable(decl: &CollectionDecl, _record: &Record) -> bool {
@@ -905,13 +853,10 @@ mod tests {
             name: String::from("c"),
             kind,
             version: 1,
-            filter_keys: Default::default(),
             segment_max_bytes: None,
             segment_max_lines: None,
             segment_rotate: None,
             singleton_id: Some(String::from("inbox")),
-            body: None,
-            fields: Vec::new(),
             isolated: false,
             encrypted: false,
             exclude_lexical_index: false,

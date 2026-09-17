@@ -4,15 +4,17 @@
 #[derive(Clone, Debug, Default)]
 pub struct CollectionInfoView<'a> {
     /// Collection directory. Slug checked in the library (same as Record `id`).
-    /// Not a field on `Schema`: `create_collection` takes it as an argument.
+    /// Not a field on `Declaration`: `create_collection` takes it as an argument.
     ///
     /// Field 1: `name`
     pub name: ::core::option::Option<&'a str>,
-    /// Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
+    /// Declaration (`Vault.create_collection` / `{name}/.collection.yaml` in the
     /// main tree). Isolated Record files live under `.isolated/{name}/`.
     ///
-    /// Field 2: `schema`
-    pub schema: ::buffa::MessageFieldView<super::super::__buffa::view::SchemaView<'a>>,
+    /// Field 2: `declaration`
+    pub declaration: ::buffa::MessageFieldView<
+        super::super::__buffa::view::DeclarationView<'a>,
+    >,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for CollectionInfoView<'a> {
@@ -59,13 +61,13 @@ impl<'a> ::buffa::MessageView<'a> for CollectionInfoView<'a> {
                 )?;
                 let __sub_ctx = ctx.descend()?;
                 let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.schema.as_mut() {
+                match view.declaration.as_mut() {
                     Some(existing) => {
                         ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
                     }
                     None => {
-                        view.schema = ::buffa::MessageFieldView::set(
-                            <super::super::__buffa::view::SchemaView as ::buffa::MessageView>::decode_view_ctx(
+                        view.declaration = ::buffa::MessageFieldView::set(
+                            <super::super::__buffa::view::DeclarationView as ::buffa::MessageView>::decode_view_ctx(
                                 sub,
                                 __sub_ctx,
                             )?,
@@ -96,11 +98,11 @@ impl<'a> ::buffa::MessageView<'a> for CollectionInfoView<'a> {
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::CollectionInfo {
             name: self.name.map(|s| s.to_string()),
-            schema: match self.schema.as_option() {
+            declaration: match self.declaration.as_option() {
                 Some(v) => {
                     ::buffa::MessageField::<
-                        super::super::Schema,
-                        ::buffa::Inline<super::super::Schema>,
+                        super::super::Declaration,
+                        ::buffa::Inline<super::super::Declaration>,
                     >::some(v.to_owned_from_source(__buffa_src)?)
                 }
                 None => ::buffa::MessageField::none(),
@@ -119,9 +121,9 @@ impl<'a> ::buffa::ViewEncode<'a> for CollectionInfoView<'a> {
         if let Some(ref v) = self.name {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if self.schema.is_set() {
+        if self.declaration.is_set() {
             let __slot = __cache.reserve();
-            let inner_size = self.schema.compute_size(__cache);
+            let inner_size = self.declaration.compute_size(__cache);
             __cache.set(__slot, inner_size);
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
@@ -141,13 +143,13 @@ impl<'a> ::buffa::ViewEncode<'a> for CollectionInfoView<'a> {
         if let Some(ref v) = self.name {
             ::buffa::types::put_string_field(1u32, v, buf);
         }
-        if self.schema.is_set() {
+        if self.declaration.is_set() {
             ::buffa::types::put_len_delimited_header(
                 2u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
-            self.schema.write_to(__cache, buf);
+            self.declaration.write_to(__cache, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -174,8 +176,8 @@ impl<'__a> ::serde::Serialize for CollectionInfoView<'__a> {
             __map.serialize_entry("name", __v)?;
         }
         {
-            if let ::core::option::Option::Some(__v) = self.schema.as_option() {
-                __map.serialize_entry("schema", __v)?;
+            if let ::core::option::Option::Some(__v) = self.declaration.as_option() {
+                __map.serialize_entry("declaration", __v)?;
             }
         }
         __map.end()
@@ -272,22 +274,22 @@ impl CollectionInfoOwnedView {
         self.0.into_bytes()
     }
     /// Collection directory. Slug checked in the library (same as Record `id`).
-    /// Not a field on `Schema`: `create_collection` takes it as an argument.
+    /// Not a field on `Declaration`: `create_collection` takes it as an argument.
     ///
     /// Field 1: `name`
     #[must_use]
     pub fn name(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().name
     }
-    /// Declaration (`Vault.create_collection` / `{name}/.schema.yaml` in the
+    /// Declaration (`Vault.create_collection` / `{name}/.collection.yaml` in the
     /// main tree). Isolated Record files live under `.isolated/{name}/`.
     ///
-    /// Field 2: `schema`
+    /// Field 2: `declaration`
     #[must_use]
-    pub fn schema(
+    pub fn declaration(
         &self,
-    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::SchemaView<'_>> {
-        &self.0.reborrow().schema
+    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::DeclarationView<'_>> {
+        &self.0.reborrow().declaration
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<CollectionInfoView<'static>>>

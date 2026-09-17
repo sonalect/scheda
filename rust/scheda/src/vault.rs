@@ -21,8 +21,8 @@ use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
 use crate::search::SearchEngine;
 use crate::store;
 use crate::{
-    Embedder, Encryption, Error, History, OpenOptions, Projector, Record, ReindexResult, Schema,
-    VaultInfo,
+    Declaration, Embedder, Encryption, Error, History, OpenOptions, Projector, Record,
+    ReindexResult, VaultInfo,
 };
 #[cfg(feature = "find")]
 use crate::{Filter, FindQuery, FindResult};
@@ -122,7 +122,7 @@ impl Vault {
     /// `Scheda <scheda@invalid>`.
     ///
     /// `OpenOptions.encryption` is stored on this handle for I/O of collections
-    /// whose Schema marks `encrypted`. A build without the `encrypt` crate
+    /// whose declaration marks `encrypted`. A build without the `encrypt` crate
     /// feature refuses a set value (`unsupported_encryption`) before any
     /// directory is created. Unset `encryption` is unchanged: `open` of the
     /// Vault still succeeds.
@@ -834,13 +834,14 @@ impl Vault {
         Ok(info)
     }
 
-    /// Write one collection declaration as `{name}/.schema.yaml`. Reloads Schema
-    /// on this handle. `isolated: true` stores Records under `{vault}/.isolated/`
-    /// and creates the nested git if needed. Setting or clearing `encrypted`
-    /// on a collection that already holds Record files is `invalid`; existing
-    /// files are left untouched. A build without the `encrypt` crate feature
-    /// refuses a Schema that marks `encrypted` (`unsupported_encryption`) and
-    /// writes nothing.
+    /// Write one collection declaration (`api.v1.Declaration`) as
+    /// `{name}/.collection.yaml`. Reloads declarations on this handle.
+    /// `isolated: true` stores Records under
+    /// `{vault}/.isolated/` and creates the nested git if needed. Setting or
+    /// clearing `encrypted` on a collection that already holds Record files is
+    /// `invalid`; existing files are left untouched. A build without the
+    /// `encrypt` crate feature refuses a declaration that marks `encrypted`
+    /// (`unsupported_encryption`) and writes nothing.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →
     /// `scheda`. Present but empty → `invalid` before any file is written.
@@ -850,12 +851,12 @@ impl Vault {
     pub fn create_collection(
         &self,
         name: &str,
-        schema: Schema,
+        decl: Declaration,
         message: Option<&str>,
     ) -> Result<Collection, Error> {
-        schema.require_valid()?;
+        decl.require_valid()?;
         #[cfg(not(feature = "encrypt"))]
-        if schema.encrypted == Some(true) {
+        if decl.encrypted == Some(true) {
             bail!(
                 Error::unsupported_encryption("this build cannot create an encrypted collection")
                     .context("[Vault::create_collection] encryption")
@@ -867,12 +868,12 @@ impl Vault {
             self.reject_if_reindex_active("create_collection")?;
             self.drain_abandoned()?;
             let result = (|| {
-                if schema.isolated == Some(true)
+                if decl.isolated == Some(true)
                     && let Some(rel) = isolated::ensure(&self.path)?
                 {
                     self.note_write(rel)?;
                 }
-                let rel = schema::put_collection(&self.path, name, &schema)?;
+                let rel = schema::put_collection(&self.path, name, &decl)?;
                 self.note_write(rel)?;
                 let loaded = schema::load(&self.path)?;
                 let dir = self.generation_dir()?;
@@ -882,7 +883,7 @@ impl Vault {
                 self.finish_mutation(message)?;
                 Ok(())
             })();
-            // Autocommit only: a later step can fail after the Schema file is
+            // Autocommit only: a later step can fail after the declaration file is
             // recorded. Inside a transaction the written set also holds earlier
             // Record paths; restoring them here would drop work that `commit`
             // or `discard` still owns.
@@ -1408,13 +1409,10 @@ impl Collection {
                 name: String::from("c"),
                 kind: Kind::Document,
                 version: 1,
-                filter_keys: std::collections::BTreeSet::new(),
                 segment_max_bytes: None,
                 segment_max_lines: None,
                 segment_rotate: None,
                 singleton_id: None,
-                body: None,
-                fields: Vec::new(),
                 isolated: false,
                 encrypted: false,
                 exclude_lexical_index: false,
@@ -1434,15 +1432,15 @@ impl Collection {
         }
     }
 
-    /// Collection directory name (same as Schema `name`).
+    /// Collection directory name (same as declaration `name`).
     #[must_use]
     pub fn name(&self) -> &str {
         &self.decl.name
     }
 
-    /// This collection's Schema as `api.v1.Schema`. Not a Vault listing (`info`).
-    pub fn schema(&self) -> Result<Schema, Error> {
-        schema::to_proto_schema(&self.decl, false)
+    /// This collection's declaration as `api.v1.Declaration`. Not a Vault listing (`info`).
+    pub fn decl(&self) -> Result<Declaration, Error> {
+        schema::to_proto_declaration(&self.decl)
     }
 
     /// Write mode: `document`, `journal`, or `singleton`.
@@ -1459,19 +1457,10 @@ impl Collection {
         self.decl.version
     }
 
-    /// Whether `field` is a Schema filter key (`find` / `search` Filter).
-    ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema).
-    #[must_use]
-    pub fn is_filter_key(&self, field: &str) -> bool {
-        self.decl.filter_keys.contains(field)
-    }
-
     /// Journal segment size cap in bytes. `None` on `document` / `singleton`.
     ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema).
+    /// Rust helper for declaration inspection. The collection catalog is
+    /// [`decl`](Self::decl).
     #[must_use]
     pub fn segment_max_bytes(&self) -> Option<u64> {
         self.decl.segment_max_bytes
@@ -1479,69 +1468,11 @@ impl Collection {
 
     /// Fixed `id` of a `singleton` collection. `None` otherwise.
     ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema).
+    /// Rust helper for declaration inspection. The collection catalog is
+    /// [`decl`](Self::decl).
     #[must_use]
     pub fn singleton_id(&self) -> Option<&str> {
         self.decl.singleton_id.as_deref()
-    }
-
-    /// Schema type name of `name` (`string`, `integer`, …). Nested fields included.
-    ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema). The first nested field with this name wins
-    /// if names collide.
-    #[must_use]
-    pub fn field_type(&self, name: &str) -> Option<&'static str> {
-        self.field(name).map(|field| field.type_.as_str())
-    }
-
-    /// Whether Schema marks `name` required. `None` if the field is unknown.
-    ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema). The first nested field with this name wins
-    /// if names collide.
-    #[must_use]
-    pub fn field_is_required(&self, name: &str) -> Option<bool> {
-        self.field(name).map(|field| field.required)
-    }
-
-    /// Whether Schema marks `name` nullable. `None` if the field is unknown.
-    ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema). The first nested field with this name wins
-    /// if names collide.
-    #[must_use]
-    pub fn field_is_nullable(&self, name: &str) -> Option<bool> {
-        self.field(name).map(|field| field.nullable)
-    }
-
-    /// Whether Schema sets a default for `name`. `None` if the field is unknown.
-    ///
-    /// Rust helper for Schema inspection. The collection catalog is
-    /// [`schema`](Self::schema). The first nested field with this name wins
-    /// if names collide.
-    #[must_use]
-    pub fn field_has_default(&self, name: &str) -> Option<bool> {
-        self.field(name).map(|field| field.default.is_some())
-    }
-
-    fn field(&self, name: &str) -> Option<&crate::schema::FieldDecl> {
-        fn walk<'a>(
-            fields: &'a [crate::schema::FieldDecl],
-            name: &str,
-        ) -> Option<&'a crate::schema::FieldDecl> {
-            for field in fields {
-                if field.name == name {
-                    return Some(field);
-                }
-                if let Some(found) = walk(&field.fields, name) {
-                    return Some(found);
-                }
-            }
-            None
-        }
-        walk(&self.decl.fields, name)
     }
 
     fn generation_dir(&self) -> Result<PathBuf, Error> {
@@ -3055,7 +2986,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Code, Encryption, Error, Schema, VaultInfo};
+    use crate::{Code, Declaration, Encryption, Error, VaultInfo};
     #[cfg(feature = "search")]
     use crate::{Embedder, SearchQuery};
 
@@ -3181,11 +3112,10 @@ mod tests {
     }
 
     #[cfg(feature = "encrypt")]
-    fn encrypted_document_schema() -> Schema {
-        use crate::Body;
-        Schema {
-            kind: Body::default().into(),
-            ..Schema::default()
+    fn encrypted_document_schema() -> Declaration {
+        Declaration {
+            kind: crate::Unit::default().into(),
+            ..Declaration::default()
         }
         .with_encrypted(true)
     }
@@ -3390,28 +3320,24 @@ mod tests {
         assert!(gitignore.lines().any(|line| line.trim() == "other"));
     }
 
-    fn document_schema() -> Schema {
-        Schema {
-            kind: crate::Body::default().into(),
-            ..Schema::default()
+    fn document_schema() -> Declaration {
+        Declaration {
+            kind: crate::Unit::default().into(),
+            ..Declaration::default()
         }
     }
 
-    fn journal_schema() -> Schema {
+    fn journal_schema() -> Declaration {
         serde_json::from_value(serde_json::json!({
-            "version": 1,
-            "journal": {},
-            "fields": [{"name": "tag", "string": {}}]
+            "journal": {}
         }))
         .unwrap()
     }
 
     #[cfg(feature = "search")]
-    fn journal_vector_schema() -> Schema {
+    fn journal_vector_schema() -> Declaration {
         serde_json::from_value(serde_json::json!({
-            "version": 1,
-            "journal": {},
-            "fields": [{"name": "tag", "string": {}, "fts": true, "vector": true}]
+            "journal": {}
         }))
         .unwrap()
     }
@@ -3857,7 +3783,7 @@ mod tests {
     #[test]
     fn info_is_on_the_vault_surface() {
         let _: fn(&Vault) -> Result<VaultInfo, Error> = Vault::info;
-        let _: fn(&Vault, &str, Schema, Option<&str>) -> Result<Collection, Error> =
+        let _: fn(&Vault, &str, Declaration, Option<&str>) -> Result<Collection, Error> =
             Vault::create_collection;
         let _: fn(&Vault) -> Result<(), Error> = Vault::begin;
         let _: fn(&Vault) -> Result<(), Error> = Vault::discard;
@@ -3871,9 +3797,9 @@ mod tests {
         let scratch = Scratch::new();
         let writer = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
         writer.begin().unwrap();
-        let schema = Schema {
-            kind: crate::Body::default().into(),
-            ..Schema::default()
+        let schema = Declaration {
+            kind: crate::Unit::default().into(),
+            ..Declaration::default()
         };
         writer.create_collection("c", schema, None).unwrap();
         writer.commit("schema").unwrap();

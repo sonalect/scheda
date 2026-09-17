@@ -1,17 +1,3 @@
 name: west_indexed
 kind: document
 version: 1
-body: {}
-fields:
-  - name: title
-    string: {}
-  - name: tag
-    string: {}
-  - name: rank
-    integer: {}
-    default: 0
-  - name: see
-    edge:
-      collection: west_docs
-      one: {}
-      dangling: strict

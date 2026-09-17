@@ -3,7 +3,3 @@ kind: singleton
 version: 1
 singleton:
   id: inbox
-fields:
-  - name: title
-    required: true
-    string: {}

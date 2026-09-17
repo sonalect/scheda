@@ -39,9 +39,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -67,24 +67,12 @@ name: ops_log
 kind: journal
 version: 1
 segment_max_lines: 100
-fields:
-  - name: msg
-    string: {}
 ";
 
 const OPS_NOTES: &str = "\
 name: north_notes
 kind: journal
 version: 1
-fields:
-  - name: title
-    required: true
-    string: {}
-  - name: tag
-    nullable: true
-    string: {}
-  - name: count
-    integer: {}
 ";
 
 struct OpsEmbedder;

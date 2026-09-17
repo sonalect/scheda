@@ -1,34 +1,32 @@
-// Declaration for `Vault.create_collection`. The collection name is a
-// method argument, not a field here. Bindings and the CLI encode these
-// messages as Protobuf JSON, not binary protobuf. On-disk Schema files
-// stay YAML. Field names are Schema field names as declared on `Field`.
+// Collection declaration for `Vault.create_collection`. The collection name is
+// a method argument, not a field here. Bindings and the CLI encode these
+// messages as Protobuf JSON, not binary protobuf. On-disk declaration files
+// are `{name}/.collection.yaml` (also `.yml` / `.json`). There is no field
+// list. Collection generation `version` lives on the YAML/JSON file, not on
+// this message.
 //
 // The caller never supplies a Record file path. Only `Vault.open` takes a
-// filesystem path (the Vault root). Collection generation `version` lives
-// on the YAML/JSON file, not on this message.
+// filesystem path (the Vault root).
 
 edition = "2024";
 
 package api.v1;
 
 import "buf/validate/validate.proto";
-import "google/protobuf/struct.proto";
 
-message Schema {
-  // Field declarations. May be empty.
-  repeated Field fields = 1;
+message Declaration {
   // Exactly one kind. The set arm is the kind (`document` | `journal` |
   // `singleton`).
   oneof kind {
     option (buf.validate.oneof).required = true;
-    // `document`. Empty Body: allowed and indexed. File: `{name}/{id}`.
-    Body document = 2;
+    // `document`. Empty Unit. File: `{name}/{id}`.
+    Unit document = 2;
     Journal journal = 3;
     Singleton singleton = 4;
   }
   // Later. Default false. `true`: Record files live under
-  // `{vault}/.isolated/{name}/` (gitignored nested git). Schema file
-  // stays `{vault}/{name}/.schema.yaml`. Search over non-isolated
+  // `{vault}/.isolated/{name}/` (gitignored nested git). The declaration
+  // file stays `{vault}/{name}/.collection.yaml`. Search over non-isolated
   // collections does not read it.
   bool isolated = 5;
   // Record files of this collection are age armor on disk. Independent
@@ -42,7 +40,7 @@ message Schema {
   // `encrypted` (ciphertext is never indexed) and allowed. A `journal`
   // may set it.
   bool exclude_lexical_index = 7;
-  // Default false: eligible fields are embedded on write. `true`: no
+  // Default false: eligible columns are embedded on write. `true`: no
   // Record of this collection is embedded or stored in the vector
   // Index; `add` / `replace` do not call the embedder. `search` then
   // uses the lexical leg only. Redundant on `encrypted` and allowed.
@@ -80,102 +78,5 @@ message Singleton {
   }];
 }
 
-message Field {
-  // Field name. Non-empty. Not `id` or `body`.
-  string name = 1 [(buf.validate.field) = {
-    required: true
-    string: {min_len: 1}
-  }];
-  // Must be present on write. Default false (optional). Nested fields of
-  // `object` / `object_list` use the same flag.
-  bool required = 2;
-  // JSON/YAML `null` is allowed. Default false. Independent of `required`.
-  bool nullable = 3;
-  // Exclude from `find`. Default false: the field is a filter key.
-  bool exclude_find = 4;
-  // Applied only when this key is present. Otherwise missing stays missing.
-  // Type must match `spec` (checked in the library).
-  google.protobuf.Value default = 5;
-  // Exactly one type or an edge.
-  oneof spec {
-    option (buf.validate.oneof).required = true;
-    Text string = 6;
-    Unit integer = 7;
-    Unit number = 8;
-    Unit boolean = 9;
-    Text string_list = 10;
-    Object object = 11;
-    Object object_list = 12;
-    Edge edge = 13;
-  }
-}
-
-// `string` / `string_list`: lexical and vector search. Default on.
-message Text {
-  bool exclude_fts = 1;
-  bool exclude_vector = 2;
-}
-
-// `integer` / `number` / `boolean`, and Edge `one` / `many`.
+// `integer` / `number` / `boolean` markers elsewhere, and empty `document`.
 message Unit {}
-
-// `object` / `object_list`. `fields` lists keys. `values` types every
-// unnamed key. The two are mutually exclusive. Omitting both: open map
-// of `string` values. The xor is a library check: protovalidate-buffa
-// cannot transpile CEL over a repeated message. `values` flags that
-// cannot apply (`required`, `default`, `exclude_find`) are refused
-// here. `edge` under `values` is a library check (CEL cannot see a
-// oneof arm as `this.edge`).
-message Object {
-  repeated Field fields = 1;
-  // Type of every value under a key Schema does not name. `name` labels
-  // one entry in error messages and is never a key on disk.
-  Field values = 2 [(buf.validate.field) = {
-    cel: [
-      {
-        id: "object.values.no_required"
-        message: "values must not set required"
-        expression: "!this.required"
-      },
-      {
-        id: "object.values.no_exclude_find"
-        message: "values must not set exclude_find"
-        expression: "!this.exclude_find"
-      },
-      {
-        id: "object.values.no_default"
-        message: "values must not set default"
-        expression: "!has(this.default)"
-      }
-    ]
-  }];
-}
-
-message Edge {
-  // Target collection name. Must exist in Schema. Slug checked in the
-  // library.
-  string collection = 1 [(buf.validate.field) = {
-    required: true
-    string: {min_len: 1}
-  }];
-  // `one` → one Record `id` (`string`). `many` → `string_list` of ids.
-  oneof arity {
-    option (buf.validate.oneof).required = true;
-    Unit one = 2;
-    Unit many = 3;
-  }
-  // Default false (`lax`). `true` rejects a write whose target `id` is
-  // missing.
-  bool strict = 4;
-  // Omit → indexed. Same flags as `string`.
-  Text text = 5;
-}
-
-message Body {
-  // Default false: Markdown body is allowed. `true` rejects a non-empty
-  // body on write. (A proto `bool` cannot default to true.)
-  bool no_body = 1;
-  // Omit → in the lexical Index: `find` field `body` and BM25. `exclude_fts`
-  // drops both. `exclude_vector` applies only to the vector leg.
-  Text text = 2;
-}

@@ -20,7 +20,7 @@ use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
 
 use crate::error::{Code, ContextAs, bail};
 use crate::projector::find_marked_column;
-use crate::schema::{CollectionDecl, FieldDecl};
+use crate::schema::CollectionDecl;
 use crate::{ColumnKind, Error, Filter, IndexSchema, Projector};
 
 pub(crate) struct FindFields {
@@ -225,7 +225,7 @@ fn compile_kind(
         Kind::Regex(regex) => compile_regex(fields, regex),
         Kind::RegexPhrase(phrase) => compile_regex_phrase(fields, phrase),
         Kind::Range(range) => compile_range(fields, range),
-        Kind::Exists(exists) => compile_exists(decl, fields, exists),
+        Kind::Exists(exists) => compile_exists(fields, exists),
         Kind::Boolean(boolean) => compile_boolean(decl, fields, index, boolean, mlt_fts),
         Kind::Boost(boost) => {
             let inner = compile_kind(decl, fields, index, &boost.query, mlt_fts)?;
@@ -301,71 +301,17 @@ fn compile_term_set(fields: &FindFields, term: &filter::TermSet) -> Result<Box<d
     Ok(Box::new(TermSetQuery::new(terms)))
 }
 
-fn compile_exists(
-    decl: &CollectionDecl,
-    fields: &FindFields,
-    exists: &filter::Exists,
-) -> Result<Box<dyn Query>, Error> {
+fn compile_exists(fields: &FindFields, exists: &filter::Exists) -> Result<Box<dyn Query>, Error> {
     let name = exists.field.as_deref().unwrap_or("");
     if name == "id" {
         return Ok(Box::new(AllQuery));
     }
-    let mut names = vec![name.to_owned()];
-    if exists.json_subpaths.unwrap_or(false) {
-        names.extend(descendant_filter_keys(&decl.fields, name));
-        names.sort_unstable();
-        names.dedup();
-    }
-    match names.as_slice() {
-        [] => unreachable!("exists field name is required"),
-        [one] => Ok(Box::new(TermQuery::new(
-            Term::from_field_text(fields.exists, one),
-            IndexRecordOption::Basic,
-        ))),
-        many => {
-            let clauses = many
-                .iter()
-                .map(|n| {
-                    (
-                        TantivyOccur::Should,
-                        Box::new(TermQuery::new(
-                            Term::from_field_text(fields.exists, n),
-                            IndexRecordOption::Basic,
-                        )) as Box<dyn Query>,
-                    )
-                })
-                .collect();
-            Ok(Box::new(BooleanQuery::new(clauses)))
-        }
-    }
-}
-
-fn descendant_filter_keys(fields: &[FieldDecl], name: &str) -> Vec<String> {
-    fn find<'a>(fields: &'a [FieldDecl], name: &str) -> Option<&'a FieldDecl> {
-        for field in fields {
-            if field.name == name {
-                return Some(field);
-            }
-            if let Some(found) = find(&field.fields, name) {
-                return Some(found);
-            }
-        }
-        None
-    }
-    fn collect(fields: &[FieldDecl], out: &mut Vec<String>) {
-        for field in fields {
-            if field.filter {
-                out.push(field.name.clone());
-            }
-            collect(&field.fields, out);
-        }
-    }
-    let Some(field) = find(fields, name) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    collect(&field.fields, &mut out);
-    out
+    // Projector columns are flat; `json_subpaths` does not expand nested fields.
+    let _ = exists.json_subpaths;
+    Ok(Box::new(TermQuery::new(
+        Term::from_field_text(fields.exists, name),
+        IndexRecordOption::Basic,
+    )))
 }
 
 fn compile_phrase(

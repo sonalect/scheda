@@ -1,7 +1,3 @@
 name: walk_dst
 kind: journal
 version: 1
-fields:
-  - name: title
-    required: true
-    string: {}

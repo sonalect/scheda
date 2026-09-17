@@ -51,9 +51,9 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         let dest = if file.ends_with(".json") {
-            ".schema.json"
+            ".collection.json"
         } else {
-            ".schema.yaml"
+            ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
     }
@@ -737,8 +737,8 @@ fn collection_name_with_slash_is_invalid() {
     let dir = scratch.vault().join("notes");
     fs::create_dir_all(&dir).unwrap();
     fs::write(
-        dir.join(".schema.yaml"),
-        "name: \"a/b\"\nkind: document\nversion: 1\nfields:\n  - name: title\n    required: true\n    string: {}\n",
+        dir.join(".collection.yaml"),
+        "name: \"a/b\"\nkind: document\nversion: 1\n",
     )
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();
@@ -966,7 +966,6 @@ kind: singleton
 version: 1
 singleton:
   id: inbox.toml
-fields: []
 ";
     let scratch = Scratch::new();
     drop(scratch.init());

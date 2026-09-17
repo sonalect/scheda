@@ -14,7 +14,7 @@ use std::sync::Arc;
 use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
     Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, Reranker, SearchQuery,
-    Vault, parse_age_identity, schema_from_json,
+    Vault, declaration_from_json, parse_age_identity,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -118,12 +118,12 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
                 encryption,
                 embedder,
             )?;
-            let schema = schema_from_json(&json_input(
+            let schema = declaration_from_json(&json_input(
                 schema.as_deref(),
                 "missing schema JSON (pass --schema or stdin)",
             )?)?;
             let collection = vault.create_collection(&name, schema, message.as_deref())?;
-            emit_json(&collection.schema()?)
+            emit_json(&collection.decl()?)
         }
         Command::Collection { name, command } => collection_dispatch(
             &open_existing(
@@ -261,7 +261,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
 fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) -> Result<(), Error> {
     let collection = vault.collection(name)?;
     match command {
-        CollectionCommand::Schema => emit_json(&collection.schema()?),
+        CollectionCommand::Schema => emit_json(&collection.decl()?),
         CollectionCommand::Add { id, file, message } => {
             collection.add(&id, read_raw_bytes(file.as_deref())?, message.as_deref())
         }
