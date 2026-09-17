@@ -1,4 +1,4 @@
-//! Hybrid lexical + vector search and one-step edges.
+//! Hybrid lexical + vector search.
 
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
@@ -10,6 +10,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::thread;
 use std::time::Duration;
 
+#[cfg(feature = "search")]
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "search")]
 use sha1::{Digest, Sha1};
@@ -51,7 +52,6 @@ const VECTOR_INDEX: &str = "index.usearch";
 const VECTOR_META: &str = "meta.json";
 #[cfg(feature = "search")]
 const VECTOR_KEYS: &str = "keys.json";
-const EDGES_FILE: &str = "edges.jsonl";
 const ORD_FILE: &str = "ord.json";
 /// Heap budget for one Tantivy `IndexWriter`. Opening a writer allocates
 /// this and starts a merge thread, so the engine keeps a writer only while
@@ -92,7 +92,6 @@ struct Inner {
     lexical: Option<Lexical>,
     #[cfg(feature = "search")]
     vector: Option<VectorStore>,
-    edges: EdgeIndex,
     dirty: bool,
     can_write: bool,
     next_ord: BTreeMap<String, u64>,
@@ -284,19 +283,6 @@ struct VectorMeta {
     next_key: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct EdgeLine {
-    src: String,
-    id: String,
-    field: String,
-    dst: String,
-}
-
-#[derive(Clone, Debug, Default)]
-struct EdgeIndex {
-    by_target: BTreeMap<(String, String, String), Vec<String>>,
-}
-
 #[cfg(feature = "search")]
 struct LegHit {
     collection: String,
@@ -335,7 +321,6 @@ impl SearchEngine {
             lexical: open_lexical(index_dir).ok().flatten(),
             #[cfg(feature = "search")]
             vector: load_vector(index_dir).ok().flatten(),
-            edges: load_edges(index_dir).unwrap_or_else(|_| EdgeIndex::default()),
             dirty: false,
             can_write,
             next_ord: load_next_ord(index_dir).unwrap_or_default(),
@@ -368,7 +353,6 @@ impl SearchEngine {
                 lexical: None,
                 #[cfg(feature = "search")]
                 vector: None,
-                edges: EdgeIndex::default(),
                 dirty: false,
                 can_write: false,
                 next_ord: BTreeMap::new(),
@@ -390,7 +374,6 @@ impl SearchEngine {
         {
             inner.vector = None;
         }
-        inner.edges = EdgeIndex::default();
         inner.dirty = false;
         inner.next_ord.clear();
         drop(inner);
@@ -458,7 +441,6 @@ impl SearchEngine {
             {
                 inner.vector = None;
             }
-            inner.edges = EdgeIndex::default();
             inner.dirty = false;
             inner.next_ord.clear();
             let can_write = inner.can_write;
@@ -1114,7 +1096,6 @@ fn empty_inner(can_write: bool) -> Inner {
         lexical: None,
         #[cfg(feature = "search")]
         vector: None,
-        edges: EdgeIndex::default(),
         dirty: false,
         can_write,
         next_ord: BTreeMap::new(),
@@ -1251,7 +1232,6 @@ impl Inner {
         if let Some(vector) = &self.vector {
             save_vector(index_dir, vector)?;
         }
-        save_edges(index_dir, &self.edges)?;
         save_next_ord(index_dir, &self.next_ord)?;
         self.dirty = false;
         index::restrict_index_tree(index_dir)?;
@@ -1361,9 +1341,6 @@ fn upsert_record(
         (Some(doc), Some(schema)) => projector::fts_blob(schema, doc),
         _ => String::new(),
     };
-    if decl.lexical_indexed() {
-        forget_source(&mut inner.edges, &decl.name, id);
-    }
     if can_write {
         if decl.lexical_indexed() {
             if inner.lexical.is_none() {
@@ -1406,7 +1383,6 @@ fn upsert_record(
 }
 
 fn forget_record(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Error> {
-    forget_source(&mut inner.edges, collection, id);
     inner.dirty = true;
     inner.ensure_writer()?;
     if let Some(lexical) = inner.lexical.as_ref() {
@@ -2459,56 +2435,6 @@ fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
     let keys_bytes = serde_json::to_vec(&store.keys)
         .context(Code::Invalid, "[SearchEngine::save_vector] encode keys")?;
     store::atomic_write(&dir.join(VECTOR_KEYS), &keys_bytes)
-}
-
-fn load_edges(index_dir: &Path) -> Result<EdgeIndex, Error> {
-    let path = index_dir.join(EDGES_FILE);
-    if !path.is_file() {
-        return Ok(EdgeIndex::default());
-    }
-    let text = fs::read_to_string(&path).context("[SearchEngine::load_edges] read index")?;
-    let mut edges = EdgeIndex::default();
-    for line in text.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let parsed: EdgeLine = serde_json::from_str(line)
-            .context(Code::IndexCorrupt, "[SearchEngine::load_edges] decode line")?;
-        edges
-            .by_target
-            .entry((parsed.src, parsed.field, parsed.dst))
-            .or_default()
-            .push(parsed.id);
-    }
-    Ok(edges)
-}
-
-fn save_edges(index_dir: &Path, edges: &EdgeIndex) -> Result<(), Error> {
-    let mut bytes = Vec::new();
-    for ((src, field, dst), ids) in &edges.by_target {
-        for id in ids {
-            let line = EdgeLine {
-                src: src.clone(),
-                id: id.clone(),
-                field: field.clone(),
-                dst: dst.clone(),
-            };
-            let mut encoded = serde_json::to_vec(&line)
-                .context(Code::Invalid, "[SearchEngine::save_edges] encode line")?;
-            encoded.push(b'\n');
-            bytes.extend_from_slice(&encoded);
-        }
-    }
-    store::atomic_write(&index_dir.join(EDGES_FILE), &bytes)
-}
-
-fn forget_source(edges: &mut EdgeIndex, src: &str, id: &str) {
-    edges.by_target.retain(|(s, _, _), ids| {
-        if s == src {
-            ids.retain(|existing| existing != id);
-        }
-        !ids.is_empty()
-    });
 }
 
 fn doc_key(collection: &str, id: &str) -> String {

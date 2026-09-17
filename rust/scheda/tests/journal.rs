@@ -393,6 +393,23 @@ fn integer_field_round_trips_as_integer_not_1_0() {
 }
 
 #[test]
+fn reindex_rebuilds_journal_id_map_from_envelopes() {
+    let scratch = Scratch::new();
+    let vault = open_log(&scratch);
+    let collection = vault.collection("south_log").unwrap();
+    collection.add("alpha", rec("ok"), None).unwrap();
+    let ids = journal_ids_path(&scratch.vault(), "south_log");
+    assert!(ids.is_file());
+    fs::remove_file(&ids).unwrap();
+    vault.reindex().unwrap();
+    let rebuilt = journal_ids_path(&scratch.vault(), "south_log");
+    let text = fs::read_to_string(&rebuilt).unwrap();
+    assert!(text.contains("alpha"), "{text}");
+    let got = collection.get("alpha").unwrap();
+    assert_eq!(got.id.as_deref(), Some("alpha"));
+}
+
+#[test]
 fn get_and_find_include_raw_match_payload() {
     let scratch = Scratch::new();
     let vault = open_lines(&scratch);

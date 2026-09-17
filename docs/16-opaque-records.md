@@ -6,9 +6,9 @@ Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F16 are done; codes and
+and `search` learn columns and text. F0–F17 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F17–F19.
+This file remains the work order for F18–F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -74,7 +74,7 @@ it is unused; wiring is F12–F13.
 | [F14](#f14-drop-field-schema) | done | No `Field` / edges in proto, disk, or `src/` |
 | [F15](#f15-cli) | done | CLI `--file`; default whole-file Projector |
 | [F16](#f16-agent-surface) | done | `info` / `create_collection` without fields |
-| [F17](#f17-check-reindex-dead-code) | not started | `check` / `reindex` / YAML codec gone |
+| [F17](#f17-check-reindex-dead-code) | done | `check` / `reindex` / YAML codec gone |
 | [F18](#f18-documents-once) | not started | One consistency pass over `docs/` + README |
 | [F19](#f19-acceptance) | not started | Mixed-format fixture; wipe Index; same files |
 
@@ -703,21 +703,21 @@ Close only after F15.
 
 ## F17. `check`, `reindex`, dead code
 
-**Status:** not started
+**Status:** done
 
 **Codes:** LIB-15, LIB-16, IDX-1, IDX-3.
 
 Close only after F16.
 
-- [ ] `check` does not type-check consumer contents. It still checks
+- [x] `check` does not type-check consumer contents. It still checks
       declaration files, encodings (UTF-8), journal envelopes (STO-3),
       `id` uniqueness, conflict markers, Index freshness, isolation
       gitignore, encrypted armor when the handle can read it.
-- [ ] `reindex` walks files as bytes, calls `Projector.project` when
+- [x] `reindex` walks files as bytes, calls `Projector.project` when
       present, rebuilds journal maps from envelopes.
-- [ ] Dead YAML/JSON Record codec, Schema field testdata, and unused
+- [x] Dead YAML/JSON Record codec, Schema field testdata, and unused
       `schema_from_*` field helpers are gone.
-- [ ] `bazel test //...` green. Owner has reviewed the diff.
+- [x] `bazel test //...` green. Owner has reviewed the diff.
 
 **Review:** maintenance paths and deletions. Stop.
 

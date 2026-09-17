@@ -1210,6 +1210,20 @@ fn yaml_and_toml_ids_are_distinct_and_unparsed() {
 }
 
 #[test]
+fn check_accepts_opaque_non_yaml_document() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add("note.txt", b"plain text, not yaml\n", None)
+        .unwrap();
+    collection
+        .add("extra.json", br#"{"title":"x","unknown":true}"#, None)
+        .unwrap();
+    vault.check().unwrap();
+}
+
+#[test]
 fn non_utf8_add_is_error_and_writes_no_file() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);

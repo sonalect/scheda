@@ -146,13 +146,6 @@ fn src_rs() -> String {
     .join("\n")
 }
 
-fn fields_block(schema: &str) -> &str {
-    schema
-        .split_once("fields:\n")
-        .map(|(_, rest)| rest)
-        .unwrap_or("")
-}
-
 fn write_rel(vault: &Path, parts: &[&str], body: &str) {
     let mut path = vault.to_path_buf();
     for part in parts {
@@ -425,11 +418,6 @@ fn src_grep_is_library_source_not_testdata() {
             "{name} must not appear in rust/scheda/src"
         );
     }
-    assert_eq!(
-        fields_block(PERSONAL_SCHEMA),
-        fields_block(PROJECT_SCHEMA),
-        "the two document collections must declare the same fields"
-    );
 }
 
 #[test]
@@ -770,12 +758,6 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
 #[cfg(feature = "find")]
 #[test]
 fn identical_document_schemas_accept_the_same_record_and_find_stays_in_one() {
-    assert_eq!(
-        fields_block(PERSONAL_SCHEMA),
-        fields_block(PROJECT_SCHEMA),
-        "the two document collections must declare the same fields"
-    );
-
     let scratch = Scratch::new();
     let vault = open_fixture(&scratch);
     vault.reindex().unwrap();

@@ -186,7 +186,6 @@ fn src_does_not_name_consumer_collections() {
         "token_notes",
         "walk_src",
         "walk_dst",
-        "walk_strict",
         "west_indexed",
         "west_isolated",
         "sealed_log",

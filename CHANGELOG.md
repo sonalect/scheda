@@ -69,6 +69,13 @@ API or on-disk format changes bump the minor.
   on the YAML/JSON file, with no default. Only generation `1` is implemented.
   `create_collection` always writes `version: 1`. Missing, `0`, or any other
   integer is `invalid`.
+- Pin Buf CLI to `v1.73.0` and `bazel_utils_*` to tag `v0.2.6`.
+- **`check` does not type-check Record bytes.** It still checks
+  declaration files, UTF-8, journal envelopes, `id` uniqueness, conflict
+  markers, Index freshness, isolation gitignore, and encrypted armor when
+  the handle can read it.
+- **`reindex` walks Record bytes** and calls `Projector.project` when
+  present. Journal id maps are rebuilt from envelopes.
 
 ### Removed
 
@@ -76,6 +83,8 @@ API or on-disk format changes bump the minor.
   lists, edge graphs, and body marks are not Scheda's. `Collection.schema()`
   is gone (`decl()` returns `Declaration`). A leftover `.schema.yaml` or
   `fields` key is `invalid`.
+- **Live Index `edges.jsonl`.** The Index no longer writes an edge graph
+  file. Leftover `edges.jsonl` is still pruned as a legacy name.
 - **`Record.fields`, `Record.body`, and `Record.valid`.** Callers pass UTF-8
   `raw`. Journal `add` writes `{id}: {payload}\n`; `get` / `lines` `raw` is
   the payload.

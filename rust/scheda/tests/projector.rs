@@ -230,6 +230,27 @@ fn project_error_or_empty_omits_from_find_but_add_succeeds() {
 }
 
 #[test]
+fn reindex_omits_empty_projection_but_get_still_works() {
+    let scratch = Scratch::new();
+    let vault = open_with(&scratch, Some(Arc::new(FailingProjector)));
+    let collection = vault.collection("proj_notes").unwrap();
+    collection
+        .add("empty", rec(json!({"title": "blank"})), None)
+        .unwrap();
+    collection
+        .add("kept", rec(json!({"title": "kept"})), None)
+        .unwrap();
+    vault.reindex().unwrap();
+    let all = collection.find(&Filter::all().into(), 0, 10).unwrap();
+    assert_eq!(ids(&all), ["kept"]);
+    assert_eq!(
+        collection.get("empty").unwrap().id.as_deref(),
+        Some("empty")
+    );
+    assert_eq!(collection.get("kept").unwrap().id.as_deref(), Some("kept"));
+}
+
+#[test]
 fn phrase_on_integer_column_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_with(&scratch, Some(Arc::new(TypedProjector)));
