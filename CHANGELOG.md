@@ -8,6 +8,12 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.16.1] - 2026-09-17
+
+### Changed
+
+- Update `mimalloc` to `v3.5.3`.
+
 ## [0.16.0] - 2026-09-17
 
 ### Added
@@ -1498,6 +1504,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.16.1]
 - [0.16.0]
 - [0.15.2]
 - [0.15.1]
@@ -1542,7 +1549,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.16.1...HEAD
+[0.16.1]: https://github.com/amsokol/scheda/releases/tag/v0.16.1
 [0.16.0]: https://github.com/amsokol/scheda/releases/tag/v0.16.0
 [0.15.2]: https://github.com/amsokol/scheda/releases/tag/v0.15.2
 [0.15.1]: https://github.com/amsokol/scheda/releases/tag/v0.15.1

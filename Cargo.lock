@@ -2139,8 +2139,8 @@ dependencies = [
 
 [[package]]
 name = "mimalloc"
-version = "3.5.2"
-source = "git+https://github.com/amsokol/mimalloc?tag=v3.5.2#e08e549ada0d4c41ba76845ecad02d430ff6badd"
+version = "3.5.3"
+source = "git+https://github.com/amsokol/mimalloc?tag=v3.5.3#ce6fe62d0f9a4450aa96ceb87f021a126bb9ffed"
 dependencies = [
  "cc",
 ]
@@ -2999,7 +2999,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "age",
  "buffa 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3018,7 +3018,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "clap",
  "mimalloc",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-generated"
-version = "0.16.0"
+version = "0.16.1"
 dependencies = [
  "buffa 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "buffa-types",
@@ -3455,7 +3455,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
