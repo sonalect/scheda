@@ -5,6 +5,9 @@
 
 use std::path::PathBuf;
 use std::process;
+use std::sync::Arc;
+
+use scheda::{ColumnKind, Error, IndexColumn, IndexDoc, IndexSchema, IndexValue, Projector};
 
 /// Isolate this process from the host git configuration.
 pub(crate) fn isolate_test_git_env() {
@@ -33,4 +36,37 @@ pub(crate) fn scratch_root(prefix: &str, n: u64) -> PathBuf {
     let root = base.join(format!("{prefix}-{}-{n}-{tid}", process::id()));
     std::fs::create_dir_all(&root).unwrap();
     root
+}
+
+/// Matches the CLI whole-file Projector: one `body` text column, find + fts +
+/// vector, value is the entire UTF-8 Record (non-UTF-8 → empty `IndexDoc`).
+pub(crate) fn cli_body_projector() -> Arc<dyn Projector> {
+    Arc::new(CliBodyProjector)
+}
+
+struct CliBodyProjector;
+
+impl Projector for CliBodyProjector {
+    fn schema(&self, _collection: &str) -> Result<IndexSchema, Error> {
+        Ok(IndexSchema {
+            columns: vec![
+                IndexColumn::default()
+                    .with_name("body")
+                    .with_kind(ColumnKind::Text)
+                    .with_find(true)
+                    .with_fts(true)
+                    .with_vector(true),
+            ],
+            ..IndexSchema::default()
+        })
+    }
+
+    fn project(&self, _collection: &str, _id: &str, raw: &[u8]) -> Result<IndexDoc, Error> {
+        let Ok(text) = str::from_utf8(raw) else {
+            return Ok(IndexDoc::default());
+        };
+        Ok(IndexDoc {
+            values: [(String::from("body"), IndexValue::Text(text.to_owned()))].into(),
+        })
+    }
 }

@@ -1,10 +1,12 @@
-//! Thin CLI of the library. JSON is the Protobuf JSON mapping of `api/v1`.
+//! Thin CLI of the library. JSON is the Protobuf JSON mapping of `api/v1`,
+//! except `collection … get`, which writes `Record.raw` bytes.
 
 use mimalloc::MiMalloc;
 
 mod args;
 mod http;
 mod model2vec;
+mod projector;
 
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
@@ -20,6 +22,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
+use projector::cli_projector;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -265,7 +268,10 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
         CollectionCommand::Add { id, file, message } => {
             collection.add(&id, read_raw_bytes(file.as_deref())?, message.as_deref())
         }
-        CollectionCommand::Get { id } => emit_json(&collection.get(&id)?),
+        CollectionCommand::Get { id } => {
+            let record = collection.get(&id)?;
+            emit_raw(record.raw.as_deref().unwrap_or(&[]))
+        }
         CollectionCommand::History { id, offset, count } => {
             emit_json(&collection.history(&id, offset, count)?)
         }
@@ -350,7 +356,7 @@ fn open_vault(
     encryption: Option<Encryption>,
     embedder: Option<Arc<dyn Embedder>>,
 ) -> Result<Vault, Error> {
-    Vault::open(
+    Vault::open_with(
         path,
         open_options(
             auto_sync,
@@ -360,6 +366,7 @@ fn open_vault(
             encryption,
         ),
         embedder,
+        Some(cli_projector()),
     )
 }
 
@@ -371,10 +378,11 @@ fn open_existing(
     encryption: Option<Encryption>,
     embedder: Option<Arc<dyn Embedder>>,
 ) -> Result<Vault, Error> {
-    Vault::open(
+    Vault::open_with(
         path,
         open_options(auto_sync, None, author_name, author_email, encryption),
         embedder,
+        Some(cli_projector()),
     )
 }
 
@@ -559,6 +567,13 @@ fn json_input(flag: Option<&str>, missing: &str) -> Result<String, Error> {
 
 fn parse_json<T: DeserializeOwned>(text: &str) -> Result<T, Error> {
     serde_json::from_str(text).map_err(|err| Error::invalid(err.to_string()))
+}
+
+fn emit_raw(bytes: &[u8]) -> Result<(), Error> {
+    io::stdout()
+        .lock()
+        .write_all(bytes)
+        .map_err(|err| Error::io_other(err.to_string()))
 }
 
 fn emit_json(value: &impl Serialize) -> Result<(), Error> {

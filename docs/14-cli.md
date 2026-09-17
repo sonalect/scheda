@@ -53,7 +53,7 @@ on stderr).
 |---|---|
 | `open` | [`--remote-repo URL`] (absolute URI when set) |
 | `info` | |
-| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is the thin collection declaration (`api.v1.Schema` today). A `fields` or `version` key is `invalid`. |
+| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is the thin collection declaration (`api.v1.Declaration`). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |
 | `check` | |
 | `reindex` | Uses the CLI default Projector (`body` = whole Record). |
@@ -141,7 +141,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `history` | `--id ID --offset N --count N`. JSON `History`. |
 | `replace` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. Same bytes rule as `add`. `journal` → `unsupported`. |
 | `remove` | `--id ID` [`--message TEXT`] |
-| `documents` | Walk Record files of this `document` or `singleton` in `id` order. JSON array of Records (`collection`, `id`, `path`, `raw`). `journal` → `unsupported`. Encrypted collection without a secret → `crypto`. |
+| `documents` | Walk Record files of this `document` or `singleton` in `id` order. JSON array of Records (`collection`, `id`, `raw`). `journal` → `unsupported`. Encrypted collection without a secret → `crypto`. |
 | `ids` | Ids in the same order (relative path, including extension). JSON array of strings. Encrypted collections do not need a secret. `journal` → `unsupported`. |
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. CLI Projector: identity and `body` only. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |

@@ -37,7 +37,13 @@ impl Scratch {
     }
 
     fn reopen(&self) -> Vault {
-        Vault::open(self.vault(), OpenOptions::new(), None).unwrap()
+        Vault::open_with(
+            self.vault(),
+            OpenOptions::new(),
+            None,
+            Some(common::cli_body_projector()),
+        )
+        .unwrap()
     }
 }
 
@@ -146,11 +152,12 @@ fn collection<'a>(info: &'a Value, name: &str) -> &'a Value {
 #[test]
 fn src_does_not_name_fixture_collections() {
     let src = format!(
-        "{}\n{}\n{}\n{}",
+        "{}\n{}\n{}\n{}\n{}",
         include_str!("../src/main.rs"),
         include_str!("../src/args.rs"),
         include_str!("../src/http.rs"),
-        include_str!("../src/model2vec.rs")
+        include_str!("../src/model2vec.rs"),
+        include_str!("../src/projector.rs")
     );
     for name in ["accept_notes", "accept_log"] {
         assert!(
@@ -299,7 +306,6 @@ fn library_and_cli_json_and_code_match() {
         .unwrap()
         .get("alpha")
         .unwrap();
-    let lib_json = serde_json::to_value(&lib).unwrap();
     let cli = run(&[
         "--vault",
         &path,
@@ -309,7 +315,8 @@ fn library_and_cli_json_and_code_match() {
         "--id",
         "alpha",
     ]);
-    assert_eq!(stdout_json(&cli), lib_json);
+    assert_eq!(cli.status, 0, "stderr={}", cli.stderr);
+    assert_eq!(cli.stdout.as_bytes(), lib.raw.as_deref().unwrap_or(&[]));
 
     let lib_err = scratch
         .reopen()

@@ -6,9 +6,9 @@ Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F14 are done; codes and
+and `search` learn columns and text. F0–F15 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F15–F19.
+This file remains the work order for F16–F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -72,7 +72,7 @@ it is unused; wiring is F12–F13.
 | [F12](#f12-projector-and-find) | done | `Projector` wired into the lexical Index and `find` |
 | [F13](#f13-projector-and-search) | done | BM25 / vectors from Projector slots |
 | [F14](#f14-drop-field-schema) | done | No `Field` / edges in proto, disk, or `src/` |
-| [F15](#f15-cli) | not started | CLI `--file`; default whole-file Projector |
+| [F15](#f15-cli) | done | CLI `--file`; default whole-file Projector |
 | [F16](#f16-agent-surface) | not started | `info` / `create_collection` without fields |
 | [F17](#f17-check-reindex-dead-code) | not started | `check` / `reindex` / YAML codec gone |
 | [F18](#f18-documents-once) | not started | One consistency pass over `docs/` + README |
@@ -663,20 +663,20 @@ Close only after F13.
 
 ## F15. CLI
 
-**Status:** not started
+**Status:** done
 
 **Codes:** `14`, AGT-2–5 as they read after F7.
 
 Close only after F14.
 
-- [ ] `add` / `replace` read bytes from `--file` or stdin. No `--fields`
+- [x] `add` / `replace` read bytes from `--file` or stdin. No `--fields`
       JSON object as the Record body.
-- [ ] `get` output matches F7's choice in `14`.
-- [ ] Default whole-file Projector on CLI `find` / `search` / `reindex` as
+- [x] `get` output matches F7's choice in `14`.
+- [x] Default whole-file Projector on CLI `find` / `search` / `reindex` as
       F7. Library `open` from other programs does not get that default.
-- [ ] `create-collection` JSON matches the thin declaration. `--schema`
+- [x] `create-collection` JSON matches the thin declaration. `--schema`
       is renamed or documented as declaration JSON in this stage (`14`).
-- [ ] `bazel test //...` green (includes `rust/cli/tests`). Owner has
+- [x] `bazel test //...` green (includes `rust/cli/tests`). Owner has
       reviewed the diff.
 
 **Review:** CLI. Stop.

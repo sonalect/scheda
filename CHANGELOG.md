@@ -29,9 +29,18 @@ API or on-disk format changes bump the minor.
   lexical Index; the file remains. Changing projector schema is an Index
   format change (`index_version` until `reindex`). One vector slot per
   `vector` column; digest skip unchanged.
+- **CLI default whole-file Projector.** Every CLI `open` installs one text
+  column `body` (marks `find`, `fts`, and `vector`) whose value is the
+  entire UTF-8 Record. Non-UTF-8 bytes omit the Record from the lexical
+  Index; the file remains. `find` / `search` Filter leaves other than
+  identity and `body` are `invalid`. This default is CLI-only; library
+  `Vault::open` does not install it.
 
 ### Changed
 
+- **CLI `collection get` writes `Record.raw` bytes** to stdout (no extra
+  newline). Empty Record → empty stdout. Errors stay protobuf JSON on
+  stderr.
 - **On-disk collection file is `{name}/.collection.yaml` without `fields`.**
   `create_collection` writes generation `version: 1` and never a field list.
   `open` / `check` refuse a leftover `{name}/.schema.yaml` (also `.yml` /

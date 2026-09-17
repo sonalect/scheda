@@ -39,13 +39,25 @@ impl Scratch {
     }
 
     fn init(&self) -> Vault {
-        let vault = Vault::open(self.vault(), OpenOptions::new(), None).unwrap();
+        let vault = Vault::open_with(
+            self.vault(),
+            OpenOptions::new(),
+            None,
+            Some(common::cli_body_projector()),
+        )
+        .unwrap();
         vault.begin().unwrap();
         vault
     }
 
     fn reopen(&self) -> Vault {
-        Vault::open(self.vault(), OpenOptions::new(), None).unwrap()
+        Vault::open_with(
+            self.vault(),
+            OpenOptions::new(),
+            None,
+            Some(common::cli_body_projector()),
+        )
+        .unwrap()
     }
 
     fn write_schema(&self, file: &str, body: &str) {
@@ -305,10 +317,10 @@ fn scripted_find_search_get_journal_add_commit() {
 
     let search = run(&["--vault", &path, "search", "--query", &query]);
     let hits = stdout_json(&search);
-    assert_eq!(
-        hits["hits"].as_array().map(Vec::len).unwrap_or(0),
-        0,
-        "CLI has no default Projector until F15, so search has no FTS slots: {hits}"
+    let ids = hit_ids(&hits);
+    assert!(
+        ids.contains(&"alpha"),
+        "CLI whole-file Projector FTS must hit a token in the Record: {hits}"
     );
 
     let one = run(&[
@@ -320,10 +332,11 @@ fn scripted_find_search_get_journal_add_commit() {
         "--id",
         "alpha",
     ]);
-    let record = stdout_json(&one);
-    assert_eq!(record["id"], "alpha");
-    assert_eq!(record["collection"], "agent_notes");
-    assert!(record.get("path").is_none());
+    assert_eq!(one.status, 0, "stderr={}", one.stderr);
+    assert_eq!(
+        one.stdout.as_bytes(),
+        rec(json!({"title": "Alpha token", "tag": "blue"}))
+    );
 
     let add = run(&[
         "--vault",
@@ -500,8 +513,6 @@ fn library_and_cli_record_json_and_error_code_match() {
         .unwrap()
         .get("alpha")
         .unwrap();
-    let lib_json = serde_json::to_value(&lib).unwrap();
-
     let cli = run(&[
         "--vault",
         &path,
@@ -511,7 +522,8 @@ fn library_and_cli_record_json_and_error_code_match() {
         "--id",
         "alpha",
     ]);
-    assert_eq!(stdout_json(&cli), lib_json);
+    assert_eq!(cli.status, 0, "stderr={}", cli.stderr);
+    assert_eq!(cli.stdout.as_bytes(), lib.raw.as_deref().unwrap_or(&[]));
 
     let lib_err = scratch
         .reopen()
@@ -651,10 +663,8 @@ fn auto_sync_off_local_info_get_add_commit() {
         "--id",
         "alpha",
     ]);
-    let record = stdout_json(&got);
-    assert_eq!(record["id"], "alpha");
-    assert_eq!(record["collection"], "agent_notes");
-    assert!(record.get("path").is_none());
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(got.stdout.as_bytes(), rec(json!({"title":"A"})));
 }
 
 #[test]
@@ -694,16 +704,18 @@ fn create_collection_then_add_without_handwritten_yaml() {
         "--id",
         "alpha",
     ]);
-    assert_eq!(stdout_json(&got)["id"], "alpha");
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(got.stdout.as_bytes(), rec(json!({"title":"A","tag":"t"})));
 }
 
 #[test]
 fn src_does_not_name_fixture_collections() {
     let src = format!(
-        "{}\n{}\n{}",
+        "{}\n{}\n{}\n{}",
         include_str!("../src/main.rs"),
         include_str!("../src/args.rs"),
-        include_str!("../src/model2vec.rs")
+        include_str!("../src/model2vec.rs"),
+        include_str!("../src/projector.rs")
     );
     for name in ["agent_notes", "agent_log", "agent_pages", "agent_sealed"] {
         assert!(
@@ -811,7 +823,13 @@ fn encryption_secret_is_not_an_argv_flag() {
 fn encryption_passphrase_env_round_trips_and_stays_off_output() {
     let scratch = Scratch::new();
     let secret = Encryption::new().passphrase(CLI_PASS);
-    let vault = Vault::open(scratch.vault(), OpenOptions::new().encryption(secret), None).unwrap();
+    let vault = Vault::open_with(
+        scratch.vault(),
+        OpenOptions::new().encryption(secret),
+        None,
+        Some(common::cli_body_projector()),
+    )
+    .unwrap();
     vault
         .create_collection("agent_sealed", encrypted_decl(), None)
         .unwrap();
@@ -853,7 +871,8 @@ fn encryption_passphrase_env_round_trips_and_stays_off_output() {
         ],
         &[("SCHEDA_P16_PASS", CLI_PASS)],
     );
-    assert_eq!(stdout_json(&got)["id"], "alpha");
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(got.stdout.as_bytes(), rec(json!({"title": "sealed"})));
     let blob = format!("{}{}", got.stdout, got.stderr);
     assert!(!blob.contains(CLI_PASS), "{blob}");
     assert!(!tree_contains_text(&scratch.vault(), CLI_PASS));
@@ -882,7 +901,13 @@ fn encryption_identity_file_round_trips_and_malformed_is_invalid_before_open() {
     assert!(!dest.join(".git").exists());
 
     let secret = Encryption::new().identity(CLI_IDENTITY);
-    let vault = Vault::open(dest, OpenOptions::new().encryption(secret), None).unwrap();
+    let vault = Vault::open_with(
+        dest,
+        OpenOptions::new().encryption(secret),
+        None,
+        Some(common::cli_body_projector()),
+    )
+    .unwrap();
     vault
         .create_collection("agent_sealed", encrypted_decl(), None)
         .unwrap();
@@ -911,7 +936,8 @@ fn encryption_identity_file_round_trips_and_malformed_is_invalid_before_open() {
         "--id",
         "alpha",
     ]);
-    assert_eq!(stdout_json(&got)["id"], "alpha");
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(got.stdout.as_bytes(), rec(json!({"title": "sealed"})));
     let blob = format!("{}{}", got.stdout, got.stderr);
     assert!(!blob.contains(CLI_IDENTITY), "{blob}");
 }
@@ -989,9 +1015,10 @@ fn cli_omits_isolated_sealed_values() {
     ]));
     assert_eq!(
         search["hits"].as_array().map(Vec::len).unwrap_or(0),
-        0,
-        "document collections do not index title for search: {search}"
+        1,
+        "CLI whole-file Projector FTS must hit a token in the Record: {search}"
     );
+    assert_eq!(search["hits"][0]["id"], "alpha");
     assert_no_sealed(&search.to_string());
 
     let miss = stdout_json(&run(&[
@@ -1007,7 +1034,7 @@ fn cli_omits_isolated_sealed_values() {
         "sealed token must not be a search hit: {miss}"
     );
 
-    let got = stdout_json(&run(&[
+    let got = run(&[
         "--vault",
         &path,
         "collection",
@@ -1015,9 +1042,13 @@ fn cli_omits_isolated_sealed_values() {
         "get",
         "--id",
         "alpha",
-    ]));
-    assert_eq!(got["id"], "alpha");
-    assert_no_sealed(&got.to_string());
+    ]);
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(
+        got.stdout.as_bytes(),
+        rec(json!({"title": "Alpha token", "tag": "blue"}))
+    );
+    assert_no_sealed(&got.stdout);
 
     let scoped = stdout_json(&run(&[
         "--vault",
@@ -1046,11 +1077,12 @@ fn cli_omits_isolated_sealed_values() {
     ]));
     assert_eq!(
         scoped_search["hits"].as_array().map(Vec::len).unwrap_or(0),
-        0
+        1
     );
+    assert_eq!(scoped_search["hits"][0]["id"], "alpha");
     assert_no_sealed(&scoped_search.to_string());
 
-    let isolated_get = stdout_json(&run(&[
+    let isolated_get = run(&[
         "--vault",
         &path,
         "collection",
@@ -1058,12 +1090,10 @@ fn cli_omits_isolated_sealed_values() {
         "get",
         "--id",
         "sealed.md",
-    ]));
-    assert_eq!(isolated_get["id"], "sealed.md");
-    let isolated_record: scheda::Record = serde_json::from_value(isolated_get.clone()).unwrap();
-    let isolated_text = String::from_utf8_lossy(isolated_record.raw.as_deref().unwrap_or(&[]));
-    assert!(isolated_text.contains(NESTED_SEALED));
-    assert!(!isolated_text.contains(TREE_SEALED));
+    ]);
+    assert_eq!(isolated_get.status, 0, "stderr={}", isolated_get.stderr);
+    assert!(isolated_get.stdout.contains(NESTED_SEALED));
+    assert!(!isolated_get.stdout.contains(TREE_SEALED));
 
     let named = stdout_json(&run(&[
         "--vault",
@@ -1447,10 +1477,9 @@ fn rerank_limit_flag_on_search_and_rejects_zero_or_below_k() {
     ]);
     assert_eq!(ignored.status, 0, "stderr={}", ignored.stderr);
     let hits = stdout_json(&ignored);
-    assert_eq!(
-        hits["hits"].as_array().map(Vec::len).unwrap_or(0),
-        0,
-        "CLI has no default Projector, so search has no FTS slots: {hits}"
+    assert!(
+        hits["hits"].as_array().is_some_and(|arr| !arr.is_empty()),
+        "CLI whole-file Projector FTS must hit a token in the Record: {hits}"
     );
 
     let below_k = run(&[
@@ -1496,7 +1525,7 @@ fn join_leaf(base: &str, leaf: &str) -> String {
 }
 
 fn embed_vector(text: &str) -> [f32; 4] {
-    if text == "car" || text == "automobile" {
+    if text.contains("car") || text.contains("automobile") {
         [1.0, 0.0, 0.0, 0.0]
     } else {
         [0.0, 1.0, 0.0, 0.0]
@@ -1949,8 +1978,8 @@ fn http_embedder_writes_vectors_and_scores_match() {
     {
         let seen = stub.seen.lock().unwrap();
         assert!(
-            seen.is_empty(),
-            "CLI has no default Projector, so the embedder must not run: {seen:?}"
+            !seen.is_empty(),
+            "CLI whole-file Projector must call the embedder on add: {seen:?}"
         );
     }
 
@@ -1958,9 +1987,10 @@ fn http_embedder_writes_vectors_and_scores_match() {
     let hits = stdout_json(&search);
     let ids = hit_ids(&hits);
     assert!(
-        ids.is_empty(),
-        "CLI has no default Projector, so search has no vector slots: {ids:?}"
+        ids.contains(&"vehicle") || ids.contains(&"split"),
+        "CLI vector search must rank a whole-file hit: {ids:?}"
     );
+    assert_ne!(ids.first().copied(), Some("decoy"));
 
     let added = run_embed(
         &path,
@@ -1981,14 +2011,21 @@ fn http_embedder_writes_vectors_and_scores_match() {
     let again = run_embed(&path, url, &["search", "--query", &query]);
     assert_eq!(again.status, 0, "stderr={}", again.stderr);
     let again_hits = stdout_json(&again);
+    let again_ids = hit_ids(&again_hits);
     assert!(
-        hit_ids(&again_hits).is_empty(),
-        "reindex without a Projector still has no vector slots: {again_hits}"
+        again_ids.contains(&"auto"),
+        "CLI vector search after reindex must rank automobile: {again_hits}"
     );
 
     let query: SearchQuery = serde_json::from_str(&query).unwrap();
     let embedder = Arc::new(HttpEmbedder::new(url));
-    let vault = Vault::open(scratch.vault(), OpenOptions::new(), Some(embedder)).unwrap();
+    let vault = Vault::open_with(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(embedder),
+        Some(common::cli_body_projector()),
+    )
+    .unwrap();
     let lib = vault.search(&[], &query, None).unwrap();
     let lib_json = serde_json::to_value(&lib).unwrap();
     let cli = run_embed(
@@ -2025,4 +2062,186 @@ fn http_embedder_writes_vectors_and_scores_match() {
         &["collection", "http_notes", "get", "--id", "vehicle"],
     );
     assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(got.stdout.as_bytes(), rec(json!({"title":"car"})));
+}
+
+const WHOLEFILE_TOKEN: &str = "zxqv-wholefile-only";
+
+fn cli_open_notes(scratch: &Scratch) -> String {
+    let path = vault_arg(scratch);
+    assert_eq!(run(&["--vault", &path, "open"]).status, 0);
+    let put = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "agent_notes",
+        "--schema",
+        &serde_json::to_string(&notes_decl()).unwrap(),
+    ]);
+    assert_eq!(put.status, 0, "stderr={}", put.stderr);
+    path
+}
+
+#[test]
+fn cli_search_finds_token_only_in_file_bytes() {
+    let scratch = Scratch::new();
+    let path = cli_open_notes(&scratch);
+    let payload = format!("plain text {WHOLEFILE_TOKEN} trailer");
+    let add = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "add",
+        "--id",
+        "note.txt",
+        "--file",
+        &scratch.payload_file("payload", payload.as_bytes()),
+    ]);
+    assert_eq!(add.status, 0, "stderr={}", add.stderr);
+    let hits = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "search",
+        "--query",
+        &text_query(WHOLEFILE_TOKEN),
+    ]));
+    assert_eq!(hits["hits"][0]["id"], "note.txt", "{hits}");
+}
+
+#[test]
+fn cli_collection_find_on_body_rejects_unknown_field() {
+    let scratch = Scratch::new();
+    let path = cli_open_notes(&scratch);
+    let add = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "add",
+        "--id",
+        "note",
+        "--file",
+        &scratch.payload_file("payload", WHOLEFILE_TOKEN),
+    ]);
+    assert_eq!(add.status, 0, "stderr={}", add.stderr);
+
+    let body = format!(r#"{{"term":{{"field":"body","value":"{WHOLEFILE_TOKEN}"}}}}"#);
+    let found = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "find",
+        "--filter",
+        &body,
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]));
+    assert_eq!(found["records"].as_array().unwrap().len(), 1);
+    assert_eq!(found["records"][0]["id"], "note");
+
+    let title = r#"{"term":{"field":"title","value":"x"}}"#;
+    let err = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "find",
+        "--filter",
+        title,
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]);
+    assert_eq!(error_json(&err)["code"], "CODE_INVALID");
+}
+
+#[test]
+fn collection_get_stdout_equals_file_bytes_not_json() {
+    let scratch = Scratch::new();
+    let path = cli_open_notes(&scratch);
+    let bytes = b"no-trailing-newline";
+    let add = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "add",
+        "--id",
+        "plain",
+        "--file",
+        &scratch.payload_file("payload", bytes),
+    ]);
+    assert_eq!(add.status, 0, "stderr={}", add.stderr);
+    let got = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "get",
+        "--id",
+        "plain",
+    ]);
+    assert_eq!(got.status, 0, "stderr={}", got.stderr);
+    assert_eq!(got.stdout.as_bytes(), bytes);
+    assert!(serde_json::from_str::<Value>(got.stdout.trim()).is_err());
+
+    let empty = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "add",
+        "--id",
+        "blank",
+        "--file",
+        &scratch.payload_file("empty", b""),
+    ]);
+    assert_eq!(empty.status, 0, "stderr={}", empty.stderr);
+    let blank = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "get",
+        "--id",
+        "blank",
+    ]);
+    assert_eq!(blank.status, 0, "stderr={}", blank.stderr);
+    assert!(blank.stdout.is_empty());
+}
+
+#[test]
+fn library_open_without_projector_has_no_fts() {
+    let scratch = Scratch::new();
+    let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    vault
+        .create_collection("agent_notes", notes_decl(), None)
+        .unwrap();
+    vault
+        .collection("agent_notes")
+        .unwrap()
+        .add("alpha", WHOLEFILE_TOKEN, None)
+        .unwrap();
+    let hits = vault
+        .search(
+            &[],
+            &SearchQuery::default().with_text(WHOLEFILE_TOKEN),
+            None,
+        )
+        .unwrap();
+    assert!(
+        hits.hits.is_empty(),
+        "library Vault::open without a Projector must not FTS: {hits:?}"
+    );
+    let page = vault
+        .collection("agent_notes")
+        .unwrap()
+        .find(&Filter::all().into(), 0, 10)
+        .unwrap();
+    assert_eq!(page.records.len(), 1);
 }

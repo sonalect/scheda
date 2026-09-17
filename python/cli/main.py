@@ -1602,13 +1602,13 @@ class SchedaCli:
             embedder=False,
         )
 
-    def get(self, collection: str, record_id: str) -> dict[str, Any] | None:
-        """`collection NAME get --id ID`. `None` when `CODE_NOT_FOUND`."""
+    def get(self, collection: str, record_id: str) -> str | None:
+        """`collection NAME get --id ID`. Raw UTF-8. `None` if `CODE_NOT_FOUND`."""
         result = self._invoke(
             "collection", collection, "get", "--id", record_id, embedder=False
         )
         if result.returncode == 0:
-            return _parse_json(result.stdout, result.args, "stdout")
+            return result.stdout
         error = _parse_error(result)
         if error.get("code") == _NOT_FOUND:
             return None

@@ -200,7 +200,7 @@ pub enum CollectionCommand {
         #[arg(long)]
         message: Option<String>,
     },
-    /// Read one Record by id.
+    /// Read one Record by id. Stdout is `Record.raw` bytes, not JSON.
     Get {
         #[arg(long)]
         id: String,
