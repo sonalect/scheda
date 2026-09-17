@@ -789,6 +789,34 @@ fn create_collection_rejects_layout_json_key() {
 }
 
 #[test]
+fn create_collection_rejects_fields_json_key() {
+    let scratch = Scratch::new();
+    let path = vault_arg(&scratch);
+    assert_eq!(run(&["--vault", &path, "open"]).status, 0);
+    let schema = json!({
+        "document": {},
+        "fields": [{"name": "title", "string": {}}],
+    })
+    .to_string();
+    let err = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "agent_notes",
+        "--schema",
+        &schema,
+    ]);
+    assert_eq!(error_json(&err)["code"], "CODE_INVALID");
+    assert!(
+        !scratch
+            .vault()
+            .join("agent_notes")
+            .join(".collection.yaml")
+            .is_file()
+    );
+}
+
+#[test]
 fn collection_documents_and_ids() {
     let scratch = fixture_with_note();
     let path = vault_arg(&scratch);

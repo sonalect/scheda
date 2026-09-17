@@ -79,6 +79,16 @@ fn open_encrypted(scratch: &Scratch, secret: Encryption) -> Vault {
     Vault::open(scratch.vault(), OpenOptions::new().encryption(secret), None).unwrap()
 }
 
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|v| json_contains_key(v, key))
+        }
+        Value::Array(items) => items.iter().any(|v| json_contains_key(v, key)),
+        _ => false,
+    }
+}
+
 fn tree_contains(root: &Path, needle: &str) -> bool {
     fn walk(path: &Path, needle: &str) -> bool {
         let Ok(meta) = fs::metadata(path) else {
@@ -280,6 +290,20 @@ fn info_reports_encrypted_and_omits_fields() {
         .expect("listed");
     assert_eq!(item.declaration.encrypted, Some(true));
     assert!(item.declaration.kind.is_some());
+
+    let json = serde_json::to_value(&info).unwrap();
+    let listed = json["collections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "sealed_notes")
+        .expect("listed");
+    assert_eq!(listed["declaration"]["encrypted"], true);
+    assert!(listed["declaration"].get("fields").is_none());
+    assert!(
+        !json_contains_key(&json["collections"], "fields"),
+        "encrypted info JSON must not list fields: {json}"
+    );
 }
 
 #[cfg(feature = "search")]

@@ -6,9 +6,9 @@ Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
 perimeter. Field Schema, YAML frontmatter, and a forced `.md` suffix go.
 A `Projector` callback (same injection idea as `Embedder`) is how `find`
-and `search` learn columns and text. F0–F15 are done; codes and
+and `search` learn columns and text. F0–F16 are done; codes and
 *Check:* lines in `03`–`09`, `13`, and `14` as amended are the spec.
-This file remains the work order for F16–F19.
+This file remains the work order for F17–F19.
 
 This is a breaking 0.x change of the Vault layout and of `api/v1`. There
 is no compatibility adapter for `{id}.md` YAML headers or for
@@ -73,7 +73,7 @@ it is unused; wiring is F12–F13.
 | [F13](#f13-projector-and-search) | done | BM25 / vectors from Projector slots |
 | [F14](#f14-drop-field-schema) | done | No `Field` / edges in proto, disk, or `src/` |
 | [F15](#f15-cli) | done | CLI `--file`; default whole-file Projector |
-| [F16](#f16-agent-surface) | not started | `info` / `create_collection` without fields |
+| [F16](#f16-agent-surface) | done | `info` / `create_collection` without fields |
 | [F17](#f17-check-reindex-dead-code) | not started | `check` / `reindex` / YAML codec gone |
 | [F18](#f18-documents-once) | not started | One consistency pass over `docs/` + README |
 | [F19](#f19-acceptance) | not started | Mixed-format fixture; wipe Index; same files |
@@ -685,17 +685,17 @@ Close only after F14.
 
 ## F16. Agent surface
 
-**Status:** not started
+**Status:** done
 
 **Codes:** AGT-1, LIB-20, ISO-3.
 
 Close only after F15.
 
-- [ ] `Vault.info` JSON has no field lists. Isolated collections still
+- [x] `Vault.info` JSON has no field lists. Isolated collections still
       marked isolated; encrypted still marked encrypted.
-- [ ] Library vs CLI JSON (and `code`) match on `info` and
+- [x] Library vs CLI JSON (and `code`) match on `info` and
       `create_collection` (AGT-4).
-- [ ] Owner has reviewed the diff.
+- [x] Owner has reviewed the diff.
 
 **Review:** `info` / agent listing. Stop.
 

@@ -77,6 +77,16 @@ fn collection<'a>(json: &'a Value, name: &str) -> &'a Value {
         .unwrap()
 }
 
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|v| json_contains_key(v, key))
+        }
+        Value::Array(items) => items.iter().any(|v| json_contains_key(v, key)),
+        _ => false,
+    }
+}
+
 fn contains_collection_name(haystack: &str, name: &str) -> bool {
     haystack.match_indices(name).any(|(i, _)| {
         let before = haystack[..i].chars().next_back();
@@ -114,6 +124,7 @@ fn catalog_json_matches_schema_files() {
     scratch.write_schema("west.yaml", WEST);
     scratch.write_schema("west_indexed.yaml", WEST_INDEXED);
     scratch.write_schema("log.yaml", EAST_LOG);
+    scratch.write_schema("west_isolated.yaml", WEST_ISOLATED);
     let json = catalog_json(&scratch.reopen());
     let west = collection(&json, "west_docs");
     let west_schema = &west["declaration"];
@@ -128,6 +139,14 @@ fn catalog_json_matches_schema_files() {
 
     let log = &collection(&json, "east_log")["declaration"];
     assert!(log.get("journal").is_some());
+
+    let isolated = collection(&json, "west_isolated");
+    assert_eq!(isolated["declaration"]["isolated"], true);
+    assert!(isolated["declaration"].get("fields").is_none());
+    assert!(
+        !json_contains_key(&json["collections"], "fields"),
+        "library info JSON must not list fields: {json}"
+    );
 }
 
 #[test]

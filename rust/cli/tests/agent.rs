@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Declaration, FindQuery, OpenOptions, SearchQuery, Vault};
+use scheda::{Declaration, FindQuery, OpenOptions, SearchQuery, Vault, declaration_from_json};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -115,6 +115,24 @@ fn log_decl() -> Declaration {
     .unwrap()
 }
 
+fn isolated_decl() -> Declaration {
+    serde_json::from_value(json!({
+        "document": {},
+        "isolated": true,
+    }))
+    .unwrap()
+}
+
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|v| json_contains_key(v, key))
+        }
+        Value::Array(items) => items.iter().any(|v| json_contains_key(v, key)),
+        _ => false,
+    }
+}
+
 fn open_with_notes(scratch: &Scratch) -> String {
     let path = vault_arg(scratch);
     let open = run(&["--vault", &path, "open"]);
@@ -159,7 +177,7 @@ fn src_does_not_name_fixture_collections() {
         include_str!("../src/model2vec.rs"),
         include_str!("../src/projector.rs")
     );
-    for name in ["accept_notes", "accept_log"] {
+    for name in ["accept_notes", "accept_log", "accept_sealed"] {
         assert!(
             !contains_collection_name(&src, name),
             "CLI source names {name}"
@@ -217,6 +235,45 @@ fn info_json_matches_schema_files() {
 
     let lib = serde_json::to_value(scratch.reopen().info().unwrap()).unwrap();
     assert_eq!(lib["collections"], info["collections"]);
+    assert!(
+        !json_contains_key(&info["collections"], "fields"),
+        "CLI info JSON must not list fields: {info}"
+    );
+    assert!(
+        !json_contains_key(&lib["collections"], "fields"),
+        "library info JSON must not list fields: {lib}"
+    );
+}
+
+#[test]
+fn info_marks_isolated_without_fields() {
+    let scratch = Scratch::new();
+    let path = open_with_notes(&scratch);
+    let put = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "accept_sealed",
+        "--schema",
+        &serde_json::to_string(&isolated_decl()).unwrap(),
+    ]);
+    assert_eq!(put.status, 0, "stderr={}", put.stderr);
+
+    let info = stdout_json(&run(&["--vault", &path, "info"]));
+    let lib = serde_json::to_value(scratch.reopen().info().unwrap()).unwrap();
+    assert_eq!(lib["collections"], info["collections"]);
+
+    let sealed = collection(&info, "accept_sealed");
+    assert_eq!(sealed["declaration"]["isolated"], true);
+    assert!(sealed["declaration"].get("fields").is_none());
+    assert!(
+        !json_contains_key(&info["collections"], "fields"),
+        "isolated info JSON must not list fields: {info}"
+    );
+    assert!(
+        !json_contains_key(&lib["collections"], "fields"),
+        "library isolated info JSON must not list fields: {lib}"
+    );
 }
 
 #[test]
@@ -341,6 +398,14 @@ fn library_and_cli_json_and_code_match() {
     let lib_info = serde_json::to_value(scratch.reopen().info().unwrap()).unwrap();
     let cli_info = stdout_json(&run(&["--vault", &path, "info"]));
     assert_eq!(cli_info["collections"], lib_info["collections"]);
+    assert!(
+        !json_contains_key(&cli_info["collections"], "fields"),
+        "CLI info JSON must not list fields: {cli_info}"
+    );
+    assert!(
+        !json_contains_key(&lib_info["collections"], "fields"),
+        "library info JSON must not list fields: {lib_info}"
+    );
 
     let lib_find = scratch
         .reopen()
@@ -395,5 +460,54 @@ fn library_and_cli_json_and_code_match() {
     assert_eq!(
         error_json(&cli_invalid)["code"],
         serde_json::to_value(&lib_invalid).unwrap()["code"]
+    );
+}
+
+#[test]
+fn library_and_cli_create_collection_json_and_code_match() {
+    let lib_scratch = Scratch::new();
+    let cli_scratch = Scratch::new();
+    let schema = serde_json::to_string(&notes_decl()).unwrap();
+    let lib_json = {
+        let vault = lib_scratch.reopen();
+        let collection = vault
+            .create_collection("accept_notes", notes_decl(), None)
+            .unwrap();
+        serde_json::to_value(collection.decl().unwrap()).unwrap()
+    };
+    let path = vault_arg(&cli_scratch);
+    let open = run(&["--vault", &path, "open"]);
+    assert_eq!(open.status, 0, "stderr={}", open.stderr);
+    let cli = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "accept_notes",
+        "--schema",
+        &schema,
+    ]);
+    assert_eq!(stdout_json(&cli), lib_json);
+
+    let leftover = r#"{"document":{},"fields":[{"name":"title","string":{}}]}"#;
+    let lib_err = declaration_from_json(leftover).unwrap_err();
+    let cli_err = run(&[
+        "--vault",
+        &path,
+        "create-collection",
+        "accept_log",
+        "--schema",
+        leftover,
+    ]);
+    assert_eq!(error_json(&cli_err)["code"], "CODE_INVALID");
+    assert_eq!(
+        error_json(&cli_err)["code"],
+        serde_json::to_value(&lib_err).unwrap()["code"]
+    );
+    assert!(
+        !cli_scratch
+            .vault()
+            .join("accept_log")
+            .join(".collection.yaml")
+            .is_file()
     );
 }
