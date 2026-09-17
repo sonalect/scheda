@@ -60,7 +60,7 @@ impl Scratch {
         .unwrap()
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -257,7 +257,7 @@ fn help_lists_lib2_tools_not_collection_names() {
     let collection = run(&["collection", "--help"]);
     assert_eq!(collection.status, 0, "stderr={}", collection.stderr);
     let collection_help = format!("{}{}", collection.stdout, collection.stderr);
-    for name in ["documents", "ids", "schema", "add", "get"] {
+    for name in ["documents", "ids", "declaration", "schema", "add", "get"] {
         assert!(
             collection_help.contains(name),
             "missing {name} in collection help:\n{collection_help}"
@@ -452,8 +452,8 @@ fn mutating_command_commit_message_and_identity() {
 fn extra_field_is_invalid_and_write_nothing() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("notes.yaml", notes_schema());
-    scratch.write_schema("log.yaml", "name: agent_log\nkind: journal\nversion: 1\n");
+    scratch.write_declaration("notes.yaml", notes_schema());
+    scratch.write_declaration("log.yaml", "name: agent_log\nkind: journal\nversion: 1\n");
     let path = vault_arg(&scratch);
 
     let extra = run(&[

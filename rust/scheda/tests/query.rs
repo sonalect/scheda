@@ -47,7 +47,7 @@ impl Scratch {
         Vault::open_with(self.vault(), self.options(), None, Some(query_projector())).unwrap()
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -98,7 +98,7 @@ fn ids(result: &scheda::FindResult) -> Vec<&str> {
 
 fn open_notes(scratch: &Scratch) -> Vault {
     drop(scratch.init());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     scratch.reopen()
 }
 
@@ -196,8 +196,8 @@ fn concurrent_find_on_one_handle() {
 fn vault_find_empty_names_is_all_collections() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("notes.yaml", NOTES);
-    scratch.write_schema("pages.yaml", PAGES);
+    scratch.write_declaration("notes.yaml", NOTES);
+    scratch.write_declaration("pages.yaml", PAGES);
     let vault = scratch.reopen();
     vault
         .collection("query_notes")
@@ -235,7 +235,7 @@ fn vault_find_empty_names_is_all_collections() {
         ids(&vault
             .find(
                 &[],
-                &filter(json!({"term":{"field":"tag","value":"red"}})),
+                &filter(json!({"term":{"field":"tag","collection":"query_notes","value":"red"}})),
                 0,
                 100
             )
@@ -253,7 +253,7 @@ fn vault_find_empty_names_is_all_collections() {
         vault
             .find(
                 &["query_pages"],
-                &filter(json!({"term":{"field":"tag","value":"red"}})),
+                &filter(json!({"term":{"field":"tag","collection":"query_pages","value":"red"}})),
                 0,
                 10
             )
@@ -337,7 +337,7 @@ fn unmarked_field_is_invalid() {
 fn document_filter_on_project_field() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("pages.yaml", PAGES);
+    scratch.write_declaration("pages.yaml", PAGES);
     let vault = scratch.reopen();
     let collection = vault.collection("query_pages").unwrap();
     collection
@@ -364,7 +364,7 @@ fn document_filter_on_project_field() {
 fn journal_empty_find_keeps_append_order() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("query_log").unwrap();
     collection
@@ -397,7 +397,7 @@ fn check_reports_schema_failure_with_path() {
         .add("a", rec(json!({"title": "A"})), None)
         .unwrap();
     drop(vault);
-    scratch.write_schema(
+    scratch.write_declaration(
         "notes.yaml",
         "name: query_notes\nkind: journal\nversion: 1\n",
     );
@@ -452,7 +452,7 @@ fn reindex_rebuilds_format_and_counts() {
 fn conflict_markers_fail_check() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "notes.yaml",
         r#"
 name: query_notes
@@ -773,7 +773,7 @@ fn find_score_ties_are_stable_across_reopen_and_pages() {
 fn exists_json_subpaths_does_not_expand_nested_keys() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "notes.yaml",
         r#"
 name: query_notes
@@ -870,7 +870,7 @@ fn find_regex_and_phrase_on_body() {
 fn exclude_fts_body_is_not_a_find_key() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "notes.yaml",
         r#"
 name: query_notes
@@ -901,7 +901,7 @@ version: 1
 fn journal_rejects_body_filter() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("query_log").unwrap();
     collection
@@ -1208,7 +1208,7 @@ fn tree_contains(root: &Path, needle: &str) -> bool {
 fn find_on_lexically_excluded_collection_is_unsupported() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("fold.yaml", FOLD_DOCS);
+    scratch.write_declaration("fold.yaml", FOLD_DOCS);
     let vault = scratch.reopen();
     let collection = vault.collection("fold_docs").unwrap();
     collection
@@ -1231,8 +1231,8 @@ fn find_on_lexically_excluded_collection_is_unsupported() {
 fn excluded_records_are_absent_from_the_index_and_keyed_reads_work() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("fold.yaml", FOLD_DOCS);
-    scratch.write_schema("inbox.yaml", FOLD_INBOX);
+    scratch.write_declaration("fold.yaml", FOLD_DOCS);
+    scratch.write_declaration("inbox.yaml", FOLD_INBOX);
     let vault = scratch.reopen();
     vault
         .collection("fold_docs")
@@ -1279,7 +1279,7 @@ fn excluded_records_are_absent_from_the_index_and_keyed_reads_work() {
 fn new_field_on_excluded_collection_is_not_indexed() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("fold.yaml", FOLD_DOCS);
+    scratch.write_declaration("fold.yaml", FOLD_DOCS);
     let vault = scratch.reopen();
     vault
         .collection("fold_docs")
@@ -1287,7 +1287,7 @@ fn new_field_on_excluded_collection_is_not_indexed() {
         .add("alpha", rec(json!({"title": "keep"})), None)
         .unwrap();
     drop(vault);
-    scratch.write_schema(
+    scratch.write_declaration(
         "fold.yaml",
         r#"
 name: fold_docs
@@ -1324,7 +1324,7 @@ exclude_vector_index: true
 fn journal_with_both_legs_excluded_still_gets_by_id() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "log.yaml",
         r#"
 name: fold_log
@@ -1349,7 +1349,7 @@ exclude_vector_index: true
 fn more_like_this_on_vector_excluded_collection_is_lexical() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "fold.yaml",
         r#"
 name: fold_docs
@@ -1394,6 +1394,64 @@ exclude_vector_index: true
     let got = ids(&found);
     assert!(got.contains(&"b"), "similar title missing: {got:?}");
     assert!(!got.contains(&"d"), "unrelated matched: {got:?}");
+}
+
+#[test]
+fn vault_find_bare_projector_field_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    vault
+        .collection("query_notes")
+        .unwrap()
+        .add("red", rec(json!({"title": "R", "tag": "red"})), None)
+        .unwrap();
+    let err = vault
+        .find(
+            &[],
+            &filter(json!({"term":{"field":"tag","value":"red"}})),
+            0,
+            10,
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+#[test]
+fn vault_find_unknown_collection_qualifier_is_not_found() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let err = vault
+        .find(
+            &[],
+            &filter(json!({
+                "term":{"field":"tag","collection":"missing","value":"red"}
+            })),
+            0,
+            10,
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::NotFound));
+}
+
+#[test]
+fn collection_find_other_qualifier_is_invalid() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_declaration("notes.yaml", NOTES);
+    scratch.write_declaration("pages.yaml", PAGES);
+    let vault = scratch.reopen();
+    let err = vault
+        .collection("query_notes")
+        .unwrap()
+        .find(
+            &filter(json!({
+                "term":{"field":"tag","collection":"query_pages","value":"red"}
+            })),
+            0,
+            10,
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
 fn peek_schema_name(body: &str) -> String {

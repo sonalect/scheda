@@ -19,7 +19,6 @@ message Record {
   // Not an input: `add` / `replace` use the collection handle.
   string collection = 1;
   string id = 2;
-  // Document / singleton: file bytes. Journal: the JSONL line until the
-  // envelope lands. Encrypted isolated: decrypted plaintext.
+  // Document / singleton: file bytes. Journal: envelope payload after `: `.
   bytes raw = 3;
 }

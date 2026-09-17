@@ -6,7 +6,7 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{Code, Context, ContextAs, ContextIo, bail};
+use crate::error::{bail, Code, Context, ContextAs, ContextIo};
 use crate::id::require_slug;
 use crate::store;
 use crate::{CollectionInfo, Declaration, Error, Journal, Singleton, Unit, VaultInfo};
@@ -26,7 +26,7 @@ const LEFTOVER_SCHEMA_FILENAMES: [&str; 3] = [".schema.yaml", ".schema.yml", ".s
 pub enum Kind {
     /// One file per Record; `replace` is allowed.
     Document,
-    /// Append-only JSONL segments; `replace` and `remove` are `unsupported`.
+    /// Append-only `{id}: {payload}` segments; `replace` and `remove` are `unsupported`.
     Journal,
     /// One file for the collection; replace as a whole.
     Singleton,
@@ -114,11 +114,11 @@ impl CollectionDecl {
 
 /// Loaded collection declarations, keyed by name. Not `api.v1.Declaration`.
 #[derive(Clone, Debug, Default)]
-pub(crate) struct Schema {
+pub(crate) struct Decls {
     collections: BTreeMap<String, CollectionDecl>,
 }
 
-impl Schema {
+impl Decls {
     #[must_use]
     pub(crate) fn get(&self, name: &str) -> Option<&CollectionDecl> {
         self.collections.get(name)
@@ -137,19 +137,19 @@ impl Schema {
     }
 }
 
-pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
+pub(crate) fn load(vault: &Path) -> Result<Decls, Error> {
     let mut collections = BTreeMap::new();
     let entries = match fs::read_dir(vault) {
         Ok(entries) => entries,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Schema::default());
+            return Ok(Decls::default());
         }
         Err(err) => {
-            return Err(err).context("[Schema::load] read vault");
+            return Err(err).context("[Decls::load] read vault");
         }
     };
     for entry in entries {
-        let entry = entry.context("[Schema::load] read vault entry")?;
+        let entry = entry.context("[Decls::load] read vault entry")?;
         let path = entry.path();
         if !path.is_dir() {
             continue;
@@ -180,7 +180,7 @@ pub(crate) fn load(vault: &Path) -> Result<Schema, Error> {
         }
         collections.insert(decl.name.clone(), decl);
     }
-    Ok(Schema { collections })
+    Ok(Decls { collections })
 }
 
 fn is_collection_dir_name(name: &str) -> bool {
@@ -226,10 +226,10 @@ fn load_collection_file(path: &Path) -> Result<CollectionDecl, Error> {
         .is_some_and(|ext| ext != "json");
     let raw: RawCollection = if yaml {
         yaml_serde::from_str(&text)
-            .context(Code::Invalid, "[Schema::load] parse collection YAML")?
+            .context(Code::Invalid, "[Decls::load] parse collection YAML")?
     } else {
         serde_json::from_str(&text)
-            .context(Code::Invalid, "[Schema::load] parse collection JSON")?
+            .context(Code::Invalid, "[Decls::load] parse collection JSON")?
     };
     finish_collection(raw, path)
 }
@@ -370,7 +370,7 @@ pub(crate) fn to_vault_info(
     index_path: &Path,
     remote: &str,
     auto_sync: bool,
-    schema: &Schema,
+    decls: &Decls,
 ) -> Result<VaultInfo, Error> {
     let mut info = VaultInfo::default()
         .with_path(path.to_string_lossy().into_owned())
@@ -379,7 +379,7 @@ pub(crate) fn to_vault_info(
     if !remote.is_empty() {
         info = info.with_remote(remote.to_owned());
     }
-    for decl in schema.collections() {
+    for decl in decls.collections() {
         let mut item = CollectionInfo::default().with_name(decl.name.as_str());
         item.declaration = to_proto_declaration(decl)?.into();
         info.collections.push(item);
@@ -420,10 +420,10 @@ pub(crate) fn put_collection(
         None => format!("{}/{COLLECTION_YAML}", collection_dir(name)),
     };
     let path = join_inside(vault, &rel)?;
-    let mut schema = load(vault)?;
-    schema.collections.insert(decl.name.clone(), decl.clone());
+    let mut decls = load(vault)?;
+    decls.collections.insert(decl.name.clone(), decl.clone());
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).context("[Schema::put_collection] create collection dir")?;
+        fs::create_dir_all(parent).context("[Decls::put_collection] create collection dir")?;
     }
     if path.is_file() {
         let existing = load_collection_file(&path)?;
@@ -505,12 +505,12 @@ fn decl_from_proto(name: &str, incoming: &Declaration) -> Result<CollectionDecl,
 
 fn yaml_from_decl(decl: &CollectionDecl) -> Result<String, Error> {
     yaml_serde::to_string(&DiskCollection::from(decl))
-        .context(Code::Invalid, "[Schema::put_collection] encode YAML")
+        .context(Code::Invalid, "[Decls::put_collection] encode YAML")
 }
 
 fn json_from_decl(decl: &CollectionDecl) -> Result<String, Error> {
     serde_json::to_string_pretty(&DiskCollection::from(decl))
-        .context(Code::Invalid, "[Schema::put_collection] encode JSON")
+        .context(Code::Invalid, "[Decls::put_collection] encode JSON")
 }
 
 #[derive(Serialize)]
@@ -583,8 +583,8 @@ fn posix_rel(vault: &Path, path: &Path) -> Result<String, Error> {
 }
 
 fn read_utf8(path: &Path) -> Result<String, Error> {
-    let bytes = fs::read(path).context("[Schema::read_utf8] read file")?;
-    String::from_utf8(bytes).context(Code::NotUtf8, "[Schema::read_utf8] decode UTF-8")
+    let bytes = fs::read(path).context("[Decls::read_utf8] read file")?;
+    String::from_utf8(bytes).context(Code::NotUtf8, "[Decls::read_utf8] decode UTF-8")
 }
 
 /// On-disk directory for a collection: the collection name.
@@ -630,7 +630,7 @@ pub(crate) fn join_inside(vault: &Path, rel: &str) -> Result<PathBuf, Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Kind, finish_collection};
+    use super::{finish_collection, Kind};
     use crate::Code;
     use std::path::Path;
 
@@ -659,7 +659,7 @@ mod tests {
     #[test]
     fn missing_kind_is_invalid() {
         let err = yaml_serde::from_str::<super::RawCollection>(include_str!(
-            "../testdata/schema/missing_kind.yaml"
+            "../testdata/declaration/missing_kind.yaml"
         ))
         .expect_err("kind is required");
         let _ = err;
@@ -667,26 +667,24 @@ mod tests {
 
     #[test]
     fn missing_version_is_invalid() {
-        let err = parse(include_str!("../testdata/schema/missing_version.yaml")).unwrap_err();
+        let err = parse(include_str!("../testdata/declaration/missing_version.yaml")).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
-        assert!(
-            err.message
-                .as_deref()
-                .unwrap_or("")
-                .contains("version is required")
-        );
+        assert!(err
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("version is required"));
     }
 
     #[test]
     fn version_2_is_invalid() {
         let err = parse("name: c\nkind: document\nversion: 2\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
-        assert!(
-            err.message
-                .as_deref()
-                .unwrap_or("")
-                .contains("version 2 is not implemented")
-        );
+        assert!(err
+            .message
+            .as_deref()
+            .unwrap_or("")
+            .contains("version 2 is not implemented"));
     }
 
     #[test]
@@ -698,7 +696,7 @@ mod tests {
     #[test]
     fn leftover_version_alias_is_invalid() {
         let err = yaml_serde::from_str::<super::RawCollection>(include_str!(
-            "../testdata/schema/unknown_collection_key.yaml"
+            "../testdata/declaration/unknown_collection_key.yaml"
         ))
         .expect_err("unknown key");
         let _ = err;
@@ -707,7 +705,7 @@ mod tests {
     #[test]
     fn executable_key_is_invalid() {
         let err = yaml_serde::from_str::<super::RawCollection>(include_str!(
-            "../testdata/schema/on_write.yaml"
+            "../testdata/declaration/on_write.yaml"
         ))
         .expect_err("unknown key");
         let _ = err;
@@ -751,7 +749,7 @@ mod tests {
 
     #[test]
     fn journal_default_segment_cap() {
-        let decl = parse(include_str!("../testdata/schema/journal.yaml")).unwrap();
+        let decl = parse(include_str!("../testdata/declaration/journal.yaml")).unwrap();
         assert_eq!(
             decl.segment_max_bytes,
             Some(super::DEFAULT_SEGMENT_MAX_BYTES)
@@ -760,7 +758,7 @@ mod tests {
 
     #[test]
     fn journal_cap_above_32_mib_is_invalid() {
-        let err = parse(include_str!("../testdata/schema/journal_oversize.yaml")).unwrap_err();
+        let err = parse(include_str!("../testdata/declaration/journal_oversize.yaml")).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
@@ -781,10 +779,9 @@ mod tests {
     fn encrypted_journal_yaml_is_invalid() {
         let err = parse("name: c\nkind: journal\nversion: 1\nencrypted: true\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
-        assert!(
-            err.to_string()
-                .contains("journal collections cannot be encrypted")
-        );
+        assert!(err
+            .to_string()
+            .contains("journal collections cannot be encrypted"));
     }
 
     #[test]

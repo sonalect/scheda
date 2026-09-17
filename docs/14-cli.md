@@ -53,7 +53,7 @@ on stderr).
 |---|---|
 | `open` | [`--remote-repo URL`] (absolute URI when set) |
 | `info` | |
-| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is the thin collection declaration (`api.v1.Declaration`). A `fields` or `version` key is `invalid`. |
+| `create-collection` | `NAME --declaration JSON` (or stdin) [`--message TEXT`]. `--schema` is the same flag. JSON is the thin collection declaration (`api.v1.Declaration`). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |
 | `check` | |
 | `reindex` | Uses the CLI default Projector (`body` = whole Record). |
@@ -73,9 +73,9 @@ Unknown name → `not_found`. Isolated name → an ordinary query: the one
 Vault Index holds those Records (ISO-4), and a set mixing isolated with
 plain names is one page with one `total`. Encrypted name →
 `unsupported`, because no Index holds one (ISO-4). Collection `find` /
-`search` below call the same methods with that `NAME` (no
-`--collections`), so an isolated `NAME` works there and an encrypted one
-is `unsupported`. Stdout JSON includes `collection` on each `Record`
+`search` below use Collection-handle Filter scope (a bare Projector field
+is this `NAME`). Vault `find` / `search` require proto `collection` on
+Projector-column leaves. Stdout JSON includes `collection` on each `Record`
 / `Hit`. `--include-raw` sets `FindQuery.include_raw` /
 `SearchQuery.include_raw` (default off: omit `raw`). `--filter` is
 `FindQuery.filter` JSON. With the CLI Projector, a Filter leaf other than
@@ -117,7 +117,7 @@ bazel run //python/vllm:embedder
 bazel run //python/vllm:reranker
 ```
 
-Python is locked in `uv.lock` (`vllm==0.28.0`). Sidecars
+Python is locked in `uv.lock` (`vllm==0.29.0`). Sidecars
 `snapshot_download` the Qwen repo (tqdm on stderr) into
 `<workspace>/.cache/huggingface` (`HF_HOME`; an already-set `HF_HOME`
 wins) before `vllm serve`. `tags = ["manual"]` so `bazel build //...`
@@ -135,7 +135,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 
 | Subcommand | Args |
 |---|---|
-| `schema` | Print this collection's declaration as protobuf JSON (kind, perimeter, caps). No field list. |
+| `declaration` | Print this collection's declaration as protobuf JSON (kind, perimeter, caps). Alias: `schema`. No field list. |
 | `add` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. `raw` is those UTF-8 bytes. Not a JSON `fields` object. `--file` and a non-empty stdin together → `invalid`. Empty bytes are allowed. |
 | `get` | `--id ID`. Stdout is `Record.raw` (UTF-8 bytes), not a JSON envelope. Errors are protobuf JSON on stderr. |
 | `history` | `--id ID --offset N --count N`. JSON `History`. |
@@ -146,7 +146,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. CLI Projector: identity and `body` only. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 
-Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
+Isolated `NAME` is the handle for those Records: `declaration`, `add`, `get`,
 `history`, `replace`, `remove`, `documents`, `ids`, `find`, `search` (and `lines` on the
 library, not this CLI). `find` / `search` on that `NAME` are ordinary
 queries, same as Vault `--collections` with an isolated name. Encrypted

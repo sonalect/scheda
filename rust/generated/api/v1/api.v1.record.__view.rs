@@ -13,8 +13,7 @@ pub struct RecordView<'a> {
     pub collection: ::core::option::Option<&'a str>,
     /// Field 2: `id`
     pub id: ::core::option::Option<&'a str>,
-    /// Document / singleton: file bytes. Journal: the JSONL line until the
-    /// envelope lands. Encrypted isolated: decrypted plaintext.
+    /// Document / singleton: file bytes. Journal: envelope payload after `: `.
     ///
     /// Field 3: `raw`
     pub raw: ::core::option::Option<&'a [u8]>,
@@ -266,8 +265,7 @@ impl RecordOwnedView {
     pub fn id(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().id
     }
-    /// Document / singleton: file bytes. Journal: the JSONL line until the
-    /// envelope lands. Encrypted isolated: decrypted plaintext.
+    /// Document / singleton: file bytes. Journal: envelope payload after `: `.
     ///
     /// Field 3: `raw`
     #[must_use]

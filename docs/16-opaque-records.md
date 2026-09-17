@@ -180,8 +180,8 @@ later F stage without amending this section first.
    `api.v1.VaultInfo` (same proto object as today). Agent listing is
    collections + kind / isolated / encrypted / caps. Queryable field
    names live in the consumer's `Projector` (and may be mirrored at
-   runtime later; not a Vault file). `create_collection` takes a proto
-   collection declaration (today `api.v1.Schema`; rename is F14), not a
+   runtime later; not a Vault file).    `create_collection` takes a proto
+   collection declaration (`api.v1.Declaration`), not a
    field list and not a language-native hashmap.
 7. **Kinds stay.** `document` / `journal` / `singleton` are write mode
    and disk layout, not content codecs. `replace` / `remove` on `journal`
@@ -381,8 +381,8 @@ Close only after F4. Amend `07` only. Proto edits wait for F9.
 - [x] LIB-18 (RFC 8785 journal line) is retired. Journal `add` writes the
       envelope (§3 decision 4).
 - [x] LIB-21 `create_collection(name, decl, message?)`. `decl` is proto
-      (today `api.v1.Schema`; rename is F14), not a YAML string and not
-      `Schema` with `fields`.
+      `api.v1.Declaration` (`declaration.proto`), not a YAML string and not
+      a field list.
 - [x] LIB-20 `info` returns `api.v1.VaultInfo` (same proto object as
       today). Lists declarations without field lists. ISO-3 still omits
       sealed material; there are no field values to omit.
@@ -674,8 +674,8 @@ Close only after F14.
 - [x] `get` output matches F7's choice in `14`.
 - [x] Default whole-file Projector on CLI `find` / `search` / `reindex` as
       F7. Library `open` from other programs does not get that default.
-- [x] `create-collection` JSON matches the thin declaration. `--schema`
-      is renamed or documented as declaration JSON in this stage (`14`).
+- [x] `create-collection` JSON matches the thin declaration. `--declaration`
+      is Protobuf JSON `Declaration`; `--schema` is the same flag (`14`).
 - [x] `bazel test //...` green (includes `rust/cli/tests`). Owner has
       reviewed the diff.
 

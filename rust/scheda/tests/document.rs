@@ -46,7 +46,7 @@ impl Scratch {
         Vault::open(self.vault(), self.options(), None).unwrap()
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -77,7 +77,7 @@ const INBOX: &str = include_str!("../testdata/document/inbox.yaml");
 const LOG: &str = include_str!("../testdata/document/log.yaml");
 const ALPHA_MD: &str = include_str!("../testdata/document/alpha.md");
 const PLAIN_YAML: &str = include_str!("../testdata/document/plain.yaml");
-const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/declaration/west_isolated.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
@@ -107,7 +107,7 @@ fn tmp_names(dir: &std::path::Path) -> Vec<String> {
 
 fn open_notes(scratch: &Scratch) -> Vault {
     drop(scratch.init());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     scratch.reopen()
 }
 
@@ -163,7 +163,7 @@ fn markdown_and_yaml_only_and_empty_body() {
 fn document_writes_flat_id_md_path() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("pages.yaml", PAGES);
+    scratch.write_declaration("pages.yaml", PAGES);
     let vault = scratch.reopen();
     let collection = vault.collection("north_pages").unwrap();
     collection
@@ -344,8 +344,8 @@ fn document_id_rejects_path_injection() {
 fn journal_and_singleton_still_reject_slash_in_id() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("log.yaml", LOG);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let err = vault
         .collection("north_log")
@@ -365,7 +365,7 @@ fn journal_and_singleton_still_reject_slash_in_id() {
 fn singleton_second_insert_then_replace() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     collection
@@ -442,7 +442,7 @@ fn remove_illegal_slug_is_invalid_before_any_file() {
 fn journal_remove_is_unsupported() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("north_log").unwrap();
     collection
@@ -457,7 +457,7 @@ fn journal_remove_is_unsupported() {
 fn singleton_remove_then_add_again() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     collection
@@ -513,7 +513,7 @@ fn remove_of_unindexed_file_is_not_found() {
 fn journal_replace_one_is_unsupported() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     let err = vault
         .collection("north_log")
@@ -584,7 +584,7 @@ fn invalid_record_rejected_old_file_stays_readable() {
         .unwrap();
     drop(collection);
     drop(vault);
-    scratch.write_schema("notes.yaml", NOTES_REQUIRED);
+    scratch.write_declaration("notes.yaml", NOTES_REQUIRED);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     let got = collection.get("alpha").unwrap();
@@ -605,7 +605,7 @@ fn schema_n_plus_one_optional_still_reads() {
         .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     drop(vault);
-    scratch.write_schema("notes.yaml", NOTES_PLUS);
+    scratch.write_declaration("notes.yaml", NOTES_PLUS);
     let vault = scratch.reopen();
     let got = vault
         .collection("north_notes")
@@ -623,7 +623,7 @@ fn fixture_files_are_utf8_text() {
     assert!(PLAIN_YAML.contains("title: YAML only"));
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     fs::create_dir_all(scratch.coll_file("north_notes", "north")).unwrap();
     fs::write(scratch.coll_file("north_notes", "alpha"), ALPHA_MD).unwrap();
     fs::write(scratch.coll_file("north_notes", "plain.md"), PLAIN_YAML).unwrap();
@@ -803,7 +803,7 @@ fn documents_skips_non_record_names() {
 fn documents_and_ids_on_journal_are_unsupported() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     let collection = vault.collection("north_log").unwrap();
     let err = match collection.documents() {
@@ -849,7 +849,7 @@ fn documents_schema_fail_is_valid_false() {
         .add("alpha", rec(serde_json::json!({"title": "Hello"})), None)
         .unwrap();
     drop(vault);
-    scratch.write_schema("notes.yaml", NOTES_REQUIRED);
+    scratch.write_declaration("notes.yaml", NOTES_REQUIRED);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     let got = collection.get("alpha").unwrap();
@@ -894,7 +894,7 @@ fn documents_unparseable_file_is_valid_false_and_walk_continues() {
 fn singleton_documents_and_ids_empty_then_one() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     assert!(collection.ids().unwrap().is_empty());
@@ -916,7 +916,7 @@ fn singleton_documents_and_ids_empty_then_one() {
 fn singleton_method_id_must_equal_declared_id() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     let err = collection
@@ -931,7 +931,7 @@ fn singleton_method_id_must_equal_declared_id() {
 fn singleton_bytes_are_opaque_utf8() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     collection.add("inbox", b"key = \"toml\"\n", None).unwrap();
@@ -950,7 +950,7 @@ fn singleton_bytes_are_opaque_utf8() {
 fn singleton_non_utf8_writes_no_file() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
+    scratch.write_declaration("inbox.yaml", INBOX);
     let vault = scratch.reopen();
     let collection = vault.collection("north_inbox").unwrap();
     let err = collection.add("inbox", [0xff, 0xfe], None).unwrap_err();
@@ -969,7 +969,7 @@ singleton:
 ";
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("box.yaml", SCHEMA);
+    scratch.write_declaration("box.yaml", SCHEMA);
     let vault = scratch.reopen();
     let collection = vault.collection("box_toml").unwrap();
     collection
@@ -994,7 +994,7 @@ fn documents_and_ids_empty_and_missing_are_empty() {
 
     drop(collection);
     drop(vault);
-    scratch.write_schema("west.yaml", WEST_ISOLATED);
+    scratch.write_declaration("west.yaml", WEST_ISOLATED);
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     assert!(collection.ids().unwrap().is_empty());
@@ -1012,7 +1012,7 @@ fn documents_and_ids_empty_and_missing_are_empty() {
 fn documents_isolated_walks_nested_dir() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST_ISOLATED);
+    scratch.write_declaration("west.yaml", WEST_ISOLATED);
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     collection
@@ -1044,7 +1044,7 @@ fn documents_isolated_walks_nested_dir() {
 fn isolated_document_id_may_contain_slash_namespaces() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST_ISOLATED);
+    scratch.write_declaration("west.yaml", WEST_ISOLATED);
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     collection

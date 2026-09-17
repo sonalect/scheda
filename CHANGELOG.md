@@ -17,10 +17,20 @@ API or on-disk format changes bump the minor.
   `exclude_vector_index`) stay on the message. There is no proto `version`
   (generation lives on the YAML file). `CollectionInfo.declaration` nests
   that message (JSON key `declaration`). `Collection.decl()` returns it.
-  `Vault::create_collection` takes `Declaration`.
+  `Vault::create_collection` takes `Declaration`. The proto file is
+  `api/v1/declaration.proto` (was `schema.proto`). Wire type names stay
+  `api.v1.Declaration` / `Journal` / `Singleton` / `Unit`. The on-disk
+  loader is `declaration` (`Decls`), not a crate module named `schema`.
 - **`api.v1.IndexSchema` / `IndexColumn` / `ColumnKind` (`index.proto`).**
   `Projector.schema` returns that message. The Projector trait is still a
   caller callback, not proto. `IndexDoc` stays a Rust ingest type.
+- **Filter leaf `collection`.** Projector-column leaves on Vault `find` /
+  `search` must name the collection. On a Collection handle, unset means
+  this collection; a qualifier for another collection is `invalid`. Identity
+  `id` is not qualified. Unknown Vault qualifier is `not_found`.
+- **CLI `--declaration`.** `create-collection --declaration` is Protobuf
+  JSON `Declaration`; `--schema` is the same flag. `collection declaration`
+  prints the declaration; `collection schema` is the same subcommand.
 - **`Projector` callback on `open` / `open_with`.** `find` columns and
   `search` FTS / vector slots come from `Projector.schema` / `project`, not
   collection-declaration fields. No Projector: identity only (`all`,
@@ -38,6 +48,9 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- **Document 5 file is `docs/05-collection-declaration.md`.** Same `05`
+  number and `SCH-*` codes. Leftover on-disk `.schema.yaml` is still that
+  name (`invalid`).
 - **CLI `collection get` writes `Record.raw` bytes** to stdout (no extra
   newline). Empty Record → empty stdout. Errors stay protobuf JSON on
   stderr.
@@ -49,11 +62,13 @@ API or on-disk format changes bump the minor.
   round-trip.
 - **`document` files are opaque UTF-8 at `{collection}/{id}`.** The library
   no longer appends `.md`. An extension is part of `id` (`foo.md`,
-  `work/meeting.toml`). `add` / `replace` take raw bytes (`impl AsRef<[u8]>`
-  in Rust); empty is allowed; non-UTF-8 is refused and writes no file.
+  `work/meeting.toml`).   `add` / `replace` take raw bytes (`impl AsRef<[u8]>`
+  in Rust); empty is allowed; non-UTF-8 is `not_utf8` and writes no file.
   CLI `add` / `replace` take `--file` or stdin, not Protobuf JSON.
   `get` returns those bytes without parsing YAML. `documents` / `ids`
   list regular files of any extension and skip dotfiles.
+- **`documents()` keeps walking after an `Err`.** A bad file does not hide
+  later Records. `lines()` still stops on a broken journal envelope.
 - **`singleton` file is `{name}/{declared id}`.** Not always `record.yaml`.
   An extension may be part of that id (`inbox.toml`). Contents are opaque
   UTF-8: `add` / `replace` write the caller bytes; Schema fields are not

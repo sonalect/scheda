@@ -13,13 +13,13 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use clap::{Parser, error::ErrorKind as ClapErrorKind};
+use clap::{error::ErrorKind as ClapErrorKind, Parser};
 use scheda::{
-    Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, Reranker, SearchQuery,
-    Vault, declaration_from_json, parse_age_identity,
+    declaration_from_json, parse_age_identity, Author, Embedder, Encryption, Error, Filter,
+    FindQuery, OpenOptions, Reranker, SearchQuery, Vault,
 };
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
 use projector::cli_projector;
@@ -110,7 +110,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         ),
         Command::CreateCollection {
             name,
-            schema,
+            declaration,
             message,
         } => {
             let vault = open_existing(
@@ -122,8 +122,8 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
                 embedder,
             )?;
             let schema = declaration_from_json(&json_input(
-                schema.as_deref(),
-                "missing schema JSON (pass --schema or stdin)",
+                declaration.as_deref(),
+                "missing declaration JSON (pass --declaration or stdin)",
             )?)?;
             let collection = vault.create_collection(&name, schema, message.as_deref())?;
             emit_json(&collection.decl()?)
@@ -264,7 +264,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
 fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) -> Result<(), Error> {
     let collection = vault.collection(name)?;
     match command {
-        CollectionCommand::Schema => emit_json(&collection.decl()?),
+        CollectionCommand::Declaration => emit_json(&collection.decl()?),
         CollectionCommand::Add { id, file, message } => {
             collection.add(&id, read_raw_bytes(file.as_deref())?, message.as_deref())
         }

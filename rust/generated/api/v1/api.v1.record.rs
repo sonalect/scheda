@@ -20,8 +20,7 @@ pub struct Record {
     /// Field 2: `id`
     #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
     pub id: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Document / singleton: file bytes. Journal: the JSONL line until the
-    /// envelope lands. Encrypted isolated: decrypted plaintext.
+    /// Document / singleton: file bytes. Journal: envelope payload after `: `.
     ///
     /// Field 3: `raw`
     #[serde(

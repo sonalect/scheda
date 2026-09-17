@@ -77,14 +77,13 @@ from `N` when the model matches, then digest-skip or re-embed. Catch-up
 applies queued ids to **every** artifact of `N+1`. A generation with only
 lexical catch-up would make `search` miss a Record that `find` returns.
 
-IDX-9 names four artifacts per write. "Both legs" below is shorthand for
-all four; a plan that stops at two publishes a generation that lies.
+IDX-9 names three artifacts per write. "Both legs" below is shorthand for
+all three; a plan that stops at two publishes a generation that lies.
 
 | Artifact | Where | What catch-up does |
 | --- | --- | --- |
 | lexical | `<gen>/lexical/` (Tantivy) | upsert the document, or delete by key term |
 | vector | `<gen>/vector/` (`index.usearch`, `keys.json`, `meta.json`) | copy the slot from `N`, or embed; drop a slot that is gone |
-| edges | `<gen>/edges.jsonl` | forget this source, then re-add its edges |
 | journal `id` map | `<gen>/journal/{name}/ids` (IDX-5) | remember / forget the `id`, in the file **and** in the map the handle keeps |
 
 The journal map is the one that is easy to miss. It is not part of the

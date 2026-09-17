@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::Context;
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::journal;
-use crate::schema::{self, Kind, Schema};
+use crate::declaration::{self, Kind, Decls};
 use crate::store;
 use crate::{Error, ReindexResult};
 
@@ -324,9 +324,9 @@ fn remove_legacy_layout_files(root: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<JournalIdMaps, Error> {
+pub(crate) fn load_journal_ids(index_dir: &Path, decls: &Decls) -> Result<JournalIdMaps, Error> {
     let mut maps = JournalIdMaps::default();
-    for decl in schema.collections() {
+    for decl in decls.collections() {
         if decl.encrypted || decl.kind != Kind::Journal {
             continue;
         }
@@ -346,7 +346,7 @@ pub(crate) fn load_journal_ids(index_dir: &Path, schema: &Schema) -> Result<Jour
 /// `current`; the caller publishes after the search engines are rebuilt.
 pub(crate) fn rebuild(
     vault: &Path,
-    schema: &Schema,
+    decls: &Decls,
     index_dir: &Path,
 ) -> Result<(ReindexResult, JournalIdMaps), Error> {
     clear_index_dir(index_dir)?;
@@ -354,7 +354,7 @@ pub(crate) fn rebuild(
     let mut skipped_invalid = 0u64;
     let mut segments_seen = 0u64;
     let mut maps = JournalIdMaps::default();
-    for decl in schema.collections().filter(|decl| !decl.encrypted) {
+    for decl in decls.collections().filter(|decl| !decl.encrypted) {
         match decl.kind {
             Kind::Journal => {
                 #[cfg(feature = "find")]
@@ -481,8 +481,8 @@ pub(crate) fn lookup_on_disk(
 /// Rejects absolute paths, `..`, and a prefix that is not this collection
 /// (plain or `.isolated/`). Used when reading the journal `id` map so a
 /// hand-edited line cannot name a file outside the collection.
-pub(crate) fn id_map_rel_ok(decl: &schema::CollectionDecl, rel: &str) -> bool {
-    let dir = schema::collection_dir(&decl.name);
+pub(crate) fn id_map_rel_ok(decl: &declaration::CollectionDecl, rel: &str) -> bool {
+    let dir = declaration::collection_dir(&decl.name);
     let prefix = if decl.isolated {
         format!(".isolated/{dir}/")
     } else {
@@ -491,12 +491,12 @@ pub(crate) fn id_map_rel_ok(decl: &schema::CollectionDecl, rel: &str) -> bool {
     id_map_rel_has_prefix(rel, &prefix)
 }
 
-fn id_map_line_ok(decl: &schema::CollectionDecl, id: &str, rel: &str) -> bool {
+fn id_map_line_ok(decl: &declaration::CollectionDecl, id: &str, rel: &str) -> bool {
     crate::id::require_slug("id", id).is_ok() && id_map_rel_ok(decl, rel)
 }
 
 fn id_map_rel_ok_for_name(collection: &str, rel: &str) -> bool {
-    let dir = schema::collection_dir(collection);
+    let dir = declaration::collection_dir(collection);
     let plain = format!("{dir}/");
     let isolated = format!(".isolated/{dir}/");
     id_map_rel_has_prefix(rel, &plain) || id_map_rel_has_prefix(rel, &isolated)
@@ -515,8 +515,8 @@ fn id_map_rel_has_prefix(rel: &str, prefix: &str) -> bool {
 }
 
 /// Fail if a journal `ids` file names a path outside its collection.
-pub(crate) fn check_journal_id_maps(index_dir: &Path, schema: &Schema) -> Result<(), Error> {
-    for decl in schema.collections() {
+pub(crate) fn check_journal_id_maps(index_dir: &Path, decls: &Decls) -> Result<(), Error> {
+    for decl in decls.collections() {
         if decl.encrypted || decl.kind != Kind::Journal {
             continue;
         }
@@ -591,7 +591,7 @@ pub(crate) fn rewrite_collection(
 fn ids_path(index_dir: &Path, collection: &str) -> PathBuf {
     index_dir
         .join(JOURNAL_DIR)
-        .join(schema::collection_dir(collection))
+        .join(declaration::collection_dir(collection))
         .join(IDS_FILE)
 }
 
@@ -815,8 +815,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    fn journal_decl(name: &str, isolated: bool) -> schema::CollectionDecl {
-        schema::CollectionDecl {
+    fn journal_decl(name: &str, isolated: bool) -> declaration::CollectionDecl {
+        declaration::CollectionDecl {
             name: name.to_owned(),
             kind: Kind::Journal,
             version: 1,

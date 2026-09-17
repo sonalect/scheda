@@ -1650,9 +1650,7 @@ pub mod filter {
     /// `TermQuery`. Documents that contain this term.
     #[derive(Clone, Debug, Default)]
     pub struct TermView<'a> {
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path. `exclude_find` → `invalid`. `id` is always allowed. `body` is
-        /// allowed on `document` unless `no_body` or `exclude_fts`.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -1663,6 +1661,12 @@ pub mod filter {
         pub value: ::buffa::MessageFieldView<
             ::buffa_types::google::protobuf::__buffa::view::ValueView<'a>,
         >,
+        /// Collection that owns this Projector column. Required on Vault
+        /// `find` / `search`. On a Collection handle, unset means this
+        /// collection. Ignored when `field` is `id`.
+        ///
+        /// Field 3: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for TermView<'a> {
@@ -1729,6 +1733,13 @@ pub mod filter {
                         }
                     }
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -1767,6 +1778,7 @@ pub mod filter {
                     }
                     None => ::buffa::MessageField::none(),
                 },
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -1789,6 +1801,9 @@ pub mod filter {
                     += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                         + inner_size as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -1810,6 +1825,9 @@ pub mod filter {
                     buf,
                 );
                 self.value.write_to(__cache, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -1839,6 +1857,9 @@ pub mod filter {
                 if let ::core::option::Option::Some(__v) = self.value.as_option() {
                     __map.serialize_entry("value", __v)?;
                 }
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -1929,9 +1950,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path. `exclude_find` → `invalid`. `id` is always allowed. `body` is
-        /// allowed on `document` unless `no_body` or `exclude_fts`.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -1949,6 +1968,15 @@ pub mod filter {
             ::buffa_types::google::protobuf::__buffa::view::ValueView<'_>,
         > {
             &self.0.reborrow().value
+        }
+        /// Collection that owns this Projector column. Required on Vault
+        /// `find` / `search`. On a Collection handle, unset means this
+        /// collection. Ignored when `field` is `id`.
+        ///
+        /// Field 3: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<TermView<'static>>> for TermOwnedView {
@@ -1983,8 +2011,7 @@ pub mod filter {
     /// field).
     #[derive(Clone, Debug, Default)]
     pub struct TermSetView<'a> {
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -1994,6 +2021,10 @@ pub mod filter {
         pub values: ::buffa::MessageFieldView<
             ::buffa_types::google::protobuf::__buffa::view::ListValueView<'a>,
         >,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for TermSetView<'a> {
@@ -2060,6 +2091,13 @@ pub mod filter {
                         }
                     }
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -2098,6 +2136,7 @@ pub mod filter {
                     }
                     None => ::buffa::MessageField::none(),
                 },
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -2120,6 +2159,9 @@ pub mod filter {
                     += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                         + inner_size as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2141,6 +2183,9 @@ pub mod filter {
                     buf,
                 );
                 self.values.write_to(__cache, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2170,6 +2215,9 @@ pub mod filter {
                 if let ::core::option::Option::Some(__v) = self.values.as_option() {
                     __map.serialize_entry("values", __v)?;
                 }
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -2262,8 +2310,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -2280,6 +2327,13 @@ pub mod filter {
             ::buffa_types::google::protobuf::__buffa::view::ListValueView<'_>,
         > {
             &self.0.reborrow().values
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<TermSetView<'static>>>
@@ -2315,7 +2369,7 @@ pub mod filter {
     /// `PhraseQuery`. Ordered sequence of tokens. Field must have positions.
     #[derive(Clone, Debug, Default)]
     pub struct PhraseView<'a> {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -2327,6 +2381,10 @@ pub mod filter {
         ///
         /// Field 3: `slop`
         pub slop: ::core::option::Option<u32>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 4: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for PhraseView<'a> {
@@ -2375,6 +2433,13 @@ pub mod filter {
                     )?;
                     view.slop = Some(::buffa::types::decode_uint32(&mut cur)?);
                 }
+                4u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 2u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
@@ -2417,6 +2482,7 @@ pub mod filter {
                 field: self.field.map(|s| s.to_string()),
                 terms: self.terms.iter().map(|s| s.to_string()).collect(),
                 slop: self.slop,
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -2437,6 +2503,9 @@ pub mod filter {
             if let Some(v) = self.slop {
                 size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2456,6 +2525,9 @@ pub mod filter {
             }
             if let Some(v) = self.slop {
                 ::buffa::types::put_uint32_field(3u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(4u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2486,6 +2558,9 @@ pub mod filter {
             }
             if let ::core::option::Option::Some(__v) = self.slop {
                 __map.serialize_entry("slop", &::buffa::json_helpers::ProtoJson(&__v))?;
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -2578,7 +2653,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -2598,6 +2673,13 @@ pub mod filter {
         #[must_use]
         pub fn slop(&self) -> ::core::option::Option<u32> {
             self.0.reborrow().slop
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 4: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<PhraseView<'static>>>
@@ -2634,7 +2716,7 @@ pub mod filter {
     /// matches “part time”). Field must have positions.
     #[derive(Clone, Debug, Default)]
     pub struct PhrasePrefixView<'a> {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -2651,6 +2733,10 @@ pub mod filter {
         ///
         /// Field 4: `max_expansions`
         pub max_expansions: ::core::option::Option<u32>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 5: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for PhrasePrefixView<'a> {
@@ -2706,6 +2792,13 @@ pub mod filter {
                     )?;
                     view.max_expansions = Some(::buffa::types::decode_uint32(&mut cur)?);
                 }
+                5u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 2u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
@@ -2749,6 +2842,7 @@ pub mod filter {
                 terms: self.terms.iter().map(|s| s.to_string()).collect(),
                 prefix: self.prefix.map(|s| s.to_string()),
                 max_expansions: self.max_expansions,
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -2772,6 +2866,9 @@ pub mod filter {
             if let Some(v) = self.max_expansions {
                 size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2794,6 +2891,9 @@ pub mod filter {
             }
             if let Some(v) = self.max_expansions {
                 ::buffa::types::put_uint32_field(4u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(5u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2831,6 +2931,9 @@ pub mod filter {
                         "maxExpansions",
                         &::buffa::json_helpers::ProtoJson(&__v),
                     )?;
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -2925,7 +3028,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -2953,6 +3056,13 @@ pub mod filter {
         #[must_use]
         pub fn max_expansions(&self) -> ::core::option::Option<u32> {
             self.0.reborrow().max_expansions
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 5: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<PhrasePrefixView<'static>>>
@@ -2988,7 +3098,7 @@ pub mod filter {
     /// `FuzzyTermQuery`. Term within Levenshtein distance.
     #[derive(Clone, Debug, Default)]
     pub struct FuzzyTermView<'a> {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -3008,6 +3118,10 @@ pub mod filter {
         ///
         /// Field 5: `transposition_cost_one`
         pub transposition_cost_one: ::core::option::Option<bool>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 6: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for FuzzyTermView<'a> {
@@ -3079,6 +3193,13 @@ pub mod filter {
                         ::buffa::types::decode_bool(&mut cur)?,
                     );
                 }
+                6u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -3112,6 +3233,7 @@ pub mod filter {
                 distance: self.distance,
                 prefix: self.prefix,
                 transposition_cost_one: self.transposition_cost_one,
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -3138,6 +3260,9 @@ pub mod filter {
             if self.transposition_cost_one.is_some() {
                 size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -3163,6 +3288,9 @@ pub mod filter {
             }
             if let Some(v) = self.transposition_cost_one {
                 ::buffa::types::put_bool_field(5u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(6u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -3203,6 +3331,9 @@ pub mod filter {
             }
             if let ::core::option::Option::Some(__v) = self.transposition_cost_one {
                 __map.serialize_entry("transpositionCostOne", &__v)?;
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -3295,7 +3426,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -3329,6 +3460,13 @@ pub mod filter {
         #[must_use]
         pub fn transposition_cost_one(&self) -> ::core::option::Option<bool> {
             self.0.reborrow().transposition_cost_one
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 6: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<FuzzyTermView<'static>>>
@@ -3364,7 +3502,7 @@ pub mod filter {
     /// `RegexQuery`. A term that matches this pattern.
     #[derive(Clone, Debug, Default)]
     pub struct RegexView<'a> {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -3372,6 +3510,10 @@ pub mod filter {
         ///
         /// Field 2: `pattern`
         pub pattern: ::core::option::Option<&'a str>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for RegexView<'a> {
@@ -3420,6 +3562,13 @@ pub mod filter {
                     )?;
                     view.pattern = Some(::buffa::types::borrow_str(&mut cur)?);
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -3450,6 +3599,7 @@ pub mod filter {
             ::core::result::Result::Ok(super::super::super::filter::Regex {
                 field: self.field.map(|s| s.to_string()),
                 pattern: self.pattern.map(|s| s.to_string()),
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -3465,6 +3615,9 @@ pub mod filter {
                 size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
             }
             if let Some(ref v) = self.pattern {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
+            if let Some(ref v) = self.collection {
                 size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
             }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
@@ -3483,6 +3636,9 @@ pub mod filter {
             }
             if let Some(ref v) = self.pattern {
                 ::buffa::types::put_string_field(2u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -3510,6 +3666,9 @@ pub mod filter {
             }
             if let ::core::option::Option::Some(__v) = self.pattern {
                 __map.serialize_entry("pattern", __v)?;
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -3602,7 +3761,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -3615,6 +3774,13 @@ pub mod filter {
         #[must_use]
         pub fn pattern(&self) -> ::core::option::Option<&'_ str> {
             self.0.reborrow().pattern
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<RegexView<'static>>>
@@ -3651,7 +3817,7 @@ pub mod filter {
     /// positions.
     #[derive(Clone, Debug, Default)]
     pub struct RegexPhraseView<'a> {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -3668,6 +3834,10 @@ pub mod filter {
         ///
         /// Field 4: `max_expansions`
         pub max_expansions: ::core::option::Option<u32>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 5: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for RegexPhraseView<'a> {
@@ -3723,6 +3893,13 @@ pub mod filter {
                     )?;
                     view.max_expansions = Some(::buffa::types::decode_uint32(&mut cur)?);
                 }
+                5u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 2u32 => {
                     ::buffa::encoding::check_wire_type(
                         tag,
@@ -3766,6 +3943,7 @@ pub mod filter {
                 patterns: self.patterns.iter().map(|s| s.to_string()).collect(),
                 slop: self.slop,
                 max_expansions: self.max_expansions,
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -3789,6 +3967,9 @@ pub mod filter {
             if let Some(v) = self.max_expansions {
                 size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -3811,6 +3992,9 @@ pub mod filter {
             }
             if let Some(v) = self.max_expansions {
                 ::buffa::types::put_uint32_field(4u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(5u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -3848,6 +4032,9 @@ pub mod filter {
                         "maxExpansions",
                         &::buffa::json_helpers::ProtoJson(&__v),
                     )?;
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -3942,7 +4129,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -3970,6 +4157,13 @@ pub mod filter {
         #[must_use]
         pub fn max_expansions(&self) -> ::core::option::Option<u32> {
             self.0.reborrow().max_expansions
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 5: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<RegexPhraseView<'static>>>
@@ -4399,8 +4593,7 @@ pub mod filter {
     /// unbounded. Score 1.0.
     #[derive(Clone, Debug, Default)]
     pub struct RangeView<'a> {
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -4416,6 +4609,10 @@ pub mod filter {
         pub upper: ::buffa::MessageFieldView<
             super::super::super::__buffa::view::filter::BoundView<'a>,
         >,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 4: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for RangeView<'a> {
@@ -4507,6 +4704,13 @@ pub mod filter {
                         }
                     }
                 }
+                4u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -4554,6 +4758,7 @@ pub mod filter {
                     }
                     None => ::buffa::MessageField::none(),
                 },
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -4584,6 +4789,9 @@ pub mod filter {
                     += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                         + inner_size as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -4613,6 +4821,9 @@ pub mod filter {
                     buf,
                 );
                 self.upper.write_to(__cache, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(4u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -4647,6 +4858,9 @@ pub mod filter {
                 if let ::core::option::Option::Some(__v) = self.upper.as_option() {
                     __map.serialize_entry("upper", __v)?;
                 }
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -4739,8 +4953,7 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         #[must_use]
@@ -4768,6 +4981,13 @@ pub mod filter {
             super::super::super::__buffa::view::filter::BoundView<'_>,
         > {
             &self.0.reborrow().upper
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 4: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<RangeView<'static>>>
@@ -4804,8 +5024,8 @@ pub mod filter {
     /// null” — that is `term` with value `null`.
     #[derive(Clone, Debug, Default)]
     pub struct ExistsView<'a> {
-        /// Schema field name or Markdown `body`. Not Record `id` (`id` always
-        /// exists on an indexed Record).
+        /// Projector column name or Record identity `id` (`id` always exists
+        /// on an indexed Record).
         ///
         /// Field 1: `field`
         pub field: ::core::option::Option<&'a str>,
@@ -4813,6 +5033,10 @@ pub mod filter {
         ///
         /// Field 2: `json_subpaths`
         pub json_subpaths: ::core::option::Option<bool>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        pub collection: ::core::option::Option<&'a str>,
         pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
     }
     impl<'a> ::buffa::MessageView<'a> for ExistsView<'a> {
@@ -4861,6 +5085,13 @@ pub mod filter {
                     )?;
                     view.json_subpaths = Some(::buffa::types::decode_bool(&mut cur)?);
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
+                }
                 _ => {
                     ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                     let span_len = before_tag.len() - cur.len();
@@ -4891,6 +5122,7 @@ pub mod filter {
             ::core::result::Result::Ok(super::super::super::filter::Exists {
                 field: self.field.map(|s| s.to_string()),
                 json_subpaths: self.json_subpaths,
+                collection: self.collection.map(|s| s.to_string()),
                 __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
                 ..::core::default::Default::default()
             })
@@ -4908,6 +5140,9 @@ pub mod filter {
             if self.json_subpaths.is_some() {
                 size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -4924,6 +5159,9 @@ pub mod filter {
             }
             if let Some(v) = self.json_subpaths {
                 ::buffa::types::put_bool_field(2u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -4951,6 +5189,9 @@ pub mod filter {
             }
             if let ::core::option::Option::Some(__v) = self.json_subpaths {
                 __map.serialize_entry("jsonSubpaths", &__v)?;
+            }
+            if let ::core::option::Option::Some(__v) = self.collection {
+                __map.serialize_entry("collection", __v)?;
             }
             __map.end()
         }
@@ -5043,8 +5284,8 @@ pub mod filter {
         pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
             self.0.into_bytes()
         }
-        /// Schema field name or Markdown `body`. Not Record `id` (`id` always
-        /// exists on an indexed Record).
+        /// Projector column name or Record identity `id` (`id` always exists
+        /// on an indexed Record).
         ///
         /// Field 1: `field`
         #[must_use]
@@ -5057,6 +5298,13 @@ pub mod filter {
         #[must_use]
         pub fn json_subpaths(&self) -> ::core::option::Option<bool> {
             self.0.reborrow().json_subpaths
+        }
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        #[must_use]
+        pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+            self.0.reborrow().collection
         }
     }
     impl ::core::convert::From<::buffa::OwnedView<ExistsView<'static>>>
@@ -7704,7 +7952,7 @@ pub mod filter {
             /// One Index field and the values taken from it.
             #[derive(Clone, Debug, Default)]
             pub struct FieldView<'a> {
-                /// Schema field name or Markdown `body`. Not Record `id`.
+                /// Projector column name. Not Record `id`.
                 ///
                 /// Field 1: `field`
                 pub field: ::core::option::Option<&'a str>,
@@ -7714,6 +7962,10 @@ pub mod filter {
                 pub values: ::buffa::MessageFieldView<
                     ::buffa_types::google::protobuf::__buffa::view::ListValueView<'a>,
                 >,
+                /// Collection that owns this Projector column. Same rule as `Term.collection`.
+                ///
+                /// Field 3: `collection`
+                pub collection: ::core::option::Option<&'a str>,
                 pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
             }
             impl<'a> ::buffa::MessageView<'a> for FieldView<'a> {
@@ -7784,6 +8036,15 @@ pub mod filter {
                                 }
                             }
                         }
+                        3u32 => {
+                            ::buffa::encoding::check_wire_type(
+                                tag,
+                                ::buffa::encoding::WireType::LengthDelimited,
+                            )?;
+                            view.collection = Some(
+                                ::buffa::types::borrow_str(&mut cur)?,
+                            );
+                        }
                         _ => {
                             ::buffa::encoding::skip_field_depth(
                                 tag,
@@ -7827,6 +8088,7 @@ pub mod filter {
                             }
                             None => ::buffa::MessageField::none(),
                         },
+                        collection: self.collection.map(|s| s.to_string()),
                         __buffa_unknown_fields: self
                             .__buffa_unknown_fields
                             .to_owned()?
@@ -7853,6 +8115,9 @@ pub mod filter {
                                 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                                 + inner_size as u64;
                     }
+                    if let Some(ref v) = self.collection {
+                        size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+                    }
                     size += self.__buffa_unknown_fields.encoded_len() as u64;
                     ::buffa::saturate_size(size)
                 }
@@ -7874,6 +8139,9 @@ pub mod filter {
                             buf,
                         );
                         self.values.write_to(__cache, buf);
+                    }
+                    if let Some(ref v) = self.collection {
+                        ::buffa::types::put_string_field(3u32, v, buf);
                     }
                     self.__buffa_unknown_fields.write_to(buf);
                 }
@@ -7906,6 +8174,9 @@ pub mod filter {
                         {
                             __map.serialize_entry("values", __v)?;
                         }
+                    }
+                    if let ::core::option::Option::Some(__v) = self.collection {
+                        __map.serialize_entry("collection", __v)?;
                     }
                     __map.end()
                 }
@@ -8002,7 +8273,7 @@ pub mod filter {
                 pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
                     self.0.into_bytes()
                 }
-                /// Schema field name or Markdown `body`. Not Record `id`.
+                /// Projector column name. Not Record `id`.
                 ///
                 /// Field 1: `field`
                 #[must_use]
@@ -8019,6 +8290,13 @@ pub mod filter {
                     ::buffa_types::google::protobuf::__buffa::view::ListValueView<'_>,
                 > {
                     &self.0.reborrow().values
+                }
+                /// Collection that owns this Projector column. Same rule as `Term.collection`.
+                ///
+                /// Field 3: `collection`
+                #[must_use]
+                pub fn collection(&self) -> ::core::option::Option<&'_ str> {
+                    self.0.reborrow().collection
                 }
             }
             impl ::core::convert::From<::buffa::OwnedView<FieldView<'static>>>

@@ -1,5 +1,5 @@
 //! A1: `catalog` from Schema (`08` AGT-1, `12`). Collection names here and in
-//! `testdata/schema/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
+//! `testdata/declaration/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
 
 mod common;
 
@@ -39,7 +39,7 @@ impl Scratch {
         Vault::open(self.vault(), OpenOptions::new(), None).unwrap()
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -58,11 +58,11 @@ impl Drop for Scratch {
     }
 }
 
-const WEST: &str = include_str!("../testdata/schema/west.yaml");
-const EAST: &str = include_str!("../testdata/schema/east.yaml");
-const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");
-const WEST_INDEXED: &str = include_str!("../testdata/schema/west_indexed.yaml");
-const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
+const WEST: &str = include_str!("../testdata/declaration/west.yaml");
+const EAST: &str = include_str!("../testdata/declaration/east.yaml");
+const EAST_LOG: &str = include_str!("../testdata/declaration/east_log.yaml");
+const WEST_INDEXED: &str = include_str!("../testdata/declaration/west_indexed.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/declaration/west_isolated.yaml");
 
 fn catalog_json(vault: &Vault) -> Value {
     serde_json::to_value(vault.info().unwrap()).unwrap()
@@ -109,7 +109,7 @@ fn src_rs() -> String {
         include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
-        include_str!("../src/schema.rs"),
+        include_str!("../src/declaration.rs"),
         include_str!("../src/search.rs"),
         include_str!("../src/store.rs"),
         include_str!("../src/vault.rs"),
@@ -121,10 +121,10 @@ fn src_rs() -> String {
 fn catalog_json_matches_schema_files() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
-    scratch.write_schema("west_indexed.yaml", WEST_INDEXED);
-    scratch.write_schema("log.yaml", EAST_LOG);
-    scratch.write_schema("west_isolated.yaml", WEST_ISOLATED);
+    scratch.write_declaration("west.yaml", WEST);
+    scratch.write_declaration("west_indexed.yaml", WEST_INDEXED);
+    scratch.write_declaration("log.yaml", EAST_LOG);
+    scratch.write_declaration("west_isolated.yaml", WEST_ISOLATED);
     let json = catalog_json(&scratch.reopen());
     let west = collection(&json, "west_docs");
     let west_schema = &west["declaration"];
@@ -153,7 +153,7 @@ fn catalog_json_matches_schema_files() {
 fn catalog_is_not_built_from_record_directories() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
+    scratch.write_declaration("west.yaml", WEST);
     let forged = scratch.vault().join("east_docs");
     fs::create_dir_all(&forged).unwrap();
     fs::write(forged.join("ghost.md"), "---\nid: ghost\ntitle: no\n---\n").unwrap();
@@ -175,8 +175,8 @@ fn catalog_follows_each_vault_schema() {
     let east = Scratch::new();
     drop(west.init());
     drop(east.init());
-    west.write_schema("west.yaml", WEST);
-    east.write_schema("east.yaml", EAST);
+    west.write_declaration("west.yaml", WEST);
+    east.write_declaration("east.yaml", EAST);
     let west_json = catalog_json(&west.reopen());
     let east_json = catalog_json(&east.reopen());
     assert!(
@@ -222,8 +222,8 @@ fn catalog_follows_each_vault_schema() {
 fn catalog_lists_isolated_without_fields() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
-    scratch.write_schema("isolated.yaml", WEST_ISOLATED);
+    scratch.write_declaration("west.yaml", WEST);
+    scratch.write_declaration("isolated.yaml", WEST_ISOLATED);
     let vault = scratch.reopen();
     let json = catalog_json(&vault);
     let isolated = collection(&json, "west_isolated");
@@ -270,8 +270,8 @@ fn assert_no_sealed(haystack: &str) {
 fn isolated_sealed_values_stay_off_the_main_vault() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
-    scratch.write_schema("isolated.yaml", WEST_ISOLATED);
+    scratch.write_declaration("west.yaml", WEST);
+    scratch.write_declaration("isolated.yaml", WEST_ISOLATED);
     let vault = scratch.reopen();
     vault
         .collection("west_docs")

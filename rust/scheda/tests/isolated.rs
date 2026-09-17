@@ -46,8 +46,8 @@ impl Drop for Scratch {
     }
 }
 
-const WEST: &str = include_str!("../testdata/schema/west.yaml");
-const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
+const WEST: &str = include_str!("../testdata/declaration/west.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/declaration/west_isolated.yaml");
 const SEALED_LOG: &str = include_str!("../testdata/isolated/log.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
@@ -66,7 +66,7 @@ fn live_index_at(vault: &Path) -> PathBuf {
     }
 }
 
-fn write_schema(scratch: &Scratch, body: &str) {
+fn write_declaration(scratch: &Scratch, body: &str) {
     let name = peek_schema_name(body);
     let dir = scratch.vault().join(name);
     fs::create_dir_all(&dir).unwrap();
@@ -209,7 +209,7 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
 fn nested_commit_rolls_back_when_main_commit_fails() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST);
+    write_declaration(&scratch, WEST);
     let vault = scratch.reopen();
     let decl: Declaration = serde_json::from_value(json!({
         "version": 1,
@@ -302,7 +302,7 @@ fn isolated_journal_rotates_and_ids_map_is_in_main_index() {
 fn isolated_add_without_begin_is_one_nested_commit() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, SEALED_LOG);
+    write_declaration(&scratch, SEALED_LOG);
     let vault = scratch.reopen();
     let nested = scratch.vault().join(".isolated");
     vault
@@ -318,8 +318,8 @@ fn isolated_add_without_begin_is_one_nested_commit() {
 fn isolated_document_round_trip_and_main_find_skips_it() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST);
-    write_schema(&scratch, WEST_ISOLATED);
+    write_declaration(&scratch, WEST);
+    write_declaration(&scratch, WEST_ISOLATED);
     let vault = scratch.reopen();
     vault
         .collection("west_docs")
@@ -378,7 +378,7 @@ fn isolated_document_round_trip_and_main_find_skips_it() {
 fn isolated_replace_and_history_use_nested_git() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST_ISOLATED);
+    write_declaration(&scratch, WEST_ISOLATED);
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     collection
@@ -401,7 +401,7 @@ fn isolated_replace_and_history_use_nested_git() {
 fn isolated_remove_uses_nested_git() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST_ISOLATED);
+    write_declaration(&scratch, WEST_ISOLATED);
     let vault = scratch.reopen();
     let collection = vault.collection("west_isolated").unwrap();
     collection
@@ -438,7 +438,7 @@ fn isolated_remove_uses_nested_git() {
 fn check_passes_when_nested_git_has_a_remote() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, SEALED_LOG);
+    write_declaration(&scratch, SEALED_LOG);
     let vault = scratch.reopen();
     vault
         .collection("sealed_log")
@@ -463,7 +463,7 @@ fn check_passes_when_nested_git_has_a_remote() {
 fn vault_push_leaves_nested_remote_untouched() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST_ISOLATED);
+    write_declaration(&scratch, WEST_ISOLATED);
     let vault = scratch.reopen();
     vault
         .collection("west_isolated")
@@ -560,7 +560,7 @@ fn tree_contains(dir: &Path, needle: &str) -> bool {
 fn check_fails_when_parent_tracks_isolated() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, SEALED_LOG);
+    write_declaration(&scratch, SEALED_LOG);
     let vault = scratch.reopen();
     vault
         .collection("sealed_log")
@@ -590,7 +590,7 @@ fn isolated_record_files_are_owner_only() {
     use std::os::unix::fs::PermissionsExt;
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, SEALED_LOG);
+    write_declaration(&scratch, SEALED_LOG);
     let vault = scratch.reopen();
     vault
         .collection("sealed_log")
@@ -610,8 +610,8 @@ fn isolated_record_files_are_owner_only() {
 fn open_succeeds_when_isolated_tree_is_missing() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST);
-    write_schema(&scratch, WEST_ISOLATED);
+    write_declaration(&scratch, WEST);
+    write_declaration(&scratch, WEST_ISOLATED);
     assert!(!scratch.vault().join(".isolated").exists());
     let vault = scratch.reopen();
     vault.reindex().unwrap();
@@ -703,8 +703,36 @@ fn term_query_over_isolated_and_plain_returns_both() {
         .add("secret", rec(json!({"title": "shared"})), None)
         .unwrap();
     let query = term("title", "shared");
+    let vault_query = serde_json::from_value::<Filter>(json!({
+        "boolean": {
+            "clauses": [
+                {
+                    "occur": "OCCUR_SHOULD",
+                    "query": {
+                        "term": {
+                            "field": "title",
+                            "collection": "plain_notes",
+                            "value": "shared"
+                        }
+                    }
+                },
+                {
+                    "occur": "OCCUR_SHOULD",
+                    "query": {
+                        "term": {
+                            "field": "title",
+                            "collection": "sealed_notes",
+                            "value": "shared"
+                        }
+                    }
+                }
+            ]
+        }
+    }))
+    .unwrap()
+    .into();
     let page = vault
-        .find(&["plain_notes", "sealed_notes"], &query, 0, 10)
+        .find(&["plain_notes", "sealed_notes"], &vault_query, 0, 10)
         .unwrap();
     assert_eq!(page.total, Some(2));
     let mut names: Vec<_> = page
@@ -847,7 +875,7 @@ fn old_nested_isolated_index_is_removed_by_reindex() {
 fn second_schema_claiming_isolated_name_is_invalid() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    write_schema(&scratch, WEST_ISOLATED);
+    write_declaration(&scratch, WEST_ISOLATED);
     let other = scratch.vault().join("other_docs");
     fs::create_dir_all(&other).unwrap();
     fs::write(

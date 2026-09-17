@@ -33,7 +33,7 @@ impl Scratch {
         self.root.join("vault")
     }
 
-    fn write_schema(&self, body: &str) {
+    fn write_declaration(&self, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -262,7 +262,7 @@ fn open_proj(path: impl AsRef<std::path::Path>, embedder: Option<Arc<dyn Embedde
 
 fn open_tokens(scratch: &Scratch, embedder: Option<Arc<dyn Embedder>>) -> Vault {
     drop(open_proj(scratch.vault(), None));
-    scratch.write_schema(TOKENS);
+    scratch.write_declaration(TOKENS);
     open_proj(scratch.vault(), embedder)
 }
 
@@ -499,8 +499,8 @@ fn open_during_mismatch_rebuild_does_not_prune() {
 fn journal_queued_line_is_gettable_after_publish() {
     let scratch = Scratch::new();
     drop(open_proj(scratch.vault(), None));
-    scratch.write_schema(LOG);
-    scratch.write_schema(TOKENS);
+    scratch.write_declaration(LOG);
+    scratch.write_declaration(TOKENS);
     let first = CountingEmbedder::new("model-a");
     let vault = open_proj(
         scratch.vault(),

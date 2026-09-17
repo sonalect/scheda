@@ -46,7 +46,7 @@ impl Scratch {
         Vault::open(self.vault(), self.options(), None).unwrap()
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -75,7 +75,7 @@ fn rec(fields: Value) -> Vec<u8> {
 
 fn open_notes(scratch: &Scratch) -> Vault {
     drop(scratch.init());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     vault.begin().unwrap();
     vault
@@ -257,8 +257,8 @@ fn history_matches_git_show_after_two_document_commits() {
 fn history_of_singleton_and_journal_segment() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("inbox.yaml", INBOX);
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("inbox.yaml", INBOX);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     vault.begin().unwrap();
     vault
@@ -336,7 +336,7 @@ fn empty_commit_message_is_invalid() {
 fn insert_one_without_begin_autocommits() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     let before = log_len(vault.path());
     vault
@@ -459,7 +459,7 @@ fn history_after_remove_still_answers_from_git() {
 fn remove_autocommits_outside_a_transaction() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     collection
@@ -531,7 +531,7 @@ fn abandoned_remove_is_restored_on_next_autocommit() {
 fn killed_mid_batch_keeps_complete_journal_lines() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = scratch.reopen();
     vault.begin().unwrap();
     let before = log_len(vault.path());
@@ -584,7 +584,7 @@ fn set_local_identity(dir: &Path, name: &str, email: &str) {
 fn autocommit_uses_caller_message() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     vault
         .collection("north_notes")
@@ -611,7 +611,7 @@ fn autocommit_uses_caller_message() {
 fn omitted_autocommit_message_is_scheda() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     vault
         .collection("north_notes")
@@ -637,7 +637,7 @@ fn omitted_autocommit_message_is_scheda() {
 fn empty_override_message_is_invalid_before_write() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     let collection = vault.collection("north_notes").unwrap();
     for message in [Some(""), Some("  ")] {
@@ -680,7 +680,7 @@ fn message_inside_transaction_is_ignored() {
 fn history_message_keeps_the_body_and_drops_the_terminator() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     vault
         .collection("north_notes")
@@ -708,7 +708,7 @@ fn open_options_identity_is_author_and_committer() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     set_local_identity(scratch.vault().as_path(), "Config", "config@invalid");
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let options = OpenOptions::new().author(Author::new().name("Ada").email("ada@invalid"));
     let vault = Vault::open(scratch.vault(), options, None).unwrap();
     vault
@@ -732,7 +732,7 @@ fn git_config_identity_when_open_options_unset() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     set_local_identity(scratch.vault().as_path(), "Config", "config@invalid");
-    scratch.write_schema("notes.yaml", NOTES);
+    scratch.write_declaration("notes.yaml", NOTES);
     let vault = scratch.reopen();
     vault
         .collection("north_notes")

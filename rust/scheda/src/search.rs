@@ -33,7 +33,7 @@ use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
 use crate::projector::{self, IndexDoc, IndexValue, ProjectorDump};
 use crate::query::{self, FindFields};
-use crate::schema::{CollectionDecl, Kind, Schema};
+use crate::declaration::{CollectionDecl, Kind, Decls};
 use crate::store;
 use crate::{Embedder, Error, Filter, IndexSchema, Record};
 #[cfg(feature = "search")]
@@ -383,10 +383,10 @@ impl SearchEngine {
     pub(crate) fn rebuild(
         &self,
         vault: &Path,
-        schema: &Schema,
+        decls: &Decls,
         embedder: Option<&dyn Embedder>,
     ) -> Result<RebuildStats, Error> {
-        self.rebuild_from(vault, schema, embedder, None)
+        self.rebuild_from(vault, decls, embedder, None)
     }
 
     /// Fill this engine from Vault files. `hook` runs after a collection's
@@ -397,11 +397,11 @@ impl SearchEngine {
     pub(crate) fn rebuild_online(
         &self,
         vault: &Path,
-        schema: &Schema,
+        decls: &Decls,
         embedder: Option<&dyn Embedder>,
         hook: Option<&dyn Fn(&str)>,
     ) -> Result<RebuildStats, Error> {
-        self.rebuild_from(vault, schema, embedder, hook)
+        self.rebuild_from(vault, decls, embedder, hook)
     }
 
     /// Install `other`'s engine and generation directory as this handle's
@@ -428,7 +428,7 @@ impl SearchEngine {
     fn rebuild_from(
         &self,
         vault: &Path,
-        schema: &Schema,
+        decls: &Decls,
         embedder: Option<&dyn Embedder>,
         hook: Option<&dyn Fn(&str)>,
     ) -> Result<RebuildStats, Error> {
@@ -455,7 +455,7 @@ impl SearchEngine {
                 &index_dir,
                 &projector::encode_dump(
                     self.projector.as_deref(),
-                    schema.collections().map(|decl| decl.name.as_str()),
+                    decls.collections().map(|decl| decl.name.as_str()),
                 )?,
             )?;
         }
@@ -468,7 +468,7 @@ impl SearchEngine {
         #[cfg(feature = "search")]
         let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut stats = RebuildStats::default();
-        for decl in schema.collections().filter(|decl| decl.any_indexed()) {
+        for decl in decls.collections().filter(|decl| decl.any_indexed()) {
             match decl.kind {
                 Kind::Journal => {
                     if let Some(hook) = hook {
@@ -480,10 +480,6 @@ impl SearchEngine {
                         stats.records_read += 1;
                         if let Some(id) = record.id.as_deref() {
                             ids.insert(id.to_owned(), rel.to_owned());
-                        }
-                        if !store::record_indexable(decl, &record) {
-                            stats.skipped_invalid += 1;
-                            return Ok(true);
                         }
                         index_one_rebuild_record(
                             self,
@@ -515,10 +511,6 @@ impl SearchEngine {
                             Err(err) => return Err(err),
                         };
                         stats.records_read += 1;
-                        if !store::record_indexable(decl, &record) {
-                            stats.skipped_invalid += 1;
-                            continue;
-                        }
                         index_one_rebuild_record(
                             self,
                             &index_dir,

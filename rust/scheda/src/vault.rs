@@ -16,7 +16,7 @@ use crate::isolated;
 use crate::journal;
 #[cfg(feature = "find")]
 use crate::query;
-use crate::schema::{self, CollectionDecl, Kind, Schema as LoadedSchema};
+use crate::declaration::{self, CollectionDecl, Kind, Decls};
 #[cfg(feature = "find")]
 use crate::search::SearchEngine;
 use crate::store;
@@ -60,7 +60,7 @@ pub struct Vault {
     remotes: Vec<String>,
     auto_sync: bool,
     write_lock: Arc<Mutex<WriteLock>>,
-    schema: Mutex<Arc<LoadedSchema>>,
+    decls: Mutex<Arc<Decls>>,
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
     writer: Arc<str>,
@@ -83,7 +83,7 @@ pub struct Collection {
     auto_sync: bool,
     remotes: Vec<String>,
     decl: CollectionDecl,
-    schema: Arc<LoadedSchema>,
+    decls: Arc<Decls>,
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
     writer: Arc<str>,
@@ -252,8 +252,8 @@ impl Vault {
         let index = Arc::new(index::bind(&index_root)?);
         let generation = index.dir()?;
         index::restrict_index_tree(&generation)?;
-        let schema = Arc::new(schema::load(&path)?);
-        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&generation, &schema)?));
+        let decls = Arc::new(declaration::load(&path)?);
+        let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&generation, &decls)?));
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
         let writer = Arc::<str>::from(crate::writer::load_or_create(
@@ -270,7 +270,7 @@ impl Vault {
             remotes,
             auto_sync,
             write_lock: Arc::new(Mutex::new(WriteLock::new())),
-            schema: Mutex::new(schema),
+            decls: Mutex::new(decls),
             written,
             in_txn,
             writer,
@@ -366,15 +366,15 @@ impl Vault {
 
     /// Collection generation values present in this Vault.
     ///
-    /// A poisoned schema lock is `io_other`, same as the other schema reads.
+    /// A poisoned decls lock is `io_other`, same as the other decls reads.
     pub fn versions(&self) -> Result<Vec<u32>, Error> {
-        Ok(self.schema_arc()?.versions())
+        Ok(self.decls_arc()?.versions())
     }
 
-    fn schema_arc(&self) -> Result<Arc<LoadedSchema>, Error> {
+    fn decls_arc(&self) -> Result<Arc<Decls>, Error> {
         Ok(Arc::clone(&*crate::error::mutex(
-            &self.schema,
-            "[Vault] lock schema",
+            &self.decls,
+            "[Vault] lock decls",
         )?))
     }
 
@@ -385,10 +385,10 @@ impl Vault {
     /// `encrypt` crate feature refuses an encrypted collection
     /// (`unsupported_encryption`); `open` of the Vault still succeeds.
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
-        let schema = self.schema_arc()?;
-        let Some(decl) = schema.get(name) else {
+        let decls = self.decls_arc()?;
+        let Some(decl) = decls.get(name) else {
             bail!(Error::not_found(format!(
-                "collection {name} is not in Schema"
+                "collection {name} is not in the declaration"
             )));
         };
         #[cfg(not(feature = "encrypt"))]
@@ -407,7 +407,7 @@ impl Vault {
             auto_sync: self.auto_sync,
             remotes: self.remotes.clone(),
             decl: decl.clone(),
-            schema,
+            decls,
             written: Arc::clone(&self.written),
             in_txn: Arc::clone(&self.in_txn),
             writer: Arc::clone(&self.writer),
@@ -435,7 +435,8 @@ impl Vault {
     /// collection uses append order instead.
     ///
     /// Filter field names are [`Projector`] find-columns plus identity `id`.
-    /// Without a projector, only `all` and Filter on `id` are valid.
+    /// Projector-column leaves must set proto `collection`. Without a
+    /// projector, only `all` and Filter on `id` are valid.
     #[cfg(feature = "find")]
     pub fn find(
         &self,
@@ -444,13 +445,14 @@ impl Vault {
         offset: u32,
         count: u32,
     ) -> Result<FindResult, Error> {
-        let schema = self.schema_arc()?;
+        let decls = self.decls_arc()?;
         QueryCtx {
             engine: &self.search,
-            schema: &schema,
+            decls: &decls,
             vault: &self.path,
             journal_ids: &self.journal_ids,
             projector: self.projector.as_deref(),
+            scope: crate::query::FilterScope::Vault,
         }
         .find(collections, query, offset, count)
     }
@@ -491,13 +493,14 @@ impl Vault {
         query: &SearchQuery,
         reranker: Option<&dyn Reranker>,
     ) -> Result<SearchHits, Error> {
-        let schema = self.schema_arc()?;
+        let decls = self.decls_arc()?;
         QueryCtx {
             engine: &self.search,
-            schema: &schema,
+            decls: &decls,
             vault: &self.path,
             journal_ids: &self.journal_ids,
             projector: self.projector.as_deref(),
+            scope: crate::query::FilterScope::Vault,
         }
         .search(self.embedder.as_deref(), collections, query, reranker)
     }
@@ -599,17 +602,17 @@ impl Vault {
         if paths.is_empty() {
             return Ok(());
         }
-        let schema = self.schema_arc()?;
-        let snapshot = crate::reindex::snapshot_restored(&self.path, &schema, &paths)?;
+        let decls = self.decls_arc()?;
+        let snapshot = crate::reindex::snapshot_restored(&self.path, &decls, &paths)?;
         isolated::discard_recorded(&self.path, &paths)?;
         self.reload_after_restore()?;
-        let schema = self.schema_arc()?;
-        crate::reindex::enqueue_restored(&self.path, &schema, &paths, &snapshot)?;
+        let decls = self.decls_arc()?;
+        crate::reindex::enqueue_restored(&self.path, &decls, &paths, &snapshot)?;
         Ok(())
     }
 
     fn reload_after_restore(&self) -> Result<(), Error> {
-        let loaded = schema::load(&self.path)?;
+        let loaded = declaration::load(&self.path)?;
         let dir = self.generation_dir()?;
         #[cfg(feature = "find")]
         {
@@ -619,7 +622,7 @@ impl Vault {
         }
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
             index::load_journal_ids(&dir, &loaded)?;
-        *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
+        *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
         Ok(())
     }
 
@@ -815,21 +818,21 @@ impl Vault {
             index::require_fresh(&dir)?;
         }
         store::check_scheda_owner_only(&self.path)?;
-        let schema = schema::load(&self.path)?;
-        index::check_journal_id_maps(&self.generation_dir()?, &schema)?;
-        store::check_documents(&self.path, &schema, self.encryption.as_ref())?;
-        journal::check_journals(&self.path, &schema)
+        let decls = declaration::load(&self.path)?;
+        index::check_journal_id_maps(&self.generation_dir()?, &decls)?;
+        store::check_documents(&self.path, &decls, self.encryption.as_ref())?;
+        journal::check_journals(&self.path, &decls)
     }
 
     /// Proto snapshot (`api.v1.VaultInfo`): vault attrs plus the collection list.
     pub fn info(&self) -> Result<VaultInfo, Error> {
         let remote = self.remotes.first().cloned().unwrap_or_default();
-        let info = schema::to_vault_info(
+        let info = declaration::to_vault_info(
             &self.path,
             &self.index.root,
             &remote,
             self.auto_sync,
-            &*self.schema_arc()?,
+            &*self.decls_arc()?,
         )?;
         Ok(info)
     }
@@ -873,13 +876,13 @@ impl Vault {
                 {
                     self.note_write(rel)?;
                 }
-                let rel = schema::put_collection(&self.path, name, &decl)?;
+                let rel = declaration::put_collection(&self.path, name, &decl)?;
                 self.note_write(rel)?;
-                let loaded = schema::load(&self.path)?;
+                let loaded = declaration::load(&self.path)?;
                 let dir = self.generation_dir()?;
                 *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
                     index::load_journal_ids(&dir, &loaded)?;
-                *crate::error::mutex(&self.schema, "[Vault] lock schema")? = Arc::new(loaded);
+                *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
                 self.finish_mutation(message)?;
                 Ok(())
             })();
@@ -939,7 +942,7 @@ impl Vault {
     }
 
     fn reindex_body(&self, in_txn: bool) -> Result<ReindexResult, Error> {
-        let schema = schema::load(&self.path)?;
+        let decls = declaration::load(&self.path)?;
         #[cfg(feature = "search")]
         let previous = self.generation_dir()?;
         let new_dir = index::start_generation(&self.index.root)?;
@@ -959,7 +962,7 @@ impl Vault {
             self.search.release_writer()?;
             release_held_write_lock(&self.write_lock)?;
         }
-        let (counts, mut maps) = index::rebuild(&self.path, &schema, &new_dir)?;
+        let (counts, mut maps) = index::rebuild(&self.path, &decls, &new_dir)?;
         #[cfg(feature = "find")]
         let counts = {
             let hook = self.walk_hook();
@@ -967,7 +970,7 @@ impl Vault {
             let rebuilder = SearchEngine::open(&new_dir, true, self.projector.clone())?;
             let walk = rebuilder.rebuild_online(
                 &self.path,
-                &schema,
+                &decls,
                 self.embedder.as_deref(),
                 hook_ref.map(|h| h as &dyn Fn(&str)),
             )?;
@@ -977,7 +980,7 @@ impl Vault {
                 self.publish_reindex(&new_dir, maps, rebuilder)?;
             } else {
                 self.catch_up_and_publish(
-                    &schema,
+                    &decls,
                     &new_dir,
                     &mut maps,
                     rebuilder,
@@ -995,7 +998,7 @@ impl Vault {
                 self.index.set_dir(new_dir)?;
                 *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? = maps;
             } else {
-                self.catch_up_and_publish_thin(&schema, &new_dir, &mut maps)?;
+                self.catch_up_and_publish_thin(&decls, &new_dir, &mut maps)?;
             }
         }
         Ok(counts)
@@ -1035,7 +1038,7 @@ impl Vault {
     #[cfg(feature = "find")]
     fn catch_up_and_publish(
         &self,
-        schema: &LoadedSchema,
+        decls: &Decls,
         new_dir: &Path,
         maps: &mut JournalIdMaps,
         rebuilder: SearchEngine,
@@ -1049,7 +1052,7 @@ impl Vault {
         let deadline = Instant::now() + crate::reindex::publish_window();
         loop {
             self.apply_queue(
-                schema,
+                decls,
                 new_dir,
                 maps,
                 &rebuilder,
@@ -1070,7 +1073,7 @@ impl Vault {
                     continue;
                 }
                 self.apply_queue(
-                    schema,
+                    decls,
                     new_dir,
                     maps,
                     &rebuilder,
@@ -1092,15 +1095,15 @@ impl Vault {
     #[cfg(not(feature = "find"))]
     fn catch_up_and_publish_thin(
         &self,
-        schema: &LoadedSchema,
+        decls: &Decls,
         new_dir: &Path,
         maps: &mut JournalIdMaps,
     ) -> Result<(), Error> {
         let deadline = Instant::now() + crate::reindex::publish_window();
         loop {
-            self.apply_queue_thin(schema, new_dir, maps)?;
+            self.apply_queue_thin(decls, new_dir, maps)?;
             if self.try_take_write_lock()? {
-                self.apply_queue_thin(schema, new_dir, maps)?;
+                self.apply_queue_thin(decls, new_dir, maps)?;
                 index::publish_generation(&self.index.root, new_dir)?;
                 self.index.set_dir(new_dir.to_path_buf())?;
                 *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
@@ -1119,7 +1122,7 @@ impl Vault {
     #[cfg(feature = "find")]
     fn apply_queue(
         &self,
-        schema: &LoadedSchema,
+        decls: &Decls,
         new_dir: &Path,
         maps: &mut JournalIdMaps,
         rebuilder: &SearchEngine,
@@ -1142,14 +1145,14 @@ impl Vault {
             let Some((collection, id)) = crate::reindex::take_queue_file(&path)? else {
                 continue;
             };
-            let Some(decl) = schema.get(&collection) else {
+            let Some(decl) = decls.get(&collection) else {
                 continue;
             };
             if decl.encrypted {
                 continue;
             }
             match self.read_queued_record(decl, &id)? {
-                Some((record, journal_rel)) if store::record_indexable(decl, &record) => {
+                Some((record, journal_rel)) => {
                     if decl.kind == Kind::Journal
                         && let Some(rel) = journal_rel.as_deref()
                     {
@@ -1181,7 +1184,7 @@ impl Vault {
     #[cfg(not(feature = "find"))]
     fn apply_queue_thin(
         &self,
-        schema: &LoadedSchema,
+        decls: &Decls,
         new_dir: &Path,
         maps: &mut JournalIdMaps,
     ) -> Result<(), Error> {
@@ -1189,14 +1192,14 @@ impl Vault {
             let Some((collection, id)) = crate::reindex::take_queue_file(&path)? else {
                 continue;
             };
-            let Some(decl) = schema.get(&collection) else {
+            let Some(decl) = decls.get(&collection) else {
                 continue;
             };
             if decl.encrypted {
                 continue;
             }
             match self.read_queued_record(decl, &id)? {
-                Some((record, journal_rel)) if store::record_indexable(decl, &record) => {
+                Some((_, journal_rel)) => {
                     if decl.kind == Kind::Journal
                         && let Some(rel) = journal_rel.as_deref()
                     {
@@ -1326,7 +1329,7 @@ impl Vault {
     pub(crate) fn reindex_without_publish(&self) -> Result<PathBuf, Error> {
         self.require_write_lock("reindex")?;
         self.conclude_write((|| {
-            let schema = schema::load(&self.path)?;
+            let decls = declaration::load(&self.path)?;
             #[cfg(feature = "search")]
             let previous = self.generation_dir()?;
             let new_dir = index::start_generation(&self.index.root)?;
@@ -1337,9 +1340,9 @@ impl Vault {
                 // except an inherited `vector/` dump already in place.
                 crate::search::copy_vector_dump(&previous, &new_dir, self.embedder.as_deref())?;
             }
-            index::rebuild(&self.path, &schema, &new_dir)?;
+            index::rebuild(&self.path, &decls, &new_dir)?;
             let rebuilder = SearchEngine::open(&new_dir, true, self.projector.clone())?;
-            rebuilder.rebuild_online(&self.path, &schema, self.embedder.as_deref(), None)?;
+            rebuilder.rebuild_online(&self.path, &decls, self.embedder.as_deref(), None)?;
             drop(rebuilder);
             Ok(new_dir)
         })())
@@ -1418,7 +1421,7 @@ impl Collection {
                 exclude_lexical_index: false,
                 exclude_vector_index: false,
             },
-            schema: Arc::new(LoadedSchema::default()),
+            decls: Arc::new(Decls::default()),
             written: Arc::new(Mutex::new(BTreeSet::new())),
             in_txn: Arc::new(Mutex::new(false)),
             writer: Arc::from("stub"),
@@ -1440,7 +1443,7 @@ impl Collection {
 
     /// This collection's declaration as `api.v1.Declaration`. Not a Vault listing (`info`).
     pub fn decl(&self) -> Result<Declaration, Error> {
-        schema::to_proto_declaration(&self.decl)
+        declaration::to_proto_declaration(&self.decl)
     }
 
     /// Write mode: `document`, `journal`, or `singleton`.
@@ -1521,10 +1524,7 @@ impl Collection {
 
     fn restore_indexed_from_disk(&self, id: &str) -> Result<(), Error> {
         match self.lookup_decl(&self.decl, id) {
-            Ok(record) if store::record_indexable(&self.decl, &record) => {
-                self.upsert_lexical(&record)
-            }
-            Ok(_) => self.forget_lexical(id),
+            Ok(record) => self.upsert_lexical(&record),
             Err(err) if crate::reindex::is_absent(&err) => self.forget_lexical(id),
             Err(err) => Err(err),
         }
@@ -1585,7 +1585,7 @@ impl Collection {
         if paths.is_empty() {
             return Ok(());
         }
-        let snapshot = crate::reindex::snapshot_restored(&self.vault, &self.schema, &paths)?;
+        let snapshot = crate::reindex::snapshot_restored(&self.vault, &self.decls, &paths)?;
         isolated::discard_recorded(&self.vault, &paths)?;
         let dir = self.generation_dir()?;
         repair_index_after_discard(
@@ -1596,7 +1596,7 @@ impl Collection {
             &self.search,
             self.embedder.as_deref(),
         )?;
-        crate::reindex::enqueue_restored(&self.vault, &self.schema, &paths, &snapshot)
+        crate::reindex::enqueue_restored(&self.vault, &self.decls, &paths, &snapshot)
     }
 
     fn prepare_isolated_write(&self) -> Result<(), Error> {
@@ -1795,10 +1795,11 @@ impl Collection {
 
     /// Walk this `journal` in append order without opening the Index.
     ///
-    /// Closed segments in Schema sequence, each file from first line to last,
+    /// Closed segments in declaration sequence, each file from first line to last,
     /// then the open segment. Rotation does not reorder earlier lines. Each
-    /// item is one Record; `raw` is the line bytes including the trailing
-    /// newline. `document` / `singleton` → `unsupported`. A missing Index
+    /// item is one Record; `raw` is the envelope payload after `: `, not the
+    /// line bytes and not including the trailing newline. `document` /
+    /// `singleton` → `unsupported`. A missing Index
     /// directory does not stop the walk.
     pub fn lines(&self) -> Result<crate::JournalLines, Error> {
         journal::journal_lines(&self.vault, &self.decl)
@@ -1825,7 +1826,7 @@ impl Collection {
     ///
     /// Derived from the file names; no Record file is opened. `journal` →
     /// `unsupported`. A `singleton` before the first write is empty; after,
-    /// one id equal to the Schema `singleton_id`. A missing collection
+    /// one id equal to the declared `singleton_id`. A missing collection
     /// directory is an empty list. Encrypted collections do not need the
     /// handle secret.
     pub fn ids(&self) -> Result<Vec<String>, Error> {
@@ -1953,7 +1954,9 @@ impl Collection {
     /// collection uses append order instead.
     ///
     /// Filter field names are [`Projector`] find-columns plus identity `id`.
-    /// Without a projector, only `all` and Filter on `id` are valid.
+    /// Unset proto `collection` on a projector leaf means this collection.
+    /// A qualifier for another collection is `invalid`. Without a projector,
+    /// only `all` and Filter on `id` are valid.
     #[cfg(feature = "find")]
     pub fn find(&self, query: &FindQuery, offset: u32, count: u32) -> Result<FindResult, Error> {
         if self.decl.encrypted {
@@ -1971,10 +1974,11 @@ impl Collection {
         let name = self.decl.name.as_str();
         QueryCtx {
             engine: &self.search,
-            schema: &self.schema,
+            decls: &self.decls,
             vault: &self.vault,
             journal_ids: &self.journal_ids,
             projector: self.projector.as_deref(),
+            scope: crate::query::FilterScope::Collection(name),
         }
         .find(&[name], query, offset, count)
     }
@@ -2016,10 +2020,11 @@ impl Collection {
         let name = self.decl.name.as_str();
         QueryCtx {
             engine: &self.search,
-            schema: &self.schema,
+            decls: &self.decls,
             vault: &self.vault,
             journal_ids: &self.journal_ids,
             projector: self.projector.as_deref(),
+            scope: crate::query::FilterScope::Collection(name),
         }
         .search(self.embedder.as_deref(), &[name], query, reranker)
     }
@@ -2153,11 +2158,11 @@ fn record_from_raw(id: &str, collection: &str, raw: &[u8]) -> Record {
 
 #[cfg(feature = "find")]
 fn resolve_collections(
-    schema: &LoadedSchema,
+    decls: &Decls,
     names: &[&str],
-) -> Result<Vec<schema::CollectionDecl>, Error> {
+) -> Result<Vec<declaration::CollectionDecl>, Error> {
     if names.is_empty() {
-        return Ok(schema
+        return Ok(decls
             .collections()
             .filter(|decl| !decl.isolated && decl.lexical_indexed())
             .cloned()
@@ -2169,9 +2174,9 @@ fn resolve_collections(
         if !seen.insert(*name) {
             continue;
         }
-        let Some(decl) = schema.get(name) else {
+        let Some(decl) = decls.get(name) else {
             bail!(Error::not_found(format!(
-                "collection {name} is not in Schema"
+                "collection {name} is not in the declaration"
             )));
         };
         if decl.encrypted {
@@ -2191,11 +2196,11 @@ fn resolve_collections(
 
 #[cfg(feature = "search")]
 fn resolve_search_collections(
-    schema: &LoadedSchema,
+    decls: &Decls,
     names: &[&str],
-) -> Result<Vec<schema::CollectionDecl>, Error> {
+) -> Result<Vec<declaration::CollectionDecl>, Error> {
     if names.is_empty() {
-        return Ok(schema
+        return Ok(decls
             .collections()
             .filter(|decl| !decl.isolated && decl.any_indexed())
             .cloned()
@@ -2207,9 +2212,9 @@ fn resolve_search_collections(
         if !seen.insert(*name) {
             continue;
         }
-        let Some(decl) = schema.get(name) else {
+        let Some(decl) = decls.get(name) else {
             bail!(Error::not_found(format!(
-                "collection {name} is not in Schema"
+                "collection {name} is not in the declaration"
             )));
         };
         if decl.encrypted {
@@ -2228,35 +2233,36 @@ fn resolve_search_collections(
 }
 
 #[cfg(feature = "find")]
-fn apply_filter_schema(
-    decls: Vec<schema::CollectionDecl>,
+fn apply_filter_decls(
+    decls: Vec<declaration::CollectionDecl>,
     filter: &Filter,
     explicit: bool,
     projector: Option<&dyn crate::Projector>,
-) -> Result<Vec<schema::CollectionDecl>, Error> {
+    scope: query::FilterScope<'_>,
+) -> Result<Vec<declaration::CollectionDecl>, Error> {
     if explicit {
         for decl in &decls {
-            query::validate(decl, filter, projector)?;
+            query::validate(decl, filter, projector, scope)?;
         }
         return Ok(decls);
     }
     Ok(decls
         .into_iter()
-        .filter(|decl| query::validate(decl, filter, projector).is_ok())
+        .filter(|decl| query::validate(decl, filter, projector, scope).is_ok())
         .collect())
 }
 
 #[cfg(feature = "find")]
 fn read_record(
     vault: &Path,
-    schema: &LoadedSchema,
+    decls: &Decls,
     journal_ids: &Mutex<JournalIdMaps>,
     collection: &str,
     id: &str,
 ) -> Result<Record, Error> {
-    let Some(decl) = schema.get(collection) else {
+    let Some(decl) = decls.get(collection) else {
         bail!(Error::not_found(format!(
-            "collection {collection} is not in Schema"
+            "collection {collection} is not in the declaration"
         )));
     };
     match decl.kind {
@@ -2292,7 +2298,7 @@ fn more_like_this_source_text(
             decl.name
         )));
     }
-    let record = match read_record(ctx.vault, ctx.schema, ctx.journal_ids, &decl.name, id) {
+    let record = match read_record(ctx.vault, ctx.decls, ctx.journal_ids, &decl.name, id) {
         Ok(record) => record,
         Err(err)
             if matches!(
@@ -2310,7 +2316,7 @@ fn more_like_this_source_text(
     let Some(projector) = ctx.projector else {
         return Ok(String::new());
     };
-    let schema = match projector.schema(&decl.name) {
+    let index_schema = match projector.schema(&decl.name) {
         Ok(schema) => {
             schema.require_valid()?;
             schema
@@ -2322,16 +2328,17 @@ fn more_like_this_source_text(
         Ok(doc) if !doc.values.is_empty() => doc,
         _ => return Ok(String::new()),
     };
-    Ok(crate::projector::fts_blob(&schema, &doc))
+    Ok(crate::projector::fts_blob(&index_schema, &doc))
 }
 
 #[cfg(feature = "find")]
 struct QueryCtx<'a> {
     engine: &'a SearchEngine,
-    schema: &'a LoadedSchema,
+    decls: &'a Decls,
     vault: &'a Path,
     journal_ids: &'a Mutex<JournalIdMaps>,
     projector: Option<&'a dyn crate::Projector>,
+    scope: query::FilterScope<'a>,
 }
 
 #[cfg(feature = "find")]
@@ -2348,13 +2355,20 @@ impl QueryCtx<'_> {
         }
         query.require_valid()?;
         let filter = &*query.filter;
+        query::check_scope(
+            filter,
+            self.scope,
+            |name| self.decls.get(name),
+            self.projector,
+        )?;
         let include_raw = query.include_raw == Some(true);
         let explicit = !names.is_empty();
-        let decls = apply_filter_schema(
-            resolve_collections(self.schema, names)?,
+        let decls = apply_filter_decls(
+            resolve_collections(self.decls, names)?,
             filter,
             explicit,
             self.projector,
+            self.scope,
         )?;
         if decls.is_empty() {
             return Ok(FindResult {
@@ -2375,7 +2389,7 @@ impl QueryCtx<'_> {
         )?;
         let mut records = Vec::new();
         for (collection, id) in page.ids {
-            match read_record(self.vault, self.schema, self.journal_ids, &collection, &id) {
+            match read_record(self.vault, self.decls, self.journal_ids, &collection, &id) {
                 Ok(record) => records.push(if include_raw {
                     record
                 } else {
@@ -2403,9 +2417,17 @@ impl QueryCtx<'_> {
         query.require_valid()?;
         let explicit = !names.is_empty();
         let filter = &*query.filter;
-        let mut decls = resolve_search_collections(self.schema, names)?;
         if filter.kind.is_some() {
-            decls = apply_filter_schema(decls, filter, explicit, self.projector)?;
+            query::check_scope(
+                filter,
+                self.scope,
+                |name| self.decls.get(name),
+                self.projector,
+            )?;
+        }
+        let mut decls = resolve_search_collections(self.decls, names)?;
+        if filter.kind.is_some() {
+            decls = apply_filter_decls(decls, filter, explicit, self.projector, self.scope)?;
         }
         if decls.is_empty() {
             return Ok(SearchHits::default());
@@ -2474,7 +2496,7 @@ impl QueryCtx<'_> {
         for hit in &hits.hits {
             records.push(read_record(
                 self.vault,
-                self.schema,
+                self.decls,
                 self.journal_ids,
                 hit_collection(hit),
                 hit.id.as_deref().unwrap_or(""),
@@ -2512,7 +2534,7 @@ impl QueryCtx<'_> {
             let collection = hit_collection(hit);
             match read_record(
                 self.vault,
-                self.schema,
+                self.decls,
                 self.journal_ids,
                 collection,
                 hit.id.as_deref().unwrap_or(""),
@@ -2729,7 +2751,7 @@ fn repair_index_after_discard(
     #[cfg(feature = "find")] search: &SearchEngine,
     embedder: Option<&dyn Embedder>,
 ) -> Result<(), Error> {
-    let loaded = schema::load(vault)?;
+    let loaded = declaration::load(vault)?;
     #[cfg(feature = "find")]
     {
         search.close_for_rebuild();
@@ -3797,11 +3819,11 @@ mod tests {
         let scratch = Scratch::new();
         let writer = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
         writer.begin().unwrap();
-        let schema = Declaration {
+        let declaration = Declaration {
             kind: crate::Unit::default().into(),
             ..Declaration::default()
         };
-        writer.create_collection("c", schema, None).unwrap();
+        writer.create_collection("c", declaration, None).unwrap();
         writer.commit("schema").unwrap();
         writer
             .collection("c")

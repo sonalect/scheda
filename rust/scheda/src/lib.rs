@@ -89,7 +89,7 @@ mod projector;
 #[cfg(feature = "find")]
 mod query;
 mod reindex;
-mod schema;
+mod declaration;
 #[cfg(feature = "find")]
 mod search;
 mod store;
@@ -117,7 +117,7 @@ pub use scheda_generated::api::v1::{Filter, FindQuery, FindResult, filter};
 #[cfg(feature = "search")]
 #[doc(inline)]
 pub use scheda_generated::api::v1::{SearchHits, SearchQuery, search_hits};
-pub use schema::Kind;
+pub use declaration::Kind;
 pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};
 

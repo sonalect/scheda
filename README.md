@@ -55,7 +55,7 @@ The design is a numbered package in `docs/`, in English.
 | [02-glossary.md](docs/02-glossary.md)                 | Normative vocabulary: Vault, Collection, Record, collection declaration, Projector, Index, kinds, API names           |
 | [03-model.md](docs/03-model.md)                       | Collection kinds, Record `id` and paths, opaque bytes, journal envelope                                               |
 | [04-files-and-git.md](docs/04-files-and-git.md)       | Files as truth, write lock, commit, `auto_sync`, `sync`, clone, no LFS                                                |
-| [05-schema.md](docs/05-schema.md)                     | Collection declaration: write mode, perimeter, generation `version`, journal caps                                     |
+| [05-collection-declaration.md](docs/05-collection-declaration.md) | Collection declaration: write mode, perimeter, generation `version`, journal caps                                     |
 | [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, `get`                                                                                               |
 | [13-find-and-search.md](docs/13-find-and-search.md)   | Target `find` / `search`: Tantivy Query, hybrid BM25 + USearch, Projector columns, optional reranker                   |
 | [14-cli.md](docs/14-cli.md)                           | Target `scheda` CLI argv (`07`; `--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url` on `search`) |

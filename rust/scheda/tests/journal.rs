@@ -46,7 +46,7 @@ impl Scratch {
         Vault::open(self.vault(), self.options(), None).unwrap()
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -91,13 +91,13 @@ fn rec_fields(fields: serde_json::Value) -> Vec<u8> {
 
 fn open_log(scratch: &Scratch) -> Vault {
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     scratch.reopen()
 }
 
 fn open_lines(scratch: &Scratch) -> Vault {
     drop(scratch.init());
-    scratch.write_schema("lines.yaml", LINES);
+    scratch.write_declaration("lines.yaml", LINES);
     scratch.reopen()
 }
 
@@ -192,7 +192,7 @@ fn find_one_uses_collection_and_id_not_segment_name() {
     // `id.jsonl`.
     let options = OpenOptions::new().writer("c");
     drop(Vault::open(scratch.vault(), options.clone(), None).unwrap());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     let vault = Vault::open(scratch.vault(), options, None).unwrap();
     let collection = vault.collection("south_log").unwrap();
     collection.add("a", rec("x"), None).unwrap();
@@ -302,7 +302,7 @@ fn fixture_jsonl_is_utf8_text() {
     assert!(ALPHA_JSONL.contains(r#""msg":"hello""#));
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     fs::create_dir_all(scratch.log_dir()).unwrap();
     fs::write(scratch.log_dir().join("00000001.jsonl"), ALPHA_JSONL).unwrap();
     let vault = scratch.reopen();
@@ -599,7 +599,7 @@ fn lines_survives_deleted_index() {
 fn lines_on_document_is_unsupported() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "notes.yaml",
         include_str!("../testdata/document/notes.yaml"),
     );
@@ -790,7 +790,7 @@ fn two_clones_write_disjoint_journal_segments() {
 fn writerless_segment_is_read_and_not_appended() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     fs::create_dir_all(scratch.log_dir()).unwrap();
     fs::write(
         scratch.log_dir().join("00000001.jsonl"),
@@ -825,7 +825,7 @@ fn writerless_segment_is_read_and_not_appended() {
 fn rotation_caps_are_per_writer() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     fs::create_dir_all(scratch.log_dir()).unwrap();
     fs::write(
         scratch.log_dir().join("00000001-bob.jsonl"),

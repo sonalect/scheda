@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::Error;
 use crate::error::{ContextIo, bail};
 use crate::git;
-use crate::schema::{self, CollectionDecl};
+use crate::declaration::{self, CollectionDecl};
 
 /// Vault-relative directory that holds isolated Record files.
 pub(crate) const DIR: &str = ".isolated";
@@ -23,12 +23,12 @@ pub(crate) fn root(vault: &Path) -> PathBuf {
 /// Record directory for a collection (`{vault}/{name}/` or under `.isolated/`).
 pub(crate) fn records_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
     if decl.isolated {
-        schema::join_inside(
+        declaration::join_inside(
             vault,
-            &format!("{DIR}/{}", schema::collection_dir(&decl.name)),
+            &format!("{DIR}/{}", declaration::collection_dir(&decl.name)),
         )
     } else {
-        schema::join_in_collection(vault, &decl.name, "")
+        declaration::join_in_collection(vault, &decl.name, "")
     }
 }
 
@@ -36,9 +36,9 @@ pub(crate) fn records_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf
 #[must_use]
 pub(crate) fn vault_rel(decl: &CollectionDecl, file: &str) -> String {
     if decl.isolated {
-        format!("{DIR}/{}/{file}", schema::collection_dir(&decl.name))
+        format!("{DIR}/{}/{file}", declaration::collection_dir(&decl.name))
     } else {
-        format!("{}/{file}", schema::collection_dir(&decl.name))
+        format!("{}/{file}", declaration::collection_dir(&decl.name))
     }
 }
 

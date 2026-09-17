@@ -8,7 +8,7 @@ edition = "2024";
 
 package api.v1;
 
-import "api/v1/schema.proto";
+import "api/v1/declaration.proto";
 
 message CollectionInfo {
   // Collection directory. Slug checked in the library (same as Record `id`).

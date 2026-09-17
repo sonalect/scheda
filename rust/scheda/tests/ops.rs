@@ -34,7 +34,7 @@ impl Scratch {
         self.root.join("vault")
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -113,7 +113,7 @@ fn rec_note(title: &str) -> Vec<u8> {
 
 fn open_log(scratch: &Scratch) -> Vault {
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
-    scratch.write_schema("log.yaml", LOG);
+    scratch.write_declaration("log.yaml", LOG);
     Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap()
 }
 
@@ -182,8 +182,8 @@ fn missing_map_falls_back_to_scan() {
 fn ops_fixture_find_and_insert_and_reindex() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
-    scratch.write_schema("log.yaml", OPS_LOG);
-    scratch.write_schema("notes.yaml", OPS_NOTES);
+    scratch.write_declaration("log.yaml", OPS_LOG);
+    scratch.write_declaration("notes.yaml", OPS_NOTES);
     let vault = Vault::open_with(
         scratch.vault(),
         OpenOptions::new(),

@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
-use crate::schema::{CollectionDecl, Kind, Schema, SegmentRotate};
+use crate::declaration::{CollectionDecl, Kind, Decls, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
 
@@ -255,7 +255,7 @@ fn resolve_segment(vault: &Path, decl: &CollectionDecl, rel: &str) -> Result<Pat
                 .context("[Journal::find] resolve segment")
         );
     }
-    let path = crate::schema::join_inside(vault, rel).map_err(|_| {
+    let path = crate::declaration::join_inside(vault, rel).map_err(|_| {
         Error::index_corrupt("journal id map path is not a collection segment")
             .context("[Journal::find] resolve segment")
     })?;
@@ -311,8 +311,8 @@ pub(crate) fn for_each_record(
     })
 }
 
-pub(crate) fn check_journals(vault: &Path, schema: &Schema) -> Result<(), Error> {
-    for decl in schema.collections() {
+pub(crate) fn check_journals(vault: &Path, decls: &Decls) -> Result<(), Error> {
+    for decl in decls.collections() {
         if decl.kind != Kind::Journal {
             continue;
         }
@@ -723,21 +723,17 @@ pub(crate) fn reindex_map(
 ) -> Result<(u64, u64, u64, BTreeMap<String, String>), Error> {
     let segments = list_segments(&journal_dir(vault, decl)?)?.len() as u64;
     let mut records = 0u64;
-    let mut invalid = 0u64;
     let mut ids = std::collections::BTreeMap::new();
     for_each_parsed(vault, decl, |path, parsed| {
         records += 1;
         let rel = store::rel_posix(vault, path)?;
         let record = record_from_parsed(decl, parsed);
-        if !store::record_indexable(decl, &record) {
-            invalid += 1;
-        }
         if let Some(id) = record.id {
             ids.insert(id, rel);
         }
         Ok(true)
     })?;
-    Ok((records, invalid, segments, ids))
+    Ok((records, 0, segments, ids))
 }
 
 fn map_from_files(vault: &Path, decl: &CollectionDecl) -> Result<BTreeMap<String, String>, Error> {
@@ -926,14 +922,14 @@ mod tests {
         }
     }
 
-    fn journal_decl(daily: bool) -> crate::schema::CollectionDecl {
-        crate::schema::CollectionDecl {
+    fn journal_decl(daily: bool) -> crate::declaration::CollectionDecl {
+        crate::declaration::CollectionDecl {
             name: String::from("log"),
-            kind: crate::schema::Kind::Journal,
+            kind: crate::declaration::Kind::Journal,
             version: 1,
             segment_max_bytes: None,
             segment_max_lines: None,
-            segment_rotate: daily.then_some(crate::schema::SegmentRotate::Daily),
+            segment_rotate: daily.then_some(crate::declaration::SegmentRotate::Daily),
             singleton_id: None,
             isolated: false,
             encrypted: false,

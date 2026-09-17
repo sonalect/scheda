@@ -125,12 +125,13 @@ pub enum Command {
     },
     /// `api.v1.VaultInfo`: path, Index path, `remote`, `auto_sync`, collections.
     Info,
-    /// Write one collection declaration. `--schema` is Protobuf JSON `Declaration`.
+    /// Write one collection declaration. `--declaration` is Protobuf JSON
+    /// `Declaration`. `--schema` is the same flag.
     #[command(name = "create-collection")]
     CreateCollection {
         name: String,
-        #[arg(long)]
-        schema: Option<String>,
+        #[arg(long, visible_alias = "schema")]
+        declaration: Option<String>,
         /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
         #[arg(long)]
         message: Option<String>,
@@ -189,7 +190,8 @@ pub enum Command {
 #[derive(Subcommand, Debug)]
 pub enum CollectionCommand {
     /// Collection declaration as Protobuf JSON.
-    Schema,
+    #[command(name = "declaration", visible_alias = "schema")]
+    Declaration,
     /// Create a Record. `--file` is UTF-8 bytes, or stdin when omitted.
     Add {
         #[arg(long)]

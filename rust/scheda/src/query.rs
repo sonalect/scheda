@@ -20,7 +20,7 @@ use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
 
 use crate::error::{Code, ContextAs, bail};
 use crate::projector::find_marked_column;
-use crate::schema::CollectionDecl;
+use crate::declaration::CollectionDecl;
 use crate::{ColumnKind, Error, Filter, IndexSchema, Projector};
 
 pub(crate) struct FindFields {
@@ -52,17 +52,37 @@ pub(crate) fn uses_score(filter: &Filter) -> bool {
     }
 }
 
-pub(crate) fn validate(
-    decl: &CollectionDecl,
-    filter: &Filter,
-    projector: Option<&dyn Projector>,
-) -> Result<(), Error> {
-    check_fields(decl, filter, projector)
+/// How Filter projector-column leaves resolve a collection name.
+#[derive(Clone, Copy)]
+pub(crate) enum FilterScope<'a> {
+    /// Vault `find` / `search`: every projector leaf must set `collection`.
+    Vault,
+    /// Collection handle: unset `collection` means this name.
+    Collection(&'a str),
 }
 
-fn check_fields(
-    decl: &CollectionDecl,
+fn leaf_collection(collection: Option<&str>) -> Option<&str> {
+    collection.filter(|name| !name.is_empty())
+}
+
+fn foreign_projector_leaf(decl: &CollectionDecl, field: &str, collection: Option<&str>) -> bool {
+    field != "id" && leaf_collection(collection).is_some_and(|name| name != decl.name)
+}
+
+/// Qualifier rules plus column checks on the leaf's target collection.
+pub(crate) fn check_scope<'a>(
     filter: &Filter,
+    scope: FilterScope<'_>,
+    lookup: impl Fn(&str) -> Option<&'a CollectionDecl>,
+    projector: Option<&dyn Projector>,
+) -> Result<(), Error> {
+    walk_scope(filter, scope, &lookup, projector)
+}
+
+fn walk_scope<'a>(
+    filter: &Filter,
+    scope: FilterScope<'_>,
+    lookup: &impl Fn(&str) -> Option<&'a CollectionDecl>,
     projector: Option<&dyn Projector>,
 ) -> Result<(), Error> {
     let Some(kind) = filter.kind.as_ref() else {
@@ -70,40 +90,272 @@ fn check_fields(
     };
     match kind {
         Kind::All(_) | Kind::Empty(_) => Ok(()),
-        Kind::Term(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
-        Kind::TermSet(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
-        Kind::Phrase(term) => {
-            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
-        }
-        Kind::PhrasePrefix(term) => {
-            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
-        }
-        Kind::Fuzzy(term) => {
-            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
-        }
-        Kind::Regex(term) => {
-            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
-        }
-        Kind::RegexPhrase(term) => {
-            check_token_field(decl, projector, term.field.as_deref().unwrap_or(""))
-        }
-        Kind::Range(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
-        Kind::Exists(term) => check_leaf(decl, projector, term.field.as_deref().unwrap_or("")),
+        Kind::Term(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::TermSet(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::Phrase(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::PhrasePrefix(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::Fuzzy(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::Regex(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::RegexPhrase(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::Range(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+            lookup,
+            projector,
+        ),
+        Kind::Exists(term) => check_scope_leaf(
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+            lookup,
+            projector,
+        ),
         Kind::Boolean(boolean) => {
             for clause in &boolean.clauses {
-                check_fields(decl, &clause.query, projector)?;
+                walk_scope(&clause.query, scope, lookup, projector)?;
             }
             Ok(())
         }
-        Kind::Boost(boost) => check_fields(decl, &boost.query, projector),
-        Kind::ConstScore(inner) => check_fields(decl, &inner.query, projector),
+        Kind::Boost(boost) => walk_scope(&boost.query, scope, lookup, projector),
+        Kind::ConstScore(inner) => walk_scope(&inner.query, scope, lookup, projector),
         Kind::DisjunctionMax(inner) => {
             for nested in &inner.queries {
-                check_fields(decl, nested, projector)?;
+                walk_scope(nested, scope, lookup, projector)?;
             }
             Ok(())
         }
-        Kind::MoreLikeThis(mlt) => check_more_like_this(decl, projector, mlt),
+        Kind::MoreLikeThis(mlt) => match mlt.source.as_ref() {
+            Some(Source::Id(_)) | None => Ok(()),
+            Some(Source::Fields(fields)) => {
+                for field in &fields.fields {
+                    check_scope_leaf(
+                        field.field.as_deref().unwrap_or(""),
+                        field.collection.as_deref(),
+                        true,
+                        scope,
+                        lookup,
+                        projector,
+                    )?;
+                }
+                Ok(())
+            }
+        },
+    }
+}
+
+fn check_scope_leaf<'a>(
+    field: &str,
+    collection: Option<&str>,
+    token: bool,
+    scope: FilterScope<'_>,
+    lookup: &impl Fn(&str) -> Option<&'a CollectionDecl>,
+    projector: Option<&dyn Projector>,
+) -> Result<(), Error> {
+    if field.is_empty() {
+        bail!(Error::invalid("filter field is required"));
+    }
+    if field == "id" {
+        if token {
+            bail!(Error::invalid("this Filter kind cannot use field id"));
+        }
+        return Ok(());
+    }
+    let target = match scope {
+        FilterScope::Vault => {
+            let Some(name) = leaf_collection(collection) else {
+                bail!(Error::invalid(format!(
+                    "Vault find requires collection on field {field}"
+                )));
+            };
+            let Some(decl) = lookup(name) else {
+                bail!(Error::not_found(format!(
+                    "collection {name} is not in the declaration"
+                )));
+            };
+            decl
+        }
+        FilterScope::Collection(handle) => {
+            if let Some(name) = leaf_collection(collection)
+                && name != handle
+            {
+                bail!(Error::invalid(format!(
+                    "filter collection {name} is not {handle}"
+                )));
+            }
+            let Some(decl) = lookup(handle) else {
+                bail!(Error::not_found(format!(
+                    "collection {handle} is not in the declaration"
+                )));
+            };
+            decl
+        }
+    };
+    if token {
+        check_token_field(target, projector, field)
+    } else {
+        check_leaf(target, projector, field)
+    }
+}
+
+pub(crate) fn validate(
+    decl: &CollectionDecl,
+    filter: &Filter,
+    projector: Option<&dyn Projector>,
+    scope: FilterScope<'_>,
+) -> Result<(), Error> {
+    check_fields(decl, filter, projector, scope)
+}
+
+fn check_fields(
+    decl: &CollectionDecl,
+    filter: &Filter,
+    projector: Option<&dyn Projector>,
+    scope: FilterScope<'_>,
+) -> Result<(), Error> {
+    let Some(kind) = filter.kind.as_ref() else {
+        bail!(Error::invalid("filter kind is required"));
+    };
+    match kind {
+        Kind::All(_) | Kind::Empty(_) => Ok(()),
+        Kind::Term(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+        ),
+        Kind::TermSet(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+        ),
+        Kind::Phrase(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+        ),
+        Kind::PhrasePrefix(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+        ),
+        Kind::Fuzzy(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+        ),
+        Kind::Regex(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+        ),
+        Kind::RegexPhrase(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            true,
+            scope,
+        ),
+        Kind::Range(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+        ),
+        Kind::Exists(term) => check_decl_leaf(
+            decl,
+            projector,
+            term.field.as_deref().unwrap_or(""),
+            term.collection.as_deref(),
+            false,
+            scope,
+        ),
+        Kind::Boolean(boolean) => {
+            for clause in &boolean.clauses {
+                check_fields(decl, &clause.query, projector, scope)?;
+            }
+            Ok(())
+        }
+        Kind::Boost(boost) => check_fields(decl, &boost.query, projector, scope),
+        Kind::ConstScore(inner) => check_fields(decl, &inner.query, projector, scope),
+        Kind::DisjunctionMax(inner) => {
+            for nested in &inner.queries {
+                check_fields(decl, nested, projector, scope)?;
+            }
+            Ok(())
+        }
+        Kind::MoreLikeThis(mlt) => check_more_like_this(decl, projector, mlt, scope),
     }
 }
 
@@ -111,15 +363,63 @@ fn check_more_like_this(
     decl: &CollectionDecl,
     projector: Option<&dyn Projector>,
     mlt: &filter::MoreLikeThis,
+    scope: FilterScope<'_>,
 ) -> Result<(), Error> {
     match mlt.source.as_ref() {
         Some(Source::Id(_)) | None => Ok(()),
         Some(Source::Fields(fields)) => {
             for field in &fields.fields {
-                check_token_field(decl, projector, field.field.as_deref().unwrap_or(""))?;
+                check_decl_leaf(
+                    decl,
+                    projector,
+                    field.field.as_deref().unwrap_or(""),
+                    field.collection.as_deref(),
+                    true,
+                    scope,
+                )?;
             }
             Ok(())
         }
+    }
+}
+
+fn check_decl_leaf(
+    decl: &CollectionDecl,
+    projector: Option<&dyn Projector>,
+    field: &str,
+    collection: Option<&str>,
+    token: bool,
+    scope: FilterScope<'_>,
+) -> Result<(), Error> {
+    if field.is_empty() {
+        bail!(Error::invalid("filter field is required"));
+    }
+    if field == "id" {
+        if token {
+            bail!(Error::invalid("this Filter kind cannot use field id"));
+        }
+        return Ok(());
+    }
+    match scope {
+        FilterScope::Vault => {
+            if foreign_projector_leaf(decl, field, collection) {
+                return Ok(());
+            }
+        }
+        FilterScope::Collection(handle) => {
+            if let Some(name) = leaf_collection(collection)
+                && name != handle
+            {
+                bail!(Error::invalid(format!(
+                    "filter collection {name} is not {handle}"
+                )));
+            }
+        }
+    }
+    if token {
+        check_token_field(decl, projector, field)
+    } else {
+        check_leaf(decl, projector, field)
     }
 }
 
@@ -217,15 +517,105 @@ fn compile_kind(
     match kind {
         Kind::All(_) => Ok(Box::new(AllQuery)),
         Kind::Empty(_) => Ok(Box::new(EmptyQuery)),
-        Kind::Term(term) => compile_term(fields, term),
-        Kind::TermSet(term) => compile_term_set(fields, term),
-        Kind::Phrase(phrase) => compile_phrase(fields, index, phrase),
-        Kind::PhrasePrefix(prefix) => compile_phrase_prefix(fields, index, prefix),
-        Kind::Fuzzy(fuzzy) => compile_fuzzy(fields, index, fuzzy),
-        Kind::Regex(regex) => compile_regex(fields, regex),
-        Kind::RegexPhrase(phrase) => compile_regex_phrase(fields, phrase),
-        Kind::Range(range) => compile_range(fields, range),
-        Kind::Exists(exists) => compile_exists(fields, exists),
+        Kind::Term(term) => {
+            if foreign_projector_leaf(
+                decl,
+                term.field.as_deref().unwrap_or(""),
+                term.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_term(fields, term)
+            }
+        }
+        Kind::TermSet(term) => {
+            if foreign_projector_leaf(
+                decl,
+                term.field.as_deref().unwrap_or(""),
+                term.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_term_set(fields, term)
+            }
+        }
+        Kind::Phrase(phrase) => {
+            if foreign_projector_leaf(
+                decl,
+                phrase.field.as_deref().unwrap_or(""),
+                phrase.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_phrase(fields, index, phrase)
+            }
+        }
+        Kind::PhrasePrefix(prefix) => {
+            if foreign_projector_leaf(
+                decl,
+                prefix.field.as_deref().unwrap_or(""),
+                prefix.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_phrase_prefix(fields, index, prefix)
+            }
+        }
+        Kind::Fuzzy(fuzzy) => {
+            if foreign_projector_leaf(
+                decl,
+                fuzzy.field.as_deref().unwrap_or(""),
+                fuzzy.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_fuzzy(fields, index, fuzzy)
+            }
+        }
+        Kind::Regex(regex) => {
+            if foreign_projector_leaf(
+                decl,
+                regex.field.as_deref().unwrap_or(""),
+                regex.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_regex(fields, regex)
+            }
+        }
+        Kind::RegexPhrase(phrase) => {
+            if foreign_projector_leaf(
+                decl,
+                phrase.field.as_deref().unwrap_or(""),
+                phrase.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_regex_phrase(fields, phrase)
+            }
+        }
+        Kind::Range(range) => {
+            if foreign_projector_leaf(
+                decl,
+                range.field.as_deref().unwrap_or(""),
+                range.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_range(fields, range)
+            }
+        }
+        Kind::Exists(exists) => {
+            if foreign_projector_leaf(
+                decl,
+                exists.field.as_deref().unwrap_or(""),
+                exists.collection.as_deref(),
+            ) {
+                Ok(Box::new(EmptyQuery))
+            } else {
+                compile_exists(fields, exists)
+            }
+        }
         Kind::Boolean(boolean) => compile_boolean(decl, fields, index, boolean, mlt_fts),
         Kind::Boost(boost) => {
             let inner = compile_kind(decl, fields, index, &boost.query, mlt_fts)?;
@@ -251,7 +641,7 @@ fn compile_kind(
                 inner.tie_breaker.unwrap_or(0.0),
             )))
         }
-        Kind::MoreLikeThis(mlt) => compile_more_like_this(fields, mlt, mlt_fts),
+        Kind::MoreLikeThis(mlt) => compile_more_like_this(decl, fields, mlt, mlt_fts),
     }
 }
 
@@ -525,6 +915,7 @@ fn compile_boolean(
 }
 
 fn compile_more_like_this(
+    decl: &CollectionDecl,
     fields: &FindFields,
     mlt: &filter::MoreLikeThis,
     mlt_fts: &dyn Fn(&str) -> Result<String, Error>,
@@ -538,12 +929,22 @@ fn compile_more_like_this(
         Some(Source::Fields(source)) => {
             let mut values = Vec::new();
             for field in &source.fields {
+                if foreign_projector_leaf(
+                    decl,
+                    field.field.as_deref().unwrap_or(""),
+                    field.collection.as_deref(),
+                ) {
+                    continue;
+                }
                 if !field.values.is_set() {
                     continue;
                 }
                 for value in &field.values.values {
                     values.push(OwnedValue::Str(proto_term_text(value)?));
                 }
+            }
+            if values.is_empty() {
+                return Ok(Box::new(EmptyQuery));
             }
             compile_more_like_this_fields(builder, fields.text, values)
         }

@@ -16,7 +16,7 @@ use sha2::{Digest, Sha256};
 use crate::Error;
 use crate::error::{Code, ContextAs, ContextIo, io_code};
 use crate::id;
-use crate::schema::{CollectionDecl, Kind, Schema};
+use crate::declaration::{CollectionDecl, Kind, Decls};
 use crate::store;
 
 /// Retry spacing while waiting for `write.lock` at publish.
@@ -198,7 +198,7 @@ pub(crate) struct RestoreSnapshot {
 /// `reindex/active` is absent, so the hot path does not read those files.
 pub(crate) fn snapshot_restored(
     vault: &Path,
-    schema: &Schema,
+    decls: &Decls,
     rels: &[String],
 ) -> Result<RestoreSnapshot, Error> {
     if !active_exists(vault) {
@@ -208,8 +208,8 @@ pub(crate) fn snapshot_restored(
     }
     let mut ids = BTreeSet::new();
     for rel in rels {
-        for (collection, id) in ids_from_restored(vault, schema, rel)? {
-            let Some(decl) = schema.get(&collection) else {
+        for (collection, id) in ids_from_restored(vault, decls, rel)? {
+            let Some(decl) = decls.get(&collection) else {
                 continue;
             };
             if decl.kind == Kind::Journal {
@@ -230,7 +230,7 @@ pub(crate) fn snapshot_restored(
 /// open segment, and only runs on crash leftovers while a rebuild is active.
 pub(crate) fn enqueue_restored(
     vault: &Path,
-    schema: &Schema,
+    decls: &Decls,
     rels: &[String],
     snapshot: &RestoreSnapshot,
 ) -> Result<(), Error> {
@@ -239,11 +239,11 @@ pub(crate) fn enqueue_restored(
     }
     let mut seen = BTreeSet::new();
     for (collection, id) in &snapshot.ids {
-        enqueue_restored_id(vault, schema, collection, id, &mut seen)?;
+        enqueue_restored_id(vault, decls, collection, id, &mut seen)?;
     }
     for rel in rels {
-        for (collection, id) in ids_from_restored(vault, schema, rel)? {
-            enqueue_restored_id(vault, schema, &collection, &id, &mut seen)?;
+        for (collection, id) in ids_from_restored(vault, decls, rel)? {
+            enqueue_restored_id(vault, decls, &collection, &id, &mut seen)?;
         }
     }
     Ok(())
@@ -251,7 +251,7 @@ pub(crate) fn enqueue_restored(
 
 fn enqueue_restored_id(
     vault: &Path,
-    schema: &Schema,
+    decls: &Decls,
     collection: &str,
     id: &str,
     seen: &mut BTreeSet<(String, String)>,
@@ -259,7 +259,7 @@ fn enqueue_restored_id(
     if !seen.insert((collection.to_owned(), id.to_owned())) {
         return Ok(());
     }
-    let Some(decl) = schema.get(collection) else {
+    let Some(decl) = decls.get(collection) else {
         return Ok(());
     };
     enqueue(vault, decl, id)
@@ -370,7 +370,7 @@ fn queue_dir(vault: &Path) -> PathBuf {
 
 fn ids_from_restored(
     vault: &Path,
-    schema: &Schema,
+    decls: &Decls,
     rel: &str,
 ) -> Result<Vec<(String, String)>, Error> {
     let rel = rel.trim_start_matches("./");
@@ -381,7 +381,7 @@ fn ids_from_restored(
     let Some((name, file)) = rest.split_once('/') else {
         return Ok(Vec::new());
     };
-    let Some(decl) = schema.get(name) else {
+    let Some(decl) = decls.get(name) else {
         return Ok(Vec::new());
     };
     match decl.kind {

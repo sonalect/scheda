@@ -76,7 +76,7 @@ mod validate {
             }
 
             include!("api/v1/api.v1.author.validate.rs");
-            include!("api/v1/api.v1.schema.validate.rs");
+            include!("api/v1/api.v1.declaration.validate.rs");
             include!("api/v1/api.v1.collection.validate.rs");
             include!("api/v1/api.v1.encryption.validate.rs");
             include!("api/v1/api.v1.error.validate.rs");

@@ -562,6 +562,44 @@ fn documents_walks_encrypted_collection() {
 }
 
 #[test]
+fn documents_continues_after_decrypt_error() {
+    let scratch = Scratch::new();
+    let vault = open_encrypted(&scratch, passphrase());
+    vault.begin().unwrap();
+    vault
+        .create_collection("sealed_notes", document_schema(true, false), None)
+        .unwrap();
+    let collection = vault.collection("sealed_notes").unwrap();
+    collection
+        .add("alpha", rec(json!({"title": "Keep"})), None)
+        .unwrap();
+    collection
+        .add("bravo", rec(json!({"title": "Two"})), None)
+        .unwrap();
+    collection
+        .add("charlie", rec(json!({"title": "Three"})), None)
+        .unwrap();
+    fs::write(
+        scratch.vault().join("sealed_notes").join("bravo"),
+        "not-age-armor",
+    )
+    .unwrap();
+    let mut ids = Vec::new();
+    let mut errors = 0u32;
+    for item in collection.documents().unwrap() {
+        match item {
+            Ok(record) => ids.push(record.id.unwrap()),
+            Err(err) => {
+                assert_eq!(err.known_code(), Some(Code::Crypto));
+                errors += 1;
+            }
+        }
+    }
+    assert_eq!(errors, 1);
+    assert_eq!(ids, ["alpha", "charlie"]);
+}
+
+#[test]
 fn check_with_and_without_secret() {
     let scratch = Scratch::new();
     let vault = open_encrypted(&scratch, passphrase());

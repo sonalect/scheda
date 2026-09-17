@@ -5,8 +5,8 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use scheda::{Embedder, Error, Record, Reranker, redact_remote_text};
-use serde_json::{Value, json};
+use scheda::{redact_remote_text, Embedder, Error, Record, Reranker};
+use serde_json::{json, Value};
 
 const EMBEDDINGS_LEAF: &str = "embeddings";
 const RERANK_LEAF: &str = "rerank";

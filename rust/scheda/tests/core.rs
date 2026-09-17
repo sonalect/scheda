@@ -37,7 +37,7 @@ impl Scratch {
         vault
     }
 
-    fn write_schema(&self, file: &str, body: &str) {
+    fn write_declaration(&self, file: &str, body: &str) {
         let name = peek_schema_name(body);
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
@@ -56,8 +56,8 @@ impl Drop for Scratch {
     }
 }
 
-const WEST: &str = include_str!("../testdata/schema/west.yaml");
-const EAST: &str = include_str!("../testdata/schema/east.yaml");
+const WEST: &str = include_str!("../testdata/declaration/west.yaml");
+const EAST: &str = include_str!("../testdata/declaration/east.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
@@ -92,7 +92,7 @@ fn read_src_rs() -> String {
         include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
-        include_str!("../src/schema.rs"),
+        include_str!("../src/declaration.rs"),
         include_str!("../src/search.rs"),
         include_str!("../src/store.rs"),
         include_str!("../src/vault.rs"),
@@ -104,7 +104,7 @@ fn read_src_rs() -> String {
 fn deleting_index_does_not_lose_records() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
+    scratch.write_declaration("west.yaml", WEST);
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     vault
         .collection("west_docs")
@@ -136,8 +136,8 @@ fn records_do_not_cross_vaults() {
     let east = Scratch::new();
     drop(west.init());
     drop(east.init());
-    west.write_schema("west.yaml", WEST);
-    east.write_schema("east.yaml", EAST);
+    west.write_declaration("west.yaml", WEST);
+    east.write_declaration("east.yaml", EAST);
     let west_vault = Vault::open(west.vault(), OpenOptions::new(), None).unwrap();
     let east_vault = Vault::open(east.vault(), OpenOptions::new(), None).unwrap();
     west_vault
@@ -212,7 +212,7 @@ fn src_does_not_name_consumer_collections() {
 fn writes_and_commit_do_not_need_the_network() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema("west.yaml", WEST);
+    scratch.write_declaration("west.yaml", WEST);
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
     assert!(!vault.auto_sync());
     vault
@@ -229,7 +229,7 @@ fn writes_and_commit_do_not_need_the_network() {
 fn typed_open_map_round_trips_and_names_the_bad_key() {
     let scratch = Scratch::new();
     drop(scratch.init());
-    scratch.write_schema(
+    scratch.write_declaration(
         "maps.yaml",
         "\
 name: c

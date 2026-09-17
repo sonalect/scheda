@@ -386,15 +386,15 @@ def _cmd_import(args: argparse.Namespace) -> None:
     _ensure_vault(cli, paths.vault)
     collections = _fixture_collections(paths.fixture)
     existing = _collection_names(cli.info())
-    for name, schema_path, _docs in collections:
+    for name, decl_path, _docs in collections:
         if name not in existing:
             _LOG.info("create-collection %s", name)
-            cli.create_collection(name, load_schema_json(schema_path))
+            cli.create_collection(name, load_declaration_json(decl_path))
             existing.add(name)
     added = 0
     skipped = 0
     pass_embedder = models.backend is not Backend.MODEL2VEC
-    for name, _schema_path, docs in collections:
+    for name, _decl_path, docs in collections:
         for doc in docs:
             if cli.get(name, doc.record_id) is not None:
                 _LOG.info("skip %s/%s (exists)", name, doc.record_id)
@@ -1258,16 +1258,15 @@ def _collection_names(info: dict[str, Any]) -> set[str]:
 
 def _load_document(collection: str, path: Path) -> Document:
     text = path.read_text(encoding="utf-8")
-    meta, body = _split_front_matter(text, path)
-    record_id = meta.pop("id", "")
-    if not record_id:
-        msg = f"missing id in front matter: {path}"
-        raise ToolError(msg)
-    if not meta:
-        msg = f"no fields in front matter: {path}"
-        raise ToolError(msg)
+    record_id = path.name
+    fields: dict[str, Any] = {}
+    body = text
+    if text.startswith(f"{_FRONT_MATTER}\n"):
+        meta, body = _split_front_matter(text, path)
+        record_id = str(meta.pop("id", "") or path.name)
+        fields = meta
     return Document(
-        collection=collection, record_id=record_id, fields=meta, body=body, path=path
+        collection=collection, record_id=record_id, fields=fields, body=body, path=path
     )
 
 
@@ -1295,11 +1294,11 @@ def _split_front_matter(text: str, path: Path) -> tuple[dict[str, Any], str]:
     return meta, body
 
 
-def load_schema_json(path: Path) -> str:
+def load_declaration_json(path: Path) -> str:
     """Load fixture `.collection.yaml` as Protobuf JSON `Declaration`."""
     data = load_yaml_subset(path.read_text(encoding="utf-8"), path)
     if not isinstance(data, dict):
-        msg = f"schema must be a mapping: {path}"
+        msg = f"declaration must be a mapping: {path}"
         raise ToolError(msg)
     data.pop("version", None)
     return json.dumps(data)
@@ -1588,15 +1587,15 @@ class SchedaCli:
         return self._run_json("info", embedder=False)
 
     def reindex(self) -> dict[str, Any]:
-        """`reindex`: rebuild lexical / vector / edges from files."""
+        """`reindex`: rebuild lexical / vector / journal maps from files."""
         return self._run_json("reindex")
 
     def create_collection(self, name: str, schema_json: str) -> None:
-        """`create-collection NAME --schema JSON`."""
+        """`create-collection NAME --declaration JSON`."""
         self._run(
             "create-collection",
             name,
-            "--schema",
+            "--declaration",
             schema_json,
             expect_stdout=True,
             embedder=False,

@@ -5,7 +5,10 @@
 // `Filter` is a Tantivy 0.26 `Query` tree. The library maps each `kind` to
 // `tantivy::query::*`, runs it on the Index, then opens Record files for
 // the matching `(collection, id)`s. Collection names are a method argument
-// on `Vault.find`, not a field here. No Record path. Unset `kind` is not a
+// on `Vault.find`. Projector-column leaves also carry optional proto
+// `collection` (required on Vault `find` / `search`; on a Collection
+// handle, unset means this collection). Identity `id` is not qualified.
+// No Record path. Unset `kind` is not a
 // query (`invalid`). `all` matches every indexed Record in the selected
 // collections. `QueryParser` is not a `Query`; it is not here.
 //
@@ -37,9 +40,7 @@ message Filter {
 
   // `TermQuery`. Documents that contain this term.
   message Term {
-    // Schema field name, Record identity `id`, or Markdown `body`. Not a
-    // path. `exclude_find` → `invalid`. `id` is always allowed. `body` is
-    // allowed on `document` unless `no_body` or `exclude_fts`.
+    // Projector column name or Record identity `id`. Not a path.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -47,24 +48,29 @@ message Filter {
     // Term value. Type must match the Index (library). JSON `null` is a
     // stored null, not “missing”.
     google.protobuf.Value value = 2 [(buf.validate.field) = {required: true}];
+    // Collection that owns this Projector column. Required on Vault
+    // `find` / `search`. On a Collection handle, unset means this
+    // collection. Ignored when `field` is `id`.
+    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `TermSetQuery`. Documents that contain any of these terms (OR on one
   // field).
   message TermSet {
-    // Schema field name, Record identity `id`, or Markdown `body`. Not a
-    // path.
+    // Projector column name or Record identity `id`. Not a path.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
     }];
     // Terms; at least one. Same type rule as `Term.value`.
     google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `PhraseQuery`. Ordered sequence of tokens. Field must have positions.
   message Phrase {
-    // Schema field name or Markdown `body`. Not Record `id`.
+    // Projector column name. Not Record `id`.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -75,12 +81,14 @@ message Filter {
     }];
     // Extra positions allowed between tokens. Unset or `0` → adjacent.
     uint32 slop = 3;
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 4 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `PhrasePrefixQuery`. Phrase whose last token is a prefix (`"part t"`
   // matches “part time”). Field must have positions.
   message PhrasePrefix {
-    // Schema field name or Markdown `body`. Not Record `id`.
+    // Projector column name. Not Record `id`.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -97,11 +105,13 @@ message Filter {
     }];
     // Cap on prefix expansion. Unset → Tantivy default (50).
     uint32 max_expansions = 4;
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 5 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `FuzzyTermQuery`. Term within Levenshtein distance.
   message FuzzyTerm {
-    // Schema field name or Markdown `body`. Not Record `id`.
+    // Projector column name. Not Record `id`.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -119,11 +129,13 @@ message Filter {
     bool prefix = 4;
     // `true` → a transposition costs 1, not 2.
     bool transposition_cost_one = 5;
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 6 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `RegexQuery`. A term that matches this pattern.
   message Regex {
-    // Schema field name or Markdown `body`. Not Record `id`.
+    // Projector column name. Not Record `id`.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -133,12 +145,14 @@ message Filter {
       required: true
       string: {min_len: 1}
     }];
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `RegexPhraseQuery`. Ordered sequence of regexes. Field must have
   // positions.
   message RegexPhrase {
-    // Schema field name or Markdown `body`. Not Record `id`.
+    // Projector column name. Not Record `id`.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -152,6 +166,8 @@ message Filter {
     // Cap on regex expansion across all tokens. Unset → Tantivy default
     // (16384).
     uint32 max_expansions = 4;
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 5 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // One end of a `Range`. Inclusive or exclusive; not both.
@@ -169,8 +185,7 @@ message Filter {
   // `RangeQuery`. At least one term in `[lower, upper]`. Unset bound is
   // unbounded. Score 1.0.
   message Range {
-    // Schema field name, Record identity `id`, or Markdown `body`. Not a
-    // path.
+    // Projector column name or Record identity `id`. Not a path.
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
@@ -179,19 +194,23 @@ message Filter {
     Bound lower = 2;
     // Upper bound. Unset = unbounded above.
     Bound upper = 3;
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 4 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `ExistsQuery`. A non-null indexed value. Not “equals JSON
   // null” — that is `term` with value `null`.
   message Exists {
-    // Schema field name or Markdown `body`. Not Record `id` (`id` always
-    // exists on an indexed Record).
+    // Projector column name or Record identity `id` (`id` always exists
+    // on an indexed Record).
     string field = 1 [(buf.validate.field) = {
       required: true
       string: {min_len: 1}
     }];
     // JSON fields: also match any non-null subpath. Default false.
     bool json_subpaths = 2;
+    // Collection that owns this Projector column. Same rule as `Term.collection`.
+    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
   }
 
   // `tantivy::query::Occur` on a boolean clause. There is no JSON `and` /
@@ -296,13 +315,15 @@ message Filter {
     message Fields {
       // One Index field and the values taken from it.
       message Field {
-        // Schema field name or Markdown `body`. Not Record `id`.
+        // Projector column name. Not Record `id`.
         string field = 1 [(buf.validate.field) = {
           required: true
           string: {min_len: 1}
         }];
         // Values on that field (possibly several).
         google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
+        // Collection that owns this Projector column. Same rule as `Term.collection`.
+        string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
       }
       // At least one field.
       repeated Field fields = 1 [(buf.validate.field) = {

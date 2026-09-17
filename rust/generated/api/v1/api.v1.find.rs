@@ -1490,9 +1490,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct Term {
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path. `exclude_find` → `invalid`. `id` is always allowed. `body` is
-        /// allowed on `document` unless `no_body` or `exclude_fts`.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         #[serde(
@@ -1513,6 +1511,16 @@ pub mod filter {
             ::buffa_types::google::protobuf::Value,
             ::buffa::Inline<::buffa_types::google::protobuf::Value>,
         >,
+        /// Collection that owns this Projector column. Required on Vault
+        /// `find` / `search`. On a Collection handle, unset means this
+        /// collection. Ignored when `field` is `id`.
+        ///
+        /// Field 3: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -1522,6 +1530,7 @@ pub mod filter {
             f.debug_struct("Term")
                 .field("field", &self.field)
                 .field("value", &self.value)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -1541,6 +1550,16 @@ pub mod filter {
             value: impl Into<::buffa::alloc::string::String>,
         ) -> Self {
             self.field = Some(value.into());
+            self
+        }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
             self
         }
     }
@@ -1575,6 +1594,9 @@ pub mod filter {
                     += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                         + inner_size as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -1595,6 +1617,9 @@ pub mod filter {
                     buf,
                 );
                 self.value.write_to(__cache, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -1632,6 +1657,18 @@ pub mod filter {
                         ctx,
                     )?;
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -1642,6 +1679,7 @@ pub mod filter {
         fn clear(&mut self) {
             self.field = ::core::option::Option::None;
             self.value = ::buffa::MessageField::none();
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -1680,8 +1718,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct TermSet {
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         #[serde(
@@ -1700,6 +1737,14 @@ pub mod filter {
             ::buffa_types::google::protobuf::ListValue,
             ::buffa::Inline<::buffa_types::google::protobuf::ListValue>,
         >,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -1709,6 +1754,7 @@ pub mod filter {
             f.debug_struct("TermSet")
                 .field("field", &self.field)
                 .field("values", &self.values)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -1728,6 +1774,16 @@ pub mod filter {
             value: impl Into<::buffa::alloc::string::String>,
         ) -> Self {
             self.field = Some(value.into());
+            self
+        }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
             self
         }
     }
@@ -1762,6 +1818,9 @@ pub mod filter {
                     += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                         + inner_size as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -1782,6 +1841,9 @@ pub mod filter {
                     buf,
                 );
                 self.values.write_to(__cache, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -1819,6 +1881,18 @@ pub mod filter {
                         ctx,
                     )?;
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -1829,6 +1903,7 @@ pub mod filter {
         fn clear(&mut self) {
             self.field = ::core::option::Option::None;
             self.values = ::buffa::MessageField::none();
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -1866,7 +1941,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct Phrase {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[serde(
@@ -1892,6 +1967,14 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub slop: ::core::option::Option<u32>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 4: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -1902,6 +1985,7 @@ pub mod filter {
                 .field("field", &self.field)
                 .field("terms", &self.terms)
                 .field("slop", &self.slop)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -1928,6 +2012,16 @@ pub mod filter {
         ///Sets [`Self::slop`] to `Some(value)`, consuming and returning `self`.
         pub fn with_slop(mut self, value: u32) -> Self {
             self.slop = Some(value);
+            self
+        }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
             self
         }
     }
@@ -1960,6 +2054,9 @@ pub mod filter {
             if let Some(v) = self.slop {
                 size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -1978,6 +2075,9 @@ pub mod filter {
             }
             if let Some(v) = self.slop {
                 ::buffa::types::put_uint32_field(3u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(4u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2024,6 +2124,18 @@ pub mod filter {
                         ::buffa::types::decode_uint32(buf)?,
                     );
                 }
+                4u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -2035,6 +2147,7 @@ pub mod filter {
             self.field = ::core::option::Option::None;
             self.terms.clear();
             self.slop = ::core::option::Option::None;
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -2073,7 +2186,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct PhrasePrefix {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[serde(
@@ -2109,6 +2222,14 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub max_expansions: ::core::option::Option<u32>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 5: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -2120,6 +2241,7 @@ pub mod filter {
                 .field("terms", &self.terms)
                 .field("prefix", &self.prefix)
                 .field("max_expansions", &self.max_expansions)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -2158,6 +2280,16 @@ pub mod filter {
             self.max_expansions = Some(value);
             self
         }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
+            self
+        }
     }
     ::buffa::impl_default_instance!(PhrasePrefix);
     impl ::buffa::MessageName for PhrasePrefix {
@@ -2191,6 +2323,9 @@ pub mod filter {
             if let Some(v) = self.max_expansions {
                 size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2212,6 +2347,9 @@ pub mod filter {
             }
             if let Some(v) = self.max_expansions {
                 ::buffa::types::put_uint32_field(4u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(5u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2270,6 +2408,18 @@ pub mod filter {
                         ::buffa::types::decode_uint32(buf)?,
                     );
                 }
+                5u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -2282,6 +2432,7 @@ pub mod filter {
             self.terms.clear();
             self.prefix = ::core::option::Option::None;
             self.max_expansions = ::core::option::Option::None;
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -2319,7 +2470,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct FuzzyTerm {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[serde(
@@ -2361,6 +2512,14 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub transposition_cost_one: ::core::option::Option<bool>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 6: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -2373,6 +2532,7 @@ pub mod filter {
                 .field("distance", &self.distance)
                 .field("prefix", &self.prefix)
                 .field("transposition_cost_one", &self.transposition_cost_one)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -2425,6 +2585,16 @@ pub mod filter {
             self.transposition_cost_one = Some(value);
             self
         }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
+            self
+        }
     }
     ::buffa::impl_default_instance!(FuzzyTerm);
     impl ::buffa::MessageName for FuzzyTerm {
@@ -2461,6 +2631,9 @@ pub mod filter {
             if self.transposition_cost_one.is_some() {
                 size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2485,6 +2658,9 @@ pub mod filter {
             }
             if let Some(v) = self.transposition_cost_one {
                 ::buffa::types::put_bool_field(5u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(6u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2550,6 +2726,18 @@ pub mod filter {
                         ::buffa::types::decode_bool(buf)?,
                     );
                 }
+                6u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -2563,6 +2751,7 @@ pub mod filter {
             self.distance = ::core::option::Option::None;
             self.prefix = ::core::option::Option::None;
             self.transposition_cost_one = ::core::option::Option::None;
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -2600,7 +2789,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct Regex {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[serde(
@@ -2616,6 +2805,14 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub pattern: ::core::option::Option<::buffa::alloc::string::String>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -2625,6 +2822,7 @@ pub mod filter {
             f.debug_struct("Regex")
                 .field("field", &self.field)
                 .field("pattern", &self.pattern)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -2656,6 +2854,16 @@ pub mod filter {
             self.pattern = Some(value.into());
             self
         }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
+            self
+        }
     }
     ::buffa::impl_default_instance!(Regex);
     impl ::buffa::MessageName for Regex {
@@ -2683,6 +2891,9 @@ pub mod filter {
             if let Some(ref v) = self.pattern {
                 size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2698,6 +2909,9 @@ pub mod filter {
             }
             if let Some(ref v) = self.pattern {
                 ::buffa::types::put_string_field(2u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2736,6 +2950,18 @@ pub mod filter {
                         buf,
                     )?;
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -2746,6 +2972,7 @@ pub mod filter {
         fn clear(&mut self) {
             self.field = ::core::option::Option::None;
             self.pattern = ::core::option::Option::None;
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -2784,7 +3011,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct RegexPhrase {
-        /// Schema field name or Markdown `body`. Not Record `id`.
+        /// Projector column name. Not Record `id`.
         ///
         /// Field 1: `field`
         #[serde(
@@ -2821,6 +3048,14 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub max_expansions: ::core::option::Option<u32>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 5: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -2832,6 +3067,7 @@ pub mod filter {
                 .field("patterns", &self.patterns)
                 .field("slop", &self.slop)
                 .field("max_expansions", &self.max_expansions)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -2867,6 +3103,16 @@ pub mod filter {
             self.max_expansions = Some(value);
             self
         }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
+            self
+        }
     }
     ::buffa::impl_default_instance!(RegexPhrase);
     impl ::buffa::MessageName for RegexPhrase {
@@ -2900,6 +3146,9 @@ pub mod filter {
             if let Some(v) = self.max_expansions {
                 size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -2921,6 +3170,9 @@ pub mod filter {
             }
             if let Some(v) = self.max_expansions {
                 ::buffa::types::put_uint32_field(4u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(5u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -2976,6 +3228,18 @@ pub mod filter {
                         ::buffa::types::decode_uint32(buf)?,
                     );
                 }
+                5u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -2988,6 +3252,7 @@ pub mod filter {
             self.patterns.clear();
             self.slop = ::core::option::Option::None;
             self.max_expansions = ::core::option::Option::None;
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -3311,8 +3576,7 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct Range {
-        /// Schema field name, Record identity `id`, or Markdown `body`. Not a
-        /// path.
+        /// Projector column name or Record identity `id`. Not a path.
         ///
         /// Field 1: `field`
         #[serde(
@@ -3342,6 +3606,14 @@ pub mod filter {
             super::filter::Bound,
             ::buffa::Inline<super::filter::Bound>,
         >,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 4: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -3352,6 +3624,7 @@ pub mod filter {
                 .field("field", &self.field)
                 .field("lower", &self.lower)
                 .field("upper", &self.upper)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -3371,6 +3644,16 @@ pub mod filter {
             value: impl Into<::buffa::alloc::string::String>,
         ) -> Self {
             self.field = Some(value.into());
+            self
+        }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
             self
         }
     }
@@ -3413,6 +3696,9 @@ pub mod filter {
                     += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                         + inner_size as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -3441,6 +3727,9 @@ pub mod filter {
                     buf,
                 );
                 self.upper.write_to(__cache, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(4u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -3489,6 +3778,18 @@ pub mod filter {
                         ctx,
                     )?;
                 }
+                4u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -3500,6 +3801,7 @@ pub mod filter {
             self.field = ::core::option::Option::None;
             self.lower = ::buffa::MessageField::none();
             self.upper = ::buffa::MessageField::none();
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -3538,8 +3840,8 @@ pub mod filter {
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
     pub struct Exists {
-        /// Schema field name or Markdown `body`. Not Record `id` (`id` always
-        /// exists on an indexed Record).
+        /// Projector column name or Record identity `id` (`id` always exists
+        /// on an indexed Record).
         ///
         /// Field 1: `field`
         #[serde(
@@ -3556,6 +3858,14 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub json_subpaths: ::core::option::Option<bool>,
+        /// Collection that owns this Projector column. Same rule as `Term.collection`.
+        ///
+        /// Field 3: `collection`
+        #[serde(
+            rename = "collection",
+            skip_serializing_if = "::core::option::Option::is_none"
+        )]
+        pub collection: ::core::option::Option<::buffa::alloc::string::String>,
         #[serde(skip)]
         #[doc(hidden)]
         pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -3565,6 +3875,7 @@ pub mod filter {
             f.debug_struct("Exists")
                 .field("field", &self.field)
                 .field("json_subpaths", &self.json_subpaths)
+                .field("collection", &self.collection)
                 .finish()
         }
     }
@@ -3591,6 +3902,16 @@ pub mod filter {
         ///Sets [`Self::json_subpaths`] to `Some(value)`, consuming and returning `self`.
         pub fn with_json_subpaths(mut self, value: bool) -> Self {
             self.json_subpaths = Some(value);
+            self
+        }
+        #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+        #[inline]
+        ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+        pub fn with_collection(
+            mut self,
+            value: impl Into<::buffa::alloc::string::String>,
+        ) -> Self {
+            self.collection = Some(value.into());
             self
         }
     }
@@ -3620,6 +3941,9 @@ pub mod filter {
             if self.json_subpaths.is_some() {
                 size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
             }
+            if let Some(ref v) = self.collection {
+                size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+            }
             size += self.__buffa_unknown_fields.encoded_len() as u64;
             ::buffa::saturate_size(size)
         }
@@ -3635,6 +3959,9 @@ pub mod filter {
             }
             if let Some(v) = self.json_subpaths {
                 ::buffa::types::put_bool_field(2u32, v, buf);
+            }
+            if let Some(ref v) = self.collection {
+                ::buffa::types::put_string_field(3u32, v, buf);
             }
             self.__buffa_unknown_fields.write_to(buf);
         }
@@ -3670,6 +3997,18 @@ pub mod filter {
                         ::buffa::types::decode_bool(buf)?,
                     );
                 }
+                3u32 => {
+                    ::buffa::encoding::check_wire_type(
+                        tag,
+                        ::buffa::encoding::WireType::LengthDelimited,
+                    )?;
+                    ::buffa::types::merge_string(
+                        self
+                            .collection
+                            .get_or_insert_with(::buffa::alloc::string::String::new),
+                        buf,
+                    )?;
+                }
                 _ => {
                     self.__buffa_unknown_fields
                         .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -3680,6 +4019,7 @@ pub mod filter {
         fn clear(&mut self) {
             self.field = ::core::option::Option::None;
             self.json_subpaths = ::core::option::Option::None;
+            self.collection = ::core::option::Option::None;
             self.__buffa_unknown_fields.clear();
         }
     }
@@ -5497,7 +5837,7 @@ pub mod filter {
             #[derive(::serde::Serialize, ::serde::Deserialize)]
             #[serde(default)]
             pub struct Field {
-                /// Schema field name or Markdown `body`. Not Record `id`.
+                /// Projector column name. Not Record `id`.
                 ///
                 /// Field 1: `field`
                 #[serde(
@@ -5516,6 +5856,14 @@ pub mod filter {
                     ::buffa_types::google::protobuf::ListValue,
                     ::buffa::Inline<::buffa_types::google::protobuf::ListValue>,
                 >,
+                /// Collection that owns this Projector column. Same rule as `Term.collection`.
+                ///
+                /// Field 3: `collection`
+                #[serde(
+                    rename = "collection",
+                    skip_serializing_if = "::core::option::Option::is_none"
+                )]
+                pub collection: ::core::option::Option<::buffa::alloc::string::String>,
                 #[serde(skip)]
                 #[doc(hidden)]
                 pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -5528,6 +5876,7 @@ pub mod filter {
                     f.debug_struct("Field")
                         .field("field", &self.field)
                         .field("values", &self.values)
+                        .field("collection", &self.collection)
                         .finish()
                 }
             }
@@ -5547,6 +5896,16 @@ pub mod filter {
                     value: impl Into<::buffa::alloc::string::String>,
                 ) -> Self {
                     self.field = Some(value.into());
+                    self
+                }
+                #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+                #[inline]
+                ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
+                pub fn with_collection(
+                    mut self,
+                    value: impl Into<::buffa::alloc::string::String>,
+                ) -> Self {
+                    self.collection = Some(value.into());
                     self
                 }
             }
@@ -5582,6 +5941,9 @@ pub mod filter {
                                 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                                 + inner_size as u64;
                     }
+                    if let Some(ref v) = self.collection {
+                        size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+                    }
                     size += self.__buffa_unknown_fields.encoded_len() as u64;
                     ::buffa::saturate_size(size)
                 }
@@ -5602,6 +5964,9 @@ pub mod filter {
                             buf,
                         );
                         self.values.write_to(__cache, buf);
+                    }
+                    if let Some(ref v) = self.collection {
+                        ::buffa::types::put_string_field(3u32, v, buf);
                     }
                     self.__buffa_unknown_fields.write_to(buf);
                 }
@@ -5639,6 +6004,18 @@ pub mod filter {
                                 ctx,
                             )?;
                         }
+                        3u32 => {
+                            ::buffa::encoding::check_wire_type(
+                                tag,
+                                ::buffa::encoding::WireType::LengthDelimited,
+                            )?;
+                            ::buffa::types::merge_string(
+                                self
+                                    .collection
+                                    .get_or_insert_with(::buffa::alloc::string::String::new),
+                                buf,
+                            )?;
+                        }
                         _ => {
                             self.__buffa_unknown_fields
                                 .push(
@@ -5651,6 +6028,7 @@ pub mod filter {
                 fn clear(&mut self) {
                     self.field = ::core::option::Option::None;
                     self.values = ::buffa::MessageField::none();
+                    self.collection = ::core::option::Option::None;
                     self.__buffa_unknown_fields.clear();
                 }
             }
