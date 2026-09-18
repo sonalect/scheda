@@ -69,29 +69,9 @@ cargo.spec(
     repositories = ["cargo"],
     version = "=0.12.1",
 )
-
-# Binary plugin for buf generate. crates.io 0.9.2 is bin-only; the fork
-# tag adds an empty [lib] so crate_universe generate_binaries can emit it.
-# Spec on this hub (not a dummy crate) so there is no third_party pin pkg.
-cargo.spec(
-    git = "https://github.com/amsokol/buffa",
-    package = "protoc-gen-buffa-packaging",
-    repositories = ["cargo"],
-    tag = "v0.9.2-bazel-packaging",
-)
-
-# Plugin already has a [lib]; fork tag so generate_binaries can emit it
-# without a dummy crate. protovalidate-buffa-protos is generated (no PROTOC).
-cargo.spec(
-    git = "https://github.com/amsokol/protovalidate-buffa",
-    package = "protoc-gen-protovalidate-buffa",
-    repositories = ["cargo"],
-    tag = "protoc-gen-protovalidate-buffa-v0.10.0",
-)
 cargo.from_cargo(
     name = "cargo",
     cargo_lockfile = "//:Cargo.lock",
-    generate_binaries = True,
     manifests = [
         "//:Cargo.toml",
     ],

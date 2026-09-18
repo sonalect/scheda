@@ -8,6 +8,13 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Pin `bazel_utils_*` to tag `v0.2.8`. Local `buf generate` plugins
+  (`protoc-gen-buffa`, `protoc-gen-buffa-packaging`,
+  `protoc-gen-protovalidate-buffa`) are prebuilt GitHub-release binaries
+  (`protoc.plugin`), not a BSR remote plugin or crate_universe fork tags.
+
 ## [0.16.1] - 2026-09-17
 
 ### Changed

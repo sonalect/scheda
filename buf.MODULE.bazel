@@ -3,3 +3,19 @@
 buf = use_extension("@bazel_utils_buf//:extensions.bzl", "buf")
 buf.toolchains(version = "v1.73.0")
 use_repo(buf, "buf")
+
+# Root `protoc.plugin` tags are on PATH for every `buf_generate`. Catalog
+# fallbacks are not; tag the local plugins named in buf.gen.rust.yaml.
+protoc = use_extension("@bazel_utils_protoc//:extensions.bzl", "protoc")
+protoc.plugin(
+    name = "protoc-gen-buffa",
+    version = "v0.9.2",
+)
+protoc.plugin(
+    name = "protoc-gen-buffa-packaging",
+    version = "v0.9.2",
+)
+protoc.plugin(
+    name = "protoc-gen-protovalidate-buffa",
+    version = "v0.10.0",
+)
