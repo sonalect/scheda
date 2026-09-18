@@ -366,7 +366,7 @@
     "@@rules_rust+//crate_universe:extensions.bzl%crate": {
       "general": {
         "bzlTransitiveDigest": "gmeEhuu88BuiEt2IG7Ntyd3L+TfU4mZgsJ8GDjvZ3tQ=",
-        "usagesDigest": "CdoJ05533Xcsse7iqKIJE+deCtr5Ls5QvkYHmflj11E=",
+        "usagesDigest": "tJTLhSvNP3CZ0hcEaZilwREuVLPiOAuNFY2VpBQCn14=",
         "recordedInputs": [
           "ENV:CARGO_BAZEL_DEBUG \\0",
           "ENV:CARGO_BAZEL_GENERATOR_SHA256 \\0",
@@ -388,8 +388,8 @@
           "REPO_MAPPING:rules_rust+,bazel_skylib bazel_skylib+",
           "REPO_MAPPING:rules_rust+,bazel_tools bazel_tools",
           "REPO_MAPPING:rules_rust+,rules_cc rules_cc+",
-          "FILE:@@//Cargo.lock 98eb2174dfb722b83d4345c709ca4287215376da1e9ab8a1bf8ef8df053d93b2",
-          "FILE:@@//Cargo.toml 0383628184b32fce96408003f270343658994e4f0f68a84839d53b9d01d002a9",
+          "FILE:@@//Cargo.lock 1655589404029605aa5d5ead1456a7d3acea6174d7cf7b102d98798194e76348",
+          "FILE:@@//Cargo.toml 112eb1c1685b872a9a40b310e2e2e539f139872a0fe4cef993d29307b60122cf",
           "FILE:@@//rust/cli/Cargo.toml c87223abb31ca26e85232033e151e3a45e685ddedece2df83074760682225493",
           "FILE:@@//rust/scheda/Cargo.toml 495388eb477cba65d3de7099885eefdd8639b0c433384896c83ab6ea85b3f7dc",
           "FILE:@@//rust/generated/Cargo.toml b51c67c1a3f45254072ff69c5e5dad5b106b54e34331ceae7d1310da27238600"

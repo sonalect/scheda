@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.16.2] - 2026-09-18
+
 ### Changed
 
 - Pin `bazel_utils_*` to tag `v0.2.8`. Local `buf generate` plugins
@@ -1511,6 +1513,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.16.2]
 - [0.16.1]
 - [0.16.0]
 - [0.15.2]
@@ -1556,7 +1559,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.16.1...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/amsokol/scheda/releases/tag/v0.16.2
 [0.16.1]: https://github.com/amsokol/scheda/releases/tag/v0.16.1
 [0.16.0]: https://github.com/amsokol/scheda/releases/tag/v0.16.0
 [0.15.2]: https://github.com/amsokol/scheda/releases/tag/v0.15.2
