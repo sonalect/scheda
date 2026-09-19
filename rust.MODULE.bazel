@@ -32,14 +32,14 @@ cargo = use_extension(
 cargo.annotation(
     crate = "cxx",
     gen_build_script = "on",
-    repositories = ["cargo"],
+    repositories = ["scheda_cargo"],
 )
 cargo.annotation_select(
     build_script_env = {
         "CXX": "/usr/bin/c++",
     },
     crate = "cxx",
-    repositories = ["cargo"],
+    repositories = ["scheda_cargo"],
     triples = [
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
@@ -50,7 +50,7 @@ cargo.annotation_select(
         "CXX": "/usr/bin/c++",
     },
     crate = "usearch",
-    repositories = ["cargo"],
+    repositories = ["scheda_cargo"],
     triples = [
         "aarch64-unknown-linux-gnu",
         "x86_64-unknown-linux-gnu",
@@ -59,21 +59,22 @@ cargo.annotation_select(
 
 # Optional `age` for scheda `encrypt`. `age` is an optional dependency behind
 # the non-default `encrypt` feature, so `from_cargo` never materializes an
-# alias for it, and without the tag `@cargo//:age` is not a target at all
-# (`bazel query` answers "no such target"). Restrict to the `cargo` hub: a
-# spec with no `repositories` is a common spec on every hub.
+# alias for it, and without the tag `@scheda_cargo//:age` is not a target at
+# all (`bazel query` answers "no such target"). Restrict to the `scheda_cargo`
+# hub: a spec with no `repositories` is a common spec on every hub.
 cargo.spec(
     default_features = False,
     features = ["armor"],
     package = "age",
-    repositories = ["cargo"],
+    repositories = ["scheda_cargo"],
     version = "=0.12.1",
 )
 cargo.from_cargo(
-    name = "cargo",
+    name = "scheda_cargo",
     cargo_lockfile = "//:Cargo.lock",
+    lockfile = "//:cargo-bazel-lock.json",
     manifests = [
         "//:Cargo.toml",
     ],
 )
-use_repo(cargo, "cargo")
+use_repo(cargo, "scheda_cargo")

@@ -11,6 +11,8 @@ Bazel (`//bazel:lint`, generate checks, Python, the rest).
 
 Follow `.cursor/rules/run-commands.mdc`: repo root (`MODULE.bazel`),
 `required_permissions: ["all"]`. After `api/v1/*.proto` edits, generate first.
+If crate_universe inputs changed, repin `cargo-bazel-lock.json` first
+(`.cursor/rules/cargo-bazel-lock.mdc`).
 
 ```bash
 bazel test //... --keep_going --test_output=errors

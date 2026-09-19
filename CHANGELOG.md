@@ -8,6 +8,13 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Bazel crate universe hub is `scheda_cargo`, so another module that names
+  its hub `cargo` can depend on this repo as a `bazel_dep`. Transitive
+  `bazel_dep` uses a crate_universe `lockfile`.
+- Pin `bazel_utils_*` to tag `v0.2.9`.
+
 ## [0.16.2] - 2026-09-18
 
 ### Changed

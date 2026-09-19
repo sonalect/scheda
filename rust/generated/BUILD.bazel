@@ -15,11 +15,11 @@ rust_library(
     crate_name = "scheda_generated",
     visibility = ["//visibility:public"],
     deps = [
-        "@cargo//:buffa",
-        "@cargo//:buffa-types",
-        "@cargo//:protovalidate-buffa",
-        "@cargo//:serde",
-        "@cargo//:serde_json",
+        "@scheda_cargo//:buffa",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protovalidate-buffa",
+        "@scheda_cargo//:serde",
+        "@scheda_cargo//:serde_json",
     ],
 )
 

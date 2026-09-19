@@ -9,12 +9,12 @@ rust_binary(
     visibility = ["//visibility:public"],
     deps = [
         "//rust/scheda",
-        "@cargo//:clap",
-        "@cargo//:mimalloc",
-        "@cargo//:model2vec-rs",
-        "@cargo//:serde",
-        "@cargo//:serde_json",
-        "@cargo//:ureq",
+        "@scheda_cargo//:clap",
+        "@scheda_cargo//:mimalloc",
+        "@scheda_cargo//:model2vec-rs",
+        "@scheda_cargo//:serde",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:ureq",
     ],
 )
 
@@ -26,12 +26,12 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         "//rust/scheda",
-        "@cargo//:clap",
-        "@cargo//:mimalloc",
-        "@cargo//:model2vec-rs",
-        "@cargo//:serde",
-        "@cargo//:serde_json",
-        "@cargo//:ureq",
+        "@scheda_cargo//:clap",
+        "@scheda_cargo//:mimalloc",
+        "@scheda_cargo//:model2vec-rs",
+        "@scheda_cargo//:serde",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:ureq",
     ],
 )
 
@@ -50,7 +50,7 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         "//rust/scheda",
-        "@cargo//:serde_json",
+        "@scheda_cargo//:serde_json",
     ],
 )
 
@@ -69,6 +69,6 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         "//rust/scheda",
-        "@cargo//:serde_json",
+        "@scheda_cargo//:serde_json",
     ],
 )
