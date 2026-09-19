@@ -10,7 +10,10 @@ filegroup(
 
 buf_module(
     name = "module",
-    srcs = [":protos"],
+    srcs = [
+        ":protos",
+        "//api/collection/v1:protos",
+    ],
     visibility = ["//visibility:public"],
 )
 

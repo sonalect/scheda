@@ -7,8 +7,8 @@ use std::iter::FusedIterator;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::error::{bail, Code, ContextAs, ContextIo};
-use crate::declaration::{CollectionDecl, Kind, Decls};
+use crate::schema::{CollectionDecl, Decls, Kind};
+use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::{Encryption, Error, Record};
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
@@ -228,7 +228,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
     }
     let rel = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
-    let path = crate::declaration::join_inside(&dir, &rel)?;
+    let path = crate::schema::join_inside(&dir, &rel)?;
     let bytes = match decl.kind {
         Kind::Document | Kind::Singleton => {
             utf8_raw(record, "[store::prepare_write] decode UTF-8")?.to_vec()
@@ -382,7 +382,7 @@ pub(crate) fn locate_file(
     }
     let file = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
-    let path = crate::declaration::join_inside(&dir, &file)?;
+    let path = crate::schema::join_inside(&dir, &file)?;
     Ok(path.is_file().then_some(path))
 }
 
@@ -400,7 +400,7 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
                 )));
             };
             let file = record_file(decl, id)?;
-            let path = crate::declaration::join_inside(&dir, &file)?;
+            let path = crate::schema::join_inside(&dir, &file)?;
             Ok(path.is_file().then_some(path).into_iter().collect())
         }
         Kind::Document => list_document_files(&dir),
@@ -605,11 +605,13 @@ pub(crate) fn decode_record_file(
     #[cfg(not(feature = "encrypt"))]
     {
         let _ = encryption;
-        bail!(Error::unsupported_encryption(format!(
-            "collection {} is encrypted; this build cannot read it",
-            decl.name
-        ))
-        .with_path(rel));
+        bail!(
+            Error::unsupported_encryption(format!(
+                "collection {} is encrypted; this build cannot read it",
+                decl.name
+            ))
+            .with_path(rel)
+        );
     }
     #[cfg(feature = "encrypt")]
     crate::crypto::decrypt(&raw, encryption).map_err(|err| err.with_path(rel))
@@ -828,7 +830,7 @@ fn check_owner_only_tree(vault: &Path, path: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::record_file;
-    use crate::declaration::{CollectionDecl, Kind};
+    use crate::schema::{CollectionDecl, Kind};
 
     fn decl(kind: Kind) -> CollectionDecl {
         CollectionDecl {

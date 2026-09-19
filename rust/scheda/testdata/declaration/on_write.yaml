@@ -1,4 +1,0 @@
-name: c
-kind: document
-version: 1
-on_write: echo hi

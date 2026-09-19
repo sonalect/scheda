@@ -4,12 +4,19 @@ exports_files([
     "Cargo.toml",
     # Destination for //api/v1:generate → rust/generated/api/v1 (directory sync).
     "api/v1",
+    # Destination for //api/collection/v1:generate → rust/generated/api/collection/v1.
+    "api/collection/v1",
+    # Destination for //api:generate → rust/generated/version.
+    "version",
 ])
 
 rust_library(
     name = "generated_v1",
     srcs = ["lib.rs"] + glob(
-        ["api/v1/**/*.rs"],
+        [
+            "api/**/*.rs",
+            "version/**/*.rs",
+        ],
         allow_empty = True,
     ),
     crate_name = "scheda_generated",
@@ -26,5 +33,18 @@ rust_library(
 rust_test(
     name = "generated_v1_test",
     crate = ":generated_v1",
+    visibility = ["//rust:__pkg__"],
+)
+
+# Every proto field named `version` must be field number 1 (`int32 version = 2` fails).
+rust_test(
+    name = "version_field_test",
+    srcs = ["tests/version_field.rs"],
+    crate_root = "tests/version_field.rs",
+    data = [
+        "//api:protos",
+        "//api/collection/v1:protos",
+        "//api/v1:protos",
+    ],
     visibility = ["//rust:__pkg__"],
 )

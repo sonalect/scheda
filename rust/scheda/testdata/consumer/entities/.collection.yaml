@@ -1,3 +1,4 @@
-name: entities
-kind: document
 version: 1
+name: entities
+schema:
+  document: {}

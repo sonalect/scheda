@@ -77,7 +77,7 @@ const INBOX: &str = include_str!("../testdata/document/inbox.yaml");
 const LOG: &str = include_str!("../testdata/document/log.yaml");
 const ALPHA_MD: &str = include_str!("../testdata/document/alpha.md");
 const PLAIN_YAML: &str = include_str!("../testdata/document/plain.yaml");
-const WEST_ISOLATED: &str = include_str!("../testdata/declaration/west_isolated.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
@@ -738,7 +738,7 @@ fn collection_name_with_slash_is_invalid() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join(".collection.yaml"),
-        "name: \"a/b\"\nkind: document\nversion: 1\n",
+        "version: 1\nname: \"a/b\"\nschema:\n  document: {}\n",
     )
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();
@@ -961,11 +961,11 @@ fn singleton_non_utf8_writes_no_file() {
 #[test]
 fn singleton_declared_id_may_include_extension() {
     const SCHEMA: &str = "\
-name: box_toml
-kind: singleton
 version: 1
-singleton:
-  id: inbox.toml
+name: box_toml
+schema:
+  singleton:
+    id: inbox.toml
 ";
     let scratch = Scratch::new();
     drop(scratch.init());

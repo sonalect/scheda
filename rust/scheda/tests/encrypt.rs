@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Declaration, Encryption, Journal, OpenOptions, Singleton, Unit, Vault};
+use scheda::{Code, Schema, Encryption, Journal, OpenOptions, Singleton, Unit, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -53,10 +53,10 @@ fn passphrase() -> Encryption {
     Encryption::new().passphrase(PASS)
 }
 
-fn document_schema(encrypted: bool, isolated: bool) -> Declaration {
-    let mut schema = Declaration {
+fn document_schema(encrypted: bool, isolated: bool) -> Schema {
+    let mut schema = Schema {
         kind: Unit::default().into(),
-        ..Declaration::default()
+        ..Schema::default()
     };
     if encrypted {
         schema = schema.with_encrypted(true);
@@ -67,10 +67,10 @@ fn document_schema(encrypted: bool, isolated: bool) -> Declaration {
     schema
 }
 
-fn singleton_schema() -> Declaration {
-    Declaration {
+fn singleton_schema() -> Schema {
+    Schema {
         kind: Singleton::default().with_id("inbox").into(),
-        ..Declaration::default()
+        ..Schema::default()
     }
     .with_encrypted(true)
 }
@@ -258,9 +258,9 @@ fn encrypted_journal_schema_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_encrypted(&scratch, passphrase());
     vault.begin().unwrap();
-    let schema = Declaration {
+    let schema = Schema {
         kind: Journal::default().into(),
-        ..Declaration::default()
+        ..Schema::default()
     }
     .with_encrypted(true);
     let err = vault
@@ -288,8 +288,8 @@ fn info_reports_encrypted_and_omits_fields() {
         .iter()
         .find(|c| c.name.as_deref() == Some("sealed_notes"))
         .expect("listed");
-    assert_eq!(item.declaration.encrypted, Some(true));
-    assert!(item.declaration.kind.is_some());
+    assert_eq!(item.schema.encrypted, Some(true));
+    assert!(item.schema.kind.is_some());
 
     let json = serde_json::to_value(&info).unwrap();
     let listed = json["collections"]
@@ -298,8 +298,8 @@ fn info_reports_encrypted_and_omits_fields() {
         .iter()
         .find(|c| c["name"] == "sealed_notes")
         .expect("listed");
-    assert_eq!(listed["declaration"]["encrypted"], true);
-    assert!(listed["declaration"].get("fields").is_none());
+    assert_eq!(listed["schema"]["encrypted"], true);
+    assert!(listed["schema"].get("fields").is_none());
     assert!(
         !json_contains_key(&json["collections"], "fields"),
         "encrypted info JSON must not list fields: {json}"

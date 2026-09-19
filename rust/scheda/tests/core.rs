@@ -56,8 +56,8 @@ impl Drop for Scratch {
     }
 }
 
-const WEST: &str = include_str!("../testdata/declaration/west.yaml");
-const EAST: &str = include_str!("../testdata/declaration/east.yaml");
+const WEST: &str = include_str!("../testdata/schema/west.yaml");
+const EAST: &str = include_str!("../testdata/schema/east.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
@@ -92,7 +92,7 @@ fn read_src_rs() -> String {
         include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
-        include_str!("../src/declaration.rs"),
+        include_str!("../src/schema.rs"),
         include_str!("../src/search.rs"),
         include_str!("../src/store.rs"),
         include_str!("../src/vault.rs"),
@@ -232,9 +232,10 @@ fn typed_open_map_round_trips_and_names_the_bad_key() {
     scratch.write_declaration(
         "maps.yaml",
         "\
-name: c
-kind: journal
 version: 1
+name: c
+schema:
+  journal: {}
 ",
     );
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();

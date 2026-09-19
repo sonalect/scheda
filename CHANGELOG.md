@@ -8,6 +8,37 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- Proto `api.Version` (`api/version.proto`, package `api`): shared on-disk
+  file version, field number 1, value const 1. Generate:
+  `bazel run //api:generate`. The Vault loader deserializes each
+  collection file to `Version` first, then `require_valid()`, then a
+  library check that only version **1** is implemented.
+
+### Changed
+
+- On-disk `{name}/.collection.yaml` (also `.yml` / `.json`) is the
+  Protobuf JSON mapping of `api.collection.v1.CollectionInfo` (`version`,
+  `name`, nested `schema`). `Vault.info` list items are the same
+  type. The loader deserializes `api.Version`, then `CollectionInfo`,
+  then applies library slug checks and the journal default of 8 MiB.
+- `Schema` (was `Declaration`), `Journal`, `Singleton`, and `Unit` live
+  in `api.collection.v1`. `scheda::{Schema, CollectionInfo, Journal,
+  Singleton, Unit}` compile. `Vault.create_collection` takes `Schema`
+  and writes `version: 1` itself. `Collection::schema()` returns that
+  message. CollectionInfo JSON and on-disk files use the key `schema`
+  (a leftover `declaration` key is `invalid`). CLI
+  `create-collection --schema` and `collection schema`.
+
+### Removed
+
+- `api.collection.v1.CollectionFile`. The type is `CollectionInfo`.
+- `api.v1.CollectionInfo`, `api/v1/collection.proto`, and
+  `api/v1/declaration.proto`.
+- CLI `--declaration` and `collection declaration`. Use `--schema` and
+  `collection schema`.
+
 ## [0.16.3] - 2026-09-19
 
 ### Changed

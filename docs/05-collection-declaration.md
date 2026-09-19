@@ -206,10 +206,11 @@ byte-identical afterwards.
 
 ## 7. On-disk keys (**core**)
 
-UTF-8 YAML 1.2 or JSON. JSON uses the same keys. Unknown keys on a
-declaration are rejected, so an executable blob cannot hide as an extra
-field (SCH-3). Keys are snake_case. Values that `03`–`05` already name
-as literals stay those literals (`document`, `journal`, `singleton`).
+UTF-8 YAML 1.2 or JSON. JSON uses this file's Protobuf JSON mapping
+(camelCase aliases such as `segmentMaxBytes` / `segment_max_bytes` are
+accepted on read). Unknown keys on the file are rejected, so an
+executable blob cannot hide as an extra field (SCH-3). Kind literals
+stay `document`, `journal`, `singleton`.
 
 ### Collection declaration file
 
@@ -227,28 +228,34 @@ at the Vault root is `invalid`, whether or not a `.collection.yaml` is
 also present.
 
 `info` (`08`) is this data serialized, not inferred from Record files.
+The on-disk file and each `VaultInfo.collections` item are
+`api.collection.v1.CollectionInfo`.
 
 | Key | Required | Meaning |
 |---|---|---|
+| `version` | yes | Collection generation (SCH-13). Integer. This plan: **1** only. Field number 1. No default. |
 | `name` | yes | Collection name. Unique in the Vault. Same slug as one Record `id` component (library): Unicode letter or digit, then letters, digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; max 255 bytes, no trailing `.` or whitespace, not a Windows device name. The on-disk directory is this name (MOD-8). |
-| `kind` | yes | `document` \| `journal` \| `singleton` |
-| `version` | yes | Collection generation (SCH-13). Integer. This plan: **1** only. No default. |
+| `schema` | yes | Nested `Schema` (same message as `create_collection`). Kind is the set oneof arm. |
+| `schema.document` | one of three | Empty mapping. `document` kind. File: `{name}/{id}`. |
+| `schema.journal` | one of three | `journal` kind. Caps below. |
+| `schema.singleton` | one of three | Mapping with `id` (MOD-7). Same slug as Record `id` (library); an extension, if any, is part of `id`. |
+| `schema.journal.segmentMaxBytes` (`segment_max_bytes`) | `journal` only | Integer bytes. Omitted → **8 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
+| `schema.journal.segmentMaxLines` (`segment_max_lines`) | `journal` only | Optional integer line cap. If set, ≥ `1`. |
+| `schema.journal.daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
+| `schema.isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Records under `{vault}/.isolated/{name}/`. `info` lists the collection as isolated (ISO-3). |
+| `schema.encrypted` | no | Boolean. Default `false`. `true` marks SCH-16: Record files are age v1 armor and I/O needs the handle secret. Independent of `isolated`. `true` on `journal` is `invalid`. `info` lists the collection as encrypted (ISO-3). |
+| `schema.excludeLexicalIndex` (`exclude_lexical_index`) | no | Boolean. Default `false`. `true` marks SCH-9: no Record of this collection is written to the Tantivy Index. `find` that names it is `unsupported`. |
+| `schema.excludeVectorIndex` (`exclude_vector_index`) | no | Boolean. Default `false`. `true` marks SCH-9: no Record of this collection is embedded or stored in the vector Index. |
+| `kind` | — | Retired as a top-level string. A leftover key is `invalid`. Kind is the `schema` oneof. |
+| `declaration` | — | Retired CollectionInfo key. A leftover key is `invalid`. |
 | `fields` | — | Retired. A leftover key is `invalid` (SCH-2). |
+| `layout` / `body` | — | Retired. A leftover key is `invalid`. |
 | `id` | — | Removed as a collection-level identity pattern. Record `id` rules are `03`. |
-| `segment_max_bytes` | `journal` only | Integer bytes. Omitted → **8 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
-| `segment_max_lines` | `journal` only | Optional integer line cap. If set, ≥ `1`. |
-| `daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
-| `singleton` | `singleton` only | Mapping with `id` (MOD-7). Same slug as Record `id` (library); an extension, if any, is part of `id`. |
-| `body` / `document` | — | Retired (SCH-7). A leftover key is `invalid`. |
-| `isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Records under `{vault}/.isolated/{name}/`. `info` lists the collection as isolated (ISO-3). |
-| `encrypted` | no | Boolean. Default `false`. `true` marks SCH-16: Record files are age v1 armor and I/O needs the handle secret. Independent of `isolated`. `true` on `journal` is `invalid`. `info` lists the collection as encrypted (ISO-3). |
-| `exclude_lexical_index` | no | Boolean. Default `false`. `true` marks SCH-9: no Record of this collection is written to the Tantivy Index. `find` that names it is `unsupported`. |
-| `exclude_vector_index` | no | Boolean. Default `false`. `true` marks SCH-9: no Record of this collection is embedded or stored in the vector Index. |
 
 Journal-only keys on `document` / `singleton`, `singleton` on another
 kind, and `encrypted` on `journal`, are rejected. Two files with the
-same `name` are rejected. Two `kind` values on one collection are
-rejected (one `kind` string).
+same `name` are rejected. Two kind arms on one `schema` are
+rejected.
 
 There is no field-declaration table. Nested `fields` / `values` / `edge`
 keys are unknown keys (SCH-3).

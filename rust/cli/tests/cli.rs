@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use scheda::{
-    Declaration, Embedder, Encryption, Filter, OpenOptions, Record, Reranker, SearchQuery, Vault,
+    Schema, Embedder, Encryption, Filter, OpenOptions, Record, Reranker, SearchQuery, Vault,
 };
 use serde_json::{Value, json};
 
@@ -145,10 +145,14 @@ fn rec(fields: Value) -> Vec<u8> {
 }
 
 fn notes_schema() -> &'static str {
-    "name: agent_notes\nkind: document\nversion: 1\n"
+    "version: 1
+name: agent_notes
+schema:
+  document: {}
+"
 }
 
-fn notes_decl() -> Declaration {
+fn notes_decl() -> Schema {
     serde_json::from_value(json!({
         "version": 1,
         "document": {},
@@ -156,7 +160,7 @@ fn notes_decl() -> Declaration {
     .unwrap()
 }
 
-fn log_decl() -> Declaration {
+fn log_decl() -> Schema {
     serde_json::from_value(json!({
         "version": 1,
         "journal": {},
@@ -257,12 +261,27 @@ fn help_lists_lib2_tools_not_collection_names() {
     let collection = run(&["collection", "--help"]);
     assert_eq!(collection.status, 0, "stderr={}", collection.stderr);
     let collection_help = format!("{}{}", collection.stdout, collection.stderr);
-    for name in ["documents", "ids", "declaration", "schema", "add", "get"] {
+    for name in ["documents", "ids", "schema", "add", "get"] {
         assert!(
             collection_help.contains(name),
             "missing {name} in collection help:\n{collection_help}"
         );
     }
+    assert!(
+        !collection_help.contains("declaration"),
+        "legacy declaration still in collection help:\n{collection_help}"
+    );
+    let create = run(&["create-collection", "--help"]);
+    assert_eq!(create.status, 0, "stderr={}", create.stderr);
+    let create_help = format!("{}{}", create.stdout, create.stderr);
+    assert!(
+        create_help.contains("--schema"),
+        "missing --schema in create-collection help:\n{create_help}"
+    );
+    assert!(
+        !create_help.contains("declaration"),
+        "legacy --declaration still in create-collection help:\n{create_help}"
+    );
 }
 
 #[test]
@@ -453,7 +472,11 @@ fn extra_field_is_invalid_and_write_nothing() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_declaration("notes.yaml", notes_schema());
-    scratch.write_declaration("log.yaml", "name: agent_log\nkind: journal\nversion: 1\n");
+    scratch.write_declaration("log.yaml", "version: 1
+name: agent_log
+schema:
+  journal: {}
+");
     let path = vault_arg(&scratch);
 
     let extra = run(&[
@@ -627,6 +650,18 @@ fn auto_sync_off_local_info_get_add_commit() {
         "create_collection must write generation 1: {on_disk}"
     );
     assert!(
+        on_disk.contains("schema:"),
+        "create_collection must nest schema: {on_disk}"
+    );
+    assert!(
+        on_disk.contains("document:"),
+        "create_collection must write document kind: {on_disk}"
+    );
+    assert!(
+        !on_disk.contains("kind: document"),
+        "create_collection must not write kind: document: {on_disk}"
+    );
+    assert!(
         !on_disk.contains("fields:"),
         "create_collection must not write fields: {on_disk}"
     );
@@ -738,7 +773,7 @@ const CLI_PASS: &str = "p16-cli-passphrase-never-on-disk";
 const CLI_IDENTITY: &str =
     "AGE-SECRET-KEY-1GQ9778VQXMMJVE8SK7J6VT8UJ4HDQAJUVSFCWCM02D8GEWQ72PVQ2Y5J33";
 
-fn encrypted_decl() -> Declaration {
+fn encrypted_decl() -> Schema {
     serde_json::from_value(json!({
         "version": 1,
         "encrypted": true,
@@ -974,7 +1009,12 @@ const TREE_SEALED: &str = "agent-sealed-tree-token";
 const NESTED_SEALED: &str = "agent-sealed-nested-token";
 
 fn isolated_schema_yaml() -> &'static str {
-    "name: agent_sealed\nkind: document\nversion: 1\nisolated: true\n"
+    "version: 1
+name: agent_sealed
+schema:
+  document: {}
+  isolated: true
+"
 }
 
 fn sealed_document(token: &str) -> String {
@@ -1021,8 +1061,8 @@ fn cli_omits_isolated_sealed_values() {
         .iter()
         .find(|col| col["name"] == "agent_sealed")
         .unwrap();
-    assert_eq!(isolated["declaration"]["isolated"], true);
-    assert!(isolated["declaration"].get("fields").is_none());
+    assert_eq!(isolated["schema"]["isolated"], true);
+    assert!(isolated["schema"].get("fields").is_none());
     assert_no_sealed(&info.to_string());
 
     let filter = all_filter();

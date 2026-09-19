@@ -40,9 +40,10 @@ impl Drop for Scratch {
 }
 
 const NOTES: &str = "\
-name: proj_notes
-kind: document
 version: 1
+name: proj_notes
+schema:
+  document: {}
 ";
 
 fn rec(fields: serde_json::Value) -> Vec<u8> {

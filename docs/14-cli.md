@@ -53,7 +53,7 @@ on stderr).
 |---|---|
 | `open` | [`--remote-repo URL`] (absolute URI when set) |
 | `info` | |
-| `create-collection` | `NAME --declaration JSON` (or stdin) [`--message TEXT`]. `--schema` is the same flag. JSON is the thin collection declaration (`api.v1.Declaration`). A `fields` or `version` key is `invalid`. |
+| `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is Protobuf JSON `Schema` (`api.collection.v1.Schema`). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |
 | `check` | |
 | `reindex` | Uses the CLI default Projector (`body` = whole Record). |
@@ -135,7 +135,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 
 | Subcommand | Args |
 |---|---|
-| `declaration` | Print this collection's declaration as protobuf JSON (kind, perimeter, caps). Alias: `schema`. No field list. |
+| `schema` | Print this collection's Schema as protobuf JSON (kind, perimeter, caps). No field list. |
 | `add` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. `raw` is those UTF-8 bytes. Not a JSON `fields` object. `--file` and a non-empty stdin together → `invalid`. Empty bytes are allowed. |
 | `get` | `--id ID`. Stdout is `Record.raw` (UTF-8 bytes), not a JSON envelope. Errors are protobuf JSON on stderr. |
 | `history` | `--id ID --offset N --count N`. JSON `History`. |
@@ -146,7 +146,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | `find` | `--filter JSON --offset N --count N` [`--include-raw`] (filter JSON or stdin). This collection only; no `--collections`. CLI Projector: identity and `body` only. |
 | `search` | `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. This collection only. |
 
-Isolated `NAME` is the handle for those Records: `declaration`, `add`, `get`,
+Isolated `NAME` is the handle for those Records: `schema`, `add`, `get`,
 `history`, `replace`, `remove`, `documents`, `ids`, `find`, `search` (and `lines` on the
 library, not this CLI). `find` / `search` on that `NAME` are ordinary
 queries, same as Vault `--collections` with an isolated name. Encrypted

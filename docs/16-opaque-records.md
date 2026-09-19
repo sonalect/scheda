@@ -674,8 +674,8 @@ Close only after F14.
 - [x] `get` output matches F7's choice in `14`.
 - [x] Default whole-file Projector on CLI `find` / `search` / `reindex` as
       F7. Library `open` from other programs does not get that default.
-- [x] `create-collection` JSON matches the thin declaration. `--declaration`
-      is Protobuf JSON `Declaration`; `--schema` is the same flag (`14`).
+- [x] `create-collection` JSON matches the thin Schema. `--schema`
+      is Protobuf JSON `Schema` (`14`).
 - [x] `bazel test //...` green (includes `rust/cli/tests`). Owner has
       reviewed the diff.
 

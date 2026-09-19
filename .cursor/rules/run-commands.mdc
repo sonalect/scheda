@@ -13,13 +13,19 @@ an inferred workspace root that is not Scheda.
 
 ## Generate
 
-After changing `api/v1/*.proto`, regenerate stubs **before** tests:
+After changing `api/version.proto` (or other `api/*.proto` at the api
+package root), `api/v1/*.proto`, or `api/collection/v1/*.proto`,
+regenerate stubs **before** tests:
 
 ```bash
+bazel run //api:generate
 bazel run //api/v1:generate
+bazel run //api/collection/v1:generate
 ```
 
-That writes `rust/generated/api/v1/`. Optional check: `bazel test //api/v1:generate_tests`.
+That writes `rust/generated/version/`, `rust/generated/api/v1/`, and
+`rust/generated/api/collection/v1/`. Optional check:
+`bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test`.
 
 ## No sandbox
 

@@ -1,3 +1,4 @@
-name: query_pages
-kind: journal
 version: 1
+name: query_pages
+schema:
+  journal: {}

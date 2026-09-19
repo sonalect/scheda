@@ -1,3 +1,4 @@
-name: walk_dst
-kind: journal
 version: 1
+name: walk_dst
+schema:
+  journal: {}

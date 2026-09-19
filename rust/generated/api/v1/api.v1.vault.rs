@@ -36,7 +36,7 @@ pub struct VaultInfo {
     )]
     pub auto_sync: ::core::option::Option<bool>,
     /// Declared collections. Not inferred from Record directories.
-    /// Isolated collections appear here; `schema.fields` may be omitted.
+    /// Isolated collections appear here. Each item includes `version`.
     ///
     /// Field 5: `collections`
     #[serde(
@@ -44,7 +44,7 @@ pub struct VaultInfo {
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_empty_vec",
         deserialize_with = "::buffa::json_helpers::null_as_default"
     )]
-    pub collections: ::buffa::alloc::vec::Vec<CollectionInfo>,
+    pub collections: ::buffa::alloc::vec::Vec<super::collection::v1::CollectionInfo>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,

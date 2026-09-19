@@ -1,3 +1,4 @@
-name: north_log
-kind: journal
 version: 1
+name: north_log
+schema:
+  journal: {}

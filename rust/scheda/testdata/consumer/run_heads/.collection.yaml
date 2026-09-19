@@ -1,5 +1,5 @@
-name: run_heads
-kind: singleton
 version: 1
-singleton:
-  id: cursor
+name: run_heads
+schema:
+  singleton:
+    id: cursor

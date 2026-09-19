@@ -16,11 +16,11 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::schema::{self, Decls, Kind};
 #[cfg(feature = "find")]
 use crate::error::Context;
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::journal;
-use crate::declaration::{self, Kind, Decls};
 use crate::store;
 use crate::{Error, ReindexResult};
 
@@ -481,8 +481,8 @@ pub(crate) fn lookup_on_disk(
 /// Rejects absolute paths, `..`, and a prefix that is not this collection
 /// (plain or `.isolated/`). Used when reading the journal `id` map so a
 /// hand-edited line cannot name a file outside the collection.
-pub(crate) fn id_map_rel_ok(decl: &declaration::CollectionDecl, rel: &str) -> bool {
-    let dir = declaration::collection_dir(&decl.name);
+pub(crate) fn id_map_rel_ok(decl: &schema::CollectionDecl, rel: &str) -> bool {
+    let dir = schema::collection_dir(&decl.name);
     let prefix = if decl.isolated {
         format!(".isolated/{dir}/")
     } else {
@@ -491,12 +491,12 @@ pub(crate) fn id_map_rel_ok(decl: &declaration::CollectionDecl, rel: &str) -> bo
     id_map_rel_has_prefix(rel, &prefix)
 }
 
-fn id_map_line_ok(decl: &declaration::CollectionDecl, id: &str, rel: &str) -> bool {
+fn id_map_line_ok(decl: &schema::CollectionDecl, id: &str, rel: &str) -> bool {
     crate::id::require_slug("id", id).is_ok() && id_map_rel_ok(decl, rel)
 }
 
 fn id_map_rel_ok_for_name(collection: &str, rel: &str) -> bool {
-    let dir = declaration::collection_dir(collection);
+    let dir = schema::collection_dir(collection);
     let plain = format!("{dir}/");
     let isolated = format!(".isolated/{dir}/");
     id_map_rel_has_prefix(rel, &plain) || id_map_rel_has_prefix(rel, &isolated)
@@ -591,7 +591,7 @@ pub(crate) fn rewrite_collection(
 fn ids_path(index_dir: &Path, collection: &str) -> PathBuf {
     index_dir
         .join(JOURNAL_DIR)
-        .join(declaration::collection_dir(collection))
+        .join(schema::collection_dir(collection))
         .join(IDS_FILE)
 }
 
@@ -815,8 +815,8 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    fn journal_decl(name: &str, isolated: bool) -> declaration::CollectionDecl {
-        declaration::CollectionDecl {
+    fn journal_decl(name: &str, isolated: bool) -> schema::CollectionDecl {
+        schema::CollectionDecl {
             name: name.to_owned(),
             kind: Kind::Journal,
             version: 1,

@@ -1,0 +1,41 @@
+load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
+load("@bazel_utils_buf//:buf.bzl", "buf_format", "buf_generate", "buf_lint_test", "buf_module")
+load("//bazel:compat.bzl", "NOT_WINDOWS")
+
+filegroup(
+    name = "protos",
+    srcs = glob(["*.proto"]),
+    visibility = ["//visibility:public"],
+)
+
+buf_module(
+    name = "module",
+    srcs = [":protos"],
+    visibility = ["//visibility:public"],
+)
+
+buf_lint_test(
+    name = "lint",
+    size = "small",
+    module = ":module",
+    target_compatible_with = NOT_WINDOWS,
+)
+
+buf_format(
+    name = "format",
+    module = ":module",
+)
+
+buf_generate(
+    name = "rust",
+    module = ":module",
+    template = ":buf.gen.rust.yaml",
+)
+
+write_source_files(
+    name = "generate",
+    check_that_out_file_exists = False,
+    files = {
+        "//rust/generated:api/collection/v1": ":rust",
+    },
+)

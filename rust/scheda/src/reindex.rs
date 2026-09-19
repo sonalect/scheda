@@ -14,9 +14,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::Error;
+use crate::schema::{CollectionDecl, Decls, Kind};
 use crate::error::{Code, ContextAs, ContextIo, io_code};
 use crate::id;
-use crate::declaration::{CollectionDecl, Kind, Decls};
 use crate::store;
 
 /// Retry spacing while waiting for `write.lock` at publish.

@@ -1,5 +1,5 @@
 //! A1: `catalog` from Schema (`08` AGT-1, `12`). Collection names here and in
-//! `testdata/declaration/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
+//! `testdata/schema/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
 
 mod common;
 
@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Declaration, FindQuery, OpenOptions, SearchQuery, Vault};
+use scheda::{Code, Schema, FindQuery, OpenOptions, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -58,11 +58,11 @@ impl Drop for Scratch {
     }
 }
 
-const WEST: &str = include_str!("../testdata/declaration/west.yaml");
-const EAST: &str = include_str!("../testdata/declaration/east.yaml");
-const EAST_LOG: &str = include_str!("../testdata/declaration/east_log.yaml");
-const WEST_INDEXED: &str = include_str!("../testdata/declaration/west_indexed.yaml");
-const WEST_ISOLATED: &str = include_str!("../testdata/declaration/west_isolated.yaml");
+const WEST: &str = include_str!("../testdata/schema/west.yaml");
+const EAST: &str = include_str!("../testdata/schema/east.yaml");
+const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");
+const WEST_INDEXED: &str = include_str!("../testdata/schema/west_indexed.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
 
 fn catalog_json(vault: &Vault) -> Value {
     serde_json::to_value(vault.info().unwrap()).unwrap()
@@ -109,7 +109,7 @@ fn src_rs() -> String {
         include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
-        include_str!("../src/declaration.rs"),
+        include_str!("../src/schema.rs"),
         include_str!("../src/search.rs"),
         include_str!("../src/store.rs"),
         include_str!("../src/vault.rs"),
@@ -127,22 +127,22 @@ fn catalog_json_matches_schema_files() {
     scratch.write_declaration("west_isolated.yaml", WEST_ISOLATED);
     let json = catalog_json(&scratch.reopen());
     let west = collection(&json, "west_docs");
-    let west_schema = &west["declaration"];
+    let west_schema = &west["schema"];
     assert!(west_schema.get("document").is_some());
     assert!(west_schema.get("version").is_none());
     assert!(west_schema.get("fields").is_none());
     assert!(west_schema.get("isolated").is_none());
 
-    let indexed = &collection(&json, "west_indexed")["declaration"];
+    let indexed = &collection(&json, "west_indexed")["schema"];
     assert!(indexed.get("document").is_some());
     assert!(indexed.get("fields").is_none());
 
-    let log = &collection(&json, "east_log")["declaration"];
+    let log = &collection(&json, "east_log")["schema"];
     assert!(log.get("journal").is_some());
 
     let isolated = collection(&json, "west_isolated");
-    assert_eq!(isolated["declaration"]["isolated"], true);
-    assert!(isolated["declaration"].get("fields").is_none());
+    assert_eq!(isolated["schema"]["isolated"], true);
+    assert!(isolated["schema"].get("fields").is_none());
     assert!(
         !json_contains_key(&json["collections"], "fields"),
         "library info JSON must not list fields: {json}"
@@ -180,7 +180,7 @@ fn catalog_follows_each_vault_schema() {
     let west_json = catalog_json(&west.reopen());
     let east_json = catalog_json(&east.reopen());
     assert!(
-        collection(&west_json, "west_docs")["declaration"]
+        collection(&west_json, "west_docs")["schema"]
             .get("document")
             .is_some()
     );
@@ -192,7 +192,7 @@ fn catalog_follows_each_vault_schema() {
             .all(|col| col["name"] != "east_docs")
     );
     assert!(
-        collection(&east_json, "east_docs")["declaration"]
+        collection(&east_json, "east_docs")["schema"]
             .get("document")
             .is_some()
     );
@@ -227,9 +227,9 @@ fn catalog_lists_isolated_without_fields() {
     let vault = scratch.reopen();
     let json = catalog_json(&vault);
     let isolated = collection(&json, "west_isolated");
-    assert_eq!(isolated["declaration"]["isolated"], true);
-    assert!(isolated["declaration"].get("document").is_some());
-    assert!(isolated["declaration"].get("fields").is_none());
+    assert_eq!(isolated["schema"]["isolated"], true);
+    assert!(isolated["schema"].get("document").is_some());
+    assert!(isolated["schema"].get("fields").is_none());
     let dump = isolated.to_string();
     assert!(!dump.contains("west_pass"));
     vault.collection("west_isolated").unwrap();
@@ -283,8 +283,8 @@ fn isolated_sealed_values_stay_off_the_main_vault() {
 
     let info = catalog_json(&vault);
     let isolated = collection(&info, "west_isolated");
-    assert_eq!(isolated["declaration"]["isolated"], true);
-    assert!(isolated["declaration"].get("fields").is_none());
+    assert_eq!(isolated["schema"]["isolated"], true);
+    assert!(isolated["schema"].get("fields").is_none());
     let info_dump = info.to_string();
     assert!(!info_dump.contains("west_pass"));
     assert_no_sealed(&info_dump);
@@ -347,7 +347,7 @@ fn rec(fields: Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
 }
 
-fn west_docs_decl() -> Declaration {
+fn west_docs_decl() -> Schema {
     serde_json::from_value(json!({
         "version": 1,
         "document": {},
@@ -390,7 +390,7 @@ fn create_collection_then_insert_one_without_reopen() {
     assert_eq!(got.id.as_deref(), Some("alpha"));
     let json = catalog_json(&vault);
     assert!(
-        collection(&json, "west_docs")["declaration"]
+        collection(&json, "west_docs")["schema"]
             .get("document")
             .is_some()
     );
@@ -400,7 +400,7 @@ fn create_collection_then_insert_one_without_reopen() {
 fn create_collection_rejects_fields_json_key() {
     let scratch = Scratch::new();
     let _vault = scratch.init();
-    let err = scheda::declaration_from_json(r#"{"document":{},"fields":[]}"#).unwrap_err();
+    let err = scheda::schema_from_json(r#"{"document":{},"fields":[]}"#).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert!(err.message.as_deref().unwrap_or("").contains("fields"));
 }
@@ -409,7 +409,7 @@ fn create_collection_rejects_fields_json_key() {
 fn create_collection_missing_kind_writes_nothing() {
     let scratch = Scratch::new();
     let vault = scratch.init();
-    let decl: Declaration = serde_json::from_value(json!({
+    let decl: Schema = serde_json::from_value(json!({
         "version": 1,
     }))
     .unwrap();
@@ -433,7 +433,7 @@ fn create_collection_restores_schema_when_journal_map_is_unreadable() {
 
     let scratch = Scratch::new();
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let log: Declaration = serde_json::from_value(json!({
+    let log: Schema = serde_json::from_value(json!({
         "version": 1,
         "journal": {},
     }))
@@ -491,7 +491,7 @@ fn create_collection_restores_schema_when_journal_map_is_unreadable() {
 fn create_collection_isolated_writes_schema_and_nested_git() {
     let scratch = Scratch::new();
     let vault = scratch.init();
-    let decl: Declaration = serde_json::from_value(json!({
+    let decl: Schema = serde_json::from_value(json!({
         "version": 1,
         "document": {},
         "isolated": true,
@@ -525,7 +525,7 @@ fn create_collection_rejects_layout_json_key() {
     let scratch = Scratch::new();
     let _vault = scratch.init();
     let json = r#"{"document":{},"layout":["c/{id}.md"]}"#;
-    let err = scheda::declaration_from_json(json).unwrap_err();
+    let err = scheda::schema_from_json(json).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
     assert!(err.message.as_deref().unwrap_or("").contains("layout"));
     assert!(

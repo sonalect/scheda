@@ -56,9 +56,10 @@ impl Drop for Scratch {
 
 const TOKENS: &str = include_str!("../testdata/search/tokens.yaml");
 const TOKEN_EXTRA: &str = "\
-name: token_extra
-kind: journal
 version: 1
+name: token_extra
+schema:
+  journal: {}
 ";
 const WALK_SRC: &str = include_str!("../testdata/search/walk_src.yaml");
 const WALK_DST: &str = include_str!("../testdata/search/walk_dst.yaml");
@@ -103,7 +104,14 @@ fn rec_rep(fields: Value) -> Vec<u8> {
 }
 
 fn slot_schema(name: &str, id: &str) -> String {
-    format!("name: {name}\nkind: singleton\nversion: 1\nsingleton:\n  id: {id}\n")
+    format!(
+        "version: 1
+name: {name}
+schema:
+  singleton:
+    id: {id}
+"
+    )
 }
 
 fn drop_journal_id(vault: &Path, collection: &str, id: &str) {
@@ -1184,7 +1192,11 @@ fn invalid_record_is_omitted_from_search() {
     drop(vault);
     scratch.write_declaration(
         "tokens.yaml",
-        "name: token_notes\nkind: journal\nversion: 1\n",
+        "version: 1
+name: token_notes
+schema:
+  journal: {}
+",
     );
     let vault = open_proj(scratch.vault(), None);
     let collection = vault.collection("token_notes").unwrap();
@@ -1376,7 +1388,11 @@ fn embed_uses_single_or_many_by_limit() {
     drop(open_proj(scratch.vault(), None));
     scratch.write_declaration(
         "tokens.yaml",
-        "name: token_notes\nkind: journal\nversion: 1\n",
+        "version: 1
+name: token_notes
+schema:
+  journal: {}
+",
     );
     let vault = open_proj(
         scratch.vault(),
@@ -1581,10 +1597,11 @@ fn search_on_lexically_excluded_collection_uses_vector_leg() {
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_lexical_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_lexical_index: true
 "#,
     );
     let embedder = Arc::new(MapEmbedder {
@@ -1619,10 +1636,11 @@ fn search_on_vector_excluded_collection_uses_lexical_leg() {
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_vector_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_vector_index: true
 "#,
     );
     let probe = ProbeEmbedder::new(32);
@@ -1652,11 +1670,12 @@ fn search_with_both_index_legs_excluded_is_unsupported() {
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_lexical_index: true
-exclude_vector_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_lexical_index: true
+  exclude_vector_index: true
 "#,
     );
     let vault = open_proj(scratch.vault(), None);
@@ -1684,10 +1703,11 @@ fn new_field_on_vector_excluded_collection_is_not_embedded() {
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_vector_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_vector_index: true
 "#,
     );
     let probe = ProbeEmbedder::new(32);
@@ -1704,10 +1724,11 @@ exclude_vector_index: true
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_vector_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_vector_index: true
 "#,
     );
     let vault = open_proj(

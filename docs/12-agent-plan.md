@@ -272,7 +272,7 @@ embedder / reranker is A5.
       `model.safetensors`; missing → `invalid`; unset → no vector leg).
 - [x] `open [--remote-repo URL]`. No `init` / `clone`. `--remote-repo` is
       not global.
-- [x] Vault commands: `info`, `create-collection NAME --declaration`,
+- [x] Vault commands: `info`, `create-collection NAME --schema`,
       `collection NAME <subcommand>`, `check`, `reindex`, `find`,
       `search`, `push`, `pull`, `sync`. No `catalog`. No `begin` /
       `commit` / `discard` (GIT-2: CLI autocommits each mutation).

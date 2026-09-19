@@ -399,7 +399,11 @@ fn check_reports_schema_failure_with_path() {
     drop(vault);
     scratch.write_declaration(
         "notes.yaml",
-        "name: query_notes\nkind: journal\nversion: 1\n",
+        "version: 1
+name: query_notes
+schema:
+  journal: {}
+",
     );
     let vault = scratch.reopen();
     let _got = vault.collection("query_notes").unwrap().get("a").unwrap();
@@ -455,9 +459,10 @@ fn conflict_markers_fail_check() {
     scratch.write_declaration(
         "notes.yaml",
         r#"
-name: query_notes
-kind: document
 version: 1
+name: query_notes
+schema:
+  document: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -776,9 +781,10 @@ fn exists_json_subpaths_does_not_expand_nested_keys() {
     scratch.write_declaration(
         "notes.yaml",
         r#"
-name: query_notes
-kind: journal
 version: 1
+name: query_notes
+schema:
+  journal: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -873,9 +879,10 @@ fn exclude_fts_body_is_not_a_find_key() {
     scratch.write_declaration(
         "notes.yaml",
         r#"
-name: query_notes
-kind: journal
 version: 1
+name: query_notes
+schema:
+  journal: {}
 "#,
     );
     let vault = scratch.reopen();
@@ -1163,20 +1170,21 @@ fn legacy_format_3_is_index_version_until_reindex() {
 
 const FOLD_TOKEN: &str = "fold-secret-token-never-index";
 const FOLD_DOCS: &str = r#"
-name: fold_docs
-kind: document
 version: 1
-exclude_lexical_index: true
-exclude_vector_index: true
+name: fold_docs
+schema:
+  document: {}
+  exclude_lexical_index: true
+  exclude_vector_index: true
 "#;
 const FOLD_INBOX: &str = r#"
-name: fold_inbox
-kind: singleton
 version: 1
-exclude_lexical_index: true
-exclude_vector_index: true
-singleton:
-  id: inbox
+name: fold_inbox
+schema:
+  singleton:
+    id: inbox
+  exclude_lexical_index: true
+  exclude_vector_index: true
 "#;
 
 fn tree_contains(root: &Path, needle: &str) -> bool {
@@ -1290,11 +1298,12 @@ fn new_field_on_excluded_collection_is_not_indexed() {
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_lexical_index: true
-exclude_vector_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_lexical_index: true
+  exclude_vector_index: true
 "#,
     );
     let vault = scratch.reopen();
@@ -1327,11 +1336,12 @@ fn journal_with_both_legs_excluded_still_gets_by_id() {
     scratch.write_declaration(
         "log.yaml",
         r#"
-name: fold_log
-kind: journal
 version: 1
-exclude_lexical_index: true
-exclude_vector_index: true
+name: fold_log
+schema:
+  journal: {}
+  exclude_lexical_index: true
+  exclude_vector_index: true
 "#,
     );
     let vault = scratch.reopen();
@@ -1352,10 +1362,11 @@ fn more_like_this_on_vector_excluded_collection_is_lexical() {
     scratch.write_declaration(
         "fold.yaml",
         r#"
-name: fold_docs
-kind: journal
 version: 1
-exclude_vector_index: true
+name: fold_docs
+schema:
+  journal: {}
+  exclude_vector_index: true
 "#,
     );
     let vault = scratch.reopen();

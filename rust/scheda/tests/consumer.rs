@@ -138,7 +138,7 @@ fn src_rs() -> String {
         include_str!("../src/json.rs"),
         include_str!("../src/lib.rs"),
         include_str!("../src/query.rs"),
-        include_str!("../src/declaration.rs"),
+        include_str!("../src/schema.rs"),
         include_str!("../src/search.rs"),
         include_str!("../src/store.rs"),
         include_str!("../src/vault.rs"),

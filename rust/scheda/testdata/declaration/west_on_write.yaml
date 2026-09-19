@@ -1,4 +1,0 @@
-name: west_docs
-kind: document
-version: 1
-on_write: echo hi

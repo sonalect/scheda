@@ -18,9 +18,9 @@ use tantivy::query::{
 use tantivy::schema::{Field, IndexRecordOption, OwnedValue};
 use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
 
+use crate::schema::CollectionDecl;
 use crate::error::{Code, ContextAs, bail};
 use crate::projector::find_marked_column;
-use crate::declaration::CollectionDecl;
 use crate::{ColumnKind, Error, Filter, IndexSchema, Projector};
 
 pub(crate) struct FindFields {

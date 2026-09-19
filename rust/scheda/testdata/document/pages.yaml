@@ -1,3 +1,4 @@
-name: north_pages
-kind: document
 version: 1
+name: north_pages
+schema:
+  document: {}

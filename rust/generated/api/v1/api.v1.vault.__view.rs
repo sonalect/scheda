@@ -22,12 +22,12 @@ pub struct VaultInfoView<'a> {
     /// Field 4: `auto_sync`
     pub auto_sync: ::core::option::Option<bool>,
     /// Declared collections. Not inferred from Record directories.
-    /// Isolated collections appear here; `schema.fields` may be omitted.
+    /// Isolated collections appear here. Each item includes `version`.
     ///
     /// Field 5: `collections`
     pub collections: ::buffa::RepeatedView<
         'a,
-        super::super::__buffa::view::CollectionInfoView<'a>,
+        super::super::super::collection::v1::__buffa::view::CollectionInfoView<'a>,
     >,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -98,12 +98,12 @@ impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
                 let sub = ::buffa::types::borrow_bytes(&mut cur)?;
                 ctx.register_element_memory(
                     ::core::mem::size_of::<
-                        super::super::__buffa::view::CollectionInfoView,
+                        super::super::super::collection::v1::__buffa::view::CollectionInfoView,
                     >(),
                 )?;
                 view.collections
                     .push(
-                        <super::super::__buffa::view::CollectionInfoView as ::buffa::MessageView>::decode_view_ctx(
+                        <super::super::super::collection::v1::__buffa::view::CollectionInfoView as ::buffa::MessageView>::decode_view_ctx(
                             sub,
                             __sub_ctx,
                         )?,
@@ -360,7 +360,7 @@ impl VaultInfoOwnedView {
         self.0.reborrow().auto_sync
     }
     /// Declared collections. Not inferred from Record directories.
-    /// Isolated collections appear here; `schema.fields` may be omitted.
+    /// Isolated collections appear here. Each item includes `version`.
     ///
     /// Field 5: `collections`
     #[must_use]
@@ -368,7 +368,7 @@ impl VaultInfoOwnedView {
         &self,
     ) -> &::buffa::RepeatedView<
         '_,
-        super::super::__buffa::view::CollectionInfoView<'_>,
+        super::super::super::collection::v1::__buffa::view::CollectionInfoView<'_>,
     > {
         &self.0.reborrow().collections
     }

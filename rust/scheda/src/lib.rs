@@ -33,7 +33,7 @@
 //! - **`openmp`** — USearch OpenMP executor (`usearch/openmp`). Needs
 //!   libomp (Linux `libomp-dev`). Not enabled in the Bazel CI build.
 //! - **`encrypt`** — age v1 ASCII-armor Record files for collections whose
-//!   declaration marks `encrypted`. Off by default. A build without it refuses
+//!   Schema marks `encrypted`. Off by default. A build without it refuses
 //!   `OpenOptions.encryption` at `open` (`unsupported_encryption`) and
 //!   refuses `collection` of an encrypted name the same way; other
 //!   collections still work.
@@ -77,6 +77,7 @@
 mod ann;
 #[cfg(feature = "encrypt")]
 mod crypto;
+mod schema;
 mod embed;
 mod error;
 mod git;
@@ -89,7 +90,6 @@ mod projector;
 #[cfg(feature = "find")]
 mod query;
 mod reindex;
-mod declaration;
 #[cfg(feature = "find")]
 mod search;
 mod store;
@@ -99,17 +99,22 @@ mod writer;
 #[cfg(feature = "search")]
 #[doc(hidden)]
 pub use ann::AnnIndex;
+pub use schema::Kind;
 pub use embed::{Embedder, Reranker};
 #[doc(hidden)]
 pub use error::redact_remote_text;
 pub use error::{Code, Repeat};
 pub use journal::JournalLines;
-pub use json::{declaration_from_json, declaration_from_value};
+pub use json::{schema_from_json, schema_from_value};
 pub use projector::{IndexDoc, IndexValue, Projector};
 #[doc(inline)]
+pub use scheda_generated::api::collection::v1::{
+    CollectionInfo, Journal, Schema, Singleton, Unit,
+};
+#[doc(inline)]
 pub use scheda_generated::api::v1::{
-    Author, CollectionInfo, ColumnKind, Declaration, Encryption, Error, History, IndexColumn,
-    IndexSchema, Journal, OpenOptions, Record, ReindexResult, Singleton, Unit, VaultInfo, history,
+    Author, ColumnKind, Encryption, Error, History, IndexColumn, IndexSchema, OpenOptions, Record,
+    ReindexResult, VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]
@@ -117,7 +122,6 @@ pub use scheda_generated::api::v1::{Filter, FindQuery, FindResult, filter};
 #[cfg(feature = "search")]
 #[doc(inline)]
 pub use scheda_generated::api::v1::{SearchHits, SearchQuery, search_hits};
-pub use declaration::Kind;
 pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};
 

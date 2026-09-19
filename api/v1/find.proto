@@ -51,7 +51,9 @@ message Filter {
     // Collection that owns this Projector column. Required on Vault
     // `find` / `search`. On a Collection handle, unset means this
     // collection. Ignored when `field` is `id`.
-    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `TermSetQuery`. Documents that contain any of these terms (OR on one
@@ -65,7 +67,9 @@ message Filter {
     // Terms; at least one. Same type rule as `Term.value`.
     google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `PhraseQuery`. Ordered sequence of tokens. Field must have positions.
@@ -82,7 +86,9 @@ message Filter {
     // Extra positions allowed between tokens. Unset or `0` → adjacent.
     uint32 slop = 3;
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 4 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 4 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `PhrasePrefixQuery`. Phrase whose last token is a prefix (`"part t"`
@@ -106,7 +112,9 @@ message Filter {
     // Cap on prefix expansion. Unset → Tantivy default (50).
     uint32 max_expansions = 4;
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 5 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 5 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `FuzzyTermQuery`. Term within Levenshtein distance.
@@ -130,7 +138,9 @@ message Filter {
     // `true` → a transposition costs 1, not 2.
     bool transposition_cost_one = 5;
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 6 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 6 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `RegexQuery`. A term that matches this pattern.
@@ -146,7 +156,9 @@ message Filter {
       string: {min_len: 1}
     }];
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `RegexPhraseQuery`. Ordered sequence of regexes. Field must have
@@ -167,7 +179,9 @@ message Filter {
     // (16384).
     uint32 max_expansions = 4;
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 5 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 5 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // One end of a `Range`. Inclusive or exclusive; not both.
@@ -195,7 +209,9 @@ message Filter {
     // Upper bound. Unset = unbounded above.
     Bound upper = 3;
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 4 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 4 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `ExistsQuery`. A non-null indexed value. Not “equals JSON
@@ -210,7 +226,9 @@ message Filter {
     // JSON fields: also match any non-null subpath. Default false.
     bool json_subpaths = 2;
     // Collection that owns this Projector column. Same rule as `Term.collection`.
-    string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
   }
 
   // `tantivy::query::Occur` on a boolean clause. There is no JSON `and` /
@@ -323,7 +341,9 @@ message Filter {
         // Values on that field (possibly several).
         google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
         // Collection that owns this Projector column. Same rule as `Term.collection`.
-        string collection = 3 [(buf.validate.field) = {string: {min_len: 1}}];
+        string collection = 3 [(buf.validate.field) = {
+          string: {min_len: 1}
+        }];
       }
       // At least one field.
       repeated Field fields = 1 [(buf.validate.field) = {

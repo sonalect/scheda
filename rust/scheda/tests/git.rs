@@ -782,7 +782,7 @@ fn isolated_commit_uses_open_options_identity() {
     let scratch = Scratch::new();
     let options = OpenOptions::new().author(Author::new().name("Ada").email("ada@invalid"));
     let vault = Vault::open(scratch.vault(), options, None).unwrap();
-    let decl: scheda::Declaration = serde_json::from_value(json!({
+    let decl: scheda::Schema = serde_json::from_value(json!({
         "version": 1,
         "document": {},
         "isolated": true,

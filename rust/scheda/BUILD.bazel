@@ -212,10 +212,10 @@ rust_test(
 )
 
 rust_test(
-    name = "declaration_test",
-    srcs = ["tests/declaration.rs"] + _TEST_COMMON,
+    name = "schema_test",
+    srcs = ["tests/schema.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
-    crate_root = "tests/declaration.rs",
+    crate_root = "tests/schema.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",

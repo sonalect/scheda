@@ -389,7 +389,7 @@ def _cmd_import(args: argparse.Namespace) -> None:
     for name, decl_path, _docs in collections:
         if name not in existing:
             _LOG.info("create-collection %s", name)
-            cli.create_collection(name, load_declaration_json(decl_path))
+            cli.create_collection(name, load_schema_json(decl_path))
             existing.add(name)
     added = 0
     skipped = 0
@@ -1294,14 +1294,17 @@ def _split_front_matter(text: str, path: Path) -> tuple[dict[str, Any], str]:
     return meta, body
 
 
-def load_declaration_json(path: Path) -> str:
-    """Load fixture `.collection.yaml` as Protobuf JSON `Declaration`."""
+def load_schema_json(path: Path) -> str:
+    """Load fixture `.collection.yaml` as Protobuf JSON `Schema`."""
     data = load_yaml_subset(path.read_text(encoding="utf-8"), path)
     if not isinstance(data, dict):
-        msg = f"declaration must be a mapping: {path}"
+        msg = f"collection file must be a mapping: {path}"
         raise ToolError(msg)
-    data.pop("version", None)
-    return json.dumps(data)
+    schema = data.get("schema")
+    if not isinstance(schema, dict):
+        msg = f"schema object is missing: {path}"
+        raise ToolError(msg)
+    return json.dumps(schema)
 
 
 def load_topics(path: Path) -> list[Topic]:
@@ -1591,11 +1594,11 @@ class SchedaCli:
         return self._run_json("reindex")
 
     def create_collection(self, name: str, schema_json: str) -> None:
-        """`create-collection NAME --declaration JSON`."""
+        """`create-collection NAME --schema JSON`."""
         self._run(
             "create-collection",
             name,
-            "--declaration",
+            "--schema",
             schema_json,
             expect_stdout=True,
             embedder=False,

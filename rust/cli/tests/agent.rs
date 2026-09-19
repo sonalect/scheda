@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Declaration, FindQuery, OpenOptions, SearchQuery, Vault, declaration_from_json};
+use scheda::{Schema, FindQuery, OpenOptions, SearchQuery, Vault, schema_from_json};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -99,7 +99,7 @@ fn vault_arg(scratch: &Scratch) -> String {
     scratch.vault().display().to_string()
 }
 
-fn notes_decl() -> Declaration {
+fn notes_decl() -> Schema {
     serde_json::from_value(json!({
         "version": 1,
         "document": {},
@@ -107,7 +107,7 @@ fn notes_decl() -> Declaration {
     .unwrap()
 }
 
-fn log_decl() -> Declaration {
+fn log_decl() -> Schema {
     serde_json::from_value(json!({
         "version": 1,
         "journal": {},
@@ -115,7 +115,7 @@ fn log_decl() -> Declaration {
     .unwrap()
 }
 
-fn isolated_decl() -> Declaration {
+fn isolated_decl() -> Schema {
     serde_json::from_value(json!({
         "document": {},
         "isolated": true,
@@ -202,19 +202,19 @@ fn info_json_matches_schema_files() {
     let notes_yaml =
         fs::read_to_string(scratch.vault().join("accept_notes/.collection.yaml")).unwrap();
     assert!(notes_yaml.contains("name: accept_notes"));
-    assert!(notes_yaml.contains("kind: document"));
+    assert!(notes_yaml.contains("document:"));
     let log_yaml = fs::read_to_string(scratch.vault().join("accept_log/.collection.yaml")).unwrap();
     assert!(log_yaml.contains("name: accept_log"));
-    assert!(log_yaml.contains("kind: journal"));
+    assert!(log_yaml.contains("journal:"));
 
     let info = stdout_json(&run(&["--vault", &path, "info"]));
     let notes = collection(&info, "accept_notes");
-    let notes_schema = &notes["declaration"];
+    let notes_schema = &notes["schema"];
     let lib_notes = scratch
         .reopen()
         .collection("accept_notes")
         .unwrap()
-        .decl()
+        .schema()
         .unwrap();
     assert_eq!(notes_schema, &serde_json::to_value(&lib_notes).unwrap());
     assert!(notes_schema.get("document").is_some());
@@ -222,12 +222,12 @@ fn info_json_matches_schema_files() {
     assert!(notes_schema.get("fields").is_none());
     assert!(notes_schema.get("isolated").is_none());
 
-    let journal = &collection(&info, "accept_log")["declaration"];
+    let journal = &collection(&info, "accept_log")["schema"];
     let lib_log = scratch
         .reopen()
         .collection("accept_log")
         .unwrap()
-        .decl()
+        .schema()
         .unwrap();
     assert_eq!(journal, &serde_json::to_value(&lib_log).unwrap());
     assert!(journal.get("journal").is_some());
@@ -264,8 +264,8 @@ fn info_marks_isolated_without_fields() {
     assert_eq!(lib["collections"], info["collections"]);
 
     let sealed = collection(&info, "accept_sealed");
-    assert_eq!(sealed["declaration"]["isolated"], true);
-    assert!(sealed["declaration"].get("fields").is_none());
+    assert_eq!(sealed["schema"]["isolated"], true);
+    assert!(sealed["schema"].get("fields").is_none());
     assert!(
         !json_contains_key(&info["collections"], "fields"),
         "isolated info JSON must not list fields: {info}"
@@ -473,7 +473,7 @@ fn library_and_cli_create_collection_json_and_code_match() {
         let collection = vault
             .create_collection("accept_notes", notes_decl(), None)
             .unwrap();
-        serde_json::to_value(collection.decl().unwrap()).unwrap()
+        serde_json::to_value(collection.schema().unwrap()).unwrap()
     };
     let path = vault_arg(&cli_scratch);
     let open = run(&["--vault", &path, "open"]);
@@ -489,7 +489,7 @@ fn library_and_cli_create_collection_json_and_code_match() {
     assert_eq!(stdout_json(&cli), lib_json);
 
     let leftover = r#"{"document":{},"fields":[{"name":"title","string":{}}]}"#;
-    let lib_err = declaration_from_json(leftover).unwrap_err();
+    let lib_err = schema_from_json(leftover).unwrap_err();
     let cli_err = run(&[
         "--vault",
         &path,

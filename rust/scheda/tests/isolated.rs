@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Declaration, Filter, OpenOptions, Vault};
+use scheda::{Code, Schema, Filter, OpenOptions, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -46,8 +46,8 @@ impl Drop for Scratch {
     }
 }
 
-const WEST: &str = include_str!("../testdata/declaration/west.yaml");
-const WEST_ISOLATED: &str = include_str!("../testdata/declaration/west_isolated.yaml");
+const WEST: &str = include_str!("../testdata/schema/west.yaml");
+const WEST_ISOLATED: &str = include_str!("../testdata/schema/west_isolated.yaml");
 const SEALED_LOG: &str = include_str!("../testdata/isolated/log.yaml");
 
 fn rec(fields: Value) -> Vec<u8> {
@@ -125,7 +125,7 @@ fn term(field: &str, value: &str) -> scheda::FindQuery {
         .into()
 }
 
-fn title_schema(isolated: bool) -> Declaration {
+fn title_schema(isolated: bool) -> Schema {
     let mut value = json!({
         "version": 1,
         "journal": {},
@@ -171,7 +171,7 @@ fn create_isolated_journal_writes_nested_git_not_main_log() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
     vault.begin().unwrap();
-    let decl: Declaration = serde_json::from_value(json!({
+    let decl: Schema = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 45},
         "isolated": true,
@@ -211,7 +211,7 @@ fn nested_commit_rolls_back_when_main_commit_fails() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     write_declaration(&scratch, WEST);
     let vault = scratch.reopen();
-    let decl: Declaration = serde_json::from_value(json!({
+    let decl: Schema = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 1024},
         "isolated": true,
@@ -259,7 +259,7 @@ fn isolated_journal_rotates_and_ids_map_is_in_main_index() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
     vault.begin().unwrap();
-    let decl: Declaration = serde_json::from_value(json!({
+    let decl: Schema = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 1024, "segment_max_lines": 1},
         "isolated": true,
@@ -814,7 +814,7 @@ fn old_nested_isolated_index_is_removed_by_reindex() {
     drop(Vault::open(scratch.vault(), scratch.options(), None).unwrap());
     let vault = scratch.reopen();
     vault.begin().unwrap();
-    let decl: Declaration = serde_json::from_value(json!({
+    let decl: Schema = serde_json::from_value(json!({
         "version": 1,
         "journal": {"segment_max_bytes": 1024},
         "isolated": true,
@@ -880,7 +880,11 @@ fn second_schema_claiming_isolated_name_is_invalid() {
     fs::create_dir_all(&other).unwrap();
     fs::write(
         other.join(".collection.yaml"),
-        "name: west_isolated\nkind: document\nversion: 1\n",
+        "version: 1
+name: west_isolated
+schema:
+  document: {}
+",
     )
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();

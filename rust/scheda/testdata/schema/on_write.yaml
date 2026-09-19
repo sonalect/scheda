@@ -1,0 +1,5 @@
+version: 1
+name: c
+schema:
+  document: {}
+on_write: echo hi

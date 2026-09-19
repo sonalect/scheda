@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda::{
-    Code, ColumnKind, Declaration, Error, Filter, FindQuery, FindResult, IndexColumn, IndexDoc,
+    Code, ColumnKind, Schema, Error, Filter, FindQuery, FindResult, IndexColumn, IndexDoc,
     IndexSchema, Journal, OpenOptions, Projector, SearchHits, SearchQuery, Unit, Vault,
 };
 use serde_json::json;
@@ -63,17 +63,17 @@ const PASS: &str = "p19-test-passphrase-never-on-disk";
 #[cfg(feature = "encrypt")]
 const PLAIN: &[u8] = b"fixture-plaintext-body-token";
 
-fn document_decl() -> Declaration {
-    Declaration {
+fn document_decl() -> Schema {
+    Schema {
         kind: Unit::default().into(),
-        ..Declaration::default()
+        ..Schema::default()
     }
 }
 
-fn journal_decl() -> Declaration {
-    Declaration {
+fn journal_decl() -> Schema {
+    Schema {
         kind: Journal::default().into(),
-        ..Declaration::default()
+        ..Schema::default()
     }
 }
 

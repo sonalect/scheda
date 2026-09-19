@@ -1,3 +1,4 @@
-name: lessons_personal
-kind: document
 version: 1
+name: lessons_personal
+schema:
+  document: {}

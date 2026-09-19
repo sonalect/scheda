@@ -1,5 +1,5 @@
-name: chain_heads
-kind: singleton
 version: 1
-singleton:
-  id: heads
+name: chain_heads
+schema:
+  singleton:
+    id: heads

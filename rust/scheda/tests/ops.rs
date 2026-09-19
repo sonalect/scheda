@@ -63,16 +63,18 @@ const OPS_JOURNAL: u64 = 1_000;
 const OPS_DOCS: u64 = 100;
 
 const OPS_LOG: &str = "\
-name: ops_log
-kind: journal
 version: 1
-segment_max_lines: 100
+name: ops_log
+schema:
+  journal:
+    segmentMaxLines: 100
 ";
 
 const OPS_NOTES: &str = "\
-name: north_notes
-kind: journal
 version: 1
+name: north_notes
+schema:
+  journal: {}
 ";
 
 struct OpsEmbedder;

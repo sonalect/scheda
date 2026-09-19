@@ -1,4 +1,8 @@
 version: v2
+inputs:
+  - directory: .
+    paths:
+      - api/v1
 plugins:
   - local: protoc-gen-buffa
     out: rust/generated/api/v1

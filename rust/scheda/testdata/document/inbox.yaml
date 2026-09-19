@@ -1,5 +1,5 @@
-name: north_inbox
-kind: singleton
 version: 1
-singleton:
-  id: inbox
+name: north_inbox
+schema:
+  singleton:
+    id: inbox

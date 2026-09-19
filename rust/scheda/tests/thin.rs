@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Declaration, OpenOptions, Record, Vault};
+use scheda::{Code, Schema, OpenOptions, Record, Vault};
 #[cfg(not(feature = "search"))]
 use scheda::{Embedder, Error};
 use serde_json::{Map, Value, json};
@@ -42,9 +42,10 @@ impl Drop for Scratch {
     }
 }
 
-const NOTES: &str = r#"name: thin_notes
-kind: document
-version: 1
+const NOTES: &str = r#"version: 1
+name: thin_notes
+schema:
+  document: {}
 "#;
 
 #[cfg(not(feature = "search"))]
@@ -122,7 +123,7 @@ fn isolated_round_trip_and_documents_without_find() {
     let scratch = Scratch::new();
     drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
-    let mut schema = Declaration::default().with_isolated(true);
+    let mut schema = Schema::default().with_isolated(true);
     schema.kind = scheda::Unit::default().into();
     vault
         .create_collection("thin_sealed", schema, None)
@@ -300,7 +301,12 @@ fn vault_with_encrypted_collection_opens_plain_collections() {
     fs::create_dir_all(&dir).unwrap();
     fs::write(
         dir.join(".collection.yaml"),
-        "name: sealed_thin\nkind: document\nversion: 1\nencrypted: true\n",
+        "version: 1
+name: sealed_thin
+schema:
+  document: {}
+  encrypted: true
+",
     )
     .unwrap();
     let vault = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
@@ -319,11 +325,11 @@ fn vault_with_encrypted_collection_opens_plain_collections() {
 #[cfg(not(feature = "encrypt"))]
 #[test]
 fn create_encrypted_collection_is_unsupported_encryption() {
-    use scheda::{Declaration, Unit};
+    use scheda::{Schema, Unit};
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     vault.begin().unwrap();
-    let mut schema = Declaration::default().with_encrypted(true);
+    let mut schema = Schema::default().with_encrypted(true);
     schema.kind = Unit::default().into();
     let err = vault
         .create_collection("sealed_thin", schema, None)

@@ -7,6 +7,7 @@ use std::time::Instant;
 
 #[cfg(feature = "search")]
 use crate::Reranker;
+use crate::schema::{self, CollectionDecl, Decls, Kind};
 #[cfg(feature = "search")]
 use crate::error::ensure;
 use crate::error::{Code, Context, ContextAs, ContextIo, bail, io_code};
@@ -16,12 +17,11 @@ use crate::isolated;
 use crate::journal;
 #[cfg(feature = "find")]
 use crate::query;
-use crate::declaration::{self, CollectionDecl, Kind, Decls};
 #[cfg(feature = "find")]
 use crate::search::SearchEngine;
 use crate::store;
 use crate::{
-    Declaration, Embedder, Encryption, Error, History, OpenOptions, Projector, Record,
+    Embedder, Encryption, Error, History, OpenOptions, Projector, Record, Schema,
     ReindexResult, VaultInfo,
 };
 #[cfg(feature = "find")]
@@ -252,7 +252,7 @@ impl Vault {
         let index = Arc::new(index::bind(&index_root)?);
         let generation = index.dir()?;
         index::restrict_index_tree(&generation)?;
-        let decls = Arc::new(declaration::load(&path)?);
+        let decls = Arc::new(schema::load(&path)?);
         let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&generation, &decls)?));
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
@@ -612,7 +612,7 @@ impl Vault {
     }
 
     fn reload_after_restore(&self) -> Result<(), Error> {
-        let loaded = declaration::load(&self.path)?;
+        let loaded = schema::load(&self.path)?;
         let dir = self.generation_dir()?;
         #[cfg(feature = "find")]
         {
@@ -818,7 +818,7 @@ impl Vault {
             index::require_fresh(&dir)?;
         }
         store::check_scheda_owner_only(&self.path)?;
-        let decls = declaration::load(&self.path)?;
+        let decls = schema::load(&self.path)?;
         index::check_journal_id_maps(&self.generation_dir()?, &decls)?;
         store::check_documents(&self.path, &decls, self.encryption.as_ref())?;
         journal::check_journals(&self.path, &decls)
@@ -827,7 +827,7 @@ impl Vault {
     /// Proto snapshot (`api.v1.VaultInfo`): vault attrs plus the collection list.
     pub fn info(&self) -> Result<VaultInfo, Error> {
         let remote = self.remotes.first().cloned().unwrap_or_default();
-        let info = declaration::to_vault_info(
+        let info = schema::to_vault_info(
             &self.path,
             &self.index.root,
             &remote,
@@ -837,13 +837,13 @@ impl Vault {
         Ok(info)
     }
 
-    /// Write one collection declaration (`api.v1.Declaration`) as
+    /// Write one collection Schema (`api.collection.v1.Schema`) as
     /// `{name}/.collection.yaml`. Reloads declarations on this handle.
     /// `isolated: true` stores Records under
     /// `{vault}/.isolated/` and creates the nested git if needed. Setting or
     /// clearing `encrypted` on a collection that already holds Record files is
     /// `invalid`; existing files are left untouched. A build without the
-    /// `encrypt` crate feature refuses a declaration that marks `encrypted`
+    /// `encrypt` crate feature refuses a Schema that marks `encrypted`
     /// (`unsupported_encryption`) and writes nothing.
     ///
     /// `message` is the git commit subject outside a transaction. Omitted →
@@ -854,12 +854,12 @@ impl Vault {
     pub fn create_collection(
         &self,
         name: &str,
-        decl: Declaration,
+        schema: Schema,
         message: Option<&str>,
     ) -> Result<Collection, Error> {
-        decl.require_valid()?;
+        schema.require_valid()?;
         #[cfg(not(feature = "encrypt"))]
-        if decl.encrypted == Some(true) {
+        if schema.encrypted == Some(true) {
             bail!(
                 Error::unsupported_encryption("this build cannot create an encrypted collection")
                     .context("[Vault::create_collection] encryption")
@@ -871,14 +871,14 @@ impl Vault {
             self.reject_if_reindex_active("create_collection")?;
             self.drain_abandoned()?;
             let result = (|| {
-                if decl.isolated == Some(true)
+                if schema.isolated == Some(true)
                     && let Some(rel) = isolated::ensure(&self.path)?
                 {
                     self.note_write(rel)?;
                 }
-                let rel = declaration::put_collection(&self.path, name, &decl)?;
+                let rel = schema::put_collection(&self.path, name, &schema)?;
                 self.note_write(rel)?;
-                let loaded = declaration::load(&self.path)?;
+                let loaded = schema::load(&self.path)?;
                 let dir = self.generation_dir()?;
                 *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
                     index::load_journal_ids(&dir, &loaded)?;
@@ -942,7 +942,7 @@ impl Vault {
     }
 
     fn reindex_body(&self, in_txn: bool) -> Result<ReindexResult, Error> {
-        let decls = declaration::load(&self.path)?;
+        let decls = schema::load(&self.path)?;
         #[cfg(feature = "search")]
         let previous = self.generation_dir()?;
         let new_dir = index::start_generation(&self.index.root)?;
@@ -1329,7 +1329,7 @@ impl Vault {
     pub(crate) fn reindex_without_publish(&self) -> Result<PathBuf, Error> {
         self.require_write_lock("reindex")?;
         self.conclude_write((|| {
-            let decls = declaration::load(&self.path)?;
+            let decls = schema::load(&self.path)?;
             #[cfg(feature = "search")]
             let previous = self.generation_dir()?;
             let new_dir = index::start_generation(&self.index.root)?;
@@ -1441,9 +1441,9 @@ impl Collection {
         &self.decl.name
     }
 
-    /// This collection's declaration as `api.v1.Declaration`. Not a Vault listing (`info`).
-    pub fn decl(&self) -> Result<Declaration, Error> {
-        declaration::to_proto_declaration(&self.decl)
+    /// This collection's Schema (`api.collection.v1.Schema`). Not a Vault listing (`info`).
+    pub fn schema(&self) -> Result<Schema, Error> {
+        schema::to_proto_schema(&self.decl)
     }
 
     /// Write mode: `document`, `journal`, or `singleton`.
@@ -1462,8 +1462,8 @@ impl Collection {
 
     /// Journal segment size cap in bytes. `None` on `document` / `singleton`.
     ///
-    /// Rust helper for declaration inspection. The collection catalog is
-    /// [`decl`](Self::decl).
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema).
     #[must_use]
     pub fn segment_max_bytes(&self) -> Option<u64> {
         self.decl.segment_max_bytes
@@ -1471,8 +1471,8 @@ impl Collection {
 
     /// Fixed `id` of a `singleton` collection. `None` otherwise.
     ///
-    /// Rust helper for declaration inspection. The collection catalog is
-    /// [`decl`](Self::decl).
+    /// Rust helper for Schema inspection. The collection catalog is
+    /// [`schema`](Self::schema).
     #[must_use]
     pub fn singleton_id(&self) -> Option<&str> {
         self.decl.singleton_id.as_deref()
@@ -2160,7 +2160,7 @@ fn record_from_raw(id: &str, collection: &str, raw: &[u8]) -> Record {
 fn resolve_collections(
     decls: &Decls,
     names: &[&str],
-) -> Result<Vec<declaration::CollectionDecl>, Error> {
+) -> Result<Vec<schema::CollectionDecl>, Error> {
     if names.is_empty() {
         return Ok(decls
             .collections()
@@ -2198,7 +2198,7 @@ fn resolve_collections(
 fn resolve_search_collections(
     decls: &Decls,
     names: &[&str],
-) -> Result<Vec<declaration::CollectionDecl>, Error> {
+) -> Result<Vec<schema::CollectionDecl>, Error> {
     if names.is_empty() {
         return Ok(decls
             .collections()
@@ -2234,12 +2234,12 @@ fn resolve_search_collections(
 
 #[cfg(feature = "find")]
 fn apply_filter_decls(
-    decls: Vec<declaration::CollectionDecl>,
+    decls: Vec<schema::CollectionDecl>,
     filter: &Filter,
     explicit: bool,
     projector: Option<&dyn crate::Projector>,
     scope: query::FilterScope<'_>,
-) -> Result<Vec<declaration::CollectionDecl>, Error> {
+) -> Result<Vec<schema::CollectionDecl>, Error> {
     if explicit {
         for decl in &decls {
             query::validate(decl, filter, projector, scope)?;
@@ -2751,7 +2751,7 @@ fn repair_index_after_discard(
     #[cfg(feature = "find")] search: &SearchEngine,
     embedder: Option<&dyn Embedder>,
 ) -> Result<(), Error> {
-    let loaded = declaration::load(vault)?;
+    let loaded = schema::load(vault)?;
     #[cfg(feature = "find")]
     {
         search.close_for_rebuild();
@@ -3008,7 +3008,7 @@ mod tests {
 
     use super::{Collection, OpenOptions, Vault};
     use crate::git;
-    use crate::{Code, Declaration, Encryption, Error, VaultInfo};
+    use crate::{Code, Encryption, Error, Schema, VaultInfo};
     #[cfg(feature = "search")]
     use crate::{Embedder, SearchQuery};
 
@@ -3134,10 +3134,10 @@ mod tests {
     }
 
     #[cfg(feature = "encrypt")]
-    fn encrypted_document_schema() -> Declaration {
-        Declaration {
+    fn encrypted_document_schema() -> Schema {
+        Schema {
             kind: crate::Unit::default().into(),
-            ..Declaration::default()
+            ..Schema::default()
         }
         .with_encrypted(true)
     }
@@ -3342,14 +3342,14 @@ mod tests {
         assert!(gitignore.lines().any(|line| line.trim() == "other"));
     }
 
-    fn document_schema() -> Declaration {
-        Declaration {
+    fn document_schema() -> Schema {
+        Schema {
             kind: crate::Unit::default().into(),
-            ..Declaration::default()
+            ..Schema::default()
         }
     }
 
-    fn journal_schema() -> Declaration {
+    fn journal_schema() -> Schema {
         serde_json::from_value(serde_json::json!({
             "journal": {}
         }))
@@ -3357,7 +3357,7 @@ mod tests {
     }
 
     #[cfg(feature = "search")]
-    fn journal_vector_schema() -> Declaration {
+    fn journal_vector_schema() -> Schema {
         serde_json::from_value(serde_json::json!({
             "journal": {}
         }))
@@ -3805,7 +3805,7 @@ mod tests {
     #[test]
     fn info_is_on_the_vault_surface() {
         let _: fn(&Vault) -> Result<VaultInfo, Error> = Vault::info;
-        let _: fn(&Vault, &str, Declaration, Option<&str>) -> Result<Collection, Error> =
+        let _: fn(&Vault, &str, Schema, Option<&str>) -> Result<Collection, Error> =
             Vault::create_collection;
         let _: fn(&Vault) -> Result<(), Error> = Vault::begin;
         let _: fn(&Vault) -> Result<(), Error> = Vault::discard;
@@ -3819,9 +3819,9 @@ mod tests {
         let scratch = Scratch::new();
         let writer = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
         writer.begin().unwrap();
-        let declaration = Declaration {
+        let declaration = Schema {
             kind: crate::Unit::default().into(),
-            ..Declaration::default()
+            ..Schema::default()
         };
         writer.create_collection("c", declaration, None).unwrap();
         writer.commit("schema").unwrap();

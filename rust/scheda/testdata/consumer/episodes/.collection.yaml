@@ -1,3 +1,4 @@
-name: episodes
-kind: journal
 version: 1
+name: episodes
+schema:
+  journal: {}

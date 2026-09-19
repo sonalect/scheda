@@ -135,18 +135,23 @@ bazel build //rust/scheda:pages        # same HTML plus redirect and .nojekyll
 bazel test //rust/scheda:scheda_doc_test
 ```
 
-Generate Rust stubs from `api/v1` (writes `rust/generated/api/v1/`;
-`bazel test //api/v1:generate_tests` checks they match):
+Generate Rust stubs from `api/version.proto`, `api/v1`, and
+`api/collection/v1` (writes `rust/generated/version/`,
+`rust/generated/api/v1/`, and `rust/generated/api/collection/v1/`;
+`bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test`
+checks they match):
 
 ```bash
+bazel run //api:generate
+bazel run //api/collection/v1:generate
 bazel run //api/v1:generate
-bazel test //api/v1:generate_tests
+bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test
 ```
 
 Lint (`bazel test` never rewrites files; format is `bazel run` only):
 
 ```bash
-bazel test //api/v1:lint        # Protobuf (buf)
+bazel test //api:lint //api/v1:lint //api/collection/v1:lint        # Protobuf (buf)
 bazel test //rust:lint          # clippy
 bazel test //python:lint        # ruff
 bazel test //bazel:lint         # Starlark (buildifier)
@@ -154,7 +159,7 @@ bazel test //bazel:markdown     # markdownlint-cli2
 bazel test //rust:vuln          # cargo-audit (needs network)
 bazel test //python:vuln        # pip-audit (needs network)
 
-bazel run //api/v1:format       # buf format
+bazel run //api:format //api/v1:format //api/collection/v1:format       # buf format
 bazel run //python:format       # ruff format
 bazel run //bazel:format        # buildifier -mode=fix
 ```

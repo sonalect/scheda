@@ -7,9 +7,9 @@ use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::schema::{CollectionDecl, Decls, Kind, SegmentRotate};
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
-use crate::declaration::{CollectionDecl, Kind, Decls, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
 
@@ -255,7 +255,7 @@ fn resolve_segment(vault: &Path, decl: &CollectionDecl, rel: &str) -> Result<Pat
                 .context("[Journal::find] resolve segment")
         );
     }
-    let path = crate::declaration::join_inside(vault, rel).map_err(|_| {
+    let path = crate::schema::join_inside(vault, rel).map_err(|_| {
         Error::index_corrupt("journal id map path is not a collection segment")
             .context("[Journal::find] resolve segment")
     })?;
@@ -922,14 +922,14 @@ mod tests {
         }
     }
 
-    fn journal_decl(daily: bool) -> crate::declaration::CollectionDecl {
-        crate::declaration::CollectionDecl {
+    fn journal_decl(daily: bool) -> crate::schema::CollectionDecl {
+        crate::schema::CollectionDecl {
             name: String::from("log"),
-            kind: crate::declaration::Kind::Journal,
+            kind: crate::schema::Kind::Journal,
             version: 1,
             segment_max_bytes: None,
             segment_max_lines: None,
-            segment_rotate: daily.then_some(crate::declaration::SegmentRotate::Daily),
+            segment_rotate: daily.then_some(crate::schema::SegmentRotate::Daily),
             singleton_id: None,
             isolated: false,
             encrypted: false,

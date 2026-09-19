@@ -1,0 +1,19 @@
+version: v2
+inputs:
+  - directory: .
+    paths:
+      - api/version.proto
+plugins:
+  - local: protoc-gen-buffa
+    out: rust/generated/version
+    opt:
+      - json=true
+  - local: protoc-gen-buffa-packaging
+    out: rust/generated/version
+    strategy: all
+  - local: protoc-gen-protovalidate-buffa
+    out: rust/generated/version
+    strategy: all
+    opt:
+      - proto_module=crate::generated
+      - packaging=false
