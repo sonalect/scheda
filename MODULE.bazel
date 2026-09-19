@@ -2,7 +2,7 @@
 
 module(
     name = "scheda",
-    version = "0.16.2",
+    version = "0.16.3",
 )
 
 bazel_dep(name = "aspect_rules_py", version = "1.12.1")
