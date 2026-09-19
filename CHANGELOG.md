@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.17.0] - 2026-09-19
+
 ### Added
 
 - Proto `api.Version` (`api/version.proto`, package `api`): shared on-disk
@@ -1553,6 +1555,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.17.0]
 - [0.16.3]
 - [0.16.2]
 - [0.16.1]
@@ -1600,7 +1603,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.16.3...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/amsokol/scheda/releases/tag/v0.17.0
 [0.16.3]: https://github.com/amsokol/scheda/releases/tag/v0.16.3
 [0.16.2]: https://github.com/amsokol/scheda/releases/tag/v0.16.2
 [0.16.1]: https://github.com/amsokol/scheda/releases/tag/v0.16.1
