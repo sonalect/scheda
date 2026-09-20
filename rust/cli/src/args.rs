@@ -118,7 +118,8 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Open or create a Vault. `--remote-repo` fills a missing path from that
-    /// URL; on an existing Vault it must match `origin`.
+    /// URL (absolute URI or scp-style `git@host:path`); on an existing Vault
+    /// it must match `origin`.
     Open {
         #[arg(long)]
         remote_repo: Option<String>,

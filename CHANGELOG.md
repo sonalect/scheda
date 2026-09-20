@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.17.1] - 2026-09-21
+
+### Changed
+
+- `OpenOptions.remote_repo` accepts an scp-style `git@host:path` as well as
+  an absolute URI (`https://…`, `ssh://…`, `file:///…`). Git clone
+  understands both; Scheda passes the string to the git CLI as-is. An empty
+  string, a filesystem path, and a hybrid `ssh://git@host:path` stay
+  `invalid`.
+
 ## [0.17.0] - 2026-09-19
 
 ### Added
@@ -1555,6 +1565,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.17.1]
 - [0.17.0]
 - [0.16.3]
 - [0.16.2]
@@ -1603,7 +1614,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.17.1...HEAD
+[0.17.1]: https://github.com/amsokol/scheda/releases/tag/v0.17.1
 [0.17.0]: https://github.com/amsokol/scheda/releases/tag/v0.17.0
 [0.16.3]: https://github.com/amsokol/scheda/releases/tag/v0.16.3
 [0.16.2]: https://github.com/amsokol/scheda/releases/tag/v0.16.2

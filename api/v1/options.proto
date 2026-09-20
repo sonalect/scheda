@@ -17,15 +17,17 @@ message OpenOptions {
   // Clone URL when `path` does not exist. Unset means local `git init`.
   // When `path` is already a Vault, a set value must match the fetch URL of
   // `origin`; otherwise `invalid`. Unset on an existing Vault attaches and
-  // does not change `origin`. A set value must be an absolute URI (RFC 3986):
-  // `https://…`, `ssh://…`, `file:///…`.
+  // does not change `origin`. A set value must be an absolute URI (RFC 3986:
+  // `https://…`, `ssh://…`, `file:///…`) or an scp-style address
+  // (`git@host:path`). Git clone understands both. A hybrid
+  // `ssh://git@host:path` (colon after the host) is not a URI and is not
+  // scp-style.
   string remote_repo = 2 [(buf.validate.field) = {
-    string: {uri: true}
     cel: [
       {
         id: "open_options.remote_repo.uri"
-        message: "must be a valid URI"
-        expression: "this.isUri()"
+        message: "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)"
+        expression: "this.isUri() || (this.contains('@') && this.contains(':') && !this.contains('://'))"
       }
     ]
   }];

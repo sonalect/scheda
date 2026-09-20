@@ -102,8 +102,9 @@ impl Vault {
     /// Path exists → open. A set `remote_repo` must match the fetch URL of
     /// `origin` (`invalid` if there is no `origin` or the URL differs); `origin`
     /// is not added or rewritten. Unset `remote_repo` attaches and does not
-    /// change `origin`. Path missing + `remote_repo` → clone. Path missing →
-    /// `git init`. Path exists but is not a Vault → `invalid`.
+    /// change `origin`. Path missing + `remote_repo` → clone. A set
+    /// `remote_repo` is an absolute URI or an scp-style `git@host:path`. Path
+    /// missing → `git init`. Path exists but is not a Vault → `invalid`.
     /// Optional caller embedder. Turns on the vector leg of `search`.
     /// Without the `search` crate feature, a `Some` value fails
     /// (`index_vector`): that leg is absent. The signature is the same in

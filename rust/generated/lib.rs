@@ -453,7 +453,8 @@ impl api::v1::OpenOptions {
     }
 
     /// Clone URL when `open` path does not exist. Unset means local `git init`.
-    /// A set value must be an absolute URI (`https://…`, `ssh://…`, `file:///…`).
+    /// A set value must be an absolute URI (`https://…`, `ssh://…`,
+    /// `file:///…`) or an scp-style address (`git@host:path`).
     #[must_use]
     pub fn remote_repo(self, remote_repo: impl Into<String>) -> Self {
         self.with_remote_repo(remote_repo)
@@ -725,7 +726,7 @@ mod tests {
     }
 
     #[test]
-    fn open_options_remote_repo_must_be_uri() {
+    fn open_options_remote_repo_must_be_uri_or_scp() {
         assert!(OpenOptions::new().validate().is_ok());
         assert!(
             OpenOptions::new()
@@ -739,6 +740,18 @@ mod tests {
                 .validate()
                 .is_ok()
         );
+        assert!(
+            OpenOptions::new()
+                .remote_repo("ssh://git@github.com/org/repo.git")
+                .validate()
+                .is_ok()
+        );
+        assert!(
+            OpenOptions::new()
+                .remote_repo("git@host:repo.git")
+                .validate()
+                .is_ok()
+        );
         assert!(OpenOptions::new().remote_repo("").validate().is_err());
         assert!(
             OpenOptions::new()
@@ -748,7 +761,7 @@ mod tests {
         );
         assert!(
             OpenOptions::new()
-                .remote_repo("git@host:repo.git")
+                .remote_repo("ssh://git@github.com:org/repo.git")
                 .validate()
                 .is_err()
         );

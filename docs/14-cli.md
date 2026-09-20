@@ -51,7 +51,7 @@ on stderr).
 
 | Command | Args |
 |---|---|
-| `open` | [`--remote-repo URL`] (absolute URI when set) |
+| `open` | [`--remote-repo URL`] (absolute URI or scp-style `git@host:path` when set) |
 | `info` | |
 | `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is Protobuf JSON `Schema` (`api.collection.v1.Schema`). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |

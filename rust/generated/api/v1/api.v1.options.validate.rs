@@ -176,7 +176,11 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
         }
         if let ::core::option::Option::Some(__cel_inner) = self.remote_repo.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
-            if !(::protovalidate_buffa::rules::string::is_uri(((__cel_this)))) {
+            if !((::protovalidate_buffa::rules::string::is_uri(((__cel_this)))
+                || (((((__cel_this))).contains(("@"))
+                    && (((__cel_this))).contains((":")))
+                    && (!(((__cel_this))).contains(("://"))))))
+            {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -201,7 +205,9 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                         rule_id: ::std::borrow::Cow::Borrowed(
                             "open_options.remote_repo.uri",
                         ),
-                        message: ::std::borrow::Cow::Borrowed("must be a valid URI"),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)",
+                        ),
                         for_key: false,
                     });
             }
@@ -403,7 +409,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
         }
         if let ::core::option::Option::Some(__cel_inner) = self.remote_repo.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
-            if !(::protovalidate_buffa::rules::string::is_uri(((__cel_this)))) {
+            if !((::protovalidate_buffa::rules::string::is_uri(((__cel_this)))
+                || (((((__cel_this))).contains(("@"))
+                    && (((__cel_this))).contains((":")))
+                    && (!(((__cel_this))).contains(("://"))))))
+            {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -428,7 +438,9 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                         rule_id: ::std::borrow::Cow::Borrowed(
                             "open_options.remote_repo.uri",
                         ),
-                        message: ::std::borrow::Cow::Borrowed("must be a valid URI"),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)",
+                        ),
                         for_key: false,
                     });
             }

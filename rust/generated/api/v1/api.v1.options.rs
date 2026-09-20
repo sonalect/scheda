@@ -17,8 +17,11 @@ pub struct OpenOptions {
     /// Clone URL when `path` does not exist. Unset means local `git init`.
     /// When `path` is already a Vault, a set value must match the fetch URL of
     /// `origin`; otherwise `invalid`. Unset on an existing Vault attaches and
-    /// does not change `origin`. A set value must be an absolute URI (RFC 3986):
-    /// `https://…`, `ssh://…`, `file:///…`.
+    /// does not change `origin`. A set value must be an absolute URI (RFC 3986:
+    /// `https://…`, `ssh://…`, `file:///…`) or an scp-style address
+    /// (`git@host:path`). Git clone understands both. A hybrid
+    /// `ssh://git@host:path` (colon after the host) is not a URI and is not
+    /// scp-style.
     ///
     /// Field 2: `remote_repo`
     #[serde(
