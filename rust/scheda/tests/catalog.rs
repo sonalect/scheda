@@ -7,7 +7,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Schema, FindQuery, OpenOptions, SearchQuery, Vault};
+use scheda::{Code, FindQuery, OpenOptions, Schema, SearchQuery, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);

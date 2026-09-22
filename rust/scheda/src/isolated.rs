@@ -4,9 +4,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::Error;
-use crate::schema::{self, CollectionDecl};
 use crate::error::{ContextIo, bail};
 use crate::git;
+use crate::schema::{self, CollectionDecl};
 
 /// Vault-relative directory that holds isolated Record files.
 pub(crate) const DIR: &str = ".isolated";

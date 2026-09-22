@@ -5,7 +5,7 @@
 use std::io::Read;
 
 use age::secrecy::SecretString;
-use scheda_generated::api::v1::encryption::Secret;
+use scheda_api::api::v1::encryption::Secret;
 
 use crate::error::bail;
 use crate::{Encryption, Error};

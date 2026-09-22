@@ -1,24 +1,34 @@
 ---
-description: Every parent agent delegates commands and new files to a Cursor Grok subagent, then reviews
+description: Grok does the work itself; only Opus launches a Grok 4.7 subagent
 alwaysApply: true
 ---
 
 # Delegate execution and creation
 
-Applies to **every parent agent**, including Cursor Grok (this model when
-the parent is `cursor-grok-4.6-high`). A Cursor Grok parent still launches
-a Cursor Grok subagent. If **you** were launched via the Task tool, you
-are the subagent: do the work yourself and do not spawn another Task.
+## Grok
 
-The parent does not run commands and does not create files. Both go to
-a Cursor Grok subagent (`model: "cursor-grok-4.6-high"`).
+If you are Grok (`grok-4.7-high`), do the work yourself. Do not launch a
+Grok subagent. Shell commands, new files, and edits stay in this agent.
 
-## Always delegate
+Every `bazel` / `cargo` / `buf` command runs from this clone's root (the
+directory with `MODULE.bazel`) with unrestricted permissions
+(`required_permissions: ["all"]`). Never a sibling folder or the Cursor
+sandbox. `bazel run //api/v1:generate` belongs here too.
+
+## Opus
+
+If you are Opus (Claude), you do not run commands and you do not create
+files. Both go to a Grok 4.7 subagent (`model: "grok-4.7-high"`).
+
+If **you** were launched via the Task tool, you are the subagent: do the
+work yourself and do not spawn another Task.
+
+### Always delegate
 
 - Any shell command: `cargo` builds and tests, `git`, clippy, formatters, scans, scripts, one-off measurements.
 - Creating new files, new crates, new packages.
 
-Launch it with the Task tool: `subagent_type: "shell"` for pure command work, `subagent_type: "generalPurpose"` when the subagent must also write files. Always pass `model: "cursor-grok-4.6-high"`. Never pass a Fast model (`composer-2.5-fast`, any slug ending in `-fast`) and never use `subagent_type: "explore"`.
+Launch it with the Task tool: `subagent_type: "generalPurpose"`. Always pass `model: "grok-4.7-high"`. Never pass a Fast model (`composer-2.5-fast`, any slug ending in `-fast`) and never use `subagent_type: "explore"`.
 
 The subagent starts with no context. Give it absolute paths, the exact content or a full specification, and the repository conventions it must obey. Every `bazel` / `cargo` / `buf` command must run with `working_directory` set to this clone's root (the directory with `MODULE.bazel`) and unrestricted permissions (`required_permissions: ["all"]`) — never a sibling folder or the Cursor sandbox. `bazel run //api/v1:generate` belongs there too. Also:
 
@@ -27,13 +37,13 @@ The subagent starts with no context. Give it absolute paths, the exact content o
 - every workspace crate carries `[lints] workspace = true`;
 - pinned dependency versions come from `[workspace.dependencies]` in the root `Cargo.toml`.
 
-## Keep for yourself
+### Keep for yourself
 
 - Reading, searching, reviewing: Read, Grep, Glob, ReadLints.
 - Editing files that already exist.
 - Design, analysis, and the reply to the user.
 
-## After it returns
+### After it returns
 
 Read what the subagent produced and verify it against the request and the
 conventions above. Never report success on the subagent's word alone.
@@ -43,13 +53,13 @@ subagent again with the findings (paths, what is wrong, the expected fix)
 and repeat until the result is acceptable or you must stop and tell the
 user what remains.
 
-## Example
+### Example
 
 ```
 Task(
   description: "Build scheda crate",
   subagent_type: "generalPurpose",
-  model: "cursor-grok-4.6-high",
+  model: "grok-4.7-high",
   prompt: "Create /home/amsokol/.../rust/scheda/src/lib.rs with <full spec>.
            Then run `cargo clippy -p scheda --all-targets` and report the output verbatim."
 )

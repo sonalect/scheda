@@ -19,7 +19,7 @@ rust_library(
         ],
         allow_empty = True,
     ),
-    crate_name = "scheda_generated",
+    crate_name = "scheda_api",
     visibility = ["//visibility:public"],
     deps = [
         "@scheda_cargo//:buffa",

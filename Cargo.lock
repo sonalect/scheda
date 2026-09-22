@@ -2837,14 +2837,14 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.17.1"
+version = "0.18.0"
 dependencies = [
  "age",
  "buffa",
  "buffa-types",
  "cxx",
  "regex",
- "scheda-generated",
+ "scheda-api",
  "serde",
  "serde_json",
  "sha1",
@@ -2855,8 +2855,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "scheda-api"
+version = "0.18.0"
+dependencies = [
+ "buffa",
+ "buffa-types",
+ "protovalidate-buffa",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "scheda-cli"
-version = "0.17.1"
+version = "0.18.0"
 dependencies = [
  "clap",
  "mimalloc",
@@ -2865,17 +2876,6 @@ dependencies = [
  "serde",
  "serde_json",
  "ureq",
-]
-
-[[package]]
-name = "scheda-generated"
-version = "0.17.1"
-dependencies = [
- "buffa",
- "buffa-types",
- "protovalidate-buffa",
- "serde",
- "serde_json",
 ]
 
 [[package]]

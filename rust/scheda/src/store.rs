@@ -7,8 +7,8 @@ use std::iter::FusedIterator;
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::schema::{CollectionDecl, Decls, Kind};
 use crate::error::{Code, ContextAs, ContextIo, bail};
+use crate::schema::{CollectionDecl, Decls, Kind};
 use crate::{Encryption, Error, Record};
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);

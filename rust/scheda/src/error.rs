@@ -9,7 +9,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 #[cfg(feature = "find")]
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub use scheda_generated::api::v1::error::{Code, Repeat};
+pub use scheda_api::api::v1::error::{Code, Repeat};
 
 /// Fail closed if a previous holder paniced with this mutex.
 pub(crate) fn mutex<'a, T>(

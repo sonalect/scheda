@@ -208,7 +208,7 @@ fn load_collection_text(text: &str, yaml: bool, path: &Path) -> Result<Collectio
     } else {
         serde_json::from_str(text).context(Code::Invalid, "[Decls::load] parse collection JSON")?
     };
-    let version: scheda_generated::api::Version = serde_json::from_value(value.clone())
+    let version: scheda_api::api::Version = serde_json::from_value(value.clone())
         .context(Code::Invalid, "[Decls::load] parse collection version")?;
     version.require_valid()?;
     let n = version.version.unwrap_or(0);
@@ -292,11 +292,7 @@ fn journal_to_proto(decl: &CollectionDecl) -> Journal {
 }
 
 /// Write one collection declaration. Returns the vault-relative POSIX path.
-pub(crate) fn put_collection(
-    vault: &Path,
-    name: &str,
-    incoming: &Schema,
-) -> Result<String, Error> {
+pub(crate) fn put_collection(vault: &Path, name: &str, incoming: &Schema) -> Result<String, Error> {
     incoming.require_valid()?;
     require_slug("collection name", name)?;
     let decl = decl_from_proto(name, incoming)?;
@@ -341,7 +337,7 @@ pub(crate) fn put_collection(
 }
 
 fn decl_from_proto(name: &str, incoming: &Schema) -> Result<CollectionDecl, Error> {
-    use scheda_generated::api::collection::v1::__buffa::oneof::schema::Kind as DeclKind;
+    use scheda_api::api::collection::v1::__buffa::oneof::schema::Kind as DeclKind;
     let (kind, singleton_id, segment_max_bytes, segment_max_lines, segment_rotate) =
         match incoming.kind.as_ref() {
             Some(DeclKind::Document(_)) => (Kind::Document, None, None, None, None),
@@ -482,8 +478,7 @@ schema:
 
     #[test]
     fn collection_name_must_be_a_path_component() {
-        let err =
-            parse("version: 1\nname: team/notes\nschema:\n  document: {}\n").unwrap_err();
+        let err = parse("version: 1\nname: team/notes\nschema:\n  document: {}\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         let decl = parse("version: 1\nname: team-notes\nschema:\n  document: {}\n").unwrap();
         assert_eq!(decl.name, "team-notes");
@@ -492,8 +487,8 @@ schema:
 
     #[test]
     fn singleton_id_must_be_a_valid_record_id() {
-        let err = parse("version: 1\nname: box\nschema:\n  singleton:\n    id: .hidden\n")
-            .unwrap_err();
+        let err =
+            parse("version: 1\nname: box\nschema:\n  singleton:\n    id: .hidden\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
@@ -538,41 +533,39 @@ schema:
 
     #[test]
     fn layout_key_is_invalid() {
-        let err =
-            parse("version: 1\nname: c\nschema:\n  document: {}\nlayout:\n  - '{id}.md'\n")
-                .unwrap_err();
+        let err = parse("version: 1\nname: c\nschema:\n  document: {}\nlayout:\n  - '{id}.md'\n")
+            .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("layout"));
     }
 
     #[test]
     fn leftover_fields_key_is_invalid() {
-        let err =
-            parse("version: 1\nname: c\nschema:\n  document: {}\nfields: []\n").unwrap_err();
+        let err = parse("version: 1\nname: c\nschema:\n  document: {}\nfields: []\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("fields"));
     }
 
     #[test]
     fn leftover_body_key_is_invalid() {
-        let err =
-            parse("version: 1\nname: c\nschema:\n  document: {}\nbody: {}\n").unwrap_err();
+        let err = parse("version: 1\nname: c\nschema:\n  document: {}\nbody: {}\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("body"));
     }
 
     #[test]
     fn leftover_kind_key_is_invalid() {
-        let err = parse("version: 1\nname: c\nkind: document\nschema:\n  document: {}\n")
-            .unwrap_err();
+        let err =
+            parse("version: 1\nname: c\nkind: document\nschema:\n  document: {}\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("kind"));
     }
 
     #[test]
     fn leftover_declaration_key_is_invalid() {
-        let err = parse("version: 1\nname: c\ndeclaration:\n  document: {}\nschema:\n  document: {}\n")
-            .unwrap_err();
+        let err =
+            parse("version: 1\nname: c\ndeclaration:\n  document: {}\nschema:\n  document: {}\n")
+                .unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(err.message.as_deref().unwrap_or("").contains("declaration"));
     }
@@ -588,10 +581,7 @@ schema:
 
     #[test]
     fn journal_cap_above_32_mib_is_invalid() {
-        let err = parse(include_str!(
-            "../testdata/schema/journal_oversize.yaml"
-        ))
-        .unwrap_err();
+        let err = parse(include_str!("../testdata/schema/journal_oversize.yaml")).unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
     }
 
@@ -604,16 +594,16 @@ schema:
 
     #[test]
     fn encrypted_mark_parses() {
-        let decl = parse("version: 1\nname: c\nschema:\n  document: {}\n  encrypted: true\n")
-            .unwrap();
+        let decl =
+            parse("version: 1\nname: c\nschema:\n  document: {}\n  encrypted: true\n").unwrap();
         assert!(decl.encrypted);
         assert!(!decl.isolated);
     }
 
     #[test]
     fn encrypted_journal_yaml_is_invalid() {
-        let err = parse("version: 1\nname: c\nschema:\n  journal: {}\n  encrypted: true\n")
-            .unwrap_err();
+        let err =
+            parse("version: 1\nname: c\nschema:\n  journal: {}\n  encrypted: true\n").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::Invalid));
         assert!(
             err.to_string()
@@ -648,18 +638,16 @@ schema:
 
     #[test]
     fn journal_may_set_either_exclude_index_flag() {
-        let lexical = parse(
-            "version: 1\nname: c\nschema:\n  journal: {}\n  exclude_lexical_index: true\n",
-        )
-        .unwrap();
+        let lexical =
+            parse("version: 1\nname: c\nschema:\n  journal: {}\n  exclude_lexical_index: true\n")
+                .unwrap();
         assert!(lexical.exclude_lexical_index);
         assert!(!lexical.exclude_vector_index);
         assert!(!lexical.lexical_indexed());
         assert!(lexical.vector_indexed());
-        let vector = parse(
-            "version: 1\nname: c\nschema:\n  journal: {}\n  exclude_vector_index: true\n",
-        )
-        .unwrap();
+        let vector =
+            parse("version: 1\nname: c\nschema:\n  journal: {}\n  exclude_vector_index: true\n")
+                .unwrap();
         assert!(vector.exclude_vector_index);
         assert!(vector.lexical_indexed());
         assert!(!vector.vector_indexed());

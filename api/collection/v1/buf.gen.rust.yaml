@@ -15,5 +15,5 @@ plugins:
     out: rust/generated/api/collection/v1
     strategy: all
     opt:
-      - proto_module=crate::generated
+      - proto_module=crate::api
       - packaging=false

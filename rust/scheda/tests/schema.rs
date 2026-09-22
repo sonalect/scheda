@@ -59,8 +59,7 @@ const WEST: &str = include_str!("../testdata/schema/west.yaml");
 const EAST: &str = include_str!("../testdata/schema/east.yaml");
 const WEST_JSON: &str = include_str!("../testdata/schema/west.json");
 const WEST_MISSING_KIND: &str = include_str!("../testdata/schema/west_missing_kind.yaml");
-const WEST_MISSING_VERSION: &str =
-    include_str!("../testdata/schema/west_missing_version.yaml");
+const WEST_MISSING_VERSION: &str = include_str!("../testdata/schema/west_missing_version.yaml");
 const WEST_ON_WRITE: &str = include_str!("../testdata/schema/west_on_write.yaml");
 const WIKI: &str = include_str!("../testdata/schema/wiki.md");
 const EAST_LOG: &str = include_str!("../testdata/schema/east_log.yaml");

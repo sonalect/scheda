@@ -7,7 +7,6 @@ use std::time::Instant;
 
 #[cfg(feature = "search")]
 use crate::Reranker;
-use crate::schema::{self, CollectionDecl, Decls, Kind};
 #[cfg(feature = "search")]
 use crate::error::ensure;
 use crate::error::{Code, Context, ContextAs, ContextIo, bail, io_code};
@@ -17,12 +16,13 @@ use crate::isolated;
 use crate::journal;
 #[cfg(feature = "find")]
 use crate::query;
+use crate::schema::{self, CollectionDecl, Decls, Kind};
 #[cfg(feature = "find")]
 use crate::search::SearchEngine;
 use crate::store;
 use crate::{
-    Embedder, Encryption, Error, History, OpenOptions, Projector, Record, Schema,
-    ReindexResult, VaultInfo,
+    Embedder, Encryption, Error, History, OpenOptions, Projector, Record, ReindexResult, Schema,
+    VaultInfo,
 };
 #[cfg(feature = "find")]
 use crate::{Filter, FindQuery, FindResult};
@@ -67,7 +67,9 @@ pub struct Vault {
     journal_ids: Arc<Mutex<JournalIdMaps>>,
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
-    embedder: Option<Arc<dyn Embedder>>,
+    /// Swapped after `open` by [`Self::set_embedder`]. A `collection`
+    /// copies the value it sees at that call.
+    embedder: Mutex<Option<Arc<dyn Embedder>>>,
     projector: Option<Arc<dyn Projector>>,
     identity: Arc<git::CommitIdentity>,
     encryption: Option<Encryption>,
@@ -278,7 +280,7 @@ impl Vault {
             journal_ids,
             #[cfg(feature = "find")]
             search,
-            embedder,
+            embedder: Mutex::new(embedder),
             projector,
             identity: Arc::new(identity),
             encryption,
@@ -379,6 +381,25 @@ impl Vault {
         )?))
     }
 
+    /// Install `embedder` for later [`collection`](Self::collection) handles
+    /// and for [`search`](Self::search) on this handle.
+    ///
+    /// Returns the embedder that was installed before this call. A
+    /// collection opened before the swap keeps the embedder it copied.
+    /// `None` turns the vector leg off until another embedder is installed.
+    /// The lexical index is unchanged.
+    pub fn set_embedder(
+        &self,
+        embedder: Option<Arc<dyn Embedder>>,
+    ) -> Result<Option<Arc<dyn Embedder>>, Error> {
+        let mut slot = crate::error::mutex(&self.embedder, "[Vault] lock embedder")?;
+        Ok(std::mem::replace(&mut *slot, embedder))
+    }
+
+    fn embedder_arc(&self) -> Result<Option<Arc<dyn Embedder>>, Error> {
+        Ok(crate::error::mutex(&self.embedder, "[Vault] lock embedder")?.clone())
+    }
+
     /// Handle for one collection.
     ///
     /// Unknown name → `not_found`. Isolated collections live under
@@ -415,7 +436,7 @@ impl Vault {
             journal_ids: Arc::clone(&self.journal_ids),
             #[cfg(feature = "find")]
             search: Arc::clone(&self.search),
-            embedder: self.embedder.clone(),
+            embedder: self.embedder_arc()?,
             projector: self.projector.clone(),
             identity: Arc::clone(&self.identity),
             encryption: self.encryption.clone(),
@@ -503,7 +524,12 @@ impl Vault {
             projector: self.projector.as_deref(),
             scope: crate::query::FilterScope::Vault,
         }
-        .search(self.embedder.as_deref(), collections, query, reranker)
+        .search(
+            self.embedder_arc()?.as_deref(),
+            collections,
+            query,
+            reranker,
+        )
     }
 
     /// End the transaction on this handle and create one git commit per
@@ -618,8 +644,9 @@ impl Vault {
         #[cfg(feature = "find")]
         {
             self.search.close_for_rebuild();
+            let embedder = self.embedder_arc()?;
             self.search
-                .rebuild(&self.path, &loaded, self.embedder.as_deref())?;
+                .rebuild(&self.path, &loaded, embedder.as_deref())?;
         }
         *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
             index::load_journal_ids(&dir, &loaded)?;
@@ -956,7 +983,8 @@ impl Vault {
             self.search.flush()?;
             // Must precede `index::rebuild`: that walk clears the generation
             // except an inherited `vector/` dump already in place.
-            crate::search::copy_vector_dump(&previous, &new_dir, self.embedder.as_deref())?;
+            let embedder = self.embedder_arc()?;
+            crate::search::copy_vector_dump(&previous, &new_dir, embedder.as_deref())?;
         }
         if !in_txn {
             #[cfg(feature = "find")]
@@ -969,10 +997,11 @@ impl Vault {
             let hook = self.walk_hook();
             let hook_ref = hook.as_deref();
             let rebuilder = SearchEngine::open(&new_dir, true, self.projector.clone())?;
+            let embedder = self.embedder_arc()?;
             let walk = rebuilder.rebuild_online(
                 &self.path,
                 &decls,
-                self.embedder.as_deref(),
+                embedder.as_deref(),
                 hook_ref.map(|h| h as &dyn Fn(&str)),
             )?;
             let counts = merge_reindex_counts(counts, &walk);
@@ -1046,10 +1075,10 @@ impl Vault {
         #[cfg(feature = "search")] previous: &Path,
     ) -> Result<(), Error> {
         #[cfg(feature = "search")]
-        let models_differ = self.vector_models_differ();
+        let models_differ = self.vector_models_differ()?;
         #[cfg(not(feature = "search"))]
         let models_differ = false;
-        let copy_vectors = self.embedder.is_some() && !models_differ;
+        let copy_vectors = self.embedder_arc()?.is_some() && !models_differ;
         let deadline = Instant::now() + crate::reindex::publish_window();
         loop {
             self.apply_queue(
@@ -1130,6 +1159,7 @@ impl Vault {
         #[cfg(feature = "search")] previous: &Path,
         copy_vectors: bool,
     ) -> Result<(), Error> {
+        let embedder = self.embedder_arc()?;
         let files = crate::reindex::list_queue(&self.path)?;
         if files.is_empty() {
             return Ok(());
@@ -1166,7 +1196,7 @@ impl Vault {
                         source.copy_record(rebuilder, &decl.name, &id)?;
                     }
                     if decl.any_indexed() {
-                        rebuilder.upsert(decl, &record, self.embedder.as_deref())?;
+                        rebuilder.upsert(decl, &record, embedder.as_deref())?;
                     }
                 }
                 _ => {
@@ -1281,26 +1311,26 @@ impl Vault {
     }
 
     #[cfg(feature = "search")]
-    fn vector_models_differ(&self) -> bool {
-        let Some(embedder) = self.embedder.as_deref() else {
-            return false;
+    fn vector_models_differ(&self) -> Result<bool, Error> {
+        let Some(embedder) = self.embedder_arc()? else {
+            return Ok(false);
         };
         let Ok(dir) = self.generation_dir() else {
-            return false;
+            return Ok(false);
         };
         let meta_path = dir.join("vector").join("meta.json");
         let Ok(raw) = fs::read_to_string(&meta_path) else {
-            return false;
+            return Ok(false);
         };
         let Ok(meta) = serde_json::from_str::<serde_json::Value>(&raw) else {
-            return false;
+            return Ok(false);
         };
         let model = meta.get("model_id").and_then(|v| v.as_str()).unwrap_or("");
         let dims = meta
             .get("dimensions")
             .and_then(serde_json::Value::as_u64)
             .unwrap_or(0);
-        model != embedder.model_id() || dims != embedder.dimensions().get() as u64
+        Ok(model != embedder.model_id() || dims != embedder.dimensions().get() as u64)
     }
 
     fn try_take_write_lock(&self) -> Result<bool, Error> {
@@ -1339,11 +1369,13 @@ impl Vault {
                 self.search.flush()?;
                 // Must precede `index::rebuild`: that walk clears the generation
                 // except an inherited `vector/` dump already in place.
-                crate::search::copy_vector_dump(&previous, &new_dir, self.embedder.as_deref())?;
+                let embedder = self.embedder_arc()?;
+                crate::search::copy_vector_dump(&previous, &new_dir, embedder.as_deref())?;
             }
             index::rebuild(&self.path, &decls, &new_dir)?;
             let rebuilder = SearchEngine::open(&new_dir, true, self.projector.clone())?;
-            rebuilder.rebuild_online(&self.path, &decls, self.embedder.as_deref(), None)?;
+            let embedder = self.embedder_arc()?;
+            rebuilder.rebuild_online(&self.path, &decls, embedder.as_deref(), None)?;
             drop(rebuilder);
             Ok(new_dir)
         })())

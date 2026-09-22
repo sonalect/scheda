@@ -16,11 +16,11 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-use crate::schema::{self, Decls, Kind};
 #[cfg(feature = "find")]
 use crate::error::Context;
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::journal;
+use crate::schema::{self, Decls, Kind};
 use crate::store;
 use crate::{Error, ReindexResult};
 

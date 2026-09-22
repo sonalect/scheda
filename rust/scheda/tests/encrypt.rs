@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Schema, Encryption, Journal, OpenOptions, Singleton, Unit, Vault};
+use scheda::{Code, Encryption, Journal, OpenOptions, Schema, Singleton, Unit, Vault};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);

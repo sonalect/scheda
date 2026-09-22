@@ -74,7 +74,7 @@ The design is a numbered package in `docs/`, in English.
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`Cargo.toml`](Cargo.toml)         | Workspace: members, pinned dependency versions, lints                                                                                             |
 | [`api/v1`](api/v1)                 | Library API messages (Protobuf edition 2024; not the Vault on-disk format)                                                                        |
-| [`rust/generated`](rust/generated) | Generated Rust stubs (`scheda-generated`) from `api/v1`                                                                                           |
+| [`rust/generated`](rust/generated) | Generated Rust stubs (`scheda-api`) from `api/v1`                                                                                                 |
 | [`rust/scheda`](rust/scheda)       | First implementation: Rust crate `scheda`                                                                                                         |
 | [`rust/cli`](rust/cli)             | Thin CLI binary `scheda` (`07` / `14`, AGT-2–5)                                                                                                   |
 | [`python/vllm`](python/vllm)       | `bazel run` vLLM sidecars (locked `uv.lock`; Linux)                                                                                               |

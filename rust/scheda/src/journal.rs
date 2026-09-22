@@ -7,9 +7,9 @@ use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::schema::{CollectionDecl, Decls, Kind, SegmentRotate};
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
+use crate::schema::{CollectionDecl, Decls, Kind, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
 

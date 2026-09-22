@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::{Code, Schema, OpenOptions, Record, Vault};
+use scheda::{Code, OpenOptions, Record, Schema, Vault};
 #[cfg(not(feature = "search"))]
 use scheda::{Embedder, Error};
 use serde_json::{Map, Value, json};

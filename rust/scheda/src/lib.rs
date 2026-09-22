@@ -77,7 +77,6 @@
 mod ann;
 #[cfg(feature = "encrypt")]
 mod crypto;
-mod schema;
 mod embed;
 mod error;
 mod git;
@@ -90,6 +89,7 @@ mod projector;
 #[cfg(feature = "find")]
 mod query;
 mod reindex;
+mod schema;
 #[cfg(feature = "find")]
 mod search;
 mod store;
@@ -99,7 +99,6 @@ mod writer;
 #[cfg(feature = "search")]
 #[doc(hidden)]
 pub use ann::AnnIndex;
-pub use schema::Kind;
 pub use embed::{Embedder, Reranker};
 #[doc(hidden)]
 pub use error::redact_remote_text;
@@ -108,20 +107,19 @@ pub use journal::JournalLines;
 pub use json::{schema_from_json, schema_from_value};
 pub use projector::{IndexDoc, IndexValue, Projector};
 #[doc(inline)]
-pub use scheda_generated::api::collection::v1::{
-    CollectionInfo, Journal, Schema, Singleton, Unit,
-};
+pub use scheda_api::api::collection::v1::{CollectionInfo, Journal, Schema, Singleton, Unit};
 #[doc(inline)]
-pub use scheda_generated::api::v1::{
+pub use scheda_api::api::v1::{
     Author, ColumnKind, Encryption, Error, History, IndexColumn, IndexSchema, OpenOptions, Record,
     ReindexResult, VaultInfo, history,
 };
 #[cfg(feature = "find")]
 #[doc(inline)]
-pub use scheda_generated::api::v1::{Filter, FindQuery, FindResult, filter};
+pub use scheda_api::api::v1::{Filter, FindQuery, FindResult, filter};
 #[cfg(feature = "search")]
 #[doc(inline)]
-pub use scheda_generated::api::v1::{SearchHits, SearchQuery, search_hits};
+pub use scheda_api::api::v1::{SearchHits, SearchQuery, search_hits};
+pub use schema::Kind;
 pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};
 

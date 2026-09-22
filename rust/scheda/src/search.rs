@@ -29,11 +29,11 @@ use tantivy::{
     Term,
 };
 
-use crate::schema::{CollectionDecl, Decls, Kind};
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::index::{self, JournalIdMaps};
 use crate::projector::{self, IndexDoc, IndexValue, ProjectorDump};
 use crate::query::{self, FindFields};
+use crate::schema::{CollectionDecl, Decls, Kind};
 use crate::store;
 use crate::{Embedder, Error, Filter, IndexSchema, Record};
 #[cfg(feature = "search")]

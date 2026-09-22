@@ -16,8 +16,8 @@ of the focused file (or the one the user named). Do not fold a sibling
 repo into the same plan unless asked.
 
 Do **not** implement. The deliverable is a **coding plan**. Do the review
-**in this agent** (exception to `delegate-execution.mdc`): no `Task`
-subagents, no explore/generalPurpose handoff, no weaker model.
+**in this agent**, including Opus (who otherwise delegates execution): no
+`Task` subagents, no explore/generalPurpose handoff, no weaker model.
 
 ## Checklist
 

@@ -849,7 +849,7 @@ simd   = ["search", "usearch/numkong"]
 - [x] The generated types stay compiled and stop being public. `lib.rs`
       re-exports `Filter`, `FindQuery`, `FindResult`, and `filter` only
       under `find`, and `SearchQuery`, `SearchHits`, `search_hits`, and
-      `AnnIndex` only under `search`. `scheda-generated` and
+      `AnnIndex` only under `search`. `scheda-api` and
       `bazel run //api/v1:generate` do not change.
 - [x] `replace` decides existence from the Record file, not from the
       Index. Isolated collections already do exactly that; the same path

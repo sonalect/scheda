@@ -3,10 +3,10 @@
 use std::ops::Bound as StdBound;
 
 use buffa_types::google::protobuf::value::Kind as ValueKind;
-use scheda_generated::api::v1::__buffa::oneof::filter::Kind;
-use scheda_generated::api::v1::__buffa::oneof::filter::bound::Kind as BoundKind;
-use scheda_generated::api::v1::__buffa::oneof::filter::more_like_this::Source;
-use scheda_generated::api::v1::filter::{self, Occur};
+use scheda_api::api::v1::__buffa::oneof::filter::Kind;
+use scheda_api::api::v1::__buffa::oneof::filter::bound::Kind as BoundKind;
+use scheda_api::api::v1::__buffa::oneof::filter::more_like_this::Source;
+use scheda_api::api::v1::filter::{self, Occur};
 use tantivy::Index;
 use tantivy::Term;
 use tantivy::query::{
@@ -18,9 +18,9 @@ use tantivy::query::{
 use tantivy::schema::{Field, IndexRecordOption, OwnedValue};
 use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
 
-use crate::schema::CollectionDecl;
 use crate::error::{Code, ContextAs, bail};
 use crate::projector::find_marked_column;
+use crate::schema::CollectionDecl;
 use crate::{ColumnKind, Error, Filter, IndexSchema, Projector};
 
 pub(crate) struct FindFields {

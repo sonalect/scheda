@@ -10,8 +10,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda::{
-    Code, ColumnKind, Schema, Error, Filter, FindQuery, FindResult, IndexColumn, IndexDoc,
-    IndexSchema, Journal, OpenOptions, Projector, SearchHits, SearchQuery, Unit, Vault,
+    Code, ColumnKind, Error, Filter, FindQuery, FindResult, IndexColumn, IndexDoc, IndexSchema,
+    Journal, OpenOptions, Projector, Schema, SearchHits, SearchQuery, Unit, Vault,
 };
 use serde_json::json;
 
