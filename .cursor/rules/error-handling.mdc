@@ -1,6 +1,6 @@
 ---
 description: Define and bubble api.v1.Error (code, path, repeat, stack). No anyhow.
-globs: api/v1/error.proto,rust/scheda/src/**/*.rs,rust/generated/lib.rs
+globs: api/v1/error.proto,rust/scheda/src/**/*.rs,rust/api/lib.rs
 alwaysApply: true
 ---
 

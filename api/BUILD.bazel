@@ -36,6 +36,6 @@ write_source_files(
     name = "generate",
     check_that_out_file_exists = False,
     files = {
-        "//rust/generated:version": ":rust",
+        "//rust/api:version": ":rust",
     },
 )

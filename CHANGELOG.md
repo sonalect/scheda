@@ -8,6 +8,11 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Generated Rust stubs live in `rust/api` (was `rust/generated`). The crate
+  name stays `scheda-api`.
+
 ## [0.18.0] - 2026-09-22
 
 ### Changed

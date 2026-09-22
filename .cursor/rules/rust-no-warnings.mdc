@@ -14,7 +14,7 @@ Every workspace crate must include `[lints] workspace = true`.
 
 ## Exception: generated files
 
-Generated sources (protobuf, bindgen, crate build scripts, `*_pb.rs`, `**/generated/**`) may carry `#![allow(warnings)]` at the file root. Do not copy that allow into handwritten `src/` or `tests/`.
+Generated sources (protobuf, bindgen, crate build scripts, `*_pb.rs`, `rust/api/**`) may carry `#![allow(warnings)]` at the file root. Do not copy that allow into handwritten `src/` or `tests/`.
 
 ```rust
 // BAD — handwritten

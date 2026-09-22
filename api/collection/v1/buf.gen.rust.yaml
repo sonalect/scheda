@@ -5,14 +5,14 @@ inputs:
       - api/collection/v1
 plugins:
   - local: protoc-gen-buffa
-    out: rust/generated/api/collection/v1
+    out: rust/api/api/collection/v1
     opt:
       - json=true
   - local: protoc-gen-buffa-packaging
-    out: rust/generated/api/collection/v1
+    out: rust/api/api/collection/v1
     strategy: all
   - local: protoc-gen-protovalidate-buffa
-    out: rust/generated/api/collection/v1
+    out: rust/api/api/collection/v1
     strategy: all
     opt:
       - proto_module=crate::api

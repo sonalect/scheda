@@ -2,11 +2,11 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 exports_files([
     "Cargo.toml",
-    # Destination for //api/v1:generate → rust/generated/api/v1 (directory sync).
+    # Destination for //api/v1:generate → rust/api/api/v1 (directory sync).
     "api/v1",
-    # Destination for //api/collection/v1:generate → rust/generated/api/collection/v1.
+    # Destination for //api/collection/v1:generate → rust/api/api/collection/v1.
     "api/collection/v1",
-    # Destination for //api:generate → rust/generated/version.
+    # Destination for //api:generate → rust/api/version.
     "version",
 ])
 

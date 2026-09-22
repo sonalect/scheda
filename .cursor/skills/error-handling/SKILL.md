@@ -108,7 +108,7 @@ ensure!(
 
 ## Construct and bubble
 
-`Error` constructors live on the generated type (`rust/generated/lib.rs`).
+`Error` constructors live on the generated type (`rust/api/lib.rs`).
 Use them from `scheda`:
 
 ```rust

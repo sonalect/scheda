@@ -74,7 +74,7 @@ The design is a numbered package in `docs/`, in English.
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`Cargo.toml`](Cargo.toml)         | Workspace: members, pinned dependency versions, lints                                                                                             |
 | [`api/v1`](api/v1)                 | Library API messages (Protobuf edition 2024; not the Vault on-disk format)                                                                        |
-| [`rust/generated`](rust/generated) | Generated Rust stubs (`scheda-api`) from `api/v1`                                                                                                 |
+| [`rust/api`](rust/api)             | Generated Rust stubs (`scheda-api`) from `api/v1`                                                                                                 |
 | [`rust/scheda`](rust/scheda)       | First implementation: Rust crate `scheda`                                                                                                         |
 | [`rust/cli`](rust/cli)             | Thin CLI binary `scheda` (`07` / `14`, AGT-2–5)                                                                                                   |
 | [`python/vllm`](python/vllm)       | `bazel run` vLLM sidecars (locked `uv.lock`; Linux)                                                                                               |
@@ -136,8 +136,8 @@ bazel test //rust/scheda:scheda_doc_test
 ```
 
 Generate Rust stubs from `api/version.proto`, `api/v1`, and
-`api/collection/v1` (writes `rust/generated/version/`,
-`rust/generated/api/v1/`, and `rust/generated/api/collection/v1/`;
+`api/collection/v1` (writes `rust/api/version/`,
+`rust/api/api/v1/`, and `rust/api/api/collection/v1/`;
 `bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test`
 checks they match):
 

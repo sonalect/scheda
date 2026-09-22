@@ -23,7 +23,7 @@ _TEST_COMMON = [
 _SCHEDA_SRCS = glob(["src/**/*.rs"])
 
 _SCHEDA_DEPS = [
-    "//rust/generated:generated_v1",
+    "//rust/api:generated_v1",
     "@scheda_cargo//:buffa",
     "@scheda_cargo//:buffa-types",
     "@scheda_cargo//:regex",

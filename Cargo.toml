@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/cli", "rust/generated", "rust/scheda"]
+members = ["rust/api", "rust/cli", "rust/scheda"]
 
 [workspace.package]
 edition = "2024"
@@ -28,7 +28,7 @@ model2vec-rs = { version = "=0.2.1", default-features = false, features = [
 protovalidate-buffa = { version = "=0.7.2", default-features = false }
 regex = "=1.13.1"
 scheda = { path = "rust/scheda" }
-scheda-api = { path = "rust/generated" }
+scheda-api = { path = "rust/api" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 sha1 = "=0.11.0"

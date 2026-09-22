@@ -23,8 +23,8 @@ bazel run //api/v1:generate
 bazel run //api/collection/v1:generate
 ```
 
-That writes `rust/generated/version/`, `rust/generated/api/v1/`, and
-`rust/generated/api/collection/v1/`. Optional check:
+That writes `rust/api/version/`, `rust/api/api/v1/`, and
+`rust/api/api/collection/v1/`. Optional check:
 `bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test`.
 
 ## No sandbox

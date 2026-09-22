@@ -1,5 +1,5 @@
 {
-  "checksum": "4b4a7f722f896c8c02bf59bd963ac3bff667fa43afd4564bdbf18852673179cd",
+  "checksum": "5d2703e2df371ca9010e0550582f58af72f4ef2b40df3729e003239a18f812e1",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -19507,7 +19507,7 @@
   "workspace_members": {
     "direct-cargo-bazel-deps 0.0.1": "",
     "scheda 0.18.0": "rust/scheda",
-    "scheda-api 0.18.0": "rust/generated",
+    "scheda-api 0.18.0": "rust/api",
     "scheda-cli 0.18.0": "rust/cli"
   }
 }

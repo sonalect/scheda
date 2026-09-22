@@ -16,7 +16,7 @@ associated type/const, `fn`, method, `const`, `static`, type alias, and
 `pub` field.
 
 `pub(crate)` and private items do not. Generated sources
-(`rust/generated/**`, `*_pb.rs`, bindgen) do not: they may stay under
+(`rust/api/**`, `*_pb.rs`, bindgen) do not: they may stay under
 `#![allow(warnings)]` at the file root.
 
 When you add or change a public item, write the rustdoc in the same edit.
