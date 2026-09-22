@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.18.1] - 2026-09-22
+
 ### Changed
 
 - Generated Rust stubs live in `rust/api` (was `rust/generated`). The crate
@@ -1584,6 +1586,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.18.1]
 - [0.18.0]
 - [0.17.1]
 - [0.17.0]
@@ -1634,7 +1637,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/amsokol/scheda/releases/tag/v0.18.1
 [0.18.0]: https://github.com/amsokol/scheda/releases/tag/v0.18.0
 [0.17.1]: https://github.com/amsokol/scheda/releases/tag/v0.17.1
 [0.17.0]: https://github.com/amsokol/scheda/releases/tag/v0.17.0
