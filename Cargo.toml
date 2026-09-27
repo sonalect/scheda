@@ -45,10 +45,10 @@ warnings = "deny"
 all = "deny"
 
 [patch.crates-io]
-cxx = { git = "https://github.com/amsokol/cxx", tag = "1.0.202-bazel-sandbox-fix-2" }
-cxx-build = { git = "https://github.com/amsokol/cxx", tag = "1.0.202-bazel-sandbox-fix-2" }
+cxx = { git = "https://github.com/sonalect/cxx", tag = "1.0.202-bazel-sandbox-fix-2" }
+cxx-build = { git = "https://github.com/sonalect/cxx", tag = "1.0.202-bazel-sandbox-fix-2" }
 numkong = { git = "https://github.com/sonalect/NumKong", tag = "v7.8.3-bazel-sandbox-fix" }
-usearch = { git = "https://github.com/amsokol/USearch", tag = "v2.26.2-bazel-sandbox-fix" }
+usearch = { git = "https://github.com/sonalect/USearch", tag = "v2.26.2-bazel-sandbox-fix" }
 
 # Cargo `--release` only. Bazel rustc flags are unchanged.
 [profile.release]

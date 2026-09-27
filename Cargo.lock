@@ -754,7 +754,7 @@ dependencies = [
 [[package]]
 name = "cxx"
 version = "1.0.202"
-source = "git+https://github.com/amsokol/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+source = "git+https://github.com/sonalect/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
 dependencies = [
  "cc",
  "cxx-build",
@@ -768,7 +768,7 @@ dependencies = [
 [[package]]
 name = "cxx-build"
 version = "1.0.202"
-source = "git+https://github.com/amsokol/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+source = "git+https://github.com/sonalect/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
 dependencies = [
  "cc",
  "codespan-reporting",
@@ -782,7 +782,7 @@ dependencies = [
 [[package]]
 name = "cxxbridge-cmd"
 version = "1.0.202"
-source = "git+https://github.com/amsokol/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+source = "git+https://github.com/sonalect/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
 dependencies = [
  "clap",
  "codespan-reporting",
@@ -795,12 +795,12 @@ dependencies = [
 [[package]]
 name = "cxxbridge-flags"
 version = "1.0.202"
-source = "git+https://github.com/amsokol/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+source = "git+https://github.com/sonalect/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
 
 [[package]]
 name = "cxxbridge-macro"
 version = "1.0.202"
-source = "git+https://github.com/amsokol/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+source = "git+https://github.com/sonalect/cxx?tag=1.0.202-bazel-sandbox-fix-2#b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
 dependencies = [
  "indexmap",
  "proc-macro2",
@@ -1083,7 +1083,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2756,7 +2756,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3295,7 +3295,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3607,7 +3607,7 @@ dependencies = [
 [[package]]
 name = "usearch"
 version = "2.26.2"
-source = "git+https://github.com/amsokol/USearch?tag=v2.26.2-bazel-sandbox-fix#465a334f9e7ad2da304704e660698a81e2ef0ce2"
+source = "git+https://github.com/sonalect/USearch?tag=v2.26.2-bazel-sandbox-fix#465a334f9e7ad2da304704e660698a81e2ef0ce2"
 dependencies = [
  "cxx",
  "cxx-build",
@@ -3767,7 +3767,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

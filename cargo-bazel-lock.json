@@ -1,5 +1,5 @@
 {
-  "checksum": "8a4b441af8c56ead78be24e38b170496d5c66e3db13e97d20d69e96d4ac1b358",
+  "checksum": "63e24cfad4d91f005f20ceb5e7cc0ed85a732686be897f9e56b73703f6f8ee24",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -3793,7 +3793,7 @@
           "commitish": {
             "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
           },
-          "remote": "https://github.com/amsokol/cxx"
+          "remote": "https://github.com/sonalect/cxx"
         }
       },
       "targets": [
@@ -3864,7 +3864,7 @@
           "commitish": {
             "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
           },
-          "remote": "https://github.com/amsokol/cxx",
+          "remote": "https://github.com/sonalect/cxx",
           "strip_prefix": "bridge/build"
         }
       },
@@ -3905,7 +3905,7 @@
           "commitish": {
             "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
           },
-          "remote": "https://github.com/amsokol/cxx",
+          "remote": "https://github.com/sonalect/cxx",
           "strip_prefix": "flags"
         }
       },
@@ -3959,7 +3959,7 @@
           "commitish": {
             "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
           },
-          "remote": "https://github.com/amsokol/cxx",
+          "remote": "https://github.com/sonalect/cxx",
           "strip_prefix": "macro"
         }
       },
@@ -5192,7 +5192,7 @@
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ]
@@ -13048,7 +13048,7 @@
                 "target": "errno"
               },
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ],
@@ -15537,7 +15537,7 @@
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ],
@@ -17059,7 +17059,7 @@
           "commitish": {
             "Rev": "465a334f9e7ad2da304704e660698a81e2ef0ce2"
           },
-          "remote": "https://github.com/amsokol/USearch"
+          "remote": "https://github.com/sonalect/USearch"
         }
       },
       "targets": [
@@ -17814,7 +17814,7 @@
           "selects": {
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ]
@@ -18125,6 +18125,16 @@
     },
     "windows-sys 0.52.0": {
       "common_attrs": {
+        "crate_features": [
+          "Win32",
+          "Win32_Foundation",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
+          "Win32_System",
+          "Win32_System_Console",
+          "Win32_System_SystemInformation",
+          "default"
+        ],
         "deps": [
           {
             "id": "windows-targets 0.52.6",
@@ -18211,11 +18221,8 @@
         "crate_features": [
           "Win32",
           "Win32_Foundation",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
           "Win32_System",
           "Win32_System_Console",
-          "Win32_System_SystemInformation",
           "default"
         ],
         "deps": [

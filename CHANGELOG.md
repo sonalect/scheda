@@ -8,6 +8,11 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Update `cxx` and `cxx-build` patches to use `sonalect/cxx` fork.
+- Update `usearch` patch to use `sonalect/USearch` fork.
+
 ## [0.18.2] - 2026-09-27
 
 ### Changed
