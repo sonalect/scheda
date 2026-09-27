@@ -1,5 +1,5 @@
 {
-  "checksum": "97e9670d3677b824f015421d4352c81eebb758be9340f86e4d79fb1c0266a79e",
+  "checksum": "8a4b441af8c56ead78be24e38b170496d5c66e3db13e97d20d69e96d4ac1b358",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -13470,7 +13470,7 @@
       ],
       "version": "1.0.6"
     },
-    "scheda 0.18.1": {
+    "scheda 0.18.2": {
       "common_attrs": {
         "crate_features": [
           "encrypt",
@@ -13546,9 +13546,9 @@
           }
         }
       ],
-      "version": "0.18.1"
+      "version": "0.18.2"
     },
-    "scheda-api 0.18.1": {
+    "scheda-api 0.18.2": {
       "common_attrs": {
         "deps": [
           {
@@ -13590,9 +13590,9 @@
           }
         }
       ],
-      "version": "0.18.1"
+      "version": "0.18.2"
     },
-    "scheda-cli 0.18.1": {
+    "scheda-cli 0.18.2": {
       "common_attrs": {
         "deps": [
           {
@@ -13630,7 +13630,7 @@
       "package_url": "https://github.com/amsokol/scheda",
       "repository": null,
       "targets": [],
-      "version": "0.18.1"
+      "version": "0.18.2"
     },
     "scopeguard 1.2.0": {
       "common_attrs": {
@@ -19502,8 +19502,8 @@
   "direct_dev_deps": [],
   "workspace_members": {
     "direct-cargo-bazel-deps 0.0.1": "",
-    "scheda 0.18.1": "rust/scheda",
-    "scheda-api 0.18.1": "rust/api",
-    "scheda-cli 0.18.1": "rust/cli"
+    "scheda 0.18.2": "rust/scheda",
+    "scheda-api 0.18.2": "rust/api",
+    "scheda-cli 0.18.2": "rust/cli"
   }
 }

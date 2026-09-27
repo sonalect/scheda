@@ -996,6 +996,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "direct-cargo-bazel-deps"
+version = "0.0.1"
+dependencies = [
+ "age",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2829,7 +2836,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "age",
  "buffa",
@@ -2848,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-api"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -2859,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "clap",
  "mimalloc",
