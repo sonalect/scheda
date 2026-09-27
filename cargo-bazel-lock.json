@@ -1,5 +1,5 @@
 {
-  "checksum": "00525735d3926bbc22a5fe1af54b79d86b21cd218ce9ec7eeb0e254d322b41ca",
+  "checksum": "97e9670d3677b824f015421d4352c81eebb758be9340f86e4d79fb1c0266a79e",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -9907,7 +9907,7 @@
       ],
       "version": "0.2.3"
     },
-    "model2vec-rs 0.2.1": {
+    "model2vec-rs 0.3.0": {
       "common_attrs": {
         "crate_features": [
           "fancy-regex",
@@ -9917,10 +9917,6 @@
           {
             "id": "anyhow 1.0.104",
             "target": "anyhow"
-          },
-          {
-            "id": "clap 4.6.7",
-            "target": "clap"
           },
           {
             "id": "half 2.7.1",
@@ -9947,7 +9943,7 @@
             "target": "tokenizers"
           }
         ],
-        "edition": "2021"
+        "edition": "2024"
       },
       "library_target_name": "model2vec_rs",
       "license_file": "LICENSE",
@@ -9955,8 +9951,8 @@
       "package_url": "https://github.com/MinishLab/model2vec-rs",
       "repository": {
         "Http": {
-          "sha256": "3cbb465c6997e85d6bcb0e9fabedb51cc8a0919d2a3de083157abe83dccbde54",
-          "url": "https://static.crates.io/crates/model2vec-rs/0.2.1/download"
+          "sha256": "3ca11a52a52721b3305bd03ee42d66d8026f54f00235b81746662f2b25a743f1",
+          "url": "https://static.crates.io/crates/model2vec-rs/0.3.0/download"
         }
       },
       "targets": [
@@ -9967,7 +9963,7 @@
           }
         }
       ],
-      "version": "0.2.1"
+      "version": "0.3.0"
     },
     "monostate 0.1.18": {
       "common_attrs": {
@@ -10406,7 +10402,7 @@
       ],
       "version": "0.4.0"
     },
-    "numkong 7.8.2": {
+    "numkong 7.8.3": {
       "build_script_attrs": {
         "deps": [
           {
@@ -10436,9 +10432,9 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "7a40b88aad13a45b45c401c86efeae56f591a8a8"
+            "Rev": "25d5098772f3004c66631c6921a5e5a72f0ea4a4"
           },
-          "remote": "https://github.com/amsokol/NumKong"
+          "remote": "https://github.com/sonalect/NumKong"
         }
       },
       "targets": [
@@ -10455,7 +10451,7 @@
           }
         }
       ],
-      "version": "7.8.2"
+      "version": "7.8.3"
     },
     "once_cell 1.21.4": {
       "common_attrs": {
@@ -13608,7 +13604,7 @@
             "target": "mimalloc"
           },
           {
-            "id": "model2vec-rs 0.2.1",
+            "id": "model2vec-rs 0.3.0",
             "target": "model2vec_rs"
           },
           {
@@ -17026,7 +17022,7 @@
             "target": "cxx"
           },
           {
-            "id": "numkong 7.8.2",
+            "id": "numkong 7.8.3",
             "target": "numkong"
           }
         ]
@@ -17041,7 +17037,7 @@
             "target": "cxx"
           },
           {
-            "id": "numkong 7.8.2",
+            "id": "numkong 7.8.3",
             "target": "numkong"
           }
         ],
@@ -19491,7 +19487,7 @@
     "clap 4.6.7",
     "cxx 1.0.202",
     "mimalloc 3.5.3",
-    "model2vec-rs 0.2.1",
+    "model2vec-rs 0.3.0",
     "protovalidate-buffa 0.7.2",
     "regex 1.13.1",
     "serde 1.0.229",

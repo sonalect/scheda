@@ -5560,7 +5560,7 @@ impl ::protovalidate_buffa::Validate for filter::MoreLikeThis {
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         match &self.source {
-            Some(__buffa::oneof::more_like_this::Source::Id(v)) => {
+            Some(__buffa::oneof::filter::more_like_this::Source::Id(v)) => {
                 if v.chars().count() < 1usize {
                     violations
                         .push(::protovalidate_buffa::Violation {
@@ -5593,7 +5593,7 @@ impl ::protovalidate_buffa::Validate for filter::MoreLikeThis {
                         });
                 }
             }
-            Some(__buffa::oneof::more_like_this::Source::Fields(v)) => {
+            Some(__buffa::oneof::filter::more_like_this::Source::Fields(v)) => {
                 if let Err(sub) = v.validate() {
                     violations
                         .extend(
@@ -5707,7 +5707,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::MoreLikeThisView
     ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         match &self.source {
-            Some(__buffa::view::oneof::more_like_this::Source::Id(v)) => {
+            Some(__buffa::view::oneof::filter::more_like_this::Source::Id(v)) => {
                 if v.chars().count() < 1usize {
                     violations
                         .push(::protovalidate_buffa::Violation {
@@ -5740,7 +5740,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::MoreLikeThisView
                         });
                 }
             }
-            Some(__buffa::view::oneof::more_like_this::Source::Fields(v)) => {
+            Some(__buffa::view::oneof::filter::more_like_this::Source::Fields(v)) => {
                 if let Err(sub) = v.validate() {
                     violations
                         .extend(

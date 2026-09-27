@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Update `model2vec-rs` to `0.3.0`.
+- Update `numkong` to `v7.8.3-bazel-sandbox-fix` from `sonalect/NumKong`.
+- Update vLLM sidecar to `0.30.0` and `huggingface-hub` to `1.33.0`.
+- Update Buf `wellknowntypes` to `v36.2`.
+- Pinned `bazel_utils_*` modules at `v0.2.10`.
+- Update Bazel `protobuf` to `36.2`.
+- Update Bazel `rules_python` to `2.3.4`.
+
 ## [0.18.1] - 2026-09-22
 
 ### Changed

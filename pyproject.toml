@@ -7,7 +7,7 @@ license = "Apache-2.0"
 # Extra pins: uv's latest of these was <2 days old (2026-08-26). Do not use
 # [tool.uv] constraint-dependencies — that writes [manifest] constraints and
 # aspect_rules_py fails to parse the lock.
-dependencies = ["vllm==0.29.0", "huggingface-hub==1.31.0"]
+dependencies = ["vllm==0.30.0", "huggingface-hub==1.33.0"]
 
 [tool.uv]
 package = false

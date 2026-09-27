@@ -996,13 +996,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "direct-cargo-bazel-deps"
-version = "0.0.1"
-dependencies = [
- "age",
-]
-
-[[package]]
 name = "displaydoc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2084,12 +2077,11 @@ dependencies = [
 
 [[package]]
 name = "model2vec-rs"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cbb465c6997e85d6bcb0e9fabedb51cc8a0919d2a3de083157abe83dccbde54"
+checksum = "3ca11a52a52721b3305bd03ee42d66d8026f54f00235b81746662f2b25a743f1"
 dependencies = [
  "anyhow",
- "clap",
  "half",
  "ndarray",
  "safetensors",
@@ -2199,8 +2191,8 @@ checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
 name = "numkong"
-version = "7.8.2"
-source = "git+https://github.com/amsokol/NumKong?tag=v7.8.2-bazel-sandbox-fix#7a40b88aad13a45b45c401c86efeae56f591a8a8"
+version = "7.8.3"
+source = "git+https://github.com/sonalect/NumKong?tag=v7.8.3-bazel-sandbox-fix#25d5098772f3004c66631c6921a5e5a72f0ea4a4"
 dependencies = [
  "cc",
 ]
