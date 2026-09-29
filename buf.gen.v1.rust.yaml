@@ -8,6 +8,7 @@ plugins:
     out: rust/api/api/v1
     opt:
       - json=true
+      - extern_path=.api.collection.v1=crate::api::collection::v1
   - local: protoc-gen-buffa-packaging
     out: rust/api/api/v1
     strategy: all

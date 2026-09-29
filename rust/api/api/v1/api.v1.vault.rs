@@ -44,7 +44,9 @@ pub struct VaultInfo {
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_empty_vec",
         deserialize_with = "::buffa::json_helpers::null_as_default"
     )]
-    pub collections: ::buffa::alloc::vec::Vec<super::collection::v1::CollectionInfo>,
+    pub collections: ::buffa::alloc::vec::Vec<
+        crate::api::collection::v1::CollectionInfo,
+    >,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,

@@ -19,6 +19,9 @@ API or on-disk format changes bump the minor.
   Bazel `buf_deps` (`//api/third_party`) instead of BSR `deps`.
 - Buf generate templates live in the repo root as `buf.gen.v1.rust.yaml`,
   `buf.gen.version.rust.yaml` and `buf.gen.collection.rust.yaml`.
+- Buf `extern_path` for `api.collection.v1` resolves `CollectionInfo` and
+  related types to `crate::api::collection::v1` instead of the relative
+  `super::collection::v1` path in generated `api.v1` stubs.
 
 ## [0.18.2] - 2026-09-27
 

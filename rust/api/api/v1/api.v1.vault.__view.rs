@@ -27,7 +27,7 @@ pub struct VaultInfoView<'a> {
     /// Field 5: `collections`
     pub collections: ::buffa::RepeatedView<
         'a,
-        super::super::super::collection::v1::__buffa::view::CollectionInfoView<'a>,
+        crate::api::collection::v1::__buffa::view::CollectionInfoView<'a>,
     >,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -98,12 +98,12 @@ impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
                 let sub = ::buffa::types::borrow_bytes(&mut cur)?;
                 ctx.register_element_memory(
                     ::core::mem::size_of::<
-                        super::super::super::collection::v1::__buffa::view::CollectionInfoView,
+                        crate::api::collection::v1::__buffa::view::CollectionInfoView,
                     >(),
                 )?;
                 view.collections
                     .push(
-                        <super::super::super::collection::v1::__buffa::view::CollectionInfoView as ::buffa::MessageView>::decode_view_ctx(
+                        <crate::api::collection::v1::__buffa::view::CollectionInfoView as ::buffa::MessageView>::decode_view_ctx(
                             sub,
                             __sub_ctx,
                         )?,
@@ -368,7 +368,7 @@ impl VaultInfoOwnedView {
         &self,
     ) -> &::buffa::RepeatedView<
         '_,
-        super::super::super::collection::v1::__buffa::view::CollectionInfoView<'_>,
+        crate::api::collection::v1::__buffa::view::CollectionInfoView<'_>,
     > {
         &self.0.reborrow().collections
     }
