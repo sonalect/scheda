@@ -4,12 +4,14 @@ modules:
   - path: .
     includes:
       - api
-deps:
-  - buf.build/bufbuild/protovalidate:v1.2.2
-  - buf.build/protocolbuffers/wellknowntypes:v36.2
+      - buf
+      - google
 lint:
   use:
     - STANDARD
+  ignore:
+    - buf
+    - google
   ignore_only:
     PACKAGE_VERSION_SUFFIX:
       # Package `api` matches `api/version.proto` (PACKAGE_DIRECTORY_MATCH).

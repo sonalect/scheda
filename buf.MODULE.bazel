@@ -1,11 +1,36 @@
 """Buf CLI for hermetic generate, lint, and format."""
 
+http_archive = use_repo_rule("@bazel_tools//tools/build_defs/repo:http.bzl", "http_archive")
+
+# Same tarball as BCR protovalidate 1.2.2. The BCR module graph pulls
+# googleapis → rules_foreign_cc 0.10.1, which does not load on Bazel 9.2.
+# build_file_content is the root BUILD; nested BUILD files stay and
+# make subpackages, so the proto cannot be exported from the root.
+http_archive(
+    name = "protovalidate",
+    build_file_content = """\
+exports_files(
+    ["proto/protovalidate/buf/validate/validate.proto"],
+    visibility = ["//visibility:public"],
+)
+""",
+    integrity = "sha256-lKXfez8z/oFTwrj3U7/L4paHc1U8zOqADTIo4Nk46bI=",
+    patch_cmds = [
+        "find . -mindepth 2 \\( -name BUILD -o -name BUILD.bazel \\) -delete",
+    ],
+    patch_cmds_win = [
+        "Get-ChildItem -Recurse -File -Include BUILD,BUILD.bazel | Where-Object { $_.DirectoryName -ne (Get-Item .).FullName } | Remove-Item",
+    ],
+    strip_prefix = "protovalidate-1.2.2",
+    urls = ["https://github.com/bufbuild/protovalidate/releases/download/v1.2.2/protovalidate-1.2.2.tar.gz"],
+)
+
 buf = use_extension("@bazel_utils_buf//:extensions.bzl", "buf")
 buf.toolchains(version = "v1.73.0")
 use_repo(buf, "buf")
 
 # Root `protoc.plugin` tags are on PATH for every `buf_generate`. Catalog
-# fallbacks are not; tag the local plugins named in buf.gen.rust.yaml.
+# fallbacks are not; tag the local plugins named in buf.gen.*.rust.yaml.
 protoc = use_extension("@bazel_utils_protoc//:extensions.bzl", "protoc")
 protoc.plugin(
     name = "protoc-gen-buffa",

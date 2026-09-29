@@ -12,6 +12,13 @@ API or on-disk format changes bump the minor.
 
 - Update `cxx` and `cxx-build` patches to use `sonalect/cxx` fork.
 - Update `usearch` patch to use `sonalect/USearch` fork.
+- Update `bazel_utils_*` modules to `v0.2.11` from `sonalect/bazel_utils`, and
+  `aspect_rules_py` from `sonalect/rules_py`.
+- Update `pyjwt` to `2.15.1` (fixes CVE-2026-102274 and CVE-2026-101917).
+- Buf uses one root `buf.yaml`. Protobuf and protovalidate protos come from
+  Bazel `buf_deps` (`//api/third_party`) instead of BSR `deps`.
+- Buf generate templates live in the repo root as `buf.gen.v1.rust.yaml`,
+  `buf.gen.version.rust.yaml` and `buf.gen.collection.rust.yaml`.
 
 ## [0.18.2] - 2026-09-27
 

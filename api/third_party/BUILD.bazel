@@ -1,0 +1,18 @@
+load("@bazel_utils_buf//:buf.bzl", "buf_deps")
+
+buf_deps(
+    name = "protobuf",
+    srcs = [
+        "@protobuf//:descriptor_proto_srcs",
+        "@protobuf//:well_known_type_protos",
+    ],
+    strip_import_prefix = "/src",
+    visibility = ["//visibility:public"],
+)
+
+buf_deps(
+    name = "protovalidate",
+    srcs = ["@protovalidate//:proto/protovalidate/buf/validate/validate.proto"],
+    strip_import_prefix = "/proto/protovalidate",
+    visibility = ["//visibility:public"],
+)

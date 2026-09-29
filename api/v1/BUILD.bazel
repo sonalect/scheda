@@ -15,6 +15,10 @@ buf_module(
         "//api/collection/v1:protos",
     ],
     visibility = ["//visibility:public"],
+    deps = [
+        "//api/third_party:protobuf",
+        "//api/third_party:protovalidate",
+    ],
 )
 
 buf_lint_test(
@@ -32,7 +36,7 @@ buf_format(
 buf_generate(
     name = "rust",
     module = ":module",
-    template = "//:buf.gen.rust.yaml",
+    template = "//:buf.gen.v1.rust.yaml",
 )
 
 write_source_files(
