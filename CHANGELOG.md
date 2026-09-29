@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.18.3] - 2026-09-30
+
 ### Changed
 
 - Update `cxx` and `cxx-build` patches to use `sonalect/cxx` fork.
@@ -1664,7 +1666,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.2...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.3...HEAD
+[0.18.3]: https://github.com/amsokol/scheda/releases/tag/v0.18.3
 [0.18.2]: https://github.com/amsokol/scheda/releases/tag/v0.18.2
 [0.18.1]: https://github.com/amsokol/scheda/releases/tag/v0.18.1
 [0.18.0]: https://github.com/amsokol/scheda/releases/tag/v0.18.0
