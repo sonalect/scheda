@@ -8,6 +8,13 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Move `buf.gen.v1.rust.yaml`, `buf.gen.version.rust.yaml`, and
+  `buf.gen.collection.rust.yaml` from the repo root to the `api` folder.
+- Update `urllib3` to `2.8.0` (fixes CVE-2026-97687, CVE-2026-97688, and
+  CVE-2026-97689).
+
 ## [0.18.3] - 2026-09-30
 
 ### Changed

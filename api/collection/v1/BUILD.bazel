@@ -33,7 +33,7 @@ buf_format(
 buf_generate(
     name = "rust",
     module = ":module",
-    template = "//:buf.gen.collection.rust.yaml",
+    template = "//api:buf.gen.collection.rust.yaml",
 )
 
 write_source_files(
