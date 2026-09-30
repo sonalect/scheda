@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.18.4] - 2026-09-30
+
 ### Changed
 
 - Move `buf.gen.v1.rust.yaml`, `buf.gen.version.rust.yaml`, and
@@ -1673,7 +1675,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.3...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.4...HEAD
+[0.18.4]: https://github.com/amsokol/scheda/releases/tag/v0.18.4
 [0.18.3]: https://github.com/amsokol/scheda/releases/tag/v0.18.3
 [0.18.2]: https://github.com/amsokol/scheda/releases/tag/v0.18.2
 [0.18.1]: https://github.com/amsokol/scheda/releases/tag/v0.18.1
