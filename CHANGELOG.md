@@ -8,6 +8,14 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- `age` is a direct dependency of `scheda-cli` (same `=0.12.1` pin and `armor`
+  feature as the workspace) instead of a crate_universe `cargo.spec`. The spec
+  made every repin write a synthetic `direct-cargo-bazel-deps` package into
+  `Cargo.lock` that the next `cargo` build removed again; the lockfile is now
+  stable across both tools.
+
 ## [0.18.4] - 2026-09-30
 
 ### Changed

@@ -1,5 +1,5 @@
 {
-  "checksum": "08ed53475dd357b14ae734b1906ada00b37f8a2e31332d43f4be2ca5edd64e1a",
+  "checksum": "0064c6b7fd6bb91266215438f72c58a04b69f11889ac7ec9d6d8b91ecc478aa7",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -4786,29 +4786,6 @@
         }
       ],
       "version": "0.11.3"
-    },
-    "direct-cargo-bazel-deps 0.0.1": {
-      "common_attrs": {
-        "deps": [
-          {
-            "id": "age 0.12.1",
-            "target": "age"
-          }
-        ],
-        "edition": "2018"
-      },
-      "library_target_name": "direct_cargo_bazel_deps",
-      "name": "direct-cargo-bazel-deps",
-      "repository": null,
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "direct_cargo_bazel_deps",
-            "crate_root": ".direct_cargo_bazel_deps.rs"
-          }
-        }
-      ],
-      "version": "0.0.1"
     },
     "displaydoc 0.2.7": {
       "common_attrs": {
@@ -13596,6 +13573,10 @@
       "common_attrs": {
         "deps": [
           {
+            "id": "age 0.12.1",
+            "target": "age"
+          },
+          {
             "id": "clap 4.6.7",
             "target": "clap"
           },
@@ -19508,7 +19489,6 @@
   ],
   "direct_dev_deps": [],
   "workspace_members": {
-    "direct-cargo-bazel-deps 0.0.1": "",
     "scheda 0.18.4": "rust/scheda",
     "scheda-api 0.18.4": "rust/api",
     "scheda-cli 0.18.4": "rust/cli"
