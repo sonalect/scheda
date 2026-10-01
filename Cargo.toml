@@ -4,7 +4,7 @@ members = ["rust/api", "rust/cli", "rust/scheda"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.98.1"
+rust-version = "1.99.0"
 license = "Apache-2.0"
 repository = "https://github.com/amsokol/scheda"
 version = "0.18.5"

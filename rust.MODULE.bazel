@@ -2,7 +2,7 @@
 
 RUST_EDITION = "2024"
 
-RUST_VERSION = "1.98.1"
+RUST_VERSION = "1.99.0"
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 

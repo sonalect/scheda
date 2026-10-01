@@ -122,7 +122,7 @@ later F stage without amending this section first.
    before any `open`: empty; NUL; `\`; a leading `/`; a trailing `/`;
    `//`; a `.` or `..` component; a Windows device stem (`CON`, `NUL`,
    …, as today). Do **not** add a path crate. `Path::normalize_lexically`
-   is nightly (`normalize_lexically`, not in rustc 1.98). `relative-path`
+   is nightly (`normalize_lexically`, not in rustc 1.99). `relative-path`
    applies `..` instead of refusing it, which is the opposite of this
    rule. Host `std::path` is the wrong model (Windows `\`). The library
    already has this check (`require_document_id` plus `join_inside`);

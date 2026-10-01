@@ -8,6 +8,11 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Update Rust to `1.99.0` (`rust-version` in `Cargo.toml`, `RUST_VERSION` in
+  `rust.MODULE.bazel`; `cargo-bazel-lock.json` repinned).
+
 ## [0.18.5] - 2026-10-01
 
 ### Changed
