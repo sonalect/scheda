@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.18.5] - 2026-10-01
+
 ### Changed
 
 - `age` is a direct dependency of `scheda-cli` (same `=0.12.1` pin and `armor`
@@ -1683,7 +1685,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.4...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.5...HEAD
+[0.18.5]: https://github.com/amsokol/scheda/releases/tag/v0.18.5
 [0.18.4]: https://github.com/amsokol/scheda/releases/tag/v0.18.4
 [0.18.3]: https://github.com/amsokol/scheda/releases/tag/v0.18.3
 [0.18.2]: https://github.com/amsokol/scheda/releases/tag/v0.18.2
