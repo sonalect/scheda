@@ -2829,7 +2829,7 @@ dependencies = [
 
 [[package]]
 name = "scheda"
-version = "0.18.5"
+version = "0.18.6"
 dependencies = [
  "age",
  "buffa",
@@ -2848,7 +2848,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-api"
-version = "0.18.5"
+version = "0.18.6"
 dependencies = [
  "buffa",
  "buffa-types",
@@ -2859,7 +2859,7 @@ dependencies = [
 
 [[package]]
 name = "scheda-cli"
-version = "0.18.5"
+version = "0.18.6"
 dependencies = [
  "age",
  "clap",

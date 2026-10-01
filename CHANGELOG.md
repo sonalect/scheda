@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.18.6] - 2026-10-01
+
 ### Changed
 
 - Update Rust to `1.99.0` (`rust-version` in `Cargo.toml`, `RUST_VERSION` in
@@ -1690,7 +1692,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.5...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.18.6...HEAD
+[0.18.6]: https://github.com/amsokol/scheda/releases/tag/v0.18.6
 [0.18.5]: https://github.com/amsokol/scheda/releases/tag/v0.18.5
 [0.18.4]: https://github.com/amsokol/scheda/releases/tag/v0.18.4
 [0.18.3]: https://github.com/amsokol/scheda/releases/tag/v0.18.3
