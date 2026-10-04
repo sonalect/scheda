@@ -285,7 +285,7 @@ rust_test(
         "src/**/*.rs",
         "testdata/**",
     ]),
-    crate_features = ["find"],
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/consumer.rs",
     visibility = ["//rust:__pkg__"],
     deps = [

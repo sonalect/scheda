@@ -492,9 +492,12 @@ prints it in the Protobuf JSON style the rest of its output uses
 
 ### B10. Acceptance
 
-- [ ] All of B1–B9 *Check:* green under `bazel test //...`.
-- [ ] The Knowqore contract in §6 holds (run its points as tests here
-      where they are Scheda behaviour).
+- [x] All of B1–B9 *Check:* green under `bazel test //...` (every test
+      named in B1–B9 exists; 39 of 39 targets green, `//rust/...` again
+      without the cache).
+- [x] The Knowqore contract in §6 holds (run its points as tests here
+      where they are Scheda behaviour; the mapping is under the §6
+      table).
 
 ---
 
@@ -594,6 +597,21 @@ code on 4 October 2026:
 
 Knowqore needs nothing from Part T to keep working; it may adopt
 `AsyncVault` in its server later.
+
+Checked here (B10): K3, K5, K6, K7, K8, and K9 by `consumer.rs
+a_writer_with_an_embedder_and_readers_without_one_share_a_vault` (a
+writer with an embedder and a reader without one on one Vault, from a
+plain `#[test]`; `ids` / `get` right after the commit; `wait_indexed`
+then `search` on both legs; `reindex` and a `git` commit indexed while
+the writer holds a transaction open). K4 by
+`background::indexer_role_passes_to_another_process` and
+`reader_in_another_process_follows_the_marks`. K6 also by
+`background::a_blocking_or_panicking_embedder_neither_blocks_nor_fails_a_write`.
+K8 also by `vault.rs reindex_after_deleting_the_scheda_directory_rebuilds_it`,
+the call Knowqore's own `reindex` test makes. K1, K2, and K10 are API
+shape: unchanged sync methods and traits, no new freshness promise.
+Knowqore's own test suite was not run against this tree; its K9 tests
+need `wait_indexed` when it moves to this release.
 
 ---
 

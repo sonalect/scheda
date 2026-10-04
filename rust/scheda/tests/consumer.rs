@@ -8,6 +8,8 @@ mod common;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+#[cfg(feature = "search")]
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "find")]
 use std::time::{Duration, Instant};
@@ -821,4 +823,119 @@ fn identical_document_schemas_accept_the_same_record_and_find_stays_in_one() {
         project.records.len(),
         "each collection has the planted Record plus the shared add"
     );
+}
+
+/// Embeds every text as the same unit vector: enough for one vector leg.
+#[cfg(feature = "search")]
+struct UnitEmbedder;
+
+#[cfg(feature = "search")]
+impl scheda::Embedder for UnitEmbedder {
+    fn model_id(&self) -> &str {
+        "consumer-unit/d4"
+    }
+
+    fn dimensions(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(4).unwrap()
+    }
+
+    fn many_limit(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(16).unwrap()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        Ok(vec![vec![1.0, 0.0, 0.0, 0.0]; texts.len()])
+    }
+}
+
+/// The shape of the anchor consumer after the Index moved to the
+/// background: one writer handle with an embedder, other handles on the
+/// same Vault without one, sync calls, no async runtime.
+#[cfg(feature = "search")]
+#[test]
+fn a_writer_with_an_embedder_and_readers_without_one_share_a_vault() {
+    let scratch = Scratch::new();
+    let projector = common::json_text_projector(&["body"]);
+    let options = || OpenOptions::new().with_index_poll_ms(20);
+    let writer = Vault::open_with(
+        scratch.vault(),
+        options(),
+        Some(Arc::new(UnitEmbedder) as Arc<dyn scheda::Embedder>),
+        Some(Arc::clone(&projector)),
+    )
+    .unwrap();
+    writer
+        .create_collection(
+            "notes",
+            scheda::Schema {
+                kind: scheda::Unit::default().into(),
+                ..scheda::Schema::default()
+            },
+            None,
+        )
+        .unwrap();
+    // Another handle, opened once the collection is declared. Opened
+    // from a plain `#[test]`: no runtime is needed.
+    let reader = Vault::open_with(
+        scratch.vault(),
+        options(),
+        None,
+        Some(Arc::clone(&projector)),
+    )
+    .unwrap();
+    writer.begin().unwrap();
+    let notes = writer.collection("notes").unwrap();
+    notes
+        .add("first", rec(json!({"body": "pin the toolchain"})), None)
+        .unwrap();
+    notes
+        .add("second", rec(json!({"body": "prefer small steps"})), None)
+        .unwrap();
+    writer.commit("batch").unwrap();
+
+    // `get` and `ids` read files: right after the write, on every handle.
+    assert_eq!(notes.ids().unwrap(), ["first", "second"]);
+    let reader_notes = reader.collection("notes").unwrap();
+    reader_notes.get("first").unwrap();
+
+    // A query that must see the write waits for the Index first.
+    let status = writer.wait_indexed(Duration::from_secs(30)).unwrap();
+    assert_eq!(status.lexical, status.head);
+    assert_eq!(
+        status.vector, status.head,
+        "the writer's embedder fills vectors"
+    );
+    assert!(
+        status.vector_role,
+        "only the handle with an embedder writes vectors"
+    );
+    let query = scheda::SearchQuery::default()
+        .with_text("toolchain")
+        .with_k(10);
+    let hits = notes.search(&query, None).unwrap();
+    assert_eq!(hits.hits[0].id.as_deref(), Some("first"));
+    assert!(hits.hits[0].vector_score.is_some(), "{hits:?}");
+    let status = reader.wait_indexed(Duration::from_secs(30)).unwrap();
+    assert!(!status.vector_role && !status.model_mismatch);
+    let hits = reader_notes.search(&query, None).unwrap();
+    assert_eq!(hits.hits[0].id.as_deref(), Some("first"));
+
+    // The indexer never takes `write.lock`, and neither does `reindex`:
+    // both go on while the writer holds a transaction open.
+    writer.begin().unwrap();
+    assert_eq!(reader.reindex().unwrap().records_read, Some(2));
+    git_ok(&scratch.vault(), &["mv", "notes/second", "notes/third"]);
+    commit_all(&scratch.vault(), "hand rename");
+    let status = reader.wait_indexed(Duration::from_secs(30)).unwrap();
+    assert_eq!(status.lexical, status.head);
+    let mut ids: Vec<String> = reader
+        .find(&["notes"], &scheda::FindQuery::all(), 0, 10)
+        .unwrap()
+        .records
+        .into_iter()
+        .filter_map(|record| record.id)
+        .collect();
+    ids.sort();
+    assert_eq!(ids, ["first", "third"]);
+    writer.discard().unwrap();
 }
