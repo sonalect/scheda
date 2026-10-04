@@ -36,6 +36,29 @@
 //!   refuses `collection` of an encrypted name the same way; other
 //!   collections still work.
 //!
+//! # Background indexer
+//!
+//! With `find`, `open` starts one thread per handle that keeps the Index on
+//! the last commit: it wakes on this handle's commits and otherwise reads
+//! `HEAD` every `OpenOptions.index_poll_ms` (1 s by default), so commits
+//! made by `git`, another process, or a build without `find` are indexed
+//! too. Only committed state is indexed; `find` / `search` are eventually
+//! consistent. Call `Vault::wait_indexed` before a query that must see a
+//! write just made, and `Vault::index_status` to see how far the Index
+//! is behind and why. Several processes may open one Vault: one of them
+//! indexes at a time (`{vault}/.scheda/index.lock`, and `vector.lock` for
+//! a process whose embedder matches the Index vectors); the others follow
+//! what it writes and take over when it exits.
+//!
+//! The thread never outlives the handle: dropping the last `Vault` /
+//! `Collection` clone stops and joins it, after at most one embedder call.
+//! [`Vault::close`] does the same and reports a failure. Scheda installs no
+//! signal handler. A program that wants a clean exit on `SIGINT` /
+//! `SIGTERM` catches the signal itself and calls `close` (or drops the
+//! handle) before exiting. Being killed instead loses nothing: the Index
+//! records progress only after its writes are durable, and the next `open`
+//! resumes from there.
+//!
 //! # Tokio and other async runtimes
 //!
 //! Core operations are synchronous and do not start an async executor.
@@ -43,17 +66,14 @@
 //! block the calling thread. From a Tokio task, run them on the blocking
 //! pool so worker threads stay free. Share a [`Vault`] with
 //! [`std::sync::Arc`] — the handle is `Send + Sync`. Concurrent `find` /
-//! `search` on one handle share the Index (many readers). A write still
-//! takes the exclusive side of that lock, and the Vault write lock is one
-//! writer (`locked` if a second writer races it). Remote git (`push` /
-//! `pull` / `sync`) and `reindex` / `search` are the calls that must not
-//! sit on a worker thread. The Vault write lock is held for an open
-//! transaction and for one mutating call outside a transaction, then
-//! released. `reindex` takes that lock only for start and publish; the
-//! file walk does not hold it. A second flock, `reindex.lock`, is held
-//! for the whole rebuild. The lexical Index writer uses the same
-//! lifetime, so a second handle can write after `commit` without waiting
-//! on Tantivy's directory lock.
+//! `search` on one handle share the Index (many readers). The Vault write
+//! lock is one writer (`locked` if a second writer races it); it is held
+//! for an open transaction and for one mutating call outside a
+//! transaction, then released. Writes do not touch the Index. Remote git
+//! (`push` / `pull` / `sync`), `reindex`, `search`, and `wait_indexed` are
+//! the calls that must not sit on a worker thread. `reindex` (with `find`)
+//! takes no write lock: it builds from commits and holds only the flock
+//! `{vault}/.scheda/reindex.lock`, so a second `reindex` is `locked`.
 //!
 //! ```rust,ignore (tokio is not a crate dependency)
 //! use std::sync::Arc;

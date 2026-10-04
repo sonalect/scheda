@@ -13,13 +13,13 @@ use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::Arc;
 
-use clap::{error::ErrorKind as ClapErrorKind, Parser};
+use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
-    parse_age_identity, schema_from_json, Author, Embedder, Encryption, Error, Filter,
-    FindQuery, OpenOptions, Reranker, SearchQuery, Vault,
+    Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, Reranker, SearchQuery,
+    Vault, parse_age_identity, schema_from_json,
 };
-use serde::de::DeserializeOwned;
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use args::{Cli, CollectionCommand, Command, SearchArgs};
 use projector::cli_projector;
@@ -71,8 +71,10 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         author_email,
         encryption_passphrase_env_var,
         encryption_identity_file,
+        no_wait,
         command,
     } = cli;
+    let wait = if no_wait { None } else { Some(INDEX_WAIT) };
     let encryption = load_encryption(
         encryption_passphrase_env_var.as_deref(),
         encryption_identity_file.as_deref(),
@@ -139,6 +141,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             )?,
             &name,
             command,
+            wait,
         ),
         Command::Check => open_existing(
             &vault,
@@ -160,6 +163,28 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             )?
             .reindex()?,
         ),
+        Command::IndexStatus => emit_json(&status_json(
+            &open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?
+            .index_status()?,
+        )),
+        Command::WaitIndexed { timeout_secs } => emit_json(&status_json(
+            &open_existing(
+                &vault,
+                auto_sync,
+                author_name,
+                author_email,
+                encryption,
+                embedder,
+            )?
+            .wait_indexed(std::time::Duration::from_secs(timeout_secs))?,
+        )),
         Command::Find {
             collections,
             filter,
@@ -177,7 +202,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             )?;
             let names = collection_names(&collections);
             let query = parse_find_query(filter.as_deref(), include_raw)?;
-            vault.wait_indexed(INDEX_WAIT)?;
+            wait_indexed(&vault, wait)?;
             emit_json(&vault.find(&names, &query, offset, count)?)
         }
         Command::Search {
@@ -203,7 +228,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
                 search.reranker_model.as_deref(),
                 search.reranker_api_key_env_var.as_deref(),
             )?;
-            vault.wait_indexed(INDEX_WAIT)?;
+            wait_indexed(&vault, wait)?;
             emit_json(&vault.search(&names, &query, reranker.as_deref())?)
         }
         Command::Push => open_existing(
@@ -268,7 +293,64 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
 /// by this one's background indexer, so the query waits for it.
 const INDEX_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
 
-fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) -> Result<(), Error> {
+/// Wait for the Index before a query, unless `--no-wait` cleared `wait`.
+fn wait_indexed(vault: &Vault, wait: Option<std::time::Duration>) -> Result<(), Error> {
+    if let Some(timeout) = wait {
+        vault.wait_indexed(timeout)?;
+    }
+    Ok(())
+}
+
+/// `IndexStatus` as JSON in the style of the Protobuf JSON mapping the
+/// rest of the CLI prints: lowerCamelCase keys, unset fields left out,
+/// `lastError` as an `api.v1.Error`.
+fn status_json(status: &scheda::IndexStatus) -> serde_json::Value {
+    let mut out = serde_json::Map::new();
+    let mut put = |key: &str, value: serde_json::Value| {
+        if !value.is_null() {
+            out.insert(key.to_owned(), value);
+        }
+    };
+    put("head", status.head.clone().into());
+    put("isolatedHead", status.isolated_head.clone().into());
+    put("lexical", status.lexical.clone().into());
+    put("vector", status.vector.clone().into());
+    put("isolatedLexical", status.isolated_lexical.clone().into());
+    put("isolatedVector", status.isolated_vector.clone().into());
+    put("journalIds", status.journal_ids.clone().into());
+    put(
+        "isolatedJournalIds",
+        status.isolated_journal_ids.clone().into(),
+    );
+    // Proto JSON writes 64-bit integers as strings.
+    put(
+        "lexicalPending",
+        status.lexical_pending.map(|n| n.to_string()).into(),
+    );
+    put(
+        "vectorPending",
+        status.vector_pending.map(|n| n.to_string()).into(),
+    );
+    put("modelMismatch", status.model_mismatch.into());
+    put("lexicalRole", status.lexical_role.into());
+    put("vectorRole", status.vector_role.into());
+    put(
+        "lastError",
+        status
+            .last_error
+            .as_ref()
+            .and_then(|err| serde_json::to_value(err).ok())
+            .into(),
+    );
+    serde_json::Value::Object(out)
+}
+
+fn collection_dispatch(
+    vault: &Vault,
+    name: &str,
+    command: CollectionCommand,
+    wait: Option<std::time::Duration>,
+) -> Result<(), Error> {
     let collection = vault.collection(name)?;
     match command {
         CollectionCommand::Schema => emit_json(&collection.schema()?),
@@ -301,7 +383,7 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
             include_raw,
         } => {
             let query = parse_find_query(filter.as_deref(), include_raw)?;
-            vault.wait_indexed(INDEX_WAIT)?;
+            wait_indexed(vault, wait)?;
             emit_json(&collection.find(&query, offset, count)?)
         }
         CollectionCommand::Search {
@@ -321,7 +403,7 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
                 reranker_model.as_deref(),
                 reranker_api_key_env_var.as_deref(),
             )?;
-            vault.wait_indexed(INDEX_WAIT)?;
+            wait_indexed(vault, wait)?;
             emit_json(&collection.search(&query, reranker.as_deref())?)
         }
     }

@@ -111,6 +111,12 @@ pub struct Cli {
     )]
     pub encryption_identity_file: Option<PathBuf>,
 
+    /// `find` / `search` query the Index as it is instead of waiting up to
+    /// 60 s for it to reach `HEAD`. Commits this or a previous command made
+    /// may then be missing from the result.
+    #[arg(long, global = true, default_value_t = false)]
+    pub no_wait: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -144,8 +150,21 @@ pub enum Command {
     },
     /// Validate declarations, encodings, ids, and conflict markers.
     Check,
-    /// Rebuild the derived Index.
+    /// Rebuild the derived Index from the commits at `HEAD`.
     Reindex,
+    /// Where the Index stands against `HEAD`: each leg's commit, Records
+    /// still to index, roles this process holds, `modelMismatch`, and the
+    /// last indexing error. Does not wait.
+    #[command(name = "index-status")]
+    IndexStatus,
+    /// Wait until the Index reaches `HEAD`, then print `index-status`.
+    /// Past the timeout: `io_timed_out`.
+    #[command(name = "wait-indexed")]
+    WaitIndexed {
+        /// Longest wait.
+        #[arg(long, default_value_t = 60, value_name = "N")]
+        timeout_secs: u64,
+    },
     /// Tantivy Query, then files. Unset `--collections` → every non-isolated,
     /// non-encrypted collection that is in the lexical Index.
     Find {
@@ -179,7 +198,7 @@ pub enum Command {
     /// Push `{vault}/.isolated/` to its own Remote. Does not touch the main tree.
     #[command(name = "push-isolated")]
     PushIsolated,
-    /// Pull `{vault}/.isolated/` from its own Remote, then rebuild the Index.
+    /// Pull `{vault}/.isolated/` from its own Remote.
     #[command(name = "pull-isolated")]
     PullIsolated,
     /// Isolated `pull` then `push`.

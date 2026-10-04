@@ -326,6 +326,24 @@ write alone (a full disk) does not rebuild: the read-only check passes.
 Queries fail closed until the new generation is live (D8). With D24, no
 handle without the generation's projector rebuilds it.
 
+**D36. Model change stays explicit (D7 confirmed, 4 October 2026).** A
+vector space per model, filled in the background by whichever process
+has that model, was considered and dropped. Changing the embedder model
+is a rare, deliberate migration of the application, and the application
+owns it: it calls `reindex()` with the new embedder, which re-embeds
+every slot. Until then `index_status().model_mismatch` is true for a
+handle on the new model, that handle writes no vectors, and its
+`search` runs without the vector leg.
+
+**D37. CLI surface (B9).** Global `--no-wait` makes `find` / `search`
+query the Index as it is. `scheda index-status` prints `index_status`
+and `scheda wait-indexed [--timeout-secs N]` (default 60) prints it
+after waiting, `io_timed_out` past the timeout: the CLI names commands
+after library methods. `IndexStatus` stays a plain Rust struct, not a
+proto message, so its flags stay `bool` for library callers; the CLI
+prints it in the Protobuf JSON style the rest of its output uses
+(lowerCamelCase, unset fields left out, 64-bit counts as strings).
+
 ---
 
 ## 3. Part B — background Index
@@ -466,8 +484,11 @@ handle without the generation's projector rebuilds it.
 
 ### B9. CLI
 
-- [ ] `find` / `search` wait (D13); `scheda status` (or the existing
-      `info`) prints `index_status`.
+- [x] `find` / `search` wait (D13); `scheda status` (or the existing
+      `info`) prints `index_status` (D37; `cli.rs
+      wait_indexed_and_index_status_print_where_the_index_stands`,
+      `no_wait_queries_the_index_as_it_is`). Signals and `close` are in
+      the crate rustdoc (D23 item 4).
 
 ### B10. Acceptance
 

@@ -56,6 +56,10 @@ API or on-disk format changes bump the minor.
   or `search`, so a reader opened earlier needs no reopen. A handle that
   takes a role over continues from the last holder's vectors and journal
   order.
+- CLI: `scheda index-status` prints where the Index stands, `scheda
+  wait-indexed [--timeout-secs N]` prints it after the Index reaches `HEAD`
+  (`io_timed_out` past the timeout), and the global `--no-wait` makes
+  `find` / `search` skip their wait.
 - `Vault::close()`: stop and join the indexer (at most one embedder call in
   flight), then drop the handle, with an error where `Drop` has none. Scheda
   installs no signal handler; a program calls `close` on `SIGINT` /

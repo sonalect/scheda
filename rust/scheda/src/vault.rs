@@ -604,12 +604,19 @@ impl Vault {
     }
 
     /// Install `embedder` for later [`collection`](Self::collection) handles
-    /// and for [`search`](Self::search) on this handle.
+    /// and for `search` on this handle.
     ///
     /// Returns the embedder that was installed before this call. A
     /// collection opened before the swap keeps the embedder it copied.
     /// `None` turns the vector leg off until another embedder is installed.
     /// The lexical index is unchanged.
+    ///
+    /// An embedder of another `model_id` or dimensions than the Index
+    /// vectors does not re-embed anything by itself: the handle writes no
+    /// vectors, its `search` runs without the vector leg, and
+    /// `index_status().model_mismatch` is true. Moving to a new model is the
+    /// caller's migration: call [`reindex`](Self::reindex) with the new
+    /// embedder installed, which re-embeds every slot.
     pub fn set_embedder(
         &self,
         embedder: Option<Arc<dyn Embedder>>,

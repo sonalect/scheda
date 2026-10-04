@@ -628,9 +628,98 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
     };
     // An unknown `format` is rebuilt in the background, so break the
     // lexical engine itself: the query fails closed with an Index code.
+    // Holding the lexical role keeps this process from repairing it first.
+    let _role = hold_index_role(&scratch);
     fs::write(generation.join("lexical").join("meta.json"), "not-tantivy").unwrap();
     let unusable = run(&["--vault", &path, "search", "--query", &text_query("Alpha")]);
     assert_eq!(error_json(&unusable)["code"], "CODE_INDEX_LEXICAL");
+}
+
+/// Hold `{vault}/.scheda/index.lock`, the lexical indexer role, so no CLI
+/// process indexes or repairs anything while the guard lives.
+fn hold_index_role(scratch: &Scratch) -> fs::File {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(scratch.vault().join(".scheda").join("index.lock"))
+        .unwrap();
+    file.lock().unwrap();
+    file
+}
+
+#[test]
+fn wait_indexed_and_index_status_print_where_the_index_stands() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let waited = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "wait-indexed",
+        "--timeout-secs",
+        "60",
+    ]));
+    assert!(waited["head"].is_string(), "{waited}");
+    assert_eq!(waited["lexical"], waited["head"], "{waited}");
+    assert_eq!(waited["journalIds"], waited["head"], "{waited}");
+    assert_eq!(waited["lexicalPending"], "0", "{waited}");
+    assert_eq!(waited["modelMismatch"], false, "{waited}");
+    assert!(waited.get("lastError").is_none(), "{waited}");
+    let status = stdout_json(&run(&["--vault", &path, "index-status"]));
+    assert_eq!(status["head"], waited["head"]);
+    assert_eq!(status["lexical"], waited["lexical"]);
+}
+
+#[test]
+fn no_wait_queries_the_index_as_it_is() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let indexed = run(&["--vault", &path, "wait-indexed"]);
+    assert_eq!(indexed.status, 0, "stderr={}", indexed.stderr);
+    // Nobody may index the next commit.
+    let _role = hold_index_role(&scratch);
+    let add = run(&[
+        "--vault",
+        &path,
+        "collection",
+        "agent_notes",
+        "add",
+        "--id",
+        "beta",
+        "--file",
+        &scratch.payload_file("payload", rec(json!({"title": "Beta token"}))),
+    ]);
+    assert_eq!(add.status, 0, "stderr={}", add.stderr);
+    let timed_out = run(&["--vault", &path, "wait-indexed", "--timeout-secs", "1"]);
+    assert_eq!(error_json(&timed_out)["code"], "CODE_IO_TIMED_OUT");
+    let status = stdout_json(&run(&["--vault", &path, "index-status"]));
+    assert_ne!(status["lexical"], status["head"], "{status}");
+    assert_eq!(status["lexicalPending"], "1", "{status}");
+    let started = std::time::Instant::now();
+    let found = stdout_json(&run(&[
+        "--vault",
+        &path,
+        "--no-wait",
+        "find",
+        "--filter",
+        &all_filter(),
+        "--offset",
+        "0",
+        "--count",
+        "10",
+    ]));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(30),
+        "--no-wait must not wait for the Index"
+    );
+    let ids: Vec<&str> = found["records"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|record| record["id"].as_str())
+        .collect();
+    assert_eq!(ids, ["alpha"], "the unindexed commit is not there yet");
 }
 
 #[test]
