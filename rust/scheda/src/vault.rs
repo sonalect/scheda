@@ -481,7 +481,7 @@ impl Vault {
             match &self.indexer {
                 Some(indexer) => {
                     let rounds = indexer.state().rounds;
-                    indexer.wake();
+                    indexer.nudge();
                     indexer.wait_round(rounds, slice);
                 }
                 None => thread::sleep(slice),
@@ -617,7 +617,10 @@ impl Vault {
             let mut slot = crate::error::mutex(&self.embedder, "[Vault] lock embedder")?;
             std::mem::replace(&mut *slot, embedder)
         };
-        self.wake_indexer();
+        #[cfg(feature = "find")]
+        if let Some(indexer) = &self.indexer {
+            indexer.embedder_changed();
+        }
         Ok(previous)
     }
 
@@ -3473,7 +3476,10 @@ mod tests {
         let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
         assert!(vault.index_dir().starts_with(vault.path()));
         assert!(git::is_ignored(vault.path(), Path::new(".scheda")).unwrap());
-        fs::remove_dir_all(vault.index_dir()).unwrap();
+        let index_dir = vault.index_dir().to_path_buf();
+        // The background indexer writes there until the handle closes.
+        vault.close().unwrap();
+        fs::remove_dir_all(index_dir).unwrap();
         assert!(scratch.vault().join(".git").exists());
     }
 
@@ -5505,6 +5511,324 @@ mod tests {
 
         fn tagged(text: &str) -> Vec<u8> {
             format!(r#"{{"tag":"{text}"}}"#).into_bytes()
+        }
+
+        /// Fails its first `fails` batches, then embeds like
+        /// [`CountingEmbedder`]. Counts every call.
+        #[cfg(feature = "search")]
+        struct FlakyEmbedder {
+            fails: u64,
+            calls: std::sync::Mutex<Vec<Instant>>,
+        }
+
+        #[cfg(feature = "search")]
+        impl FlakyEmbedder {
+            fn new(fails: u64) -> Arc<Self> {
+                Arc::new(Self {
+                    fails,
+                    calls: std::sync::Mutex::new(Vec::new()),
+                })
+            }
+
+            fn calls(&self) -> Vec<Instant> {
+                self.calls.lock().unwrap().clone()
+            }
+        }
+
+        #[cfg(feature = "search")]
+        impl Embedder for FlakyEmbedder {
+            fn model_id(&self) -> &str {
+                "m1"
+            }
+
+            fn dimensions(&self) -> NonZeroUsize {
+                NonZeroUsize::new(4).unwrap()
+            }
+
+            fn many_limit(&self) -> NonZeroUsize {
+                NonZeroUsize::new(32).unwrap()
+            }
+
+            fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+                let mut calls = self.calls.lock().unwrap();
+                calls.push(Instant::now());
+                if calls.len() as u64 <= self.fails {
+                    return Err(Error::invalid("embedding service unavailable"));
+                }
+                Ok(texts.iter().copied().map(counting_vector).collect())
+            }
+
+            fn embed_query(&self, text: &str) -> Result<Vec<f32>, Error> {
+                Ok(counting_vector(text))
+            }
+        }
+
+        #[cfg(feature = "search")]
+        #[test]
+        fn embedder_fails_twice_then_vectors_land_and_the_error_showed_between() {
+            let scratch = Scratch::new();
+            let flaky = FlakyEmbedder::new(2);
+            let vault = Vault::open_with(
+                scratch.vault(),
+                poll_never(),
+                Some(Arc::clone(&flaky) as Arc<dyn Embedder>),
+                Some(tag_projector()),
+            )
+            .unwrap();
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            vault
+                .collection("c")
+                .unwrap()
+                .add("r1", rec_tag("secret-body"), None)
+                .expect("a failing embedder must not fail the write");
+            let head = head_of(vault.path());
+            let deadline = Instant::now() + WAIT;
+            let failed = loop {
+                let status = vault.index_status().unwrap();
+                if let Some(err) = status.last_error.clone() {
+                    break (status, err);
+                }
+                assert!(Instant::now() < deadline, "no error reported: {status:?}");
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            let (status, err) = failed;
+            assert_eq!(err.known_code(), Some(Code::Invalid));
+            assert!(
+                !format!("{err:?}").contains("secret-body"),
+                "the error must not carry the Record: {err:?}"
+            );
+            assert_eq!(
+                status.lexical.as_deref(),
+                Some(head.as_str()),
+                "the lexical leg does not wait for the embedder"
+            );
+            assert_ne!(status.vector.as_deref(), Some(head.as_str()));
+            assert_eq!(
+                find_ids(&vault, "c"),
+                ["r1"],
+                "find works while vectors fail"
+            );
+
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert_eq!(status.vector.as_deref(), Some(head.as_str()));
+            assert!(status.last_error.is_none(), "{status:?}");
+            assert_eq!(status.vector_pending, Some(0));
+            let calls = flaky.calls();
+            assert_eq!(calls.len(), 3, "two failures and one success");
+            // `wait_indexed` asks for a round every 50 ms; the retries still
+            // keep to the backoff.
+            let first = crate::indexer::BACKOFF_FIRST;
+            assert!(calls[1] - calls[0] >= first, "{calls:?}");
+            assert!(calls[2] - calls[1] >= first * 2, "{calls:?}");
+            assert_eq!(vector_hits(&vault, "c", "secret-body"), ["r1"]);
+        }
+
+        #[cfg(feature = "search")]
+        #[test]
+        fn a_failing_embedder_holds_back_only_the_vector_leg() {
+            let scratch = Scratch::new();
+            let flaky = FlakyEmbedder::new(u64::MAX);
+            let vault = Vault::open_with(
+                scratch.vault(),
+                poll_fast(),
+                Some(Arc::clone(&flaky) as Arc<dyn Embedder>),
+                Some(tag_projector()),
+            )
+            .unwrap();
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            vault
+                .collection("c")
+                .unwrap()
+                .add("r1", rec_tag("one"), None)
+                .unwrap();
+            // Five failures: the vector leg now waits 1.6 s.
+            let deadline = Instant::now() + WAIT;
+            while flaky.calls().len() < 5 {
+                assert!(Instant::now() < deadline, "the embedder was never retried");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let before = flaky.calls().len();
+            git_cli_commit(&scratch.vault(), "c/r2", r#"{"tag":"two"}"#);
+            // Polls every 20 ms; the vector hold has over a second to run.
+            let deadline = Instant::now() + Duration::from_millis(600);
+            while sorted_ids(&vault, "c") != ["r1", "r2"] {
+                assert!(
+                    Instant::now() < deadline,
+                    "the lexical leg waited for the embedder's backoff"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            assert_eq!(
+                flaky.calls().len(),
+                before,
+                "the poll indexed r2 without retrying the embedder early"
+            );
+            // `find` sees r2 once Tantivy commits; the mark moves just after.
+            let deadline = Instant::now() + WAIT;
+            let status = loop {
+                let status = vault.index_status().unwrap();
+                if status.lexical == status.head {
+                    break status;
+                }
+                assert!(Instant::now() < deadline, "lexical mark stuck: {status:?}");
+                std::thread::sleep(Duration::from_millis(5));
+            };
+            assert_eq!(status.vector_pending, Some(2));
+            assert_eq!(
+                status.last_error.and_then(|err| err.known_code()),
+                Some(Code::Invalid),
+                "rounds that skip the held vector leg keep reporting its error"
+            );
+        }
+
+        /// Embeds one text per batch, slowly, and reports progress in
+        /// `{root}/embedded`.
+        #[cfg(feature = "search")]
+        struct ProgressEmbedder {
+            root: PathBuf,
+            calls: AtomicU64,
+        }
+
+        #[cfg(feature = "search")]
+        impl Embedder for ProgressEmbedder {
+            fn model_id(&self) -> &str {
+                "m1"
+            }
+
+            fn dimensions(&self) -> NonZeroUsize {
+                NonZeroUsize::new(4).unwrap()
+            }
+
+            fn many_limit(&self) -> NonZeroUsize {
+                NonZeroUsize::new(1).unwrap()
+            }
+
+            fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+                std::thread::sleep(Duration::from_millis(30));
+                let calls = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+                fs::write(self.root.join("embedded"), calls.to_string()).unwrap();
+                Ok(texts.iter().copied().map(counting_vector).collect())
+            }
+        }
+
+        #[cfg(feature = "search")]
+        const KILLED_RECORDS: usize = 30;
+
+        /// Child of `killed_mid_indexing_the_next_handle_finishes`: indexes
+        /// the vector leg one slow Record at a time until killed (at most
+        /// one minute).
+        #[cfg(feature = "search")]
+        #[test]
+        #[ignore = "run as the child process of killed_mid_indexing_the_next_handle_finishes"]
+        fn slow_indexer_child_process() {
+            let Some(root) = std::env::var_os(CHILD_ENV).map(PathBuf::from) else {
+                return;
+            };
+            crate::git::isolate_test_git_env();
+            let embedder: Arc<dyn Embedder> = Arc::new(ProgressEmbedder {
+                root: root.clone(),
+                calls: AtomicU64::new(0),
+            });
+            let _vault = Vault::open_with(
+                root.join("vault"),
+                poll_fast(),
+                Some(embedder),
+                Some(tag_projector()),
+            )
+            .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        /// D23: `kill -9` in the middle of a diff breaks nothing. The marks
+        /// stay where the last durable write put them, and the next handle
+        /// finishes from the saved vectors instead of from scratch.
+        #[cfg(feature = "search")]
+        #[test]
+        fn killed_mid_indexing_the_next_handle_finishes() {
+            let scratch = Scratch::new();
+            {
+                let setup = open_search(scratch.vault(), poll_fast(), None);
+                setup
+                    .create_collection("c", document_schema(), None)
+                    .unwrap();
+                setup.wait_indexed(WAIT).unwrap();
+            }
+            for n in 1..KILLED_RECORDS {
+                let path = scratch.vault().join(format!("c/r{n:02}"));
+                fs::write(path, format!(r#"{{"tag":"text {n}"}}"#)).unwrap();
+            }
+            git_cli_commit(
+                &scratch.vault(),
+                &format!("c/r{KILLED_RECORDS:02}"),
+                r#"{"tag":"text last"}"#,
+            );
+            let mut child = spawn_child(
+                &scratch.root,
+                "vault::tests::background::slow_indexer_child_process",
+            );
+            let deadline = Instant::now() + WAIT;
+            loop {
+                let calls = fs::read_to_string(scratch.root.join("embedded"))
+                    .ok()
+                    .and_then(|text| text.parse::<usize>().ok())
+                    .unwrap_or(0);
+                if calls >= 5 {
+                    break;
+                }
+                let exited = child.0.try_wait().unwrap();
+                let log = fs::read_to_string(scratch.root.join("child.log")).unwrap_or_default();
+                assert!(exited.is_none(), "child exited early: {log}");
+                assert!(Instant::now() < deadline, "child never embedded: {log}");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            child.0.kill().unwrap();
+            child.0.wait().unwrap();
+
+            let counting = CountingEmbedder::new("m1");
+            let vault = Vault::open_with(
+                scratch.vault(),
+                poll_fast(),
+                Some(Arc::clone(&counting) as Arc<dyn Embedder>),
+                Some(tag_projector()),
+            )
+            .unwrap();
+            let status = vault.wait_indexed(WAIT).unwrap();
+            let head = head_of(vault.path());
+            assert_eq!(status.lexical.as_deref(), Some(head.as_str()));
+            assert_eq!(status.vector.as_deref(), Some(head.as_str()));
+            assert_eq!(status.vector_pending, Some(0));
+            assert!(status.last_error.is_none(), "{status:?}");
+            let found = vault
+                .collection("c")
+                .unwrap()
+                .find(&crate::FindQuery::all(), 0, 100)
+                .unwrap();
+            assert_eq!(found.records.len(), KILLED_RECORDS);
+            let hits = vault
+                .collection("c")
+                .unwrap()
+                .search(
+                    &SearchQuery::default()
+                        .with_text("text")
+                        .with_k(100)
+                        .with_lexical_weight(0.0),
+                    None,
+                )
+                .unwrap()
+                .hits;
+            assert_eq!(hits.len(), KILLED_RECORDS, "every Record has its vector");
+            let embedded = usize::try_from(counting.slots()).unwrap();
+            assert!(
+                embedded < KILLED_RECORDS,
+                "vectors saved before the kill are kept: {embedded} embedded again"
+            );
         }
 
         /// Holds the lexical role and never polls, so nothing indexes the

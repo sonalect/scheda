@@ -73,7 +73,10 @@ API or on-disk format changes bump the minor.
   that exists but was never indexed can be replaced or removed. Removing a
   file git never tracked deletes it without a commit.
 - An embedder failure no longer fails or rolls back a write: the indexer
-  retries with backoff and reports it in `index_status().last_error`.
+  retries the vector leg with backoff (100 ms doubling to 30 s) and reports
+  the failure in `index_status().last_error`. `find` and the lexical leg
+  of `search` keep up with `HEAD` meanwhile. `set_embedder` retries at
+  once; `wait_indexed` does not shorten the backoff.
 - `discard`, `pull`, `sync`, and the isolated variants no longer rebuild the
   Index; the indexer applies what moved.
 - An Index generation in another format is rebuilt in the background, and a

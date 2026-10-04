@@ -24,7 +24,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::diff::{self, Change, RecordChange};
 use crate::error::{Code, Context as _, ContextIo, io_code};
@@ -43,7 +43,7 @@ pub(crate) const DEFAULT_POLL: Duration = Duration::from_millis(1000);
 /// Records per lexical batch. The vector leg uses the embedder's
 /// `many_limit` instead.
 const LEXICAL_BATCH: usize = 256;
-const BACKOFF_FIRST: Duration = Duration::from_millis(100);
+pub(crate) const BACKOFF_FIRST: Duration = Duration::from_millis(100);
 const BACKOFF_CAP: Duration = Duration::from_secs(30);
 const INDEX_LOCK: &str = "index.lock";
 const VECTOR_LOCK: &str = "vector.lock";
@@ -133,7 +133,15 @@ pub(crate) struct State {
 
 #[derive(Default)]
 struct Signal {
+    /// Something changed (a commit, a new embedder, a published
+    /// generation): run a round now, even while a failed round waits out
+    /// its backoff.
     wake: bool,
+    /// Someone waits for the Index: run a round now unless a failure holds
+    /// the indexer back.
+    nudge: bool,
+    /// The embedder changed: a vector failure of the old one holds nothing.
+    new_embedder: bool,
     stop: bool,
     /// Callers that asked the current round to end early (see
     /// [`Indexer::pause`]).
@@ -174,8 +182,7 @@ impl Indexer {
             ctx,
             signal: Mutex::new(Signal {
                 wake: true,
-                stop: false,
-                pause: 0,
+                ..Signal::default()
             }),
             busy: Mutex::new(()),
             wake: Condvar::new(),
@@ -195,9 +202,28 @@ impl Indexer {
         })
     }
 
-    /// Ask for a round now instead of at the next poll.
+    /// Ask for a round now instead of at the next poll: something the
+    /// Index follows changed.
     pub(crate) fn wake(&self) {
         lock(&self.shared.signal).wake = true;
+        self.shared.wake.notify_one();
+    }
+
+    /// Ask for a round now on behalf of a caller that waits for the Index.
+    /// Unlike [`wake`](Self::wake) it does not cut a backoff short, so a
+    /// waiting caller does not retry a failing embedder in a tight loop.
+    pub(crate) fn nudge(&self) {
+        lock(&self.shared.signal).nudge = true;
+        self.shared.wake.notify_one();
+    }
+
+    /// The handle's embedder changed: retry the vector leg now.
+    pub(crate) fn embedder_changed(&self) {
+        {
+            let mut signal = lock(&self.shared.signal);
+            signal.new_embedder = true;
+            signal.wake = true;
+        }
         self.shared.wake.notify_one();
     }
 
@@ -294,13 +320,32 @@ fn run(shared: &Shared) {
             .map(|path| format!("/proc/{}", path.display()));
     }
     let mut worker = Worker::default();
-    let mut backoff: Option<Duration> = None;
+    let mut retry = Retry::default();
+    let mut next_poll = Instant::now();
     loop {
         {
             let mut signal = lock(&shared.signal);
-            if !signal.wake && !signal.stop {
-                let wait = backoff.unwrap_or(shared.ctx.poll);
-                signal = match shared.wake.wait_timeout(signal, wait) {
+            loop {
+                if signal.stop {
+                    break;
+                }
+                if std::mem::take(&mut signal.new_embedder) {
+                    retry.vector = Backoff::default();
+                }
+                let now = Instant::now();
+                let held = retry.round.until().filter(|until| now < *until);
+                // A vector failure alone holds only the vector leg; its
+                // retry is due when the hold ends, even between polls.
+                let due = retry
+                    .vector
+                    .until()
+                    .map_or(next_poll, |until| until.min(next_poll));
+                let run = signal.wake || (held.is_none() && (signal.nudge || now >= due));
+                if run {
+                    break;
+                }
+                let until = held.unwrap_or(due);
+                signal = match shared.wake.wait_timeout(signal, until - now) {
                     Ok((guard, _)) => guard,
                     Err(poisoned) => poisoned.into_inner().0,
                 };
@@ -309,14 +354,17 @@ fn run(shared: &Shared) {
                 break;
             }
             signal.wake = false;
+            signal.nudge = false;
         }
         let outcome = {
             let _busy = lock(&shared.busy);
             if lock(&shared.signal).pause > 0 {
                 continue;
             }
+            worker.skip_vector = retry.vector.holding(Instant::now());
             catch_unwind(AssertUnwindSafe(|| worker.round(shared)))
         };
+        next_poll = later(shared.ctx.poll);
         let error = match outcome {
             Ok(Ok(())) => None,
             Ok(Err(err)) => Some(err),
@@ -325,14 +373,10 @@ fn run(shared: &Shared) {
                 "a caller callback panicked inside the background indexer",
             )),
         };
-        backoff = match (&error, backoff) {
-            (None, _) => None,
-            (Some(_), None) => Some(BACKOFF_FIRST),
-            (Some(_), Some(last)) => Some(last.saturating_mul(2).min(BACKOFF_CAP)),
-        };
+        let last_error = retry.record(&worker, error);
         let mut state = lock(&shared.state);
         state.rounds = state.rounds.saturating_add(1);
-        state.last_error = error;
+        state.last_error = last_error;
         state.lexical_role = worker.lexical.is_some();
         state.vector_role = worker.vector.is_some();
         drop(state);
@@ -345,6 +389,76 @@ fn run(shared: &Shared) {
     state.vector_role = false;
     drop(state);
     shared.changed.notify_all();
+}
+
+/// Capped exponential backoff after failed rounds.
+#[derive(Default)]
+struct Backoff {
+    /// Last delay and when it ends; `None` after a success.
+    hold: Option<(Duration, Instant)>,
+}
+
+impl Backoff {
+    fn until(&self) -> Option<Instant> {
+        self.hold.map(|(_, until)| until)
+    }
+
+    fn holding(&self, now: Instant) -> bool {
+        self.until().is_some_and(|until| now < until)
+    }
+
+    fn fail(&mut self) {
+        let delay = match self.hold {
+            None => BACKOFF_FIRST,
+            Some((last, _)) => last.saturating_mul(2).min(BACKOFF_CAP),
+        };
+        self.hold = Some((delay, later(delay)));
+    }
+}
+
+/// `delay` from now; now when the clock cannot represent that.
+fn later(delay: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(delay).unwrap_or(now)
+}
+
+/// Failures the indexer is backing off from. A failure of the vector leg
+/// (the embedder, mostly) holds back that leg alone: the lexical leg and
+/// the journal `id` maps keep following `HEAD`.
+#[derive(Default)]
+struct Retry {
+    round: Backoff,
+    vector: Backoff,
+    /// Failure of the vector leg's last attempt, reported while that leg
+    /// is held back and later rounds skip it.
+    vector_error: Option<Error>,
+}
+
+impl Retry {
+    /// Account for a finished round; returns the error to report.
+    fn record(&mut self, worker: &Worker, error: Option<Error>) -> Option<Error> {
+        match error {
+            Some(err) if worker.in_vector => {
+                // The lexical leg finished before the vector leg started.
+                self.round = Backoff::default();
+                self.vector.fail();
+                self.vector_error = Some(err.clone());
+                Some(err)
+            }
+            Some(err) => {
+                self.round.fail();
+                Some(err)
+            }
+            None => {
+                self.round = Backoff::default();
+                if !worker.skip_vector {
+                    self.vector = Backoff::default();
+                    self.vector_error = None;
+                }
+                self.vector_error.clone()
+            }
+        }
+    }
 }
 
 /// How a leg's pass ended.
@@ -416,6 +530,8 @@ struct Worker {
     vector: Option<File>,
     /// Leg being applied, for the code of a caller panic.
     in_vector: bool,
+    /// The vector leg is backing off from a failure: leave it this round.
+    skip_vector: bool,
 }
 
 impl Worker {
@@ -513,7 +629,7 @@ impl Worker {
                 }
             }
         }
-        if self.vector.is_some() && embedder.is_some() {
+        if self.vector.is_some() && embedder.is_some() && !self.skip_vector {
             self.in_vector = true;
             for repo in [Repo::Main, Repo::Isolated] {
                 let mut pass = job.apply_leg(repo, Leg::Vector)?;

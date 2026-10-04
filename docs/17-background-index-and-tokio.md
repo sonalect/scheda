@@ -279,6 +279,17 @@ declarations at `HEAD` do not load), so the status still answers when
 the indexer cannot. `model_mismatch` is true when this handle's
 embedder differs from the live generation's vectors (D7).
 
+**D33. Backoff per leg, and only a change cuts it short.** A failed
+vector leg (the embedder, mostly) holds back that leg alone, 100 ms
+doubling to 30 s; the lexical leg and the journal `id` maps keep
+following `HEAD` on every poll, and rounds that skip the held leg keep
+reporting its error in `last_error`. Any other failure holds back the
+whole round the same way. A commit, `pull` / `sync`, or the end of a
+`reindex` publish wakes the indexer at once even during a round hold;
+`wait_indexed` asks for a round without cutting either hold short, so a
+waiting caller cannot turn backoff into a tight retry loop. A new
+embedder (`set_embedder`) clears the vector hold.
+
 ---
 
 ## 3. Part B — background Index
@@ -384,9 +395,16 @@ embedder differs from the live generation's vectors (D7).
 
 ### B7. Errors
 
-- [ ] Retry with backoff, mark unchanged, last error in status (D12).
+- [x] Retry with backoff, mark unchanged, last error in status (D12,
+      D33; `background::a_failing_embedder_holds_back_only_the_vector_leg`).
 - *Check:* stub embedder fails twice then succeeds: vectors land, no
-  write failed, status showed the error in between.
+  write failed, status showed the error in between
+  (`background::embedder_fails_twice_then_vectors_land_and_the_error_showed_between`:
+  the retries keep to the backoff while `wait_indexed` waits, and the
+  error text does not carry the Record).
+- *Check (D23):* `kill -9` in the middle of a diff breaks nothing; the
+  next handle finishes from the vectors saved before the kill
+  (`background::killed_mid_indexing_the_next_handle_finishes`).
 
 ### B8. Model change and `reindex`
 
