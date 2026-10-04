@@ -1,4 +1,4 @@
-//! Online `reindex`: writers during the walk, catch-up, publish window.
+//! Online `reindex`: writes during the build reach the new generation through its marks.
 //! Collection names here and in `testdata/search/` must not appear in
 //! `rust/scheda/src`.
 
@@ -336,10 +336,9 @@ fn commit_during_rebuild_is_applied_after_publish() {
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
-            // A hand edit committed while the walk runs: no Scheda call
-            // queues it. The new generation is marked with the commit the
-            // walk started from, so the indexer applies this one after
-            // publish.
+            // A hand edit committed while the build runs. The new
+            // generation is marked with the commit the build started from,
+            // so the indexer applies this one after publish.
             drop_journal_id(&scratch.vault(), "token_notes", "gone");
             common::commit_file(&scratch.vault(), std::path::Path::new("token_notes"));
             latch.resume();
@@ -377,7 +376,7 @@ fn same_model_reindex_does_not_embed_again() {
 }
 
 #[test]
-fn different_model_reembeds_queued_add() {
+fn different_model_reembeds_an_add_made_during_the_build() {
     let scratch = Scratch::new();
     let first = CountingEmbedder::new("model-a");
     let vault = open_tokens(&scratch, Some(Arc::clone(&first) as Arc<dyn Embedder>));
@@ -496,7 +495,7 @@ fn open_during_mismatch_rebuild_does_not_prune() {
 }
 
 #[test]
-fn journal_queued_line_is_gettable_after_publish() {
+fn journal_line_added_during_the_build_is_gettable_after_publish() {
     let scratch = Scratch::new();
     drop(open_proj(scratch.vault(), None));
     scratch.write_declaration(LOG);

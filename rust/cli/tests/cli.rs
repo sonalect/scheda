@@ -1038,6 +1038,36 @@ fn plant_isolated_sealed(scratch: &Scratch) {
     let nested = scratch.vault().join(".isolated").join("agent_sealed");
     fs::create_dir_all(&nested).unwrap();
     fs::write(nested.join("sealed.md"), sealed_document(NESTED_SEALED)).unwrap();
+    git_commit_all(&scratch.vault());
+    git_commit_all(&scratch.vault().join(".isolated"));
+}
+
+/// `git init` (when needed), `git add -A`, and commit everything in `dir`.
+/// Indexing reads commits, so planted files must be committed.
+fn git_commit_all(dir: &std::path::Path) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "plant",
+        ],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    }
 }
 
 fn assert_no_sealed(haystack: &str) {

@@ -16,11 +16,14 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
+use crate::Error;
+#[cfg(not(feature = "find"))]
+use crate::ReindexResult;
 use crate::error::{Code, ContextAs, ContextIo, bail};
+#[cfg(not(feature = "find"))]
 use crate::journal;
 use crate::schema::{self, Decls, Kind};
 use crate::store;
-use crate::{Error, ReindexResult};
 
 /// On-disk Index format. Bumped to 4 when the Index became generational,
 /// and to 5 when each generation recorded the commit every leg has reached
@@ -126,6 +129,7 @@ impl JournalIdMaps {
         self.collections.insert(collection, ids);
     }
 
+    #[cfg(not(feature = "find"))]
     /// Take another map's collections. Used to merge the search-engine walk
     /// into the maps `reindex` already built for journals that are not indexed.
     #[cfg(feature = "find")]
@@ -143,12 +147,6 @@ impl JournalIdMaps {
     pub(crate) fn add_segment_line(&mut self, path: &Path) {
         if let Some(n) = self.segment_lines.get_mut(path) {
             *n = n.saturating_add(1);
-        }
-    }
-
-    pub(crate) fn forget_segment_line(&mut self, path: &Path) {
-        if let Some(n) = self.segment_lines.get_mut(path) {
-            *n = n.saturating_sub(1);
         }
     }
 
@@ -207,6 +205,49 @@ fn is_legacy_layout(root: &Path) -> bool {
 
 /// Generation directory `current` names now, or `None` without a pointer.
 ///
+/// Flag file a handle leaves in a generation whose Tantivy or vector files
+/// failed to read; the lexical-role indexer, in whatever process, then
+/// checks the generation and rebuilds it if it is damaged (D8).
+#[cfg(feature = "find")]
+const DAMAGED_FILE: &str = "damaged";
+
+/// Flag generation `dir` as possibly damaged. Best effort: the error that
+/// prompted it is what the caller reports.
+#[cfg(feature = "find")]
+pub(crate) fn flag_damaged(dir: &Path) {
+    let path = dir.join(DAMAGED_FILE);
+    if dir.is_dir() && store::atomic_write(&path, b"").is_ok() {
+        let _ = store::restrict_file(&path);
+    }
+}
+
+/// Whether generation `dir` carries the flag of [`flag_damaged`].
+#[cfg(feature = "find")]
+pub(crate) fn flagged_damaged(dir: &Path) -> bool {
+    dir.join(DAMAGED_FILE).is_file()
+}
+
+/// Drop the flag of [`flag_damaged`]: a check found nothing wrong.
+#[cfg(feature = "find")]
+pub(crate) fn clear_damaged(dir: &Path) -> Result<(), Error> {
+    match fs::remove_file(dir.join(DAMAGED_FILE)) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err).context("[Index] clear damaged flag"),
+    }
+}
+
+/// Whether `err` says Index files could not be read as written: Tantivy,
+/// the vector dump, or a decode of either. Not a format change, a missing
+/// Index, or a caller callback's failure.
+#[cfg(feature = "find")]
+pub(crate) fn is_damage(err: &Error) -> bool {
+    matches!(
+        err.known_code(),
+        Some(Code::IndexLexical | Code::IndexCorrupt | Code::IndexVector)
+    )
+}
+
 /// A handle reads this to follow a generation another handle or process
 /// published.
 #[cfg(feature = "find")]
@@ -467,6 +508,7 @@ fn note_stamp(index_dir: &Path, maps: &mut JournalIdMaps, collection: &str) {
 
 /// Fill `index_dir` with journal maps and the format file. Does not swap
 /// `current`; the caller publishes after the search engines are rebuilt.
+#[cfg(not(feature = "find"))]
 pub(crate) fn rebuild(
     vault: &Path,
     decls: &Decls,
@@ -519,7 +561,7 @@ pub(crate) fn rebuild(
     ))
 }
 
-fn remove_legacy_isolated_index(vault: &Path) -> Result<(), Error> {
+pub(crate) fn remove_legacy_isolated_index(vault: &Path) -> Result<(), Error> {
     let leftover = crate::isolated::root(vault).join(".scheda");
     match fs::remove_dir_all(&leftover) {
         Ok(()) => Ok(()),
@@ -607,30 +649,6 @@ fn remember_locked(
     Ok(())
 }
 
-/// Look up `id` in `{index_dir}/journal/{collection}/ids`.
-///
-/// A missing or unreadable file is [`OwnedLookup::MissingMap`] (caller may
-/// scan). A readable file that does not name `id` is [`OwnedLookup::UnknownId`].
-pub(crate) fn lookup_on_disk(
-    index_dir: &Path,
-    collection: &str,
-    id: &str,
-) -> Result<OwnedLookup, Error> {
-    let path = ids_path(index_dir, collection);
-    if !path.is_file() {
-        return Ok(OwnedLookup::MissingMap);
-    }
-    match read_ids_file(&path)? {
-        None => Ok(OwnedLookup::MissingMap),
-        Some(ids) => match ids.get(id) {
-            Some(rel) if id_map_rel_ok_for_name(collection, rel) => {
-                Ok(OwnedLookup::Path(rel.clone()))
-            }
-            Some(_) | None => Ok(OwnedLookup::UnknownId),
-        },
-    }
-}
-
 /// Whether `rel` is a Vault-relative segment under this collection directory.
 ///
 /// Rejects absolute paths, `..`, and a prefix that is not this collection
@@ -704,17 +722,6 @@ pub(crate) fn check_journal_id_maps(index_dir: &Path, decls: &Decls) -> Result<(
         }
     }
     Ok(())
-}
-
-/// [`MapLookup`] with an owned segment path.
-#[derive(Debug)]
-pub(crate) enum OwnedLookup {
-    /// No ids file, or the file could not be parsed.
-    MissingMap,
-    /// Ids file exists and does not name this `id`.
-    UnknownId,
-    /// Vault-relative POSIX path of the segment that holds `id`.
-    Path(String),
 }
 
 pub(crate) fn forget_remembered(
@@ -876,6 +883,7 @@ pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
     restrict_index_tree(index_dir)
 }
 
+#[cfg(not(feature = "find"))]
 fn clear_index_dir(index_dir: &Path) -> Result<(), Error> {
     fs::create_dir_all(index_dir).context("[Index::clear] create dir")?;
     let entries = fs::read_dir(index_dir).context("[Index::clear] read dir")?;
@@ -930,23 +938,6 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    #[test]
-    fn lookup_on_disk_unknown_id_is_not_missing_map() {
-        let dir = scratch_dir();
-        let mut maps = JournalIdMaps::default();
-        maps.replace_collection("log".into(), BTreeMap::new());
-        remember_id(&dir, &mut maps, "log", "a", "log/open.jsonl").unwrap();
-        match lookup_on_disk(&dir, "log", "missing").unwrap() {
-            OwnedLookup::UnknownId => {}
-            other => panic!("expected UnknownId, got {other:?}"),
-        }
-        match lookup_on_disk(&dir, "log", "a").unwrap() {
-            OwnedLookup::Path(rel) => assert_eq!(rel, "log/open.jsonl"),
-            other => panic!("expected Path, got {other:?}"),
-        }
-        let _ = fs::remove_dir_all(&dir);
-    }
-
     fn journal_decl(name: &str, isolated: bool) -> schema::CollectionDecl {
         schema::CollectionDecl {
             name: name.to_owned(),
@@ -974,22 +965,5 @@ mod tests {
         let isolated = journal_decl("log", true);
         assert!(id_map_rel_ok(&isolated, ".isolated/log/open.jsonl"));
         assert!(!id_map_rel_ok(&isolated, "log/open.jsonl"));
-    }
-
-    #[test]
-    fn lookup_on_disk_skips_path_outside_the_collection() {
-        let dir = scratch_dir();
-        let mut maps = JournalIdMaps::default();
-        maps.replace_collection("log".into(), BTreeMap::new());
-        remember_id(&dir, &mut maps, "log", "a", "log/open.jsonl").unwrap();
-        let path = ids_path(&dir, "log");
-        let mut text = fs::read_to_string(&path).unwrap();
-        text.push_str("{\"id\":\"stolen\",\"path\":\"/etc/passwd\"}\n");
-        fs::write(&path, text).unwrap();
-        match lookup_on_disk(&dir, "log", "stolen").unwrap() {
-            OwnedLookup::UnknownId => {}
-            other => panic!("expected UnknownId, got {other:?}"),
-        }
-        let _ = fs::remove_dir_all(&dir);
     }
 }

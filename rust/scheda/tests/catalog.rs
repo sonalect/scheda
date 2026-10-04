@@ -49,6 +49,8 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        // Indexing reads commits: a declaration must be committed.
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 }
 
@@ -253,6 +255,35 @@ fn plant_isolated_sealed(scratch: &Scratch) {
         format!("---\nid: sealed\nwest_pass: {NESTED_SEALED}\n---\n"),
     )
     .unwrap();
+    git_commit_all(&scratch.vault().join(".isolated"));
+}
+
+/// `git init` (when needed), `git add -A`, and commit everything in `dir`.
+/// Indexing reads commits, so planted files must be committed.
+fn git_commit_all(dir: &std::path::Path) {
+    for args in [
+        vec!["init", "-q"],
+        vec!["add", "-A"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "plant",
+        ],
+    ] {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(&args)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+    }
 }
 
 fn assert_no_sealed(haystack: &str) {

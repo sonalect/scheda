@@ -532,6 +532,8 @@ struct Worker {
     in_vector: bool,
     /// The vector leg is backing off from a failure: leave it this round.
     skip_vector: bool,
+    /// Generation the last check found readable (D8).
+    probed: Option<PathBuf>,
 }
 
 impl Worker {
@@ -547,11 +549,17 @@ impl Worker {
         let ctx = &shared.ctx;
         self.in_vector = false;
         follow_current(ctx).context("[Indexer] follow current generation")?;
-        ctx.search
-            .follow_disk()
-            .context("[Indexer] follow other handles' saves")?;
-        let embedder = lock(&ctx.embedder).clone();
         let generation = ctx.index.dir()?;
+        let disk = ctx
+            .search
+            .follow_disk()
+            .context("[Indexer] follow other handles' saves");
+        if let Err(err) = &disk
+            && index::is_damage(err)
+        {
+            index::flag_damaged(&generation);
+        }
+        let embedder = lock(&ctx.embedder).clone();
         self.update_roles(ctx, &generation, embedder.as_deref())
             .context("[Indexer] take roles")?;
         {
@@ -561,6 +569,17 @@ impl Worker {
             state.lexical_role = self.lexical.is_some();
             state.vector_role = self.vector.is_some();
         }
+        if self.lexical.is_some()
+            && !needs_new_generation(&generation)?
+            && self.damaged(&generation)?
+        {
+            let heads = Heads::read(&ctx.vault)?;
+            return self
+                .rebuild_generation(shared, heads.as_ref(), embedder.as_deref())
+                .context("[Indexer] rebuild a damaged generation");
+        }
+        // A vector view that did not load must not be saved over.
+        disk?;
         if self.lexical.is_none() && self.vector.is_none() {
             return Ok(());
         }
@@ -569,7 +588,33 @@ impl Worker {
             .catch_up(shared, &generation, embedder.as_deref())
             .context("[Indexer] catch up with HEAD");
         let released = ctx.search.release_writer();
-        result.and(released)
+        let result = result.and(released);
+        if let Err(err) = &result
+            && index::is_damage(err)
+        {
+            // The next round with the lexical role checks it in full.
+            index::flag_damaged(&generation);
+        }
+        result
+    }
+
+    /// Whether `generation` is damaged (D8): read-only checks, a quick one
+    /// once per generation and a full one (vectors included) whenever a
+    /// handle flagged it. A check that passes clears the flag.
+    fn damaged(&mut self, generation: &Path) -> Result<bool, Error> {
+        let flagged = index::flagged_damaged(generation);
+        if !flagged && self.probed.as_deref() == Some(generation) {
+            return Ok(false);
+        }
+        match crate::search::probe_generation(generation, flagged) {
+            Ok(()) => {
+                index::clear_damaged(generation)?;
+                self.probed = Some(generation.to_path_buf());
+                Ok(false)
+            }
+            Err(err) if index::is_damage(&err) => Ok(true),
+            Err(err) => Err(err),
+        }
     }
 
     fn update_roles(
@@ -607,7 +652,7 @@ impl Worker {
             return Ok(());
         };
         if self.lexical.is_some() && needs_new_generation(generation)? {
-            return self.rebuild_generation(shared, &heads, embedder);
+            return self.rebuild_generation(shared, Some(&heads), embedder);
         }
         let decls = schema::load_at(&ctx.vault, &heads.main.1)?;
         let job = Job {
@@ -622,7 +667,9 @@ impl Worker {
                 match job.apply_leg(repo, Leg::Lexical)? {
                     Pass::Done => {}
                     Pass::Stopped => return Ok(()),
-                    Pass::Rebuild => return self.rebuild_generation(shared, &heads, embedder),
+                    Pass::Rebuild => {
+                        return self.rebuild_generation(shared, Some(&heads), embedder);
+                    }
                 }
                 if job.apply_ids(repo)? == Pass::Stopped {
                     return Ok(());
@@ -656,7 +703,7 @@ impl Worker {
     fn rebuild_generation(
         &self,
         shared: &Shared,
-        heads: &Heads,
+        heads: Option<&Heads>,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
         let ctx = &shared.ctx;
@@ -664,72 +711,188 @@ impl Worker {
             return Ok(());
         };
         let previous = ctx.index.dir()?;
-        let new_dir = index::start_generation(&ctx.index.root)?;
-        #[cfg(feature = "search")]
-        crate::search::copy_vector_dump_as_is(&previous, &new_dir)?;
-        #[cfg(not(feature = "search"))]
-        let _ = previous;
-        let engine = SearchEngine::open(&new_dir, true, ctx.projector.clone())?;
-        let decls = schema::load_at(&ctx.vault, &heads.main.1)?;
-        engine.init_generation(&decls)?;
-        let vector = self.vector.is_some() && embedder.is_some();
-        let legs = Legs {
-            lexical: true,
-            vector,
+        let stop = || shared.stopping();
+        let spec = BuildSpec {
+            vault: &ctx.vault,
+            root: &ctx.index.root,
+            previous: &previous,
+            heads,
+            projector: ctx.projector.clone(),
+            embedder: if self.vector.is_some() {
+                embedder
+            } else {
+                None
+            },
+            stop: &stop,
+            hook: None,
         };
-        let embedder = if vector { embedder } else { None };
-        let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-        let mut maps = JournalIdMaps::default();
-        for decl in decls.collections().filter(|decl| !decl.encrypted) {
-            let Some((dir, head)) = heads.for_decl(decl) else {
-                if decl.kind == Kind::Journal {
-                    index::rewrite_collection(&new_dir, &mut maps, &decl.name, BTreeMap::new())?;
-                }
-                continue;
-            };
-            let records = diff::collection(dir, decl, head)?;
-            if decl.kind == Kind::Journal {
-                index::rewrite_collection(
-                    &new_dir,
-                    &mut maps,
-                    &decl.name,
-                    journal_ids(decl, &records),
-                )?;
-            }
-            seen.insert(
-                decl.name.clone(),
-                records.iter().map(|change| change.id.clone()).collect(),
-            );
-            if apply_changes(shared, &engine, &decls, dir, &records, legs, embedder)?
-                == Pass::Stopped
-            {
-                // The unfinished generation is an orphan the next `open`
-                // prunes; until then its files are owner-only too.
-                engine.release_writer()?;
-                return Ok(());
-            }
+        let Some(built) = build_generation(&spec)? else {
+            return Ok(());
+        };
+        index::publish_generation(&ctx.index.root, &built.dir)?;
+        switch_to(ctx, built.dir, built.engine, built.maps)
+    }
+}
+
+/// What [`build_generation`] reads and who embeds.
+pub(crate) struct BuildSpec<'a> {
+    pub(crate) vault: &'a Path,
+    /// `{vault}/.scheda/index/`.
+    pub(crate) root: &'a Path,
+    /// The live generation the new one replaces.
+    pub(crate) previous: &'a Path,
+    /// Commits to build from; `None` before the first commit.
+    pub(crate) heads: Option<&'a Heads>,
+    pub(crate) projector: Option<Arc<dyn Projector>>,
+    /// Fills the vector leg. Without one the new generation keeps the
+    /// previous vectors and their marks as they are.
+    pub(crate) embedder: Option<&'a dyn Embedder>,
+    /// True ends the build between batches; the unfinished directory is
+    /// left for the next `open` to prune.
+    pub(crate) stop: &'a dyn Fn() -> bool,
+    /// Called with each collection's name before its Records are indexed.
+    pub(crate) hook: Option<&'a dyn Fn(&str)>,
+}
+
+/// A generation [`build_generation`] filled, not yet published.
+pub(crate) struct Built {
+    pub(crate) dir: PathBuf,
+    pub(crate) engine: SearchEngine,
+    pub(crate) maps: JournalIdMaps,
+    pub(crate) counts: crate::ReindexResult,
+}
+
+/// Fill a new generation from the commits in `spec.heads`, git objects
+/// only (D19): a write no commit holds yet is not read, and whatever
+/// reaches `HEAD` after those commits is the indexer's to apply once the
+/// generation is live, since its marks name them. Shared by `reindex` and
+/// the indexer's own rebuild. `None` when `spec.stop` ended it.
+///
+/// Vectors: with an embedder, a previous dump of the same model is copied
+/// so unchanged slots are not embedded again, another model starts empty,
+/// and every slot of `HEAD` is filled. Without one, the previous dump and
+/// its vector marks are carried over as they are.
+pub(crate) fn build_generation(spec: &BuildSpec<'_>) -> Result<Option<Built>, Error> {
+    // Marks before the dump: a dump copied later is never older than the
+    // mark carried with it.
+    let carried: Vec<(Repo, Option<String>)> = if spec.embedder.is_none() {
+        [Repo::Main, Repo::Isolated]
+            .into_iter()
+            .map(|repo| Ok((repo, marks::read(spec.previous, Leg::Vector, repo)?)))
+            .collect::<Result<_, Error>>()?
+    } else {
+        Vec::new()
+    };
+    let new_dir = index::start_generation(spec.root)?;
+    #[cfg(feature = "search")]
+    crate::search::copy_loadable_vector_dump(spec.previous, &new_dir, spec.embedder)?;
+    let engine = SearchEngine::open(&new_dir, true, spec.projector.clone())?;
+    let decls = match spec.heads {
+        Some(heads) => schema::load_at(spec.vault, heads.main())?,
+        None => Decls::default(),
+    };
+    engine.init_generation(&decls)?;
+    let legs = Legs {
+        lexical: true,
+        vector: spec.embedder.is_some(),
+    };
+    let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut maps = JournalIdMaps::default();
+    let mut records_read = 0u64;
+    let mut segments_seen = 0u64;
+    for decl in decls.collections().filter(|decl| !decl.encrypted) {
+        let journal = decl.kind == Kind::Journal;
+        if !journal && !decl.any_indexed() {
+            continue;
         }
-        #[cfg(feature = "search")]
-        if vector {
-            engine.prune_vectors(&seen, None)?;
+        let records = match spec.heads.and_then(|heads| heads.for_decl(decl)) {
+            Some((dir, head)) => Some((dir, diff::collection(dir, decl, head)?)),
+            None => None,
+        };
+        let Some((dir, records)) = records else {
+            if journal {
+                index::rewrite_collection(&new_dir, &mut maps, &decl.name, BTreeMap::new())?;
+            }
+            continue;
+        };
+        records_read += u64::try_from(records.len()).unwrap_or(u64::MAX);
+        if journal {
+            let segments: BTreeSet<&str> = records
+                .iter()
+                .filter_map(|change| match &change.change {
+                    Change::Upsert { path, .. } => Some(path.as_str()),
+                    Change::Delete => None,
+                })
+                .collect();
+            segments_seen += u64::try_from(segments.len()).unwrap_or(u64::MAX);
+            index::rewrite_collection(
+                &new_dir,
+                &mut maps,
+                &decl.name,
+                journal_ids(decl, &records),
+            )?;
         }
-        #[cfg(not(feature = "search"))]
-        let _ = &seen;
-        engine.flush()?;
-        engine.release_writer()?;
+        if !decl.any_indexed() {
+            continue;
+        }
+        if let Some(hook) = spec.hook {
+            hook(&decl.name);
+        }
+        seen.insert(
+            decl.name.clone(),
+            records.iter().map(|change| change.id.clone()).collect(),
+        );
+        if apply_changes(
+            spec.stop,
+            &engine,
+            &decls,
+            dir,
+            &records,
+            legs,
+            spec.embedder,
+        )? == Pass::Stopped
+        {
+            // The unfinished generation is an orphan the next `open`
+            // prunes; until then its files are owner-only too.
+            engine.release_writer()?;
+            return Ok(None);
+        }
+    }
+    #[cfg(feature = "search")]
+    if legs.vector {
+        engine.prune_vectors(&seen, None)?;
+    }
+    #[cfg(not(feature = "search"))]
+    let _ = &seen;
+    engine.flush()?;
+    engine.release_writer()?;
+    index::restrict_index_tree(&new_dir)?;
+    if let Some(heads) = spec.heads {
         for repo in [Repo::Main, Repo::Isolated] {
             let Some((_, head)) = heads.of(repo) else {
                 continue;
             };
             marks::write(&new_dir, Leg::Lexical, repo, head)?;
             marks::write(&new_dir, Leg::Ids, repo, head)?;
-            if vector {
+            if legs.vector {
                 marks::write(&new_dir, Leg::Vector, repo, head)?;
             }
         }
-        index::publish_generation(&ctx.index.root, &new_dir)?;
-        switch_to(ctx, new_dir, engine, maps)
     }
+    for (repo, mark) in carried {
+        if let Some(mark) = mark {
+            marks::write(&new_dir, Leg::Vector, repo, &mark)?;
+        }
+    }
+    Ok(Some(Built {
+        dir: new_dir,
+        engine,
+        maps,
+        counts: crate::ReindexResult::default()
+            .with_records_read(records_read)
+            .with_skipped_invalid(0)
+            .with_segments_seen(segments_seen),
+    }))
 }
 
 /// Inputs of one round, shared by every leg and repository it applies.
@@ -846,6 +1009,7 @@ impl Job<'_> {
             None
         };
         let engine = &shared.ctx.search;
+        let stopping = || shared.stopping();
         let legs = legs_of(leg);
         let found = diff::diff(dir, repo, decls, from, head)?;
         if found.rebuild {
@@ -872,7 +1036,7 @@ impl Job<'_> {
                     records.iter().map(|change| change.id.clone()).collect(),
                 );
             }
-            if apply_changes(shared, engine, decls, decl_dir, &records, legs, embedder)?
+            if apply_changes(&stopping, engine, decls, decl_dir, &records, legs, embedder)?
                 == Pass::Stopped
             {
                 return Ok(Pass::Stopped);
@@ -895,8 +1059,15 @@ impl Job<'_> {
         }
         #[cfg(not(feature = "search"))]
         let _ = &seen;
-        if apply_changes(shared, engine, decls, dir, &found.changes, legs, embedder)?
-            == Pass::Stopped
+        if apply_changes(
+            &stopping,
+            engine,
+            decls,
+            dir,
+            &found.changes,
+            legs,
+            embedder,
+        )? == Pass::Stopped
         {
             return Ok(Pass::Stopped);
         }
@@ -932,12 +1103,26 @@ fn switch_to(
     ctx: &Context,
     dir: PathBuf,
     engine: SearchEngine,
+    maps: JournalIdMaps,
+) -> Result<(), Error> {
+    install(&ctx.index, &ctx.search, &ctx.journal_ids, dir, engine, maps)
+}
+
+/// Make generation `dir`, with its `engine` and journal `maps`, the one a
+/// handle answers from. Journal lines the handle wrote that `maps` lack
+/// are carried over (D27).
+pub(crate) fn install(
+    handle: &IndexHandle,
+    search: &SearchEngine,
+    journal_ids: &Mutex<JournalIdMaps>,
+    dir: PathBuf,
+    engine: SearchEngine,
     mut maps: JournalIdMaps,
 ) -> Result<(), Error> {
-    ctx.search.adopt(engine)?;
-    let mut live = lock(&ctx.journal_ids);
+    search.adopt(engine)?;
+    let mut live = lock(journal_ids);
     index::carry_over(&dir, &live, &mut maps)?;
-    ctx.index.set_dir(dir)?;
+    handle.set_dir(dir)?;
     *live = maps;
     Ok(())
 }
@@ -1080,7 +1265,7 @@ fn vault_rel(decl: &CollectionDecl, path: &str) -> String {
 /// batches; commit after each batch and stop between batches when the
 /// handle drops.
 fn apply_changes(
-    shared: &Shared,
+    stop: &dyn Fn() -> bool,
     engine: &SearchEngine,
     decls: &Decls,
     dir: &Path,
@@ -1093,7 +1278,7 @@ fn apply_changes(
         _ => LEXICAL_BATCH,
     };
     for chunk in changes.chunks(batch) {
-        if shared.stopping() {
+        if stop() {
             return Ok(Pass::Stopped);
         }
         let blobs: Vec<String> = chunk
@@ -1119,7 +1304,7 @@ fn apply_changes(
             match &change.change {
                 Change::Delete => engine.forget_legs(decl, &change.id, legs)?,
                 Change::Upsert { blob, .. } => {
-                    if legs.vector && shared.stopping() {
+                    if legs.vector && stop() {
                         // At most one embedder call in flight on close.
                         return Ok(Pass::Stopped);
                     }

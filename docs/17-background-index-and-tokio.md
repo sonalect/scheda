@@ -290,6 +290,42 @@ whole round the same way. A commit, `pull` / `sync`, or the end of a
 waiting caller cannot turn backoff into a tight retry loop. A new
 embedder (`set_embedder`) clears the vector hold.
 
+Settled while building B8 (4 October 2026):
+
+**D34. `reindex` builds from commits, like the indexer's own rebuild.**
+D10 deletes the queue, and the queue was what kept a work-tree walk
+honest: a walk without `write.lock` can read another handle's open
+transaction, and when that transaction is discarded nothing would remove
+those Records from `N+1`. So `reindex` (with `find`) fills `N+1` from the
+commits at `HEAD` with the same code the indexer uses for a format or
+damage rebuild (D8, D19), marks it with those commits, and publishes;
+the indexer applies the rest. No `write.lock` and no `reindex/active`:
+nothing another handle does to the files can race the build, so
+`create_collection`, `discard`, `pull`, and `sync` are no longer refused
+during it, and an open transaction elsewhere no longer makes it `locked`.
+`reindex.lock` stays for one build at a time. Vectors: with an embedder,
+a loadable dump of the same model is copied (unchanged slots are not
+embedded again), another model starts empty, every slot of `HEAD` is
+filled; without one, the previous dump and its vector marks move to
+`N+1` as they are, so a process without an embedder does not throw away
+vectors another process paid for. A build without `find` has no indexer:
+its `reindex` rebuilds the journal `id` maps from the files under
+`write.lock`. `ReindexResult.skipped_invalid` stays `0` with `find` (it
+already was).
+
+**D35. Damage is found by reading, and repaired by the lexical role.**
+A query or an indexer round that cannot read a generation (codes
+`index_lexical`, `index_corrupt`, `index_vector`) leaves a `damaged`
+flag file in it, so the handle with the lexical role learns of it in
+any process. That handle checks a generation read-only: quickly once per
+generation (Tantivy opens and serves a searcher, `ord` decodes), in full
+(the vector dump loads) when flagged. A failed check rebuilds the
+generation from the commits (D34); a passing one clears the flag. A dump
+that does not load is never copied into the new generation. A failed
+write alone (a full disk) does not rebuild: the read-only check passes.
+Queries fail closed until the new generation is live (D8). With D24, no
+handle without the generation's projector rebuilds it.
+
 ---
 
 ## 3. Part B — background Index
@@ -408,13 +444,25 @@ embedder (`set_embedder`) clears the vector hold.
 
 ### B8. Model change and `reindex`
 
-- [ ] Mismatch handling per D7.
-- [ ] `reindex()` builds `N+1`, records its base commit, publishes; the
-      indexer catches up from that commit (D10). Delete the queue.
-- [ ] Automatic rebuild on format change or corruption (D8).
+- [x] Mismatch handling per D7 (no role, no rebuild, the query is not
+      embedded; `background::model_change_waits_for_reindex_and_does_not_flip_flop`).
+- [x] `reindex()` builds `N+1`, records its base commit, publishes; the
+      indexer catches up from that commit (D10). Delete the queue (D34;
+      `vault.rs reindex_takes_no_write_lock_and_writes_during_the_build_follow`,
+      `a_write_during_the_build_is_applied_after_publish_on_both_legs`,
+      `reindex_publishes_while_another_handle_holds_a_transaction`,
+      `reindex_without_an_embedder_keeps_the_vectors_and_their_mark`,
+      `leftover_queue_and_orphan_are_removed_on_open`).
+- [x] Automatic rebuild on format change or corruption (D8, D35;
+      `background::format_4_generation_is_rebuilt_in_the_background`,
+      `damaged_lexical_index_is_rebuilt_in_the_background`,
+      `damaged_vector_dump_is_rebuilt_in_the_background`).
 - *Check:* embedder with a new `model_id`: status `model_mismatch`, no
   flip-flop with a second process on the old model; `reindex()` with
-  the new one re-embeds every slot and clears the status.
+  the new one re-embeds every slot and clears the status
+  (`background::model_change_waits_for_reindex_and_does_not_flip_flop`:
+  the old-model handle keeps polling on both sides of the `reindex` and
+  `current` does not move back).
 
 ### B9. CLI
 

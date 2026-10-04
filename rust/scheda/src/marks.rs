@@ -24,6 +24,13 @@ const MARKS_DIR: &str = "marks";
 
 /// One artifact of a generation that follows `HEAD`.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    all(not(feature = "find"), not(test)),
+    expect(
+        dead_code,
+        reason = "a build without `find` keeps only the journal `id` maps"
+    )
+)]
 pub(crate) enum Leg {
     /// Tantivy documents.
     Lexical,

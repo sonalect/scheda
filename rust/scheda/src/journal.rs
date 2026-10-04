@@ -13,11 +13,6 @@ use crate::schema::{CollectionDecl, Decls, Kind, SegmentRotate};
 use crate::store;
 use crate::{Error, Record};
 
-pub(crate) struct JournalRollback {
-    pub(crate) path: PathBuf,
-    pub(crate) previous_len: u64,
-}
-
 /// Append-order walk of one `journal` collection.
 ///
 /// Yields one Record at a time from segment files. Does not open the Index.
@@ -120,24 +115,6 @@ impl Iterator for JournalLines {
 
 impl FusedIterator for JournalLines {}
 
-pub(crate) fn rollback_insert(write: &JournalRollback) -> Result<(), Error> {
-    if write.previous_len == 0 {
-        match fs::remove_file(&write.path) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err).context("[Journal::rollback] remove new segment"),
-        }
-    } else {
-        let file = OpenOptions::new()
-            .write(true)
-            .open(&write.path)
-            .context("[Journal::rollback] open segment")?;
-        file.set_len(write.previous_len)
-            .context("[Journal::rollback] truncate segment")?;
-        file.sync_all().context("[Journal::rollback] fsync segment")
-    }
-}
-
 pub(crate) fn insert_journal(
     vault: &Path,
     decl: &CollectionDecl,
@@ -145,7 +122,7 @@ pub(crate) fn insert_journal(
     index_dir: &Path,
     maps: &mut JournalIdMaps,
     writer: &str,
-) -> Result<(String, String, JournalRollback), Error> {
+) -> Result<(String, String), Error> {
     let (id, line) = prepare_line(record)?;
     index::refresh_ids(index_dir, maps, decl)?;
     match maps.contains(&decl.name, &id) {
@@ -169,13 +146,6 @@ pub(crate) fn insert_journal(
     fs::create_dir_all(&dir).context("[Journal::insert] create dir")?;
     crate::isolated::restrict_record(vault, &dir)?;
     let path = open_segment_path(&dir, decl, line.len() as u64, maps, writer)?;
-    let previous_len = if path.is_file() {
-        fs::metadata(&path)
-            .context("[Journal::insert] stat segment")?
-            .len()
-    } else {
-        0
-    };
     append_line(&path, &line)?;
     crate::isolated::restrict_record(vault, &path)?;
     maps.add_segment_line(&path);
@@ -186,7 +156,7 @@ pub(crate) fn insert_journal(
         let ids = map_from_files(vault, decl)?;
         index::rewrite_collection(index_dir, maps, &decl.name, ids)?;
     }
-    Ok((id, rel, JournalRollback { path, previous_len }))
+    Ok((id, rel))
 }
 
 /// Scan segment files for `id`. Catch-up uses this when the live map is
@@ -200,28 +170,6 @@ pub(crate) fn find_journal_scan(
     for_each_parsed(vault, decl, |_path, parsed| {
         if parsed.id == id {
             found = Some(record_from_parsed(decl, parsed));
-            Ok(false)
-        } else {
-            Ok(true)
-        }
-    })?;
-    found.ok_or_else(|| Error::not_found(format!("record {id} is not in {}", decl.name)))
-}
-
-/// Same as [`find_journal_scan`], plus the vault-relative POSIX path of the
-/// segment that held the line.
-pub(crate) fn find_journal_scan_with_rel(
-    vault: &Path,
-    decl: &CollectionDecl,
-    id: &str,
-) -> Result<(Record, String), Error> {
-    let mut found = None;
-    for_each_parsed(vault, decl, |path, parsed| {
-        if parsed.id == id {
-            found = Some((
-                record_from_parsed(decl, parsed),
-                store::rel_posix(vault, path)?,
-            ));
             Ok(false)
         } else {
             Ok(true)
@@ -291,12 +239,14 @@ pub(crate) fn find_in_segment(
     )))
 }
 
+#[cfg(not(feature = "find"))]
 /// Number of segment files in Schema sequence. Missing directory → 0.
 #[cfg(feature = "find")]
 pub(crate) fn segment_count(vault: &Path, decl: &CollectionDecl) -> Result<u64, Error> {
     Ok(list_segments(&journal_dir(vault, decl)?)?.len() as u64)
 }
 
+#[cfg(not(feature = "find"))]
 /// Walk every parsed line as a Record, one at a time. `visit` receives the
 /// Record and the vault-relative POSIX path of its segment. Returns `false`
 /// to stop. Does not collect the collection in memory.
@@ -718,6 +668,7 @@ fn for_each_parsed(
     Ok(())
 }
 
+#[cfg(not(feature = "find"))]
 pub(crate) fn reindex_map(
     vault: &Path,
     decl: &CollectionDecl,

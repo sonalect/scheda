@@ -139,7 +139,9 @@ fn drop_journal_id(vault: &Path, collection: &str, id: &str) {
             out.push_str(line);
             out.push('\n');
         }
-        fs::write(path, out).unwrap();
+        fs::write(&path, out).unwrap();
+        // Indexing reads commits: the edit must be committed.
+        common::commit_file(vault, &path);
     }
 }
 

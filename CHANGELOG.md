@@ -22,9 +22,9 @@ API or on-disk format changes bump the minor.
   commits, format 5 layout).
 - Each Index generation records the commit every leg reflects, in
   `{vault}/.scheda/index/<gen>/marks/` (`lexical`, `vector`, `ids`, and
-  `isolated-` for the nested repository). `reindex` writes them when it
-  publishes outside a transaction with no uncommitted Scheda write pending;
-  the vector mark only when an embedder filled that leg.
+  `isolated-` for the nested repository). `reindex` writes them with the
+  commits it built from; the vector mark only when an embedder filled that
+  leg (without one, the previous vectors and their mark are carried over).
 - Internal: the diff the background indexer will apply. Between two commits
   it lists changed Records per collection (journals line by line, renames as
   delete plus add), asks for a whole collection when its declaration file
@@ -88,12 +88,30 @@ API or on-disk format changes bump the minor.
   reader never loads half of a save.
 - CLI `find` / `search` wait up to 60 s for the Index to reach `HEAD`.
 - Index format is `5`; an older Index is rebuilt automatically.
+- `reindex` (with `find`) builds the new generation from the commits at
+  `HEAD`, the Vault's and `{vault}/.isolated/`'s, not from the files: a
+  file edit no commit holds, or an open transaction's write, is not
+  indexed. Commit hand edits and hand-written declarations. Writes made
+  during the build are applied by the indexer after publish. It takes no
+  `write.lock`: it is no longer `locked` by another handle's transaction,
+  and `create_collection`, `discard`, `pull`, and `sync` are no longer
+  `locked` while it runs. A second `reindex` is still `locked`. Without
+  an embedder it keeps the existing vectors instead of dropping them.
+  Without `find`, `reindex` holds `write.lock` for the whole call.
+- A damaged Index (Tantivy or vector files that no longer read) is rebuilt
+  in the background by the handle that holds the lexical role; until then
+  `find` / `search` fail with `index_lexical` / `index_vector` as before.
+- `search` with an embedder of another model than the Index vectors no
+  longer embeds the query: that leg is off until `reindex`.
 
 ### Removed
 
 - The `stale` marker a build without `find` wrote on every write, and the
   `index_lexical` failure it caused: the next `find` build indexes those
   commits from the last indexed one.
+- The `reindex` catch-up queue and `reindex/active` marker under
+  `{vault}/.scheda/reindex/`, and the 30 s publish window. `open` deletes a
+  queue an older release left.
 
 ## [0.18.6] - 2026-10-01
 

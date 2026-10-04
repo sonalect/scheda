@@ -44,6 +44,8 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        // Indexing reads commits: a declaration must be committed.
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 }
 
@@ -141,7 +143,7 @@ fn find_one_does_not_read_unrelated_segments() {
 }
 
 #[test]
-fn writer_updates_map_human_edit_needs_reindex() {
+fn writer_updates_map_and_a_committed_human_edit_is_found_once_indexed() {
     let scratch = Scratch::new();
     let vault = open_log(&scratch);
     let collection = vault.collection("south_log").unwrap();
@@ -160,7 +162,15 @@ fn writer_updates_map_human_edit_needs_reindex() {
     text.push('\n');
     fs::write(&log, text).unwrap();
     let err = collection.get("human").unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::NotFound));
+    assert_eq!(
+        err.known_code(),
+        Some(Code::NotFound),
+        "an edit no commit holds is not in the map"
+    );
+    common::commit_file(scratch.vault().as_path(), &log);
+    common::indexed(&vault);
+    let got = collection.get("human").unwrap();
+    assert_eq!(got.id.as_deref(), Some("human"));
     vault.reindex().unwrap();
     let got = collection.get("human").unwrap();
     assert_eq!(got.id.as_deref(), Some("human"));
