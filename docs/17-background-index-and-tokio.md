@@ -255,6 +255,18 @@ stay in B9.
 **D30. `remove` of a file git never tracked** deletes it and commits
 nothing (reachable since D18).
 
+**D31. What "reload when the marks move" means per leg.** Tantivy needs
+no poll: every query reloads its reader, which reads the segment list
+another process committed. USearch follows `vector/current` (D25), which
+moves before the vector mark: each indexer round, with a role or without,
+and each `search` that uses the vector leg compare it with the save the
+handle holds and load the newer one outside the query lock (a save that
+drops the dump being read makes the load retry). The same round start
+re-reads the journal `ord` counters. So a handle that takes a role over
+writes on top of the last holder's vectors and append order, not over
+them with what it loaded at `open`. A handle never replaces vectors it
+has not saved yet.
+
 ---
 
 ## 3. Part B — background Index
@@ -328,10 +340,15 @@ nothing (reachable since D18).
 
 ### B5. Readers follow the marks
 
-- [ ] A handle without the lock reloads Tantivy and USearch when the
-      marks move (poll on the same interval, and lazily on a query).
+- [x] A handle without the lock reloads Tantivy and USearch when the
+      marks move (poll on the same interval, and lazily on a query)
+      (D31; `background::a_handle_taking_a_role_over_keeps_the_last_holders_work`
+      for the role hand-over).
 - *Check:* process A writes and indexes; process B, opened before,
-  finds the Record after `wait_indexed` without reopening.
+  finds the Record after `wait_indexed` without reopening
+  (`background::reader_in_another_process_follows_the_marks`: the child
+  process writes; a reader that never polls reloads on its query, one
+  that polls reloads before any query).
 
 ### B6. Status and wait
 

@@ -48,6 +48,11 @@ API or on-disk format changes bump the minor.
   to whoever holds `vector.lock` (only with an embedder of the generation's
   model). Commits from outside Scheda (`git`, another process, a build
   without `find`) are indexed the same way.
+  A handle without a role follows what the holders write: `find` sees new
+  Tantivy segments at once, and the vector view reloads on the next poll
+  or `search`, so a reader opened earlier needs no reopen. A handle that
+  takes a role over continues from the last holder's vectors and journal
+  order.
 - `Vault::close()`: stop and join the indexer (at most one embedder call in
   flight), then drop the handle, with an error where `Drop` has none. Scheda
   installs no signal handler; a program calls `close` on `SIGINT` /

@@ -5148,18 +5148,7 @@ mod tests {
             let vault = open_both_roles(&root.join("vault"), poll_never());
             vault.wait_indexed(WAIT).unwrap();
             // Marks may already be at HEAD: wait for this handle's roles.
-            let deadline = Instant::now() + WAIT;
-            loop {
-                let status = vault.index_status().unwrap();
-                if status.lexical_role && status.vector_role == cfg!(feature = "search") {
-                    break;
-                }
-                assert!(
-                    Instant::now() < deadline,
-                    "child never took its roles: {status:?}"
-                );
-                std::thread::sleep(Duration::from_millis(10));
-            }
+            wait_for_roles(&vault);
             fs::write(root.join("ready"), b"").unwrap();
             let deadline = Instant::now() + Duration::from_secs(60);
             while Instant::now() < deadline {
@@ -5183,33 +5172,11 @@ mod tests {
                 .unwrap()
                 .create_collection("c", document_schema(), None)
                 .unwrap();
-            let log = fs::File::create(scratch.root.join("child.log")).unwrap();
-            let mut child = KillOnDrop(
-                Command::new(std::env::current_exe().unwrap())
-                    .args([
-                        "--exact",
-                        "vault::tests::background::indexer_child_process",
-                        "--ignored",
-                        "--nocapture",
-                        "--test-threads=1",
-                    ])
-                    .env(CHILD_ENV, &scratch.root)
-                    .stdout(log.try_clone().unwrap())
-                    .stderr(log)
-                    .spawn()
-                    .unwrap(),
+            let mut child = spawn_child(
+                &scratch.root,
+                "vault::tests::background::indexer_child_process",
             );
-            let deadline = Instant::now() + WAIT;
-            while !scratch.root.join("ready").exists() {
-                let exited = child.0.try_wait().unwrap();
-                let log = fs::read_to_string(scratch.root.join("child.log")).unwrap_or_default();
-                assert!(exited.is_none(), "child exited early: {log}");
-                assert!(
-                    Instant::now() < deadline,
-                    "child never took the role: {log}"
-                );
-                std::thread::sleep(Duration::from_millis(20));
-            }
+            wait_for_child_file(&mut child, &scratch.root, "ready");
             let vault = open_both_roles(&scratch.vault(), poll_fast());
             vault
                 .collection("c")
@@ -5280,6 +5247,228 @@ mod tests {
             assert!(status.vector_role);
             assert_eq!(status.vector, Some(head_of(second.path())));
             assert!(!other_model.index_status().unwrap().vector_role);
+        }
+
+        /// Re-run this test binary as `test`, a child holding `CHILD_ENV`
+        /// = `root`. Output goes to `root/child.log`.
+        fn spawn_child(root: &Path, test: &str) -> KillOnDrop {
+            let log = fs::File::create(root.join("child.log")).unwrap();
+            KillOnDrop(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        test,
+                        "--ignored",
+                        "--nocapture",
+                        "--test-threads=1",
+                    ])
+                    .env(CHILD_ENV, root)
+                    .stdout(log.try_clone().unwrap())
+                    .stderr(log)
+                    .spawn()
+                    .unwrap(),
+            )
+        }
+
+        /// Wait for the child to create `root/name`; fail if it exits first.
+        fn wait_for_child_file(child: &mut KillOnDrop, root: &Path, name: &str) {
+            let deadline = Instant::now() + WAIT;
+            while !root.join(name).exists() {
+                let exited = child.0.try_wait().unwrap();
+                let log = fs::read_to_string(root.join("child.log")).unwrap_or_default();
+                assert!(exited.is_none(), "child exited early: {log}");
+                assert!(Instant::now() < deadline, "child never wrote {name}: {log}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
+        /// Wait for `vault`'s own indexer to hold the roles a handle of this
+        /// build can take.
+        fn wait_for_roles(vault: &Vault) {
+            let deadline = Instant::now() + WAIT;
+            loop {
+                let status = vault.index_status().unwrap();
+                if status.lexical_role && status.vector_role == cfg!(feature = "search") {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "handle never took its roles: {status:?}"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        #[cfg(feature = "search")]
+        fn vector_hits(vault: &Vault, name: &str, text: &str) -> Vec<String> {
+            vault
+                .collection(name)
+                .unwrap()
+                .search(
+                    &SearchQuery::default()
+                        .with_text(text)
+                        .with_k(10)
+                        .with_lexical_weight(0.0),
+                    None,
+                )
+                .unwrap()
+                .hits
+                .into_iter()
+                .filter_map(|hit| hit.id)
+                .collect()
+        }
+
+        #[cfg(feature = "search")]
+        fn open_reader(path: &Path, options: OpenOptions) -> Vault {
+            let embedder: Arc<dyn Embedder> = CountingEmbedder::new("m1");
+            Vault::open_with(path, options, Some(embedder), Some(tag_projector())).unwrap()
+        }
+
+        /// Child of `reader_in_another_process_follows_the_marks`: takes
+        /// both roles and reports `ready`; on `go`, adds `r2` and waits for
+        /// its own Index, reports `done`, and holds the roles until killed
+        /// (at most one minute).
+        #[cfg(feature = "search")]
+        #[test]
+        #[ignore = "run as the child process of reader_in_another_process_follows_the_marks"]
+        fn index_writer_child_process() {
+            let Some(root) = std::env::var_os(CHILD_ENV).map(PathBuf::from) else {
+                return;
+            };
+            crate::git::isolate_test_git_env();
+            let vault = open_both_roles(&root.join("vault"), poll_fast());
+            vault.wait_indexed(WAIT).unwrap();
+            wait_for_roles(&vault);
+            fs::write(root.join("ready"), b"").unwrap();
+            let deadline = Instant::now() + WAIT;
+            while !root.join("go").exists() {
+                assert!(Instant::now() < deadline, "parent never said go");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            vault
+                .collection("c")
+                .unwrap()
+                .add("r2", rec_tag("beta"), None)
+                .unwrap();
+            vault.wait_indexed(WAIT).unwrap();
+            fs::write(root.join("done"), b"").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        #[cfg(feature = "search")]
+        #[test]
+        fn reader_in_another_process_follows_the_marks() {
+            let scratch = Scratch::new();
+            {
+                let setup = open_search(scratch.vault(), scratch.options(), None);
+                setup
+                    .create_collection("c", document_schema(), None)
+                    .unwrap();
+                setup
+                    .collection("c")
+                    .unwrap()
+                    .add("r1", rec_tag("alpha"), None)
+                    .unwrap();
+            }
+            let mut child = spawn_child(
+                &scratch.root,
+                "vault::tests::background::index_writer_child_process",
+            );
+            wait_for_child_file(&mut child, &scratch.root, "ready");
+            // Opened before the write. `lazy` never polls, so only a query
+            // can refresh it; `polled` is never queried before its check.
+            let lazy = open_reader(&scratch.vault(), poll_never());
+            let polled = open_reader(&scratch.vault(), poll_fast());
+            for reader in [&lazy, &polled] {
+                reader.wait_indexed(WAIT).unwrap();
+                let status = reader.index_status().unwrap();
+                assert!(!status.lexical_role && !status.vector_role, "{status:?}");
+            }
+            assert_eq!(vector_hits(&lazy, "c", "beta"), ["r1"]);
+            let loaded = lazy.search.held_vector_seq();
+            fs::write(scratch.root.join("go"), b"").unwrap();
+            wait_for_child_file(&mut child, &scratch.root, "done");
+
+            let head = head_of(lazy.path());
+            let status = lazy.wait_indexed(WAIT).unwrap();
+            assert_eq!(status.lexical.as_deref(), Some(head.as_str()));
+            assert_eq!(status.vector.as_deref(), Some(head.as_str()));
+            assert_eq!(sorted_ids(&lazy, "c"), ["r1", "r2"]);
+            assert_eq!(
+                lazy.search.held_vector_seq(),
+                loaded,
+                "a handle that never polls must not have reloaded yet"
+            );
+            let mut hits = vector_hits(&lazy, "c", "beta");
+            hits.sort();
+            assert_eq!(hits, ["r1", "r2"], "the query reloads USearch");
+
+            polled.wait_indexed(WAIT).unwrap();
+            let deadline = Instant::now() + WAIT;
+            while polled.search.held_vector_seq() != polled.search.disk_vector_seq() {
+                assert!(Instant::now() < deadline, "the poll never reloaded USearch");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let mut hits = vector_hits(&polled, "c", "beta");
+            hits.sort();
+            assert_eq!(hits, ["r1", "r2"]);
+            assert_eq!(sorted_ids(&polled, "c"), ["r1", "r2"]);
+        }
+
+        /// The role passes to a handle opened before the last holder wrote:
+        /// it must write on top of that holder's vectors and journal order,
+        /// not over them with what it loaded at open.
+        #[test]
+        fn a_handle_taking_a_role_over_keeps_the_last_holders_work() {
+            let scratch = Scratch::new();
+            let first = open_both_roles(&scratch.vault(), poll_fast());
+            first
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            first
+                .create_collection("j", journal_schema(), None)
+                .unwrap();
+            wait_for_roles(&first);
+            let second = open_both_roles(&scratch.vault(), poll_fast());
+            first
+                .collection("c")
+                .unwrap()
+                .add("r1", tagged("alpha"), None)
+                .unwrap();
+            let journal = first.collection("j").unwrap();
+            journal.add("l1", tagged("one"), None).unwrap();
+            journal.add("l2", tagged("two"), None).unwrap();
+            first.wait_indexed(WAIT).unwrap();
+            drop(journal);
+            first.close().unwrap();
+
+            second
+                .collection("c")
+                .unwrap()
+                .add("r2", tagged("beta"), None)
+                .unwrap();
+            second
+                .collection("j")
+                .unwrap()
+                .add("l3", tagged("three"), None)
+                .unwrap();
+            second.wait_indexed(WAIT).unwrap();
+            wait_for_roles(&second);
+            second.wait_indexed(WAIT).unwrap();
+            assert_eq!(find_ids(&second, "j"), ["l1", "l2", "l3"]);
+            #[cfg(feature = "search")]
+            {
+                let mut hits = vector_hits(&second, "c", "alpha");
+                hits.sort();
+                assert_eq!(hits, ["r1", "r2"], "r1's vector survives the hand-over");
+            }
+        }
+
+        fn tagged(text: &str) -> Vec<u8> {
+            format!(r#"{{"tag":"{text}"}}"#).into_bytes()
         }
 
         /// Holds the lexical role and never polls, so nothing indexes the

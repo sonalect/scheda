@@ -156,6 +156,10 @@ struct VectorStore {
     dimensions: usize,
     field_ids: BTreeSet<String>,
     next_key: u64,
+    /// Save of `vector/current` this store was loaded from or last saved
+    /// as; `None` for a store built in memory or read from the flat layout.
+    /// Another handle's save moves `current` past it.
+    seq: Option<u64>,
 }
 
 #[cfg(feature = "search")]
@@ -169,6 +173,7 @@ impl VectorStore {
             dimensions,
             field_ids: BTreeSet::new(),
             next_key: 1,
+            seq: None,
         }
     }
 
@@ -179,6 +184,7 @@ impl VectorStore {
         dimensions: usize,
         field_ids: BTreeSet<String>,
         next_key: u64,
+        seq: Option<u64>,
     ) -> Self {
         let mut by_record: SlotIndex = BTreeMap::new();
         for (key, doc) in &keys {
@@ -197,6 +203,7 @@ impl VectorStore {
             dimensions,
             field_ids,
             next_key,
+            seq,
         }
     }
 
@@ -900,6 +907,73 @@ impl SearchEngine {
         Ok(())
     }
 
+    /// Catch up with what other handles saved to this generation: the
+    /// vector dump `vector/current` names and the journal `ord` counters.
+    /// Each indexer round runs it first, with a role or without, so a
+    /// handle that takes a role over writes on top of the last holder's
+    /// work, and a reader's USearch view follows the vector mark. Tantivy
+    /// needs nothing here: its reader reloads on every query.
+    ///
+    /// Buffered writes of this handle win: a dirty store is not replaced.
+    pub(crate) fn follow_disk(&self) -> Result<(), Error> {
+        let index_dir = self.dir()?;
+        {
+            let mut inner =
+                crate::error::rw_write(&self.inner, "[SearchEngine::follow_disk] lock")?;
+            if !inner.dirty {
+                inner.next_ord = load_next_ord(&index_dir)?;
+            }
+        }
+        #[cfg(feature = "search")]
+        self.refresh_vector(&index_dir)?;
+        Ok(())
+    }
+
+    /// Load the vector dump of `index_dir` when another handle saved a
+    /// newer one than this engine holds. The dump is read outside the lock,
+    /// so queries keep running on the old view meanwhile.
+    #[cfg(feature = "search")]
+    fn refresh_vector(&self, index_dir: &Path) -> Result<(), Error> {
+        let held = |inner: &Inner| inner.vector.as_ref().and_then(|store| store.seq);
+        let Some(on_disk) = vector_seq(&index_dir.join(VECTOR_DIR)) else {
+            return Ok(());
+        };
+        {
+            let inner = crate::error::rw_read(&self.inner, "[SearchEngine::refresh_vector] lock")?;
+            if inner.vector_dirty || held(&inner) == Some(on_disk) {
+                return Ok(());
+            }
+        }
+        let Some(store) = load_fresh_vector(index_dir)? else {
+            return Ok(());
+        };
+        let mut inner =
+            crate::error::rw_write(&self.inner, "[SearchEngine::refresh_vector] install")?;
+        // A save of this handle, or a newer load, may have won the race.
+        let newer = match (held(&inner), store.seq) {
+            (Some(have), Some(got)) => got > have,
+            _ => true,
+        };
+        if !inner.vector_dirty && newer {
+            inner.vector = Some(store);
+        }
+        Ok(())
+    }
+
+    /// Save of `vector/current` this engine's vector view comes from.
+    #[cfg(all(test, feature = "search"))]
+    pub(crate) fn held_vector_seq(&self) -> Option<u64> {
+        crate::error::rw_read(&self.inner, "[SearchEngine::held_vector_seq] lock")
+            .ok()
+            .and_then(|inner| inner.vector.as_ref().and_then(|store| store.seq))
+    }
+
+    /// Save number `vector/current` of this engine's generation names.
+    #[cfg(all(test, feature = "search"))]
+    pub(crate) fn disk_vector_seq(&self) -> Option<u64> {
+        vector_seq(&self.dir().ok()?.join(VECTOR_DIR))
+    }
+
     #[cfg(test)]
     pub(crate) fn lexical_writer_opens(&self) -> u64 {
         crate::error::rw_read(&self.inner, "[SearchEngine::lexical_writer_opens] lock")
@@ -1134,6 +1208,11 @@ impl SearchEngine {
         } else {
             None
         };
+        if vector_on {
+            // Between indexer rounds, another process may have saved newer
+            // vectors than this handle loaded.
+            self.refresh_vector(&index_dir)?;
+        }
         self.with_query(&index_dir, "[SearchEngine::search] lock", |inner| {
             let lexical_hits = if lexical_weight > 0.0 && !lexical_names.is_empty() {
                 lexical_search(inner, &lexical_names, text, pool, allowed)?
@@ -1330,8 +1409,8 @@ impl Inner {
         }
         #[cfg(feature = "search")]
         if self.vector_dirty {
-            if let Some(vector) = &self.vector {
-                save_vector(index_dir, vector)?;
+            if let Some(vector) = self.vector.as_mut() {
+                vector.seq = Some(save_vector(index_dir, vector)?);
             }
             self.vector_dirty = false;
         }
@@ -1705,26 +1784,27 @@ fn vector_seq(root: &Path) -> Option<u64> {
 }
 
 /// Directory that holds the live vector dump of the generation at
-/// `index_dir`: `vector/<seq>/` as `vector/current` names it, or the flat
-/// `vector/` an older release wrote. `None` without a dump.
+/// `index_dir`, with its save number: `vector/<seq>/` as `vector/current`
+/// names it, or the flat `vector/` an older release wrote (no number).
+/// `None` without a dump.
 ///
 /// Each save writes a whole new `<seq>/` and only then moves `current`, so
 /// a reader never loads half of one save and half of another.
 #[cfg(feature = "search")]
-fn vector_files(index_dir: &Path) -> Option<PathBuf> {
+fn vector_files(index_dir: &Path) -> Option<(PathBuf, Option<u64>)> {
     let root = index_dir.join(VECTOR_DIR);
     if let Some(seq) = vector_seq(&root) {
         let dir = root.join(seq.to_string());
         if dir.join(VECTOR_META).is_file() {
-            return Some(dir);
+            return Some((dir, Some(seq)));
         }
     }
-    root.join(VECTOR_META).is_file().then_some(root)
+    root.join(VECTOR_META).is_file().then_some((root, None))
 }
 
 #[cfg(feature = "search")]
 fn peek_vector_meta(index_dir: &Path) -> Result<Option<VectorMeta>, Error> {
-    let Some(dir) = vector_files(index_dir) else {
+    let Some((dir, _)) = vector_files(index_dir) else {
         return Ok(None);
     };
     let meta_path = dir.join(VECTOR_META);
@@ -1764,7 +1844,7 @@ pub(crate) fn copy_vector_dump_as_is(from: &Path, to: &Path) -> Result<(), Error
 /// Copy the live dump of `from` into `to` as its first save (`vector/1/`).
 #[cfg(feature = "search")]
 fn copy_vector_dir(from: &Path, to: &Path) -> Result<(), Error> {
-    let Some(src) = vector_files(from) else {
+    let Some((src, _)) = vector_files(from) else {
         return Ok(());
     };
     let root = to.join(VECTOR_DIR);
@@ -2562,7 +2642,7 @@ fn bind_lexical(index: Index) -> Result<Lexical, Error> {
 
 #[cfg(feature = "search")]
 fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
-    let Some(dir) = vector_files(index_dir) else {
+    let Some((dir, seq)) = vector_files(index_dir) else {
         return Ok(None);
     };
     let meta_path = dir.join(VECTOR_META);
@@ -2598,11 +2678,31 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
         meta.dimensions,
         meta.field_ids.into_iter().collect(),
         next_key,
+        seq,
     )))
 }
 
+/// Load the dump `vector/current` names. A save that moves `current` and
+/// drops the directory being read makes the load fail; read `current`
+/// again then, and fail only when it stayed put.
 #[cfg(feature = "search")]
-fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
+fn load_fresh_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
+    const ATTEMPTS: usize = 3;
+    let root = index_dir.join(VECTOR_DIR);
+    let mut attempt = 1;
+    loop {
+        let before = vector_seq(&root);
+        match load_vector(index_dir) {
+            Ok(store) => return Ok(store),
+            Err(_) if attempt < ATTEMPTS && vector_seq(&root) != before => attempt += 1,
+            Err(err) => return Err(err),
+        }
+    }
+}
+
+/// Write `store` as the next save of `vector/current`; returns its number.
+#[cfg(feature = "search")]
+fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<u64, Error> {
     let root = index_dir.join(VECTOR_DIR);
     let seq = vector_seq(&root).unwrap_or(0).saturating_add(1);
     let dir = root.join(seq.to_string());
@@ -2614,7 +2714,8 @@ fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
     fs::create_dir_all(&dir).context("[SearchEngine::save_vector] create dir")?;
     write_vector_files(&dir, store)?;
     store::atomic_write(&root.join(VECTOR_CURRENT), format!("{seq}\n").as_bytes())?;
-    drop_old_vector_dumps(&root, seq)
+    drop_old_vector_dumps(&root, seq)?;
+    Ok(seq)
 }
 
 /// Remove dumps older than the one before `seq` (a reader may still be

@@ -385,6 +385,9 @@ impl Worker {
         let ctx = &shared.ctx;
         self.in_vector = false;
         follow_current(ctx).context("[Indexer] follow current generation")?;
+        ctx.search
+            .follow_disk()
+            .context("[Indexer] follow other handles' saves")?;
         let embedder = lock(&ctx.embedder).clone();
         let generation = ctx.index.dir()?;
         self.update_roles(ctx, &generation, embedder.as_deref())
