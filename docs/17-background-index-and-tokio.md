@@ -1,0 +1,369 @@
+# 17. Background Index and the `tokio` feature
+
+Document 17 of the Scheda package. Version 0.1, 4 October 2026.
+
+Work order for two independent changes:
+
+- **Part B — background Index.** The Index stops being updated inside
+  `add` / `replace` / `remove` / `commit`. A thread owned by the Vault
+  handle follows git `HEAD`: when it moves, the thread diffs the last
+  indexed commit against `HEAD` and indexes the changed Records. On
+  `open` it catches up the same way. The caller never drives indexing;
+  the only explicit call left is `reindex`, for an embedder-model change
+  or repair.
+- **Part T — `tokio` feature.** An opt-in async API next to the
+  unchanged sync API, safe to call from a Tokio runtime without the
+  caller wrapping anything in `spawn_blocking`.
+
+Do Part B first: it carries the value (embedding leaves the write path,
+human commits get indexed, no forgotten `reindex`). Part T is additive
+and can land later or in parallel.
+
+Order inside each part: code and tests first, `bazel test //...` and
+`cargo clippy` green, then **one** docs pass (§5). Tick a box only when
+its *Check:* passes under `bazel test //...`.
+
+---
+
+## 1. Why
+
+Today (IDX-9, `06` §3) every successful write updates three Index
+artifacts inline: lexical (Tantivy), vector (USearch, calling the
+embedder), and the journal `id` map. Consequences for any consumer, as
+first seen by the anchor consumer (Knowqore):
+
+1. **The write path waits on the network.** With a remote embedder,
+   every write of an indexed Record is an HTTP round trip under
+   `write.lock`. An embedder outage fails the write.
+2. **Vectors go missing silently.** A handle without `set_embedder`
+   writes the lexical leg only. Knowqore hit this: its writer's Vault had
+   no embedder, and `lesson-index` was written without vectors for a
+   whole run.
+3. **Edits outside Scheda need a manual `reindex`.** A human commit, a
+   `git pull` from another tool, or a commit by another process is not
+   indexed until someone remembers to call `reindex`.
+4. **The writer pays for the Index on every commit.** Suspected (not
+   confirmed): `index.usearch` and `keys.json` are saved on every commit
+   even when no vector changed. Read the save path while doing B4.
+
+Git already records exactly what changed between two points. Indexing
+from `HEAD` diffs turns the Index into what `06` §1 says it is: derived
+data that follows the files.
+
+---
+
+## 2. Decisions
+
+Each item has a recommendation. Change it before coding if you disagree;
+otherwise it stands.
+
+**D1. What stays in the write path.** Recommendation: the **journal
+`id` map** stays synchronous on write (IDX-5, **core**). It is a local
+append with no network, and `15` §3 explains why a lagging map is worse
+than none: `get` of a line written a moment ago would return
+`not_found`. Lexical and vector legs move to the background. Any method
+that resolves an `id` for a *write* (`replace`, `remove`) must not
+depend on the lagging lexical leg; audit those paths in B4.
+
+**D2. What triggers indexing.** Recommendation: (a) a successful
+in-process commit (autocommit, `commit`, `pull`, `sync`) wakes the
+indexer at once through a channel; (b) the indexer also polls `HEAD`
+(read the ref, compare hashes) every `index_poll` interval, default
+1 s, set in `OpenOptions`; (c) `open` compares `HEAD` with the stored
+marks and starts catch-up. No filesystem watcher: they are unreliable
+on WSL and network mounts, and polling a ref file is cheap.
+
+**D3. Only committed state is indexed.** Uncommitted writes inside a
+transaction, and uncommitted editor edits, are not in the Index until a
+commit. Inside a transaction, `find` / `search` do not see that
+transaction's own writes. `discard` no longer rebuilds the Index (it has
+nothing to undo).
+
+**D4. Marks per leg.** The generation directory stores the commit each
+leg has reached: `<gen>/marks` with `lexical`, `vector`, and, when
+`{vault}/.isolated/` exists, the same pair for the nested repository.
+A leg advances its mark only after its writes are durable. Format
+version `4` → `5` (IDX-2).
+
+**D5. One indexer per working tree, across processes.** Several
+processes may open the same Vault (Knowqore runs several `knq`
+processes on one store). Recommendation: `{vault}/.scheda/index.lock`,
+`try_lock`, held by the indexer thread while it holds the role. A handle
+that does not hold it is a reader: it polls the marks and reloads its
+Tantivy reader and USearch view when they move. When the holder dies,
+the OS drops the lock and another handle takes the role on its next
+poll. The indexer **never** takes `write.lock`.
+
+**D6. The vector leg needs an embedder.** A handle without an embedder
+may index the lexical leg, never claims the vector leg, and never
+advances the vector mark. Recommendation: two roles under D5 —
+`index.lock` for lexical, `vector.lock` for vector, the latter taken only
+by a handle with an embedder whose `model_id` and dimensions match the
+generation's `meta.json`. So in a mixed set of processes the one with
+the embedder writes the vectors, and a process without one cannot block
+it. `index_status` (B6) shows vector lag, so a missing embedder is
+visible instead of silent.
+
+**D7. Model change is explicit.** An embedder whose `model_id` or
+dimensions differ from the live generation does not take `vector.lock`
+and does not rebuild on its own; the status says `model_mismatch`, and
+the vector leg of `search` stays on the old vectors only if the query
+embedder matches them, otherwise it is off (no mixed spaces). The caller
+runs `reindex()`. Two processes with different embedders cannot make the
+Index flip back and forth.
+
+**D8. Format change is automatic.** An Index with an unknown or old
+format (IDX-2 `index_version`) or a corrupt one is derived data: the
+indexer rebuilds it in the background into a new generation, as
+`reindex` does, without being asked. `find` / `search` fail closed
+(QRY-4) until `current` points at a good generation.
+
+**D9. Diff edge cases → full rebuild of the leg.** The stored mark is
+not an ancestor of `HEAD` (reset, amend, rebase in `sync`, branch
+switch), or its object is gone (gc): diff is still possible while the
+object exists (tree-to-tree diff does not need ancestry); when it does
+not exist, rebuild that leg into a new generation. A change of the
+collection declaration or a Schema file: reindex the affected
+collection in full. Encrypted collections stay out of the Index (as
+today).
+
+**D10. Online reindex catch-up uses marks, not the queue.** `15` built a
+queue folder so writes during an unlocked `reindex` reach `N+1`. With
+marks, `N+1` records the commit it was built from; after publish the
+indexer diffs from that commit to `HEAD`. Recommendation: delete the
+queue (`{vault}/.scheda/reindex/` queue files, enqueue in mutating
+calls) together with this change. The marker and `reindex.lock` stay
+only if they are still needed for one-`reindex`-at-a-time.
+
+**D11. Thread lifetime.** The indexer thread is owned by the handle,
+started by `open` only when the `find` feature is on, stopped and joined
+when the last clone of the handle drops. It never detaches, never
+outlives the handle, and never holds a strong reference back to the
+handle (no cycle). Between batches it checks the stop flag; at most one
+embedder call is in flight when drop waits.
+
+**D12. Errors are retried, not raised on writes.** An embedder or Index
+failure in the background does not fail any write. The indexer retries
+with capped exponential backoff, keeps the mark where it was, and
+exposes the last error in `index_status`. Error text must not carry
+embedder secrets or Record bodies.
+
+**D13. CLI reads wait.** The CLI process is short-lived: an `add`
+followed by exit leaves catch-up to the next `open`. Recommendation:
+CLI `find` / `search` call `wait_indexed` with a timeout before
+querying (`--no-wait` to skip). CLI `reindex` stays.
+
+**D14. LIB-6 still holds.** No async runtime is required: the indexer is
+a plain thread. `15`'s line "There is no Index worker thread" is
+replaced by D11.
+
+**D15. Version.** Behaviour of `find` / `search` after a write changes
+(eventual instead of immediate): release as `0.19.0`, with a CHANGELOG
+entry under *Changed* that says so.
+
+---
+
+## 3. Part B — background Index
+
+### B1. Marks
+
+- [ ] `<gen>/marks` written atomically (temp + rename) per D4; format
+      `5`; reading format `4` → D8.
+- *Check:* a write that commits, then the indexer applies it, moves the
+  lexical mark to the new `HEAD`; a crash before the rename leaves the
+  old mark and the next run reapplies the same diff idempotently.
+
+### B2. Diff
+
+- [ ] `(from, to)` → changed `(collection, id)` with add / modify /
+      delete, renames as delete + add, for the main repository and
+      `.isolated/`.
+- [ ] Declaration or Schema change → whole collection (D9).
+- [ ] Missing `from` object → full rebuild of the leg (D9).
+- *Check:* git fixtures for: plain commit, several commits at once,
+  delete, rename, `reset --hard` back, amend, branch switch, `gc` with
+  the old mark pruned, a commit made by the `git` CLI outside Scheda.
+
+### B3. Indexer thread
+
+- [ ] Thread per handle (D11), wake channel + `index_poll` (D2),
+      `index.lock` / `vector.lock` (D5, D6), batches bounded by the
+      embedder's `many_limit`.
+- [ ] Catch-up on `open` (D2c).
+- *Check:* drop of the last handle joins the thread within one batch;
+  no thread left after drop (count threads in the test).
+- *Check:* two handles in two processes on one tree: exactly one holds
+  each lock; kill the holder, the other takes over on its next poll and
+  finishes the diff.
+
+### B4. Write path
+
+- [ ] `add` / `replace` / `remove` / `commit` no longer touch lexical or
+      vector; the lexical writer is no longer opened inside a
+      transaction; `discard` no longer rebuilds (D3).
+- [ ] Journal `id` map stays inline (D1); audit `replace` / `remove`
+      for lexical-leg lookups.
+- [ ] Vector save writes only when a slot changed (§1 item 4).
+- *Check:* a write with a stub embedder that panics or blocks does not
+  block or fail the write.
+- *Check:* journal `add` then `get` of that `id` succeeds immediately,
+  before the indexer ran.
+
+### B5. Readers follow the marks
+
+- [ ] A handle without the lock reloads Tantivy and USearch when the
+      marks move (poll on the same interval, and lazily on a query).
+- *Check:* process A writes and indexes; process B, opened before,
+  finds the Record after `wait_indexed` without reopening.
+
+### B6. Status and wait
+
+- [ ] `Vault::index_status() -> IndexStatus`: `head`, per-leg mark, rows
+      pending, role held by this handle, `model_mismatch`, last error.
+- [ ] `Vault::wait_indexed(timeout) -> Result<IndexStatus, Error>`:
+      wait until every leg this handle can see as active reaches the
+      `HEAD` observed at call time; timeout → `Code::Timeout` (or the
+      nearest existing code) with the status attached. A leg with no
+      possible owner (vector, no embedder anywhere) does not block it
+      forever: report it in the status, do not wait for it.
+- *Check:* `add` then `wait_indexed` then `search` finds the Record —
+  this replaces the IDX-9 check "add then search without reindex".
+
+### B7. Errors
+
+- [ ] Retry with backoff, mark unchanged, last error in status (D12).
+- *Check:* stub embedder fails twice then succeeds: vectors land, no
+  write failed, status showed the error in between.
+
+### B8. Model change and `reindex`
+
+- [ ] Mismatch handling per D7.
+- [ ] `reindex()` builds `N+1`, records its base commit, publishes; the
+      indexer catches up from that commit (D10). Delete the queue.
+- [ ] Automatic rebuild on format change or corruption (D8).
+- *Check:* embedder with a new `model_id`: status `model_mismatch`, no
+  flip-flop with a second process on the old model; `reindex()` with
+  the new one re-embeds every slot and clears the status.
+
+### B9. CLI
+
+- [ ] `find` / `search` wait (D13); `scheda status` (or the existing
+      `info`) prints `index_status`.
+
+### B10. Acceptance
+
+- [ ] All of B1–B9 *Check:* green under `bazel test //...`.
+- [ ] The Knowqore contract in §6 holds (run its points as tests here
+      where they are Scheda behaviour).
+
+---
+
+## 4. Part T — `tokio` feature
+
+### T1. Feature and types
+
+- [ ] Cargo feature `tokio` (off by default) using the workspace pin
+      already in `Cargo.toml` (`tokio = "=1.53.1"`), features `rt` and
+      `sync` only. Bazel `crate_features`; crate_universe repin.
+- [ ] `AsyncVault` and `AsyncCollection` (module name is free; avoid a
+      module literally named `tokio`, which shadows the crate in paths).
+      `AsyncVault` wraps `Arc<Vault>`; `From<Vault>` and
+      `AsyncVault::sync(&self) -> &Vault`.
+- [ ] Every non-transactional method mirrors the sync one with owned
+      arguments (`String`, `Vec<u8>`, owned queries) and runs it inside
+      `tokio::task::spawn_blocking`. A `JoinError` maps to a Scheda
+      error, never a panic.
+- [ ] The sync API is unchanged. No sync method calls `block_on` or
+      builds a runtime: sync methods are called from inside
+      `spawn_blocking`, from plain threads, and from `#[test]`.
+
+### T2. Transactions
+
+The write lock is owned by a thread (`thread::ThreadId` in `vault.rs`).
+Separate `begin().await` / `add().await` / `commit().await` calls land on
+different blocking threads and the second one gets `locked`. So the
+async API has **no** `begin` / `commit` / `discard`. Instead:
+
+```rust
+vault
+    .transaction("subject", |tx| {
+        tx.collection("notes")?.add(raw)?;
+        tx.collection("notes")?.replace(id, raw2)?;
+        Ok(value)
+    })
+    .await?;
+```
+
+- [ ] The closure is sync, `Send + 'static`, runs in one
+      `spawn_blocking` on the sync API: `begin`, closure, `commit`;
+      `discard` on error.
+- *Check:* 64 concurrent tasks each running a transaction on a shared
+  `AsyncVault`: every one ends committed or `locked`, never a
+  transaction split across threads.
+
+### T3. Async wait
+
+- [ ] `AsyncVault::wait_indexed(timeout)` fed by a `tokio::sync::watch`
+      the indexer thread updates (no polling loop in the task).
+- [ ] `Embedder` and `Reranker` stay synchronous traits. `search` runs
+      the query embedding and the reranker inside the same
+      `spawn_blocking`.
+
+### T4. Tests
+
+- [ ] `#[tokio::test(flavor = "multi_thread")]` and `current_thread`
+      both pass for the async surface.
+- [ ] A build without `tokio` compiles and its tests run with no
+      runtime (LIB-6).
+
+---
+
+## 5. Docs pass (once, after the code)
+
+`06` (IDX-2 format 5, IDX-9 rewritten as background + marks, QRY-4 with
+D8), `07` (LIB-16, new `index_status` / `wait_indexed`, the async API
+and the `tokio` feature), `13` (find / search freshness), `15` (header
+note: queue replaced by marks, D10; "no Index worker thread" replaced by
+D11), `10` (phase table and what is next), `14` (CLI wait, status),
+README (features list, status line), CHANGELOG (`0.19.0`, *Changed*:
+`find` / `search` freshness is eventual; *Added*: `tokio` feature,
+`index_status`, `wait_indexed`; *Removed*: reindex queue).
+
+---
+
+## 6. Anchor consumer check (Knowqore)
+
+Every decision above is a general library rule; nothing in the API
+names a consumer. Knowqore, the anchor consumer, is the real-world sample
+to check them against. It pins Scheda by tag with features `encrypt`,
+`find`, `search`, `simd`. What it relies on today, checked against its
+code on 4 October 2026:
+
+| # | Knowqore relies on | Status after this plan |
+|---|---|---|
+| K1 | Sync API: `knowqore_store`, its learn engine, and reasoner are sync; its server calls Scheda inside `spawn_blocking`. | Unchanged (T1). |
+| K2 | `Embedder` / `Reranker` sync traits, implemented on `ureq`. | Unchanged (T3). |
+| K3 | `Vault::open_with` without a runtime, in `#[test]` and in `knq init`. | Holds: indexer is a thread (D14). |
+| K4 | Several `knq` processes open one Vault; one of them is the writer (its own `flock`). | One indexer per lock (D5); no conflict with Knowqore's writer lock. |
+| K5 | Only the writer's handle has an embedder (`set_embedder`). | That handle takes `vector.lock`; others index lexical only (D6). Status shows vector lag. |
+| K6 | The writer drains its queue with a lock wait on `write.lock`. | Indexer never takes `write.lock` (D5). |
+| K7 | `get` / `ids` on `document` collections right after a write. | Unaffected: they read files. All Knowqore collections are `document`. |
+| K8 | `reindex()` wrapped in `knowqore_store::reindex`. | Stays (D7, B8). |
+| K9 | Tests that write `lesson-index` then `search` at once. | Must call `wait_indexed` first (B6). Knowqore changes its tests when it bumps the tag. |
+| K10 | No production `find` / `search` yet (its `consider` comes later). | Eventual freshness is acceptable there. |
+
+Knowqore needs nothing from Part T to keep working; it may adopt
+`AsyncVault` in its server later.
+
+---
+
+## 7. Removed together with what is added
+
+- Inline lexical and vector updates in `add` / `replace` / `remove` /
+  `commit`; the lexical writer held for the life of a transaction;
+  Index rebuild inside `discard`.
+- The `reindex` catch-up queue and the enqueue step in mutating calls
+  (D10).
+- Index format `4` (rebuilt automatically, D8).
+- The IDX-9 check "add then search without reindex finds it at once"
+  (replaced by the B6 check).

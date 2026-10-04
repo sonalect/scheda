@@ -1,0 +1,36 @@
+---
+paths:
+  - "rust/**/*.rs"
+---
+
+# Rust panic policy
+
+## Library code (`src/`)
+
+Allowed only: `todo!`, `unimplemented!`, `unreachable!`.
+
+Forbidden: `panic!`, `unwrap`, `expect`, `unwrap_err`, `unwrap_unchecked`,
+`assert!`, `assert_eq!`, `assert_ne!`. Recoverable failure is `Result`
+with `scheda::Error` (`error-handling.md`).
+
+```rust
+// BAD
+let id = map.get("id").unwrap();
+panic!("missing id");
+
+// GOOD
+fn load_id(map: &Map) -> Result<&str, Error> {
+    match map.get("id").and_then(Value::as_str) {
+        Some(id) => Ok(id),
+        None => Err(Error::invalid("missing id")),
+    }
+}
+
+// GOOD — placeholder until the next stage implements it
+todo!("functionality is not implemented")
+```
+
+## Tests (`tests/`, `#[cfg(test)]`)
+
+`assert!`, `assert_eq!`, `assert_ne!`, `panic!`, `unwrap`, and `expect` are
+allowed.

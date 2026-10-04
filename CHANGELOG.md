@@ -8,6 +8,17 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- Work-order `docs/17-background-index-and-tokio.md`. Part B moves Index
+  updates out of `add` / `replace` / `remove` / `commit` into a background
+  thread that follows git `HEAD`: it indexes the diff since the last indexed
+  commit, catches up on `open`, and leaves `reindex` as the only explicit call
+  (embedder-model change, repair). It adds `index_status` / `wait_indexed` and
+  makes `find` / `search` freshness eventual. Part T adds an opt-in `tokio`
+  feature with an async API next to the unchanged sync one. Plan only; no code
+  yet.
+
 ## [0.18.6] - 2026-10-01
 
 ### Changed

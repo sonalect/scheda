@@ -1,0 +1,62 @@
+---
+paths:
+  - "rust/**/*.rs"
+---
+
+# Code comments are the API docs
+
+Rustdoc is generated from comments. A reader of those pages does not have
+the design package open. A pointer to a document is not an explanation.
+
+## Coverage
+
+Every **public** (`pub`) item on a handwritten crate surface needs rustdoc
+(`///` or `//!`): crate, module, struct, enum, variant, union, trait,
+associated type/const, `fn`, method, `const`, `static`, type alias, and
+`pub` field.
+
+`pub(crate)` and private items do not. Generated sources
+(`rust/api/**`, `*_pb.rs`, bindgen) do not: they may stay under
+`#![allow(warnings)]` at the file root.
+
+When you add or change a public item, write the rustdoc in the same edit.
+When you touch a public item that has none, add it. Do not rephrase an
+existing comment unless you are already editing that item.
+
+```rust
+// BAD — public method, no rustdoc
+pub fn name(&self) -> &str {
+    &self.decl.name
+}
+
+// GOOD
+/// Collection directory name (same as Schema `name`).
+pub fn name(&self) -> &str {
+    &self.decl.name
+}
+```
+
+## What the comment says
+
+Do **not** cite `docs/` files, document numbers, or requirement codes in
+code comments (`//`, `///`, `//!`). Do not markdown-link them.
+
+Put the **sense** in the comment: what the item does, the invariant, the
+failure, the default. Take that text from the docs if needed; do not leave
+the citation.
+
+```rust
+// BAD
+/// After `open`, `info` returns `VaultInfo` (LIB-4).
+/// See docs/07-api.md.
+/// Core operations are synchronous ([LIB-6](https://…/docs/07-api.md)).
+
+// GOOD
+/// After `open`, `info` returns path, Index path, `remote`, `auto_sync`,
+/// and the collection list. `open` does not take the write lock.
+///
+/// Core operations are synchronous and do not start an async executor.
+```
+
+Allowed in comments: public names, on-disk paths, error `code` strings,
+proto field names. Those are the product, not a document index.
