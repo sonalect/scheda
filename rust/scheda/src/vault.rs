@@ -333,16 +333,25 @@ impl Vault {
     /// wrote them. When another handle publishes a new generation, this one
     /// reports it once its indexer has switched to it. The roles and the
     /// last error are this handle's own indexer.
+    ///
+    /// The pending counts come from a `git diff` of each leg's mark against
+    /// `HEAD`, so a call costs about what that diff costs; poll
+    /// [`wait_indexed`](Self::wait_indexed) rather than this in a loop.
     #[cfg(feature = "find")]
     pub fn index_status(&self) -> Result<crate::IndexStatus, Error> {
+        self.status(true)
+    }
+
+    /// [`index_status`](Self::index_status); `pending` `false` leaves the
+    /// pending counts `None` and skips the diffs.
+    #[cfg(feature = "find")]
+    fn status(&self, pending: bool) -> Result<crate::IndexStatus, Error> {
         let generation = self.generation_dir()?;
-        let head = git::peel_head_oid(&self.path)?;
-        let nested = isolated::root(&self.path);
-        let isolated_head = if git::is_work_tree(&nested) {
-            git::peel_head_oid(&nested)?
-        } else {
-            None
-        };
+        let heads = crate::indexer::Heads::read(&self.path)?;
+        let head = heads.as_ref().map(|heads| heads.main().to_owned());
+        let isolated_head = heads
+            .as_ref()
+            .and_then(|heads| heads.nested().map(str::to_owned));
         let state = self
             .indexer
             .as_ref()
@@ -361,6 +370,21 @@ impl Vault {
                 Ok(None)
             }
         };
+        let (lexical_pending, vector_pending) = match &heads {
+            _ if !pending => (None, None),
+            None => (Some(0), Some(0)),
+            // A commit whose declarations do not load is the indexer's
+            // error to report; the status still answers.
+            Some(heads) => match schema::load_at(&self.path, heads.main()) {
+                Ok(decls) => {
+                    let count =
+                        |leg| crate::indexer::pending(&generation, heads, &decls, leg, usable).ok();
+                    (count(marks::Leg::Lexical), count(marks::Leg::Vector))
+                }
+                Err(_) => (None, None),
+            },
+        };
+        let embedder = self.embedder_arc()?;
         Ok(crate::IndexStatus {
             head,
             isolated_head,
@@ -370,6 +394,9 @@ impl Vault {
             isolated_vector: mark(marks::Leg::Vector, marks::Repo::Isolated)?,
             journal_ids: mark(marks::Leg::Ids, marks::Repo::Main)?,
             isolated_journal_ids: mark(marks::Leg::Ids, marks::Repo::Isolated)?,
+            lexical_pending,
+            vector_pending,
+            model_mismatch: crate::indexer::model_mismatch(&generation, embedder.as_deref())?,
             lexical_role: state.lexical_role,
             vector_role: state.vector_role,
             last_error: state.last_error,
@@ -391,7 +418,7 @@ impl Vault {
     #[cfg(feature = "find")]
     pub fn wait_indexed(&self, timeout: std::time::Duration) -> Result<crate::IndexStatus, Error> {
         let deadline = Instant::now().checked_add(timeout);
-        let target = self.index_status()?;
+        let target = self.status(false)?;
         let nested = isolated::root(&self.path);
         loop {
             // Owners are looked at again on every pass: a probe of a role
@@ -407,7 +434,7 @@ impl Vault {
                 _ => false,
             };
             let vector = own_vector || crate::indexer::role_taken(&self.path, true)?;
-            let status = self.index_status()?;
+            let status = self.status(false)?;
             let main = |mark: &Option<String>, active| {
                 reached(&self.path, target.head.as_deref(), mark.as_deref(), active)
             };
@@ -427,7 +454,9 @@ impl Vault {
                 && nested_reached(&status.isolated_journal_ids, lexical)?
                 && nested_reached(&status.isolated_vector, vector)?
             {
-                return Ok(status);
+                // Counted once, after the wait: a leg nobody writes shows
+                // its lag here.
+                return self.index_status();
             }
             let now = Instant::now();
             let left = match deadline {
@@ -5231,6 +5260,9 @@ mod tests {
             assert!(status.lexical_role);
             assert!(!status.vector_role);
             assert_eq!(status.vector, None, "nobody can write vectors yet");
+            assert_eq!(status.lexical_pending, Some(0));
+            assert_eq!(status.vector_pending, Some(1), "the lag shows instead");
+            assert!(!status.model_mismatch, "no embedder, nothing to mismatch");
             let first = open_with_model(&scratch.vault(), Some("m1"));
             let status = first.wait_indexed(WAIT).unwrap();
             assert!(status.vector_role);
@@ -5240,7 +5272,11 @@ mod tests {
             second.wait_indexed(WAIT).unwrap();
             other_model.wait_indexed(WAIT).unwrap();
             assert!(!second.index_status().unwrap().vector_role);
-            assert!(!other_model.index_status().unwrap().vector_role);
+            assert!(!second.index_status().unwrap().model_mismatch);
+            let status = other_model.index_status().unwrap();
+            assert!(!status.vector_role);
+            assert!(status.model_mismatch);
+            assert_eq!(status.vector_pending, Some(0));
             drop(first);
             git_cli_commit(&scratch.vault(), "c/r2", r#"{"tag":"second"}"#);
             let status = second.wait_indexed(WAIT).unwrap();
@@ -5501,6 +5537,35 @@ mod tests {
             let got = journal.get("line").unwrap();
             assert_eq!(got.raw.as_deref(), Some(b"payload".as_slice()));
             drop(holder);
+        }
+
+        #[test]
+        fn status_counts_the_records_each_leg_has_yet_to_apply() {
+            let scratch = Scratch::new();
+            let holder = idle_holder(&scratch.vault());
+            let writer = open_indexed(&scratch.vault(), poll_never());
+            writer
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            let collection = writer.collection("c").unwrap();
+            for id in ["a", "b", "c"] {
+                collection.add(id, b"x", None).unwrap();
+            }
+            let status = writer.index_status().unwrap();
+            assert_ne!(status.lexical, status.head, "nothing indexed yet");
+            assert_eq!(status.lexical_pending, Some(3));
+            let marked = holder.index_status().unwrap().lexical;
+            collection.remove("a", None).unwrap();
+            assert_eq!(
+                writer.index_status().unwrap().lexical_pending,
+                Some(2),
+                "a Record added and removed since the mark is no work"
+            );
+            assert_eq!(holder.index_status().unwrap().lexical, marked);
+            drop(holder);
+            let status = writer.wait_indexed(WAIT).unwrap();
+            assert_eq!(status.lexical, status.head);
+            assert_eq!(status.lexical_pending, Some(0));
         }
 
         #[test]

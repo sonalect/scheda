@@ -1238,18 +1238,38 @@ schema:
     assert!(ids.contains(&"old"), "{ids:?}");
 }
 
+/// B6 check (replaces IDX-9 "add then search without reindex"): a
+/// write is visible to `search`, on both legs, once `wait_indexed` returns.
 #[test]
-fn insert_is_searchable_without_reindex() {
+fn add_then_wait_indexed_then_search_finds() {
     let scratch = Scratch::new();
-    let vault = open_tokens(&scratch, None);
+    let embedder = Arc::new(MapEmbedder {
+        pairs: vec![
+            (String::from("car"), vec![1.0, 0.0, 0.0, 0.0]),
+            (String::from("automobile"), vec![1.0, 0.0, 0.0, 0.0]),
+        ],
+    });
+    let vault = open_tokens(&scratch, Some(embedder));
     let collection = vault.collection("token_notes").unwrap();
     collection
-        .add("fresh", rec(json!({"title": "kryptonite"})), None)
+        .add("fresh", rec(json!({"title": "car"})), None)
         .unwrap();
-    common::indexed(&vault);
-    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
-    let ids = hit_ids(&hits);
-    assert!(ids.contains(&"fresh"), "{ids:?}");
+    let status = vault.wait_indexed(Duration::from_secs(30)).unwrap();
+    assert!(status.head.is_some());
+    assert_eq!(status.lexical, status.head);
+    assert_eq!(status.vector, status.head);
+    assert_eq!(status.lexical_pending, Some(0));
+    assert_eq!(status.vector_pending, Some(0));
+    assert!(!status.model_mismatch);
+    assert!(status.last_error.is_none(), "{status:?}");
+    let hits = collection
+        .search(&q("car", 5).with_vector_weight(0.0), None)
+        .unwrap();
+    assert!(hit_ids(&hits).contains(&"fresh"), "{:?}", hit_ids(&hits));
+    let hits = collection
+        .search(&q("automobile", 5).with_lexical_weight(0.0), None)
+        .unwrap();
+    assert!(hit_ids(&hits).contains(&"fresh"), "{:?}", hit_ids(&hits));
 }
 
 struct FailingEmbedder;

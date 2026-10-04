@@ -87,6 +87,25 @@ pub struct IndexStatus {
     pub journal_ids: Option<String>,
     /// Commit the journal `id` maps have reached for the nested repository.
     pub isolated_journal_ids: Option<String>,
+    /// Records the lexical leg has yet to apply to reach `head` and
+    /// `isolated_head`, both repositories together: added, changed, and
+    /// removed Records of lexically indexed collections, and every Record
+    /// of a collection whose declaration changed. A leg that must be
+    /// rebuilt counts every Record. `Some(0)` when the leg is at `HEAD`;
+    /// `None` when the Records could not be counted, for example because
+    /// the declarations at `HEAD` do not load (the indexer then reports the
+    /// same in `last_error`).
+    pub lexical_pending: Option<u64>,
+    /// The same count for the vector leg. It stays above `0` while no
+    /// handle can write vectors (no embedder, or only ones of another
+    /// model): [`Vault::wait_indexed`](crate::Vault::wait_indexed) does not
+    /// wait for such a leg, and this is where its lag shows.
+    pub vector_pending: Option<u64>,
+    /// This handle's embedder has another `model_id` or dimensions than
+    /// the vectors of the live generation. It does not write the vector
+    /// leg, and its `search` runs without that leg, rather than mix two
+    /// vector spaces. `reindex` moves the Index to the new model.
+    pub model_mismatch: bool,
     /// This handle indexes the lexical leg (it holds
     /// `{vault}/.scheda/index.lock`).
     pub lexical_role: bool,
@@ -339,12 +358,39 @@ enum Pass {
 }
 
 /// `HEAD` of the Vault and, when it is a work tree, of the nested repository.
-struct Heads {
+pub(crate) struct Heads {
     main: (PathBuf, String),
     nested: Option<(PathBuf, String)>,
 }
 
 impl Heads {
+    /// Read both heads now. `None` before the Vault's first commit.
+    pub(crate) fn read(vault: &Path) -> Result<Option<Self>, Error> {
+        let Some(head) = git::peel_head_oid(vault)? else {
+            return Ok(None);
+        };
+        let nested_dir = isolated::root(vault);
+        let nested = if git::is_work_tree(&nested_dir) {
+            git::peel_head_oid(&nested_dir)?.map(|head| (nested_dir, head))
+        } else {
+            None
+        };
+        Ok(Some(Self {
+            main: (vault.to_path_buf(), head),
+            nested,
+        }))
+    }
+
+    /// The Vault's `HEAD`.
+    pub(crate) fn main(&self) -> &str {
+        &self.main.1
+    }
+
+    /// The nested repository's `HEAD`, if it has one.
+    pub(crate) fn nested(&self) -> Option<&str> {
+        self.nested.as_ref().map(|(_, head)| head.as_str())
+    }
+
     fn of(&self, repo: Repo) -> Option<(&Path, &str)> {
         match repo {
             Repo::Main => Some((self.main.0.as_path(), self.main.1.as_str())),
@@ -441,18 +487,8 @@ impl Worker {
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
         let ctx = &shared.ctx;
-        let Some(head) = git::peel_head_oid(&ctx.vault)? else {
+        let Some(heads) = Heads::read(&ctx.vault)? else {
             return Ok(());
-        };
-        let nested_dir = isolated::root(&ctx.vault);
-        let nested = if git::is_work_tree(&nested_dir) {
-            git::peel_head_oid(&nested_dir)?.map(|head| (nested_dir, head))
-        } else {
-            None
-        };
-        let heads = Heads {
-            main: (ctx.vault.clone(), head),
-            nested,
         };
         if self.lexical.is_some() && needs_new_generation(generation)? {
             return self.rebuild_generation(shared, &heads, embedder);
@@ -801,6 +837,72 @@ pub(crate) fn lexical_allowed(search: &SearchEngine, generation: &Path) -> Resul
 /// legacy layout directly under `index/`.
 fn needs_new_generation(generation: &Path) -> Result<bool, Error> {
     Ok(matches!(index::format_version(generation)?, Some(v) if v != index::FORMAT_VERSION))
+}
+
+/// Records `leg` of `generation` has yet to apply to reach `heads`, both
+/// repositories together; see [`IndexStatus::lexical_pending`]. `marked`
+/// `false` ignores the marks on disk (a generation about to be replaced):
+/// everything is pending.
+pub(crate) fn pending(
+    generation: &Path,
+    heads: &Heads,
+    decls: &Decls,
+    leg: Leg,
+    marked: bool,
+) -> Result<u64, Error> {
+    let wanted = |name: &str| decls.get(name).filter(|decl| leg_wanted(decl, leg));
+    let mut count = 0usize;
+    for repo in [Repo::Main, Repo::Isolated] {
+        let Some((dir, head)) = heads.of(repo) else {
+            continue;
+        };
+        let mark = if marked {
+            marks::read(generation, leg, repo)?
+        } else {
+            None
+        };
+        if mark.as_deref() == Some(head) {
+            continue;
+        }
+        let mut found = diff::diff(dir, repo, decls, mark.as_deref(), head)?;
+        if found.rebuild {
+            found = diff::diff(dir, repo, decls, None, head)?;
+        }
+        count += found
+            .changes
+            .iter()
+            .filter(|change| wanted(&change.collection).is_some())
+            .count();
+        for name in &found.whole {
+            let Some(decl) = wanted(name) else {
+                continue;
+            };
+            if let Some((decl_dir, decl_head)) = heads.for_decl(decl) {
+                count += diff::collection(decl_dir, decl, decl_head)?.len();
+            }
+        }
+    }
+    Ok(u64::try_from(count).unwrap_or(u64::MAX))
+}
+
+/// Whether `embedder` is set and has another model than the vectors of
+/// `generation`.
+pub(crate) fn model_mismatch(
+    generation: &Path,
+    embedder: Option<&dyn Embedder>,
+) -> Result<bool, Error> {
+    #[cfg(feature = "search")]
+    {
+        match embedder {
+            Some(embedder) => Ok(!crate::search::vector_model_matches(generation, embedder)?),
+            None => Ok(false),
+        }
+    }
+    #[cfg(not(feature = "search"))]
+    {
+        let _ = (generation, embedder);
+        Ok(false)
+    }
 }
 
 /// Whether `embedder` may write the vector leg of `generation`.

@@ -32,8 +32,11 @@ API or on-disk format changes bump the minor.
   git objects only, never the work tree.
 - `Vault::index_status()` and `Vault::wait_indexed(timeout)` (`find`
   feature), with `IndexStatus`: `HEAD` of the Vault and of
-  `{vault}/.isolated/`, the commit each Index leg has reached, which roles
-  this handle holds, and the last indexing error. `wait_indexed` waits until
+  `{vault}/.isolated/`, the commit each Index leg has reached, how many
+  Records each leg has yet to apply (`lexical_pending`, `vector_pending`),
+  whether this handle's embedder has another model than the Index vectors
+  (`model_mismatch`), which roles this handle holds, and the last indexing
+  error. `wait_indexed` waits until
   every leg that has an owner reaches the `HEAD` seen at call time and fails
   with `io_timed_out` after the timeout; a leg nobody can write does not
   make it wait.

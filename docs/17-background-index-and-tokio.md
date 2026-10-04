@@ -267,6 +267,18 @@ writes on top of the last holder's vectors and append order, not over
 them with what it loaded at `open`. A handle never replaces vectors it
 has not saved yet.
 
+**D32. "Rows pending" is a count of Records, per leg, from a diff.**
+`IndexStatus.lexical_pending` and `vector_pending` count the Records a
+leg has yet to apply from its mark to `HEAD`, both repositories
+together: changed Records of collections that leg indexes, plus every
+Record of a collection whose declaration changed; a leg to rebuild
+counts every Record. `index_status` runs that diff, so it costs about a
+`git diff`; `wait_indexed` reads only the marks while it waits and
+counts once before it returns. `None` means the count failed (the
+declarations at `HEAD` do not load), so the status still answers when
+the indexer cannot. `model_mismatch` is true when this handle's
+embedder differs from the live generation's vectors (D7).
+
 ---
 
 ## 3. Part B — background Index
@@ -352,16 +364,23 @@ has not saved yet.
 
 ### B6. Status and wait
 
-- [ ] `Vault::index_status() -> IndexStatus`: `head`, per-leg mark, rows
-      pending, role held by this handle, `model_mismatch`, last error.
-- [ ] `Vault::wait_indexed(timeout) -> Result<IndexStatus, Error>`:
+- [x] `Vault::index_status() -> IndexStatus`: `head`, per-leg mark, rows
+      pending, role held by this handle, `model_mismatch`, last error
+      (D32; `background::status_counts_the_records_each_leg_has_yet_to_apply`,
+      `background::vector_role_goes_to_one_handle_with_a_matching_embedder`
+      for `model_mismatch` and a vector leg nobody writes).
+- [x] `Vault::wait_indexed(timeout) -> Result<IndexStatus, Error>`:
       wait until every leg this handle can see as active reaches the
       `HEAD` observed at call time; timeout → `Code::Timeout` (or the
       nearest existing code) with the status attached. A leg with no
       possible owner (vector, no embedder anywhere) does not block it
-      forever: report it in the status, do not wait for it.
+      forever: report it in the status, do not wait for it
+      (`background::indexer_role_passes_to_another_process` for the
+      `io_timed_out`; `vector_role_goes_to_one_handle_with_a_matching_embedder`
+      for a leg with no owner).
 - *Check:* `add` then `wait_indexed` then `search` finds the Record —
-  this replaces the IDX-9 check "add then search without reindex".
+  this replaces the IDX-9 check "add then search without reindex"
+  (`search.rs add_then_wait_indexed_then_search_finds`, both legs).
 
 ### B7. Errors
 
