@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.57, 17 September 2026.
+Document 2 of the Scheda package. Version 0.58, 4 October 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -112,7 +112,7 @@ For `document`, `{collection}/{id}` (`/` in `id` is a directory). For `journal`,
 
 **Index** — the disposable search layer.
 
-Built from Vault files. Stored under `{vault}/.scheda/` (gitignored), not committed with the Vault, safe to delete. Rebuild (`reindex`) reads files. A corrupt Index must not serve stale ids: `find` / `search` return empty or an error. `get` and `history` still read files (IDX-10).
+Built from the commits of the Vault, not the work tree, and kept on git `HEAD` by a background thread (eventually consistent; `wait_indexed` waits for it). Stored under `{vault}/.scheda/` (gitignored), not committed with the Vault, safe to delete. Rebuild (`reindex`) reads the commits at `HEAD`. A corrupt Index must not serve stale ids: `find` / `search` return empty or an error. `get` and `history` still read files (IDX-10).
 
 Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win for `get` and `history`. Other methods trust the Index for which `id`s exist, then read those files.
 
@@ -166,7 +166,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`commit`** — end a transaction on this handle and create one git commit per repository that has recorded paths (main and/or `{vault}/.isolated/`). Message comes from the caller. Outside a transaction, mutating calls autocommit with an optional message (default `scheda`). The CLI does not expose this name.
 
-**`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload collection declarations, rebuild the Index. The CLI does not expose this name.
+**`discard`** — restore Scheda-recorded paths to HEAD, end the transaction if any on this handle, reload collection declarations, drop the journal `id` map lines the restore removed. The CLI does not expose this name.
 
 **Remote** — the one optional git remote Scheda uses on the Vault repository, named `origin`. Empty `VaultInfo.remote` means none. Extra remotes in git config are ignored. Detected on `open` from git config (no fetch). GitHub is one host, not a Scheda type.
 
@@ -180,7 +180,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`sync`** — `pull` then `push`. Independent of `auto_sync`.
 
-**`reindex`** — rebuild the Index from files (and the Projector, if any).
+**`reindex`** — rebuild the Index from the commits at `HEAD` (and the Projector, if any) into a new generation; the way to move vectors to a new embedder model.
 
 **`check`** — validate the Vault against collection declarations, encodings, and envelopes without necessarily writing. Does not type-check Record contents.
 

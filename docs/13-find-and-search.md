@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.41, 17 September 2026.
+Document 13 of the Scheda package. Version 0.42, 4 October 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`, `api/v1/index.proto`. Index columns: `Projector.schema(collection)` at `open`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat `search` as a query string only, are wrong.
 
@@ -20,7 +20,7 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 
 Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → an ordinary query. Encrypted name → `unsupported`. Empty set stays non-isolated and non-encrypted.
 
-`get` / `add` / `history` / `lines` do not wait on the Index. `find` / `search` take `id`s from the Index, then open files. `replace` / `remove` do the same when `find` is on, isolated collections included; when `find` is off, and on encrypted collections either way, they use the Record file. Orphan file: `get` works; `find` / `search` skip it until indexed. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
+`get` / `add` / `history` / `lines` / `replace` / `remove` do not wait on the Index: they use the Record file (a journal `get`, the `id` map, which writes update at once). `find` / `search` take `id`s from the Index, then open files. The Index follows the last commit in the background (`06` IDX-9), so `find` / `search` are eventually consistent: a write is found after its commit has been indexed. A caller that must see its own write calls `wait_indexed` first; `index_status` says how far behind the Index is. Inside a transaction, queries do not see its uncommitted writes. Orphan or uncommitted file: `get` works; `find` / `search` skip it until a commit holds it and the indexer has applied it. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
 
 ---
 
@@ -32,7 +32,7 @@ The **library** calls the engine APIs. The caller never writes Tantivy or USearc
 - **USearch** creates and owns the vector dump under `{vault}/.scheda/`. Scheda only passes dimensions, keys, and `f32` arrays. On-disk layout is USearch’s.
 - Scheda writes `{vault}/.scheda/index/<generation>/format` (decimal version) and `{vault}/.scheda/index/current` (live generation name). Wrong version → `index_version` / empty `find`/`search`, not foreign ids.
 
-First write or `reindex` creates the engines if missing. `add` / `replace` update them. No LLM is used to create either index.
+The background indexer (`06` IDX-9) or `reindex` creates the engines if missing and keeps them on `HEAD`; writes do not touch them. No LLM is used to create either index.
 
 ---
 
@@ -112,7 +112,7 @@ Scheda does not ship weights or a chat LLM.
 
 ---
 
-## 5. Building vectors (`add` / `replace` / `reindex`)
+## 5. Building vectors (background indexer and `reindex`)
 
 For each Record, for **each** Projector column marked `vector` that `project` filled:
 
@@ -123,13 +123,13 @@ For each Record, for **each** Projector column marked `vector` that `project` fi
 5. Store one vector in USearch. Key: `(collection, id, column name)`. Write the digest next to the slot in `keys.json`. An Index written before digests existed loads with an empty digest (`serde` default) and re-embeds each slot once.
 6. A slot that is gone — `schema` no longer marks the column `vector`, or this Record's `project` omits it — is removed from USearch. `search` must not return that content. USearch `remove` leaves tombstones, so the dump can grow across many incremental cycles; this release does not compact it.
 
-Do not glue several columns into one blob. One column, one vector. Do not hash the Record file or a git tree: a hand edit that is not yet committed must still change the digest.
+Do not glue several columns into one blob. One column, one vector. Do not hash the Record file or a git tree: the digest is of the embedder text, so a commit that changes other bytes of the Record does not re-embed it.
 
 If `embed` is missing, skip all vector writes. Tantivy still indexes `fts` columns.
 
-Index remembers `model_id` and `dimensions`. Mismatch with the current function → rebuild vectors from an empty table (every slot is embedded) or skip mixing spaces on a live write; lexical still works. `reindex` copies the previous generation’s vector dump into the new generation when model and dimensions match, then applies the skip/remove rules above. The lexical Index is always rebuilt in full.
+Index remembers `model_id` and `dimensions`. Only a handle whose embedder matches them writes vectors (the `vector.lock` role, `06` IDX-9). A handle with another model writes none, does not embed its queries, and its `search` runs on the lexical leg alone; `index_status().model_mismatch` is true. Moving to a new model is the caller's `reindex` with the new embedder: the new generation starts with an empty vector table and every slot is embedded. With the same model, `reindex` copies the previous generation's vector dump (when it loads) and applies the skip/remove rules above, so only changed text is embedded; without an embedder it carries the previous vectors over unchanged. The lexical Index of a new generation is always built in full.
 
-Catch-up of writes that finished while `reindex/active` exists copies that Record’s vector slots from live `N` into `N+1` when the two generations share `model_id` and dimensions — including the digest stored in `keys.json`. It does not call the embedder: `add` already paid for those vectors on `N`. If the digest already matches in `N+1`, skip. If the models differ, `N` did not mix spaces; catch-up embeds into `N+1` with `embed_many` **before** the publish `write.lock`. The locked tail is empty or those few slots copy from `N` (same-model) or were already embedded in the unlocked pass.
+The embedder runs on the background indexer's thread, never inside `add` / `replace` / `commit`: a slow, blocking, or failing embedder delays vectors and is retried with backoff (`index_status().last_error`), but fails no write.
 
 ---
 

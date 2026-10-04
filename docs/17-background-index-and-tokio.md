@@ -563,6 +563,11 @@ vault
 
 ## 5. Docs pass (once, after the code)
 
+Done for Part B on 4 October 2026 (`02`, `04`, `06`, `07`, `10`, `13`,
+`14`, `15`, README); the Part T items below (async API, `tokio`
+feature) follow in one pass after T. The version stays `Unreleased`
+until the owner releases.
+
 `06` (IDX-2 format 5, IDX-9 rewritten as background + marks, QRY-4 with
 D8), `07` (LIB-16, new `index_status` / `wait_indexed`, the async API
 and the `tokio` feature), `13` (find / search freshness), `15` (header

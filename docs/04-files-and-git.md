@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.40, 16 September 2026.
+Document 4 of the Scheda package. Version 0.41, 4 October 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -18,7 +18,7 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **STO-3. Journal lines are not rewritten.** Same as MOD-16: no update/delete API (`replace` and `remove` are `unsupported`). On read/`check`, a broken line is an error: a final line without `\n`, a line with no `:` delimiter, or an empty envelope `id`. It is not “JSON object failed Schema”. Scheda does not silently truncate or rewrite the segment to “fix” it. Valid lines before the damage remain readable. *Check:* flip bytes in the middle of a closed segment → `check` fails; `replace` / `remove` on the collection → error. *Check:* a line with no `:` is `invalid`; an empty payload line `{id}: \n` is a Record.
 
-**STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. The lock is held for an open transaction and for the duration of one mutating call outside a transaction. `commit` and `discard` release it before they return; dropping the handle releases it before Index teardown waits on merge threads. The lexical Index writer (Tantivy directory lock) uses the same lifetime: it is opened on the first indexed write of that work and dropped when the write lock is released, so a second handle can write after `commit` without waiting on `LockBusy`. The vector Index is an in-memory dump with no directory lock. `open` with `auto_sync` off does not take the lock. `open` with `auto_sync` on and a Remote exists takes the lock for the auto-pull, then releases it (GIT-10, LIB-4). *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5). *Check:* `open` with `auto_sync` on while another handle holds the write lock → `locked`. *Check:* write, `commit`, drop, immediately `open` the same path and write again → not `locked`. *Check:* write, `commit`, and a second handle writes while the first is still open → not `index_lexical`. A `locked` failure names the operation that took the lock in its stack frames.
+**STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. The lock is held for an open transaction and for the duration of one mutating call outside a transaction. `commit` and `discard` release it before they return; dropping the handle releases it. Writes do not touch the lexical or vector Index; the background indexer (`06` IDX-9) writes it under its own role locks, `{vault}/.scheda/index.lock` and `vector.lock`, and never takes `write.lock`. `open` with `auto_sync` off does not take the lock. `open` with `auto_sync` on and a Remote exists takes the lock for the auto-pull, then releases it (GIT-10, LIB-4). *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5). *Check:* `open` with `auto_sync` on while another handle holds the write lock → `locked`. *Check:* write, `commit`, drop, immediately `open` the same path and write again → not `locked`. *Check:* write, `commit`, and a second handle writes while the first is still open → not `index_lexical`. A `locked` failure names the operation that took the lock in its stack frames.
 
 The lock is an OS file lock on `{vault}/.scheda/write.lock` (not a pid-file,
 not under `index/`). It is released when the process dies because the kernel
@@ -27,20 +27,16 @@ survive a crash. Locks do not travel with `git push` / `git pull`. Two clones
 are two working trees: each may have a writer. NFS/SMB lock semantics are not
 relied on; Vaults on those shares are outside **core**.
 
-`reindex` takes `write.lock` only for its start protocol and for publish. The
-file walk that fills the new generation does not hold it: `add` / `replace`
-/ `remove` stay one writer per mutating call. A second flock,
-`{vault}/.scheda/reindex.lock`, is held from start until after publish (or
-failure cleanup). Only `reindex` takes `reindex.lock`. Both locks are
-`try_lock`; neither becomes a blocking wait. Start takes `write.lock` then
-`reindex.lock`; publish takes `write.lock` while already holding
-`reindex.lock`. A second `reindex` is `locked`. Mutating calls do not take
-`reindex.lock`: they look at `{vault}/.scheda/reindex/active` (LIB-16).
-`create_collection`, `pull`, `sync`, and `discard` are `locked` while that
-marker exists; `push` is not. *Check:* a second handle `add`s during an
-unlocked `reindex` walk and is not `locked`. *Check:* a second `reindex`
-while the first holds `reindex.lock` → `locked` with `reindex` in the
-stack.
+With `find`, `reindex` takes no `write.lock`: it builds the new generation
+from the commits at `HEAD`, so `add` / `replace` / `remove`, transactions,
+`create_collection`, `pull`, `sync`, and `discard` in other handles go on
+while it runs (LIB-16). It holds a second flock,
+`{vault}/.scheda/reindex.lock`, from start until after publish; the
+background indexer takes it too when it rebuilds an Index by itself. It is
+`try_lock`: a second `reindex` is `locked`. Without `find`, `reindex` holds
+`write.lock` for the whole call. *Check:* a second handle `add`s during a
+`reindex` build and is not `locked`. *Check:* a second `reindex` while the
+first holds `reindex.lock` → `locked` with `reindex` in the stack.
 
 **STO-5. A failed write is not the new truth.** Validation failure, a full disk, or a killed process must not leave a half-written `document` or `singleton` as the file at the Record path, must not leave a `journal` segment cut in the middle of a line as an accepted Record, and must not leave a partial `remove` (the path holds the whole file or no file). *Check:* interrupt `replace` / `add` / `remove`; after reopen, the set of accepted Records equals the last successful write. Technique for `document`/`singleton` writes: write a sibling temp file in the same directory, `fsync`, rename over the target. Technique for `remove`: unlink the Record file (atomic: the path holds the file or nothing). Technique for `journal`: write one complete line including `\n`; a tail without `\n` is not a Record (STO-3).
 
@@ -60,7 +56,7 @@ A transaction is a property of one library handle while that process holds the w
 
 The CLI does not expose `begin` / `commit` / `discard`. Each mutating CLI command autocommits (`--message` when set, otherwise `scheda`). Batch writes are a library-handle concern.
 
-`begin` takes this handle into a transaction: leftover Scheda writes are discarded first; `invalid` if a transaction is already open on this handle. Inside a transaction, mutating calls do not commit. `commit(message)` ends the transaction and creates one git commit per repository that has recorded paths (main tree and/or `{vault}/.isolated/`), with that message; a side with no recorded paths is skipped. Those two commits are not one atomic unit. It is `invalid` if no transaction is open, or if there is nothing to commit on either side. `discard` restores those paths to HEAD in the repository that owns each path, reloads collection declarations, and rebuilds the Index; it is allowed without an open transaction to clear crash leftovers. Staging is only those recorded paths. It must not `git add` the whole tree in a way that stages junk at the Vault root, and must not stage isolated paths into the parent git.
+`begin` takes this handle into a transaction: leftover Scheda writes are discarded first; `invalid` if a transaction is already open on this handle. Inside a transaction, mutating calls do not commit. `commit(message)` ends the transaction and creates one git commit per repository that has recorded paths (main tree and/or `{vault}/.isolated/`), with that message; a side with no recorded paths is skipped. Those two commits are not one atomic unit. It is `invalid` if no transaction is open, or if there is nothing to commit on either side. `discard` restores those paths to HEAD in the repository that owns each path, reloads collection declarations, and drops the journal `id` map lines the restore removed (the Index holds committed state only, so nothing else needs undoing); it is allowed without an open transaction to clear crash leftovers. Staging is only those recorded paths. It must not `git add` the whole tree in a way that stages junk at the Vault root, and must not stage isolated paths into the parent git.
 
 *Check:* several inserts after `begin` without `commit` → `git log` unchanged; one `commit` → one new commit whose paths are those writes. *Check:* `add` without `begin` → one new commit with message `scheda`. *Check:* `add` without `begin` with a message → that text is the commit subject. *Check:* a message passed inside a transaction is ignored; `commit`'s message lands. *Check:* a present but empty message is `invalid` before any file is written. *Check:* `OpenOptions.author` is the git author and committer on autocommit and on `commit`, in the main tree and in `{vault}/.isolated/`; `history` reports them. *Check:* 10³ journal `add` after `begin`, one `commit` → `git log` grows by one. *Check:* drop the handle mid-transaction after complete journal lines plus a truncated tail; reopen without `begin` / `discard`; `get` returns the complete Records and not the truncated line (STO-5). *Check:* drop the handle mid-transaction; reopen; `commit` is `invalid`; the next `add` without `begin` discards the leftover and the abandoned `id` is gone.
 

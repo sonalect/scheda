@@ -1,6 +1,15 @@
 # 15. Online reindex
 
-Document 15 of the Scheda package. Version 0.6, 7 September 2026.
+Document 15 of the Scheda package. Version 0.7, 4 October 2026.
+
+> **Superseded by `17` Part B.** The catch-up queue, the `reindex/active`
+> marker, and the publish window described below are gone: `reindex`
+> builds `N+1` from the commits at `HEAD`, records them as the
+> generation's marks, and the background indexer applies whatever was
+> committed during the build (`17` D10, D34). The line "There is no Index
+> worker thread" no longer holds: one indexer thread per handle keeps
+> the Index on `HEAD` (`17` D11). `06` IDX-1 / IDX-9 and `07` LIB-16 are
+> the normative text; this file is kept as the history of R0–R7.
 
 Work order so `reindex` no longer holds `{vault}/.scheda/write.lock` for
 the whole rebuild. The walk still fills every Index artifact of the new

@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.52, 17 September 2026.
+Document 10 of the Scheda package. Version 0.53, 4 October 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -29,11 +29,11 @@ The journal `id` map is **core** (IDX-5). After it exists, `get` on `journal` mu
 
 The collection declaration already parses `isolated: true` (SCH-15). `Vault.info` lists those collections as isolated and has no field list (ISO-3). `find` / `search` on non-isolated collections skip them. `collection(name)` and `create_collection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** Consumer readiness P0–P16 is in (`12` §4). Age encryption shipped as `0.6.0` (`12` P14): it is a declaration key on any one collection, behind the `encrypt` feature. The CLI can open an encrypted Vault from an environment variable or an identity file, and the nested isolated tree may have a Remote of its own (`12` P16). Opaque Records (`16` F0–F19) are in. Extra language bindings stay deferred.
+**Next in `scheda`.** Consumer readiness P0–P16 is in (`12` §4). Age encryption shipped as `0.6.0` (`12` P14): it is a declaration key on any one collection, behind the `encrypt` feature. The CLI can open an encrypted Vault from an environment variable or an identity file, and the nested isolated tree may have a Remote of its own (`12` P16). Opaque Records (`16` F0–F19) are in. The Index follows `HEAD` in a background thread (`17` Part B, B1–B10): writes no longer update it, `find` / `search` are eventually consistent with `wait_indexed` / `index_status` to wait and to look, several processes share one indexer per role, a model change is the caller's `reindex`, and a damaged or old Index is rebuilt by itself. Next is `17` Part T, the opt-in `tokio` feature. Extra language bindings stay deferred.
 
 **First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in. Those stages are not a phase: their codes cross **core**, **search**, and **later**, and three of them amend requirements this document already assigns (P1 on STO-2 and MOD-12, P2 on IDX-2 in **core** §2, P3 on GIT-2). P0–P5, P8, P9, P10, P11, P12, and P13 of that list are in, and P6 and P7 are gone: the slug is the whole `id` rule (P5); the unencrypted isolated slice (`{vault}/.isolated/` nested git) is P4; listing a `document` collection without the Index is P13. P14 took encryption out of the isolation flag and made it a declaration key on any one collection, behind the `encrypt` feature; it shipped as `0.6.0`, and the two things it designed without building — a CLI that can carry a secret, and a Remote for the nested tree — shipped as P16. P15 replaced the nested isolated Index with one owner-only Index per Vault, which is what makes an isolated collection searchable at all. `find` and `search` are opt-in crate features (P8); the crate has no default features. `remove` deletes a `document` or `singleton` (P9); a journal line still cannot leave. P10 is acceptance on that fixture. P11's open-map field types were a field-Schema rule and are gone with `16`. P12 is an optional commit message on each mutating call and a commit identity at `open`.
 
-**Still deferred:** file watcher; journal line delete; REL-4; extra language bindings.
+**Still deferred:** file watcher (the indexer polls `HEAD`; an uncommitted edit is not indexed); journal line delete; REL-4; extra language bindings.
 
 ---
 
@@ -50,7 +50,7 @@ The collection declaration already parses `isolated: true` (SCH-15). `Vault.info
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-IDX-2 stays **core** for the Index format and for methods that resolve `id` through the Index (`find`, `search`, `replace`). A sequential journal read is not one of those methods. **Core** also has `lines` (LIB-19): it walks journal segments in declaration sequence and does not open the Index. QRY-7 remains the order of `find` when the Index is present. The crate has no default features. `find`, `search`, `simd`, and `encrypt` are opt-in; Bazel CI still links them. A crate without `find`, `search`, or `simd` is the same library with those legs off, not a second product. `encrypt` degrades further and the contract says so: without it an encrypted collection cannot be read at all, so the handle refuses it by code and `check` fails with `unsupported_encryption`, rather than returning ciphertext as a Record or reporting health it never verified (SCH-16, ISO-5). Phases grade a build with `find` and `search` on.
+IDX-2 stays **core** for the Index format and for the methods that take `id`s from the Index (`find`, `search`); `replace` and `remove` use the Record file. A sequential journal read is not one of those methods. **Core** also has `lines` (LIB-19): it walks journal segments in declaration sequence and does not open the Index. QRY-7 remains the order of `find` when the Index is present. The crate has no default features. `find`, `search`, `simd`, and `encrypt` are opt-in; Bazel CI still links them. A crate without `find`, `search`, or `simd` is the same library with those legs off, not a second product. `encrypt` degrades further and the contract says so: without it an encrypted collection cannot be read at all, so the handle refuses it by code and `check` fails with `unsupported_encryption`, rather than returning ciphertext as a Record or reporting health it never verified (SCH-16, ISO-5). Phases grade a build with `find` and `search` on.
 
 **Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `unsupported` until **search** / **agent** / **later**, and writes must not depend on them): LIB-11, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse, ISO-3 listing, and the unencrypted isolated slice (ISO-2 nested git, ISO-6, IDX-4) are in (`12` P4), with ISO-4 and IDX-4 in their P15 form: one owner-only Index per Vault, ISO-10 retired. ISO-5, ISO-7–9, and ISO-11 are in with encryption (`12` P14). The ISO-6 nested Remote relaxation shipped as P16.
 
@@ -117,7 +117,7 @@ Unencrypted isolated (`encryption` unset, `0600`, nested Remote optional) is val
 
 **Already in `scheda`:** SCH-15 parse; ISO-3 listing; ISO-2 nested git; ISO-6 with a nested Remote of its own (`12` P16); ISO-4 and IDX-4 in their P15 form — one owner-only Index per Vault that holds isolated collections and no encrypted one, and no nested Index (ISO-10 retired). `collection(name)` and `create_collection` with `isolated` read and write `{vault}/.isolated/`. `find` / `search` on non-isolated collections return no isolated Records and do not require `.isolated/`; naming an isolated collection is an ordinary query. `check` covers the nested tree. ISO-5, ISO-7–9, and ISO-11 shipped as collection encryption (`12` P14): `OpenOptions.encryption` is read, `encrypted: true` is a declaration key on any one collection, and the declaration is the marker (no `.encrypted` file). The CLI can carry the encryption secret (`14`), and the nested tree may have a Remote of its own (`12` P16).
 
-Online `reindex` (writers during the Index walk) is not P16. The work order is `15`.
+Online `reindex` (writers during the build) is not P16. The work order was `15`; `17` replaced its queue with marks.
 
 **Isolated is accepted** when:
 
@@ -133,8 +133,7 @@ Gates 1–5 hold in `scheda` today. The nested Remote and the CLI secret shipped
 
 Not required of **core**, **search**, or **agent**:
 
-- File watcher for human edits (default remains `reindex`, IDX-5).
-- Holding a rebuild across a long transaction: publish gives up after 30 seconds and the caller runs `reindex` again (`15`).
+- File watcher for human edits: the indexer polls `HEAD`, so a committed edit is indexed and an uncommitted one is not (IDX-5, IDX-9).
 - Line-level journal blame (`history` of a JSONL line). `history(id)` of the segment that holds that `id` stays **core** (GIT-3, LIB-17).
 - Journal line `remove` (not for `document` / `singleton`: those have LIB-24).
 - REL-4 multi-step walk.

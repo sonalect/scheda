@@ -43,7 +43,7 @@ does not call a language model, and does not know a profession.
 **Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, collection declaration, `find` /
 `get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
 RRF from Projector slots), core acceptance, listing via `Vault.info`, `create_collection`, a CLI encoding
-of `07` (default whole-file Projector column `body`), HTTP embedder/reranker, and agent tools that omit isolated sealed values. Opaque Records (`16` F0–F19) are in. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. CLI mutations autocommit; batch writes are in-process.
+of `07` (default whole-file Projector column `body`), HTTP embedder/reranker, and agent tools that omit isolated sealed values. Opaque Records (`16` F0–F19) are in. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. The Index follows git `HEAD` in a background thread (`17` Part B): writes do not wait for it, `find` / `search` are eventually consistent (`wait_indexed` / `index_status`), several processes share one indexer, and an old or damaged Index rebuilds itself. CLI mutations autocommit; batch writes are in-process.
 
 ## Documents
 
@@ -65,8 +65,9 @@ The design is a numbered package in `docs/`, in English.
 | [10-roadmap.md](docs/10-roadmap.md)                   | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
 | [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in (`14` secret flags, nested Remote) |
-| [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8) |
+| [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8); its queue is replaced by `17` |
 | [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F19 done). |
+| [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature (Part T, next) |
 
 ## Layout
 
@@ -250,9 +251,11 @@ bazel run //python/cli:cli_LLMs -- reindex
 
 `import` `open`s `.vault-test-LLMs` if needed, `create-collection` from
 each `.collection.yaml`, then `add`s missing document files. Embedder
-flags go on `add` / `reindex` / `search`, so `add` writes `index/vector/`.
-`reindex` rebuilds lexical and vector indexes from files (use it after
-an Index format change, or if you imported without the embedder).
+flags go on `add` / `reindex` / `search`, so the background indexer of
+each command fills `index/vector/` after its commit. `reindex` rebuilds
+lexical and vector indexes from the commits (use it after a change of
+embedder model, or if you imported without the embedder; an old Index
+format is rebuilt by itself).
 Stdout of `reindex` is `ReindexResult` YAML. The CLI default Projector
 is one text column `body` (the whole UTF-8 Record).
 
@@ -356,7 +359,7 @@ bazel run //python/cli:cli_model2vec -- reindex
 from each `.collection.yaml`, then `add`s missing document files. It
 does not load Model2Vec. `reindex` downloads the cache if needed, loads
 the embedder once, and fills `index/vector/`. A later `reindex` rebuilds
-lexical and vector indexes after an Index format change. Stdout of
+lexical and vector indexes after a change of embedder model. Stdout of
 `reindex` is `ReindexResult` YAML. The CLI default Projector is one text
 column `body` (the whole UTF-8 Record).
 

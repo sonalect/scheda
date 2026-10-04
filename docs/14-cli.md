@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.70, 16 September 2026.
+Document 14 of the Scheda package. Version 0.71, 4 October 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`, except `collection … get`, which
@@ -33,6 +33,7 @@ not install it when a program passes no Projector.
 | `--embedder-model NAME` | JSON `model` on the embeddings body. With the other two HTTP embedder flags, or none. |
 | `--embedder-dimensions N` | Positive integer. `Embedder.dimensions` (no probe). Response length must match. With the other two HTTP embedder flags, or none. |
 | `--embedder-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP embedder flags. Unset → no auth. Missing or empty var → `invalid`. Not with `--model2vec-embedder`. |
+| `--no-wait` | `find` / `search` query the Index as it is. Without it they first call `wait_indexed` for up to 60 s: each CLI command is its own process, and the commits of earlier commands are indexed by this one's background indexer (`06` IDX-9). |
 | `--model2vec-embedder DIR` | Directory with Model2Vec files (`config.json`, `tokenizer.json`, `model.safetensors`). CLI loads them (`model2vec-rs`, no Hub download), implements `Embedder`, passes it to `open`. Missing a required file → `invalid`. Extra files (README) are allowed. Hidden names are ignored. Not with the HTTP embedder flags. |
 
 HTTP embedder body is `{ "model": <embedder-model>, "input": "<text>" }` for one text, or `"input": ["…", …]` for a batch of at most 2048. Rerank body is `{ "model": <reranker-model>, "query": "…", "documents": ["…", …] }` for one Record or a batch of at most 1000.
@@ -56,14 +57,16 @@ on stderr).
 | `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is Protobuf JSON `Schema` (`api.collection.v1.Schema`). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |
 | `check` | |
-| `reindex` | Uses the CLI default Projector (`body` = whole Record). |
+| `reindex` | Builds a new Index generation from the commits at `HEAD` (`07` LIB-16). Uses the CLI default Projector (`body` = whole Record). With an embedder flag, fills the vectors with that model; without one, keeps the existing vectors. |
+| `index-status` | Prints where the Index stands (`07` LIB-27): `head`, each leg's commit, `lexicalPending` / `vectorPending`, `modelMismatch`, the roles this process holds, `lastError`. Protobuf JSON style: lowerCamelCase, unset fields left out, 64-bit counts as strings. Does not wait. |
+| `wait-indexed` | [`--timeout-secs N`] (default 60). Waits for the Index to reach `HEAD`, then prints `index-status`. Past the timeout: `io_timed_out`. |
 | `find` | [`--collections NAME,…`] `--filter JSON --offset N --count N` [`--include-raw`]. Projector column in the Filter is `body` only (plus identity). Vault leaves must set `collection` (`13` §3). |
 | `search` | [`--collections NAME,…`] `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`] |
 | `push` | |
 | `pull` | |
 | `sync` | |
 | `push-isolated` | Push `{vault}/.isolated/` to its own Remote. Missing nested work tree or no Remote → `invalid`. |
-| `pull-isolated` | Pull `{vault}/.isolated/` from its own Remote, then reload collection declarations and rebuild the Index. `locked` while `reindex` is in flight. |
+| `pull-isolated` | Pull `{vault}/.isolated/` from its own Remote, then reload collection declarations; the background indexer applies what moved. |
 | `sync-isolated` | Isolated `pull` then `push`. |
 
 `find` / `search` are Vault methods (`07` LIB-10, LIB-11). `--collections`
@@ -197,10 +200,11 @@ Then it walks `python/cli/testdata/animals/`:
 `create-collection` from each `.collection.yaml` when `info` does not list the
 name; `get` then `add --file` for each Record file. Existing ids are
 skipped. `open` / `info` / `create-collection` / `get` / `find` do not
-pass embedder flags. `cli_LLMs` `add` passes the HTTP embedder so
-`index/vector/` is written per Record; skipped ids then `reindex`.
-`cli_model2vec` `add` omits `--model2vec-embedder`; it does not
-`reindex` (run `reindex` to fill vectors).
+pass embedder flags. `cli_LLMs` `add` passes the HTTP embedder, so that process's background
+indexer, and each later one with the same flags, fills the vectors;
+skipped ids then `reindex`. `cli_model2vec` `add` omits
+`--model2vec-embedder`; the first later command that passes it fills the
+vectors in the background (or run `reindex`).
 `find`, `search`, and `reindex` require that Vault already
 exists (`import` first). `reindex` prints `ReindexResult` as YAML.
 `cli_LLMs` `reindex` uses the Qwen HTTP embedder; `cli_jina` uses Jina
@@ -220,7 +224,7 @@ sidecars (`bazel run //python/vllm:embedder` on `:8080`, `:reranker` on
 `Qwen/Qwen3-Reranker-0.6B`). `cli_jina` uses
 `//python/vllm:embedder_jina` / `:reranker_jina` on the same ports
 (CC BY-NC). Embedder flags go on every `scheda` call
-so `add` / `reindex` / `search` write or query `index/vector/`. Reranker
+so `add` / `reindex` / `search` fill or query `index/vector/`. Reranker
 flags are on `search` only for `cli_LLMs` (`--no-reranker` leaves RRF).
 `cli_model2vec` `search` passes `--model2vec-embedder` so the query is
 embedded (RRF; no local reranker). `--lexical-only` turns embedder and
