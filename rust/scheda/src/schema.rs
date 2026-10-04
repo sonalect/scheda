@@ -137,20 +137,86 @@ pub(crate) fn load(vault: &Path) -> Result<Decls, Error> {
             continue;
         };
         let decl = load_collection_file(&decl_path)?;
-        if decl.name != dir_name {
+        insert_decl(&mut collections, &dir_name, decl, &decl_path)?;
+    }
+    Ok(Decls { collections })
+}
+
+fn insert_decl(
+    collections: &mut BTreeMap<String, CollectionDecl>,
+    dir_name: &str,
+    decl: CollectionDecl,
+    decl_path: &Path,
+) -> Result<(), Error> {
+    if decl.name != dir_name {
+        bail!(Error::invalid(format!(
+            "schema {}: directory {dir_name} is not the collection name {}",
+            decl_path.display(),
+            decl.name
+        )));
+    }
+    if collections.contains_key(&decl.name) {
+        bail!(Error::invalid(format!(
+            "duplicate collection name {}",
+            decl.name
+        )));
+    }
+    collections.insert(decl.name.clone(), decl);
+    Ok(())
+}
+
+/// Collection declarations as committed in `commit` of the repository at
+/// `repo`, with the same rules as [`load`] on a work tree: a leftover
+/// `.schema.*` file, two declaration files in one directory, or a
+/// directory that is not the collection name is `invalid`.
+///
+/// Compiled for tests only until the background indexer uses it.
+#[cfg(test)]
+pub(crate) fn load_at(repo: &Path, commit: &str) -> Result<Decls, Error> {
+    let dirs: Vec<String> = crate::git::tree::root_dirs(repo, commit)?
+        .into_iter()
+        .filter(|name| is_collection_dir_name(name) && !name.contains('\n'))
+        .collect();
+    let names: Vec<&str> = COLLECTION_FILENAMES
+        .iter()
+        .chain(LEFTOVER_SCHEMA_FILENAMES.iter())
+        .copied()
+        .collect();
+    let specs: Vec<String> = dirs
+        .iter()
+        .flat_map(|dir| {
+            names
+                .iter()
+                .map(move |name| format!("{commit}:{dir}/{name}"))
+        })
+        .collect();
+    let blobs = crate::git::tree::read_blobs(repo, &specs)?;
+    let mut collections = BTreeMap::new();
+    for (dir, files) in dirs.iter().zip(blobs.chunks(names.len())) {
+        let (found, leftover) = files.split_at(COLLECTION_FILENAMES.len());
+        if let Some(i) = leftover.iter().position(Option::is_some) {
             bail!(Error::invalid(format!(
-                "schema {}: directory {dir_name} is not the collection name {}",
-                decl_path.display(),
-                decl.name
+                "leftover schema file {} in {dir}",
+                LEFTOVER_SCHEMA_FILENAMES[i]
             )));
         }
-        if collections.contains_key(&decl.name) {
+        let mut present = found
+            .iter()
+            .zip(COLLECTION_FILENAMES)
+            .filter_map(|(bytes, name)| bytes.as_deref().map(|bytes| (bytes, name)));
+        let Some((bytes, name)) = present.next() else {
+            continue;
+        };
+        if present.next().is_some() {
             bail!(Error::invalid(format!(
-                "duplicate collection name {}",
-                decl.name
+                "collection directory {dir} has more than one declaration file"
             )));
         }
-        collections.insert(decl.name.clone(), decl);
+        let path = Path::new(dir).join(name);
+        let text =
+            std::str::from_utf8(bytes).context(Code::NotUtf8, "[Decls::load_at] decode UTF-8")?;
+        let decl = load_collection_text(text, is_yaml(&path), &path)?;
+        insert_decl(&mut collections, dir, decl, &path)?;
     }
     Ok(Decls { collections })
 }

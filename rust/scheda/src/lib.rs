@@ -77,6 +77,8 @@
 mod ann;
 #[cfg(feature = "encrypt")]
 mod crypto;
+#[cfg(test)]
+mod diff;
 mod embed;
 mod error;
 mod git;

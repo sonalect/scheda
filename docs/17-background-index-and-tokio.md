@@ -214,14 +214,20 @@ well-known types in `api/` yet): unset → 1000, valid 10 to 3 600 000.
 
 ### B2. Diff
 
-- [ ] `(from, to)` → changed `(collection, id)` with add / modify /
+- [x] `(from, to)` → changed `(collection, id)` with add / modify /
       delete, renames as delete + add, for the main repository and
-      `.isolated/`.
-- [ ] Declaration or Schema change → whole collection (D9).
-- [ ] Missing `from` object → full rebuild of the leg (D9).
+      `.isolated/` (`diff.rs` `plain_commit_upserts_the_new_record`,
+      `delete_and_rename`, `journal_lines_are_diffed_one_by_one`,
+      `isolated_records_count_only_in_the_nested_repository`).
+- [x] Declaration or Schema change → whole collection (D9)
+      (`declaration_change_asks_for_the_whole_collection`).
+- [x] Missing `from` object → full rebuild of the leg (D9)
+      (`pruned_mark_asks_for_a_rebuild`).
 - *Check:* git fixtures for: plain commit, several commits at once,
   delete, rename, `reset --hard` back, amend, branch switch, `gc` with
-  the old mark pruned, a commit made by the `git` CLI outside Scheda.
+  the old mark pruned, a commit made by the `git` CLI outside Scheda
+  (`diff.rs` tests, one per case; the last is
+  `git_cli_commit_after_a_scheda_commit`).
 
 ### B3. Indexer thread
 

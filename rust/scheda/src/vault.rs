@@ -3089,10 +3089,10 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{Collection, OpenOptions, Vault};
-    use crate::{git, isolated, marks};
     use crate::{Code, Encryption, Error, Schema, VaultInfo};
     #[cfg(feature = "search")]
     use crate::{Embedder, SearchQuery};
+    use crate::{git, isolated, marks};
 
     static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
 

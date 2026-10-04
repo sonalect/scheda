@@ -25,6 +25,11 @@ API or on-disk format changes bump the minor.
   `isolated-` for the nested repository). `reindex` writes them when it
   publishes outside a transaction with no uncommitted Scheda write pending;
   the vector mark only when an embedder filled that leg.
+- Internal: the diff the background indexer will apply. Between two commits
+  it lists changed Records per collection (journals line by line, renames as
+  delete plus add), asks for a whole collection when its declaration file
+  changed, and for a full rebuild when the older commit was pruned. Reads
+  git objects only, never the work tree. Not wired to any public call yet.
 
 ### Changed
 

@@ -763,6 +763,24 @@ fn parse_segment(path: &Path) -> Result<Vec<ParsedLine>, Error> {
     Ok(parse_segment_bytes(&raw))
 }
 
+/// Whether `name` is a journal segment file name (`*.jsonl`, not hidden).
+#[cfg(test)]
+pub(crate) fn is_segment_name(name: &str) -> bool {
+    !name.starts_with('.') && name.ends_with(".jsonl")
+}
+
+/// Envelope `id` → payload of every complete, parseable line in segment
+/// bytes. Lines the walk would skip (no `: `, a torn tail, conflict
+/// markers, non-UTF-8) are skipped here too. A repeated `id` keeps the
+/// last line.
+#[cfg(test)]
+pub(crate) fn segment_lines(raw: &[u8]) -> BTreeMap<String, Vec<u8>> {
+    parse_segment_bytes(raw)
+        .into_iter()
+        .map(|parsed| (parsed.id, parsed.raw))
+        .collect()
+}
+
 fn parse_segment_bytes(raw: &[u8]) -> Vec<ParsedLine> {
     let Ok(text) = str::from_utf8(raw) else {
         return Vec::new();

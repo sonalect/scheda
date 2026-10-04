@@ -4,7 +4,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
-use crate::error::{Code, ContextAs, ContextIo, bail, git_code, redact_remote_text};
+use crate::error::{Code, ContextAs, ContextIo, bail, git_code, io_code, redact_remote_text};
 use crate::{Error, OpenOptions, history};
 
 /// Git author and committer for every commit on a Vault handle.
@@ -103,7 +103,7 @@ impl GitCmd {
         self
     }
 
-    fn spawn(self, frame: &str) -> Result<GitOutput, Error> {
+    fn command(&self) -> Command {
         let mut cmd = Command::new("git");
         cmd.env("LC_ALL", "C")
             .env("LANG", "C")
@@ -132,17 +132,13 @@ impl GitCmd {
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }
-        match cmd.output() {
-            Ok(out) => Ok(GitOutput {
-                stdout: out.stdout,
-                stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
-                status: out.status,
-            }),
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Err(Error::io_not_found(
-                "git executable was not found on PATH; install Git and retry",
-            )
-            .context(frame)),
-            Err(err) => Err(err).context(frame),
+        cmd
+    }
+
+    fn spawn(self, frame: &str) -> Result<GitOutput, Error> {
+        match self.command().output() {
+            Ok(out) => Ok(GitOutput::from(out)),
+            Err(err) => Err(spawn_error(err, frame)),
         }
     }
 
@@ -153,6 +149,25 @@ impl GitCmd {
         } else {
             Err(git_fail(&out, frame))
         }
+    }
+}
+
+impl From<std::process::Output> for GitOutput {
+    fn from(out: std::process::Output) -> Self {
+        Self {
+            stdout: out.stdout,
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+            status: out.status,
+        }
+    }
+}
+
+fn spawn_error(err: io::Error, frame: &str) -> Error {
+    if err.kind() == io::ErrorKind::NotFound {
+        Error::io_not_found("git executable was not found on PATH; install Git and retry")
+            .context(frame)
+    } else {
+        Error::new(io_code(&err), err.to_string()).context(frame)
     }
 }
 
@@ -831,6 +846,232 @@ fn require_vault_rel(path: &str) -> Result<(), Error> {
         }
     }
     Ok(())
+}
+
+/// Reading trees and blobs at a commit, for indexing from `HEAD` diffs.
+///
+/// Compiled for tests only until the background indexer uses it.
+#[cfg(test)]
+pub(crate) mod tree {
+    use std::io;
+    use std::path::Path;
+    use std::process::Stdio;
+
+    use super::{GitCmd, GitOutput, git, git_fail, spawn_error};
+    use crate::Error;
+    use crate::error::{Code, ContextAs, ContextIo, bail};
+
+    impl GitCmd {
+        /// Like [`spawn`](GitCmd::spawn), with `input` on stdin. A second thread
+        /// writes stdin while this one drains stdout, so neither pipe can fill
+        /// and stall the other. The child exits when stdin closes.
+        fn spawn_with_input(self, input: &[u8], frame: &str) -> Result<GitOutput, Error> {
+            let mut cmd = self.command();
+            cmd.stdin(Stdio::piped());
+            let mut child = cmd.spawn().map_err(|err| spawn_error(err, frame))?;
+            let stdin = child.stdin.take();
+            let out = std::thread::scope(|scope| {
+                if let Some(mut stdin) = stdin {
+                    scope.spawn(move || {
+                        // A child that exits early closes the pipe; its exit
+                        // status carries the failure, not this write.
+                        let _ = io::Write::write_all(&mut stdin, input);
+                    });
+                }
+                child.wait_with_output()
+            });
+            match out {
+                Ok(out) => Ok(GitOutput::from(out)),
+                Err(err) => Err(err).context(frame),
+            }
+        }
+    }
+
+    /// One path that differs between two trees.
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub(crate) struct TreeChange {
+        /// Repository-relative POSIX path.
+        pub(crate) path: String,
+        /// Blob id on the old side. `None` when the path was absent there or
+        /// was not a regular file (a symlink, a submodule).
+        pub(crate) old: Option<String>,
+        /// Blob id on the new side, with the same `None` rule.
+        pub(crate) new: Option<String>,
+    }
+
+    /// Id of the empty tree in this repository's object format.
+    ///
+    /// Diffing from it lists every file of the other side. Git knows this
+    /// tree without it being stored.
+    pub(crate) fn empty_tree_oid(dir: &Path) -> Result<String, Error> {
+        let out = git()
+            .current_dir(dir)
+            .arg("hash-object")
+            .arg("-t")
+            .arg("tree")
+            .arg("--stdin")
+            .run("[Git::empty_tree_oid] hash empty tree")?;
+        Ok(out
+            .stdout_trim("[Git::empty_tree_oid] read empty tree id")?
+            .to_owned())
+    }
+
+    /// Whether `oid` names a commit this repository still holds.
+    ///
+    /// `false` after `gc` pruned it, or for an id that was never a commit
+    /// here. Any other git failure is an error.
+    pub(crate) fn has_commit(dir: &Path, oid: &str) -> Result<bool, Error> {
+        let out = git()
+            .current_dir(dir)
+            .arg("cat-file")
+            .arg("-e")
+            .arg(format!("{oid}^{{commit}}"))
+            .spawn("[Git::has_commit] look up commit")?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1 | 128) if !out.stderr.contains("not a git repository") => Ok(false),
+            _ => Err(git_fail(&out, "[Git::has_commit] look up commit")),
+        }
+    }
+
+    /// Paths that differ between tree-ish `from` and `to`, recursively.
+    ///
+    /// Renames are not detected: a moved file is a deletion of the old path
+    /// plus an addition of the new one. A path whose type changes between a
+    /// regular file and anything else shows `None` on the non-file side.
+    pub(crate) fn diff_trees(dir: &Path, from: &str, to: &str) -> Result<Vec<TreeChange>, Error> {
+        const FRAME: &str = "[Git::diff_trees] diff trees";
+        let out = git()
+            .current_dir(dir)
+            .arg("diff-tree")
+            .arg("-r")
+            .arg("-z")
+            .arg("--raw")
+            .arg("--no-renames")
+            .arg("--no-abbrev")
+            .arg(from)
+            .arg(to)
+            .run(FRAME)?;
+        let mut fields = out.stdout.split(|&b| b == 0);
+        let mut changes = Vec::new();
+        while let Some(meta) = fields.next() {
+            if meta.is_empty() {
+                continue;
+            }
+            let Some(path) = fields.next() else {
+                bail!(
+                    Error::git_generic("git diff-tree output ends without a path").context(FRAME)
+                );
+            };
+            let meta = std::str::from_utf8(meta).context(Code::NotUtf8, FRAME)?;
+            let Ok(path) = std::str::from_utf8(path) else {
+                // Not a name the library writes or lists; it cannot be a Record.
+                continue;
+            };
+            let mut parts = meta.trim_start_matches(':').split(' ');
+            let (Some(old_mode), Some(new_mode), Some(old_oid), Some(new_oid)) =
+                (parts.next(), parts.next(), parts.next(), parts.next())
+            else {
+                bail!(
+                    Error::git_generic(format!("unexpected git diff-tree line: {meta}"))
+                        .context(FRAME)
+                );
+            };
+            changes.push(TreeChange {
+                path: path.to_owned(),
+                old: regular_blob(old_mode, old_oid),
+                new: regular_blob(new_mode, new_oid),
+            });
+        }
+        Ok(changes)
+    }
+
+    fn regular_blob(mode: &str, oid: &str) -> Option<String> {
+        matches!(mode, "100644" | "100755").then(|| oid.to_owned())
+    }
+
+    /// Bytes of each object named by `specs` (a blob id, or `<commit>:<path>`).
+    ///
+    /// `None` for a spec that names nothing, or names something other than a
+    /// blob. One `git cat-file --batch` per call; the process ends with the
+    /// call. A spec must not contain a newline.
+    pub(crate) fn read_blobs(dir: &Path, specs: &[String]) -> Result<Vec<Option<Vec<u8>>>, Error> {
+        const FRAME: &str = "[Git::read_blobs] read objects";
+        if specs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut input = Vec::new();
+        for spec in specs {
+            if spec.contains('\n') {
+                bail!(Error::invalid("object spec contains a newline").context(FRAME));
+            }
+            input.extend_from_slice(spec.as_bytes());
+            input.push(b'\n');
+        }
+        let out = git()
+            .current_dir(dir)
+            .arg("cat-file")
+            .arg("--batch")
+            .spawn_with_input(&input, FRAME)?;
+        if !out.status.success() {
+            return Err(git_fail(&out, FRAME));
+        }
+        let mut rest = out.stdout.as_slice();
+        let mut blobs = Vec::with_capacity(specs.len());
+        for _ in specs {
+            let Some(end) = rest.iter().position(|&b| b == b'\n') else {
+                bail!(Error::git_generic("git cat-file output is truncated").context(FRAME));
+            };
+            let header = std::str::from_utf8(&rest[..end]).context(Code::NotUtf8, FRAME)?;
+            rest = &rest[end + 1..];
+            let mut words = header.rsplitn(3, ' ');
+            let (Some(last), Some(kind)) = (words.next(), words.next()) else {
+                bail!(
+                    Error::git_generic(format!("unexpected git cat-file header: {header}"))
+                        .context(FRAME)
+                );
+            };
+            let Ok(size) = last.parse::<usize>() else {
+                // `<spec> missing` or `<spec> ambiguous`: no body follows.
+                blobs.push(None);
+                continue;
+            };
+            if rest.len() < size + 1 {
+                bail!(Error::git_generic("git cat-file output is truncated").context(FRAME));
+            }
+            let body = &rest[..size];
+            rest = &rest[size + 1..];
+            blobs.push((kind == "blob").then(|| body.to_vec()));
+        }
+        Ok(blobs)
+    }
+
+    /// Names of the directories at the root of `commit`'s tree.
+    pub(crate) fn root_dirs(dir: &Path, commit: &str) -> Result<Vec<String>, Error> {
+        const FRAME: &str = "[Git::root_dirs] list tree";
+        let out = git()
+            .current_dir(dir)
+            .arg("ls-tree")
+            .arg("-z")
+            .arg(commit)
+            .run(FRAME)?;
+        let mut names = Vec::new();
+        for entry in out.stdout.split(|&b| b == 0) {
+            let Some(tab) = entry.iter().position(|&b| b == b'\t') else {
+                continue;
+            };
+            let Ok(meta) = std::str::from_utf8(&entry[..tab]) else {
+                continue;
+            };
+            let Ok(name) = std::str::from_utf8(&entry[tab + 1..]) else {
+                continue;
+            };
+            if meta.split(' ').nth(1) == Some("tree") {
+                names.push(name.to_owned());
+            }
+        }
+        Ok(names)
+    }
 }
 
 #[cfg(test)]

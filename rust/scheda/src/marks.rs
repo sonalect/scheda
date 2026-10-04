@@ -91,7 +91,10 @@ pub(crate) fn write(generation: &Path, leg: Leg, repo: Repo, oid: &str) -> Resul
         return Err(Error::invalid(format!("not a commit id: {oid:?}"))
             .context("[Marks::write] check commit id"));
     }
-    store::atomic_write(&mark_path(generation, leg, repo), format!("{oid}\n").as_bytes())?;
+    store::atomic_write(
+        &mark_path(generation, leg, repo),
+        format!("{oid}\n").as_bytes(),
+    )?;
     index::restrict_index_tree(generation)
 }
 
@@ -114,10 +117,8 @@ mod tests {
         /// `<root>/.scheda/index/1`, the shape `restrict_index_tree` expects.
         fn new() -> Self {
             let n = NEXT.fetch_add(1, Ordering::Relaxed);
-            let root = std::env::temp_dir().join(format!(
-                "scheda-marks-{}-{n}",
-                std::process::id()
-            ));
+            let root =
+                std::env::temp_dir().join(format!("scheda-marks-{}-{n}", std::process::id()));
             let _ = fs::remove_dir_all(&root);
             let generation = root.join(".scheda").join("index").join("1");
             fs::create_dir_all(&generation).unwrap();
@@ -151,7 +152,9 @@ mod tests {
         write(&generation, Leg::Lexical, Repo::Main, A).unwrap();
         write(&generation, Leg::Vector, Repo::Isolated, B).unwrap();
         assert_eq!(
-            read(&generation, Leg::Lexical, Repo::Main).unwrap().as_deref(),
+            read(&generation, Leg::Lexical, Repo::Main)
+                .unwrap()
+                .as_deref(),
             Some(A)
         );
         assert_eq!(
@@ -186,14 +189,22 @@ mod tests {
         write(&generation, Leg::Lexical, Repo::Main, A).unwrap();
         // A temp file written but never renamed: what a crash between the
         // `fsync` and the rename leaves behind.
-        fs::write(generation.join("marks").join(".scheda.99.tmp"), format!("{B}\n")).unwrap();
+        fs::write(
+            generation.join("marks").join(".scheda.99.tmp"),
+            format!("{B}\n"),
+        )
+        .unwrap();
         assert_eq!(
-            read(&generation, Leg::Lexical, Repo::Main).unwrap().as_deref(),
+            read(&generation, Leg::Lexical, Repo::Main)
+                .unwrap()
+                .as_deref(),
             Some(A)
         );
         write(&generation, Leg::Lexical, Repo::Main, B).unwrap();
         assert_eq!(
-            read(&generation, Leg::Lexical, Repo::Main).unwrap().as_deref(),
+            read(&generation, Leg::Lexical, Repo::Main)
+                .unwrap()
+                .as_deref(),
             Some(B)
         );
     }
