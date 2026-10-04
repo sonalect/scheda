@@ -52,4 +52,14 @@ message OpenOptions {
       pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
     }
   }];
+  // How often the background indexer reads `HEAD`, in milliseconds, to
+  // notice commits made outside this handle (a `git` command, another
+  // process). A commit through this handle wakes the indexer at once.
+  // Unset: 1000.
+  uint32 index_poll_ms = 6 [(buf.validate.field) = {
+    uint32: {
+      gte: 10
+      lte: 3600000
+    }
+  }];
 }

@@ -69,13 +69,18 @@ pub struct Vault {
     #[cfg(feature = "find")]
     search: Arc<SearchEngine>,
     /// Swapped after `open` by [`Self::set_embedder`]. A `collection`
-    /// copies the value it sees at that call.
-    embedder: Mutex<Option<Arc<dyn Embedder>>>,
+    /// copies the value it sees at that call; the background indexer reads
+    /// the current one every round.
+    embedder: Arc<Mutex<Option<Arc<dyn Embedder>>>>,
     projector: Option<Arc<dyn Projector>>,
     identity: Arc<git::CommitIdentity>,
     encryption: Option<Encryption>,
     #[cfg(all(test, feature = "find"))]
     walk_hook: Mutex<Option<ReindexWalkHook>>,
+    /// Background indexer; stopped and joined when the last of this
+    /// handle and its collections drops.
+    #[cfg(feature = "find")]
+    indexer: Option<Arc<crate::indexer::Indexer>>,
 }
 
 /// A named set of records with one write mode (`document`, `journal`, or `singleton`).
@@ -97,6 +102,8 @@ pub struct Collection {
     projector: Option<Arc<dyn Projector>>,
     identity: Arc<git::CommitIdentity>,
     encryption: Option<Encryption>,
+    #[cfg(feature = "find")]
+    indexer: Option<Arc<crate::indexer::Indexer>>,
 }
 
 impl Vault {
@@ -240,6 +247,12 @@ impl Vault {
             );
         }
         let auto_sync = options.auto_sync.unwrap_or(false);
+        #[cfg(feature = "find")]
+        let poll = options
+            .index_poll_ms
+            .map_or(crate::indexer::DEFAULT_POLL, |ms| {
+                std::time::Duration::from_millis(u64::from(ms))
+            });
         let path = fs::canonicalize(path).context("[Vault::open] canonicalize vault")?;
         let gitignore_pending = gitignore_needs_write(&path)?;
         let index_root = path.join(".scheda").join("index");
@@ -281,17 +294,149 @@ impl Vault {
             journal_ids,
             #[cfg(feature = "find")]
             search,
-            embedder: Mutex::new(embedder),
+            embedder: Arc::new(Mutex::new(embedder)),
             projector,
             identity: Arc::new(identity),
             encryption,
             #[cfg(all(test, feature = "find"))]
             walk_hook: Mutex::new(None),
+            #[cfg(feature = "find")]
+            indexer: None,
         };
         if gitignore_pending {
             vault.write_gitignore_under_lock()?;
         }
+        #[cfg(feature = "find")]
+        let vault = {
+            let mut vault = vault;
+            if crate::indexer::start_on_open() {
+                vault.indexer = Some(Arc::new(crate::indexer::Indexer::start(
+                    crate::indexer::Context {
+                        vault: vault.path.clone(),
+                        index: Arc::clone(&vault.index),
+                        search: Arc::clone(&vault.search),
+                        journal_ids: Arc::clone(&vault.journal_ids),
+                        embedder: Arc::clone(&vault.embedder),
+                        projector: vault.projector.clone(),
+                        poll,
+                    },
+                )?));
+            }
+            vault
+        };
         Ok(vault)
+    }
+
+    /// Where the Index stands against git `HEAD`.
+    ///
+    /// `head` and `isolated_head` are read now; the marks are what the
+    /// live generation on disk records, whichever process wrote them. The
+    /// roles and the last error are this handle's own indexer.
+    #[cfg(feature = "find")]
+    pub fn index_status(&self) -> Result<crate::IndexStatus, Error> {
+        let generation = match index::current_dir(&self.index.root)? {
+            Some(dir) => dir,
+            None => self.generation_dir()?,
+        };
+        let head = git::peel_head_oid(&self.path)?;
+        let nested = isolated::root(&self.path);
+        let isolated_head = if git::is_work_tree(&nested) {
+            git::peel_head_oid(&nested)?
+        } else {
+            None
+        };
+        let state = self
+            .indexer
+            .as_ref()
+            .map(|indexer| indexer.state())
+            .unwrap_or_default();
+        let mark = |leg, repo| marks::read(&generation, leg, repo);
+        Ok(crate::IndexStatus {
+            head,
+            isolated_head,
+            lexical: mark(marks::Leg::Lexical, marks::Repo::Main)?,
+            vector: mark(marks::Leg::Vector, marks::Repo::Main)?,
+            isolated_lexical: mark(marks::Leg::Lexical, marks::Repo::Isolated)?,
+            isolated_vector: mark(marks::Leg::Vector, marks::Repo::Isolated)?,
+            lexical_role: state.lexical_role,
+            vector_role: state.vector_role,
+            last_error: state.last_error,
+        })
+    }
+
+    /// Wait until the Index has caught up with the `HEAD` seen when this
+    /// call starts.
+    ///
+    /// Each leg that has an owner must reach that commit (or a later one):
+    /// the lexical leg when this handle runs an indexer or another handle
+    /// holds `{vault}/.scheda/index.lock`; the vector leg when this handle's
+    /// embedder may write it or another handle holds
+    /// `{vault}/.scheda/vector.lock`. A leg nobody can write does not make
+    /// the call wait; the returned status shows it behind. Past `timeout`
+    /// the call fails with `io_timed_out`, and the message lists the heads
+    /// and marks it saw last.
+    #[cfg(feature = "find")]
+    pub fn wait_indexed(&self, timeout: std::time::Duration) -> Result<crate::IndexStatus, Error> {
+        let deadline = Instant::now().checked_add(timeout);
+        let target = self.index_status()?;
+        let lexical = self.indexer.is_some() || crate::indexer::role_taken(&self.path, false)?;
+        let own_vector = match self.embedder_arc()? {
+            Some(embedder) if self.indexer.is_some() => {
+                crate::indexer::vector_allowed(&self.generation_dir()?, Some(embedder.as_ref()))?
+            }
+            _ => false,
+        };
+        let vector = own_vector || crate::indexer::role_taken(&self.path, true)?;
+        let nested = isolated::root(&self.path);
+        loop {
+            let status = self.index_status()?;
+            let main = |mark: &Option<String>, active| {
+                reached(&self.path, target.head.as_deref(), mark.as_deref(), active)
+            };
+            let nested_reached = |mark: &Option<String>, active| {
+                reached(
+                    &nested,
+                    target.isolated_head.as_deref(),
+                    mark.as_deref(),
+                    active,
+                )
+            };
+            if main(&status.lexical, lexical)?
+                && main(&status.vector, vector)?
+                && nested_reached(&status.isolated_lexical, lexical)?
+                && nested_reached(&status.isolated_vector, vector)?
+            {
+                return Ok(status);
+            }
+            let now = Instant::now();
+            let left = match deadline {
+                Some(deadline) if now >= deadline => {
+                    return Err(Error::io_timed_out(format!(
+                        "Index did not reach HEAD within {timeout:?}: head {:?}, lexical {:?}, \
+                         vector {:?}, isolated head {:?}, isolated lexical {:?}, \
+                         isolated vector {:?}",
+                        status.head,
+                        status.lexical,
+                        status.vector,
+                        status.isolated_head,
+                        status.isolated_lexical,
+                        status.isolated_vector,
+                    ))
+                    .context("[Vault::wait_indexed] wait"));
+                }
+                Some(deadline) => deadline - now,
+                None => WAIT_SLICE,
+            };
+            let slice = left.min(WAIT_SLICE);
+            match &self.indexer {
+                Some(indexer) => {
+                    let rounds = indexer.state().rounds;
+                    indexer.wake();
+                    indexer.wait_round(rounds, slice);
+                }
+                None => thread::sleep(slice),
+            }
+        }
     }
 
     /// Absolute path of the Vault working tree.
@@ -393,8 +538,20 @@ impl Vault {
         &self,
         embedder: Option<Arc<dyn Embedder>>,
     ) -> Result<Option<Arc<dyn Embedder>>, Error> {
-        let mut slot = crate::error::mutex(&self.embedder, "[Vault] lock embedder")?;
-        Ok(std::mem::replace(&mut *slot, embedder))
+        let previous = {
+            let mut slot = crate::error::mutex(&self.embedder, "[Vault] lock embedder")?;
+            std::mem::replace(&mut *slot, embedder)
+        };
+        self.wake_indexer();
+        Ok(previous)
+    }
+
+    /// Ask the background indexer for a round now.
+    fn wake_indexer(&self) {
+        #[cfg(feature = "find")]
+        if let Some(indexer) = &self.indexer {
+            indexer.wake();
+        }
     }
 
     fn embedder_arc(&self) -> Result<Option<Arc<dyn Embedder>>, Error> {
@@ -437,6 +594,8 @@ impl Vault {
             journal_ids: Arc::clone(&self.journal_ids),
             #[cfg(feature = "find")]
             search: Arc::clone(&self.search),
+            #[cfg(feature = "find")]
+            indexer: self.indexer.clone(),
             embedder: self.embedder_arc()?,
             projector: self.projector.clone(),
             identity: Arc::clone(&self.identity),
@@ -616,6 +775,7 @@ impl Vault {
         persist_written(&self.path, &set)?;
         #[cfg(feature = "find")]
         self.search.flush()?;
+        self.wake_indexer();
         Ok(())
     }
 
@@ -640,6 +800,7 @@ impl Vault {
     }
 
     fn reload_after_restore(&self) -> Result<(), Error> {
+        self.wake_indexer();
         let loaded = schema::load(&self.path)?;
         let dir = self.generation_dir()?;
         #[cfg(feature = "find")]
@@ -1510,6 +1671,8 @@ impl Collection {
             journal_ids: Arc::new(Mutex::new(JournalIdMaps::default())),
             #[cfg(feature = "find")]
             search: Arc::new(SearchEngine::empty()),
+            #[cfg(feature = "find")]
+            indexer: None,
             embedder: None,
             projector: None,
             identity: Arc::new(git::CommitIdentity::fallback()),
@@ -1711,6 +1874,10 @@ impl Collection {
                 persist_written(&self.vault, &set)?;
                 #[cfg(feature = "find")]
                 self.search.flush()?;
+                #[cfg(feature = "find")]
+                if let Some(indexer) = &self.indexer {
+                    indexer.wake();
+                }
                 if self.auto_sync && !self.remotes.is_empty() {
                     git::push(&self.vault)?;
                 }
@@ -2805,6 +2972,29 @@ fn commit_gitignore_if_needed(vault: &Path, identity: &git::CommitIdentity) -> R
 
 /// Uncommitted write paths after a crash. Next to `write.lock`, not under
 /// `index/`, so `reindex` does not delete the journal.
+/// Longest single sleep inside `wait_indexed`.
+#[cfg(feature = "find")]
+const WAIT_SLICE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// Whether a leg's `mark` has reached `target` in the repository at `dir`.
+/// An inactive leg, or no commit to reach, counts as reached.
+#[cfg(feature = "find")]
+fn reached(
+    dir: &Path,
+    target: Option<&str>,
+    mark: Option<&str>,
+    active: bool,
+) -> Result<bool, Error> {
+    let (Some(target), true) = (target, active) else {
+        return Ok(true);
+    };
+    match mark {
+        None => Ok(false),
+        Some(mark) if mark == target => Ok(true),
+        Some(mark) => git::tree::is_ancestor(dir, target, mark),
+    }
+}
+
 fn tx_log(vault: &Path) -> PathBuf {
     vault.join(".scheda").join("tx.log")
 }
@@ -4756,5 +4946,455 @@ mod tests {
             queued.iter().any(|(c, id)| c == "j" && id == "lost"),
             "deleted journal line must be queued, got {queued:?}"
         );
+    }
+
+    /// The background indexer, started by `open` on threads that ask for it.
+    #[cfg(feature = "find")]
+    mod background {
+        use std::process::{Child, Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        use super::*;
+        use crate::indexer::set_start_on_open;
+
+        const WAIT: Duration = Duration::from_secs(20);
+        const CHILD_ENV: &str = "SCHEDA_TEST_INDEXER_CHILD";
+
+        fn poll_fast() -> OpenOptions {
+            OpenOptions::new().with_index_poll_ms(20)
+        }
+
+        fn poll_never() -> OpenOptions {
+            OpenOptions::new().with_index_poll_ms(3_600_000)
+        }
+
+        fn open_indexed(path: &Path, options: OpenOptions) -> Vault {
+            let _on = set_start_on_open(true);
+            Vault::open(path, options, None).unwrap()
+        }
+
+        /// A handle that can take both roles: with `search`, a projector and
+        /// an embedder of model `m1`; without it, the lexical role only.
+        fn open_both_roles(path: &Path, options: OpenOptions) -> Vault {
+            let _on = set_start_on_open(true);
+            #[cfg(feature = "search")]
+            {
+                let embedder: Arc<dyn Embedder> = CountingEmbedder::new("m1");
+                Vault::open_with(path, options, Some(embedder), Some(tag_projector())).unwrap()
+            }
+            #[cfg(not(feature = "search"))]
+            Vault::open(path, options, None).unwrap()
+        }
+
+        fn head_of(dir: &Path) -> String {
+            git::peel_head_oid(dir).unwrap().unwrap()
+        }
+
+        /// Commit `body` as `rel` with the `git` CLI, outside Scheda.
+        fn git_cli_commit(repo: &Path, rel: &str, body: &str) {
+            let path = repo.join(rel);
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(&path, body).unwrap();
+            for args in [
+                vec!["add", "-A"],
+                vec![
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "hand",
+                ],
+            ] {
+                let out = Command::new("git")
+                    .arg("-C")
+                    .arg(repo)
+                    .args(&args)
+                    .output()
+                    .unwrap();
+                assert!(
+                    out.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&out.stderr)
+                );
+            }
+        }
+
+        fn sorted_ids(vault: &Vault, name: &str) -> Vec<String> {
+            let mut ids = find_ids(vault, name);
+            ids.sort();
+            ids
+        }
+
+        fn task_path(vault: &Vault) -> String {
+            let indexer = vault.indexer.as_ref().expect("indexer started");
+            let deadline = Instant::now() + WAIT;
+            loop {
+                if let Some(path) = indexer.task_path() {
+                    return path;
+                }
+                assert!(Instant::now() < deadline, "indexer thread never started");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        /// A joined thread's `/proc` entry may linger a moment after `join`.
+        fn assert_task_gone(task: &str) {
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while Path::new(task).exists() {
+                assert!(
+                    Instant::now() < deadline,
+                    "thread {task} outlived the last handle"
+                );
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        #[test]
+        fn commit_moves_the_lexical_mark_and_a_replay_is_harmless() {
+            let scratch = Scratch::new();
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            let collection = vault.collection("c").unwrap();
+            collection.add("alpha", empty_add(), None).unwrap();
+            let before = head_of(vault.path());
+            vault.wait_indexed(WAIT).unwrap();
+            collection.add("beta", empty_add(), None).unwrap();
+            let head = head_of(vault.path());
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert!(status.lexical_role);
+            assert_eq!(status.lexical.as_deref(), Some(head.as_str()));
+            // What a crash before the mark's rename leaves: the old mark.
+            marks::write(
+                &live_dir(&vault),
+                marks::Leg::Lexical,
+                marks::Repo::Main,
+                &before,
+            )
+            .unwrap();
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert_eq!(status.lexical.as_deref(), Some(head.as_str()));
+            let page = collection.find(&crate::FindQuery::all(), 0, 10).unwrap();
+            assert_eq!(page.total, Some(2));
+            assert_eq!(sorted_ids(&vault, "c"), ["alpha", "beta"]);
+        }
+
+        #[test]
+        fn open_catches_up_with_a_commit_made_by_the_git_cli() {
+            let scratch = Scratch::new();
+            drop(seeded(&scratch));
+            git_cli_commit(&scratch.vault(), "c/hand", "");
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert_eq!(status.lexical, Some(head_of(vault.path())));
+            assert_eq!(sorted_ids(&vault, "c"), ["alpha", "hand"]);
+        }
+
+        #[test]
+        fn poll_picks_up_a_commit_made_outside_the_handle() {
+            let scratch = Scratch::new();
+            let vault = open_indexed(&scratch.vault(), poll_fast());
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            vault.wait_indexed(WAIT).unwrap();
+            git_cli_commit(&scratch.vault(), "c/hand", "x");
+            let head = head_of(vault.path());
+            let deadline = Instant::now() + WAIT;
+            // `index_status` does not wake the indexer: only the poll can.
+            while vault.index_status().unwrap().lexical.as_deref() != Some(head.as_str()) {
+                assert!(Instant::now() < deadline, "poll never applied {head}");
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            assert_eq!(find_ids(&vault, "c"), ["hand"]);
+        }
+
+        #[test]
+        fn nested_repository_commit_is_indexed() {
+            let scratch = Scratch::new();
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            let schema = Schema {
+                isolated: Some(true),
+                ..document_schema()
+            };
+            vault.create_collection("secret", schema, None).unwrap();
+            vault
+                .collection("secret")
+                .unwrap()
+                .add("alpha", empty_add(), None)
+                .unwrap();
+            git_cli_commit(&isolated::root(vault.path()), "secret/hand", "h");
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert!(status.isolated_head.is_some());
+            assert_eq!(status.isolated_lexical, status.isolated_head);
+            assert_eq!(sorted_ids(&vault, "secret"), ["alpha", "hand"]);
+        }
+
+        #[test]
+        fn format_4_generation_is_rebuilt_in_the_background() {
+            let scratch = Scratch::new();
+            let plain = seeded(&scratch);
+            let old = live_dir(&plain);
+            fs::write(old.join("format"), "4\n").unwrap();
+            drop(plain);
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            vault.wait_indexed(WAIT).unwrap();
+            let new = live_dir(&vault);
+            assert_ne!(new, old);
+            assert_eq!(fs::read_to_string(new.join("format")).unwrap().trim(), "5");
+            assert_eq!(find_ids(&vault, "c"), ["alpha"]);
+        }
+
+        #[test]
+        fn dropping_the_last_handle_joins_the_thread() {
+            let scratch = Scratch::new();
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            let collection = vault.collection("c").unwrap();
+            let task = task_path(&vault);
+            assert!(Path::new(&task).exists());
+            drop(vault);
+            assert!(
+                Path::new(&task).exists(),
+                "a collection keeps the indexer alive"
+            );
+            drop(collection);
+            assert_task_gone(&task);
+        }
+
+        #[test]
+        fn two_handles_one_lexical_role_and_hand_over() {
+            let scratch = Scratch::new();
+            let first = open_indexed(&scratch.vault(), poll_fast());
+            first
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            first.wait_indexed(WAIT).unwrap();
+            let second = open_indexed(&scratch.vault(), poll_fast());
+            second.wait_indexed(WAIT).unwrap();
+            assert!(first.index_status().unwrap().lexical_role);
+            assert!(!second.index_status().unwrap().lexical_role);
+            drop(first);
+            git_cli_commit(&scratch.vault(), "c/after", "");
+            let status = second.wait_indexed(WAIT).unwrap();
+            assert!(status.lexical_role);
+            assert_eq!(status.lexical, Some(head_of(second.path())));
+            assert_eq!(find_ids(&second, "c"), ["after"]);
+        }
+
+        /// Child of `indexer_role_passes_to_another_process`: takes the
+        /// lexical role, reports ready, and holds it until killed (at most
+        /// one minute). Never polls, so it ignores the parent's commits.
+        #[test]
+        #[ignore = "run as the child process of indexer_role_passes_to_another_process"]
+        fn indexer_child_process() {
+            let Some(root) = std::env::var_os(CHILD_ENV).map(PathBuf::from) else {
+                return;
+            };
+            crate::git::isolate_test_git_env();
+            let vault = open_both_roles(&root.join("vault"), poll_never());
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert!(status.lexical_role);
+            assert_eq!(status.vector_role, cfg!(feature = "search"));
+            fs::write(root.join("ready"), b"").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        struct KillOnDrop(Child);
+
+        impl Drop for KillOnDrop {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+
+        #[test]
+        fn indexer_role_passes_to_another_process() {
+            let scratch = Scratch::new();
+            Vault::open(scratch.vault(), scratch.options(), None)
+                .unwrap()
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            let log = fs::File::create(scratch.root.join("child.log")).unwrap();
+            let mut child = KillOnDrop(
+                Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "vault::tests::background::indexer_child_process",
+                        "--ignored",
+                        "--test-threads=1",
+                    ])
+                    .env(CHILD_ENV, &scratch.root)
+                    .stdout(Stdio::null())
+                    .stderr(log)
+                    .spawn()
+                    .unwrap(),
+            );
+            let deadline = Instant::now() + WAIT;
+            while !scratch.root.join("ready").exists() {
+                let exited = child.0.try_wait().unwrap();
+                let log = fs::read_to_string(scratch.root.join("child.log")).unwrap_or_default();
+                assert!(exited.is_none(), "child exited early: {log}");
+                assert!(
+                    Instant::now() < deadline,
+                    "child never took the role: {log}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            let vault = open_both_roles(&scratch.vault(), poll_fast());
+            vault
+                .collection("c")
+                .unwrap()
+                .add("alpha", br#"{"tag":"alpha"}"#, None)
+                .unwrap();
+            // The child holds both roles and never polls: nothing moves.
+            let err = vault.wait_indexed(Duration::from_millis(300)).unwrap_err();
+            assert_eq!(err.known_code(), Some(Code::IoTimedOut));
+            let status = vault.index_status().unwrap();
+            assert!(!status.lexical_role);
+            assert!(!status.vector_role);
+            child.0.kill().unwrap();
+            child.0.wait().unwrap();
+            let status = vault.wait_indexed(WAIT).unwrap();
+            let head = head_of(vault.path());
+            assert!(status.lexical_role);
+            assert_eq!(status.lexical.as_deref(), Some(head.as_str()));
+            if cfg!(feature = "search") {
+                assert!(status.vector_role);
+                assert_eq!(status.vector.as_deref(), Some(head.as_str()));
+            }
+            assert_eq!(find_ids(&vault, "c"), ["alpha"]);
+        }
+
+        #[cfg(feature = "search")]
+        fn open_with_model(path: &Path, model: Option<&'static str>) -> Vault {
+            let _on = set_start_on_open(true);
+            let embedder = model.map(|model| CountingEmbedder::new(model) as Arc<dyn Embedder>);
+            Vault::open_with(path, poll_fast(), embedder, Some(tag_projector())).unwrap()
+        }
+
+        #[cfg(feature = "search")]
+        #[test]
+        fn vector_role_goes_to_one_handle_with_a_matching_embedder() {
+            let scratch = Scratch::new();
+            {
+                let plain = open_search(scratch.vault(), scratch.options(), None);
+                plain
+                    .create_collection("c", document_schema(), None)
+                    .unwrap();
+                plain
+                    .collection("c")
+                    .unwrap()
+                    .add("r1", rec_tag("first"), None)
+                    .unwrap();
+            }
+            let without = open_with_model(&scratch.vault(), None);
+            let status = without.wait_indexed(WAIT).unwrap();
+            assert!(status.lexical_role);
+            assert!(!status.vector_role);
+            assert_eq!(status.vector, None, "nobody can write vectors yet");
+            let first = open_with_model(&scratch.vault(), Some("m1"));
+            let status = first.wait_indexed(WAIT).unwrap();
+            assert!(status.vector_role);
+            assert_eq!(status.vector, Some(head_of(first.path())));
+            let second = open_with_model(&scratch.vault(), Some("m1"));
+            let other_model = open_with_model(&scratch.vault(), Some("m2"));
+            second.wait_indexed(WAIT).unwrap();
+            other_model.wait_indexed(WAIT).unwrap();
+            assert!(!second.index_status().unwrap().vector_role);
+            assert!(!other_model.index_status().unwrap().vector_role);
+            drop(first);
+            git_cli_commit(&scratch.vault(), "c/r2", r#"{"tag":"second"}"#);
+            let status = second.wait_indexed(WAIT).unwrap();
+            assert!(status.vector_role);
+            assert_eq!(status.vector, Some(head_of(second.path())));
+            assert!(!other_model.index_status().unwrap().vector_role);
+        }
+
+        #[cfg(feature = "search")]
+        struct SlowEmbedder {
+            calls: AtomicU64,
+        }
+
+        #[cfg(feature = "search")]
+        impl Embedder for SlowEmbedder {
+            fn model_id(&self) -> &str {
+                "slow"
+            }
+
+            fn dimensions(&self) -> NonZeroUsize {
+                NonZeroUsize::new(4).unwrap()
+            }
+
+            fn many_limit(&self) -> NonZeroUsize {
+                NonZeroUsize::new(1).unwrap()
+            }
+
+            fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+                self.calls.fetch_add(1, Ordering::Relaxed);
+                std::thread::sleep(Duration::from_millis(150));
+                Ok(texts.iter().copied().map(counting_vector).collect())
+            }
+        }
+
+        #[cfg(feature = "search")]
+        #[test]
+        fn drop_waits_for_one_batch_not_the_whole_diff() {
+            const RECORDS: u64 = 40;
+            let scratch = Scratch::new();
+            {
+                let plain = open_search(scratch.vault(), scratch.options(), None);
+                plain
+                    .create_collection("c", document_schema(), None)
+                    .unwrap();
+                plain.begin().unwrap();
+                let collection = plain.collection("c").unwrap();
+                for i in 0..RECORDS {
+                    collection
+                        .add(&format!("r{i:02}"), rec_tag(&format!("tag {i}")), None)
+                        .unwrap();
+                }
+                plain.commit("many").unwrap();
+            }
+            let slow = Arc::new(SlowEmbedder {
+                calls: AtomicU64::new(0),
+            });
+            let vault = {
+                let _on = set_start_on_open(true);
+                let embedder: Arc<dyn Embedder> = slow.clone();
+                Vault::open_with(
+                    scratch.vault(),
+                    poll_never(),
+                    Some(embedder),
+                    Some(tag_projector()),
+                )
+                .unwrap()
+            };
+            let deadline = Instant::now() + WAIT;
+            while slow.calls.load(Ordering::Relaxed) == 0 {
+                assert!(Instant::now() < deadline, "the vector leg never started");
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            let task = task_path(&vault);
+            let started = Instant::now();
+            drop(vault);
+            let took = started.elapsed();
+            assert!(took < Duration::from_secs(2), "drop took {took:?}");
+            assert!(
+                slow.calls.load(Ordering::Relaxed) < RECORDS,
+                "drop waited for the whole diff"
+            );
+            assert_task_gone(&task);
+        }
     }
 }

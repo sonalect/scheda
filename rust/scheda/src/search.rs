@@ -69,6 +69,21 @@ const DEFAULT_K: usize = 10;
 #[cfg(feature = "search")]
 const FUSION_POOL_FLOOR: usize = 50;
 
+/// Which Index legs one call writes. The background indexer holds the
+/// lexical and the vector role separately, possibly in two processes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct Legs {
+    pub(crate) lexical: bool,
+    pub(crate) vector: bool,
+}
+
+impl Legs {
+    pub(crate) const BOTH: Self = Self {
+        lexical: true,
+        vector: true,
+    };
+}
+
 pub(crate) struct SearchEngine {
     index_dir: RwLock<PathBuf>,
     inner: RwLock<Inner>,
@@ -92,6 +107,11 @@ struct Inner {
     lexical: Option<Lexical>,
     #[cfg(feature = "search")]
     vector: Option<VectorStore>,
+    /// A vector slot was added or removed since the last save. Only then is
+    /// the dump rewritten: a handle that wrote lexical documents alone must
+    /// not overwrite a dump another process keeps current.
+    #[cfg(feature = "search")]
+    vector_dirty: bool,
     dirty: bool,
     can_write: bool,
     next_ord: BTreeMap<String, u64>,
@@ -321,6 +341,8 @@ impl SearchEngine {
             lexical: open_lexical(index_dir).ok().flatten(),
             #[cfg(feature = "search")]
             vector: load_vector(index_dir).ok().flatten(),
+            #[cfg(feature = "search")]
+            vector_dirty: false,
             dirty: false,
             can_write,
             next_ord: load_next_ord(index_dir).unwrap_or_default(),
@@ -353,6 +375,8 @@ impl SearchEngine {
                 lexical: None,
                 #[cfg(feature = "search")]
                 vector: None,
+                #[cfg(feature = "search")]
+                vector_dirty: false,
                 dirty: false,
                 can_write: false,
                 next_ord: BTreeMap::new(),
@@ -526,7 +550,10 @@ impl SearchEngine {
         }
         let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::rebuild] commit")?;
         #[cfg(feature = "search")]
-        drop_unseen_vectors(&mut inner, &seen)?;
+        {
+            drop_unseen_vectors(&mut inner, &seen)?;
+            inner.vector_dirty = inner.vector.is_some();
+        }
         inner.commit(&index_dir, can_write)?;
         Ok(stats)
     }
@@ -537,13 +564,29 @@ impl SearchEngine {
         record: &Record,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
+        self.upsert_legs(decl, record, embedder, Legs::BOTH)
+    }
+
+    /// Upsert `record` into the legs named by `legs` only. The embedder is
+    /// called only for the vector leg.
+    pub(crate) fn upsert_legs(
+        &self,
+        decl: &CollectionDecl,
+        record: &Record,
+        embedder: Option<&dyn Embedder>,
+        legs: Legs,
+    ) -> Result<(), Error> {
         if !decl.any_indexed() {
             return Ok(());
         }
         #[cfg(not(feature = "search"))]
         let _ = embedder;
         #[cfg(feature = "search")]
-        let batch = embed_changed_slots(self, decl, record, embedder)?;
+        let batch = if legs.vector {
+            embed_changed_slots(self, decl, record, embedder)?
+        } else {
+            VectorBatch::empty()
+        };
         #[cfg(not(feature = "search"))]
         let batch = VectorBatch::empty();
         let index_dir = self.dir()?;
@@ -569,14 +612,24 @@ impl SearchEngine {
             &index_dir,
             decl,
             record,
-            embedder,
-            &batch,
+            embedder.map(|embedder| (embedder, &batch)),
             self.projector.as_deref(),
+            legs,
         )?;
         Ok(())
     }
 
     pub(crate) fn forget(&self, decl: &CollectionDecl, id: &str) -> Result<(), Error> {
+        self.forget_legs(decl, id, Legs::BOTH)
+    }
+
+    /// Drop `id` from the legs named by `legs` only.
+    pub(crate) fn forget_legs(
+        &self,
+        decl: &CollectionDecl,
+        id: &str,
+        legs: Legs,
+    ) -> Result<(), Error> {
         if !decl.any_indexed() {
             return Ok(());
         }
@@ -595,8 +648,100 @@ impl SearchEngine {
             }
             _ => index::ensure_format(&index_dir)?,
         }
-        forget_record(&mut inner, &decl.name, id)?;
+        forget_record(&mut inner, &decl.name, id, legs)?;
         Ok(())
+    }
+
+    /// Drop every Record of `collection` from the legs named by `legs`.
+    pub(crate) fn forget_collection(&self, collection: &str, legs: Legs) -> Result<(), Error> {
+        let mut guard =
+            crate::error::rw_write(&self.inner, "[SearchEngine::forget_collection] lock")?;
+        let inner = &mut *guard;
+        if !inner.can_write {
+            bail!(Error::index_lexical("search index is not open for write"));
+        }
+        inner.dirty = true;
+        if legs.lexical {
+            inner.ensure_writer()?;
+            if let Some(lexical) = inner.lexical.as_ref() {
+                let slot = crate::error::mutex(
+                    &lexical.writer,
+                    "[SearchEngine::forget_collection] writer",
+                )?;
+                if let Some(writer) = slot.as_ref() {
+                    writer.delete_term(Term::from_field_text(lexical.f_collection, collection));
+                }
+            }
+        }
+        #[cfg(feature = "search")]
+        if legs.vector
+            && let Some(store) = inner.vector.as_mut()
+        {
+            let keys: Vec<u64> = store
+                .by_record
+                .get(collection)
+                .map(|ids| {
+                    ids.values()
+                        .flat_map(|fields| fields.values().copied())
+                        .collect()
+                })
+                .unwrap_or_default();
+            if !keys.is_empty() {
+                for key in keys {
+                    store.drop_ann_slot(key)?;
+                }
+                refresh_field_ids(store);
+                inner.vector_dirty = true;
+            }
+        }
+        Ok(())
+    }
+
+    /// Drop vector slots of Records that `keep` does not name. `only` limits
+    /// the sweep to one collection; `None` sweeps every collection, so one
+    /// absent from `keep` loses all its slots.
+    #[cfg(feature = "search")]
+    pub(crate) fn prune_vectors(
+        &self,
+        keep: &BTreeMap<String, BTreeSet<String>>,
+        only: Option<&str>,
+    ) -> Result<(), Error> {
+        let mut guard = crate::error::rw_write(&self.inner, "[SearchEngine::prune_vectors] lock")?;
+        let inner = &mut *guard;
+        let Some(store) = inner.vector.as_mut() else {
+            return Ok(());
+        };
+        let stale: Vec<u64> = store
+            .keys
+            .iter()
+            .filter(|(_, doc)| only.is_none_or(|name| name == doc.collection))
+            .filter(|(_, doc)| !allowed_has(keep, &doc.collection, &doc.id))
+            .map(|(key, _)| *key)
+            .collect();
+        if stale.is_empty() {
+            return Ok(());
+        }
+        for key in stale {
+            store.drop_ann_slot(key)?;
+        }
+        refresh_field_ids(store);
+        inner.dirty = true;
+        inner.vector_dirty = true;
+        Ok(())
+    }
+
+    /// Write the `format` file and the projector dump of a generation this
+    /// engine is about to fill from nothing, as a full rebuild does first.
+    pub(crate) fn init_generation(&self, decls: &Decls) -> Result<(), Error> {
+        let index_dir = self.dir()?;
+        index::ensure_format(&index_dir)?;
+        write_projector_dump(
+            &index_dir,
+            &projector::encode_dump(
+                self.projector.as_deref(),
+                decls.collections().map(|decl| decl.name.as_str()),
+            )?,
+        )
     }
 
     fn require_projector_dump(&self, index_dir: &Path) -> Result<(), Error> {
@@ -1088,6 +1233,8 @@ fn empty_inner(can_write: bool) -> Inner {
         lexical: None,
         #[cfg(feature = "search")]
         vector: None,
+        #[cfg(feature = "search")]
+        vector_dirty: false,
         dirty: false,
         can_write,
         next_ord: BTreeMap::new(),
@@ -1114,9 +1261,9 @@ fn index_one_rebuild_record(
         index_dir,
         decl,
         record,
-        embedder,
-        &batch,
+        embedder.map(|embedder| (embedder, &batch)),
         engine.projector.as_deref(),
+        Legs::BOTH,
     )?;
     #[cfg(feature = "search")]
     if decl.vector_indexed()
@@ -1221,8 +1368,11 @@ impl Inner {
                 .context(Code::IndexLexical, "[SearchEngine::commit] reload reader")?;
         }
         #[cfg(feature = "search")]
-        if let Some(vector) = &self.vector {
-            save_vector(index_dir, vector)?;
+        if self.vector_dirty {
+            if let Some(vector) = &self.vector {
+                save_vector(index_dir, vector)?;
+            }
+            self.vector_dirty = false;
         }
         save_next_ord(index_dir, &self.next_ord)?;
         self.dirty = false;
@@ -1291,9 +1441,9 @@ fn upsert_record(
     index_dir: &Path,
     decl: &CollectionDecl,
     record: &Record,
-    embedder: Option<&dyn Embedder>,
-    batch: &VectorBatch,
+    vector: Option<(&dyn Embedder, &VectorBatch)>,
     projector: Option<&dyn crate::Projector>,
+    legs: Legs,
 ) -> Result<(), Error> {
     let Some(id) = record.id.as_deref().filter(|id| !id.is_empty()) else {
         return Ok(());
@@ -1313,10 +1463,10 @@ fn upsert_record(
     let can_write = inner.can_write;
     if projected.is_none() {
         if can_write {
-            forget_record(inner, &decl.name, id)?;
+            forget_record(inner, &decl.name, id, legs)?;
         }
         #[cfg(not(feature = "search"))]
-        let _ = (embedder, batch);
+        let _ = vector;
         return Ok(());
     }
     let find_schema = match projector {
@@ -1334,7 +1484,7 @@ fn upsert_record(
         _ => String::new(),
     };
     if can_write {
-        if decl.lexical_indexed() {
+        if decl.lexical_indexed() && legs.lexical {
             if inner.lexical.is_none() {
                 inner.lexical = Some(create_lexical(index_dir)?);
             }
@@ -1357,9 +1507,10 @@ fn upsert_record(
             }
         }
         #[cfg(feature = "search")]
-        if decl.vector_indexed()
+        if legs.vector
+            && decl.vector_indexed()
             && projector.is_some()
-            && let Some(embedder) = embedder
+            && let Some((embedder, batch)) = vector
         {
             let names = find_schema
                 .as_ref()
@@ -1370,22 +1521,26 @@ fn upsert_record(
         }
     }
     #[cfg(not(feature = "search"))]
-    let _ = (embedder, batch);
+    let _ = vector;
     Ok(())
 }
 
-fn forget_record(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Error> {
+fn forget_record(inner: &mut Inner, collection: &str, id: &str, legs: Legs) -> Result<(), Error> {
     inner.dirty = true;
-    inner.ensure_writer()?;
-    if let Some(lexical) = inner.lexical.as_ref() {
-        let slot = crate::error::mutex(&lexical.writer, "[SearchEngine::forget] writer")?;
-        if let Some(writer) = slot.as_ref() {
-            let key = doc_key(collection, id);
-            writer.delete_term(Term::from_field_text(lexical.f_key, &key));
+    if legs.lexical {
+        inner.ensure_writer()?;
+        if let Some(lexical) = inner.lexical.as_ref() {
+            let slot = crate::error::mutex(&lexical.writer, "[SearchEngine::forget] writer")?;
+            if let Some(writer) = slot.as_ref() {
+                let key = doc_key(collection, id);
+                writer.delete_term(Term::from_field_text(lexical.f_key, &key));
+            }
         }
     }
     #[cfg(feature = "search")]
-    forget_vector(inner, collection, id)?;
+    if legs.vector {
+        forget_vector(inner, collection, id)?;
+    }
     Ok(())
 }
 
@@ -1395,10 +1550,14 @@ fn forget_vector(inner: &mut Inner, collection: &str, id: &str) -> Result<(), Er
         return Ok(());
     };
     let stale = store.record_keys(collection, id);
+    if stale.is_empty() {
+        return Ok(());
+    }
     for key in stale {
         store.drop_ann_slot(key)?;
     }
     refresh_field_ids(store);
+    inner.vector_dirty = true;
     Ok(())
 }
 
@@ -1570,6 +1729,7 @@ fn drop_unseen_vectors(
     }
     refresh_field_ids(store);
     inner.dirty = true;
+    inner.vector_dirty = true;
     Ok(())
 }
 
@@ -1585,6 +1745,33 @@ fn peek_vector_meta(index_dir: &Path) -> Result<Option<VectorMeta>, Error> {
     let meta: VectorMeta = serde_json::from_str(&raw)
         .context(Code::IndexCorrupt, "[SearchEngine] decode vector meta")?;
     Ok(Some(meta))
+}
+
+/// Whether `embedder` may write the vector leg of the generation at
+/// `index_dir`: no vector dump yet, or one with the same `model_id` and
+/// dimensions.
+#[cfg(feature = "search")]
+pub(crate) fn vector_model_matches(
+    index_dir: &Path,
+    embedder: &dyn Embedder,
+) -> Result<bool, Error> {
+    Ok(match peek_vector_meta(index_dir)? {
+        None => true,
+        Some(meta) => {
+            meta.model_id == embedder.model_id() && meta.dimensions == embedder.dimensions().get()
+        }
+    })
+}
+
+/// Copy the vector dump of `from` into `to` as is, whatever its model.
+/// The vector leg of `to` then digest-skips slots whose text did not
+/// change instead of embedding every slot again.
+#[cfg(feature = "search")]
+pub(crate) fn copy_vector_dump_as_is(from: &Path, to: &Path) -> Result<(), Error> {
+    if from.join(VECTOR_DIR).join(VECTOR_META).is_file() {
+        copy_vector_dir(from, to)?;
+    }
+    Ok(())
 }
 
 #[cfg(feature = "search")]
@@ -1748,6 +1935,7 @@ impl VectorSource {
         if changed {
             refresh_field_ids(store);
             inner.dirty = true;
+            inner.vector_dirty = true;
         }
         Ok(())
     }
@@ -1775,12 +1963,14 @@ fn upsert_vector(
     let path = indexed_rel(decl, id)?;
     let dimensions = embedder.dimensions().get();
     let model_id = embedder.model_id();
+    let mut changed = false;
     if inner.vector.is_none() {
         inner.vector = Some(VectorStore::empty(
             AnnIndex::new(dimensions)?,
             model_id.to_owned(),
             dimensions,
         ));
+        changed = true;
     }
     let Some(store) = inner.vector.as_mut() else {
         return Ok(());
@@ -1808,6 +1998,7 @@ fn upsert_vector(
     };
     for key in vanished {
         store.drop_ann_slot(key)?;
+        changed = true;
     }
     let new_vectors: BTreeMap<&str, &Vec<f32>> = batch
         .vectors
@@ -1842,14 +2033,21 @@ fn upsert_vector(
                     digest,
                 },
             );
+            changed = true;
         } else if let Some(key) = store.slot_key(&decl.name, id, field)
             && let Some(doc) = store.keys.get_mut(&key)
+            && doc.path != path
         {
             doc.path.clone_from(&path);
+            changed = true;
         }
     }
+    let fields_before = store.field_ids.clone();
     refresh_field_ids(store);
     store.field_ids.extend(vector_names.iter().cloned());
+    if changed || store.field_ids != fields_before {
+        inner.vector_dirty = true;
+    }
     Ok(())
 }
 

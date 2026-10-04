@@ -77,13 +77,15 @@
 mod ann;
 #[cfg(feature = "encrypt")]
 mod crypto;
-#[cfg(test)]
+#[cfg(feature = "find")]
 mod diff;
 mod embed;
 mod error;
 mod git;
 mod id;
 mod index;
+#[cfg(feature = "find")]
+mod indexer;
 mod isolated;
 mod journal;
 mod json;
@@ -106,6 +108,8 @@ pub use embed::{Embedder, Reranker};
 #[doc(hidden)]
 pub use error::redact_remote_text;
 pub use error::{Code, Repeat};
+#[cfg(feature = "find")]
+pub use indexer::IndexStatus;
 pub use journal::JournalLines;
 pub use json::{schema_from_json, schema_from_value};
 pub use projector::{IndexDoc, IndexValue, Projector};

@@ -60,6 +60,19 @@ pub struct OpenOptions {
     /// Field 5: `writer`
     #[serde(rename = "writer", skip_serializing_if = "::core::option::Option::is_none")]
     pub writer: ::core::option::Option<::buffa::alloc::string::String>,
+    /// How often the background indexer reads `HEAD`, in milliseconds, to
+    /// notice commits made outside this handle (a `git` command, another
+    /// process). A commit through this handle wakes the indexer at once.
+    /// Unset: 1000.
+    ///
+    /// Field 6: `index_poll_ms`
+    #[serde(
+        rename = "indexPollMs",
+        alias = "index_poll_ms",
+        with = "::buffa::json_helpers::opt_uint32",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub index_poll_ms: ::core::option::Option<u32>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -72,6 +85,7 @@ impl ::core::fmt::Debug for OpenOptions {
             .field("encryption", &self.encryption)
             .field("author", &self.author)
             .field("writer", &self.writer)
+            .field("index_poll_ms", &self.index_poll_ms)
             .finish()
     }
 }
@@ -108,6 +122,13 @@ impl OpenOptions {
         value: impl Into<::buffa::alloc::string::String>,
     ) -> Self {
         self.writer = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::index_poll_ms`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_index_poll_ms(mut self, value: u32) -> Self {
+        self.index_poll_ms = Some(value);
         self
     }
 }
@@ -156,6 +177,9 @@ impl ::buffa::Message for OpenOptions {
         if let Some(ref v) = self.writer {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(v) = self.index_poll_ms {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -190,6 +214,9 @@ impl ::buffa::Message for OpenOptions {
         }
         if let Some(ref v) = self.writer {
             ::buffa::types::put_string_field(5u32, v, buf);
+        }
+        if let Some(v) = self.index_poll_ms {
+            ::buffa::types::put_uint32_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -257,6 +284,15 @@ impl ::buffa::Message for OpenOptions {
                     buf,
                 )?;
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.index_poll_ms = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint32(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -270,6 +306,7 @@ impl ::buffa::Message for OpenOptions {
         self.encryption = ::buffa::MessageField::none();
         self.author = ::buffa::MessageField::none();
         self.writer = ::core::option::Option::None;
+        self.index_poll_ms = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

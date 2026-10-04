@@ -206,11 +206,14 @@ well-known types in `api/` yet): unset → 1000, valid 10 to 3 600 000.
 
 ### B1. Marks
 
-- [ ] `<gen>/marks` written atomically (temp + rename) per D4; format
-      `5`; reading format `4` → D8.
+- [x] `<gen>/marks` written atomically (temp + rename) per D4; format
+      `5`; reading format `4` → D8 (`marks.rs` tests,
+      `vault.rs background::format_4_generation_is_rebuilt_in_the_background`).
 - *Check:* a write that commits, then the indexer applies it, moves the
   lexical mark to the new `HEAD`; a crash before the rename leaves the
-  old mark and the next run reapplies the same diff idempotently.
+  old mark and the next run reapplies the same diff idempotently
+  (`background::commit_moves_the_lexical_mark_and_a_replay_is_harmless`,
+  `marks.rs crash_before_rename_keeps_old_mark`).
 
 ### B2. Diff
 
@@ -231,15 +234,23 @@ well-known types in `api/` yet): unset → 1000, valid 10 to 3 600 000.
 
 ### B3. Indexer thread
 
-- [ ] Thread per handle (D11), wake channel + `index_poll` (D2),
+- [x] Thread per handle (D11), wake channel + `index_poll` (D2),
       `index.lock` / `vector.lock` (D5, D6), batches bounded by the
-      embedder's `many_limit`.
-- [ ] Catch-up on `open` (D2c).
+      embedder's `many_limit` (`indexer.rs`; `open` starts it only where a
+      test asks until B4 removes inline indexing;
+      `background::poll_picks_up_a_commit_made_outside_the_handle`,
+      `vector_role_goes_to_one_handle_with_a_matching_embedder`).
+- [x] Catch-up on `open` (D2c)
+      (`background::open_catches_up_with_a_commit_made_by_the_git_cli`).
 - *Check:* drop of the last handle joins the thread within one batch;
-  no thread left after drop (count threads in the test).
+  no thread left after drop (count threads in the test)
+  (`background::drop_waits_for_one_batch_not_the_whole_diff`,
+  `dropping_the_last_handle_joins_the_thread`: the thread's
+  `/proc/<pid>/task/<tid>` is gone).
 - *Check:* two handles in two processes on one tree: exactly one holds
   each lock; kill the holder, the other takes over on its next poll and
-  finishes the diff.
+  finishes the diff (`background::indexer_role_passes_to_another_process`,
+  which re-runs the test binary as the holder).
 
 ### B4. Write path
 

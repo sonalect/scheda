@@ -411,7 +411,7 @@ fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
 /// (writerless names first so older vaults keep append order), then the
 /// file name as a last tie-break. Lexicographic file names put
 /// `{seq}-{writer}` before a writerless `{seq}` because `-` sorts before `.`.
-fn segment_order(path: &Path) -> (u8, String, u32, String, String) {
+pub(crate) fn segment_order(path: &Path) -> SegmentOrder {
     let name = path
         .file_name()
         .and_then(|s| s.to_str())
@@ -764,22 +764,26 @@ fn parse_segment(path: &Path) -> Result<Vec<ParsedLine>, Error> {
 }
 
 /// Whether `name` is a journal segment file name (`*.jsonl`, not hidden).
-#[cfg(test)]
+#[cfg(feature = "find")]
 pub(crate) fn is_segment_name(name: &str) -> bool {
     !name.starts_with('.') && name.ends_with(".jsonl")
 }
 
-/// Envelope `id` → payload of every complete, parseable line in segment
-/// bytes. Lines the walk would skip (no `: `, a torn tail, conflict
-/// markers, non-UTF-8) are skipped here too. A repeated `id` keeps the
-/// last line.
-#[cfg(test)]
-pub(crate) fn segment_lines(raw: &[u8]) -> BTreeMap<String, Vec<u8>> {
+/// Envelope `id` → (line position, payload) of every complete, parseable
+/// line in segment bytes. Lines the walk would skip (no `: `, a torn tail,
+/// conflict markers, non-UTF-8) are skipped here too. A repeated `id`
+/// keeps the last line.
+#[cfg(feature = "find")]
+pub(crate) fn segment_lines(raw: &[u8]) -> BTreeMap<String, (usize, Vec<u8>)> {
     parse_segment_bytes(raw)
         .into_iter()
-        .map(|parsed| (parsed.id, parsed.raw))
+        .enumerate()
+        .map(|(line, parsed)| (parsed.id, (line, parsed.raw)))
         .collect()
 }
+
+/// Sort key that puts segments of one journal in append order.
+pub(crate) type SegmentOrder = (u8, String, u32, String, String);
 
 fn parse_segment_bytes(raw: &[u8]) -> Vec<ParsedLine> {
     let Ok(text) = str::from_utf8(raw) else {

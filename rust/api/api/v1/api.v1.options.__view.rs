@@ -41,6 +41,13 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 5: `writer`
     pub writer: ::core::option::Option<&'a str>,
+    /// How often the background indexer reads `HEAD`, in milliseconds, to
+    /// notice commits made outside this handle (a `git` command, another
+    /// process). A commit through this handle wakes the indexer at once.
+    /// Unset: 1000.
+    ///
+    /// Field 6: `index_poll_ms`
+    pub index_poll_ms: ::core::option::Option<u32>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -136,6 +143,13 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 )?;
                 view.writer = Some(::buffa::types::borrow_str(&mut cur)?);
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.index_poll_ms = Some(::buffa::types::decode_uint32(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -179,6 +193,7 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 None => ::buffa::MessageField::none(),
             },
             writer: self.writer.map(|s| s.to_string()),
+            index_poll_ms: self.index_poll_ms,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -215,6 +230,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(ref v) = self.writer {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(v) = self.index_poll_ms {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -250,6 +268,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         }
         if let Some(ref v) = self.writer {
             ::buffa::types::put_string_field(5u32, v, buf);
+        }
+        if let Some(v) = self.index_poll_ms {
+            ::buffa::types::put_uint32_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -290,6 +311,13 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.writer {
             __map.serialize_entry("writer", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.index_poll_ms {
+            __map
+                .serialize_entry(
+                    "indexPollMs",
+                    &::buffa::json_helpers::ProtoJson(&__v),
+                )?;
         }
         __map.end()
     }
@@ -436,6 +464,16 @@ impl OpenOptionsOwnedView {
     #[must_use]
     pub fn writer(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().writer
+    }
+    /// How often the background indexer reads `HEAD`, in milliseconds, to
+    /// notice commits made outside this handle (a `git` command, another
+    /// process). A commit through this handle wakes the indexer at once.
+    /// Unset: 1000.
+    ///
+    /// Field 6: `index_poll_ms`
+    #[must_use]
+    pub fn index_poll_ms(&self) -> ::core::option::Option<u32> {
+        self.0.reborrow().index_poll_ms
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

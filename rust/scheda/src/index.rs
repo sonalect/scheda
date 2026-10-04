@@ -190,6 +190,15 @@ fn is_legacy_layout(root: &Path) -> bool {
         || root.join("vector").is_dir()
 }
 
+/// Generation directory `current` names now, or `None` without a pointer.
+///
+/// A handle reads this to follow a generation another handle or process
+/// published.
+#[cfg(feature = "find")]
+pub(crate) fn current_dir(root: &Path) -> Result<Option<PathBuf>, Error> {
+    Ok(read_current(root)?.map(|n| root.join(n.to_string())))
+}
+
 fn read_current(root: &Path) -> Result<Option<u64>, Error> {
     let path = root.join(CURRENT_FILE);
     if !path.is_file() {

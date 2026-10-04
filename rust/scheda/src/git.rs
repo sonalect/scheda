@@ -849,9 +849,7 @@ fn require_vault_rel(path: &str) -> Result<(), Error> {
 }
 
 /// Reading trees and blobs at a commit, for indexing from `HEAD` diffs.
-///
-/// Compiled for tests only until the background indexer uses it.
-#[cfg(test)]
+#[cfg(feature = "find")]
 pub(crate) mod tree {
     use std::io;
     use std::path::Path;
@@ -939,10 +937,17 @@ pub(crate) mod tree {
     /// Renames are not detected: a moved file is a deletion of the old path
     /// plus an addition of the new one. A path whose type changes between a
     /// regular file and anything else shows `None` on the non-file side.
-    pub(crate) fn diff_trees(dir: &Path, from: &str, to: &str) -> Result<Vec<TreeChange>, Error> {
+    /// A non-empty `under` limits the diff to those literal path prefixes.
+    pub(crate) fn diff_trees(
+        dir: &Path,
+        from: &str,
+        to: &str,
+        under: &[&str],
+    ) -> Result<Vec<TreeChange>, Error> {
         const FRAME: &str = "[Git::diff_trees] diff trees";
-        let out = git()
+        let mut cmd = git()
             .current_dir(dir)
+            .env("GIT_LITERAL_PATHSPECS", "1")
             .arg("diff-tree")
             .arg("-r")
             .arg("-z")
@@ -950,8 +955,14 @@ pub(crate) mod tree {
             .arg("--no-renames")
             .arg("--no-abbrev")
             .arg(from)
-            .arg(to)
-            .run(FRAME)?;
+            .arg(to);
+        if !under.is_empty() {
+            cmd = cmd.arg("--");
+            for path in under {
+                cmd = cmd.arg(path);
+            }
+        }
+        let out = cmd.run(FRAME)?;
         let mut fields = out.stdout.split(|&b| b == 0);
         let mut changes = Vec::new();
         while let Some(meta) = fields.next() {
@@ -984,6 +995,24 @@ pub(crate) mod tree {
             });
         }
         Ok(changes)
+    }
+
+    /// Whether commit `ancestor` is `descendant` or one of its ancestors.
+    /// `false` when either object is missing.
+    pub(crate) fn is_ancestor(dir: &Path, ancestor: &str, descendant: &str) -> Result<bool, Error> {
+        const FRAME: &str = "[Git::is_ancestor] merge-base";
+        let out = git()
+            .current_dir(dir)
+            .arg("merge-base")
+            .arg("--is-ancestor")
+            .arg(ancestor)
+            .arg(descendant)
+            .spawn(FRAME)?;
+        match out.status.code() {
+            Some(0) => Ok(true),
+            Some(1 | 128) => Ok(false),
+            _ => Err(git_fail(&out, FRAME)),
+        }
     }
 
     fn regular_blob(mode: &str, oid: &str) -> Option<String> {

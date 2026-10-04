@@ -16,7 +16,7 @@ use crate::Error;
 use crate::git::tree;
 use crate::journal;
 use crate::marks::Repo;
-use crate::schema::{CollectionDecl, Decls, Kind};
+use crate::schema::{self, CollectionDecl, Decls, Kind};
 
 /// Declaration file names at the root of a collection directory. A change
 /// to any of them, leftovers included, re-reads the whole collection.
@@ -51,8 +51,11 @@ pub(crate) struct RecordChange {
 /// Work for one leg to move from `from` to `to`.
 #[derive(Debug, Default, Eq, PartialEq)]
 pub(crate) struct Diff {
-    /// Record-level changes, ordered by `(collection, id)`. None for a
-    /// collection in `whole`.
+    /// Record-level changes by collection. A `document` or `singleton` is
+    /// in `id` order; a `journal` lists its deletes, then its upserts in
+    /// append order (segment, then line), so the Index can number lines in
+    /// the order they were written. None for a collection in `whole`.
+    /// Within one collection a document id appears once.
     pub(crate) changes: Vec<RecordChange>,
     /// Collections whose declaration changed: index each in full from `to`,
     /// or drop it when `to` no longer declares it.
@@ -86,17 +89,70 @@ pub(crate) fn diff(
         None => tree::empty_tree_oid(dir)?,
     };
     let mut whole = BTreeSet::new();
+    let found = scan(
+        dir,
+        repo,
+        |top| decls.get(top),
+        tree::diff_trees(dir, &from, to, &[])?,
+        Some(&mut whole),
+    )?;
+    Ok(Diff {
+        changes: ordered(found, &whole),
+        whole,
+        rebuild: false,
+    })
+}
+
+/// Every Record of `decl` in commit `to` of the repository that stores it
+/// (`dir`), as upserts in the order [`diff`] uses. Encrypted → empty.
+pub(crate) fn collection(
+    dir: &Path,
+    decl: &CollectionDecl,
+    to: &str,
+) -> Result<Vec<RecordChange>, Error> {
+    if decl.encrypted {
+        return Ok(Vec::new());
+    }
+    let repo = if decl.isolated {
+        Repo::Isolated
+    } else {
+        Repo::Main
+    };
+    let empty = tree::empty_tree_oid(dir)?;
+    let prefix = format!("{}/", schema::collection_dir(&decl.name));
+    let changes = tree::diff_trees(dir, &empty, to, &[prefix.as_str()])?;
+    let found = scan(
+        dir,
+        repo,
+        |top| (top == decl.name).then_some(decl),
+        changes,
+        None,
+    )?;
+    Ok(ordered(found, &BTreeSet::new()))
+}
+
+/// Map tree changes to Record changes. `whole`, when given, collects
+/// collections whose declaration file changed (main repository only).
+fn scan<'d>(
+    dir: &Path,
+    repo: Repo,
+    lookup: impl Fn(&str) -> Option<&'d CollectionDecl>,
+    changes: Vec<tree::TreeChange>,
+    mut whole: Option<&mut BTreeSet<String>>,
+) -> Result<Found, Error> {
     let mut found = Found::default();
     let mut segments = Vec::new();
-    for change in tree::diff_trees(dir, &from, to)? {
+    for change in changes {
         let Some((top, rest)) = change.path.split_once('/') else {
             continue;
         };
         if repo == Repo::Main && DECLARATION_FILES.contains(&rest) {
-            whole.insert(top.to_owned());
+            if let Some(whole) = whole.as_deref_mut() {
+                whole.insert(top.to_owned());
+            }
             continue;
         }
-        let Some(decl) = decls.get(top) else {
+        let Some(decl) = lookup(top) else {
             continue;
         };
         if decl.encrypted || decl.isolated != (repo == Repo::Isolated) {
@@ -110,27 +166,35 @@ pub(crate) fn diff(
             }
             Kind::Document | Kind::Singleton => {
                 if record_id(decl, rest) {
-                    found.put(decl, rest, &change.path, change.new.as_deref());
+                    found.put(decl, rest, &change.path, change.new.as_deref(), None);
                 }
             }
         }
     }
     journal_changes(dir, &segments, &mut found)?;
-    let changes = found
+    Ok(found)
+}
+
+/// Changes in output order, leaving out collections in `whole`.
+fn ordered(found: Found, whole: &BTreeSet<String>) -> Vec<RecordChange> {
+    let mut keyed: Vec<_> = found
         .0
         .into_iter()
         .filter(|((collection, _), _)| !whole.contains(collection))
-        .map(|((collection, id), change)| RecordChange {
-            collection,
-            id,
-            change,
+        .map(|((collection, id), (change, order))| {
+            let key = (collection.clone(), order, id.clone());
+            (
+                key,
+                RecordChange {
+                    collection,
+                    id,
+                    change,
+                },
+            )
         })
         .collect();
-    Ok(Diff {
-        changes,
-        whole,
-        rebuild: false,
-    })
+    keyed.sort_by(|left, right| left.0.cmp(&right.0));
+    keyed.into_iter().map(|(_, change)| change).collect()
 }
 
 /// Whether `rest` (a path below the collection directory) is a Record file
@@ -155,26 +219,40 @@ fn record_id(decl: &CollectionDecl, rest: &str) -> bool {
     }
 }
 
+/// Position of a change inside its collection: deletes and document
+/// upserts first (then by `id`), journal upserts after them in append order.
+type Order = Option<(journal::SegmentOrder, usize)>;
+
 /// Changes keyed by `(collection, id)`. An upsert wins over a delete of
 /// the same id: a journal line that moved between segments is still there.
 #[derive(Default)]
-struct Found(BTreeMap<(String, String), Change>);
+struct Found(BTreeMap<(String, String), (Change, Order)>);
 
 impl Found {
-    fn put(&mut self, decl: &CollectionDecl, id: &str, path: &str, blob: Option<&str>) {
+    fn put(
+        &mut self,
+        decl: &CollectionDecl,
+        id: &str,
+        path: &str,
+        blob: Option<&str>,
+        order: Order,
+    ) {
         let key = (decl.name.clone(), id.to_owned());
         match blob {
             Some(blob) => {
                 self.0.insert(
                     key,
-                    Change::Upsert {
-                        path: path.to_owned(),
-                        blob: blob.to_owned(),
-                    },
+                    (
+                        Change::Upsert {
+                            path: path.to_owned(),
+                            blob: blob.to_owned(),
+                        },
+                        order,
+                    ),
                 );
             }
             None => {
-                self.0.entry(key).or_insert(Change::Delete);
+                self.0.entry(key).or_insert((Change::Delete, None));
             }
         }
     }
@@ -207,13 +285,15 @@ fn journal_changes(
     for (decl, change) in segments {
         let old = lines(change.old.as_deref());
         let new = lines(change.new.as_deref());
-        for (id, payload) in &new {
-            if old.get(id) != Some(payload) {
-                found.put(decl, id, &change.path, change.new.as_deref());
+        let segment = journal::segment_order(Path::new(&change.path));
+        for (id, (line, payload)) in &new {
+            if old.get(id).map(|(_, old)| old) != Some(payload) {
+                let order = Some((segment.clone(), *line));
+                found.put(decl, id, &change.path, change.new.as_deref(), order);
             }
         }
         for id in old.keys().filter(|id| !new.contains_key(*id)) {
-            found.put(decl, id, &change.path, None);
+            found.put(decl, id, &change.path, None, None);
         }
     }
     Ok(())
@@ -547,6 +627,40 @@ mod tests {
                 upsert(&repo, &c2, "log", "m", seg),
             ]
         );
+    }
+
+    #[test]
+    fn journal_upserts_come_in_append_order() {
+        let repo = notes();
+        let c1 = repo.commit("schema");
+        repo.write("log/00000002.jsonl", "a: three\n");
+        repo.write("log/00000001.jsonl", "z: one\nb: two\n");
+        let c2 = repo.commit("lines");
+        let got = repo.diff(Some(&c1), &c2);
+        let ids: Vec<&str> = got.changes.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["z", "b", "a"]);
+    }
+
+    #[test]
+    fn collection_lists_every_record_of_one_collection() {
+        let repo = notes();
+        repo.write("notes/a", "A");
+        repo.write("notes/sub/b", "B");
+        repo.write("notes-other/c", "C");
+        repo.write("log/00000001.jsonl", "x: 1\ny: 2\n");
+        let c1 = repo.commit("one");
+        let decls = schema::load_at(&repo.0, &c1).unwrap();
+        let notes = super::collection(&repo.0, decls.get("notes").unwrap(), &c1).unwrap();
+        assert_eq!(
+            notes,
+            [
+                upsert(&repo, &c1, "notes", "a", "notes/a"),
+                upsert(&repo, &c1, "notes", "sub/b", "notes/sub/b"),
+            ]
+        );
+        let log = super::collection(&repo.0, decls.get("log").unwrap(), &c1).unwrap();
+        let ids: Vec<&str> = log.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["x", "y"]);
     }
 
     #[test]

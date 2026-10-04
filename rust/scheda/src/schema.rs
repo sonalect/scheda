@@ -169,9 +169,7 @@ fn insert_decl(
 /// `repo`, with the same rules as [`load`] on a work tree: a leftover
 /// `.schema.*` file, two declaration files in one directory, or a
 /// directory that is not the collection name is `invalid`.
-///
-/// Compiled for tests only until the background indexer uses it.
-#[cfg(test)]
+#[cfg(feature = "find")]
 pub(crate) fn load_at(repo: &Path, commit: &str) -> Result<Decls, Error> {
     let dirs: Vec<String> = crate::git::tree::root_dirs(repo, commit)?
         .into_iter()

@@ -29,10 +29,28 @@ API or on-disk format changes bump the minor.
   it lists changed Records per collection (journals line by line, renames as
   delete plus add), asks for a whole collection when its declaration file
   changed, and for a full rebuild when the older commit was pruned. Reads
-  git objects only, never the work tree. Not wired to any public call yet.
+  git objects only, never the work tree.
+- `Vault::index_status()` and `Vault::wait_indexed(timeout)` (`find`
+  feature), with `IndexStatus`: `HEAD` of the Vault and of
+  `{vault}/.isolated/`, the commit each Index leg has reached, which roles
+  this handle holds, and the last indexing error. `wait_indexed` waits until
+  every leg that has an owner reaches the `HEAD` seen at call time and fails
+  with `io_timed_out` after the timeout; a leg nobody can write does not
+  make it wait.
+- `OpenOptions.index_poll_ms`: how often the background indexer reads
+  `HEAD` (10 ms to 1 h, default 1 s).
+- Background indexer (internal, not yet started by `open`: writes still
+  update the Index inline). One thread per handle follows `HEAD`, applies
+  the diff in batches, takes `{vault}/.scheda/index.lock` for the lexical
+  leg and `vector.lock` for the vector leg (only with an embedder of the
+  generation's model), rebuilds a generation of another format in the
+  background, and is joined when the last handle drops.
 
 ### Changed
 
+- The vector dump (`index.usearch`, `keys.json`, `meta.json`) is written
+  only when a vector slot was added or removed, not on every commit of an
+  indexed collection.
 - Index format is `5`. A format-`4` Index is `index_version` until
   `reindex` (automatic rebuild comes with the background indexer).
 

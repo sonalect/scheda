@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::Error;
-#[cfg(test)]
+#[cfg(any(test, feature = "find"))]
 use crate::error::ContextIo;
 use crate::index;
 use crate::store;
@@ -69,7 +69,7 @@ fn is_commit_id(text: &str) -> bool {
 ///
 /// `None` when the file is absent or does not hold a commit id: that leg
 /// starts from the empty tree. Other read failures are errors.
-#[cfg(test)]
+#[cfg(any(test, feature = "find"))]
 pub(crate) fn read(generation: &Path, leg: Leg, repo: Repo) -> Result<Option<String>, Error> {
     match std::fs::read(mark_path(generation, leg, repo)) {
         Ok(bytes) => Ok(std::str::from_utf8(&bytes)

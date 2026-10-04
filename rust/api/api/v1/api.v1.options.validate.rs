@@ -174,6 +174,70 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                 }
             }
         }
+        if let Some(v) = self.index_poll_ms {
+            if v < 10u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(6i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("index_poll_ms")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("gte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            if v > 3600000u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(6i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("index_poll_ms")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("lte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.lte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.remote_repo.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
             if !((::protovalidate_buffa::rules::string::is_uri(((__cel_this)))
@@ -405,6 +469,70 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                             for_key: false,
                         });
                 }
+            }
+        }
+        if let Some(v) = self.index_poll_ms {
+            if v < 10u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(6i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("index_poll_ms")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("gte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            if v > 3600000u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(6i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("index_poll_ms")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("lte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.lte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
             }
         }
         if let ::core::option::Option::Some(__cel_inner) = self.remote_repo.as_ref() {
