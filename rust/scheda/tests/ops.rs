@@ -256,7 +256,7 @@ fn ops_fixture_find_and_insert_and_reindex() {
     assert_eq!(counts.skipped_invalid, Some(0));
     assert_eq!(counts.segments_seen, Some(OPS_JOURNAL / 100 + 2));
     let format = fs::read_to_string(live_index(&vault).join("format")).unwrap();
-    assert_eq!(format.trim(), "4");
+    assert_eq!(format.trim(), "5");
     let mid_doc = OPS_DOCS / 2;
     let mid_title = format!("t{mid_doc}");
     let mid_id = format!("d{mid_doc:04}");

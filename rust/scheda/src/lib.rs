@@ -85,6 +85,7 @@ mod index;
 mod isolated;
 mod journal;
 mod json;
+mod marks;
 mod projector;
 #[cfg(feature = "find")]
 mod query;

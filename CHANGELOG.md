@@ -16,8 +16,20 @@ API or on-disk format changes bump the minor.
   commit, catches up on `open`, and leaves `reindex` as the only explicit call
   (embedder-model change, repair). It adds `index_status` / `wait_indexed` and
   makes `find` / `search` freshness eventual. Part T adds an opt-in `tokio`
-  feature with an async API next to the unchanged sync one. Plan only; no code
-  yet.
+  feature with an async API next to the unchanged sync one. Decisions D16–D22
+  record what the code review added (journal `id` map follows `HEAD`,
+  `replace` / `remove` resolve from the Record file, the indexer reads from
+  commits, format 5 layout).
+- Each Index generation records the commit every leg reflects, in
+  `{vault}/.scheda/index/<gen>/marks/` (`lexical`, `vector`, `ids`, and
+  `isolated-` for the nested repository). `reindex` writes them when it
+  publishes outside a transaction with no uncommitted Scheda write pending;
+  the vector mark only when an embedder filled that leg.
+
+### Changed
+
+- Index format is `5`. A format-`4` Index is `index_version` until
+  `reindex` (automatic rebuild comes with the background indexer).
 
 ## [0.18.6] - 2026-10-01
 

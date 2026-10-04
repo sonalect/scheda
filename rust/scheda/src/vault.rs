@@ -14,6 +14,7 @@ use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::isolated;
 use crate::journal;
+use crate::marks;
 #[cfg(feature = "find")]
 use crate::query;
 use crate::schema::{self, CollectionDecl, Decls, Kind};
@@ -1111,6 +1112,7 @@ impl Vault {
                     previous,
                     copy_vectors,
                 )?;
+                self.stamp_marks(new_dir)?;
                 self.publish_reindex(new_dir, std::mem::take(maps), rebuilder)?;
                 return Ok(());
             }
@@ -1134,6 +1136,7 @@ impl Vault {
             self.apply_queue_thin(decls, new_dir, maps)?;
             if self.try_take_write_lock()? {
                 self.apply_queue_thin(decls, new_dir, maps)?;
+                self.stamp_marks(new_dir)?;
                 index::publish_generation(&self.index.root, new_dir)?;
                 self.index.set_dir(new_dir.to_path_buf())?;
                 *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
@@ -1241,6 +1244,52 @@ impl Vault {
                     if decl.kind == Kind::Journal {
                         index::forget_remembered(new_dir, maps, &decl.name, &id)?;
                     }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Record, per leg, the commit a freshly built generation reflects.
+    ///
+    /// Called under `write.lock` outside a transaction, after the last queued
+    /// write is applied, so every Scheda write is in the files the generation
+    /// was built from and committed. Skipped while `tx.log` still names an
+    /// uncommitted write: the generation then holds bytes no commit has, and
+    /// an absent mark (the empty tree) is the honest answer. An unborn `HEAD`
+    /// writes no mark for the same reason. The vector leg is marked only when
+    /// an embedder filled it.
+    fn stamp_marks(&self, new_dir: &Path) -> Result<(), Error> {
+        if !load_written(&self.path)?.is_empty() {
+            return Ok(());
+        }
+        #[cfg(feature = "search")]
+        let vector_built = self.embedder_arc()?.is_some();
+        #[cfg(not(feature = "search"))]
+        let vector_built = false;
+        let legs = [
+            (marks::Leg::Ids, true),
+            (marks::Leg::Lexical, cfg!(feature = "find")),
+            (marks::Leg::Vector, vector_built),
+        ];
+        let nested = isolated::root(&self.path);
+        let repos = [
+            (marks::Repo::Main, Some(self.path.as_path())),
+            (
+                marks::Repo::Isolated,
+                git::is_work_tree(&nested).then_some(nested.as_path()),
+            ),
+        ];
+        for (repo, dir) in repos {
+            let Some(dir) = dir else {
+                continue;
+            };
+            let Some(head) = git::peel_head_oid(dir)? else {
+                continue;
+            };
+            for (leg, built) in legs {
+                if built {
+                    marks::write(new_dir, leg, repo, &head)?;
                 }
             }
         }
@@ -3040,7 +3089,7 @@ mod tests {
     use std::sync::atomic::{AtomicU64, Ordering};
 
     use super::{Collection, OpenOptions, Vault};
-    use crate::git;
+    use crate::{git, isolated, marks};
     use crate::{Code, Encryption, Error, Schema, VaultInfo};
     #[cfg(feature = "search")]
     use crate::{Embedder, SearchQuery};
@@ -4353,6 +4402,114 @@ mod tests {
         );
         vault.discard().unwrap();
         assert_eq!(find_ids(&vault, "c"), ["alpha"]);
+    }
+
+    fn live_dir(vault: &Vault) -> PathBuf {
+        let current = fs::read_to_string(vault.index_dir().join("current")).unwrap();
+        vault.index_dir().join(current.trim())
+    }
+
+    fn mark(vault: &Vault, leg: marks::Leg, repo: marks::Repo) -> Option<String> {
+        marks::read(&live_dir(vault), leg, repo).unwrap()
+    }
+
+    fn head(dir: &Path) -> String {
+        git::peel_head_oid(dir).unwrap().unwrap()
+    }
+
+    #[test]
+    fn reindex_marks_each_built_leg_with_head() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        vault.reindex().unwrap();
+        let head = head(scratch.vault().as_path());
+        assert_eq!(
+            mark(&vault, marks::Leg::Ids, marks::Repo::Main),
+            Some(head.clone())
+        );
+        let lexical = mark(&vault, marks::Leg::Lexical, marks::Repo::Main);
+        if cfg!(feature = "find") {
+            assert_eq!(lexical, Some(head));
+        } else {
+            assert_eq!(lexical, None);
+        }
+        assert_eq!(mark(&vault, marks::Leg::Vector, marks::Repo::Main), None);
+        assert_eq!(mark(&vault, marks::Leg::Ids, marks::Repo::Isolated), None);
+        assert_eq!(
+            fs::read_to_string(live_dir(&vault).join("format"))
+                .unwrap()
+                .trim(),
+            "5"
+        );
+    }
+
+    #[test]
+    fn reindex_marks_isolated_legs_with_nested_head() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let schema = Schema {
+            isolated: Some(true),
+            ..document_schema()
+        };
+        vault.create_collection("secret", schema, None).unwrap();
+        vault
+            .collection("secret")
+            .unwrap()
+            .add("alpha", empty_add(), None)
+            .unwrap();
+        vault.reindex().unwrap();
+        let nested = head(&isolated::root(scratch.vault().as_path()));
+        assert_ne!(nested, head(scratch.vault().as_path()));
+        assert_eq!(
+            mark(&vault, marks::Leg::Ids, marks::Repo::Isolated),
+            Some(nested)
+        );
+    }
+
+    #[cfg(feature = "search")]
+    #[test]
+    fn reindex_marks_vector_leg_only_with_an_embedder() {
+        let scratch = Scratch::new();
+        drop(seeded(&scratch));
+        let embedder: Arc<dyn Embedder> = CountingEmbedder::new("m1");
+        let vault = open_search(scratch.vault(), scratch.options(), Some(embedder));
+        vault.reindex().unwrap();
+        assert_eq!(
+            mark(&vault, marks::Leg::Vector, marks::Repo::Main),
+            Some(head(scratch.vault().as_path()))
+        );
+    }
+
+    #[test]
+    fn reindex_inside_transaction_writes_no_marks() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        vault.begin().unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("beta", empty_add(), None)
+            .unwrap();
+        vault.reindex().unwrap();
+        assert!(!live_dir(&vault).join("marks").exists());
+        vault.discard().unwrap();
+    }
+
+    #[test]
+    fn reindex_with_uncommitted_leftovers_writes_no_marks() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        vault.begin().unwrap();
+        vault
+            .collection("c")
+            .unwrap()
+            .add("beta", empty_add(), None)
+            .unwrap();
+        drop(vault);
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        assert!(scratch.vault().join(".scheda").join("tx.log").is_file());
+        vault.reindex().unwrap();
+        assert!(!live_dir(&vault).join("marks").exists());
     }
 
     #[cfg(feature = "find")]

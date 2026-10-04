@@ -161,6 +161,45 @@ replaced by D11.
 (eventual instead of immediate): release as `0.19.0`, with a CHANGELOG
 entry under *Changed* that says so.
 
+Accepted with the B1–B4 plan (4 October 2026), after reading the code:
+
+**D16. Journal `id` map follows `HEAD` too.** Writes still update it
+inline (D1). Lines that reach `HEAD` another way (`pull`, `sync`, a
+`git` commit, another process) are applied from the same diff by the
+lexical-role indexer, with its own marks `ids` / `isolated-ids`. Every
+change to an `ids` file, by a writer or the indexer, holds a short flock
+`ids.lock` next to it, never while taking another lock. Before answering
+"unknown id" (and in the `duplicate_id` check) a handle re-reads the
+file when its length or mtime changed.
+
+**D17. `wait_indexed` lands in B3** with a minimal `IndexStatus`; B6
+completes the fields. Tests need a wait as soon as B4 removes inline
+indexing.
+
+**D18. `replace` / `remove` resolve `id` from the Record file**, not the
+lexical leg (D1 audit: `record_exists` used `has_id`). IDX-10's rule
+"unknown to the Index → `not_found`" for those two calls is retired.
+
+**D19. The indexer reads Records and declarations from the commit**
+(`git cat-file`), not the working tree, so an open transaction's
+uncommitted writes never reach the Index (D3).
+
+**D20. Format `5` layout.** `<gen>/marks/` is a directory with one file
+per leg (`lexical`, `vector`, `ids`, and the `isolated-` trio), each
+written by temp + rename, so two processes holding different roles never
+rewrite one file. The vector dump moves to `vector/<seq>/`, and the
+`vector` mark names `<commit> <seq>`, so a reader never loads a dump
+that is half written.
+
+**D21. D8 lands in B3.** A generation whose format is not `5` is rebuilt
+by the indexer from the empty tree into a new generation under
+`reindex.lock`, then published. The indexer and readers follow `current`
+when it moves; a handle no longer stays bound to the generation it saw
+at `open`. B8 adds corruption detection and the model path.
+
+**D22. `index_poll`** is `uint32 index_poll_ms` on `OpenOptions` (no
+well-known types in `api/` yet): unset → 1000, valid 10 to 3 600 000.
+
 ---
 
 ## 3. Part B — background Index

@@ -2,7 +2,7 @@
 //!
 //! Live layout is generational: `{vault}/.scheda/index/current` names the live
 //! generation directory, and `{vault}/.scheda/index/<generation>/` holds the
-//! `format` file, `lexical/`, `vector/`, edges, ord, and `journal/`. A handle
+//! `format` file, `marks/`, `lexical/`, `vector/`, edges, ord, and `journal/`. A handle
 //! resolves `current` once at open and keeps that generation. A reader older
 //! than one `reindex` cycle may find its files gone; `find` / `search` then
 //! fail with `index_missing` (no `format` file) or `index_lexical` (Tantivy
@@ -24,10 +24,11 @@ use crate::schema::{self, Decls, Kind};
 use crate::store;
 use crate::{Error, ReindexResult};
 
-/// On-disk Index format. Bumped to 4 when the Index became generational.
-/// An older `format` file (version 3, files directly in `index/`) is
-/// `index_version`; the caller runs `reindex`.
-pub(crate) const FORMAT_VERSION: u32 = 4;
+/// On-disk Index format. Bumped to 4 when the Index became generational,
+/// and to 5 when each generation recorded the commit every leg has reached
+/// (`<gen>/marks/`). An older `format` file is `index_version`; the caller
+/// runs `reindex`.
+pub(crate) const FORMAT_VERSION: u32 = 5;
 const FORMAT_FILE: &str = "format";
 const CURRENT_FILE: &str = "current";
 const STALE_FILE: &str = "stale";

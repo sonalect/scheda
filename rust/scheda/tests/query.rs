@@ -426,7 +426,7 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(counts.skipped_invalid, Some(0));
     let live = live_index(&vault);
     let format = fs::read_to_string(live.join("format")).unwrap();
-    assert_eq!(format.trim(), "4");
+    assert_eq!(format.trim(), "5");
     fs::write(live.join("format"), "999\n").unwrap();
     fs::write(live.join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
     #[cfg(feature = "search")]
@@ -447,7 +447,7 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(counts.records_read, Some(2));
     let live = live_index(&vault);
     let format = fs::read_to_string(live.join("format")).unwrap();
-    assert_eq!(format.trim(), "4");
+    assert_eq!(format.trim(), "5");
     assert!(!live.join("stolen.json").exists());
     collection.get("a").unwrap();
 }
@@ -1164,7 +1164,7 @@ fn legacy_format_3_is_index_version_until_reindex() {
         fs::read_to_string(live_index(&vault).join("format"))
             .unwrap()
             .trim(),
-        "4"
+        "5"
     );
 }
 
