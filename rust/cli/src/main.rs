@@ -177,6 +177,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             )?;
             let names = collection_names(&collections);
             let query = parse_find_query(filter.as_deref(), include_raw)?;
+            vault.wait_indexed(INDEX_WAIT)?;
             emit_json(&vault.find(&names, &query, offset, count)?)
         }
         Command::Search {
@@ -202,6 +203,7 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
                 search.reranker_model.as_deref(),
                 search.reranker_api_key_env_var.as_deref(),
             )?;
+            vault.wait_indexed(INDEX_WAIT)?;
             emit_json(&vault.search(&names, &query, reranker.as_deref())?)
         }
         Command::Push => open_existing(
@@ -261,6 +263,11 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
     }
 }
 
+/// How long `find` / `search` wait for the Index to reach `HEAD`. A CLI
+/// process is short-lived: commits made by the previous command are indexed
+/// by this one's background indexer, so the query waits for it.
+const INDEX_WAIT: std::time::Duration = std::time::Duration::from_secs(60);
+
 fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) -> Result<(), Error> {
     let collection = vault.collection(name)?;
     match command {
@@ -294,6 +301,7 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
             include_raw,
         } => {
             let query = parse_find_query(filter.as_deref(), include_raw)?;
+            vault.wait_indexed(INDEX_WAIT)?;
             emit_json(&collection.find(&query, offset, count)?)
         }
         CollectionCommand::Search {
@@ -313,6 +321,7 @@ fn collection_dispatch(vault: &Vault, name: &str, command: CollectionCommand) ->
                 reranker_model.as_deref(),
                 reranker_api_key_env_var.as_deref(),
             )?;
+            vault.wait_indexed(INDEX_WAIT)?;
             emit_json(&collection.search(&query, reranker.as_deref())?)
         }
     }

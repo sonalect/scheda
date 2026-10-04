@@ -250,7 +250,11 @@ fn open_fixture(scratch: &Scratch) -> Vault {
     let vault = scratch.reopen();
     add_isolated_journal(&vault);
     #[cfg(feature = "find")]
-    vault.reindex().unwrap();
+    {
+        vault.reindex().unwrap();
+        // The indexer may still be writing Index files after a rebuild.
+        common::indexed(&vault);
+    }
     vault
 }
 
@@ -728,6 +732,8 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
             .unwrap();
     }
     vault.commit("ops fixture").unwrap();
+    // A journal `get` finds its line through the `id` map the indexer keeps.
+    common::indexed(&vault);
 
     let mid_journal = format!("j{:05}", OPS_JOURNAL / 2);
     let mid_doc = format!("vol-{:04}", OPS_DOCS / 2);
@@ -773,6 +779,7 @@ fn identical_document_schemas_accept_the_same_record_and_find_stays_in_one() {
         .unwrap()
         .add("twin", payload, None)
         .unwrap();
+    common::indexed(&vault);
 
     let personal = vault
         .find(&["lessons_personal"], &Filter::all().into(), 0, 100)

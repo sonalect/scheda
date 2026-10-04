@@ -18,12 +18,10 @@
 //! `git` command, including `~/.ssh/config`, `ProxyCommand`, credential
 //! helpers, and host-key checking.
 //!
-//! - **`find`** — Tantivy `Vault::find` / `Collection::find`.
-//!   Writes without it mark the Index stale, so a later build with
-//!   `find` knows its lexical segments are behind and `find` fails
-//!   closed until `reindex` rebuilds them. A build without `find`
-//!   does not report that marker from `check`: it has no lexical
-//!   segments and no way to rebuild them.
+//! - **`find`** — Tantivy `Vault::find` / `Collection::find`, and the
+//!   background indexer that keeps the Index on the last commit. Writes
+//!   from a build without it are commits like any other: the next handle
+//!   with `find` indexes them from the commit its Index last reached.
 //! - **`search`** — hybrid `Vault::search` / `Collection::search`
 //!   (BM25 + USearch). Pulls `find` in. `open` with an embedder without
 //!   this feature fails (`index_vector`): the vector leg is absent.

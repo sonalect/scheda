@@ -200,6 +200,61 @@ at `open`. B8 adds corruption detection and the model path.
 **D22. `index_poll`** is `uint32 index_poll_ms` on `OpenOptions` (no
 well-known types in `api/` yet): unset → 1000, valid 10 to 3 600 000.
 
+**D23. Graceful shutdown** (accepted 4 October 2026). `Vault::close(self)`
+stops and joins the indexer, flushes, releases `write.lock`, and returns
+an error where `Drop` cannot; collections that outlive it keep reading
+and writing but no longer wake an indexer. The indexer checks the stop
+flag before every embedder call, so at most one call is in flight when
+`close` or the last drop waits. `close` has no timeout: a sync embedder
+call cannot be interrupted and the thread must not be abandoned (D11);
+the caller bounds it with its embedder's own HTTP timeout. Scheda
+installs no signal handler: the program catches `SIGINT` / `SIGTERM`,
+calls `close`, and exits; a second Ctrl-C (or `kill -9`) is safe because
+marks move only after durable writes (B7 has the test). The vector dump
+becomes atomic (D20) in B4. Part T adds `AsyncVault::close().await`.
+
+Settled while building B4 (4 October 2026); each one closes a gap the
+tests found:
+
+**D24. The lexical role needs the generation's projector.** A handle
+takes `index.lock` only when its projector matches the generation's
+projector dump, or the generation has none yet, or it is in another
+format and about to be rebuilt. Otherwise the first process to open a
+Vault (a CLI without a projector, say) would index without the
+consumer's columns. Mismatch: no role, `wait_indexed` does not wait for
+this handle, and `reindex` from a handle with the right projector is the
+explicit way over, as D7 is for embedders.
+
+**D25. `vector/current` names the live dump.** The dump is saved after
+every batch while the vector mark moves once per diff, so the pointer is
+a file of its own, not part of the mark: `vector/<seq>/` holds one whole
+save, `vector/current` (temp + rename) names it, the save before it is
+kept for a reader that is loading it. The flat `vector/` of an older
+release still loads.
+
+**D26. `reindex` marks `N+1` with the commits its walk started from**,
+read under `write.lock` before the walk. A commit that reaches `HEAD`
+during the walk without a Scheda call (a `git` command) is then applied
+by the indexer after publish instead of being lost.
+
+**D27. A generation switch keeps the handle's journal lines.** Lines the
+handle wrote that the new generation's maps lack (an open transaction's)
+are carried into them, so `get` keeps finding them.
+
+**D28. A publish pauses the handle's indexer.** `reindex` swaps the
+engine the handle shares with its indexer; the round in flight ends at
+its next batch boundary and the next waits for the swap, so no round
+writes the old generation's diff into the new one. `check` pauses it the
+same way, so a file Tantivy just created is not reported as a wide mode;
+`index_status` reads the marks of the generation the handle queries.
+
+**D29. CLI `find` / `search` wait from B4 on** (60 s, `wait_indexed`):
+each CLI command is its own process. `--no-wait` and the status command
+stay in B9.
+
+**D30. `remove` of a file git never tracked** deletes it and commits
+nothing (reachable since D18).
+
 ---
 
 ## 3. Part B — background Index
@@ -254,16 +309,22 @@ well-known types in `api/` yet): unset → 1000, valid 10 to 3 600 000.
 
 ### B4. Write path
 
-- [ ] `add` / `replace` / `remove` / `commit` no longer touch lexical or
+- [x] `add` / `replace` / `remove` / `commit` no longer touch lexical or
       vector; the lexical writer is no longer opened inside a
-      transaction; `discard` no longer rebuilds (D3).
-- [ ] Journal `id` map stays inline (D1); audit `replace` / `remove`
-      for lexical-leg lookups.
-- [ ] Vector save writes only when a slot changed (§1 item 4).
+      transaction; `discard` no longer rebuilds (D3)
+      (`vault.rs writes_inside_a_transaction_open_no_lexical_writer`).
+- [x] Journal `id` map stays inline (D1); audit `replace` / `remove`
+      for lexical-leg lookups (D18;
+      `background::replace_and_remove_right_after_add_use_the_file`,
+      `document.rs replace_of_unindexed_file_succeeds`).
+- [x] Vector save writes only when a slot changed (§1 item 4)
+      (`background::vector_dump_is_saved_only_when_a_slot_changes`).
 - *Check:* a write with a stub embedder that panics or blocks does not
-  block or fail the write.
+  block or fail the write
+  (`background::a_blocking_or_panicking_embedder_neither_blocks_nor_fails_a_write`).
 - *Check:* journal `add` then `get` of that `id` succeeds immediately,
-  before the indexer ran.
+  before the indexer ran
+  (`background::journal_add_then_get_before_the_indexer_ran`).
 
 ### B5. Readers follow the marks
 

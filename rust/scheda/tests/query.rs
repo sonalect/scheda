@@ -57,6 +57,7 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 }
 
@@ -116,6 +117,7 @@ fn empty_filter_and_scan_return_every_record() {
     collection
         .add("c", rec(json!({"title": "C"})), None)
         .unwrap();
+    common::indexed(&vault);
     let found = collection.find(&Filter::all().into(), 0, 100).unwrap();
     assert_eq!(found.records.len(), 3);
     assert_eq!(found.total, Some(3));
@@ -137,6 +139,7 @@ fn find_count_zero_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
+    common::indexed(&vault);
     let err = collection.find(&Filter::all().into(), 0, 0).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -149,6 +152,7 @@ fn find_omits_raw_unless_include_raw() {
     collection
         .add("a", rec(json!({"title": "A", "tag": "red"})), None)
         .unwrap();
+    common::indexed(&vault);
     let omitted = collection.find(&FindQuery::all(), 0, 10).unwrap();
     assert!(omitted.records[0].raw.is_none());
     let included = collection
@@ -176,6 +180,7 @@ fn concurrent_find_on_one_handle() {
     collection
         .add("c", rec(json!({"title": "C"})), None)
         .unwrap();
+    common::indexed(&vault);
     let vault = Arc::new(vault);
     let query = Filter::all().into();
     thread::scope(|scope| {
@@ -209,6 +214,7 @@ fn vault_find_empty_names_is_all_collections() {
         .unwrap()
         .add("home", rec(json!({"title": "Home"})), None)
         .unwrap();
+    common::indexed(&vault);
     let all = vault.find(&[], &Filter::all().into(), 0, 100).unwrap();
     let mut all_ids = ids(&all);
     all_ids.sort_unstable();
@@ -281,6 +287,7 @@ fn equal_set_exists_and_null() {
         .add("omit", rec(json!({"title": "O"})), None)
         .unwrap();
 
+    common::indexed(&vault);
     let red = collection
         .find(
             &filter(json!({"term":{"field":"tag","value":"red"}})),
@@ -323,6 +330,7 @@ fn unmarked_field_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("query_notes").unwrap();
+    common::indexed(&vault);
     let err = collection
         .find(
             &filter(json!({"term":{"field":"unknown","value":"x"}})),
@@ -346,6 +354,7 @@ fn document_filter_on_project_field() {
     collection
         .add("alpha", rec(json!({"title": "A", "project": "one"})), None)
         .unwrap();
+    common::indexed(&vault);
     let projects = collection
         .find(
             &filter(json!({"term":{"field":"project","value":"one"}})),
@@ -373,6 +382,7 @@ fn journal_empty_find_keeps_append_order() {
     collection
         .add("b", rec(json!({"tag": "two"})), None)
         .unwrap();
+    common::indexed(&vault);
     let found = collection
         .find(
             &filter(json!({"term":{"field":"tag","value":"one"}})),
@@ -407,6 +417,7 @@ schema:
     );
     let vault = scratch.reopen();
     let _got = vault.collection("query_notes").unwrap().get("a").unwrap();
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -429,20 +440,28 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(format.trim(), "5");
     fs::write(live.join("format"), "999\n").unwrap();
     fs::write(live.join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
-    #[cfg(feature = "search")]
-    {
-        let err = collection
-            .search(&scheda::SearchQuery::default().with_text("foreign"), None)
-            .unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::IndexVersion));
-        assert_ne!(err.to_string(), "foreign");
+    // Whatever moment the query lands in — before the indexer replaces the
+    // unknown-format generation, or after — it never returns a foreign id:
+    // either an Index code or the Records of this Vault.
+    match collection.find(&FindQuery::all(), 0, 10) {
+        Err(err) => assert_eq!(err.known_code(), Some(Code::IndexVersion)),
+        Ok(page) => assert!(
+            page.records
+                .iter()
+                .all(|r| r.id.as_deref() != Some("foreign"))
+        ),
     }
-    #[cfg(not(feature = "search"))]
-    {
-        let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::IndexVersion));
-        assert_ne!(err.to_string(), "foreign");
-    }
+    // The indexer rebuilds it from the commits into a new generation.
+    common::indexed(&vault);
+    let rebuilt = live_index(&vault);
+    assert_ne!(rebuilt, live);
+    assert_eq!(
+        fs::read_to_string(rebuilt.join("format")).unwrap().trim(),
+        "5"
+    );
+    assert!(!rebuilt.join("stolen.json").exists());
+    let page = collection.find(&FindQuery::all(), 0, 10).unwrap();
+    assert_eq!(page.total, Some(2));
     let counts = vault.reindex().unwrap();
     assert_eq!(counts.records_read, Some(2));
     let live = live_index(&vault);
@@ -489,6 +508,7 @@ fn phrase_matches_tokens_in_title() {
     collection
         .add("fox", rec(json!({"title": "Red fox"})), None)
         .unwrap();
+    common::indexed(&vault);
     let found = collection
         .find(
             &filter(json!({"phrase":{"field":"title","terms":["giant","panda"]}})),
@@ -534,6 +554,7 @@ fn phrase_prefix_fuzzy_regex_and_range() {
         )
         .unwrap();
 
+    common::indexed(&vault);
     let prefix = collection
         .find(
             &filter(json!({"phrasePrefix":{"field":"title","terms":["part"],"prefix":"ti"}})),
@@ -632,6 +653,7 @@ fn more_like_this_from_id_ranks_similar_title() {
     collection
         .add("d", rec(json!({"title": "zzzzzyx unique widget"})), None)
         .unwrap();
+    common::indexed(&vault);
     let found = collection
         .find(
             &filter(json!({
@@ -675,6 +697,7 @@ fn more_like_this_unknown_id_is_not_found() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let err = collection
         .find(
             &filter(json!({
@@ -720,6 +743,7 @@ fn find_score_ties_are_stable_across_reopen_and_pages() {
                 None,
             )
             .unwrap();
+        common::indexed(&vault);
         let found = collection.find(&Filter::all().into(), 0, 10).unwrap();
         orders.push(
             ids(&found)
@@ -760,6 +784,7 @@ fn find_score_ties_are_stable_across_reopen_and_pages() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let page0_found = collection.find(&Filter::all().into(), 0, 1).unwrap();
     let page1_found = collection.find(&Filter::all().into(), 1, 1).unwrap();
     let page0 = ids(&page0_found);
@@ -801,6 +826,7 @@ schema:
         .unwrap();
     // Projector walks nested JSON for a declared Text column (`city`). `json_subpaths`
     // is ignored: an object column (`meta`) is not expanded into nested names.
+    common::indexed(&vault);
     let nested = collection
         .find(&filter(json!({"exists":{"field":"city"}})), 0, 100)
         .unwrap();
@@ -846,6 +872,7 @@ fn find_regex_and_phrase_on_body() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let regex = collection
         .find(
             &filter(json!({"regex":{"field":"title","pattern":"bamb.*"}})),
@@ -894,6 +921,7 @@ schema:
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let err = collection
         .find(
             &filter(json!({"regex":{"field":"hidden","pattern":"bamboo"}})),
@@ -914,6 +942,7 @@ fn journal_rejects_body_filter() {
     collection
         .add("a", rec(json!({"tag": "one"})), None)
         .unwrap();
+    common::indexed(&vault);
     let err = collection
         .find(&filter(json!({"exists":{"field":"payload"}})), 0, 10)
         .unwrap_err();
@@ -959,6 +988,7 @@ fn reader_opened_before_reindex_keeps_find_results() {
     collection
         .add("b", rec(json!({"title": "Other"})), None)
         .unwrap();
+    common::indexed(&writer);
     let reader = open_query(scratch.vault());
     let before = reader
         .collection("query_notes")
@@ -1123,6 +1153,7 @@ fn incremental_write_is_visible_to_handle_opened_afterwards() {
         .unwrap()
         .add("a", rec(json!({"title": "Keep"})), None)
         .unwrap();
+    common::indexed(&writer);
     let reader = open_query(scratch.vault());
     let page = reader
         .collection("query_notes")
@@ -1134,7 +1165,7 @@ fn incremental_write_is_visible_to_handle_opened_afterwards() {
 }
 
 #[test]
-fn legacy_format_3_is_index_version_until_reindex() {
+fn legacy_format_3_is_rebuilt_in_the_background() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     vault
@@ -1142,30 +1173,33 @@ fn legacy_format_3_is_index_version_until_reindex() {
         .unwrap()
         .add("a", rec(json!({"title": "Keep"})), None)
         .unwrap();
+    common::indexed(&vault);
+    let first = live_index(&vault);
     drop(vault);
-    let root = scratch.vault().join(".scheda").join("index");
-    let _ = fs::remove_file(root.join("current"));
-    fs::write(root.join("format"), "3\n").unwrap();
+    fs::write(first.join("format"), "3\n").unwrap();
     let vault = open_query(scratch.vault());
-    let err = vault
-        .collection("query_notes")
-        .unwrap()
-        .find(&FindQuery::all(), 0, 10)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexVersion));
-    vault.reindex().unwrap();
+    // The old generation's marks already sit at `HEAD`, so waiting for them
+    // proves nothing: poll for the published replacement.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while live_index(&vault) == first {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no new generation published"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    common::indexed(&vault);
+    let second = live_index(&vault);
+    assert_eq!(
+        fs::read_to_string(second.join("format")).unwrap().trim(),
+        "5"
+    );
     let page = vault
         .collection("query_notes")
         .unwrap()
         .find(&FindQuery::all(), 0, 10)
         .unwrap();
     assert_eq!(ids(&page), ["a"]);
-    assert_eq!(
-        fs::read_to_string(live_index(&vault).join("format"))
-            .unwrap()
-            .trim(),
-        "5"
-    );
 }
 
 const FOLD_TOKEN: &str = "fold-secret-token-never-index";
@@ -1222,6 +1256,7 @@ fn find_on_lexically_excluded_collection_is_unsupported() {
     collection
         .add("alpha", rec(json!({"title": FOLD_TOKEN})), None)
         .unwrap();
+    common::indexed(&vault);
     let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert!(
@@ -1321,6 +1356,7 @@ schema:
         !tree_contains(&scheda, FOLD_TOKEN),
         "new field on an excluded collection entered the Index"
     );
+    common::indexed(&vault);
     let err = vault
         .collection("fold_docs")
         .unwrap()
@@ -1351,6 +1387,7 @@ schema:
         .unwrap();
     let got = collection.get("line-one").unwrap();
     assert_eq!(got.id.as_deref(), Some("line-one"));
+    common::indexed(&vault);
     let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
 }
@@ -1388,6 +1425,7 @@ schema:
     collection
         .add("d", rec(json!({"title": "zzzzzyx unique widget"})), None)
         .unwrap();
+    common::indexed(&vault);
     let found = collection
         .find(
             &filter(json!({
@@ -1416,6 +1454,7 @@ fn vault_find_bare_projector_field_is_invalid() {
         .unwrap()
         .add("red", rec(json!({"title": "R", "tag": "red"})), None)
         .unwrap();
+    common::indexed(&vault);
     let err = vault
         .find(
             &[],
@@ -1431,6 +1470,7 @@ fn vault_find_bare_projector_field_is_invalid() {
 fn vault_find_unknown_collection_qualifier_is_not_found() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
+    common::indexed(&vault);
     let err = vault
         .find(
             &[],
@@ -1451,6 +1491,7 @@ fn collection_find_other_qualifier_is_invalid() {
     scratch.write_declaration("notes.yaml", NOTES);
     scratch.write_declaration("pages.yaml", PAGES);
     let vault = scratch.reopen();
+    common::indexed(&vault);
     let err = vault
         .collection("query_notes")
         .unwrap()

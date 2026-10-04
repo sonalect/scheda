@@ -39,20 +39,50 @@ API or on-disk format changes bump the minor.
   make it wait.
 - `OpenOptions.index_poll_ms`: how often the background indexer reads
   `HEAD` (10 ms to 1 h, default 1 s).
-- Background indexer (internal, not yet started by `open`: writes still
-  update the Index inline). One thread per handle follows `HEAD`, applies
-  the diff in batches, takes `{vault}/.scheda/index.lock` for the lexical
-  leg and `vector.lock` for the vector leg (only with an embedder of the
-  generation's model), rebuilds a generation of another format in the
-  background, and is joined when the last handle drops.
+- Background indexer, started by `open` in a build with `find`. One thread
+  per handle follows `HEAD` (woken by this handle's commits, otherwise every
+  `index_poll_ms`), applies the diff since the last indexed commit in
+  batches, and is joined when the last handle drops. The lexical leg and the
+  journal `id` maps belong to whoever holds `{vault}/.scheda/index.lock`
+  (only a handle with the generation's projector takes it); the vector leg
+  to whoever holds `vector.lock` (only with an embedder of the generation's
+  model). Commits from outside Scheda (`git`, another process, a build
+  without `find`) are indexed the same way.
+- `Vault::close()`: stop and join the indexer (at most one embedder call in
+  flight), then drop the handle, with an error where `Drop` has none. Scheda
+  installs no signal handler; a program calls `close` on `SIGINT` /
+  `SIGTERM`. Being killed instead is safe: the next `open` resumes.
 
 ### Changed
 
-- The vector dump (`index.usearch`, `keys.json`, `meta.json`) is written
-  only when a vector slot was added or removed, not on every commit of an
-  indexed collection.
-- Index format is `5`. A format-`4` Index is `index_version` until
-  `reindex` (automatic rebuild comes with the background indexer).
+- `find` and `search` are eventually consistent: `add` / `replace` /
+  `remove` / `commit` no longer update the Index, the background indexer
+  does after the commit. Call `Vault::wait_indexed(timeout)` before a query
+  that must see a write you just made. Inside a transaction, queries do not
+  see its uncommitted writes. Journal `get` still finds a line right after
+  `add`.
+- `replace` and `remove` find the Record by its file, not the Index: a file
+  that exists but was never indexed can be replaced or removed. Removing a
+  file git never tracked deletes it without a commit.
+- An embedder failure no longer fails or rolls back a write: the indexer
+  retries with backoff and reports it in `index_status().last_error`.
+- `discard`, `pull`, `sync`, and the isolated variants no longer rebuild the
+  Index; the indexer applies what moved.
+- An Index generation in another format is rebuilt in the background, and a
+  handle follows `{vault}/.scheda/index/current` when another handle or
+  process publishes a new generation (it no longer stays on the one it saw
+  at `open`).
+- The vector dump is written only when a vector slot was added or removed,
+  and atomically: `vector/<seq>/` plus a `vector/current` pointer, so a
+  reader never loads half of a save.
+- CLI `find` / `search` wait up to 60 s for the Index to reach `HEAD`.
+- Index format is `5`; an older Index is rebuilt automatically.
+
+### Removed
+
+- The `stale` marker a build without `find` wrote on every write, and the
+  `index_lexical` failure it caused: the next `find` build indexes those
+  commits from the last indexed one.
 
 ## [0.18.6] - 2026-10-01
 

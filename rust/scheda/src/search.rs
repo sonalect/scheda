@@ -52,6 +52,8 @@ const VECTOR_INDEX: &str = "index.usearch";
 const VECTOR_META: &str = "meta.json";
 #[cfg(feature = "search")]
 const VECTOR_KEYS: &str = "keys.json";
+#[cfg(feature = "search")]
+const VECTOR_CURRENT: &str = "current";
 const ORD_FILE: &str = "ord.json";
 /// Heap budget for one Tantivy `IndexWriter`. Opening a writer allocates
 /// this and starts a merge thread, so the engine keeps a writer only while
@@ -387,32 +389,6 @@ impl SearchEngine {
         }
     }
 
-    pub(crate) fn close_for_rebuild(&self) {
-        let Ok(mut inner) =
-            crate::error::rw_write(&self.inner, "[SearchEngine::close_for_rebuild] lock")
-        else {
-            return;
-        };
-        let lexical = inner.lexical.take();
-        #[cfg(feature = "search")]
-        {
-            inner.vector = None;
-        }
-        inner.dirty = false;
-        inner.next_ord.clear();
-        drop(inner);
-        shutdown_lexical(lexical);
-    }
-
-    pub(crate) fn rebuild(
-        &self,
-        vault: &Path,
-        decls: &Decls,
-        embedder: Option<&dyn Embedder>,
-    ) -> Result<RebuildStats, Error> {
-        self.rebuild_from(vault, decls, embedder, None)
-    }
-
     /// Fill this engine from Vault files. `hook` runs after a collection's
     /// files are listed and before they are read, so a test can `remove`
     /// in that window. One Record at a time: the walk does not hold the
@@ -441,11 +417,16 @@ impl SearchEngine {
         // engine, but never N+1's engine against N's files. Holding both write
         // locks together would deadlock with `flush` (inner then dir) or
         // `find` (dir then inner).
+        let old_dir = self.dir()?;
         self.set_index_dir(&dir)?;
         let mut self_inner = crate::error::rw_write(&self.inner, "[SearchEngine::adopt] install")?;
         let old = std::mem::replace(&mut *self_inner, taken);
         drop(self_inner);
-        shutdown_lexical(old.lexical);
+        if shutdown_lexical(old.lexical) {
+            // The old generation stays as the previous one; its last merges
+            // must not leave files wider than owner-only.
+            index::restrict_index_tree(&old_dir)?;
+        }
         Ok(())
     }
 
@@ -744,6 +725,21 @@ impl SearchEngine {
         )
     }
 
+    /// Whether this engine's projector may write the lexical leg of the
+    /// generation at `index_dir`: the same answer the first upsert would
+    /// give, without writing. A generation built by another projector (or
+    /// without one, when this engine has one) is not writable here.
+    pub(crate) fn lexical_writable(&self, index_dir: &Path) -> Result<bool, Error> {
+        let fresh = index::format_version(index_dir)?.is_none();
+        Ok(
+            match (read_projector_dump(index_dir)?, self.projector.as_deref()) {
+                (None, None) => true,
+                (None, Some(_)) => fresh,
+                (Some(dump), _) => self.match_stored_dump(&dump).is_ok(),
+            },
+        )
+    }
+
     fn require_projector_dump(&self, index_dir: &Path) -> Result<(), Error> {
         match read_projector_dump(index_dir)? {
             None => {
@@ -850,8 +846,13 @@ impl SearchEngine {
     /// drops it when the Vault write lock is released.
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
         let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::enable_write] lock")?;
-        inner.can_write = true;
+        let was = std::mem::replace(&mut inner.can_write, true);
         drop(inner);
+        if was {
+            // Every commit re-applies owner-only modes; walking the whole
+            // tree again on each indexer round would only cost time.
+            return Ok(());
+        }
         let index_dir = self.dir()?;
         index::restrict_index_tree(&index_dir)
     }
@@ -892,6 +893,9 @@ impl SearchEngine {
                 Code::IndexLexical,
                 "[SearchEngine::release_writer] close writer",
             )?;
+            // Merges write segment files after the last commit restricted
+            // the tree; make those owner-only too.
+            index::restrict_index_tree(&index_dir)?;
         }
         Ok(())
     }
@@ -923,52 +927,6 @@ impl SearchEngine {
         let mut inner = crate::error::rw_write(&self.inner, frame)?;
         inner.prepare_query(index_dir)?;
         f(&inner)
-    }
-
-    pub(crate) fn has_id(&self, collection: &str, id: &str) -> Result<bool, Error> {
-        let index_dir = self.dir()?;
-        index::require_fresh(&index_dir)?;
-        match index::format_version(&index_dir)? {
-            Some(v) if v != index::FORMAT_VERSION => {
-                return Err(Error::index_version(format!(
-                    "index format {v} is not {}",
-                    index::FORMAT_VERSION
-                ))
-                .context("[SearchEngine::has_id] check version"));
-            }
-            None => return Ok(false),
-            _ => {}
-        }
-        self.with_query(&index_dir, "[SearchEngine::has_id] lock", |inner| {
-            let Some(lexical) = inner.lexical.as_ref() else {
-                return Ok(false);
-            };
-            lexical
-                .reader
-                .reload()
-                .context(Code::IndexLexical, "[SearchEngine::has_id] reload reader")?;
-            let searcher = lexical.reader.searcher();
-            let query = BooleanQuery::new(vec![
-                (
-                    Occur::Must,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(lexical.f_collection, collection),
-                        IndexRecordOption::Basic,
-                    )),
-                ),
-                (
-                    Occur::Must,
-                    Box::new(TermQuery::new(
-                        Term::from_field_text(lexical.f_id, id),
-                        IndexRecordOption::Basic,
-                    )),
-                ),
-            ]);
-            let top = searcher
-                .search(&query, &TopDocs::with_limit(1).order_by_score())
-                .context(Code::IndexLexical, "[SearchEngine::has_id] search")?;
-            Ok(!top.is_empty())
-        })
     }
 
     #[cfg(feature = "search")]
@@ -1074,7 +1032,6 @@ impl SearchEngine {
             return Ok(None);
         }
         let index_dir = self.dir()?;
-        index::require_fresh(&index_dir)?;
         index::require_current_format(&index_dir)?;
         self.require_projector_dump(&index_dir)?;
         self.with_query(&index_dir, "[SearchEngine::with_find] lock", |inner| {
@@ -1154,7 +1111,6 @@ impl SearchEngine {
             return Ok(SearchHits::default());
         }
         let index_dir = self.dir()?;
-        index::require_fresh(&index_dir)?;
         index::require_current_format(&index_dir)?;
         let Some(text) = query.text.as_deref() else {
             unreachable!("SearchQuery text is required");
@@ -1215,16 +1171,21 @@ fn take_lexical_writer(lexical: Option<&Lexical>) -> Result<Option<IndexWriter>,
     Ok(crate::error::mutex(&lexical.writer, "[SearchEngine] take writer")?.take())
 }
 
-fn shutdown_lexical(lexical: Option<Lexical>) {
+/// Close `lexical`'s writer, waiting for its merges. Whether there was one.
+fn shutdown_lexical(lexical: Option<Lexical>) -> bool {
     let Some(lexical) = lexical else {
-        return;
+        return false;
     };
     let writer = match lexical.writer.into_inner() {
         Ok(writer) => writer,
         Err(poisoned) => poisoned.into_inner(),
     };
-    if let Some(writer) = writer {
-        let _ = writer.wait_merging_threads();
+    match writer {
+        Some(writer) => {
+            let _ = writer.wait_merging_threads();
+            true
+        }
+        None => false,
     }
 }
 
@@ -1733,12 +1694,41 @@ fn drop_unseen_vectors(
     Ok(())
 }
 
+/// Sequence number `vector/current` names, if any.
+#[cfg(feature = "search")]
+fn vector_seq(root: &Path) -> Option<u64> {
+    fs::read_to_string(root.join(VECTOR_CURRENT))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Directory that holds the live vector dump of the generation at
+/// `index_dir`: `vector/<seq>/` as `vector/current` names it, or the flat
+/// `vector/` an older release wrote. `None` without a dump.
+///
+/// Each save writes a whole new `<seq>/` and only then moves `current`, so
+/// a reader never loads half of one save and half of another.
+#[cfg(feature = "search")]
+fn vector_files(index_dir: &Path) -> Option<PathBuf> {
+    let root = index_dir.join(VECTOR_DIR);
+    if let Some(seq) = vector_seq(&root) {
+        let dir = root.join(seq.to_string());
+        if dir.join(VECTOR_META).is_file() {
+            return Some(dir);
+        }
+    }
+    root.join(VECTOR_META).is_file().then_some(root)
+}
+
 #[cfg(feature = "search")]
 fn peek_vector_meta(index_dir: &Path) -> Result<Option<VectorMeta>, Error> {
-    let meta_path = index_dir.join(VECTOR_DIR).join(VECTOR_META);
-    let dump = index_dir.join(VECTOR_DIR).join(VECTOR_INDEX);
-    let keys = index_dir.join(VECTOR_DIR).join(VECTOR_KEYS);
-    if !meta_path.is_file() || !dump.is_file() || !keys.is_file() {
+    let Some(dir) = vector_files(index_dir) else {
+        return Ok(None);
+    };
+    let meta_path = dir.join(VECTOR_META);
+    if !dir.join(VECTOR_INDEX).is_file() || !dir.join(VECTOR_KEYS).is_file() {
         return Ok(None);
     }
     let raw = fs::read_to_string(&meta_path).context("[SearchEngine] read vector meta")?;
@@ -1768,16 +1758,17 @@ pub(crate) fn vector_model_matches(
 /// change instead of embedding every slot again.
 #[cfg(feature = "search")]
 pub(crate) fn copy_vector_dump_as_is(from: &Path, to: &Path) -> Result<(), Error> {
-    if from.join(VECTOR_DIR).join(VECTOR_META).is_file() {
-        copy_vector_dir(from, to)?;
-    }
-    Ok(())
+    copy_vector_dir(from, to)
 }
 
+/// Copy the live dump of `from` into `to` as its first save (`vector/1/`).
 #[cfg(feature = "search")]
 fn copy_vector_dir(from: &Path, to: &Path) -> Result<(), Error> {
-    let src = from.join(VECTOR_DIR);
-    let dst = to.join(VECTOR_DIR);
+    let Some(src) = vector_files(from) else {
+        return Ok(());
+    };
+    let root = to.join(VECTOR_DIR);
+    let dst = root.join("1");
     fs::create_dir_all(&dst).context("[SearchEngine] create vector dir")?;
     for name in [VECTOR_INDEX, VECTOR_META, VECTOR_KEYS] {
         let from_file = src.join(name);
@@ -1786,7 +1777,7 @@ fn copy_vector_dir(from: &Path, to: &Path) -> Result<(), Error> {
         }
         fs::copy(&from_file, dst.join(name)).context("[SearchEngine] copy vector file")?;
     }
-    Ok(())
+    store::atomic_write(&root.join(VECTOR_CURRENT), b"1\n")
 }
 
 /// Copy `source`'s vector dump into `dest` when the embedder matches
@@ -2571,7 +2562,9 @@ fn bind_lexical(index: Index) -> Result<Lexical, Error> {
 
 #[cfg(feature = "search")]
 fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
-    let dir = index_dir.join(VECTOR_DIR);
+    let Some(dir) = vector_files(index_dir) else {
+        return Ok(None);
+    };
     let meta_path = dir.join(VECTOR_META);
     let dump = dir.join(VECTOR_INDEX);
     if !meta_path.is_file() || !dump.is_file() {
@@ -2610,9 +2603,54 @@ fn load_vector(index_dir: &Path) -> Result<Option<VectorStore>, Error> {
 
 #[cfg(feature = "search")]
 fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<(), Error> {
-    let dir = index_dir.join(VECTOR_DIR);
+    let root = index_dir.join(VECTOR_DIR);
+    let seq = vector_seq(&root).unwrap_or(0).saturating_add(1);
+    let dir = root.join(seq.to_string());
+    match fs::remove_dir_all(&dir) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).context("[SearchEngine::save_vector] clear leftover dump"),
+    }
     fs::create_dir_all(&dir).context("[SearchEngine::save_vector] create dir")?;
-    store.ann.save(&dir.join(VECTOR_INDEX))?;
+    write_vector_files(&dir, store)?;
+    store::atomic_write(&root.join(VECTOR_CURRENT), format!("{seq}\n").as_bytes())?;
+    drop_old_vector_dumps(&root, seq)
+}
+
+/// Remove dumps older than the one before `seq` (a reader may still be
+/// loading that one) and the flat files of an older layout.
+#[cfg(feature = "search")]
+fn drop_old_vector_dumps(root: &Path, seq: u64) -> Result<(), Error> {
+    for name in [VECTOR_INDEX, VECTOR_META, VECTOR_KEYS] {
+        match fs::remove_file(root.join(name)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).context("[SearchEngine::save_vector] drop flat dump"),
+        }
+    }
+    let entries = fs::read_dir(root).context("[SearchEngine::save_vector] list dumps")?;
+    for entry in entries {
+        let entry = entry.context("[SearchEngine::save_vector] list dumps")?;
+        let old = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u64>().ok())
+            .is_some_and(|n| n.saturating_add(1) < seq);
+        if old {
+            fs::remove_dir_all(entry.path())
+                .context("[SearchEngine::save_vector] drop old dump")?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "search")]
+fn write_vector_files(dir: &Path, store: &VectorStore) -> Result<(), Error> {
+    let dump = dir.join(VECTOR_INDEX);
+    store.ann.save(&dump)?;
+    fs::File::open(&dump)
+        .and_then(|file| file.sync_all())
+        .context("[SearchEngine::save_vector] fsync dump")?;
     let meta = VectorMeta {
         model_id: store.model_id.clone(),
         dimensions: store.dimensions,

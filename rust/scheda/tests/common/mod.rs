@@ -3,7 +3,7 @@
 //! Points this process at a git config path that does not exist so the
 //! developer's `~/.gitconfig` cannot change outcomes. Creates no files.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::Arc;
 
@@ -24,6 +24,67 @@ pub(crate) fn isolate_test_git_env() {
         }
     });
     let _: fn(&[&str]) -> Arc<dyn Projector> = json_text_projector;
+    let _: fn(&scheda::Vault) = indexed;
+    let _: fn(&Path, &Path) = commit_file;
+}
+
+/// Wait until the background indexer has reached `HEAD`.
+///
+/// Writes return before the Index sees them, so a query that follows a
+/// write calls this first.
+#[cfg(feature = "find")]
+pub(crate) fn indexed(vault: &scheda::Vault) {
+    vault
+        .wait_indexed(std::time::Duration::from_secs(30))
+        .unwrap();
+}
+
+/// Without `find` there is no Index to wait for.
+#[cfg(not(feature = "find"))]
+pub(crate) fn indexed(_vault: &scheda::Vault) {}
+
+/// Commit one file of a Vault with the git CLI, as a hand edit lands.
+///
+/// The Index reads Schema files from commits, so a declaration written
+/// straight into the working tree is invisible to `find` and `search`
+/// until it is committed. A file that already matches `HEAD` commits
+/// nothing.
+pub(crate) fn commit_file(vault: &Path, file: &Path) {
+    let git = |args: &[&std::ffi::OsStr]| {
+        process::Command::new("git")
+            .arg("-C")
+            .arg(vault)
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let path = file.as_os_str();
+    let add = git(&["add".as_ref(), "--".as_ref(), path]);
+    assert!(add.status.success(), "{add:?}");
+    let diff = git(&[
+        "diff".as_ref(),
+        "--cached".as_ref(),
+        "--quiet".as_ref(),
+        "--".as_ref(),
+        path,
+    ]);
+    if diff.status.success() {
+        return;
+    }
+    let commit = git(&[
+        "-c".as_ref(),
+        "user.name=Scheda".as_ref(),
+        "-c".as_ref(),
+        "user.email=scheda@invalid".as_ref(),
+        "-c".as_ref(),
+        "commit.gpgsign=false".as_ref(),
+        "commit".as_ref(),
+        "-m".as_ref(),
+        "declare collection".as_ref(),
+        "--".as_ref(),
+        path,
+    ]);
+    assert!(commit.status.success(), "{commit:?}");
 }
 
 /// Unique directory for one test's Vault tree.

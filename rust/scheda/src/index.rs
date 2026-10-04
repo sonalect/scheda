@@ -16,8 +16,6 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "find")]
-use crate::error::Context;
 use crate::error::{Code, ContextAs, ContextIo, bail};
 use crate::journal;
 use crate::schema::{self, Decls, Kind};
@@ -31,9 +29,9 @@ use crate::{Error, ReindexResult};
 pub(crate) const FORMAT_VERSION: u32 = 5;
 const FORMAT_FILE: &str = "format";
 const CURRENT_FILE: &str = "current";
-const STALE_FILE: &str = "stale";
 const JOURNAL_DIR: &str = "journal";
 const IDS_FILE: &str = "ids";
+const IDS_LOCK_FILE: &str = "ids.lock";
 const LEGACY_FILES: &[&str] = &["format", "stale", "edges.jsonl", "ord.json", "txn"];
 const LEGACY_DIRS: &[&str] = &["lexical", "vector", "journal"];
 
@@ -74,6 +72,17 @@ impl IndexHandle {
 pub(crate) struct JournalIdMaps {
     collections: BTreeMap<String, BTreeMap<String, String>>,
     segment_lines: BTreeMap<PathBuf, u64>,
+    /// Length and mtime of each `ids` file when this map last read or
+    /// wrote it. Another handle or process changes the file; a different
+    /// stamp means re-read before trusting "unknown id".
+    stamps: BTreeMap<String, Stamp>,
+}
+
+type Stamp = (u64, Option<std::time::SystemTime>);
+
+fn stamp_of(path: &Path) -> Option<Stamp> {
+    let meta = fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
 }
 
 #[derive(Debug)]
@@ -141,6 +150,12 @@ impl JournalIdMaps {
         if let Some(n) = self.segment_lines.get_mut(path) {
             *n = n.saturating_sub(1);
         }
+    }
+
+    /// Forget every cached segment line count; each is recounted on its
+    /// next use. Needed after a restore truncated or deleted segments.
+    pub(crate) fn clear_segment_lines(&mut self) {
+        self.segment_lines.clear();
     }
 
     pub(crate) fn ensure_segment_lines(
@@ -340,16 +355,114 @@ pub(crate) fn load_journal_ids(index_dir: &Path, decls: &Decls) -> Result<Journa
         if decl.encrypted || decl.kind != Kind::Journal {
             continue;
         }
-        let path = ids_path(index_dir, &decl.name);
-        if !path.is_file() {
-            continue;
-        }
-        if let Some(mut ids) = read_ids_file(&path)? {
+        reload_ids(index_dir, &mut maps, decl)?;
+    }
+    Ok(maps)
+}
+
+/// Re-read `decl`'s `ids` file into `maps`, or drop the collection from
+/// `maps` when the file is gone or unreadable (lookups then scan).
+fn reload_ids(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    decl: &schema::CollectionDecl,
+) -> Result<(), Error> {
+    let path = ids_path(index_dir, &decl.name);
+    let stamp = stamp_of(&path);
+    let ids = if path.is_file() {
+        read_ids_file(&path)?
+    } else {
+        None
+    };
+    match ids {
+        Some(mut ids) => {
             ids.retain(|id, rel| id_map_line_ok(decl, id, rel));
             maps.replace_collection(decl.name.clone(), ids);
         }
+        None => {
+            maps.collections.remove(&decl.name);
+        }
     }
-    Ok(maps)
+    match stamp {
+        Some(stamp) => maps.stamps.insert(decl.name.clone(), stamp),
+        None => maps.stamps.remove(&decl.name),
+    };
+    Ok(())
+}
+
+/// Bring `decl`'s map up to date with its `ids` file when another handle
+/// or process changed the file since this map last saw it. Costs one
+/// `stat` when nothing changed.
+pub(crate) fn refresh_ids(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    decl: &schema::CollectionDecl,
+) -> Result<(), Error> {
+    let path = ids_path(index_dir, &decl.name);
+    if stamp_of(&path) == maps.stamps.get(&decl.name).copied() {
+        return Ok(());
+    }
+    reload_ids(index_dir, maps, decl)
+}
+
+/// Hold `{index_dir}/journal/{collection}/ids.lock` while one change to
+/// that `ids` file is made. Every writer of the file — a write on any
+/// handle, the indexer in any process — takes it, never while waiting for
+/// another lock, so the read-change-write of one cannot drop the line
+/// another appended.
+fn lock_ids(index_dir: &Path, collection: &str) -> Result<fs::File, Error> {
+    let path = ids_path(index_dir, collection).with_file_name(IDS_LOCK_FILE);
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir).context("[Index::lock_ids] create dir")?;
+    }
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .context("[Index::lock_ids] open ids lock")?;
+    store::restrict_file(&path)?;
+    file.lock().context("[Index::lock_ids] lock ids")?;
+    Ok(file)
+}
+
+/// Re-read the `ids` file of `collection` into `maps` when its stamp
+/// changed, for callers that hold [`lock_ids`] and know only the name.
+fn refresh_named(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    collection: &str,
+) -> Result<(), Error> {
+    let path = ids_path(index_dir, collection);
+    let stamp = stamp_of(&path);
+    if stamp == maps.stamps.get(collection).copied() {
+        return Ok(());
+    }
+    if let Some(ids) = if path.is_file() {
+        read_ids_file(&path)?
+    } else {
+        None
+    } {
+        let ids = ids
+            .into_iter()
+            .filter(|(id, rel)| {
+                crate::id::require_slug("id", id).is_ok() && id_map_rel_ok_for_name(collection, rel)
+            })
+            .collect();
+        maps.replace_collection(collection.to_owned(), ids);
+    }
+    if let Some(stamp) = stamp {
+        maps.stamps.insert(collection.to_owned(), stamp);
+    }
+    Ok(())
+}
+
+fn note_stamp(index_dir: &Path, maps: &mut JournalIdMaps, collection: &str) {
+    match stamp_of(&ids_path(index_dir, collection)) {
+        Some(stamp) => maps.stamps.insert(collection.to_owned(), stamp),
+        None => maps.stamps.remove(collection),
+    };
 }
 
 /// Fill `index_dir` with journal maps and the format file. Does not swap
@@ -434,7 +547,39 @@ fn scheda_dir(index_dir: &Path) -> Option<&Path> {
     }
 }
 
+/// Remember in `into` (and its `ids` files under `index_dir`) every line
+/// `from` maps that `into` does not, for collections `into` knows.
+#[cfg(feature = "find")]
+pub(crate) fn carry_over(
+    index_dir: &Path,
+    from: &JournalIdMaps,
+    into: &mut JournalIdMaps,
+) -> Result<(), Error> {
+    for (collection, ids) in &from.collections {
+        for (id, rel) in ids {
+            if into.contains(collection, id) == Some(false) {
+                remember_id(index_dir, into, collection, id, rel)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn remember_id(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    collection: &str,
+    id: &str,
+    rel: &str,
+) -> Result<(), Error> {
+    let _lock = lock_ids(index_dir, collection)?;
+    refresh_named(index_dir, maps, collection)?;
+    remember_locked(index_dir, maps, collection, id, rel)?;
+    note_stamp(index_dir, maps, collection);
+    Ok(())
+}
+
+fn remember_locked(
     index_dir: &Path,
     maps: &mut JournalIdMaps,
     collection: &str,
@@ -578,13 +723,17 @@ pub(crate) fn forget_remembered(
     collection: &str,
     id: &str,
 ) -> Result<(), Error> {
+    let _lock = lock_ids(index_dir, collection)?;
+    refresh_named(index_dir, maps, collection)?;
     maps.forget_id(collection, id);
     let ids = maps
         .collections
         .get(collection)
         .cloned()
         .unwrap_or_default();
-    write_ids_file(index_dir, collection, &ids)
+    write_ids_file(index_dir, collection, &ids)?;
+    note_stamp(index_dir, maps, collection);
+    Ok(())
 }
 
 pub(crate) fn rewrite_collection(
@@ -593,8 +742,10 @@ pub(crate) fn rewrite_collection(
     collection: &str,
     ids: BTreeMap<String, String>,
 ) -> Result<(), Error> {
+    let _lock = lock_ids(index_dir, collection)?;
     write_ids_file(index_dir, collection, &ids)?;
     maps.replace_collection(collection.to_owned(), ids);
+    note_stamp(index_dir, maps, collection);
     Ok(())
 }
 
@@ -723,35 +874,6 @@ pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
     fs::write(&path, format!("{FORMAT_VERSION}\n"))
         .context("[Index::write_format] write format")?;
     restrict_index_tree(index_dir)
-}
-
-fn stale_path(index_dir: &Path) -> PathBuf {
-    index_dir.join(STALE_FILE)
-}
-
-/// Whether a build that cannot update Tantivy segments wrote Records here.
-#[cfg(feature = "find")]
-#[must_use]
-pub(crate) fn is_stale(index_dir: &Path) -> bool {
-    stale_path(index_dir).is_file()
-}
-
-/// Mark lexical segments out of date after a write that did not update them.
-#[cfg(not(feature = "find"))]
-pub(crate) fn mark_stale(index_dir: &Path) -> Result<(), Error> {
-    fs::create_dir_all(index_dir).context("[Index::mark_stale] create dir")?;
-    fs::write(stale_path(index_dir), []).context("[Index::mark_stale] write stale")?;
-    restrict_index_tree(index_dir)
-}
-
-/// Fail closed when lexical segments were aged without a Tantivy update.
-#[cfg(feature = "find")]
-pub(crate) fn require_fresh(index_dir: &Path) -> Result<(), Error> {
-    if is_stale(index_dir) {
-        return Err(Error::index_lexical("index is stale"))
-            .context("[Index::require_fresh] lexical segments");
-    }
-    Ok(())
 }
 
 fn clear_index_dir(index_dir: &Path) -> Result<(), Error> {

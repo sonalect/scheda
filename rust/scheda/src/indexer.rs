@@ -18,7 +18,6 @@
 //! (the `Vault` and every `Collection` made from it) stops and joins it;
 //! the stop flag is checked between batches.
 
-use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, TryLockError};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -28,7 +27,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use crate::diff::{self, Change, RecordChange};
-use crate::error::{Code, ContextIo, io_code};
+use crate::error::{Code, Context as _, ContextIo, io_code};
 use crate::git::{self, tree};
 use crate::index::{self, IndexHandle, JournalIdMaps};
 use crate::isolated;
@@ -48,32 +47,6 @@ const BACKOFF_FIRST: Duration = Duration::from_millis(100);
 const BACKOFF_CAP: Duration = Duration::from_secs(30);
 const INDEX_LOCK: &str = "index.lock";
 const VECTOR_LOCK: &str = "vector.lock";
-
-thread_local! {
-    static START_ON_OPEN: Cell<bool> = const { Cell::new(false) };
-}
-
-/// Whether `open` on this thread starts an indexer. Off while writes still
-/// update the Index inline; a test turns it on for its own thread.
-pub(crate) fn start_on_open() -> bool {
-    START_ON_OPEN.with(Cell::get)
-}
-
-/// Restores the previous [`start_on_open`] value when dropped.
-#[cfg(test)]
-pub(crate) struct StartOnOpen(bool);
-
-#[cfg(test)]
-pub(crate) fn set_start_on_open(on: bool) -> StartOnOpen {
-    StartOnOpen(START_ON_OPEN.with(|cell| cell.replace(on)))
-}
-
-#[cfg(test)]
-impl Drop for StartOnOpen {
-    fn drop(&mut self) {
-        START_ON_OPEN.with(|cell| cell.set(self.0));
-    }
-}
 
 /// What the thread needs from the handle. Shared state only: nothing here
 /// keeps the handle itself alive.
@@ -108,6 +81,12 @@ pub struct IndexStatus {
     pub isolated_lexical: Option<String>,
     /// Commit the vector leg has reached for the nested repository.
     pub isolated_vector: Option<String>,
+    /// Commit the journal `id` maps have reached for the Vault work tree.
+    /// Writes add their own lines at once; this mark covers lines that
+    /// reached `HEAD` another way (`pull`, a `git` commit, another process).
+    pub journal_ids: Option<String>,
+    /// Commit the journal `id` maps have reached for the nested repository.
+    pub isolated_journal_ids: Option<String>,
     /// This handle indexes the lexical leg (it holds
     /// `{vault}/.scheda/index.lock`).
     pub lexical_role: bool,
@@ -137,11 +116,16 @@ pub(crate) struct State {
 struct Signal {
     wake: bool,
     stop: bool,
+    /// Callers that asked the current round to end early (see
+    /// [`Indexer::pause`]).
+    pause: u32,
 }
 
 struct Shared {
     ctx: Context,
     signal: Mutex<Signal>,
+    /// Held by the thread for the length of one round.
+    busy: Mutex<()>,
     wake: Condvar,
     state: Mutex<State>,
     changed: Condvar,
@@ -150,15 +134,18 @@ struct Shared {
 }
 
 impl Shared {
+    /// Whether the current round should end at the next batch boundary:
+    /// the handle is dropping, or someone is switching its generation.
     fn stopping(&self) -> bool {
-        lock(&self.signal).stop
+        let signal = lock(&self.signal);
+        signal.stop || signal.pause > 0
     }
 }
 
 /// Owner of the indexer thread. Dropping it stops and joins the thread.
 pub(crate) struct Indexer {
     shared: Arc<Shared>,
-    thread: Option<JoinHandle<()>>,
+    thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Indexer {
@@ -169,7 +156,9 @@ impl Indexer {
             signal: Mutex::new(Signal {
                 wake: true,
                 stop: false,
+                pause: 0,
             }),
+            busy: Mutex::new(()),
             wake: Condvar::new(),
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
@@ -183,7 +172,7 @@ impl Indexer {
             .context("[Indexer::start] spawn thread")?;
         Ok(Self {
             shared,
-            thread: Some(thread),
+            thread: Mutex::new(Some(thread)),
         })
     }
 
@@ -191,6 +180,18 @@ impl Indexer {
     pub(crate) fn wake(&self) {
         lock(&self.shared.signal).wake = true;
         self.shared.wake.notify_one();
+    }
+
+    /// End the current round at its next batch boundary and keep the next
+    /// one from starting until the guard drops. The caller then swaps the
+    /// handle's generation without a round still writing the old one's
+    /// diff into it. The round leaves its marks where they were.
+    pub(crate) fn pause(&self) -> Paused<'_> {
+        lock(&self.shared.signal).pause += 1;
+        Paused {
+            indexer: self,
+            _busy: Some(lock(&self.shared.busy)),
+        }
     }
 
     /// Latest report of the thread.
@@ -217,15 +218,48 @@ impl Indexer {
     }
 }
 
-impl Drop for Indexer {
-    fn drop(&mut self) {
+impl Indexer {
+    /// Stop the thread and wait for it. It finishes the Record it is
+    /// indexing (at most one embedder call) and leaves every mark where
+    /// its last durable write put it. Later calls return at once.
+    pub(crate) fn shutdown(&self) -> Result<(), Error> {
         lock(&self.shared.signal).stop = true;
         self.shared.wake.notify_one();
-        if let Some(thread) = self.thread.take()
-            && thread.thread().id() != thread::current().id()
-        {
-            let _ = thread.join();
+        let Some(thread) = lock(&self.thread).take() else {
+            return Ok(());
+        };
+        if thread.thread().id() == thread::current().id() {
+            return Ok(());
         }
+        thread.join().map_err(|_| {
+            Error::new(Code::IndexLexical, "the background indexer thread panicked")
+                .context("[Indexer::shutdown] join thread")
+        })
+    }
+}
+
+impl Drop for Indexer {
+    fn drop(&mut self) {
+        let _ = self.shutdown();
+    }
+}
+
+/// Returned by [`Indexer::pause`]; dropping it lets the indexer run again
+/// and wakes it.
+pub(crate) struct Paused<'a> {
+    indexer: &'a Indexer,
+    _busy: Option<MutexGuard<'a, ()>>,
+}
+
+impl Drop for Paused<'_> {
+    fn drop(&mut self) {
+        self._busy = None;
+        {
+            let mut signal = lock(&self.indexer.shared.signal);
+            signal.pause = signal.pause.saturating_sub(1);
+            signal.wake = true;
+        }
+        self.indexer.shared.wake.notify_one();
     }
 }
 
@@ -257,7 +291,13 @@ fn run(shared: &Shared) {
             }
             signal.wake = false;
         }
-        let outcome = catch_unwind(AssertUnwindSafe(|| worker.round(shared)));
+        let outcome = {
+            let _busy = lock(&shared.busy);
+            if lock(&shared.signal).pause > 0 {
+                continue;
+            }
+            catch_unwind(AssertUnwindSafe(|| worker.round(shared)))
+        };
         let error = match outcome {
             Ok(Ok(())) => None,
             Ok(Err(err)) => Some(err),
@@ -344,15 +384,25 @@ impl Worker {
     fn round(&mut self, shared: &Shared) -> Result<(), Error> {
         let ctx = &shared.ctx;
         self.in_vector = false;
-        follow_current(ctx)?;
+        follow_current(ctx).context("[Indexer] follow current generation")?;
         let embedder = lock(&ctx.embedder).clone();
         let generation = ctx.index.dir()?;
-        self.update_roles(ctx, &generation, embedder.as_deref())?;
+        self.update_roles(ctx, &generation, embedder.as_deref())
+            .context("[Indexer] take roles")?;
+        {
+            // Report roles before any mark moves, so a caller that sees a
+            // mark this round wrote also sees who wrote it.
+            let mut state = lock(&shared.state);
+            state.lexical_role = self.lexical.is_some();
+            state.vector_role = self.vector.is_some();
+        }
         if self.lexical.is_none() && self.vector.is_none() {
             return Ok(());
         }
         ctx.search.enable_write()?;
-        let result = self.catch_up(shared, &generation, embedder.as_deref());
+        let result = self
+            .catch_up(shared, &generation, embedder.as_deref())
+            .context("[Indexer] catch up with HEAD");
         let released = ctx.search.release_writer();
         result.and(released)
     }
@@ -363,7 +413,12 @@ impl Worker {
         generation: &Path,
         embedder: Option<&dyn Embedder>,
     ) -> Result<(), Error> {
-        if self.lexical.is_none() {
+        if !lexical_allowed(&ctx.search, generation)? {
+            // Another projector built this generation: writing would mix
+            // two column sets. `reindex` from a handle with this projector
+            // is the explicit way over.
+            self.lexical = None;
+        } else if self.lexical.is_none() {
             self.lexical = try_role(&ctx.vault, INDEX_LOCK)?;
         }
         if vector_allowed(generation, embedder)? {
@@ -413,6 +468,9 @@ impl Worker {
                     Pass::Done => {}
                     Pass::Stopped => return Ok(()),
                     Pass::Rebuild => return self.rebuild_generation(shared, &heads, embedder),
+                }
+                if job.apply_ids(repo)? == Pass::Stopped {
+                    return Ok(());
                 }
             }
         }
@@ -490,6 +548,9 @@ impl Worker {
             if apply_changes(shared, &engine, &decls, dir, &records, legs, embedder)?
                 == Pass::Stopped
             {
+                // The unfinished generation is an orphan the next `open`
+                // prunes; until then its files are owner-only too.
+                engine.release_writer()?;
                 return Ok(());
             }
         }
@@ -526,6 +587,81 @@ struct Job<'a> {
 }
 
 impl Job<'_> {
+    /// Bring the journal `id` maps of the live generation to `HEAD` of
+    /// `repo`: lines a commit added are remembered, lines it removed are
+    /// forgotten. Writes keep adding their own lines inline; this covers
+    /// commits that reach `HEAD` another way. A collection read whole (a
+    /// changed declaration, a map filled from nothing) only gains lines: a
+    /// stale entry answers `not_found` from the segment anyway.
+    fn apply_ids(&self, repo: Repo) -> Result<Pass, Error> {
+        let Some((dir, head)) = self.heads.of(repo) else {
+            return Ok(Pass::Done);
+        };
+        let mark = marks::read(self.generation, Leg::Ids, repo)?;
+        if mark.as_deref() == Some(head) {
+            return Ok(Pass::Done);
+        }
+        let mut found = diff::diff(dir, repo, self.decls, mark.as_deref(), head)?;
+        if found.rebuild {
+            found = diff::diff(dir, repo, self.decls, None, head)?;
+        }
+        let ctx = &self.shared.ctx;
+        let journal = |name: &str| {
+            self.decls
+                .get(name)
+                .filter(|decl| decl.kind == Kind::Journal && !decl.encrypted)
+        };
+        for name in &found.whole {
+            let Some(decl) = journal(name) else {
+                continue;
+            };
+            let Some((decl_dir, decl_head)) = self.heads.for_decl(decl) else {
+                continue;
+            };
+            for (i, change) in diff::collection(decl_dir, decl, decl_head)?
+                .iter()
+                .enumerate()
+            {
+                if i % LEXICAL_BATCH == 0 && self.shared.stopping() {
+                    return Ok(Pass::Stopped);
+                }
+                if let Change::Upsert { path, .. } = &change.change {
+                    let mut maps = lock(&ctx.journal_ids);
+                    index::remember_id(
+                        self.generation,
+                        &mut maps,
+                        &decl.name,
+                        &change.id,
+                        &vault_rel(decl, path),
+                    )?;
+                }
+            }
+        }
+        for (i, change) in found.changes.iter().enumerate() {
+            if i % LEXICAL_BATCH == 0 && self.shared.stopping() {
+                return Ok(Pass::Stopped);
+            }
+            let Some(decl) = journal(&change.collection) else {
+                continue;
+            };
+            let mut maps = lock(&ctx.journal_ids);
+            match &change.change {
+                Change::Upsert { path, .. } => index::remember_id(
+                    self.generation,
+                    &mut maps,
+                    &decl.name,
+                    &change.id,
+                    &vault_rel(decl, path),
+                )?,
+                Change::Delete => {
+                    index::forget_remembered(self.generation, &mut maps, &decl.name, &change.id)?;
+                }
+            }
+        }
+        marks::write(self.generation, Leg::Ids, repo, head)?;
+        Ok(Pass::Done)
+    }
+
     fn apply_leg(&self, repo: Repo, leg: Leg) -> Result<Pass, Error> {
         let Some((_, head)) = self.heads.of(repo) else {
             return Ok(Pass::Done);
@@ -609,7 +745,11 @@ impl Job<'_> {
         {
             return Ok(Pass::Stopped);
         }
-        engine.flush()?;
+        // Commit, wait for Tantivy's merges, and close the writer before the
+        // mark moves: a caller that sees the mark finds every file final
+        // and owner-only, and no writer lock left behind.
+        engine.release_writer()?;
+        index::restrict_index_tree(self.generation)?;
         marks::write(self.generation, leg, repo, head)?;
         Ok(Pass::Done)
     }
@@ -630,16 +770,28 @@ fn follow_current(ctx: &Context) -> Result<(), Error> {
     switch_to(ctx, live, engine, maps)
 }
 
+/// Point the handle at generation `dir`. Journal lines this handle wrote
+/// that `dir`'s maps lack — an open transaction's, not committed when the
+/// generation was built — are carried over, so `get` keeps finding them.
 fn switch_to(
     ctx: &Context,
     dir: PathBuf,
     engine: SearchEngine,
-    maps: JournalIdMaps,
+    mut maps: JournalIdMaps,
 ) -> Result<(), Error> {
     ctx.search.adopt(engine)?;
+    let mut live = lock(&ctx.journal_ids);
+    index::carry_over(&dir, &live, &mut maps)?;
     ctx.index.set_dir(dir)?;
-    *lock(&ctx.journal_ids) = maps;
+    *live = maps;
     Ok(())
+}
+
+/// Whether a handle whose engine is `search` may take the lexical role on
+/// `generation`: it was built by the same projector (or by none yet), or
+/// it is in another format and is about to be rebuilt anyway.
+pub(crate) fn lexical_allowed(search: &SearchEngine, generation: &Path) -> Result<bool, Error> {
+    Ok(needs_new_generation(generation)? || search.lexical_writable(generation)?)
 }
 
 /// A generation with a `format` file other than the current one, or the
@@ -687,13 +839,20 @@ fn journal_ids(decl: &CollectionDecl, records: &[RecordChange]) -> BTreeMap<Stri
     records
         .iter()
         .filter_map(|change| match &change.change {
-            Change::Upsert { path, .. } if decl.isolated => {
-                Some((change.id.clone(), format!("{}/{path}", isolated::DIR)))
-            }
-            Change::Upsert { path, .. } => Some((change.id.clone(), path.clone())),
+            Change::Upsert { path, .. } => Some((change.id.clone(), vault_rel(decl, path))),
             Change::Delete => None,
         })
         .collect()
+}
+
+/// Vault-relative path of `path`, which is relative to the repository
+/// that stores `decl` (the nested one for an isolated collection).
+fn vault_rel(decl: &CollectionDecl, path: &str) -> String {
+    if decl.isolated {
+        format!("{}/{path}", isolated::DIR)
+    } else {
+        path.to_owned()
+    }
 }
 
 /// Apply `changes`, read from the repository at `dir`, to `engine` in
@@ -739,6 +898,10 @@ fn apply_changes(
             match &change.change {
                 Change::Delete => engine.forget_legs(decl, &change.id, legs)?,
                 Change::Upsert { blob, .. } => {
+                    if legs.vector && shared.stopping() {
+                        // At most one embedder call in flight on close.
+                        return Ok(Pass::Stopped);
+                    }
                     let Some(file) = bytes.get(blob) else {
                         continue;
                     };

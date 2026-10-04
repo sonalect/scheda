@@ -66,6 +66,7 @@ fn write_notes(scratch: &Scratch) {
     let dir = scratch.vault().join("proj_notes");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join(".collection.yaml"), NOTES).unwrap();
+    common::commit_file(&scratch.vault(), &dir.join(".collection.yaml"));
 }
 
 fn title_projector() -> Arc<dyn Projector> {
@@ -161,6 +162,7 @@ fn term_on_projected_column_hits_one_and_id_still_hits() {
     collection
         .add("b", rec(json!({"title": "beta"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hit = collection
         .find(
             &filter(json!({"term":{"field":"title","value":"alpha"}})),
@@ -191,6 +193,7 @@ fn no_projector_identity_only() {
     collection
         .add("a", rec(json!({"title": "alpha"})), None)
         .unwrap();
+    common::indexed(&vault);
     let all = collection.find(&Filter::all().into(), 0, 10).unwrap();
     assert_eq!(ids(&all), ["a"]);
     let by_id = collection
@@ -226,6 +229,7 @@ fn project_error_or_empty_omits_from_find_but_add_succeeds() {
         collection.get("empty").unwrap().id.as_deref(),
         Some("empty")
     );
+    common::indexed(&vault);
     let all = collection.find(&Filter::all().into(), 0, 10).unwrap();
     assert_eq!(ids(&all), ["kept"]);
 }
@@ -242,6 +246,7 @@ fn reindex_omits_empty_projection_but_get_still_works() {
         .add("kept", rec(json!({"title": "kept"})), None)
         .unwrap();
     vault.reindex().unwrap();
+    common::indexed(&vault);
     let all = collection.find(&Filter::all().into(), 0, 10).unwrap();
     assert_eq!(ids(&all), ["kept"]);
     assert_eq!(
@@ -259,6 +264,7 @@ fn phrase_on_integer_column_is_invalid() {
     collection
         .add("a", rec(json!({"title": "alpha", "count": 2})), None)
         .unwrap();
+    common::indexed(&vault);
     let err = collection
         .find(
             &filter(json!({"phrase":{"field":"count","terms":["one","two"]}})),

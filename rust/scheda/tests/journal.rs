@@ -56,6 +56,7 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 
     fn log_dir(&self) -> PathBuf {
@@ -174,6 +175,7 @@ fn size_cap_closes_segment_without_rewriting_it() {
     assert_eq!(fs::read(&first).unwrap(), before);
     assert!(before.len() as u64 <= 32);
     assert!(scratch.log_dir().join(seq_jsonl(&vault, 2)).is_file());
+    common::indexed(&vault);
     let ids: Vec<_> = collection
         .find(&Filter::all().into(), 0, 1000)
         .unwrap()
@@ -235,6 +237,7 @@ fn empty_find_and_scan_keep_append_order_across_rotate() {
     collection.add("a", rec("x"), None).unwrap();
     collection.add("b", rec("x"), None).unwrap();
     collection.add("c", rec("x"), None).unwrap();
+    common::indexed(&vault);
     let found = collection.find(&Filter::all().into(), 0, 1000).unwrap();
     assert_eq!(found.total, Some(3));
     let scan_ids: Vec<_> = found
@@ -309,6 +312,7 @@ fn fixture_jsonl_is_utf8_text() {
     let got = vault.collection("south_log").unwrap().get("alpha").unwrap();
     assert_eq!(got.id.as_deref(), Some("alpha"));
     assert_eq!(got.raw.as_deref(), Some(br#"{"msg":"hello"}"#.as_slice()));
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -420,6 +424,7 @@ fn get_and_find_include_raw_match_payload() {
     assert_eq!(file, "a: {\"n\":1}\n");
     let got = collection.get("a").unwrap();
     assert_eq!(got.raw.as_deref(), Some(payload.as_slice()));
+    common::indexed(&vault);
     let found = collection
         .find(&FindQuery::all().with_include_raw(true), 0, 10)
         .unwrap();
@@ -527,6 +532,7 @@ fn lines_matches_find_append_order_and_raw_across_rotate() {
     collection.add("c", rec("x"), None).unwrap();
     assert!(jsonl_names(&scratch.log_dir()).len() >= 2);
 
+    common::indexed(&vault);
     let find_ids: Vec<_> = collection
         .find(&Filter::all().into(), 0, 100)
         .unwrap()
@@ -652,6 +658,9 @@ fn journal_id_map_outside_collection_is_not_read() {
         .unwrap()
         .add("kept", rec("ok"), None)
         .unwrap();
+    // Tamper only once no indexer of this handle can rewrite the file.
+    common::indexed(&vault);
+    vault.close().unwrap();
     let marker = "UNIQUE_LEAK_MARKER";
     let outside = scratch.root.join("secret.txt");
     fs::write(&outside, marker).unwrap();

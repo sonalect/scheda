@@ -47,6 +47,7 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 }
 
@@ -158,6 +159,7 @@ fn records_do_not_cross_vaults() {
         .get("alpha")
         .unwrap();
     assert_eq!(fields_of(&west_hit).get("title").unwrap(), "west");
+    common::indexed(&east_vault);
     let east_scan = east_vault
         .collection("east_docs")
         .unwrap()
@@ -263,6 +265,7 @@ schema:
         )
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 

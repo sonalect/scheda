@@ -1,5 +1,5 @@
-//! Reduced crate: `find` and `search` off. Writes still work; the Index is
-//! marked stale. Collection names here must not appear in `rust/scheda/src`.
+//! Reduced crate: `find` and `search` off. Writes still work and never touch
+//! the Index. Collection names here must not appear in `rust/scheda/src`.
 
 mod common;
 
@@ -82,15 +82,6 @@ fn rec_rep(fields: Value) -> Vec<u8> {
     rec(fields)
 }
 
-#[cfg(not(feature = "find"))]
-fn live_index(vault: &Vault) -> PathBuf {
-    let root = vault.index_dir();
-    match fs::read_to_string(root.join("current")) {
-        Ok(name) => root.join(name.trim()),
-        Err(_) => root.to_path_buf(),
-    }
-}
-
 fn fields_of(record: &Record) -> Map<String, Value> {
     match serde_json::from_slice(record.raw.as_deref().unwrap_or(&[])) {
         Ok(Value::Object(map)) => map,
@@ -169,7 +160,7 @@ fn documents_and_ids_without_find() {
 
 #[cfg(not(feature = "find"))]
 #[test]
-fn add_marks_index_stale_and_check_ignores_it() {
+fn add_without_find_keeps_check_passing() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     vault.check().unwrap();
@@ -177,7 +168,6 @@ fn add_marks_index_stale_and_check_ignores_it() {
     collection
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
-    assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
     let _got = collection.get("alpha").unwrap();
 }
@@ -221,7 +211,7 @@ fn remove_uses_the_record_file() {
 
 #[cfg(not(feature = "find"))]
 #[test]
-fn remove_marks_index_stale() {
+fn remove_without_find_keeps_check_passing() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
@@ -229,7 +219,6 @@ fn remove_marks_index_stale() {
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     collection.remove("alpha", None).unwrap();
-    assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
 }
 
@@ -264,7 +253,7 @@ fn open_with_embedder_fails_vector_leg() {
 
 #[cfg(not(feature = "find"))]
 #[test]
-fn reindex_without_find_marks_stale() {
+fn reindex_without_find_keeps_check_passing() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("thin_notes").unwrap();
@@ -272,7 +261,6 @@ fn reindex_without_find_marks_stale() {
         .add("alpha", rec(json!({"title": "Keep"})), None)
         .unwrap();
     vault.reindex().unwrap();
-    assert!(live_index(&vault).join("stale").is_file());
     vault.check().unwrap();
 }
 

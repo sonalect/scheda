@@ -7,8 +7,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
-use scheda::{Schema, FindQuery, OpenOptions, SearchQuery, Vault, schema_from_json};
+use scheda::{FindQuery, OpenOptions, Schema, SearchQuery, Vault, schema_from_json};
 use serde_json::{Value, json};
 
 static NEXT_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -36,14 +37,18 @@ impl Scratch {
         path.display().to_string()
     }
 
+    /// A library handle on the Vault the CLI wrote, caught up with `HEAD`:
+    /// each CLI process indexes in the background and may exit first.
     fn reopen(&self) -> Vault {
-        Vault::open_with(
+        let vault = Vault::open_with(
             self.vault(),
             OpenOptions::new(),
             None,
             Some(common::cli_body_projector()),
         )
-        .unwrap()
+        .unwrap();
+        vault.wait_indexed(Duration::from_secs(30)).unwrap();
+        vault
     }
 }
 

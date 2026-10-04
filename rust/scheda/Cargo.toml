@@ -76,6 +76,10 @@ name = "ops"
 required-features = ["search"]
 
 [[test]]
+name = "projector"
+required-features = ["find"]
+
+[[test]]
 name = "query"
 required-features = ["find"]
 

@@ -38,6 +38,7 @@ impl Scratch {
         let dir = self.vault().join(name);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join(".collection.yaml"), body).unwrap();
+        common::commit_file(&self.vault(), &dir.join(".collection.yaml"));
     }
 }
 
@@ -95,6 +96,7 @@ fn q(text: &str, k: u32) -> SearchQuery {
 }
 
 fn find_ids(vault: &Vault, name: &str) -> Vec<String> {
+    common::indexed(vault);
     vault
         .collection(name)
         .unwrap()
@@ -107,6 +109,7 @@ fn find_ids(vault: &Vault, name: &str) -> Vec<String> {
 }
 
 fn search_ids(vault: &Vault, name: &str, text: &str) -> Vec<String> {
+    common::indexed(vault);
     vault
         .collection(name)
         .unwrap()
@@ -310,7 +313,7 @@ fn writer_during_rebuild_is_found_and_searched_after_publish() {
 }
 
 #[test]
-fn remove_during_rebuild_is_absent_after_publish() {
+fn commit_during_rebuild_is_applied_after_publish() {
     let scratch = Scratch::new();
     let first = CountingEmbedder::new("model-a");
     let vault = open_tokens(&scratch, Some(Arc::clone(&first) as Arc<dyn Embedder>));
@@ -333,22 +336,17 @@ fn remove_during_rebuild_is_absent_after_publish() {
     thread::scope(|s| {
         s.spawn(|| {
             latch.wait_parked();
+            // A hand edit committed while the walk runs: no Scheda call
+            // queues it. The new generation is marked with the commit the
+            // walk started from, so the indexer applies this one after
+            // publish.
             drop_journal_id(&scratch.vault(), "token_notes", "gone");
-            let queue = scratch
-                .vault()
-                .join(".scheda")
-                .join("reindex")
-                .join("queue");
-            fs::create_dir_all(&queue).unwrap();
-            fs::write(
-                queue.join("gone.json"),
-                r#"{"collection":"token_notes","id":"gone"}"#,
-            )
-            .unwrap();
+            common::commit_file(&scratch.vault(), std::path::Path::new("token_notes"));
             latch.resume();
         });
         vault.reindex().unwrap();
     });
+    common::indexed(&vault);
     assert_eq!(find_ids(&vault, "token_notes"), ["keep"]);
     let hits = search_ids(&vault, "token_notes", "gone mineral");
     assert!(!hits.contains(&"gone".to_owned()), "{hits:?}");
@@ -368,6 +366,7 @@ fn same_model_reindex_does_not_embed_again() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let after_add = embedder.slots();
     vault.reindex().unwrap();
     assert_eq!(
@@ -424,6 +423,7 @@ fn failing_embedder_leaves_current_on_old_generation() {
         .unwrap()
         .add("keep", rec(json!({"title": "keep mineral"})), None)
         .unwrap();
+    common::indexed(&vault);
     let live = live_generation(&vault);
     drop(vault);
     struct Boom;

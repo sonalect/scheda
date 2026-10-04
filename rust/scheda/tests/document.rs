@@ -56,6 +56,7 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 
     fn coll_file(&self, collection: &str, rel: &str) -> PathBuf {
@@ -222,7 +223,7 @@ fn record_id_filename_respects_255_byte_component() {
 
 #[cfg(feature = "find")]
 #[test]
-fn rename_fails_check_and_find_one_does_not_follow() {
+fn renamed_file_is_a_new_record_and_the_index_waits_for_a_commit() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
@@ -236,8 +237,19 @@ fn rename_fails_check_and_find_one_does_not_follow() {
     .unwrap();
     let err = collection.get("alpha").unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let moved = collection.get("beta").unwrap();
+    assert_eq!(
+        moved.raw.as_deref(),
+        Some(br#"{"title":"Hello"}"#.as_slice())
+    );
+    common::indexed(&vault);
+    vault.check().unwrap();
+    // The rename is not committed: the Index still describes `alpha`,
+    // whose file is gone, so the hit counts but opens no Record.
+    common::indexed(&vault);
+    let page = collection.find(&Filter::all().into(), 0, 10).unwrap();
+    assert_eq!(page.total, Some(1));
+    assert!(page.records.is_empty());
 }
 
 #[test]
@@ -489,6 +501,7 @@ fn remove_leaves_find() {
         .add("beta", rec(serde_json::json!({"title": "Stay"})), None)
         .unwrap();
     collection.remove("alpha", None).unwrap();
+    common::indexed(&vault);
     let page = collection.find(&Filter::all().into(), 0, 10).unwrap();
     assert_eq!(page.total, Some(1));
     assert_eq!(page.records.len(), 1);
@@ -497,16 +510,18 @@ fn remove_leaves_find() {
 
 #[cfg(feature = "find")]
 #[test]
-fn remove_of_unindexed_file_is_not_found() {
+fn remove_of_unindexed_file_succeeds() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     let path = scratch.coll_file("north_notes", "orphan");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
     assert!(collection.get("orphan").is_ok());
+    // The id comes from the file, not from the Index.
+    collection.remove("orphan", None).unwrap();
+    assert!(!path.exists());
     let err = collection.remove("orphan", None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
-    assert!(path.is_file());
 }
 
 #[test]
@@ -526,15 +541,21 @@ fn journal_replace_one_is_unsupported() {
 
 #[cfg(feature = "find")]
 #[test]
-fn replace_of_unindexed_file_is_not_found() {
+fn replace_of_unindexed_file_succeeds() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
     let path = scratch.coll_file("north_notes", "orphan");
     fs::write(&path, "---\nid: orphan\ntitle: Ghost\n---\n").unwrap();
     collection.get("orphan").unwrap();
-    let err = collection
+    // The id comes from the file, not from the Index.
+    collection
         .replace("orphan", rec_rep(serde_json::json!({"title": "New"})), None)
+        .unwrap();
+    let got = collection.get("orphan").unwrap();
+    assert_eq!(got.raw.as_deref(), Some(br#"{"title":"New"}"#.as_slice()));
+    let err = collection
+        .replace("ghost", rec_rep(serde_json::json!({"title": "New"})), None)
         .unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
 }
@@ -671,6 +692,7 @@ fn header_id_must_match_record_id() {
         .unwrap();
     let got = collection.get("alpha").unwrap();
     assert_eq!(got.id.as_deref(), Some("alpha"));
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -690,6 +712,7 @@ fn nested_document_header_must_match_path() {
     let mut text = fs::read_to_string(&path).unwrap();
     text = text.replace("id: work/meeting", "id: meeting");
     fs::write(&path, text).unwrap();
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -713,6 +736,7 @@ fn find_term_on_hierarchical_id() {
         "term": {"field": "id", "value": "work/meeting"}
     }))
     .unwrap();
+    common::indexed(&vault);
     let page = collection.find(&query.into(), 0, 10).unwrap();
     assert_eq!(page.total, Some(1));
     assert_eq!(page.records.len(), 1);
@@ -1102,7 +1126,7 @@ fn documents_thousand_in_id_order() {
 
 #[cfg(feature = "find")]
 #[test]
-fn ids_matches_files_when_index_is_stale() {
+fn ids_matches_files_not_the_commits_the_index_follows() {
     let scratch = Scratch::new();
     let vault = open_notes(&scratch);
     let collection = vault.collection("north_notes").unwrap();
@@ -1118,6 +1142,8 @@ fn ids_matches_files_when_index_is_stale() {
     )
     .unwrap();
     assert_eq!(collection.ids().unwrap(), ["alpha", "bravo", "charlie"]);
+    // `charlie` is an uncommitted file: `find` follows commits only.
+    common::indexed(&vault);
     let mut found: Vec<_> = collection
         .find(&Filter::all().into(), 0, 100)
         .unwrap()
@@ -1220,6 +1246,7 @@ fn check_accepts_opaque_non_yaml_document() {
     collection
         .add("extra.json", br#"{"title":"x","unknown":true}"#, None)
         .unwrap();
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -1264,6 +1291,7 @@ fn find_all_and_term_id_work_on_documents() {
     let collection = vault.collection("north_notes").unwrap();
     collection.add("alpha", b"one", None).unwrap();
     collection.add("beta", b"two", None).unwrap();
+    common::indexed(&vault);
     let all = collection.find(&Filter::all().into(), 0, 10).unwrap();
     let mut ids: Vec<_> = all
         .records

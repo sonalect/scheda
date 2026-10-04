@@ -206,6 +206,18 @@ pub(crate) fn snapshot_restored(
             ids: BTreeSet::new(),
         });
     }
+    Ok(RestoreSnapshot {
+        ids: journal_ids_in(vault, decls, rels)?,
+    })
+}
+
+/// `(collection, id)` of every journal line in the `*.jsonl` segments among
+/// `rels` (vault-relative paths), as the files hold them now.
+pub(crate) fn journal_ids_in(
+    vault: &Path,
+    decls: &Decls,
+    rels: &[String],
+) -> Result<BTreeSet<(String, String)>, Error> {
     let mut ids = BTreeSet::new();
     for rel in rels {
         for (collection, id) in ids_from_restored(vault, decls, rel)? {
@@ -217,7 +229,7 @@ pub(crate) fn snapshot_restored(
             }
         }
     }
-    Ok(RestoreSnapshot { ids })
+    Ok(ids)
 }
 
 /// Enqueue one file per restored `(collection, id)` after discarding crash

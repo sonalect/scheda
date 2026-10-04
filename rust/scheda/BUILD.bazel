@@ -64,6 +64,7 @@ rust_test(
         "src/**/*.rs",
         "testdata/**",
     ]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/core.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -76,6 +77,7 @@ rust_test(
     name = "document_test",
     srcs = ["tests/document.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/document.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -88,6 +90,7 @@ rust_test(
     name = "query_test",
     srcs = ["tests/query.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/query.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -100,6 +103,7 @@ rust_test(
     name = "git_test",
     srcs = ["tests/git.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/git.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -111,6 +115,7 @@ rust_test(
 rust_test(
     name = "ann_test",
     srcs = ["tests/ann.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/ann.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -124,6 +129,7 @@ rust_test(
     size = "large",
     srcs = ["tests/ops.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/ops.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -135,6 +141,7 @@ rust_test(
 rust_test(
     name = "projector_test",
     srcs = ["tests/projector.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/projector.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -159,6 +166,7 @@ rust_test(
     name = "remote_test",
     srcs = ["tests/remote.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/remote.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -178,6 +186,7 @@ rust_test(
     name = "journal_test",
     srcs = ["tests/journal.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/journal.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -190,6 +199,7 @@ rust_test(
     name = "search_test",
     srcs = ["tests/search.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/search.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -203,6 +213,7 @@ rust_test(
     size = "large",
     srcs = ["tests/reindex.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/reindex.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -215,6 +226,7 @@ rust_test(
     name = "schema_test",
     srcs = ["tests/schema.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/schema.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -240,6 +252,7 @@ rust_test(
     name = "isolated_test",
     srcs = ["tests/isolated.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/isolated.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
@@ -255,6 +268,7 @@ rust_test(
         "src/**/*.rs",
         "testdata/**",
     ]),
+    crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/catalog.rs",
     visibility = ["//rust:__pkg__"],
     deps = [

@@ -147,6 +147,7 @@ pub(crate) fn insert_journal(
     writer: &str,
 ) -> Result<(String, String, JournalRollback), Error> {
     let (id, line) = prepare_line(record)?;
+    index::refresh_ids(index_dir, maps, decl)?;
     match maps.contains(&decl.name, &id) {
         Some(true) => {
             bail!(Error::duplicate_id(format!(

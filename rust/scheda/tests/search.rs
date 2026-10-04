@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use scheda::{
     Code, Embedder, Filter, FindQuery, OpenOptions, Record, Reranker, SearchQuery, Vault,
@@ -45,6 +46,7 @@ impl Scratch {
             ".collection.yaml"
         };
         fs::write(dir.join(dest), body).unwrap();
+        common::commit_file(&self.vault(), &dir.join(dest));
     }
 }
 
@@ -198,6 +200,7 @@ fn token_in_marked_field_ranks_and_unmarked_is_absent() {
             )
             .unwrap();
     }
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"hit"), "marked field must rank: {ids:?}");
@@ -229,6 +232,7 @@ fn no_projector_skips_embedder_and_search_slots() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(embedder.slots(), 0, "no projector must not call embedder");
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     assert!(
@@ -265,6 +269,7 @@ fn concurrent_search_on_one_handle() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let vault = Arc::new(vault);
     thread::scope(|scope| {
         for _ in 0..8 {
@@ -304,6 +309,7 @@ fn remove_leaves_search() {
         .unwrap();
     drop_journal_id(&scratch.vault(), "token_notes", "hit");
     vault.reindex().unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(!ids.contains(&"hit"), "removed id still a hit: {ids:?}");
@@ -331,6 +337,7 @@ fn vault_search_scopes_collections() {
         .unwrap()
         .add("other", rec(json!({"title": "kryptonite extra"})), None)
         .unwrap();
+    common::indexed(&vault);
     let all = vault.search(&[], &q("kryptonite", 10), None).unwrap();
     let mut all_ids = hit_ids(&all);
     all_ids.sort_unstable();
@@ -370,6 +377,7 @@ fn vault_search_bare_projector_filter_is_invalid() {
         "filter": {"term":{"field":"tag","value":"red"}}
     }))
     .unwrap();
+    common::indexed(&vault);
     let err = vault.search(&[], &query, None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
@@ -389,6 +397,7 @@ fn body_fts_is_indexed_when_marked() {
     collection
         .add("other", rec(json!({"title": "quiet too"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"bodyhit"), "{ids:?}");
@@ -411,6 +420,7 @@ fn synonym_with_no_shared_tokens_hits_vector_leg() {
     collection
         .add("other", rec(json!({"title": "banana"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hits = collection
         .search(&q("automobile", 5).with_lexical_weight(0.0), None)
         .unwrap();
@@ -429,6 +439,7 @@ fn negative_weight_is_invalid() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
+    common::indexed(&vault);
     let err = collection
         .search(&q("kryptonite", 5).with_lexical_weight(-1.0), None)
         .unwrap_err();
@@ -456,6 +467,7 @@ fn hybrid_hit_carries_both_scores() {
     collection
         .add("noise", rec(json!({"title": "unrelated prose"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"both"), "{ids:?}");
@@ -596,6 +608,7 @@ fn open_disagreeing_legs(scratch: &Scratch) -> scheda::Collection {
         .unwrap();
     add_numbered_kryptonite(&collection, 49);
     vault.commit("disagreeing legs").unwrap();
+    common::indexed(&vault);
     collection
 }
 
@@ -647,6 +660,7 @@ fn reranker_reorders_and_sets_score() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let fused = collection.search(&q("kryptonite", 2), None).unwrap();
     assert!(fused.hits.iter().all(|hit| hit.rerank_score.is_none()));
     let last = fused.hits.last().and_then(|hit| hit.id.clone()).unwrap();
@@ -663,6 +677,7 @@ fn unset_rerank_limit_scores_the_whole_fused_pool() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 20);
+    common::indexed(&vault);
     let fused = collection.search(&q("kryptonite", 20), None).unwrap();
     assert_eq!(fused.hits.len(), 20);
     let reranker = ScoreByIdReranker::new();
@@ -680,6 +695,7 @@ fn rerank_limit_scores_only_the_truncated_fused_prefix() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 20);
+    common::indexed(&vault);
     let fused = collection.search(&q("kryptonite", 20), None).unwrap();
     assert_eq!(fused.hits.len(), 20);
     let window = 5;
@@ -720,6 +736,7 @@ fn rerank_limit_zero_is_invalid() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 3);
+    common::indexed(&vault);
     let err = collection
         .search(&q("kryptonite", 3).with_rerank_limit(0), None)
         .unwrap_err();
@@ -739,6 +756,7 @@ fn rerank_limit_below_k_is_invalid() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 20);
+    common::indexed(&vault);
     let err = collection
         .search(
             &q("kryptonite", 3).with_rerank_limit(2),
@@ -773,6 +791,7 @@ fn rerank_limit_below_k_is_invalid_when_search_would_return_nothing() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 20);
+    common::indexed(&vault);
     let empty = collection
         .search(&q("zzzz-no-such-token", 3), None)
         .unwrap();
@@ -793,6 +812,7 @@ fn rerank_limit_larger_than_the_pool_matches_unset() {
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 20);
     let unset = ScoreByIdReranker::new();
+    common::indexed(&vault);
     let full = collection
         .search(&q("kryptonite", 3), Some(&unset))
         .unwrap();
@@ -821,6 +841,7 @@ fn rerank_limit_without_reranker_is_ignored() {
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     add_numbered_kryptonite(&collection, 20);
+    common::indexed(&vault);
     let plain = collection.search(&q("kryptonite", 3), None).unwrap();
     let ignored = collection
         .search(&q("kryptonite", 3).with_rerank_limit(2), None)
@@ -836,6 +857,7 @@ fn unset_rerank_limit_on_a_large_corpus_scores_the_fusion_floor() {
     let vault = open_tokens(&scratch, None);
     let collection = fill_kryptonite(&vault, 80);
     let reranker = ScoreByIdReranker::new();
+    common::indexed(&vault);
     let page = collection
         .search(&q("kryptonite", 10), Some(&reranker))
         .unwrap();
@@ -850,6 +872,7 @@ fn rerank_limit_at_or_below_the_floor_does_not_deepen_the_pool() {
     let vault = open_tokens(&scratch, None);
     let collection = fill_kryptonite(&vault, 80);
     let below = ScoreByIdReranker::new();
+    common::indexed(&vault);
     let below_page = collection
         .search(&q("kryptonite", 10).with_rerank_limit(30), Some(&below))
         .unwrap();
@@ -876,6 +899,7 @@ fn rerank_limit_above_the_floor_hands_that_many_to_the_reranker() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);
     let collection = fill_kryptonite(&vault, 80);
+    common::indexed(&vault);
     let fused = collection.search(&q("kryptonite", 80), None).unwrap();
     assert_eq!(fused.hits.len(), 80);
     let deep_id = fused.hits[59].id.clone().unwrap();
@@ -917,6 +941,7 @@ fn rerank_limit_beyond_the_corpus_scores_everything_without_error() {
     let vault = open_tokens(&scratch, None);
     let collection = fill_kryptonite(&vault, 20);
     let reranker = ScoreByIdReranker::new();
+    common::indexed(&vault);
     let page = collection
         .search(
             &q("kryptonite", 10).with_rerank_limit(10_000),
@@ -933,6 +958,7 @@ fn rerank_limit_without_reranker_does_not_change_a_large_page() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);
     let collection = fill_kryptonite(&vault, 80);
+    common::indexed(&vault);
     let plain = collection.search(&q("kryptonite", 10), None).unwrap();
     let ignored = collection
         .search(&q("kryptonite", 10).with_rerank_limit(80), None)
@@ -1014,6 +1040,7 @@ fn reranker_fills_the_pool_from_the_longer_leg() {
     }
     vault.commit("short lexical leg").unwrap();
 
+    common::indexed(&vault);
     let lexical_only = collection
         .search(&q("kryptonite", 10).with_vector_weight(0.0), None)
         .unwrap();
@@ -1052,6 +1079,7 @@ fn without_reranker_fused_order_and_scores_stay_rrf() {
     collection
         .add("noise", rec(json!({"title": "unrelated prose"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let mut got = serde_json::to_value(&hits).unwrap();
     if let Some(hits) = got.get_mut("hits").and_then(Value::as_array_mut) {
@@ -1150,6 +1178,7 @@ fn filter_applies_before_ranking() {
         "filter": {"term":{"field":"tag","value":"red"}}
     }))
     .unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&query, None).unwrap();
     let ids = hit_ids(&hits);
     assert_eq!(ids, ["keep"]);
@@ -1167,6 +1196,7 @@ fn search_omits_raw_unless_include_raw() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let omitted = collection.search(&q("kryptonite", 5), None).unwrap();
     assert!(omitted.hits[0].raw.is_none());
     let included = collection
@@ -1202,6 +1232,7 @@ schema:
     let collection = vault.collection("token_notes").unwrap();
     collection.get("old").unwrap();
     vault.reindex().unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"old"), "{ids:?}");
@@ -1215,6 +1246,7 @@ fn insert_is_searchable_without_reindex() {
     collection
         .add("fresh", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     let ids = hit_ids(&hits);
     assert!(ids.contains(&"fresh"), "{ids:?}");
@@ -1245,16 +1277,44 @@ impl Embedder for FailingEmbedder {
 }
 
 #[test]
-fn failed_embed_rolls_back_the_new_record() {
+fn failed_embed_does_not_fail_the_write_and_is_reported_by_the_indexer() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, Some(Arc::new(FailingEmbedder)));
     let collection = vault.collection("token_notes").unwrap();
-    let err = collection
+    collection
         .add("fresh", rec(json!({"title": "kryptonite"})), None)
-        .unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::Invalid));
-    let missing = collection.get("fresh").unwrap_err();
-    assert_eq!(missing.known_code(), Some(Code::NotFound));
+        .unwrap();
+    assert_eq!(
+        collection.get("fresh").unwrap().id.as_deref(),
+        Some("fresh")
+    );
+    // The vector leg never reaches `HEAD`, so `wait_indexed` would not
+    // return: poll the status until the indexer has reported the failure.
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let (error, status) = loop {
+        let status = vault.index_status().unwrap();
+        if let Some(error) = status.last_error.clone() {
+            break (error, status);
+        }
+        assert!(Instant::now() < deadline, "no indexer error: {status:?}");
+        thread::sleep(Duration::from_millis(20));
+    };
+    // The embedder's own error is kept, code and all.
+    assert_eq!(error.known_code(), Some(Code::Invalid));
+    // The Record is in the lexical leg only: the vector mark stays behind `HEAD`.
+    assert_eq!(status.lexical, status.head);
+    assert_ne!(status.vector, status.head);
+    let found = collection.find(&FindQuery::all(), 0, 10).unwrap();
+    let found_ids: Vec<_> = found
+        .records
+        .iter()
+        .filter_map(|record| record.id.as_deref())
+        .collect();
+    assert_eq!(found_ids, ["fresh"]);
+    assert_eq!(
+        collection.get("fresh").unwrap().id.as_deref(),
+        Some("fresh")
+    );
 }
 
 struct ProbeEmbedder {
@@ -1353,6 +1413,7 @@ fn embed_uses_single_or_many_by_limit() {
         .unwrap()
         .add("one", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(one.counts(), (1, 0));
 
     let many = ProbeEmbedder::new(32);
@@ -1367,6 +1428,7 @@ fn embed_uses_single_or_many_by_limit() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(many.counts(), (0, 1));
 
     let limit_one = ProbeEmbedder::new(1);
@@ -1381,6 +1443,7 @@ fn embed_uses_single_or_many_by_limit() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(limit_one.counts(), (2, 0));
 
     let leftover = ProbeEmbedder::new(2);
@@ -1407,6 +1470,7 @@ schema:
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(leftover.counts(), (1, 1));
 }
 
@@ -1427,6 +1491,7 @@ fn score_uses_single_or_many_by_limit() {
         .unwrap();
 
     let many = ProbeReranker::new(32);
+    common::indexed(&vault);
     collection.search(&q("kryptonite", 2), Some(&many)).unwrap();
     assert_eq!(many.counts(), (0, 1));
 
@@ -1443,6 +1508,7 @@ fn missing_format_fails_closed() {
     collection
         .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
+    common::indexed(&vault);
     fs::remove_file(live_index(&vault).join("format")).unwrap();
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexMissing));
@@ -1456,6 +1522,7 @@ fn corrupt_lexical_index_fails_closed() {
     collection
         .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
+    common::indexed(&vault);
     drop(vault);
     fs::write(
         live_index_at(&scratch.vault().join(".scheda").join("index"))
@@ -1467,6 +1534,7 @@ fn corrupt_lexical_index_fails_closed() {
     let vault = open_proj(scratch.vault(), None);
     let collection = vault.collection("token_notes").unwrap();
     collection.get("a").unwrap();
+    common::indexed(&vault);
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::IndexLexical));
 }
@@ -1502,6 +1570,7 @@ fn edge_field_read_matches_hand_list() {
         None,
     )
     .unwrap();
+    common::indexed(&vault);
     let found = src
         .find(
             &filter(json!({"term":{"field":"title","value":"keep"}})).with_include_raw(true),
@@ -1544,6 +1613,7 @@ fn find_by_edge_target_does_not_scan_unrelated() {
         )
         .unwrap();
     }
+    common::indexed(&vault);
     let found = src
         .find(
             &filter(json!({"term":{"field":"target","value":"t"}})),
@@ -1557,25 +1627,21 @@ fn find_by_edge_target_does_not_scan_unrelated() {
 }
 
 #[test]
-fn stale_index_fails_closed_until_reindex() {
+fn reindex_keeps_find_search_and_check_working() {
     let scratch = Scratch::new();
     let vault = open_tokens(&scratch, None);
     let collection = vault.collection("token_notes").unwrap();
     collection
         .add("a", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
-    fs::write(live_index(&vault).join("stale"), []).unwrap();
-    let err = collection.find(&FindQuery::all(), 0, 10).unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexLexical));
-    let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexLexical));
-    let err = vault.check().unwrap_err();
-    assert_eq!(err.known_code(), Some(Code::IndexLexical));
-    collection.get("a").unwrap();
+    common::indexed(&vault);
     vault.reindex().unwrap();
-    assert!(!live_index(&vault).join("stale").is_file());
+    common::indexed(&vault);
     let found = collection.find(&FindQuery::all(), 0, 10).unwrap();
     assert_eq!(found.total, Some(1));
+    let hits = collection.search(&q("kryptonite", 5), None).unwrap();
+    assert_eq!(hit_ids(&hits), ["a"]);
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -1621,6 +1687,7 @@ schema:
     collection
         .add("other", rec(json!({"title": "fold-vector-other"})), None)
         .unwrap();
+    common::indexed(&vault);
     let hits = collection.search(&q("fold-vector-alpha", 1), None).unwrap();
     assert_eq!(hit_ids(&hits), ["alpha"]);
     assert!(hits.hits[0].vector_score.is_some());
@@ -1652,11 +1719,13 @@ schema:
     collection
         .add("alpha", rec(json!({"title": "kryptonite mineral"})), None)
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(
         probe.counts(),
         (0, 0),
         "exclude_vector_index must not call the embedder on add"
     );
+    common::indexed(&vault);
     let hits = collection.search(&q("kryptonite", 5), None).unwrap();
     assert_eq!(hit_ids(&hits), ["alpha"]);
     assert!(hits.hits[0].lexical_score.is_some());
@@ -1683,6 +1752,7 @@ schema:
     collection
         .add("alpha", rec(json!({"title": "kryptonite"})), None)
         .unwrap();
+    common::indexed(&vault);
     let err = collection.search(&q("kryptonite", 5), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Unsupported));
     assert!(
@@ -1744,6 +1814,7 @@ schema:
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(
         probe.counts(),
         (0, 0),
@@ -1829,6 +1900,7 @@ fn unchanged_record_write_does_not_embed_again() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let after_add = embedder.slots();
     assert_eq!(after_add, 2);
     collection
@@ -1838,6 +1910,7 @@ fn unchanged_record_write_does_not_embed_again() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(
         embedder.slots(),
         after_add,
@@ -1874,6 +1947,7 @@ fn replacing_one_field_embeds_only_that_slot() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let after_add = embedder.slots();
     assert_eq!(after_add, 4);
     vault
@@ -1885,6 +1959,7 @@ fn replacing_one_field_embeds_only_that_slot() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(
         embedder.slots(),
         after_add + 1,
@@ -1923,6 +1998,7 @@ fn vanished_vector_slot_is_absent_from_search() {
         .add("keep", rec(json!({"title": "unique-slot-token"})), None)
         .unwrap();
     let names = ["token_hit", "token_keep"];
+    common::indexed(&vault);
     let before = vault
         .search(
             &names,
@@ -1940,6 +2016,7 @@ fn vanished_vector_slot_is_absent_from_search() {
         .unwrap()
         .replace("hit", rec_rep(json!({"title": "plain title"})), None)
         .unwrap();
+    common::indexed(&vault);
     let after = vault
         .search(
             &names,
@@ -1991,9 +2068,11 @@ fn reindex_on_unchanged_content_does_not_embed_again() {
     collection
         .add("other", rec(json!({"title": "beta mineral"})), None)
         .unwrap();
+    common::indexed(&vault);
     let after_add = embedder.slots();
     assert_eq!(after_add, 3);
     vault.reindex().unwrap();
+    common::indexed(&vault);
     assert_eq!(
         embedder.slots(),
         after_add,
@@ -2013,14 +2092,17 @@ fn reindex_drops_vectors_for_records_that_are_gone() {
     collection
         .add("keep", rec(json!({"title": "unique-keep-token"})), None)
         .unwrap();
+    common::indexed(&vault);
     let after_add = embedder.slots();
     drop_journal_id(&scratch.vault(), "token_notes", "gone");
     vault.reindex().unwrap();
+    common::indexed(&vault);
     assert_eq!(
         embedder.slots(),
         after_add,
         "dropping a missing record must not re-embed the rest"
     );
+    common::indexed(&vault);
     let hits = collection
         .search(&q("unique-gone-token", 5).with_lexical_weight(0.0), None)
         .unwrap();
@@ -2053,6 +2135,7 @@ fn different_model_id_reembeds_every_slot() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     assert_eq!(first.slots(), 2);
     drop(vault);
     let second = CountingEmbedder::new("model-b");
@@ -2061,6 +2144,7 @@ fn different_model_id_reembeds_every_slot() {
         Some(Arc::clone(&second) as Arc<dyn Embedder>),
     );
     vault.reindex().unwrap();
+    common::indexed(&vault);
     assert_eq!(
         second.slots(),
         2,
@@ -2087,6 +2171,7 @@ fn vector_digest_is_stable_across_runs() {
             None,
         )
         .unwrap();
+    common::indexed(&vault);
     let after_add = embedder.slots();
     vault.reindex().unwrap();
     vault
@@ -2099,6 +2184,7 @@ fn vector_digest_is_stable_across_runs() {
         )
         .unwrap();
     vault.reindex().unwrap();
+    common::indexed(&vault);
     assert_eq!(
         embedder.slots(),
         after_add,
@@ -2151,6 +2237,7 @@ fn search_sends_the_query_through_embed_query_not_embed_many() {
         .unwrap()
         .add("vehicle", rec(json!({"title": "car"})), None)
         .unwrap();
+    common::indexed(&vault);
     let _ = vault
         .collection("token_notes")
         .unwrap()

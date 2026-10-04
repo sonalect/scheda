@@ -15,7 +15,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use scheda::{
-    Schema, Embedder, Encryption, Filter, OpenOptions, Record, Reranker, SearchQuery, Vault,
+    Embedder, Encryption, Filter, OpenOptions, Record, Reranker, Schema, SearchQuery, Vault,
 };
 use serde_json::{Value, json};
 
@@ -50,14 +50,18 @@ impl Scratch {
         vault
     }
 
+    /// A library handle on the Vault the CLI wrote, caught up with `HEAD`:
+    /// each CLI process indexes in the background and may exit first.
     fn reopen(&self) -> Vault {
-        Vault::open_with(
+        let vault = Vault::open_with(
             self.vault(),
             OpenOptions::new(),
             None,
             Some(common::cli_body_projector()),
         )
-        .unwrap()
+        .unwrap();
+        vault.wait_indexed(Duration::from_secs(30)).unwrap();
+        vault
     }
 
     fn write_declaration(&self, file: &str, body: &str) {
@@ -472,11 +476,14 @@ fn extra_field_is_invalid_and_write_nothing() {
     let scratch = Scratch::new();
     drop(scratch.init());
     scratch.write_declaration("notes.yaml", notes_schema());
-    scratch.write_declaration("log.yaml", "version: 1
+    scratch.write_declaration(
+        "log.yaml",
+        "version: 1
 name: agent_log
 schema:
   journal: {}
-");
+",
+    );
     let path = vault_arg(&scratch);
 
     let extra = run(&[
@@ -619,9 +626,11 @@ fn contract_codes_not_found_invalid_locked_index_unusable() {
         Ok(name) => index.join(name.trim()),
         Err(_) => index,
     };
-    fs::write(generation.join("format"), "999\n").unwrap();
+    // An unknown `format` is rebuilt in the background, so break the
+    // lexical engine itself: the query fails closed with an Index code.
+    fs::write(generation.join("lexical").join("meta.json"), "not-tantivy").unwrap();
     let unusable = run(&["--vault", &path, "search", "--query", &text_query("Alpha")]);
-    assert_eq!(error_json(&unusable)["code"], "CODE_INDEX_VERSION");
+    assert_eq!(error_json(&unusable)["code"], "CODE_INDEX_LEXICAL");
 }
 
 #[test]
@@ -2043,6 +2052,9 @@ fn http_embedder_writes_vectors_and_scores_match() {
         assert_eq!(add.status, 0, "stderr={}", add.stderr);
     }
 
+    // A CLI process may exit before its indexer embeds the added Record;
+    // `search` waits for the Index, so the embedder has been called by now.
+    let search = run_embed(&path, url, &["search", "--query", &query]);
     {
         let seen = stub.seen.lock().unwrap();
         assert!(
@@ -2050,8 +2062,6 @@ fn http_embedder_writes_vectors_and_scores_match() {
             "CLI whole-file Projector must call the embedder on add: {seen:?}"
         );
     }
-
-    let search = run_embed(&path, url, &["search", "--query", &query]);
     let hits = stdout_json(&search);
     let ids = hit_ids(&hits);
     assert!(
@@ -2328,6 +2338,7 @@ fn library_open_without_projector_has_no_fts() {
         .unwrap()
         .add("alpha", WHOLEFILE_TOKEN, None)
         .unwrap();
+    vault.wait_indexed(Duration::from_secs(30)).unwrap();
     let hits = vault
         .search(
             &[],

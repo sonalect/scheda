@@ -71,6 +71,7 @@ fn write_declaration(scratch: &Scratch, body: &str) {
     let dir = scratch.vault().join(name);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(".collection.yaml"), body).unwrap();
+    common::commit_file(&scratch.vault(), &dir.join(".collection.yaml"));
 }
 
 fn git_output(dir: &Path, args: &[&str]) -> std::process::Output {
@@ -305,13 +306,15 @@ fn isolated_add_without_begin_is_one_nested_commit() {
     write_declaration(&scratch, SEALED_LOG);
     let vault = scratch.reopen();
     let nested = scratch.vault().join(".isolated");
+    let before = log_len(vault.path());
     vault
         .collection("sealed_log")
         .unwrap()
         .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
     assert_eq!(log_len(&nested), 1);
-    assert_eq!(log_len(vault.path()), 1);
+    // The record lives in the nested repository only.
+    assert_eq!(log_len(vault.path()), before);
 }
 
 #[test]
@@ -337,6 +340,7 @@ fn isolated_document_round_trip_and_main_find_skips_it() {
         .get("secret")
         .unwrap();
     assert_eq!(got.id.as_deref(), Some("secret"));
+    common::indexed(&vault);
     let page = vault.find(&[], &Filter::all().into(), 0, 10).unwrap();
     assert_eq!(page.records.len(), 1);
     assert_eq!(page.records[0].id.as_deref(), Some("alpha"));
@@ -445,6 +449,7 @@ fn check_passes_when_nested_git_has_a_remote() {
         .unwrap()
         .add("e1", rec(json!({"msg": "x"})), None)
         .unwrap();
+    common::indexed(&vault);
     vault.check().unwrap();
     let nested = scratch.vault().join(".isolated");
     git_ok(
@@ -456,6 +461,7 @@ fn check_passes_when_nested_git_has_a_remote() {
             "https://example.invalid/isolated.git",
         ],
     );
+    common::indexed(&vault);
     vault.check().unwrap();
 }
 
@@ -481,6 +487,7 @@ fn vault_push_leaves_nested_remote_untouched() {
     let nested_url = as_url(&nested_bare);
     set_origin(vault.path(), &main_url);
     set_origin(&nested, &nested_url);
+    common::indexed(&vault);
     vault.check().unwrap();
     assert_eq!(origin_url(&nested), nested_url);
     assert_ne!(origin_url(&nested), origin_url(vault.path()));
@@ -615,6 +622,7 @@ fn open_succeeds_when_isolated_tree_is_missing() {
     assert!(!scratch.vault().join(".isolated").exists());
     let vault = scratch.reopen();
     vault.reindex().unwrap();
+    common::indexed(&vault);
     vault.find(&[], &Filter::all().into(), 0, 10).unwrap();
     vault.collection("west_isolated").unwrap();
 }
@@ -635,8 +643,13 @@ fn scheda_index_is_owner_only_and_wide_mode_fails_check() {
         .unwrap()
         .add("alpha", rec(json!({"title": "public"})), None)
         .unwrap();
+    // Walk the tree once the indexer is idle: mid-round it renames temp
+    // files and prunes generations under the walk.
+    common::indexed(&vault);
     assert_owner_only_tree(&scratch.vault().join(".scheda"));
     vault.reindex().unwrap();
+    // Let the indexer finish: a round after the chmod would repair it.
+    common::indexed(&vault);
     assert_owner_only_tree(&scratch.vault().join(".scheda"));
     fs::set_permissions(vault.index_dir(), Permissions::from_mode(0o755)).unwrap();
     let err = vault.check().unwrap_err();
@@ -731,6 +744,7 @@ fn term_query_over_isolated_and_plain_returns_both() {
     }))
     .unwrap()
     .into();
+    common::indexed(&vault);
     let page = vault
         .find(&["plain_notes", "sealed_notes"], &vault_query, 0, 10)
         .unwrap();
@@ -779,6 +793,7 @@ fn same_id_in_isolated_and_plain_is_distinct() {
         .unwrap()
         .add("shared", rec(json!({"title": "sealed"})), None)
         .unwrap();
+    common::indexed(&vault);
     let page = vault
         .find(
             &["plain_notes", "sealed_notes"],

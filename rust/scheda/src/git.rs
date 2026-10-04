@@ -514,6 +514,24 @@ pub(crate) fn push(dir: &Path) -> Result<(), Error> {
 }
 
 /// True when the git index tracks `prefix` or any path under it.
+/// Whether git tracks `path` (repository-relative) in its index.
+pub(crate) fn is_tracked(dir: &Path, path: &str) -> Result<bool, Error> {
+    const FRAME: &str = "[Git::is_tracked] ls-files";
+    let out = git()
+        .current_dir(dir)
+        .env("GIT_LITERAL_PATHSPECS", "1")
+        .arg("ls-files")
+        .arg("--error-unmatch")
+        .arg("--")
+        .arg(path)
+        .spawn(FRAME)?;
+    match out.status.code() {
+        Some(0) => Ok(true),
+        Some(1) => Ok(false),
+        _ => Err(git_fail(&out, FRAME)),
+    }
+}
+
 pub(crate) fn index_has_prefix(dir: &Path, prefix: &str) -> Result<bool, Error> {
     require_work_tree(dir)?;
     let out = git()
