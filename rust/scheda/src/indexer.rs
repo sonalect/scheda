@@ -33,7 +33,7 @@ use crate::index::{self, IndexHandle, JournalIdMaps};
 use crate::isolated;
 use crate::journal;
 use crate::marks::{self, Leg, Repo};
-use crate::schema::{self, CollectionDecl, Decls, Kind};
+use crate::schema::{self, CollectionDecl, Declared, Decls, Kind};
 use crate::search::{Legs, SearchEngine};
 use crate::store;
 use crate::{Embedder, Error, Projector, Record};
@@ -55,6 +55,9 @@ pub(crate) struct Context {
     pub(crate) index: Arc<IndexHandle>,
     pub(crate) search: Arc<SearchEngine>,
     pub(crate) journal_ids: Arc<Mutex<JournalIdMaps>>,
+    /// The handle's collection declarations, read again after a round
+    /// that sees the Index pass a commit.
+    pub(crate) declared: Arc<Declared>,
     pub(crate) embedder: Arc<Mutex<Option<Arc<dyn Embedder>>>>,
     pub(crate) projector: Option<Arc<dyn Projector>>,
     pub(crate) poll: Duration,
@@ -374,7 +377,14 @@ fn run(shared: &Shared) {
                 continue;
             }
             worker.skip_vector = retry.vector.holding(Instant::now());
-            catch_unwind(AssertUnwindSafe(|| worker.round(shared)))
+            catch_unwind(AssertUnwindSafe(|| {
+                let round = worker.round(shared);
+                // Whatever the round's outcome: a leg may have moved its
+                // mark before a later step failed, and a handle without a
+                // role sees the marks other handles moved.
+                let declared = follow_declarations(&shared.ctx);
+                round.and(declared)
+            }))
         };
         next_poll = later(shared.ctx.poll);
         let error = match outcome {
@@ -1115,6 +1125,14 @@ impl Job<'_> {
         marks::write(self.generation, leg, repo, head)?;
         Ok(Pass::Done)
     }
+}
+
+/// Read the handle's declarations again when the Index passed a commit
+/// since the last look, on this handle's round or another handle's.
+fn follow_declarations(ctx: &Context) -> Result<(), Error> {
+    ctx.declared
+        .follow(&ctx.index.dir()?)
+        .context("[Indexer] reload declarations")
 }
 
 /// Bind the handle to the generation `current` names when another handle

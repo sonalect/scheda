@@ -69,6 +69,7 @@ The design is a numbered package in `docs/`, in English.
 | [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F19 done). |
 | [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature with an async API (T1–T4 done) |
 | [18-review-fixes.md](docs/18-review-fixes.md) | Rust work order: fixes from the 5 October 2026 full review (S1–S8) |
+| [19-follow-ups.md](docs/19-follow-ups.md) | Rust work order: declarations follow the work tree, `search` vector-leg signal, `index_version` repeat, sync and async `transaction` (F1–F5) |
 
 ## Layout
 

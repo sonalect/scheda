@@ -62,7 +62,9 @@ pub struct Vault {
     remotes: Vec<String>,
     auto_sync: bool,
     write_lock: Arc<Mutex<WriteLock>>,
-    decls: Mutex<Arc<Decls>>,
+    /// Collection declarations, read again from the work tree when a
+    /// name misses and when the Index passes a commit.
+    declared: Arc<schema::Declared>,
     written: Arc<Mutex<BTreeSet<String>>>,
     in_txn: Arc<Mutex<bool>>,
     writer: Arc<str>,
@@ -271,7 +273,8 @@ impl Vault {
         let index = Arc::new(index::bind(&index_root)?);
         let generation = index.dir()?;
         index::restrict_index_tree(&generation)?;
-        let decls = Arc::new(schema::load(&path)?);
+        let declared = Arc::new(schema::Declared::open(&path, &generation)?);
+        let decls = declared.current()?;
         let journal_ids = Arc::new(Mutex::new(index::load_journal_ids(&generation, &decls)?));
         let written = Arc::new(Mutex::new(load_written(&path)?));
         let in_txn = Arc::new(Mutex::new(false));
@@ -288,7 +291,7 @@ impl Vault {
             remotes,
             auto_sync,
             write_lock: Arc::new(Mutex::new(WriteLock::new())),
-            decls: Mutex::new(decls),
+            declared,
             written,
             in_txn,
             writer,
@@ -316,6 +319,7 @@ impl Vault {
                     index: Arc::clone(&vault.index),
                     search: Arc::clone(&vault.search),
                     journal_ids: Arc::clone(&vault.journal_ids),
+                    declared: Arc::clone(&vault.declared),
                     embedder: Arc::clone(&vault.embedder),
                     projector: vault.projector.clone(),
                     poll,
@@ -421,9 +425,7 @@ impl Vault {
         let target = self.wait_target()?;
         loop {
             let Some(status) = self.wait_pass(&target)? else {
-                // Counted once, after the wait: a leg nobody writes shows
-                // its lag here.
-                return self.index_status();
+                return self.wait_done();
             };
             let now = Instant::now();
             let left = match deadline {
@@ -445,6 +447,15 @@ impl Vault {
                 None => thread::sleep(slice),
             }
         }
+    }
+
+    /// The end of a wait that reached its target: declarations a passed
+    /// commit changed are read again, then the status is taken. Counted
+    /// once, after the wait: a leg nobody writes shows its lag here.
+    #[cfg(feature = "find")]
+    pub(crate) fn wait_done(&self) -> Result<crate::IndexStatus, Error> {
+        self.declared.follow(&self.generation_dir()?)?;
+        self.index_status()
     }
 
     /// The heads a wait has to reach: those of `HEAD` now.
@@ -619,10 +630,27 @@ impl Vault {
     }
 
     fn decls_arc(&self) -> Result<Arc<Decls>, Error> {
-        Ok(Arc::clone(&*crate::error::mutex(
-            &self.decls,
-            "[Vault] lock decls",
-        )?))
+        self.declared.current()
+    }
+
+    /// Declarations that know every name in `names`: read again from the
+    /// work tree once when one is missing, since another handle or process
+    /// may have declared it after this handle last read them.
+    fn decls_naming(&self, names: &[&str]) -> Result<Arc<Decls>, Error> {
+        let decls = self.decls_arc()?;
+        if names.iter().all(|name| decls.get(name).is_some()) {
+            return Ok(decls);
+        }
+        self.declared.reload()
+    }
+
+    /// [`decls_naming`](Self::decls_naming) for a query: the collections it
+    /// names and those its Filter leaves qualify.
+    #[cfg(feature = "find")]
+    fn decls_for_query(&self, collections: &[&str], filter: &Filter) -> Result<Arc<Decls>, Error> {
+        let mut names = collections.to_vec();
+        names.extend(query::leaf_collections(filter));
+        self.decls_naming(&names)
     }
 
     /// Install `embedder` for later [`collection`](Self::collection) handles
@@ -674,7 +702,7 @@ impl Vault {
     /// `encrypt` crate feature refuses an encrypted collection
     /// (`unsupported_encryption`); `open` of the Vault still succeeds.
     pub fn collection(&self, name: &str) -> Result<Collection, Error> {
-        let decls = self.decls_arc()?;
+        let decls = self.decls_naming(&[name])?;
         let Some(decl) = decls.get(name) else {
             bail!(Error::not_found(format!(
                 "collection {name} is not in the declaration"
@@ -737,7 +765,7 @@ impl Vault {
         offset: u32,
         count: u32,
     ) -> Result<FindResult, Error> {
-        let decls = self.decls_arc()?;
+        let decls = self.decls_for_query(collections, &query.filter)?;
         QueryCtx {
             engine: &self.search,
             decls: &decls,
@@ -785,7 +813,7 @@ impl Vault {
         query: &SearchQuery,
         reranker: Option<&dyn Reranker>,
     ) -> Result<SearchHits, Error> {
-        let decls = self.decls_arc()?;
+        let decls = self.decls_for_query(collections, &query.filter)?;
         QueryCtx {
             engine: &self.search,
             decls: &decls,
@@ -888,7 +916,7 @@ impl Vault {
             &self.journal_ids,
         )?;
         if let Some(loaded) = restored {
-            *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
+            self.declared.replace(loaded)?;
         }
         Ok(())
     }
@@ -898,8 +926,7 @@ impl Vault {
     /// up to the new `HEAD`.
     fn reload_after_restore(&self) -> Result<(), Error> {
         self.wake_indexer();
-        let loaded = schema::load(&self.path)?;
-        *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
+        self.declared.reload()?;
         Ok(())
     }
 
@@ -1138,7 +1165,7 @@ impl Vault {
                 let dir = self.generation_dir()?;
                 *crate::error::mutex(&self.journal_ids, "[Vault] lock journal ids")? =
                     index::load_journal_ids(&dir, &loaded)?;
-                *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
+                self.declared.replace(loaded)?;
                 self.finish_mutation(message)?;
                 Ok(())
             })();
@@ -4958,6 +4985,197 @@ mod tests {
             assert!(status.lexical_role);
             assert_eq!(status.lexical, Some(head_of(second.path())));
             assert_eq!(find_ids(&second, "c"), ["after"]);
+        }
+
+        /// `exclude_vector_index` of `name` as `info` reports it.
+        fn excludes_vectors(vault: &Vault, name: &str) -> Option<bool> {
+            vault
+                .info()
+                .unwrap()
+                .collections
+                .iter()
+                .find(|item| item.name.as_deref() == Some(name))
+                .and_then(|item| item.schema.exclude_vector_index)
+        }
+
+        fn names_in_info(vault: &Vault) -> Vec<String> {
+            vault
+                .info()
+                .unwrap()
+                .collections
+                .iter()
+                .filter_map(|item| item.name.clone())
+                .collect()
+        }
+
+        #[test]
+        fn a_collection_another_handle_declares_is_found_without_reopen() {
+            let scratch = Scratch::new();
+            drop(open_indexed(&scratch.vault(), poll_never()));
+            let by_name = open_indexed(&scratch.vault(), poll_never());
+            let by_find = open_indexed(&scratch.vault(), poll_never());
+            let writer = open_indexed(&scratch.vault(), poll_never());
+            let missing = by_name.collection("x").unwrap_err();
+            assert_eq!(missing.known_code(), Some(Code::NotFound));
+            writer
+                .create_collection("x", document_schema(), None)
+                .unwrap()
+                .add("alpha", empty_add(), None)
+                .unwrap();
+            assert_eq!(by_name.collection("x").unwrap().name(), "x");
+            assert!(!names_in_info(&by_find).iter().any(|name| name == "x"));
+            // Nobody indexed yet: an Index code is fine, `not_found` is not.
+            let found = by_find.find(&["x"], &crate::FindQuery::all(), 0, 10);
+            assert_resolved(found.map(|_| ()));
+            assert!(names_in_info(&by_find).iter().any(|name| name == "x"));
+        }
+
+        /// The query got past name resolution.
+        fn assert_resolved(result: Result<(), Error>) {
+            if let Err(err) = result {
+                assert_ne!(err.known_code(), Some(Code::NotFound), "{err:?}");
+            }
+        }
+
+        /// A collection a Filter leaf qualifies counts as a name to look up.
+        #[cfg(feature = "search")]
+        #[test]
+        fn a_filter_qualifier_declared_after_open_is_found() {
+            let scratch = Scratch::new();
+            drop(open_search(scratch.vault(), poll_never(), None));
+            let reader = open_search(scratch.vault(), poll_never(), None);
+            let writer = open_search(scratch.vault(), poll_never(), None);
+            writer
+                .create_collection("x", document_schema(), None)
+                .unwrap()
+                .add("alpha", rec_tag("red"), None)
+                .unwrap();
+            let filter: crate::Filter = serde_json::from_value(serde_json::json!(
+                {"term": {"field": "tag", "collection": "x", "value": "red"}}
+            ))
+            .unwrap();
+            let found = reader.find(&[], &crate::FindQuery::from(filter), 0, 10);
+            assert_resolved(found.map(|_| ()));
+            assert!(names_in_info(&reader).iter().any(|name| name == "x"));
+        }
+
+        /// Child of `a_collection_another_process_declares_is_found_without_reopen`:
+        /// declares `x`, writes one Record, reports done.
+        #[test]
+        #[ignore = "run as the child process of a_collection_another_process_declares_is_found_without_reopen"]
+        fn declaring_child_process() {
+            let Some(root) = std::env::var_os(CHILD_ENV).map(PathBuf::from) else {
+                return;
+            };
+            crate::git::isolate_test_git_env();
+            let vault = open_indexed(&root.join("vault"), poll_never());
+            vault
+                .create_collection("x", document_schema(), None)
+                .unwrap()
+                .add("alpha", empty_add(), None)
+                .unwrap();
+            fs::write(root.join("done"), b"").unwrap();
+        }
+
+        #[test]
+        fn a_collection_another_process_declares_is_found_without_reopen() {
+            let scratch = Scratch::new();
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            vault.wait_indexed(WAIT).unwrap();
+            assert!(vault.collection("x").is_err());
+            let mut child = spawn_child(
+                &scratch.root,
+                "vault::tests::background::declaring_child_process",
+            );
+            wait_for_child_file(&mut child, &scratch.root, "done");
+            let found = vault.collection("x").unwrap();
+            assert_eq!(found.get("alpha").unwrap().id.as_deref(), Some("alpha"));
+        }
+
+        /// A changed declaration of a collection the handle knows, read
+        /// again once the Index passed the commit: by the handle that
+        /// indexes and by one that only reads.
+        #[test]
+        fn a_changed_declaration_is_seen_after_wait_indexed() {
+            let scratch = Scratch::new();
+            let indexing = open_indexed(&scratch.vault(), poll_never());
+            indexing
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            indexing.wait_indexed(WAIT).unwrap();
+            let reading = open_indexed(&scratch.vault(), poll_never());
+            reading.wait_indexed(WAIT).unwrap();
+            assert!(indexing.index_status().unwrap().lexical_role);
+            assert!(!reading.index_status().unwrap().lexical_role);
+            let writer = open_indexed(&scratch.vault(), poll_never());
+            let changed = Schema {
+                exclude_vector_index: Some(true),
+                ..document_schema()
+            };
+            writer.create_collection("c", changed, None).unwrap();
+            for vault in [&indexing, &reading] {
+                assert_ne!(excludes_vectors(vault, "c"), Some(true));
+            }
+            for vault in [&indexing, &reading] {
+                vault.wait_indexed(WAIT).unwrap();
+                assert_eq!(excludes_vectors(vault, "c"), Some(true));
+            }
+        }
+
+        /// A reload brought by the Index reads the work tree, so this
+        /// handle's own uncommitted declaration stays.
+        #[test]
+        fn a_reload_in_an_open_transaction_keeps_its_own_declaration() {
+            let scratch = Scratch::new();
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            vault.wait_indexed(WAIT).unwrap();
+            vault.begin().unwrap();
+            vault
+                .create_collection("y", document_schema(), None)
+                .unwrap();
+            // Another writer's commit, made while this handle holds the
+            // transaction: only the git CLI can, and it commits `x` alone.
+            let rel = "x/.collection.yaml";
+            fs::create_dir_all(scratch.vault().join("x")).unwrap();
+            fs::write(
+                scratch.vault().join(rel),
+                "version: 1\nname: x\nschema:\n  document: {}\n",
+            )
+            .unwrap();
+            for args in [
+                vec!["add", "--", rel],
+                vec![
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@example.invalid",
+                    "commit",
+                    "-q",
+                    "-m",
+                    "hand",
+                    "--",
+                    rel,
+                ],
+            ] {
+                let out = Command::new("git")
+                    .arg("-C")
+                    .arg(scratch.vault())
+                    .args(&args)
+                    .output()
+                    .unwrap();
+                assert!(out.status.success(), "{out:?}");
+            }
+            assert!(!names_in_info(&vault).iter().any(|name| name == "x"));
+            vault.wait_indexed(WAIT).unwrap();
+            let names = names_in_info(&vault);
+            assert!(names.iter().any(|name| name == "x"), "{names:?}");
+            assert!(names.iter().any(|name| name == "y"), "{names:?}");
+            vault.commit("declare y").unwrap();
+            assert_eq!(vault.collection("y").unwrap().name(), "y");
+            assert!(last_commit_files(&scratch.vault()).contains(&"y/.collection.yaml".to_owned()));
         }
 
         /// Child of `indexer_role_passes_to_another_process`: takes the

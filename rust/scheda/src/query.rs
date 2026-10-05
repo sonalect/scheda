@@ -77,103 +77,75 @@ pub(crate) fn check_scope<'a>(
     lookup: impl Fn(&str) -> Option<&'a CollectionDecl>,
     projector: Option<&dyn Projector>,
 ) -> Result<(), Error> {
-    walk_scope(filter, scope, &lookup, projector)
+    visit_leaves(filter, &mut |leaf| {
+        check_scope_leaf(
+            leaf.field,
+            leaf.collection,
+            leaf.token,
+            scope,
+            &lookup,
+            projector,
+        )
+    })
 }
 
-fn walk_scope<'a>(
-    filter: &Filter,
-    scope: FilterScope<'_>,
-    lookup: &impl Fn(&str) -> Option<&'a CollectionDecl>,
-    projector: Option<&dyn Projector>,
+/// Collection names the leaves of `filter` qualify, in walk order. A
+/// Filter whose shape is invalid yields the names seen before the fault.
+pub(crate) fn leaf_collections(filter: &Filter) -> Vec<&str> {
+    let mut names = Vec::new();
+    let _ = visit_leaves(filter, &mut |leaf| {
+        if let Some(name) = leaf_collection(leaf.collection) {
+            names.push(name);
+        }
+        Ok(())
+    });
+    names
+}
+
+/// One field leaf of a Filter.
+struct Leaf<'f> {
+    field: &'f str,
+    collection: Option<&'f str>,
+    /// The leaf matches tokens of a text column.
+    token: bool,
+}
+
+/// Call `visit` on every field leaf of `filter`, depth first. Stops at the
+/// first error, `visit`'s or a missing `kind`.
+fn visit_leaves<'f>(
+    filter: &'f Filter,
+    visit: &mut impl FnMut(Leaf<'f>) -> Result<(), Error>,
 ) -> Result<(), Error> {
     let Some(kind) = filter.kind.as_ref() else {
         bail!(Error::invalid("filter kind is required"));
     };
+    let leaf = |field: &'f Option<String>, collection: &'f Option<String>, token| Leaf {
+        field: field.as_deref().unwrap_or(""),
+        collection: collection.as_deref(),
+        token,
+    };
     match kind {
         Kind::All(_) | Kind::Empty(_) => Ok(()),
-        Kind::Term(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            false,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::TermSet(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            false,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::Phrase(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            true,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::PhrasePrefix(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            true,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::Fuzzy(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            true,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::Regex(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            true,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::RegexPhrase(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            true,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::Range(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            false,
-            scope,
-            lookup,
-            projector,
-        ),
-        Kind::Exists(term) => check_scope_leaf(
-            term.field.as_deref().unwrap_or(""),
-            term.collection.as_deref(),
-            false,
-            scope,
-            lookup,
-            projector,
-        ),
+        Kind::Term(term) => visit(leaf(&term.field, &term.collection, false)),
+        Kind::TermSet(term) => visit(leaf(&term.field, &term.collection, false)),
+        Kind::Phrase(term) => visit(leaf(&term.field, &term.collection, true)),
+        Kind::PhrasePrefix(term) => visit(leaf(&term.field, &term.collection, true)),
+        Kind::Fuzzy(term) => visit(leaf(&term.field, &term.collection, true)),
+        Kind::Regex(term) => visit(leaf(&term.field, &term.collection, true)),
+        Kind::RegexPhrase(term) => visit(leaf(&term.field, &term.collection, true)),
+        Kind::Range(term) => visit(leaf(&term.field, &term.collection, false)),
+        Kind::Exists(term) => visit(leaf(&term.field, &term.collection, false)),
         Kind::Boolean(boolean) => {
             for clause in &boolean.clauses {
-                walk_scope(&clause.query, scope, lookup, projector)?;
+                visit_leaves(&clause.query, visit)?;
             }
             Ok(())
         }
-        Kind::Boost(boost) => walk_scope(&boost.query, scope, lookup, projector),
-        Kind::ConstScore(inner) => walk_scope(&inner.query, scope, lookup, projector),
+        Kind::Boost(boost) => visit_leaves(&boost.query, visit),
+        Kind::ConstScore(inner) => visit_leaves(&inner.query, visit),
         Kind::DisjunctionMax(inner) => {
             for nested in &inner.queries {
-                walk_scope(nested, scope, lookup, projector)?;
+                visit_leaves(nested, visit)?;
             }
             Ok(())
         }
@@ -181,14 +153,7 @@ fn walk_scope<'a>(
             Some(Source::Id(_)) | None => Ok(()),
             Some(Source::Fields(fields)) => {
                 for field in &fields.fields {
-                    check_scope_leaf(
-                        field.field.as_deref().unwrap_or(""),
-                        field.collection.as_deref(),
-                        true,
-                        scope,
-                        lookup,
-                        projector,
-                    )?;
+                    visit(leaf(&field.field, &field.collection, true))?;
                 }
                 Ok(())
             }

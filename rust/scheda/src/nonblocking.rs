@@ -333,7 +333,7 @@ impl AsyncVault {
             let wanted = Arc::clone(&target);
             let Some(status) = blocking(FRAME, move || vault.wait_pass(&wanted)).await? else {
                 let vault = Arc::clone(&self.vault);
-                return blocking(FRAME, move || vault.index_status()).await;
+                return blocking(FRAME, move || vault.wait_done()).await;
             };
             self.vault.nudge_indexer();
             let round = rounds.changed();

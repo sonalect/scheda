@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -106,6 +107,97 @@ impl Decls {
         versions.dedup();
         versions
     }
+}
+
+/// The declarations a handle answers from, shared with its background
+/// indexer. Every reload reads the work tree, as `open` does: a handle's
+/// own declaration that no commit holds yet (an open transaction's) stays.
+pub(crate) struct Declared {
+    vault: PathBuf,
+    state: Mutex<DeclaredState>,
+}
+
+struct DeclaredState {
+    decls: Arc<Decls>,
+    /// Main lexical and vector marks of the live generation when the
+    /// declarations were last read on account of them.
+    #[cfg(feature = "find")]
+    marks: MainMarks,
+}
+
+#[cfg(feature = "find")]
+type MainMarks = (Option<String>, Option<String>);
+
+impl Declared {
+    /// Read the declarations of `vault` now. With `find`, the marks of
+    /// `generation` are read first: a commit that lands between the two
+    /// reads moves a mark past them, and the next [`follow`](Self::follow)
+    /// reads the declarations again.
+    pub(crate) fn open(vault: &Path, generation: &Path) -> Result<Self, Error> {
+        #[cfg(feature = "find")]
+        let marks = main_marks(generation)?;
+        #[cfg(not(feature = "find"))]
+        let _ = generation;
+        let decls = Arc::new(load(vault)?);
+        Ok(Self {
+            vault: vault.to_path_buf(),
+            state: Mutex::new(DeclaredState {
+                decls,
+                #[cfg(feature = "find")]
+                marks,
+            }),
+        })
+    }
+
+    /// The declarations as last read.
+    pub(crate) fn current(&self) -> Result<Arc<Decls>, Error> {
+        Ok(Arc::clone(&self.lock()?.decls))
+    }
+
+    /// Read the declarations from the work tree again. The read happens
+    /// under the lock, so a reload that started earlier never replaces the
+    /// result of a later one.
+    pub(crate) fn reload(&self) -> Result<Arc<Decls>, Error> {
+        let mut state = self.lock()?;
+        state.decls = Arc::new(load(&self.vault)?);
+        Ok(Arc::clone(&state.decls))
+    }
+
+    /// Install declarations the caller read from the work tree after its
+    /// own write, under `write.lock`.
+    pub(crate) fn replace(&self, decls: Decls) -> Result<(), Error> {
+        self.lock()?.decls = Arc::new(decls);
+        Ok(())
+    }
+
+    /// Read the declarations again when the lexical or vector mark of the
+    /// main repository in `generation` moved since the last look: the Index
+    /// passed a commit, which may have changed a declaration. A look costs
+    /// two small file reads; a reload, one read of each declaration file.
+    #[cfg(feature = "find")]
+    pub(crate) fn follow(&self, generation: &Path) -> Result<(), Error> {
+        let marks = main_marks(generation)?;
+        let mut state = self.lock()?;
+        if state.marks == marks {
+            return Ok(());
+        }
+        state.decls = Arc::new(load(&self.vault)?);
+        state.marks = marks;
+        Ok(())
+    }
+
+    fn lock(&self) -> Result<std::sync::MutexGuard<'_, DeclaredState>, Error> {
+        crate::error::mutex(&self.state, "[Vault] lock declarations")
+    }
+}
+
+#[cfg(feature = "find")]
+fn main_marks(generation: &Path) -> Result<MainMarks, Error> {
+    use crate::marks::{self, Leg, Repo};
+    Ok((
+        marks::read(generation, Leg::Lexical, Repo::Main)?,
+        marks::read(generation, Leg::Vector, Repo::Main)?,
+    ))
 }
 
 pub(crate) fn load(vault: &Path) -> Result<Decls, Error> {

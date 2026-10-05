@@ -135,6 +135,37 @@ fn isolated_round_trip_and_documents_without_find() {
     assert!(!scratch.vault().join(".isolated").join(".scheda").exists());
 }
 
+/// A handle opened before another handle declared a collection finds it
+/// by name without reopening: the miss reads the declarations again.
+#[test]
+fn a_collection_declared_after_open_is_found_without_find() {
+    let scratch = Scratch::new();
+    drop(Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap());
+    let reader = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let writer = Vault::open(scratch.vault(), OpenOptions::new(), None).unwrap();
+    let missing = reader.collection("thin_later").unwrap_err();
+    assert_eq!(missing.known_code(), Some(Code::NotFound));
+    let schema = Schema {
+        kind: scheda::Unit::default().into(),
+        ..Schema::default()
+    };
+    writer
+        .create_collection("thin_later", schema, None)
+        .unwrap()
+        .add("one", rec(json!({"title": "later"})), None)
+        .unwrap();
+    let found = reader.collection("thin_later").unwrap();
+    assert_eq!(found.get("one").unwrap().id.as_deref(), Some("one"));
+    let names: Vec<_> = reader
+        .info()
+        .unwrap()
+        .collections
+        .iter()
+        .filter_map(|item| item.name.clone())
+        .collect();
+    assert!(names.iter().any(|name| name == "thin_later"), "{names:?}");
+}
+
 #[test]
 fn documents_and_ids_without_find() {
     let scratch = Scratch::new();

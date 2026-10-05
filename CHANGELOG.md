@@ -8,6 +8,18 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- A `Vault` handle follows collection declarations made after it opened.
+  `collection(name)`, and the names `find` / `search` take or a Filter leaf
+  qualifies, read the declarations again from the work tree once before
+  answering `not_found`. With `find`, the background indexer reads them
+  again whenever the Index passes a commit (on any handle, with or without
+  an indexing role), and `wait_indexed` does before it returns; `info()`
+  then shows a changed declaration of a known collection. The work tree is
+  read, so a handle's own uncommitted declaration stays. A `Collection`
+  handle keeps the declaration it was made with.
+
 ## [0.19.0] - 2026-10-05
 
 ### Added
