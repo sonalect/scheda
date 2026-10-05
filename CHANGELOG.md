@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.20.0] - 2026-10-05
+
 ### Added
 
 - `SearchHits.vector_leg` (`api.v1.SearchHits.VectorLeg`), set on every
@@ -1945,6 +1947,7 @@ API or on-disk format changes bump the minor.
 ## Links
 
 - [Unreleased]
+- [0.20.0]
 - [0.19.0]
 - [0.18.1]
 - [0.18.0]
@@ -1997,7 +2000,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.19.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.20.0...HEAD
+[0.20.0]: https://github.com/amsokol/scheda/releases/tag/v0.20.0
 [0.19.0]: https://github.com/amsokol/scheda/releases/tag/v0.19.0
 [0.18.6]: https://github.com/amsokol/scheda/releases/tag/v0.18.6
 [0.18.5]: https://github.com/amsokol/scheda/releases/tag/v0.18.5
