@@ -67,7 +67,7 @@ The design is a numbered package in `docs/`, in English.
 | [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in (`14` secret flags, nested Remote) |
 | [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8); its queue is replaced by `17` |
 | [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F19 done). |
-| [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature (Part T, next) |
+| [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature with an async API (T1–T4 done) |
 
 ## Layout
 
@@ -98,10 +98,12 @@ and host-key checking match a plain `git` command. Features
 `find` and `search` are opt-in: Tantivy `find` and hybrid `search`
 (BM25 + USearch). `search` turns `find` on. `simd` turns `search` on
 and enables USearch SIMD kernels. `openmp` is opt-in (Linux
-`libomp-dev`). There are no default features: `cargo add scheda` is
-git plus Records, without Tantivy or USearch. Add `features =
-["search", "simd"]` for ANN + SIMD, or `features = ["find"]` for
-Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
+`libomp-dev`). `tokio` is opt-in: an async API (`AsyncVault`,
+`AsyncCollection`) that runs each call on Tokio's blocking pool, with
+`AsyncVault::transaction` for batches of writes. There are no default
+features: `cargo add scheda` is git plus Records, without Tantivy,
+USearch, or Tokio. Add `features = ["search", "simd"]` for ANN + SIMD,
+or `features = ["find"]` for Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
 **clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
 build without `search` does not need C++. Bazel on Debian 13, macOS,
 and Windows amd64 links `find`, `search`, and `simd`. GitHub Actions

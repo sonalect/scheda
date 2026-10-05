@@ -61,33 +61,45 @@
 //!
 //! # Tokio and other async runtimes
 //!
-//! Core operations are synchronous and do not start an async executor.
-//! There is no `tokio` crate feature: disk I/O and git child processes
-//! block the calling thread. From a Tokio task, run them on the blocking
-//! pool so worker threads stay free. Share a [`Vault`] with
-//! [`std::sync::Arc`] — the handle is `Send + Sync`. Concurrent `find` /
-//! `search` on one handle share the Index (many readers). The Vault write
-//! lock is one writer (`locked` if a second writer races it); it is held
-//! for an open transaction and for one mutating call outside a
-//! transaction, then released. Writes do not touch the Index. Remote git
-//! (`push` / `pull` / `sync`), `reindex`, `search`, and `wait_indexed` are
-//! the calls that must not sit on a worker thread. `reindex` (with `find`)
+//! Core operations are synchronous and do not start an async executor:
+//! disk I/O and git child processes block the calling thread, and a build
+//! without the `tokio` feature has no runtime dependency at all. Share a
+//! [`Vault`] with [`std::sync::Arc`] — the handle is `Send + Sync`.
+//! Concurrent `find` / `search` on one handle share the Index (many
+//! readers). The Vault write lock is one writer (`locked` if a second
+//! writer races it); it belongs to the thread that took it and is held for
+//! an open transaction and for one mutating call outside a transaction,
+//! then released. Writes do not touch the Index. `reindex` (with `find`)
 //! takes no write lock: it builds from commits and holds only the flock
 //! `{vault}/.scheda/reindex.lock`, so a second `reindex` is `locked`.
 //!
-//! ```rust,ignore (tokio is not a crate dependency)
-//! use std::sync::Arc;
-//! use scheda::{Record, Vault};
+//! The opt-in `tokio` feature adds `nonblocking`: `AsyncVault` and
+//! `AsyncCollection` run each call that does I/O, or calls the embedder,
+//! Projector, or reranker, on Tokio's blocking pool, so runtime worker
+//! threads stay free. They have no `begin` / `commit` / `discard`, because
+//! two awaits may resume on two threads; `AsyncVault::transaction` runs
+//! `begin`, a sync closure, and `commit` on one blocking thread instead.
+//! `AsyncVault::wait_indexed` waits for the indexer's rounds without
+//! holding a blocking thread.
 //!
-//! async fn get_one(vault: Arc<Vault>, id: String) -> Result<Record, scheda::Error> {
-//!     tokio::task::spawn_blocking(move || vault.collection("notes")?.get(&id))
-//!         .await
-//!         .map_err(|err| {
-//!             scheda::Error::io_other(err.to_string())
-//!                 .context("join blocking task")
-//!         })?
+//! ```rust,ignore (needs the tokio feature and a runtime)
+//! use scheda::{AsyncVault, OpenOptions};
+//!
+//! async fn add_two(path: &str) -> Result<(), scheda::Error> {
+//!     let vault = AsyncVault::open(path, OpenOptions::new(), None).await?;
+//!     vault
+//!         .transaction("add two notes", |vault| {
+//!             let notes = vault.collection("notes")?;
+//!             notes.add("alpha", b"one", None)?;
+//!             notes.add("beta", b"two", None)
+//!         })
+//!         .await?;
+//!     vault.close().await
 //! }
 //! ```
+//!
+//! Without the feature, wrap the sync calls in `spawn_blocking` yourself;
+//! a batch of writes then has to stay inside one `spawn_blocking`.
 
 #![doc(html_root_url = "https://amsokol.github.io/scheda/scheda")]
 
