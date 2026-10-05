@@ -9,7 +9,7 @@
 //!
 //! There is no `begin` / `commit` / `discard`: the Vault write lock belongs
 //! to the thread that took it, and two awaits may resume on two different
-//! blocking threads. Batch writes go through `AsyncVault::transaction`,
+//! blocking threads. Batch writes go through [`AsyncVault::transaction`],
 //! which runs the whole batch on one thread.
 //!
 //! A blocking task cancelled by a runtime that shuts down is
@@ -20,6 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::error::Context as _;
 use crate::{
     Collection, Embedder, Error, History, Kind, OpenOptions, Projector, Record, ReindexResult,
     Schema, Vault, VaultInfo,
@@ -171,6 +172,45 @@ impl AsyncVault {
         })
         .await
         .map(AsyncCollection::from)
+    }
+
+    /// Run `f` as one transaction: [`Vault::begin`], `f`, then
+    /// [`Vault::commit`] with `message`, all on one blocking thread, so the
+    /// write lock never changes threads mid-transaction. Every write `f`
+    /// makes through the [`Vault`] it is handed, or through a collection
+    /// from it, joins the transaction and lands in one git commit.
+    ///
+    /// When `f` returns an error, or `commit` fails, the transaction is
+    /// discarded and that error is returned. When `f` panics, the
+    /// transaction is discarded and the result is `io_other`. While this
+    /// `Vault` holds a transaction on another thread (another `transaction`
+    /// call, or a sync [`Vault::begin`]), the result is `locked` at once and
+    /// `f` does not run.
+    pub async fn transaction<T, F>(&self, message: impl Into<String>, f: F) -> Result<T, Error>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Vault) -> Result<T, Error> + Send + 'static,
+    {
+        const FRAME: &str = "[AsyncVault::transaction]";
+        let vault = Arc::clone(&self.vault);
+        let message = message.into();
+        blocking(FRAME, move || {
+            vault.begin().with_context(|| FRAME)?;
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(&vault)));
+            let result = match outcome {
+                Ok(Ok(value)) => vault.commit(&message).map(|()| value),
+                Ok(Err(err)) => Err(err),
+                Err(_panic) => Err(Error::io_other("the transaction closure panicked")),
+            };
+            if result.is_err() {
+                // The error the caller sees is the one that ended the
+                // transaction; a failed discard leaves leftovers that the
+                // next `begin` or mutating call restores.
+                let _ = vault.discard();
+            }
+            result.with_context(|| FRAME)
+        })
+        .await
     }
 
     /// Async [`Vault::check`].

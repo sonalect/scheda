@@ -599,12 +599,19 @@ vault
     .await?;
 ```
 
-- [ ] The closure is sync, `Send + 'static`, runs in one
+- [x] The closure is sync, `Send + 'static`, runs in one
       `spawn_blocking` on the sync API: `begin`, closure, `commit`;
-      `discard` on error.
+      `discard` on error, on a failed `commit`, and on a panic (D42)
+      (`nonblocking.rs an_error_or_a_panic_discards_the_transaction`);
+      `locked` at once against a sync transaction on another thread (D43)
+      (`a_sync_transaction_on_another_thread_makes_it_locked`).
 - *Check:* 64 concurrent tasks each running a transaction on a shared
   `AsyncVault`: every one ends committed or `locked`, never a
-  transaction split across threads.
+  transaction split across threads
+  (`nonblocking.rs concurrent_transactions_commit_whole_or_are_locked`:
+  each task retries on `locked` until it commits; every attempt either
+  commits both of its writes in one commit with its own message or leaves
+  no trace).
 
 ### T3. Async wait
 

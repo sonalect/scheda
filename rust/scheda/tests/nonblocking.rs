@@ -224,3 +224,187 @@ async fn a_panicking_callback_is_io_other() {
         err.stack
     );
 }
+
+/// Two writes, a pause between them, and the thread they ran on.
+fn add_pair(vault: &scheda::Vault, i: usize) -> Result<std::thread::ThreadId, scheda::Error> {
+    let notes = vault.collection("notes")?;
+    let thread = std::thread::current().id();
+    notes.add(&format!("t{i}"), b"first", None)?;
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    notes.add(&format!("u{i}"), b"second", None)?;
+    assert_eq!(std::thread::current().id(), thread);
+    Ok(thread)
+}
+
+/// The single commit that holds `id`, as `(hash, message)`.
+async fn only_commit(notes: &scheda::AsyncCollection, id: &str) -> (String, String) {
+    let history = notes.history(id.into(), 0, 10).await.unwrap();
+    assert_eq!(history.entries.len(), 1, "{id}: {:?}", history.entries);
+    let entry = &history.entries[0];
+    (
+        entry.hash.clone().unwrap(),
+        entry.message.clone().unwrap_or_default(),
+    )
+}
+
+/// Each of 64 tasks runs its transaction until it commits. Every attempt
+/// either commits both writes in one commit or is `locked` and leaves no
+/// trace; none is split across commits or threads.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_transactions_commit_whole_or_are_locked() {
+    const TASKS: usize = 64;
+    let scratch = Scratch::new();
+    let vault = AsyncVault::open(scratch.vault(), OpenOptions::new(), None)
+        .await
+        .unwrap();
+    let notes = vault
+        .create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut tasks = tokio::task::JoinSet::new();
+    for i in 0..TASKS {
+        let vault = vault.clone();
+        let notes = notes.clone();
+        tasks.spawn(async move {
+            let mut locked = 0;
+            loop {
+                let result = vault
+                    .transaction(format!("tx {i}"), move |vault| add_pair(vault, i))
+                    .await;
+                match result {
+                    Ok(_thread) => return locked,
+                    Err(err) => {
+                        assert_eq!(err.known_code(), Some(Code::Locked), "{:?}", err.stack);
+                        for id in [format!("t{i}"), format!("u{i}")] {
+                            let err = notes.get(id).await.unwrap_err();
+                            assert_eq!(err.known_code(), Some(Code::NotFound));
+                        }
+                        locked += 1;
+                        assert!(tokio::time::Instant::now() < deadline, "task {i} starved");
+                        tokio::time::sleep(std::time::Duration::from_millis(1 + (i % 7) as u64))
+                            .await;
+                    }
+                }
+            }
+        });
+    }
+    let mut locked = 0;
+    while let Some(joined) = tasks.join_next().await {
+        locked += joined.unwrap();
+    }
+    assert!(locked >= 1, "no attempt ran into another transaction");
+    for i in 0..TASKS {
+        let (first, message) = only_commit(&notes, &format!("t{i}")).await;
+        let (second, _) = only_commit(&notes, &format!("u{i}")).await;
+        assert_eq!(first, second, "transaction {i} split across commits");
+        assert_eq!(message.trim(), format!("tx {i}"));
+    }
+    assert_eq!(notes.ids().await.unwrap().len(), 2 * TASKS);
+    vault.check().await.unwrap();
+    vault.close().await.unwrap();
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn an_error_or_a_panic_discards_the_transaction() {
+    let scratch = Scratch::new();
+    let vault = AsyncVault::open(scratch.vault(), OpenOptions::new(), None)
+        .await
+        .unwrap();
+    let notes = vault
+        .create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    let err = vault
+        .transaction("fails", |vault| -> Result<(), scheda::Error> {
+            vault.collection("notes")?.add("a", b"one", None)?;
+            Err(scheda::Error::invalid("caller gave up"))
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = vault
+        .transaction("panics", |vault| -> Result<(), scheda::Error> {
+            vault.collection("notes")?.add("b", b"two", None)?;
+            panic!("caller bug");
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::IoOther));
+    assert!(
+        err.stack
+            .iter()
+            .any(|frame| frame.contains("[AsyncVault::transaction]")),
+        "{:?}",
+        err.stack
+    );
+    for id in ["a", "b"] {
+        let err = notes.get(id.into()).await.unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::NotFound), "{id}");
+    }
+    let value = vault
+        .transaction("works", |vault| {
+            vault.collection("notes")?.add("c", b"three", None)?;
+            Ok(7)
+        })
+        .await
+        .unwrap();
+    assert_eq!(value, 7);
+    let (_, message) = only_commit(&notes, "c").await;
+    assert!(message.contains("works"), "{message:?}");
+    vault.check().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_sync_transaction_on_another_thread_makes_it_locked() {
+    let scratch = Scratch::new();
+    let vault = AsyncVault::open(scratch.vault(), OpenOptions::new(), None)
+        .await
+        .unwrap();
+    let notes = vault
+        .create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    let (begun_tx, begun_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let vault = vault.clone();
+        std::thread::spawn(move || {
+            let sync = vault.as_vault();
+            sync.begin().unwrap();
+            sync.collection("notes")
+                .unwrap()
+                .add("held", b"one", None)
+                .unwrap();
+            begun_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            sync.commit("sync transaction").unwrap();
+        })
+    };
+    begun_rx.await.unwrap();
+    let ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let err = {
+        let ran = std::sync::Arc::clone(&ran);
+        vault
+            .transaction("async", move |_vault| {
+                ran.store(true, Ordering::SeqCst);
+                Ok(())
+            })
+            .await
+            .unwrap_err()
+    };
+    assert_eq!(err.known_code(), Some(Code::Locked), "{:?}", err.stack);
+    assert!(!ran.load(Ordering::SeqCst));
+    release_tx.send(()).unwrap();
+    tokio::task::spawn_blocking(move || holder.join().unwrap())
+        .await
+        .unwrap();
+    only_commit(&notes, "held").await;
+    vault
+        .transaction("async", |vault| {
+            vault.collection("notes")?.add("after", b"two", None)
+        })
+        .await
+        .unwrap();
+    only_commit(&notes, "after").await;
+}

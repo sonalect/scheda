@@ -66,8 +66,11 @@ API or on-disk format changes bump the minor.
   owned arguments; cheap getters stay sync; `lines()` / `documents()`
   return a `Vec`. A panicking caller callback is `io_other`, a cancelled
   task `io_interrupted`. `AsyncVault::close().await` stops the indexer
-  when it holds the last reference. Adds `tokio 1.53.1` as an optional
-  dependency.
+  when it holds the last reference. There is no async `begin` / `commit`:
+  `AsyncVault::transaction(message, |vault| …)` runs `begin`, the closure,
+  and `commit` on one blocking thread, discards on an error or a panic
+  (`io_other`), and is `locked` while the Vault holds a transaction on
+  another thread. Adds `tokio 1.53.1` as an optional dependency.
 - `Vault::close()`: stop and join the indexer (at most one embedder call in
   flight), then drop the handle, with an error where `Drop` has none. Scheda
   installs no signal handler; a program calls `close` on `SIGINT` /
