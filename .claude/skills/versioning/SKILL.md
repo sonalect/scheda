@@ -73,12 +73,10 @@ heading is missing. Do not use `--generate-notes` or `--notes-from-tag`.
 
 ```bash
 notes="$(mktemp)"
-awk -v ver="MAJOR.MINOR.PATCH" '
-  $0 ~ "^## \\[" ver "\\]" {p=1; next}
-  p && /^## \[/ {exit}
-  p && !started && /^$/ {next}
-  p {started=1; print}
-' CHANGELOG.md > "$notes"
+# The skill loader substitutes positional placeholders, so this block
+# avoids them; escape each `.` of the version in the pattern.
+sed -n '/^## \[MAJOR\.MINOR\.PATCH\]/,/^## \[/{/^## \[/d;p;}' CHANGELOG.md \
+  | sed '/./,$!d' > "$notes"
 test -s "$notes"
 
 gh release create "vMAJOR.MINOR.PATCH" \
