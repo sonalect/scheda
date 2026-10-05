@@ -70,7 +70,10 @@ API or on-disk format changes bump the minor.
   `AsyncVault::transaction(message, |vault| …)` runs `begin`, the closure,
   and `commit` on one blocking thread, discards on an error or a panic
   (`io_other`), and is `locked` while the Vault holds a transaction on
-  another thread. Adds `tokio 1.53.1` as an optional dependency.
+  another thread. `AsyncVault::wait_indexed` holds no blocking thread
+  while it waits: it wakes on the handle's indexer rounds, and a bounded
+  wait needs the runtime's time driver. Adds `tokio 1.53.1` as an optional
+  dependency.
 - `Vault::close()`: stop and join the indexer (at most one embedder call in
   flight), then drop the handle, with an error where `Drop` has none. Scheda
   installs no signal handler; a program calls `close` on `SIGINT` /

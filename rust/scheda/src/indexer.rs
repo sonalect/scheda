@@ -156,6 +156,9 @@ struct Shared {
     wake: Condvar,
     state: Mutex<State>,
     changed: Condvar,
+    /// `State::rounds`, for async waiters.
+    #[cfg(feature = "tokio")]
+    rounds: tokio::sync::watch::Sender<u64>,
     #[cfg(test)]
     tid: Mutex<Option<String>>,
 }
@@ -188,6 +191,8 @@ impl Indexer {
             wake: Condvar::new(),
             state: Mutex::new(State::default()),
             changed: Condvar::new(),
+            #[cfg(feature = "tokio")]
+            rounds: tokio::sync::watch::Sender::new(0),
             #[cfg(test)]
             tid: Mutex::new(None),
         });
@@ -242,6 +247,13 @@ impl Indexer {
     /// Latest report of the thread.
     pub(crate) fn state(&self) -> State {
         lock(&self.shared.state).clone()
+    }
+
+    /// Changes each time the thread finishes a round; holds the count of
+    /// rounds finished.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn subscribe_rounds(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.shared.rounds.subscribe()
     }
 
     /// Wait until the thread finishes a round after `after`, or `timeout`.
@@ -379,8 +391,12 @@ fn run(shared: &Shared) {
         state.last_error = last_error;
         state.lexical_role = worker.lexical.is_some();
         state.vector_role = worker.vector.is_some();
+        #[cfg(feature = "tokio")]
+        let rounds = state.rounds;
         drop(state);
         shared.changed.notify_all();
+        #[cfg(feature = "tokio")]
+        shared.rounds.send_replace(rounds);
     }
     worker.lexical = None;
     worker.vector = None;

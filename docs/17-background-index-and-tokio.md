@@ -615,11 +615,19 @@ vault
 
 ### T3. Async wait
 
-- [ ] `AsyncVault::wait_indexed(timeout)` fed by a `tokio::sync::watch`
-      the indexer thread updates (no polling loop in the task).
-- [ ] `Embedder` and `Reranker` stay synchronous traits. `search` runs
+- [x] `AsyncVault::wait_indexed(timeout)` fed by a `tokio::sync::watch`
+      the indexer thread updates (no polling loop in the task). Each look
+      at the Index runs in `spawn_blocking`; between looks the task awaits
+      the handle's next indexer round, bounded by `tokio::time` (the sync
+      `wait_indexed` shares the look, `Vault::wait_pass`)
+      (`nonblocking.rs wait_indexed_holds_no_blocking_thread`: on a
+      blocking pool of one thread, with the vector leg held up and polls an
+      hour apart, other calls still run, a 200 ms wait is `io_timed_out`,
+      and the wait returns once the embedder lets go).
+- [x] `Embedder` and `Reranker` stay synchronous traits. `search` runs
       the query embedding and the reranker inside the same
-      `spawn_blocking`.
+      `spawn_blocking`
+      (`nonblocking.rs search_embeds_and_reranks_on_one_blocking_thread`).
 
 ### T4. Tests
 

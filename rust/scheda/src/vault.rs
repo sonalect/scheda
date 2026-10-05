@@ -419,61 +419,19 @@ impl Vault {
     #[cfg(feature = "find")]
     pub fn wait_indexed(&self, timeout: std::time::Duration) -> Result<crate::IndexStatus, Error> {
         let deadline = Instant::now().checked_add(timeout);
-        let target = self.status(false)?;
-        let nested = isolated::root(&self.path);
+        let target = self.wait_target()?;
         loop {
-            // Owners are looked at again on every pass: a probe of a role
-            // lock from another thread can make one pass see it taken.
-            let lexical = (self.indexer.is_some()
-                && crate::indexer::lexical_allowed(&self.search, &self.generation_dir()?)?)
-                || crate::indexer::role_taken(&self.path, false)?;
-            let own_vector = match self.embedder_arc()? {
-                Some(embedder) if self.indexer.is_some() => crate::indexer::vector_allowed(
-                    &self.generation_dir()?,
-                    Some(embedder.as_ref()),
-                )?,
-                _ => false,
-            };
-            let vector = own_vector || crate::indexer::role_taken(&self.path, true)?;
-            let status = self.status(false)?;
-            let main = |mark: &Option<String>, active| {
-                reached(&self.path, target.head.as_deref(), mark.as_deref(), active)
-            };
-            let nested_reached = |mark: &Option<String>, active| {
-                reached(
-                    &nested,
-                    target.isolated_head.as_deref(),
-                    mark.as_deref(),
-                    active,
-                )
-            };
-            // The journal `id` maps move with the lexical role.
-            if main(&status.lexical, lexical)?
-                && main(&status.journal_ids, lexical)?
-                && main(&status.vector, vector)?
-                && nested_reached(&status.isolated_lexical, lexical)?
-                && nested_reached(&status.isolated_journal_ids, lexical)?
-                && nested_reached(&status.isolated_vector, vector)?
-            {
+            let Some(status) = self.wait_pass(&target)? else {
                 // Counted once, after the wait: a leg nobody writes shows
                 // its lag here.
                 return self.index_status();
-            }
+            };
             let now = Instant::now();
             let left = match deadline {
                 Some(deadline) if now >= deadline => {
-                    return Err(Error::io_timed_out(format!(
-                        "Index did not reach HEAD within {timeout:?}: head {:?}, lexical {:?}, \
-                         vector {:?}, isolated head {:?}, isolated lexical {:?}, \
-                         isolated vector {:?}",
-                        status.head,
-                        status.lexical,
-                        status.vector,
-                        status.isolated_head,
-                        status.isolated_lexical,
-                        status.isolated_vector,
-                    ))
-                    .context("[Vault::wait_indexed] wait"));
+                    return Err(
+                        wait_timed_out(timeout, &status).context("[Vault::wait_indexed] wait")
+                    );
                 }
                 Some(deadline) => deadline - now,
                 None => WAIT_SLICE,
@@ -488,6 +446,71 @@ impl Vault {
                 None => thread::sleep(slice),
             }
         }
+    }
+
+    /// The heads a wait has to reach: those of `HEAD` now.
+    #[cfg(feature = "find")]
+    pub(crate) fn wait_target(&self) -> Result<crate::IndexStatus, Error> {
+        self.status(false)
+    }
+
+    /// One look at the Index on behalf of a wait for `target`: `None` once
+    /// every leg with an owner has reached it, else the status seen.
+    #[cfg(feature = "find")]
+    pub(crate) fn wait_pass(
+        &self,
+        target: &crate::IndexStatus,
+    ) -> Result<Option<crate::IndexStatus>, Error> {
+        let nested = isolated::root(&self.path);
+        // Owners are looked at again on every pass: a probe of a role lock
+        // from another thread can make one pass see it taken.
+        let lexical = (self.indexer.is_some()
+            && crate::indexer::lexical_allowed(&self.search, &self.generation_dir()?)?)
+            || crate::indexer::role_taken(&self.path, false)?;
+        let own_vector = match self.embedder_arc()? {
+            Some(embedder) if self.indexer.is_some() => {
+                crate::indexer::vector_allowed(&self.generation_dir()?, Some(embedder.as_ref()))?
+            }
+            _ => false,
+        };
+        let vector = own_vector || crate::indexer::role_taken(&self.path, true)?;
+        let status = self.status(false)?;
+        let main = |mark: &Option<String>, active| {
+            reached(&self.path, target.head.as_deref(), mark.as_deref(), active)
+        };
+        let nested_reached = |mark: &Option<String>, active| {
+            reached(
+                &nested,
+                target.isolated_head.as_deref(),
+                mark.as_deref(),
+                active,
+            )
+        };
+        // The journal `id` maps move with the lexical role.
+        let done = main(&status.lexical, lexical)?
+            && main(&status.journal_ids, lexical)?
+            && main(&status.vector, vector)?
+            && nested_reached(&status.isolated_lexical, lexical)?
+            && nested_reached(&status.isolated_journal_ids, lexical)?
+            && nested_reached(&status.isolated_vector, vector)?;
+        Ok((!done).then_some(status))
+    }
+
+    /// Ask this handle's indexer for a round now, unless a failure holds it
+    /// back.
+    #[cfg(all(feature = "find", feature = "tokio"))]
+    pub(crate) fn nudge_indexer(&self) {
+        if let Some(indexer) = &self.indexer {
+            indexer.nudge();
+        }
+    }
+
+    /// Bumped by this handle's indexer at the end of every round.
+    #[cfg(all(feature = "find", feature = "tokio"))]
+    pub(crate) fn index_rounds(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
+        self.indexer
+            .as_ref()
+            .map(|indexer| indexer.subscribe_rounds())
     }
 
     /// Close this handle: stop and join the background indexer, then drop
@@ -2565,11 +2588,26 @@ fn commit_gitignore_if_needed(vault: &Path, identity: &git::CommitIdentity) -> R
     Ok(())
 }
 
-/// Uncommitted write paths after a crash. Next to `write.lock`, not under
-/// `index/`, so `reindex` does not delete the journal.
 /// Longest single sleep inside `wait_indexed`.
 #[cfg(feature = "find")]
 const WAIT_SLICE: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// `wait_indexed` ran out of time; the message lists the heads and marks
+/// seen last.
+#[cfg(feature = "find")]
+pub(crate) fn wait_timed_out(timeout: std::time::Duration, status: &crate::IndexStatus) -> Error {
+    Error::io_timed_out(format!(
+        "Index did not reach HEAD within {timeout:?}: head {:?}, lexical {:?}, \
+         vector {:?}, isolated head {:?}, isolated lexical {:?}, \
+         isolated vector {:?}",
+        status.head,
+        status.lexical,
+        status.vector,
+        status.isolated_head,
+        status.isolated_lexical,
+        status.isolated_vector,
+    ))
+}
 
 /// Whether a leg's `mark` has reached `target` in the repository at `dir`.
 /// An inactive leg, or no commit to reach, counts as reached.

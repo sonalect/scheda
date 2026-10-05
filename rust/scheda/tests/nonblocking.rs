@@ -408,3 +408,221 @@ async fn a_sync_transaction_on_another_thread_makes_it_locked() {
         .unwrap();
     only_commit(&notes, "after").await;
 }
+
+/// Embeds only while its gate is open; a call waits for the gate.
+#[cfg(feature = "search")]
+#[derive(Clone, Default)]
+struct GateEmbedder {
+    gate: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+}
+
+#[cfg(feature = "search")]
+impl GateEmbedder {
+    fn open(&self) {
+        *self.gate.0.lock().unwrap() = true;
+        self.gate.1.notify_all();
+    }
+}
+
+#[cfg(feature = "search")]
+impl scheda::Embedder for GateEmbedder {
+    fn model_id(&self) -> &str {
+        "gate/d4"
+    }
+
+    fn dimensions(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(4).unwrap()
+    }
+
+    fn many_limit(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(16).unwrap()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        let (open, cond) = &*self.gate;
+        let _open = cond
+            .wait_while(open.lock().unwrap(), |open| !*open)
+            .unwrap();
+        Ok(vec![vec![1.0, 0.0, 0.0, 0.0]; texts.len()])
+    }
+}
+
+/// Opens the gate on drop, so a failed assertion does not leave the
+/// indexer thread blocked in the embedder.
+#[cfg(feature = "search")]
+struct OpenOnDrop(GateEmbedder);
+
+#[cfg(feature = "search")]
+impl Drop for OpenOnDrop {
+    fn drop(&mut self) {
+        self.0.open();
+    }
+}
+
+/// While the vector leg is held up, `wait_indexed` sleeps without a
+/// blocking thread: on a pool of one, other calls still run. It wakes on
+/// the indexer's round, not on its poll (an hour here), and a bounded
+/// wait ends `io_timed_out` with no round finishing.
+#[cfg(feature = "search")]
+#[test]
+fn wait_indexed_holds_no_blocking_thread() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .max_blocking_threads(1)
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let scratch = Scratch::new();
+        let gate = OpenOnDrop(GateEmbedder::default());
+        let vault = AsyncVault::open_with(
+            scratch.vault(),
+            OpenOptions::new().with_index_poll_ms(3_600_000),
+            Some(std::sync::Arc::new(gate.0.clone())),
+            Some(common::json_text_projector(&["body"])),
+        )
+        .await
+        .unwrap();
+        let notes = vault
+            .create_collection("notes".into(), document_schema(), None)
+            .await
+            .unwrap();
+        notes
+            .add(
+                "alpha".into(),
+                serde_json::to_vec(&serde_json::json!({"body": "one"})).unwrap(),
+                None,
+            )
+            .await
+            .unwrap();
+        let err = vault
+            .wait_indexed(std::time::Duration::from_millis(200))
+            .await
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::IoTimedOut), "{:?}", err.stack);
+        let waiting = {
+            let vault = vault.clone();
+            tokio::spawn(
+                async move { vault.wait_indexed(std::time::Duration::from_secs(60)).await },
+            )
+        };
+        tokio::task::yield_now().await;
+        let info = tokio::time::timeout(std::time::Duration::from_secs(20), vault.info())
+            .await
+            .expect("info waited for the blocking thread")
+            .unwrap();
+        assert_eq!(info.collections.len(), 1);
+        assert!(!waiting.is_finished());
+        gate.0.open();
+        let status = waiting.await.unwrap().unwrap();
+        assert_eq!(status.vector, status.head);
+        assert_eq!(status.lexical, status.head);
+        vault.close().await.unwrap();
+    });
+}
+
+#[cfg(feature = "search")]
+type Threads = std::sync::Arc<std::sync::Mutex<Vec<(&'static str, std::thread::ThreadId)>>>;
+
+/// Notes the thread of every query embedding.
+#[cfg(feature = "search")]
+struct ThreadEmbedder(Threads);
+
+#[cfg(feature = "search")]
+impl scheda::Embedder for ThreadEmbedder {
+    fn model_id(&self) -> &str {
+        "threads/d4"
+    }
+
+    fn dimensions(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(4).unwrap()
+    }
+
+    fn many_limit(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(16).unwrap()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        Ok(vec![vec![1.0, 0.0, 0.0, 0.0]; texts.len()])
+    }
+
+    fn embed_query(&self, _text: &str) -> Result<Vec<f32>, scheda::Error> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(("embed", std::thread::current().id()));
+        Ok(vec![1.0, 0.0, 0.0, 0.0])
+    }
+}
+
+/// Notes the thread of every rerank.
+#[cfg(feature = "search")]
+struct ThreadReranker(Threads);
+
+#[cfg(feature = "search")]
+impl scheda::Reranker for ThreadReranker {
+    fn many_limit(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(8).unwrap()
+    }
+
+    fn score_many(
+        &self,
+        _query: &str,
+        records: &[&scheda::Record],
+    ) -> Result<Vec<f64>, scheda::Error> {
+        self.0
+            .lock()
+            .unwrap()
+            .push(("rerank", std::thread::current().id()));
+        Ok(vec![1.0; records.len()])
+    }
+}
+
+/// The sync `Embedder` and `Reranker` run inside the one blocking task of
+/// a `search`, never on the runtime's thread.
+#[cfg(feature = "search")]
+#[tokio::test(flavor = "current_thread")]
+async fn search_embeds_and_reranks_on_one_blocking_thread() {
+    let scratch = Scratch::new();
+    let threads = Threads::default();
+    let vault = AsyncVault::open_with(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(std::sync::Arc::new(ThreadEmbedder(threads.clone()))),
+        Some(common::json_text_projector(&["body"])),
+    )
+    .await
+    .unwrap();
+    let notes = vault
+        .create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    notes
+        .add(
+            "alpha".into(),
+            serde_json::to_vec(&serde_json::json!({"body": "kryptonite"})).unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+    vault
+        .wait_indexed(std::time::Duration::from_secs(30))
+        .await
+        .unwrap();
+    let query = scheda::SearchQuery::default()
+        .with_text("kryptonite")
+        .with_k(5);
+    let hits = notes
+        .search(
+            query,
+            Some(std::sync::Arc::new(ThreadReranker(threads.clone()))),
+        )
+        .await
+        .unwrap();
+    assert!(!hits.hits.is_empty());
+    let threads = threads.lock().unwrap().clone();
+    let kinds: Vec<&str> = threads.iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(kinds, ["embed", "rerank"]);
+    assert_eq!(threads[0].1, threads[1].1);
+    assert_ne!(threads[0].1, std::thread::current().id());
+    vault.close().await.unwrap();
+}

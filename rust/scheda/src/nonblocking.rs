@@ -302,17 +302,55 @@ impl AsyncVault {
         blocking("[AsyncVault::index_status]", move || vault.index_status()).await
     }
 
-    /// Async [`Vault::wait_indexed`].
+    /// Async [`Vault::wait_indexed`]: the same wait, without a blocking
+    /// thread held for its length.
+    ///
+    /// Each look at the Index runs on the blocking pool. Between looks the
+    /// task sleeps until this handle's background indexer finishes its
+    /// next round (it runs one at once on request, and one per poll
+    /// interval otherwise), so progress of an indexer in another handle or
+    /// process shows at that round. Past `timeout` the result is
+    /// `io_timed_out`, and the message lists the heads and marks seen last.
+    /// A bounded `timeout` needs the runtime's time driver (`enable_time`,
+    /// on in `#[tokio::main]`).
     #[cfg(feature = "find")]
     pub async fn wait_indexed(
         &self,
         timeout: std::time::Duration,
     ) -> Result<crate::IndexStatus, Error> {
+        const FRAME: &str = "[AsyncVault::wait_indexed]";
+        let deadline = tokio::time::Instant::now().checked_add(timeout);
+        let Some(mut rounds) = self.vault.index_rounds() else {
+            return Err(Error::io_other("the handle has no background indexer").context(FRAME));
+        };
         let vault = Arc::clone(&self.vault);
-        blocking("[AsyncVault::wait_indexed]", move || {
-            vault.wait_indexed(timeout)
-        })
-        .await
+        let target = Arc::new(blocking(FRAME, move || vault.wait_target()).await?);
+        loop {
+            // Seen before the look, so a round that ends during it wakes
+            // the wait below.
+            rounds.borrow_and_update();
+            let vault = Arc::clone(&self.vault);
+            let wanted = Arc::clone(&target);
+            let Some(status) = blocking(FRAME, move || vault.wait_pass(&wanted)).await? else {
+                let vault = Arc::clone(&self.vault);
+                return blocking(FRAME, move || vault.index_status()).await;
+            };
+            self.vault.nudge_indexer();
+            let round = rounds.changed();
+            let ended = match deadline {
+                Some(deadline) => tokio::time::timeout_at(deadline, round).await,
+                None => Ok(round.await),
+            };
+            match ended {
+                Ok(Ok(())) => {}
+                Ok(Err(_closed)) => {
+                    return Err(Error::io_other("the background indexer stopped").context(FRAME));
+                }
+                Err(_elapsed) => {
+                    return Err(crate::vault::wait_timed_out(timeout, &status).context(FRAME));
+                }
+            }
+        }
     }
 
     /// Async [`Vault::close`]. With the last reference to the Vault, stops
