@@ -20,6 +20,15 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- An `index_version` failure caused by a generation another projector built
+  (or none) now carries `repeat: forbidden`, and its message names
+  `reindex` from a handle with the projector the Index should follow:
+  retrying never helps there. An Index of another format keeps
+  `repeat: allowed` (the background rebuild fixes it).
+- `search` without a Filter now checks the generation's projector, as `find`
+  and a filtered `search` already did: a handle with another projector (or
+  none) gets that `index_version` instead of hits from an Index its
+  projector did not build.
 - A `Vault` handle follows collection declarations made after it opened.
   `collection(name)`, and the names `find` / `search` take or a Filter leaf
   qualifies, read the declarations again from the work tree once before

@@ -5181,6 +5181,84 @@ mod tests {
             assert!(last_commit_files(&scratch.vault()).contains(&"y/.collection.yaml".to_owned()));
         }
 
+        /// A Vault with `c` holding `alpha` (tag `red`), indexed with the
+        /// tag projector; the handle is dropped.
+        #[cfg(feature = "search")]
+        fn seeded_with_tags(scratch: &Scratch) {
+            let vault = open_search(scratch.vault(), poll_never(), None);
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap()
+                .add("alpha", rec_tag("red"), None)
+                .unwrap();
+            vault.wait_indexed(WAIT).unwrap();
+        }
+
+        #[cfg(feature = "search")]
+        fn search_c(vault: &Vault) -> Result<crate::SearchHits, Error> {
+            vault.search(&["c"], &SearchQuery::default().with_text("red"), None)
+        }
+
+        /// A generation of another format: `index_version` that a repeat
+        /// fixes, since the indexer rebuilds it.
+        #[cfg(feature = "search")]
+        #[test]
+        fn another_format_is_index_version_a_repeat_fixes() {
+            let scratch = Scratch::new();
+            seeded_with_tags(&scratch);
+            let root = scratch.vault().join(".scheda").join("index");
+            let live = crate::index::current_dir(&root).unwrap().unwrap();
+            fs::write(live.join("format"), "5\n").unwrap();
+            // Held here, the rebuild waits: the first query sees format 5.
+            let rebuild = crate::reindex::acquire_lock(&scratch.vault()).unwrap();
+            let vault = open_search(scratch.vault(), poll_never(), None);
+            let err = search_c(&vault).unwrap_err();
+            assert_eq!(err.known_code(), Some(Code::IndexVersion), "{err:?}");
+            assert_eq!(err.known_repeat(), Some(crate::Repeat::Allowed));
+            drop(rebuild);
+            vault.wait_indexed(WAIT).unwrap();
+            let hits = search_c(&vault).unwrap();
+            assert_eq!(hits.hits.len(), 1);
+        }
+
+        /// A handle without the generation's projector: `index_version`
+        /// that no repeat fixes, from `search` with or without a Filter
+        /// and from `find`.
+        #[cfg(feature = "search")]
+        #[test]
+        fn another_projector_is_index_version_a_repeat_does_not_fix() {
+            let scratch = Scratch::new();
+            seeded_with_tags(&scratch);
+            let bare = open_indexed(&scratch.vault(), poll_never());
+            let forbidden = |err: Error| {
+                assert_eq!(err.known_code(), Some(Code::IndexVersion), "{err:?}");
+                assert_eq!(err.known_repeat(), Some(crate::Repeat::Forbidden));
+                assert!(
+                    err.message.as_deref().unwrap_or("").contains("reindex"),
+                    "{err:?}"
+                );
+            };
+            forbidden(search_c(&bare).unwrap_err());
+            let term: crate::Filter = serde_json::from_value(serde_json::json!(
+                {"term": {"field": "id", "value": "alpha"}}
+            ))
+            .unwrap();
+            let filtered = SearchQuery {
+                filter: term.into(),
+                ..SearchQuery::default().with_text("red")
+            };
+            forbidden(bare.search(&["c"], &filtered, None).unwrap_err());
+            forbidden(
+                bare.find(&["c"], &crate::FindQuery::all(), 0, 10)
+                    .unwrap_err(),
+            );
+            // Repeating changes nothing; `reindex` from this handle moves
+            // the Index to its projector.
+            forbidden(search_c(&bare).unwrap_err());
+            bare.reindex().unwrap();
+            search_c(&bare).unwrap();
+        }
+
         /// Child of `indexer_role_passes_to_another_process`: takes the
         /// lexical role, reports ready, and holds it until killed (at most
         /// one minute). Never polls, so it ignores the parent's commits.

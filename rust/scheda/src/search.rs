@@ -27,7 +27,7 @@ use tantivy::{
     Term,
 };
 
-use crate::error::{Code, ContextAs, ContextIo, bail};
+use crate::error::{Code, ContextAs, ContextIo, Repeat, bail};
 use crate::index;
 use crate::projector::{self, IndexDoc, IndexValue, ProjectorDump};
 use crate::query::{self, FindFields};
@@ -742,15 +742,10 @@ impl SearchEngine {
 
     fn require_projector_dump(&self, index_dir: &Path) -> Result<(), Error> {
         match read_projector_dump(index_dir)? {
-            None => {
-                if self.projector.is_some() {
-                    return Err(
-                        Error::index_version("index was built without this projector")
-                            .context("[SearchEngine] projector dump"),
-                    );
-                }
-                Ok(())
+            None if self.projector.is_some() => {
+                Err(projector_mismatch("index was built without this projector"))
             }
+            None => Ok(()),
             Some(dump) => self.match_stored_dump(&dump),
         }
     }
@@ -775,18 +770,13 @@ impl SearchEngine {
                 };
                 write_projector_dump(index_dir, &dump)
             }
-            None => Err(
-                Error::index_version("index was built without this projector")
-                    .context("[SearchEngine] projector dump"),
-            ),
-            Some(ProjectorDump::Identity) if self.projector.is_some() => Err(Error::index_version(
-                "index was built without this projector",
-            )
-            .context("[SearchEngine] projector dump")),
+            None => Err(projector_mismatch("index was built without this projector")),
+            Some(ProjectorDump::Identity) if self.projector.is_some() => {
+                Err(projector_mismatch("index was built without this projector"))
+            }
             Some(ProjectorDump::Identity) => Ok(()),
             Some(_) if self.projector.is_none() => {
-                Err(Error::index_version("index was built with a projector")
-                    .context("[SearchEngine] projector dump"))
+                Err(projector_mismatch("index was built with a projector"))
             }
             Some(mut dump) => {
                 let Some(projector) = self.projector.as_deref() else {
@@ -795,10 +785,9 @@ impl SearchEngine {
                 let current = projector::collection_dump_line(projector, collection)?;
                 match (dump.line(collection), current.as_deref()) {
                     (Some(stored), Some(current)) if stored == current => Ok(()),
-                    (Some(_), _) => Err(Error::index_version(format!(
+                    (Some(_), _) => Err(projector_mismatch(format!(
                         "projector schema for {collection} changed"
-                    ))
-                    .context("[SearchEngine] projector dump")),
+                    ))),
                     (None, Some(current)) => {
                         dump.insert_line(collection.to_owned(), current.to_owned());
                         write_projector_dump(index_dir, &dump.to_text())
@@ -811,14 +800,12 @@ impl SearchEngine {
 
     fn match_stored_dump(&self, dump: &ProjectorDump) -> Result<(), Error> {
         match dump {
-            ProjectorDump::Identity if self.projector.is_some() => Err(Error::index_version(
-                "index was built without this projector",
-            )
-            .context("[SearchEngine] projector dump")),
+            ProjectorDump::Identity if self.projector.is_some() => {
+                Err(projector_mismatch("index was built without this projector"))
+            }
             ProjectorDump::Identity => Ok(()),
             ProjectorDump::Collections(_) if self.projector.is_none() => {
-                Err(Error::index_version("index was built with a projector")
-                    .context("[SearchEngine] projector dump"))
+                Err(projector_mismatch("index was built with a projector"))
             }
             ProjectorDump::Collections(map) => {
                 let Some(projector) = self.projector.as_deref() else {
@@ -829,10 +816,9 @@ impl SearchEngine {
                     match current {
                         Some(current) if current == *stored => {}
                         _ => {
-                            return Err(Error::index_version(format!(
+                            return Err(projector_mismatch(format!(
                                 "projector schema for {name} changed"
-                            ))
-                            .context("[SearchEngine] projector dump"));
+                            )));
                         }
                     }
                 }
@@ -1216,6 +1202,9 @@ impl SearchEngine {
         }
         let index_dir = self.dir()?;
         index::require_current_format(&index_dir)?;
+        // Same rule as `find`: an Index another projector built is not
+        // answered from, Filter or not.
+        self.require_projector_dump(&index_dir)?;
         let Some(text) = query.text.as_deref() else {
             unreachable!("SearchQuery text is required");
         };
@@ -1287,6 +1276,18 @@ impl SearchEngine {
         })
         .inspect_err(|err| note_damage(&index_dir, err))
     }
+}
+
+/// `index_version` for a generation another projector built (or none, or
+/// one, against this engine). Repeating the call does not help: no rebuild
+/// comes by itself. `reindex` from a handle with the projector the Index
+/// should follow is the way over.
+fn projector_mismatch(detail: impl std::fmt::Display) -> Error {
+    Error::index_version(format!(
+        "{detail}; reindex from a handle with the projector the Index should follow"
+    ))
+    .with_repeat(Repeat::Forbidden)
+    .context("[SearchEngine] projector dump")
 }
 
 /// Why a query whose vector leg has nothing to search did not run it:

@@ -2567,18 +2567,22 @@ fn vector_leg_without_a_vector_collection() {
         .unwrap();
     assert_eq!(leg(&hits), VectorLeg::NoVectorCollection);
     assert_eq!(hit_ids(&hits), ["alpha"]);
-    // A handle without a Projector has no vector slots at all.
-    drop(vault);
-    let bare = Vault::open(
-        scratch.vault(),
-        OpenOptions::new(),
-        Some(CountingEmbedder::new("m1") as Arc<dyn Embedder>),
-    )
-    .unwrap();
-    match bare.search(&["token_notes"], &vector_only("kryptonite"), None) {
-        Ok(hits) => assert_eq!(leg(&hits), VectorLeg::NoVectorCollection),
-        Err(err) => assert_eq!(err.known_code(), Some(Code::IndexVersion), "{err:?}"),
-    }
+    // A handle without a Projector, on an Index built without one, has no
+    // vector slots at all.
+    let other = Scratch::new();
+    let embedder = || Some(CountingEmbedder::new("m1") as Arc<dyn Embedder>);
+    drop(Vault::open(other.vault(), OpenOptions::new(), None).unwrap());
+    other.write_declaration("tokens.yaml", TOKENS);
+    let bare = Vault::open(other.vault(), OpenOptions::new(), embedder()).unwrap();
+    bare.collection("token_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    common::indexed(&bare);
+    let hits = bare
+        .search(&["token_notes"], &vector_only("kryptonite"), None)
+        .unwrap();
+    assert_eq!(leg(&hits), VectorLeg::NoVectorCollection);
 }
 
 #[test]

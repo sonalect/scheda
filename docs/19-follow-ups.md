@@ -180,10 +180,15 @@ check; the background rebuild publishes a new generation, so a repeat
 helps) and for a projector mismatch (`search.rs`, the projector-dump
 checks; no rebuild comes, `17` D24).
 
-- [ ] Every projector-mismatch `index_version` carries
+- [x] Every projector-mismatch `index_version` carries
       `repeat: forbidden`; its message names `reindex` from a handle with
-      the generation's projector as the way over (D4).
-- [ ] The format case keeps `repeat: allowed`.
+      the generation's projector as the way over (D4). As built (owner,
+      5 October 2026): `search` without a Filter checks the projector dump
+      too, as `find` does; before, only `find` and a filtered `search`
+      failed on a mismatch.
+      (`vault::tests::background::another_projector_is_index_version_a_repeat_does_not_fix`.)
+- [x] The format case keeps `repeat: allowed`.
+      (`another_format_is_index_version_a_repeat_fixes`.)
 - *Check:* a format-5 generation: `search` fails with `index_version`,
   `known_repeat() == Allowed`; after `wait_indexed` it succeeds.
 - *Check:* a handle without the generation's projector: `search` fails
