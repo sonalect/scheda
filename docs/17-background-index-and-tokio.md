@@ -344,6 +344,62 @@ proto message, so its flags stay `bool` for library callers; the CLI
 prints it in the Protobuf JSON style the rest of its output uses
 (lowerCamelCase, unset fields left out, 64-bit counts as strings).
 
+Accepted with the Part T plan (5 October 2026):
+
+**D38. `tokio` is a new dependency.** The pin T1 cited is the anchor
+consumer's workspace, not this one: Scheda had no `tokio`. It adds
+`tokio = "=1.53.1"` (published 2026-07-20; the same version the anchor
+consumer uses, so its tree keeps one copy) with `rt`, `sync`, and `time`
+(`time` for the `wait_indexed` timeout); tests add `macros` and
+`rt-multi-thread`, which bring `tokio-macros 2.7.2` (2026-07-29).
+
+**D39. Module and names.** `scheda::nonblocking` holds the async types;
+`AsyncVault` and `AsyncCollection` are re-exported from the crate root.
+The `tokio` feature does not depend on `find` / `search`: the async layer
+wraps whatever methods the build has.
+
+**D40. What is mirrored.** Every method that does I/O, `open` and
+`open_with` included, runs its sync counterpart in `spawn_blocking` with
+owned arguments. Cheap getters (`path`, `writer`, `has_remote`, `name`,
+`kind`, …) stay sync. `holds_write_lock` is not mirrored. `lines()` and
+`documents()` return a `Vec` collected in one `spawn_blocking`: no
+`Stream`, no further dependency; the rustdoc states the memory cost.
+
+**D41. `close`.** `AsyncVault::close(self).await` runs the sync `close`
+in `spawn_blocking` when it holds the last reference to the `Vault`;
+otherwise it releases its reference, and the last one stops the indexer,
+as `Drop` does.
+
+**D42. `JoinError`.** A cancelled task (the runtime shutting down) is
+`io_interrupted`; a panic in a caller callback (embedder, projector,
+reranker, the transaction closure) is `io_other` with a stack frame that
+names the method. No new proto code. A transaction whose closure
+panicked is discarded first.
+
+**D43. `transaction` and a sync transaction.** While the same `Vault`
+holds a sync transaction on another thread, `transaction` is `locked`
+at once, as the sync API is.
+
+**D44. Order.** T1 → T4 one stage at a time, as in Part B; the Part T
+docs pass (§5) runs once after T4.
+
+Settled while building T1 (5 October 2026):
+
+**D45. `sync()` is the git operation.** T1 named the accessor to the
+wrapped handle `AsyncVault::sync(&self) -> &Vault`, but `sync` is the git
+`pull` + `push` (LIB-2 keeps operation names in every binding), so
+`AsyncVault::sync().await` mirrors it and the accessor is `as_vault()`
+(`AsyncCollection::as_collection()` likewise).
+
+**D46. A new generation never reuses or prunes the caller's.** With
+`{vault}/.scheda/` deleted under a live handle, its indexer may recreate
+generation `1` with no `current`; a `reindex` then picked `1` too and
+two Tantivy writers met in one directory. A new generation's number is
+above `current`, every generation directory present, and the caller's
+own; the caller's generation is never pruned while it builds. A caller
+that deletes `.scheda/` waits for the indexer first (`wait_indexed`), or
+the delete races its writes.
+
 ---
 
 ## 3. Part B — background Index
@@ -505,20 +561,26 @@ prints it in the Protobuf JSON style the rest of its output uses
 
 ### T1. Feature and types
 
-- [ ] Cargo feature `tokio` (off by default) using the workspace pin
-      already in `Cargo.toml` (`tokio = "=1.53.1"`), features `rt` and
-      `sync` only. Bazel `crate_features`; crate_universe repin.
-- [ ] `AsyncVault` and `AsyncCollection` (module name is free; avoid a
+- [x] Cargo feature `tokio` (off by default) adding `tokio = "=1.53.1"`
+      to the workspace (D38), features `rt`, `sync`, `time`. Bazel
+      `crate_features`; crate_universe repin (`nonblocking_test` under
+      Bazel).
+- [x] `AsyncVault` and `AsyncCollection` (module name is free; avoid a
       module literally named `tokio`, which shadows the crate in paths).
       `AsyncVault` wraps `Arc<Vault>`; `From<Vault>` and
-      `AsyncVault::sync(&self) -> &Vault`.
-- [ ] Every non-transactional method mirrors the sync one with owned
+      `AsyncVault::as_vault(&self) -> &Vault` (D39, D45).
+- [x] Every non-transactional method mirrors the sync one with owned
       arguments (`String`, `Vec<u8>`, owned queries) and runs it inside
       `tokio::task::spawn_blocking`. A `JoinError` maps to a Scheda
-      error, never a panic.
-- [ ] The sync API is unchanged. No sync method calls `block_on` or
+      error, never a panic (D40–D42; `nonblocking.rs
+      round_trip_on_a_multi_thread_runtime`,
+      `journal_lines_are_collected`, `an_open_error_keeps_its_code`,
+      `close_with_a_clone_alive_leaves_the_clone_working`,
+      `a_panicking_callback_is_io_other`).
+- [x] The sync API is unchanged. No sync method calls `block_on` or
       builds a runtime: sync methods are called from inside
-      `spawn_blocking`, from plain threads, and from `#[test]`.
+      `spawn_blocking`, from plain threads, and from `#[test]` (every
+      sync test target, `scheda_thin_test` without `tokio`).
 
 ### T2. Transactions
 

@@ -1,5 +1,5 @@
 {
-  "checksum": "c0db4b3e44088b92ad39e785a88d176cf7ccba9cf4c2dcf68f7267ffec910f5b",
+  "checksum": "15ccd5ef8f62963a1eadbeb0f1c532eed9f6f4295675cf89574857617847dc6c",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -5169,7 +5169,7 @@
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ]
@@ -13025,7 +13025,7 @@
                 "target": "errno"
               },
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ],
@@ -13503,6 +13503,12 @@
           {
             "id": "yaml_serde 0.10.7",
             "target": "yaml_serde"
+          }
+        ],
+        "deps_dev": [
+          {
+            "id": "tokio 1.53.1",
+            "target": "tokio"
           }
         ],
         "edition": "2024"
@@ -15500,13 +15506,13 @@
           "selects": {
             "aarch64-apple-darwin": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "aarch64-unknown-linux-gnu": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
@@ -15518,31 +15524,31 @@
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ],
             "wasm32-wasip1": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "x86_64-pc-windows-msvc": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "x86_64-unknown-linux-gnu": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "x86_64-unknown-nixos-gnu": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ]
@@ -16102,6 +16108,96 @@
         }
       ],
       "version": "0.21.4"
+    },
+    "tokio 1.53.1": {
+      "common_attrs": {
+        "crate_features": [
+          "macros",
+          "rt",
+          "rt-multi-thread",
+          "sync",
+          "time",
+          "tokio-macros"
+        ],
+        "deps": [
+          {
+            "id": "pin-project-lite 0.2.17",
+            "target": "pin_project_lite"
+          }
+        ],
+        "edition": "2021",
+        "proc_macro_deps": [
+          {
+            "id": "tokio-macros 2.7.2",
+            "target": "tokio_macros"
+          }
+        ]
+      },
+      "library_target_name": "tokio",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "MIT"
+      ],
+      "name": "tokio",
+      "package_url": "https://github.com/tokio-rs/tokio",
+      "repository": {
+        "Http": {
+          "sha256": "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed",
+          "url": "https://static.crates.io/crates/tokio/1.53.1/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "tokio",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.53.1"
+    },
+    "tokio-macros 2.7.2": {
+      "common_attrs": {
+        "deps": [
+          {
+            "id": "proc-macro2 1.0.107",
+            "target": "proc_macro2"
+          },
+          {
+            "id": "quote 1.0.47",
+            "target": "quote"
+          },
+          {
+            "id": "syn 3.0.5",
+            "target": "syn"
+          }
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "tokio_macros",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "MIT"
+      ],
+      "name": "tokio-macros",
+      "package_url": "https://github.com/tokio-rs/tokio",
+      "repository": {
+        "Http": {
+          "sha256": "78773a2a397f451582ce068015985c33193cf6dea8b74d2a639fe457b2f07b0e",
+          "url": "https://static.crates.io/crates/tokio-macros/2.7.2/download"
+        }
+      },
+      "targets": [
+        {
+          "ProcMacro": {
+            "crate_name": "tokio_macros",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "2.7.2"
     },
     "toml 0.5.11": {
       "common_attrs": {
@@ -17795,7 +17891,7 @@
           "selects": {
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ]
@@ -18106,16 +18202,6 @@
     },
     "windows-sys 0.52.0": {
       "common_attrs": {
-        "crate_features": [
-          "Win32",
-          "Win32_Foundation",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
-          "Win32_System",
-          "Win32_System_Console",
-          "Win32_System_SystemInformation",
-          "default"
-        ],
         "deps": [
           {
             "id": "windows-targets 0.52.6",
@@ -18202,8 +18288,11 @@
         "crate_features": [
           "Win32",
           "Win32_Foundation",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
           "Win32_System",
           "Win32_System_Console",
+          "Win32_System_SystemInformation",
           "default"
         ],
         "deps": [
@@ -19487,7 +19576,9 @@
     "usearch 2.26.2",
     "yaml_serde 0.10.7"
   ],
-  "direct_dev_deps": [],
+  "direct_dev_deps": [
+    "tokio 1.53.1"
+  ],
   "workspace_members": {
     "scheda 0.18.6": "rust/scheda",
     "scheda-api 0.18.6": "rust/api",

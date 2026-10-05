@@ -21,6 +21,9 @@ openmp = ["search", "usearch/openmp"]
 # Age ASCII-armor Record files. Off by default: a consumer that encrypts
 # nothing does not compile scrypt / ChaCha20-Poly1305 / X25519.
 encrypt = ["dep:age"]
+# Async API (`scheda::nonblocking`): every I/O method on a Tokio blocking
+# thread. Independent of `find` / `search`; wraps what the build has.
+tokio = ["dep:tokio"]
 
 [dependencies]
 age = { workspace = true, optional = true }
@@ -34,11 +37,13 @@ serde_json = { workspace = true }
 sha1 = { workspace = true, optional = true }
 sha2 = { workspace = true }
 tantivy = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
 usearch = { workspace = true, optional = true }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [lints]
 workspace = true
@@ -90,6 +95,10 @@ required-features = ["search"]
 [[test]]
 name = "reindex"
 required-features = ["search"]
+
+[[test]]
+name = "nonblocking"
+required-features = ["tokio"]
 
 [[test]]
 name = "opaque"

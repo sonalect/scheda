@@ -23,6 +23,7 @@ rust_clippy_test(
         "//rust/scheda:git_test",
         "//rust/scheda:isolated_test",
         "//rust/scheda:journal_test",
+        "//rust/scheda:nonblocking_test",
         "//rust/scheda:ops_test",
         "//rust/scheda:opaque_test",
         "//rust/scheda:projector_test",

@@ -291,19 +291,42 @@ fn create_generation(root: &Path, n: u64) -> Result<PathBuf, Error> {
     Ok(dir)
 }
 
-fn next_generation(root: &Path) -> Result<u64, Error> {
-    Ok(read_current(root)?.unwrap_or(0).saturating_add(1).max(1))
+/// A number above `current`, every generation directory present, and
+/// `previous`: a new generation never reuses a directory some handle may
+/// still be writing, even after `{vault}/.scheda/` was deleted under it.
+fn next_generation(root: &Path, previous: Option<u64>) -> Result<u64, Error> {
+    let mut top = read_current(root)?.unwrap_or(0).max(previous.unwrap_or(0));
+    match fs::read_dir(root) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.context("[Index] read generation entry")?;
+                if let Some(n) = entry.file_name().to_str().and_then(parse_generation) {
+                    top = top.max(n);
+                }
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(err).context("[Index] read generations"),
+    }
+    Ok(top.saturating_add(1))
 }
 
 /// Build a new generation directory without publishing `current`.
 ///
-/// Used by `reindex`. A caller that stops before [`publish_generation`]
-/// leaves the previous generation live; the unfinished directory is an
-/// orphan removed by the next `reindex` or by `open` when the write lock
-/// and `reindex.lock` are free.
-pub(crate) fn start_generation(root: &Path) -> Result<PathBuf, Error> {
-    prune_generations(root)?;
-    let n = next_generation(root)?;
+/// Used by `reindex` and the indexer's rebuild. `previous` is the
+/// generation the caller's handle answers from: it is neither pruned nor
+/// reused. A caller that stops before [`publish_generation`] leaves the
+/// previous generation live; the unfinished directory is an orphan removed
+/// by the next build or by `open` when the write lock and `reindex.lock`
+/// are free.
+pub(crate) fn start_generation(root: &Path, previous: &Path) -> Result<PathBuf, Error> {
+    let previous = if previous.parent() == Some(root) {
+        generation_number(previous).ok()
+    } else {
+        None
+    };
+    prune_generations_keeping(root, previous)?;
+    let n = next_generation(root, previous)?;
     create_generation(root, n)
 }
 
@@ -335,8 +358,13 @@ pub(crate) fn publish_generation(root: &Path, dir: &Path) -> Result<(), Error> {
 /// Delete generation directories other than the live one and, when it
 /// exists, the immediately previous one.
 pub(crate) fn prune_generations(root: &Path) -> Result<(), Error> {
+    prune_generations_keeping(root, None)
+}
+
+/// [`prune_generations`], also keeping generation `also`.
+fn prune_generations_keeping(root: &Path, also: Option<u64>) -> Result<(), Error> {
     let live = read_current(root)?;
-    let mut keep = BTreeSet::new();
+    let mut keep: BTreeSet<u64> = also.into_iter().collect();
     if let Some(n) = live {
         keep.insert(n);
         if n > 1 {
@@ -922,6 +950,28 @@ mod tests {
         let generation = root.join(".scheda").join("index").join("1");
         fs::create_dir_all(&generation).unwrap();
         generation
+    }
+
+    /// `{vault}/.scheda/` deleted under a live handle: its indexer may have
+    /// recreated generation `1` with no `current`. A new build must neither
+    /// prune nor reuse it.
+    #[test]
+    fn a_new_generation_never_prunes_or_reuses_the_callers() {
+        let previous = scratch_dir();
+        let root = previous.parent().unwrap().to_path_buf();
+        fs::write(previous.join("marker"), b"in use").unwrap();
+        let next = start_generation(&root, &previous).unwrap();
+        assert_eq!(next, root.join("2"));
+        assert!(
+            previous.join("marker").is_file(),
+            "the caller's generation survives"
+        );
+        // Orphans go first; the caller's generation still stays.
+        fs::create_dir_all(root.join("7")).unwrap();
+        assert_eq!(start_generation(&root, &previous).unwrap(), root.join("2"));
+        assert!(!root.join("7").exists());
+        assert!(previous.join("marker").is_file());
+        let _ = fs::remove_dir_all(root.parent().unwrap().parent().unwrap());
     }
 
     #[test]

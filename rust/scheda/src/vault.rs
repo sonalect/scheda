@@ -1226,7 +1226,7 @@ impl Vault {
             let _reindex_lock = crate::reindex::acquire_lock(&self.path)?;
             let decls = schema::load(&self.path)?;
             let base = self.reindex_base()?;
-            let new_dir = index::start_generation(&self.index.root)?;
+            let new_dir = index::start_generation(&self.index.root, &self.generation_dir()?)?;
             let (counts, maps) = index::rebuild(&self.path, &decls, &new_dir)?;
             self.stamp_marks(&new_dir, base.as_deref())?;
             index::publish_generation(&self.index.root, &new_dir)?;
@@ -4382,6 +4382,9 @@ mod tests {
             .unwrap()
             .add("line", empty_add(), None)
             .unwrap();
+        // The indexer writes under `.scheda/` after a commit: a caller that
+        // deletes the directory waits for it first, or the delete races it.
+        indexed(&vault);
         fs::remove_dir_all(scratch.vault().join(".scheda")).unwrap();
         let counts = vault.reindex().unwrap();
         assert_eq!(counts.records_read, Some(1));

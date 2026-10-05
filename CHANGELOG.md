@@ -60,6 +60,14 @@ API or on-disk format changes bump the minor.
   wait-indexed [--timeout-secs N]` prints it after the Index reaches `HEAD`
   (`io_timed_out` past the timeout), and the global `--no-wait` makes
   `find` / `search` skip their wait.
+- Crate feature `tokio` (off by default): `scheda::nonblocking` with
+  `AsyncVault` and `AsyncCollection` (re-exported at the crate root). Each
+  method that does I/O runs the sync one on Tokio's blocking pool with
+  owned arguments; cheap getters stay sync; `lines()` / `documents()`
+  return a `Vec`. A panicking caller callback is `io_other`, a cancelled
+  task `io_interrupted`. `AsyncVault::close().await` stops the indexer
+  when it holds the last reference. Adds `tokio 1.53.1` as an optional
+  dependency.
 - `Vault::close()`: stop and join the indexer (at most one embedder call in
   flight), then drop the handle, with an error where `Drop` has none. Scheda
   installs no signal handler; a program calls `close` on `SIGINT` /

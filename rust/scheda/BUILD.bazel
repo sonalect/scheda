@@ -3,13 +3,14 @@ load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
-# Full CI build (`find` + `search` + SIMD). The crate has no default
-# features. `openmp` is Cargo-only (needs libomp).
+# Full CI build (`find` + `search` + SIMD + the async API). The crate has
+# no default features. `openmp` is Cargo-only (needs libomp).
 _SCHEDA_FEATURES = [
     "find",
     "search",
     "simd",
     "encrypt",
+    "tokio",
 ]
 
 # Matches Cargo.toml [features]: no feature at all. No Tantivy, USearch, or C++.
@@ -44,6 +45,7 @@ rust_library(
         "@scheda_cargo//:cxx",
         "@scheda_cargo//:sha1",
         "@scheda_cargo//:tantivy",
+        "@scheda_cargo//:tokio",
         "@scheda_cargo//:usearch",
     ],
 )
@@ -70,6 +72,19 @@ rust_test(
     deps = [
         ":scheda",
         "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "nonblocking_test",
+    srcs = ["tests/nonblocking.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/nonblocking.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
     ],
 )
 

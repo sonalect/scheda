@@ -783,7 +783,7 @@ pub(crate) fn build_generation(spec: &BuildSpec<'_>) -> Result<Option<Built>, Er
     } else {
         Vec::new()
     };
-    let new_dir = index::start_generation(spec.root)?;
+    let new_dir = index::start_generation(spec.root, spec.previous)?;
     #[cfg(feature = "search")]
     crate::search::copy_loadable_vector_dump(spec.previous, &new_dir, spec.embedder)?;
     let engine = SearchEngine::open(&new_dir, true, spec.projector.clone())?;

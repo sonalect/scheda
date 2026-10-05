@@ -108,6 +108,8 @@ mod isolated;
 mod journal;
 mod json;
 mod marks;
+#[cfg(feature = "tokio")]
+pub mod nonblocking;
 mod projector;
 #[cfg(feature = "find")]
 mod query;
@@ -147,6 +149,8 @@ pub use scheda_api::api::v1::{SearchHits, SearchQuery, search_hits};
 pub use schema::Kind;
 pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};
+#[cfg(feature = "tokio")]
+pub use nonblocking::{AsyncCollection, AsyncVault};
 
 #[cfg(feature = "encrypt")]
 pub use crypto::parse_age_identity;
