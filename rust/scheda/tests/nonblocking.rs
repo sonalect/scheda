@@ -74,21 +74,38 @@ async fn round_trip() {
     assert_eq!(documents[0].raw.as_deref(), Some(b"uno".as_slice()));
     let err = notes.get("beta".into()).await.unwrap_err();
     assert_eq!(err.known_code(), Some(Code::NotFound));
+    vault
+        .transaction("two at once", |vault| {
+            let notes = vault.collection("notes")?;
+            notes.add("gamma", b"three", None)?;
+            notes.add("delta", b"four", None)
+        })
+        .await
+        .unwrap();
+    assert_eq!(notes.ids().await.unwrap(), ["alpha", "delta", "gamma"]);
     assert_eq!(vault.info().await.unwrap().collections.len(), 1);
     vault.check().await.unwrap();
     #[cfg(feature = "find")]
     {
-        vault
+        let status = vault
             .wait_indexed(std::time::Duration::from_secs(30))
             .await
             .unwrap();
+        assert_eq!(status.lexical, status.head);
         let page = notes.find(scheda::FindQuery::all(), 0, 10).await.unwrap();
-        assert_eq!(page.records.len(), 1);
+        assert_eq!(page.records.len(), 3);
         let page = vault
             .find(vec!["notes".into()], scheda::FindQuery::all(), 0, 10)
             .await
             .unwrap();
-        assert_eq!(page.total, Some(1));
+        assert_eq!(page.total, Some(3));
+        assert_eq!(vault.index_status().await.unwrap().head, status.head);
+    }
+    vault.reindex().await.unwrap();
+    #[cfg(feature = "find")]
+    {
+        let page = notes.find(scheda::FindQuery::all(), 0, 10).await.unwrap();
+        assert_eq!(page.records.len(), 3);
     }
     vault.close().await.unwrap();
 }
@@ -103,8 +120,86 @@ async fn round_trip_on_a_current_thread_runtime() {
     round_trip().await;
 }
 
+/// `push`, `pull`, and `sync` against a bare remote.
+async fn remote_round_trip() {
+    let scratch = Scratch::new();
+    let bare = scratch.root.join("bare.git");
+    let made = std::process::Command::new("git")
+        .args(["init", "--quiet", "--bare", "--initial-branch=main", "--"])
+        .arg(&bare)
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let seed = AsyncVault::open(scratch.root.join("seed"), OpenOptions::new(), None)
+        .await
+        .unwrap();
+    seed.create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    let pushed = std::process::Command::new("git")
+        .current_dir(seed.path())
+        .args(["push", "--quiet"])
+        .arg(&bare)
+        .arg("HEAD:main")
+        .status()
+        .unwrap();
+    assert!(pushed.success());
+    seed.close().await.unwrap();
+    let url = format!("file://{}", bare.display());
+    let a = AsyncVault::open(
+        scratch.root.join("a"),
+        OpenOptions::new().remote_repo(&url),
+        None,
+    )
+    .await
+    .unwrap();
+    let b = AsyncVault::open(
+        scratch.root.join("b"),
+        OpenOptions::new().remote_repo(&url),
+        None,
+    )
+    .await
+    .unwrap();
+    a.collection("notes")
+        .unwrap()
+        .add("from-a".into(), b"one".to_vec(), None)
+        .await
+        .unwrap();
+    a.push().await.unwrap();
+    b.pull().await.unwrap();
+    let got = b
+        .collection("notes")
+        .unwrap()
+        .get("from-a".into())
+        .await
+        .unwrap();
+    assert_eq!(got.raw.as_deref(), Some(b"one".as_slice()));
+    b.collection("notes")
+        .unwrap()
+        .add("from-b".into(), b"two".to_vec(), None)
+        .await
+        .unwrap();
+    b.sync().await.unwrap();
+    a.sync().await.unwrap();
+    assert_eq!(
+        a.collection("notes").unwrap().ids().await.unwrap(),
+        ["from-a", "from-b"]
+    );
+    a.close().await.unwrap();
+    b.close().await.unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread")]
-async fn journal_lines_are_collected() {
+async fn remote_round_trip_on_a_multi_thread_runtime() {
+    remote_round_trip().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn remote_round_trip_on_a_current_thread_runtime() {
+    remote_round_trip().await;
+}
+
+async fn journal_lines() {
     let scratch = Scratch::new();
     let vault = AsyncVault::open(scratch.vault(), OpenOptions::new(), None)
         .await
@@ -127,6 +222,16 @@ async fn journal_lines_are_collected() {
         .filter_map(|record| record.id)
         .collect();
     assert_eq!(ids, ["a", "b", "c"]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn journal_lines_on_a_multi_thread_runtime() {
+    journal_lines().await;
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn journal_lines_on_a_current_thread_runtime() {
+    journal_lines().await;
 }
 
 #[tokio::test(flavor = "multi_thread")]

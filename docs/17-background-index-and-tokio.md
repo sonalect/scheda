@@ -631,10 +631,24 @@ vault
 
 ### T4. Tests
 
-- [ ] `#[tokio::test(flavor = "multi_thread")]` and `current_thread`
-      both pass for the async surface.
-- [ ] A build without `tokio` compiles and its tests run with no
-      runtime (LIB-6).
+- [x] `#[tokio::test(flavor = "multi_thread")]` and `current_thread`
+      both pass for the async surface (`nonblocking.rs`: `round_trip_*`
+      covers `open`, the collection calls, `transaction`, `info`,
+      `check`, `find`, `wait_indexed`, `index_status`, `reindex`, and
+      `close`; `remote_round_trip_*` covers `push`, `pull`, and `sync`;
+      `journal_lines_*` covers `lines`; `search` runs on both through
+      `a_panicking_callback_is_io_other` and
+      `search_embeds_and_reranks_on_one_blocking_thread`; `transaction`
+      under contention through
+      `concurrent_transactions_commit_whole_or_are_locked`).
+- [x] A build without `tokio` compiles and its tests run with no
+      runtime (LIB-6): `cargo test -p scheda --no-default-features` and
+      `--no-default-features --features find` pass, and Bazel's
+      `scheda_thin_test`, `thin_test`, and `consumer_thin_test` build on
+      `:scheda_thin`, which has no `tokio` dependency.
+      `cargo tree -p scheda --no-default-features --features
+      find,search,simd,encrypt -e normal` lists no `tokio`: without the
+      feature no dependency pulls it in.
 
 ---
 
