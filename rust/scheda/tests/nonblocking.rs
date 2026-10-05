@@ -724,6 +724,24 @@ async fn search_embeds_and_reranks_on_one_blocking_thread() {
         .await
         .unwrap();
     assert!(!hits.hits.is_empty());
+    let ran = Some(scheda::search_hits::VectorLeg::Ran.into());
+    assert_eq!(hits.vector_leg, ran, "the reranked reply keeps vector_leg");
+    let lexical_only = scheda::SearchQuery::default()
+        .with_text("kryptonite")
+        .with_vector_weight(0.0);
+    let vault_hits = vault
+        .search(vec!["notes".into()], lexical_only.clone(), None)
+        .await
+        .unwrap();
+    let sync_hits = vault
+        .as_vault()
+        .search(&["notes"], &lexical_only, None)
+        .unwrap();
+    assert_eq!(
+        vault_hits.vector_leg,
+        Some(scheda::search_hits::VectorLeg::NotAsked.into())
+    );
+    assert_eq!(vault_hits.vector_leg, sync_hits.vector_leg);
     let threads = threads.lock().unwrap().clone();
     let kinds: Vec<&str> = threads.iter().map(|(kind, _)| *kind).collect();
     assert_eq!(kinds, ["embed", "rerank"]);

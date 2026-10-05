@@ -346,7 +346,8 @@ pub const __SEARCH_QUERY_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buff
     from_json: ::buffa::type_registry::any_from_json::<SearchQuery>,
     is_wkt: false,
 };
-/// Output, not a write envelope: no field validators (same as `FindResult`).
+/// Output, not a write envelope. The one validator is on `vector_leg`,
+/// which every `search` sets.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -360,13 +361,29 @@ pub struct SearchHits {
         deserialize_with = "::buffa::json_helpers::null_as_default"
     )]
     pub hits: ::buffa::alloc::vec::Vec<search_hits::Hit>,
+    /// What the vector leg of this `search` did, decided before the query
+    /// runs from what the handle already holds. A vector-only query
+    /// (`lexical_weight` 0) with no hits and a value other than
+    /// `VECTOR_LEG_RAN` did not search vectors at all.
+    ///
+    /// Field 2: `vector_leg`
+    #[serde(
+        rename = "vectorLeg",
+        alias = "vector_leg",
+        with = "::buffa::json_helpers::opt_enum",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub vector_leg: ::core::option::Option<::buffa::EnumValue<search_hits::VectorLeg>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
 }
 impl ::core::fmt::Debug for SearchHits {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-        f.debug_struct("SearchHits").field("hits", &self.hits).finish()
+        f.debug_struct("SearchHits")
+            .field("hits", &self.hits)
+            .field("vector_leg", &self.vector_leg)
+            .finish()
     }
 }
 impl SearchHits {
@@ -375,6 +392,18 @@ impl SearchHits {
     ///
     /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
     pub const TYPE_URL: &'static str = "type.googleapis.com/api.v1.SearchHits";
+}
+impl SearchHits {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::vector_leg`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_vector_leg(
+        mut self,
+        value: impl Into<::buffa::EnumValue<search_hits::VectorLeg>>,
+    ) -> Self {
+        self.vector_leg = Some(value.into());
+        self
+    }
 }
 ::buffa::impl_default_instance!(SearchHits);
 impl ::buffa::MessageName for SearchHits {
@@ -404,6 +433,9 @@ impl ::buffa::Message for SearchHits {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(ref v) = self.vector_leg {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -421,6 +453,9 @@ impl ::buffa::Message for SearchHits {
                 buf,
             );
             v.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.vector_leg {
+            ::buffa::types::put_int32_field(2u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -447,6 +482,15 @@ impl ::buffa::Message for SearchHits {
                 ::buffa::Message::merge_length_delimited(&mut elem, buf, ctx)?;
                 self.hits.push(elem);
             }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.vector_leg = ::core::option::Option::Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(buf)?),
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -456,6 +500,7 @@ impl ::buffa::Message for SearchHits {
     }
     fn clear(&mut self) {
         self.hits.clear();
+        self.vector_leg = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -491,6 +536,211 @@ pub const __SEARCH_HITS_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa
 pub mod search_hits {
     #[allow(unused_imports)]
     use super::*;
+    /// Why the vector leg ran or did not. The first that applies, in this
+    /// order, is reported.
+    #[allow(non_camel_case_types)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    #[repr(i32)]
+    pub enum VectorLeg {
+        /// Unset. Never returned by `search`.
+        VECTOR_LEG_UNSPECIFIED = 0i32,
+        /// The leg was not asked for: `vector_weight` is 0.
+        VECTOR_LEG_NOT_ASKED = 1i32,
+        /// No requested collection has vector slots: every one is excluded
+        /// (`exclude_vector_index`, encrypted), the handle has no Projector,
+        /// or the Projector marks no column `vector`.
+        VECTOR_LEG_NO_VECTOR_COLLECTION = 2i32,
+        /// The handle has no embedder, so the query is not embedded.
+        VECTOR_LEG_NO_EMBEDDER = 3i32,
+        /// The Index holds no vectors yet.
+        VECTOR_LEG_NO_VECTORS = 4i32,
+        /// The embedder's `model_id` or dimensions differ from the Index
+        /// vectors; `reindex` with this embedder moves the Index to it.
+        VECTOR_LEG_MODEL_MISMATCH = 5i32,
+        /// The leg ran: the query was embedded and the vectors searched.
+        VECTOR_LEG_RAN = 6i32,
+    }
+    impl VectorLeg {
+        ///Idiomatic alias for [`Self::VECTOR_LEG_UNSPECIFIED`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const Unspecified: Self = Self::VECTOR_LEG_UNSPECIFIED;
+        ///Idiomatic alias for [`Self::VECTOR_LEG_NOT_ASKED`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const NotAsked: Self = Self::VECTOR_LEG_NOT_ASKED;
+        ///Idiomatic alias for [`Self::VECTOR_LEG_NO_VECTOR_COLLECTION`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const NoVectorCollection: Self = Self::VECTOR_LEG_NO_VECTOR_COLLECTION;
+        ///Idiomatic alias for [`Self::VECTOR_LEG_NO_EMBEDDER`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const NoEmbedder: Self = Self::VECTOR_LEG_NO_EMBEDDER;
+        ///Idiomatic alias for [`Self::VECTOR_LEG_NO_VECTORS`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const NoVectors: Self = Self::VECTOR_LEG_NO_VECTORS;
+        ///Idiomatic alias for [`Self::VECTOR_LEG_MODEL_MISMATCH`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const ModelMismatch: Self = Self::VECTOR_LEG_MODEL_MISMATCH;
+        ///Idiomatic alias for [`Self::VECTOR_LEG_RAN`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const Ran: Self = Self::VECTOR_LEG_RAN;
+    }
+    impl ::core::default::Default for VectorLeg {
+        fn default() -> Self {
+            Self::VECTOR_LEG_UNSPECIFIED
+        }
+    }
+    impl ::serde::Serialize for VectorLeg {
+        fn serialize<S: ::serde::Serializer>(
+            &self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            s.serialize_str(::buffa::Enumeration::proto_name(self))
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for VectorLeg {
+        fn deserialize<D: ::serde::Deserializer<'de>>(
+            d: D,
+        ) -> ::core::result::Result<Self, D::Error> {
+            struct _V;
+            impl ::serde::de::Visitor<'_> for _V {
+                type Value = VectorLeg;
+                fn expecting(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.write_str(
+                        concat!("a string, integer, or null for ", stringify!(VectorLeg)),
+                    )
+                }
+                fn visit_str<E: ::serde::de::Error>(
+                    self,
+                    v: &str,
+                ) -> ::core::result::Result<VectorLeg, E> {
+                    <VectorLeg as ::buffa::Enumeration>::from_proto_name(v)
+                        .ok_or_else(|| { ::serde::de::Error::unknown_variant(v, &[]) })
+                }
+                fn visit_i64<E: ::serde::de::Error>(
+                    self,
+                    v: i64,
+                ) -> ::core::result::Result<VectorLeg, E> {
+                    let v32 = i32::try_from(v)
+                        .map_err(|_| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("enum value {v} out of i32 range"),
+                            )
+                        })?;
+                    <VectorLeg as ::buffa::Enumeration>::from_i32(v32)
+                        .ok_or_else(|| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("unknown enum value {v32}"),
+                            )
+                        })
+                }
+                fn visit_u64<E: ::serde::de::Error>(
+                    self,
+                    v: u64,
+                ) -> ::core::result::Result<VectorLeg, E> {
+                    let v32 = i32::try_from(v)
+                        .map_err(|_| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("enum value {v} out of i32 range"),
+                            )
+                        })?;
+                    <VectorLeg as ::buffa::Enumeration>::from_i32(v32)
+                        .ok_or_else(|| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("unknown enum value {v32}"),
+                            )
+                        })
+                }
+                fn visit_unit<E: ::serde::de::Error>(
+                    self,
+                ) -> ::core::result::Result<VectorLeg, E> {
+                    ::core::result::Result::Ok(::core::default::Default::default())
+                }
+            }
+            d.deserialize_any(_V)
+        }
+    }
+    impl ::buffa::json_helpers::ProtoElemJson for VectorLeg {
+        fn serialize_proto_json<S: ::serde::Serializer>(
+            v: &Self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            ::serde::Serialize::serialize(v, s)
+        }
+        fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+            d: D,
+        ) -> ::core::result::Result<Self, D::Error> {
+            <Self as ::serde::Deserialize>::deserialize(d)
+        }
+    }
+    impl ::buffa::Enumeration for VectorLeg {
+        fn from_i32(value: i32) -> ::core::option::Option<Self> {
+            match value {
+                0i32 => ::core::option::Option::Some(Self::VECTOR_LEG_UNSPECIFIED),
+                1i32 => ::core::option::Option::Some(Self::VECTOR_LEG_NOT_ASKED),
+                2i32 => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_NO_VECTOR_COLLECTION)
+                }
+                3i32 => ::core::option::Option::Some(Self::VECTOR_LEG_NO_EMBEDDER),
+                4i32 => ::core::option::Option::Some(Self::VECTOR_LEG_NO_VECTORS),
+                5i32 => ::core::option::Option::Some(Self::VECTOR_LEG_MODEL_MISMATCH),
+                6i32 => ::core::option::Option::Some(Self::VECTOR_LEG_RAN),
+                _ => ::core::option::Option::None,
+            }
+        }
+        fn to_i32(&self) -> i32 {
+            *self as i32
+        }
+        fn proto_name(&self) -> &'static str {
+            match self {
+                Self::VECTOR_LEG_UNSPECIFIED => "VECTOR_LEG_UNSPECIFIED",
+                Self::VECTOR_LEG_NOT_ASKED => "VECTOR_LEG_NOT_ASKED",
+                Self::VECTOR_LEG_NO_VECTOR_COLLECTION => {
+                    "VECTOR_LEG_NO_VECTOR_COLLECTION"
+                }
+                Self::VECTOR_LEG_NO_EMBEDDER => "VECTOR_LEG_NO_EMBEDDER",
+                Self::VECTOR_LEG_NO_VECTORS => "VECTOR_LEG_NO_VECTORS",
+                Self::VECTOR_LEG_MODEL_MISMATCH => "VECTOR_LEG_MODEL_MISMATCH",
+                Self::VECTOR_LEG_RAN => "VECTOR_LEG_RAN",
+            }
+        }
+        fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
+            match name {
+                "VECTOR_LEG_UNSPECIFIED" => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_UNSPECIFIED)
+                }
+                "VECTOR_LEG_NOT_ASKED" => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_NOT_ASKED)
+                }
+                "VECTOR_LEG_NO_VECTOR_COLLECTION" => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_NO_VECTOR_COLLECTION)
+                }
+                "VECTOR_LEG_NO_EMBEDDER" => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_NO_EMBEDDER)
+                }
+                "VECTOR_LEG_NO_VECTORS" => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_NO_VECTORS)
+                }
+                "VECTOR_LEG_MODEL_MISMATCH" => {
+                    ::core::option::Option::Some(Self::VECTOR_LEG_MODEL_MISMATCH)
+                }
+                "VECTOR_LEG_RAN" => ::core::option::Option::Some(Self::VECTOR_LEG_RAN),
+                _ => ::core::option::Option::None,
+            }
+        }
+        fn values() -> &'static [Self] {
+            &[
+                Self::VECTOR_LEG_UNSPECIFIED,
+                Self::VECTOR_LEG_NOT_ASKED,
+                Self::VECTOR_LEG_NO_VECTOR_COLLECTION,
+                Self::VECTOR_LEG_NO_EMBEDDER,
+                Self::VECTOR_LEG_NO_VECTORS,
+                Self::VECTOR_LEG_MODEL_MISMATCH,
+                Self::VECTOR_LEG_RAN,
+            ]
+        }
+    }
     #[derive(Clone, PartialEq, Default)]
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]

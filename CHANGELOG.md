@@ -8,6 +8,16 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `SearchHits.vector_leg` (`api.v1.SearchHits.VectorLeg`), set on every
+  `search` reply (sync, async, and CLI JSON `vectorLeg`): the vector leg
+  ran, or why not — not asked (`vector_weight` 0), no requested collection
+  with vector slots, no embedder, no vectors in the Index yet, or an
+  embedder of another model than the Index vectors. Decided from what the
+  handle already holds, without extra I/O. A vector-only query with no hits
+  can now tell "nothing matched" from "the vectors were not searched".
+
 ### Changed
 
 - A `Vault` handle follows collection declarations made after it opened.

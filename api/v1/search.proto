@@ -72,10 +72,51 @@ message SearchQuery {
   }];
 }
 
-// Output, not a write envelope: no field validators (same as `FindResult`).
+// Output, not a write envelope. The one validator is on `vector_leg`,
+// which every `search` sets.
 message SearchHits {
   // Ranked page, length at most `k`. Empty if nothing matched.
   repeated Hit hits = 1;
+  // What the vector leg of this `search` did, decided before the query
+  // runs from what the handle already holds. A vector-only query
+  // (`lexical_weight` 0) with no hits and a value other than
+  // `VECTOR_LEG_RAN` did not search vectors at all.
+  VectorLeg vector_leg = 2 [(buf.validate.field) = {
+    required: true
+    enum: {
+      defined_only: true
+      not_in: [0]
+    }
+    cel: [
+      {
+        id: "search_hits.vector_leg.not_unspecified"
+        message: "vector_leg must not be unspecified"
+        expression: "this != 0"
+      }
+    ]
+  }];
+
+  // Why the vector leg ran or did not. The first that applies, in this
+  // order, is reported.
+  enum VectorLeg {
+    // Unset. Never returned by `search`.
+    VECTOR_LEG_UNSPECIFIED = 0;
+    // The leg was not asked for: `vector_weight` is 0.
+    VECTOR_LEG_NOT_ASKED = 1;
+    // No requested collection has vector slots: every one is excluded
+    // (`exclude_vector_index`, encrypted), the handle has no Projector,
+    // or the Projector marks no column `vector`.
+    VECTOR_LEG_NO_VECTOR_COLLECTION = 2;
+    // The handle has no embedder, so the query is not embedded.
+    VECTOR_LEG_NO_EMBEDDER = 3;
+    // The Index holds no vectors yet.
+    VECTOR_LEG_NO_VECTORS = 4;
+    // The embedder's `model_id` or dimensions differ from the Index
+    // vectors; `reindex` with this embedder moves the Index to it.
+    VECTOR_LEG_MODEL_MISMATCH = 5;
+    // The leg ran: the query was embedded and the vectors searched.
+    VECTOR_LEG_RAN = 6;
+  }
 
   message Hit {
     // Collection name (directory). Output only. Same as

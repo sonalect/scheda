@@ -468,7 +468,8 @@ impl ::serde::Serialize for SearchQueryOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// Output, not a write envelope: no field validators (same as `FindResult`).
+/// Output, not a write envelope. The one validator is on `vector_leg`,
+/// which every `search` sets.
 #[derive(Clone, Debug, Default)]
 pub struct SearchHitsView<'a> {
     /// Ranked page, length at most `k`. Empty if nothing matched.
@@ -477,6 +478,15 @@ pub struct SearchHitsView<'a> {
     pub hits: ::buffa::RepeatedView<
         'a,
         super::super::__buffa::view::search_hits::HitView<'a>,
+    >,
+    /// What the vector leg of this `search` did, decided before the query
+    /// runs from what the handle already holds. A vector-only query
+    /// (`lexical_weight` 0) with no hits and a value other than
+    /// `VECTOR_LEG_RAN` did not search vectors at all.
+    ///
+    /// Field 2: `vector_leg`
+    pub vector_leg: ::core::option::Option<
+        ::buffa::EnumValue<super::super::search_hits::VectorLeg>,
     >,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -510,6 +520,15 @@ impl<'a> ::buffa::MessageView<'a> for SearchHitsView<'a> {
         let view = self;
         let mut cur = cur;
         match tag.field_number() {
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.vector_leg = Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(&mut cur)?),
+                );
+            }
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
@@ -557,6 +576,7 @@ impl<'a> ::buffa::MessageView<'a> for SearchHitsView<'a> {
                 .iter()
                 .map(|v| v.to_owned_from_source(__buffa_src))
                 .collect::<::core::result::Result<_, ::buffa::DecodeError>>()?,
+            vector_leg: self.vector_leg,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -576,6 +596,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SearchHitsView<'a> {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(ref v) = self.vector_leg {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -594,6 +617,9 @@ impl<'a> ::buffa::ViewEncode<'a> for SearchHitsView<'a> {
                 buf,
             );
             v.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.vector_leg {
+            ::buffa::types::put_int32_field(2u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -618,6 +644,9 @@ impl<'__a> ::serde::Serialize for SearchHitsView<'__a> {
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
         if !self.hits.is_empty() {
             __map.serialize_entry("hits", &*self.hits)?;
+        }
+        if let ::core::option::Option::Some(ref __v) = self.vector_leg {
+            __map.serialize_entry("vectorLeg", __v)?;
         }
         __map.end()
     }
@@ -721,6 +750,20 @@ impl SearchHitsOwnedView {
         super::super::__buffa::view::search_hits::HitView<'_>,
     > {
         &self.0.reborrow().hits
+    }
+    /// What the vector leg of this `search` did, decided before the query
+    /// runs from what the handle already holds. A vector-only query
+    /// (`lexical_weight` 0) with no hits and a value other than
+    /// `VECTOR_LEG_RAN` did not search vectors at all.
+    ///
+    /// Field 2: `vector_leg`
+    #[must_use]
+    pub fn vector_leg(
+        &self,
+    ) -> ::core::option::Option<
+        ::buffa::EnumValue<super::super::search_hits::VectorLeg>,
+    > {
+        self.0.reborrow().vector_leg
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<SearchHitsView<'static>>>

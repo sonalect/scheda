@@ -2295,7 +2295,7 @@ impl QueryCtx<'_> {
             decls = apply_filter_decls(decls, filter, explicit, self.projector, self.scope)?;
         }
         if decls.is_empty() {
-            return Ok(SearchHits::default());
+            return Ok(crate::search::hits_without_vectors(query));
         }
         let constrained = filter.kind.is_some() && !query::is_unconstrained(filter);
         if explicit && constrained {
@@ -2311,7 +2311,7 @@ impl QueryCtx<'_> {
         if !explicit && constrained {
             decls.retain(|decl| decl.lexical_indexed());
             if decls.is_empty() {
-                return Ok(SearchHits::default());
+                return Ok(crate::search::hits_without_vectors(query));
             }
         }
         let k = match query.k {
@@ -2395,7 +2395,10 @@ impl QueryCtx<'_> {
                 .unwrap_or(std::cmp::Ordering::Equal)
                 .then_with(|| a.1.id.cmp(&b.1.id))
         });
-        let mut out = SearchHits::default();
+        let mut out = SearchHits {
+            vector_leg: hits.vector_leg,
+            ..SearchHits::default()
+        };
         for (score, mut hit) in scored.into_iter().take(k) {
             hit.rerank_score = Some(score);
             out.hits.push(hit);

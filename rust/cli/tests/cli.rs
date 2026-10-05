@@ -340,6 +340,11 @@ fn scripted_find_search_get_journal_add_commit() {
 
     let search = run(&["--vault", &path, "search", "--query", &query]);
     let hits = stdout_json(&search);
+    let leg = hits["vectorLeg"].as_str().unwrap_or_default();
+    assert!(
+        leg.starts_with("VECTOR_LEG_"),
+        "search prints vectorLeg: {hits}"
+    );
     let ids = hit_ids(&hits);
     assert!(
         ids.contains(&"alpha"),

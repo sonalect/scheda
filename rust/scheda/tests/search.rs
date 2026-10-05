@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use scheda::search_hits::VectorLeg;
 use scheda::{
     Code, Embedder, Filter, FindQuery, OpenOptions, Record, Reranker, SearchQuery, Vault,
 };
@@ -1118,7 +1119,8 @@ fn without_reranker_fused_order_and_scores_stay_rrf() {
                 "rrfScore": 0.015873015873015872,
                 "vectorScore": 0.5
             }
-        ]
+        ],
+        "vectorLeg": "VECTOR_LEG_RAN"
     });
     assert_eq!(got, expected);
 }
@@ -2470,4 +2472,146 @@ fn peek_schema_name(body: &str) -> String {
         .ok()
         .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
         .expect("schema fixture name")
+}
+
+const LEG_OFF: &str = "\
+version: 1
+name: leg_off
+schema:
+  journal: {}
+  exclude_vector_index: true
+";
+
+/// A Vault with one Record in `token_notes` (vector slots) and one in
+/// `leg_off` (`exclude_vector_index`), indexed by a handle whose embedder
+/// has `model`; `None` leaves the vector leg unwritten. Returns that handle.
+fn leg_vault(scratch: &Scratch, model: Option<&'static str>) -> Vault {
+    drop(open_proj(scratch.vault(), None));
+    scratch.write_declaration("tokens.yaml", TOKENS);
+    scratch.write_declaration("leg_off.yaml", LEG_OFF);
+    let embedder = model.map(|model| CountingEmbedder::new(model) as Arc<dyn Embedder>);
+    let vault = open_proj(scratch.vault(), embedder);
+    for name in ["token_notes", "leg_off"] {
+        vault
+            .collection(name)
+            .unwrap()
+            // Distinct bytes per collection: each journal gets its own segment blob.
+            .add(
+                "alpha",
+                rec(json!({"title": "kryptonite mineral", "tag": name})),
+                None,
+            )
+            .unwrap();
+    }
+    common::indexed(&vault);
+    vault
+}
+
+fn leg(hits: &scheda::SearchHits) -> VectorLeg {
+    hits.vector_leg
+        .as_ref()
+        .and_then(|leg| leg.as_known())
+        .expect("search sets vector_leg")
+}
+
+fn vector_only(text: &str) -> SearchQuery {
+    q(text, 5).with_lexical_weight(0.0)
+}
+
+#[test]
+fn vector_leg_ran_with_the_matching_embedder() {
+    let scratch = Scratch::new();
+    let vault = leg_vault(&scratch, Some("m1"));
+    let hits = vault
+        .search(&["token_notes"], &vector_only("kryptonite"), None)
+        .unwrap();
+    assert_eq!(leg(&hits), VectorLeg::Ran);
+    assert_eq!(hit_ids(&hits), ["alpha"]);
+}
+
+#[test]
+fn vector_leg_reports_another_model_and_returns_no_hits() {
+    let scratch = Scratch::new();
+    drop(leg_vault(&scratch, Some("m1")));
+    let reader = open_proj(
+        scratch.vault(),
+        Some(CountingEmbedder::new("m2") as Arc<dyn Embedder>),
+    );
+    let hits = reader
+        .search(&["token_notes"], &vector_only("kryptonite"), None)
+        .unwrap();
+    assert_eq!(leg(&hits), VectorLeg::ModelMismatch);
+    assert!(hits.hits.is_empty(), "{:?}", hit_ids(&hits));
+}
+
+#[test]
+fn vector_leg_not_asked_with_vector_weight_zero() {
+    let scratch = Scratch::new();
+    let vault = leg_vault(&scratch, Some("m1"));
+    let query = q("kryptonite", 5).with_vector_weight(0.0);
+    let hits = vault.search(&["token_notes"], &query, None).unwrap();
+    assert_eq!(leg(&hits), VectorLeg::NotAsked);
+    assert_eq!(hit_ids(&hits), ["alpha"]);
+    let none = vault
+        .search(&["leg_off"], &query.with_lexical_weight(0.0), None)
+        .unwrap();
+    assert_eq!(leg(&none), VectorLeg::NotAsked);
+}
+
+#[test]
+fn vector_leg_without_a_vector_collection() {
+    let scratch = Scratch::new();
+    let vault = leg_vault(&scratch, Some("m1"));
+    let hits = vault
+        .search(&["leg_off"], &q("kryptonite", 5), None)
+        .unwrap();
+    assert_eq!(leg(&hits), VectorLeg::NoVectorCollection);
+    assert_eq!(hit_ids(&hits), ["alpha"]);
+    // A handle without a Projector has no vector slots at all.
+    drop(vault);
+    let bare = Vault::open(
+        scratch.vault(),
+        OpenOptions::new(),
+        Some(CountingEmbedder::new("m1") as Arc<dyn Embedder>),
+    )
+    .unwrap();
+    match bare.search(&["token_notes"], &vector_only("kryptonite"), None) {
+        Ok(hits) => assert_eq!(leg(&hits), VectorLeg::NoVectorCollection),
+        Err(err) => assert_eq!(err.known_code(), Some(Code::IndexVersion), "{err:?}"),
+    }
+}
+
+#[test]
+fn vector_leg_without_an_embedder() {
+    let scratch = Scratch::new();
+    drop(leg_vault(&scratch, Some("m1")));
+    let reader = open_proj(scratch.vault(), None);
+    let hits = reader
+        .search(&["token_notes"], &vector_only("kryptonite"), None)
+        .unwrap();
+    assert_eq!(leg(&hits), VectorLeg::NoEmbedder);
+    assert!(hits.hits.is_empty());
+}
+
+#[test]
+fn vector_leg_before_any_vector_is_written() {
+    let scratch = Scratch::new();
+    drop(leg_vault(&scratch, None));
+    // Another holder of the vector role that writes nothing: the reader's
+    // own indexer cannot fill the leg before the query.
+    let role = fs::File::options()
+        .read(true)
+        .write(true)
+        .open(scratch.vault().join(".scheda").join("vector.lock"))
+        .unwrap();
+    role.try_lock().unwrap();
+    let reader = open_proj(
+        scratch.vault(),
+        Some(CountingEmbedder::new("m1") as Arc<dyn Embedder>),
+    );
+    let hits = reader
+        .search(&["token_notes"], &vector_only("kryptonite"), None)
+        .unwrap();
+    assert_eq!(leg(&hits), VectorLeg::NoVectors);
+    assert!(hits.hits.is_empty());
 }

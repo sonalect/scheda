@@ -153,15 +153,19 @@ embedded when there is no embedder or the generation's vectors are of
 another model (`holds_vectors_of`). `SearchHits` (`api/v1/search.proto`)
 carries only `hits`.
 
-- [ ] A new enum on `SearchHits`, set by every `search`, that tells at
+- [x] A new enum on `SearchHits`, set by every `search`, that tells at
       least: the vector leg ran; it was not asked for (`vector_weight` 0);
       no requested collection indexes vectors; no embedder; the embedder's
       model differs from the Index vectors; the Index holds no vectors yet.
       Names, numbering, and `buf.validate` per `proto-validation.md`;
       `bazel run //api:generate`; the generated `Validate` holds the rule.
-- [ ] The value is decided before the query runs, from what the handle
+      (`SearchHits.vector_leg`, enum `VectorLeg`; `required`,
+      `defined_only`, `not_in: [0]` plus CEL `this != 0`, which the
+      generator emits. Tests `vector_leg_*` in `tests/search.rs`.)
+- [x] The value is decided before the query runs, from what the handle
       already holds: no extra I/O, no diff.
-- [ ] CLI `search` prints the field in its Protobuf JSON output.
+- [x] CLI `search` prints the field in its Protobuf JSON output.
+      (`scripted_find_search_get_journal_add_commit`.)
 - *Check:* one test per state; a vector-only query (`lexical_weight` 0)
   with an embedder of another model returns no hits and the mismatch
   state; the same query with the matching embedder returns hits and "ran".

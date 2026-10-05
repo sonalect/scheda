@@ -36,6 +36,8 @@ use crate::store;
 use crate::{Embedder, Error, Filter, IndexSchema, Record};
 #[cfg(feature = "search")]
 use crate::{SearchHits, SearchQuery, search_hits};
+#[cfg(feature = "search")]
+use search_hits::VectorLeg;
 
 #[cfg(feature = "search")]
 use crate::ann::AnnIndex;
@@ -929,14 +931,26 @@ impl SearchEngine {
         Ok(())
     }
 
-    /// Whether the vectors this engine holds were made by `embedder`'s
-    /// `model_id` and dimensions.
+    /// What the vector leg of a query that asks for it, over collections
+    /// with vector slots, can do with `embedder` and the vectors this engine
+    /// holds. No I/O.
     #[cfg(feature = "search")]
-    fn holds_vectors_of(&self, embedder: &dyn Embedder) -> Result<bool, Error> {
+    fn vector_leg(&self, embedder: Option<&dyn Embedder>) -> Result<VectorLeg, Error> {
+        let Some(embedder) = embedder else {
+            return Ok(VectorLeg::NoEmbedder);
+        };
         let inner = crate::error::rw_read(&self.inner, "[SearchEngine::search] lock vectors")?;
-        Ok(inner.vector.as_ref().is_some_and(|store| {
-            store.model_id == embedder.model_id() && store.dimensions == embedder.dimensions().get()
-        }))
+        Ok(match inner.vector.as_ref() {
+            None => VectorLeg::NoVectors,
+            Some(store) if store.ann.is_empty() => VectorLeg::NoVectors,
+            Some(store)
+                if store.model_id != embedder.model_id()
+                    || store.dimensions != embedder.dimensions().get() =>
+            {
+                VectorLeg::ModelMismatch
+            }
+            Some(_) => VectorLeg::Ran,
+        })
     }
 
     /// The failure that kept the vector dump from loading at `open`, when
@@ -1198,7 +1212,7 @@ impl SearchEngine {
             .map(|decl| decl.name.as_str())
             .collect();
         if lexical_names.is_empty() && vector_names.is_empty() {
-            return Ok(SearchHits::default());
+            return Ok(hits_without_vectors(query));
         }
         let index_dir = self.dir()?;
         index::require_current_format(&index_dir)?;
@@ -1223,12 +1237,15 @@ impl SearchEngine {
                 .inspect_err(|err| note_damage(&index_dir, err))?;
             self.require_vector_loaded()?;
         }
-        // Vectors of another model are not searched: do not pay for
-        // embedding a query that cannot use them.
+        let leg = if vector_on {
+            self.vector_leg(embedder)?
+        } else {
+            leg_without_vectors(query)
+        };
+        // Vectors of another model, or none, are not searched: do not pay
+        // for embedding a query that cannot use them.
         let query_vec = match embedder {
-            Some(embedder) if vector_on && self.holds_vectors_of(embedder)? => {
-                Some(embedder.embed_query(text)?)
-            }
+            Some(embedder) if leg == VectorLeg::Ran => Some(embedder.embed_query(text)?),
             _ => None,
         };
         self.with_query(&index_dir, "[SearchEngine::search] lock", |inner| {
@@ -1257,17 +1274,36 @@ impl SearchEngine {
             } else {
                 Vec::new()
             };
-            Ok(fuse(
+            let mut hits = fuse(
                 &lexical_hits,
                 &vector_hits,
                 lexical_weight,
                 vector_weight,
                 pool,
                 has_reranker,
-            ))
+            );
+            hits.vector_leg = Some(leg.into());
+            Ok(hits)
         })
         .inspect_err(|err| note_damage(&index_dir, err))
     }
+}
+
+/// Why a query whose vector leg has nothing to search did not run it:
+/// not asked for, or no collection with vector slots.
+#[cfg(feature = "search")]
+pub(crate) fn leg_without_vectors(query: &SearchQuery) -> VectorLeg {
+    if query.vector_weight.unwrap_or(1.0) > 0.0 {
+        VectorLeg::NoVectorCollection
+    } else {
+        VectorLeg::NotAsked
+    }
+}
+
+/// An empty reply to `query` that searched no vectors.
+#[cfg(feature = "search")]
+pub(crate) fn hits_without_vectors(query: &SearchQuery) -> SearchHits {
+    SearchHits::default().with_vector_leg(leg_without_vectors(query))
 }
 
 /// The query `filter` stands for over `decls`, limited to the collections

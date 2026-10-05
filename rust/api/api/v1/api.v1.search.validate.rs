@@ -737,6 +737,70 @@ impl ::protovalidate_buffa::Validate for SearchHits {
                     );
             }
         }
+        if self.vector_leg.is_none() {
+            violations
+                .push(::protovalidate_buffa::Violation {
+                    field: ::protovalidate_buffa::FieldPath {
+                        elements: ::std::vec![
+                            ::protovalidate_buffa::FieldPathElement { field_number :
+                            Some(2i32), field_name :
+                            Some(::std::borrow::Cow::Borrowed("vector_leg")), field_type
+                            : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                            None, value_type : None, subscript : None, },
+                        ],
+                    },
+                    rule: ::protovalidate_buffa::FieldPath {
+                        elements: ::std::vec![
+                            ::protovalidate_buffa::FieldPathElement { field_number :
+                            Some(25i32), field_name :
+                            Some(::std::borrow::Cow::Borrowed("required")), field_type :
+                            Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                            None, value_type : None, subscript : None, },
+                        ],
+                    },
+                    rule_id: ::std::borrow::Cow::Borrowed("required"),
+                    message: ::std::borrow::Cow::Borrowed("value is required"),
+                    for_key: false,
+                });
+        }
+        if self.vector_leg.is_some() {}
+        if let ::core::option::Option::Some(__cel_inner) = self.vector_leg.as_ref() {
+            let __cel_this = ({
+                use ::buffa::Enumeration as _;
+                (*__cel_inner).to_i32() as i64
+            });
+            if !(((__cel_this) != (0i64 as i64))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("vector_leg")), field_type
+                                : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "search_hits.vector_leg.not_unspecified",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "vector_leg must not be unspecified",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
         if let Some(index) = violations
             .iter()
             .position(|v| v.rule_id == "__cel_runtime_error__")
@@ -797,6 +861,70 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SearchHitsView<'_> {
                                 v
                             }),
                     );
+            }
+        }
+        if self.vector_leg.is_none() {
+            violations
+                .push(::protovalidate_buffa::Violation {
+                    field: ::protovalidate_buffa::FieldPath {
+                        elements: ::std::vec![
+                            ::protovalidate_buffa::FieldPathElement { field_number :
+                            Some(2i32), field_name :
+                            Some(::std::borrow::Cow::Borrowed("vector_leg")), field_type
+                            : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                            None, value_type : None, subscript : None, },
+                        ],
+                    },
+                    rule: ::protovalidate_buffa::FieldPath {
+                        elements: ::std::vec![
+                            ::protovalidate_buffa::FieldPathElement { field_number :
+                            Some(25i32), field_name :
+                            Some(::std::borrow::Cow::Borrowed("required")), field_type :
+                            Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                            None, value_type : None, subscript : None, },
+                        ],
+                    },
+                    rule_id: ::std::borrow::Cow::Borrowed("required"),
+                    message: ::std::borrow::Cow::Borrowed("value is required"),
+                    for_key: false,
+                });
+        }
+        if self.vector_leg.is_some() {}
+        if let ::core::option::Option::Some(__cel_inner) = self.vector_leg.as_ref() {
+            let __cel_this = ({
+                use ::buffa::Enumeration as _;
+                (*__cel_inner).to_i32() as i64
+            });
+            if !(((__cel_this) != (0i64 as i64))) {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("vector_leg")), field_type
+                                : Some(::protovalidate_buffa::FieldType::Enum), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(23), field_name :
+                                Some(::std::borrow::Cow::Borrowed("cel")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript :
+                                Some(::protovalidate_buffa::Subscript::Index(0u64)), }
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "search_hits.vector_leg.not_unspecified",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "vector_leg must not be unspecified",
+                        ),
+                        for_key: false,
+                    });
             }
         }
         if let Some(index) = violations
