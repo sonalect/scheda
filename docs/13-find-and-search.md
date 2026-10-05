@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.42, 4 October 2026.
+Document 13 of the Scheda package. Version 0.43, 5 October 2026.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`, `api/v1/index.proto`. Index columns: `Projector.schema(collection)` at `open`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat `search` as a query string only, are wrong.
 
@@ -151,8 +151,9 @@ Steps:
    - **Reranker present:** RRF does not decide membership. Fill the pool by alternating legs — vector rank 1, lexical rank 1, vector rank 2, lexical rank 2, and so on — skipping a document already taken, until the pool is full or both legs are exhausted. A short leg does not leave the pool short while the other still has hits. When both weights are non-zero the interleave is one-for-one; the weights no longer choose who enters the pool.
 5. If a **reranker** is passed to `search`: cut the fused list to `rerank_limit` when it is set, then `get` each remaining Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`); `rerank_limit` does not change the pool.
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
+7. Set `SearchHits.vector_leg` on every reply, early empty ones included. It is decided before step 3 from what the handle already holds (no extra I/O, no diff), the first that applies: `VECTOR_LEG_NOT_ASKED` (`vector_weight` 0); `VECTOR_LEG_NO_VECTOR_COLLECTION` (no selected collection has vector slots: excluded or encrypted, no Projector, or no Projector column marked `vector`); `VECTOR_LEG_NO_EMBEDDER`; `VECTOR_LEG_NO_VECTORS` (the Index holds none yet); `VECTOR_LEG_MODEL_MISMATCH` (the embedder's `model_id` or dimensions differ from the Index vectors; the query is not embedded); else `VECTOR_LEG_RAN`. A vector-only query (`lexical_weight` 0) with no hits and any value but `RAN` did not search vectors at all, which is how a caller tells that from "nothing matched" without `index_status`.
 
-Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids. An Index that `open` could not read (Tantivy files, `ord.json`, or the vector dump the vector leg needs) is not read as empty: `find` and `search` return that Index code until the lexical-role indexer has rebuilt the generation, which the failed `open` flags. A query Tantivy refuses because of what the caller put in it (a `regex_phrase` pattern, a `fuzzy.distance` above 2) is `invalid`, never an Index code, and does not flag the generation.
+Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids. `search` checks the generation's projector dump like `find`, Filter or not: a generation another Projector built is `index_version` with `repeat: forbidden` (IDX-2). An Index that `open` could not read (Tantivy files, `ord.json`, or the vector dump the vector leg needs) is not read as empty: `find` and `search` return that Index code until the lexical-role indexer has rebuilt the generation, which the failed `open` flags. A query Tantivy refuses because of what the caller put in it (a `regex_phrase` pattern, a `fuzzy.distance` above 2) is `invalid`, never an Index code, and does not flag the generation.
 
 ### Reranker
 

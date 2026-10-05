@@ -418,7 +418,9 @@ impl Vault {
     /// `{vault}/.scheda/vector.lock`. A leg nobody can write does not make
     /// the call wait; the returned status shows it behind. Past `timeout`
     /// the call fails with `io_timed_out`, and the message lists the heads
-    /// and marks it saw last.
+    /// and marks it saw last. Before it returns, the collection declarations
+    /// are read again when the Index passed a commit since the last read,
+    /// so `info` shows a declaration another handle changed.
     #[cfg(feature = "find")]
     pub fn wait_indexed(&self, timeout: std::time::Duration) -> Result<crate::IndexStatus, Error> {
         let deadline = Instant::now().checked_add(timeout);
@@ -697,7 +699,10 @@ impl Vault {
 
     /// Handle for one collection.
     ///
-    /// Unknown name → `not_found`. Isolated collections live under
+    /// A name this handle does not know reads the declarations again from
+    /// the work tree once, so a collection another handle or process
+    /// declared after `open` is found; still unknown → `not_found`. The
+    /// returned handle keeps the declaration it was made with. Isolated collections live under
     /// `{vault}/.isolated/{name}/` on this same handle. A build without the
     /// `encrypt` crate feature refuses an encrypted collection
     /// (`unsupported_encryption`); `open` of the Vault still succeeds.
@@ -756,7 +761,9 @@ impl Vault {
     ///
     /// Filter field names are [`Projector`] find-columns plus identity `id`.
     /// Projector-column leaves must set proto `collection`. Without a
-    /// projector, only `all` and Filter on `id` are valid.
+    /// projector, only `all` and Filter on `id` are valid. A collection name
+    /// or Filter qualifier this handle does not know reads the declarations
+    /// again once, as [`collection`](Self::collection) does.
     #[cfg(feature = "find")]
     pub fn find(
         &self,
@@ -806,6 +813,16 @@ impl Vault {
     /// reads before the model runs. Zero is `invalid`. N below the effective
     /// `k` (unset or 0 means 10) is `invalid` and names both numbers.
     /// `rerank_limit` is ignored, not rejected, when no reranker is passed.
+    ///
+    /// `SearchHits.vector_leg` is set on every reply: `VECTOR_LEG_RAN`, or
+    /// why the vector leg did not run (not asked, no collection with vector
+    /// slots, no embedder, no vectors yet, an embedder of another model),
+    /// decided from what this handle holds without extra I/O. A generation
+    /// another Projector built is `index_version` with `repeat: forbidden`,
+    /// Filter or not; `reindex` from a handle with the right Projector is
+    /// the way over. Collection names and Filter qualifiers this handle
+    /// does not know read the declarations again once, as
+    /// [`collection`](Self::collection) does.
     #[cfg(feature = "search")]
     pub fn search(
         &self,
@@ -1175,6 +1192,12 @@ impl Vault {
 
     /// Proto snapshot (`api.v1.VaultInfo`): vault attrs plus the collection list.
     ///
+    /// The list is the declarations this handle holds. They are read again
+    /// from the work tree when a name lookup misses and, with `find`,
+    /// whenever the Index passes a commit (and before `wait_indexed`
+    /// returns), so a declaration another handle or process committed shows
+    /// here without a reopen. This handle's own uncommitted declaration
+    /// stays.
     /// `remote` is `origin` when that remote exists, otherwise empty, whatever
     /// other remotes are configured.
     pub fn info(&self) -> Result<VaultInfo, Error> {

@@ -1,6 +1,8 @@
 # 19. Follow-ups to 0.19: declarations, search signals, transactions
 
-Document 19 of the Scheda package. Version 0.1, 5 October 2026.
+Document 19 of the Scheda package. Version 0.2, 5 October 2026.
+
+Status: F1–F5 done, docs pass done (5 October 2026).
 
 Work order for four gaps found while planning the anchor consumer's move to
 `0.19.0` and to the async API (`tokio` feature). None is a defect of a

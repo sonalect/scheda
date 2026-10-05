@@ -77,8 +77,10 @@
 //! `AsyncCollection` run each call that does I/O, or calls the embedder,
 //! Projector, or reranker, on Tokio's blocking pool, so runtime worker
 //! threads stay free. They have no `begin` / `commit` / `discard`, because
-//! two awaits may resume on two threads; `AsyncVault::transaction` runs
-//! `begin`, a sync closure, and `commit` on one blocking thread instead.
+//! two awaits may resume on two threads; `AsyncVault::transaction` runs the
+//! sync `Vault::transaction` (`begin`, a sync closure, the commit) on one
+//! blocking thread instead. Both keep the closure's own error type and take
+//! a batch with nothing to commit as success.
 //! `AsyncVault::wait_indexed` waits for the indexer's rounds without
 //! holding a blocking thread.
 //!

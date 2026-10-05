@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.71, 4 October 2026.
+Document 14 of the Scheda package. Version 0.72, 5 October 2026.
 
 Target argv for the `scheda` binary. Thin encoding of `07`. JSON is
 the Protobuf JSON mapping of `api/v1`, except `collection … get`, which
@@ -63,7 +63,7 @@ on stderr).
 | `index-status` | Prints where the Index stands (`07` LIB-27): `head`, each leg's commit, `lexicalPending` / `vectorPending`, `modelMismatch`, the roles this process holds, `lastError`. Protobuf JSON style: lowerCamelCase, unset fields left out, 64-bit counts as strings. Does not wait. |
 | `wait-indexed` | [`--timeout-secs N`] (default 60). Waits for the Index to reach `HEAD`, then prints `index-status`. Past the timeout: `io_timed_out`. |
 | `find` | [`--collections NAME,…`] `--filter JSON --offset N --count N` [`--include-raw`]. Projector column in the Filter is `body` only (plus identity). Vault leaves must set `collection` (`13` §3). |
-| `search` | [`--collections NAME,…`] `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`] |
+| `search` | [`--collections NAME,…`] `--query JSON` (or stdin) [`--include-raw`] [`--rerank-limit N`] [`--reranker-cohere-url URL --reranker-model NAME [--reranker-api-key-env-var NAME]`]. Prints `SearchHits`: `hits` and `vectorLeg` (`VECTOR_LEG_RAN` or why the vector leg did not run, `13` §6). |
 | `push` | |
 | `pull` | |
 | `sync` | |

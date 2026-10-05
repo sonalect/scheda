@@ -1,6 +1,6 @@
 # 17. Background Index and the `tokio` feature
 
-Document 17 of the Scheda package. Version 0.1, 4 October 2026.
+Document 17 of the Scheda package. Version 0.2, 5 October 2026.
 
 Work order for two independent changes:
 
@@ -684,12 +684,12 @@ code on 4 October 2026:
 | K2 | `Embedder` / `Reranker` sync traits, implemented on `ureq`. | Unchanged (T3). |
 | K3 | `Vault::open_with` without a runtime, in `#[test]` and in `knq init`. | Holds: indexer is a thread (D14). |
 | K4 | Several `knq` processes open one Vault; one of them is the writer (its own `flock`). | One indexer per lock (D5); no conflict with Knowqore's writer lock. |
-| K5 | Only the writer's handle has an embedder (`set_embedder`). | That handle takes `vector.lock`; others index lexical only (D6). Status shows vector lag. |
+| K5 | Only the writer's handle has an embedder (`set_embedder`). Updated by `19`: handles other than the writer carry an embedder of the same model, for the query. | The writer's handle takes `vector.lock` (D6); the others embed queries only. A handle whose embedder has another model gets `SearchHits.vector_leg` `VECTOR_LEG_MODEL_MISMATCH` (`19` F2). |
 | K6 | The writer drains its queue with a lock wait on `write.lock`. | Indexer never takes `write.lock` (D5). |
 | K7 | `get` / `ids` on `document` collections right after a write. | Unaffected: they read files. All Knowqore collections are `document`. |
 | K8 | `reindex()` wrapped in `knowqore_store::reindex`. | Stays (D7, B8). |
 | K9 | Tests that write `lesson-index` then `search` at once. | Must call `wait_indexed` first (B6). Knowqore changes its tests when it bumps the tag. |
-| K10 | No production `find` / `search` yet (its `consider` comes later). | Eventual freshness is acceptable there. |
+| K10 | No production `find` / `search` yet (its `consider` comes later). Updated by `19`: vector-only `search` (`lexical_weight` 0) runs on every request. | Eventual freshness is acceptable there. `vector_leg` tells an unsearched vector leg from no match; declarations made by another process are seen without a reopen (`19` F1). Checked by `consumer.rs an_async_writer_and_readers_share_a_vault`. |
 
 Knowqore needs nothing from Part T to keep working; it may adopt
 `AsyncVault` in its server later.
