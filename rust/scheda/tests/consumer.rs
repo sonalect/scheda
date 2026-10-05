@@ -939,3 +939,167 @@ fn a_writer_with_an_embedder_and_readers_without_one_share_a_vault() {
     assert_eq!(ids, ["first", "third"]);
     writer.discard().unwrap();
 }
+
+/// Failure kinds of a caller that applies batches of operations.
+#[cfg(all(feature = "tokio", feature = "search"))]
+#[derive(Debug)]
+enum BatchError {
+    Refused(String),
+    Scheda(scheda::Error),
+}
+
+#[cfg(all(feature = "tokio", feature = "search"))]
+impl From<scheda::Error> for BatchError {
+    fn from(err: scheda::Error) -> Self {
+        Self::Scheda(err)
+    }
+}
+
+/// [`UnitEmbedder`]'s vectors under another model id.
+#[cfg(all(feature = "tokio", feature = "search"))]
+struct OtherModelEmbedder;
+
+#[cfg(all(feature = "tokio", feature = "search"))]
+impl scheda::Embedder for OtherModelEmbedder {
+    fn model_id(&self) -> &str {
+        "consumer-other/d4"
+    }
+
+    fn dimensions(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(4).unwrap()
+    }
+
+    fn many_limit(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(16).unwrap()
+    }
+
+    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, scheda::Error> {
+        Ok(vec![vec![1.0, 0.0, 0.0, 0.0]; texts.len()])
+    }
+}
+
+/// Apply the two operations of one batch: add each, or replace it when an
+/// earlier run of the same batch already wrote it.
+#[cfg(all(feature = "tokio", feature = "search"))]
+fn apply_batch(vault: &Vault) -> Result<usize, BatchError> {
+    let batches = vault.collection("inbox_batches")?;
+    let ops = [
+        ("op-1", "pin the toolchain"),
+        ("op-2", "prefer small steps"),
+    ];
+    for (id, body) in ops {
+        let raw = rec(json!({ "body": body }));
+        match batches.get(id) {
+            Ok(_) => batches.replace(id, &raw, None)?,
+            Err(err) if err.known_code() == Some(Code::NotFound) => batches.add(id, &raw, None)?,
+            Err(err) => return Err(err.into()),
+        }
+    }
+    Ok(ops.len())
+}
+
+#[cfg(all(feature = "tokio", feature = "search"))]
+fn head_of(vault: &Path) -> String {
+    let out = git_ok(vault, &["rev-parse", "HEAD"]);
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// The shape of a consumer on the async API: a writer that applies each
+/// batch in one `transaction` with its own error type and replays it after
+/// a crash, readers opened before a collection was declared, and a reader
+/// whose embedder has another model than the Index vectors.
+#[cfg(all(feature = "tokio", feature = "search"))]
+#[tokio::test(flavor = "multi_thread")]
+async fn an_async_writer_and_readers_share_a_vault() {
+    use scheda::AsyncVault;
+    use scheda::search_hits::VectorLeg;
+
+    const WAIT: Duration = Duration::from_secs(30);
+    let scratch = Scratch::new();
+    let projector = common::json_text_projector(&["body"]);
+    let options = || OpenOptions::new().with_index_poll_ms(20);
+    let open = |embedder: Arc<dyn scheda::Embedder>| {
+        AsyncVault::open_with(
+            scratch.vault(),
+            options(),
+            Some(embedder),
+            Some(Arc::clone(&projector)),
+        )
+    };
+    let document = || scheda::Schema {
+        kind: scheda::Unit::default().into(),
+        ..scheda::Schema::default()
+    };
+    let writer = open(Arc::new(UnitEmbedder)).await.unwrap();
+    writer
+        .create_collection("inbox_batches".into(), document(), None)
+        .await
+        .unwrap();
+    let reader = open(Arc::new(UnitEmbedder)).await.unwrap();
+    let other_model = open(Arc::new(OtherModelEmbedder)).await.unwrap();
+
+    // (1) One batch, one commit; its replay writes the same bytes and is Ok.
+    let before = head_of(writer.path());
+    assert_eq!(writer.transaction("batch 1", apply_batch).await.unwrap(), 2);
+    let after = head_of(writer.path());
+    assert_ne!(after, before);
+    assert_eq!(writer.transaction("batch 1", apply_batch).await.unwrap(), 2);
+    assert_eq!(head_of(writer.path()), after, "the replay made a commit");
+    // The caller's own refusal comes back as its variant; nothing lands.
+    let err = writer
+        .transaction("batch 2", |vault| -> Result<(), BatchError> {
+            let raw = rec(json!({ "body": "over quota" }));
+            vault.collection("inbox_batches")?.add("op-3", &raw, None)?;
+            Err(BatchError::Refused("quota".into()))
+        })
+        .await
+        .unwrap_err();
+    match err {
+        BatchError::Refused(reason) => assert_eq!(reason, "quota"),
+        BatchError::Scheda(err) => panic!("the caller's refusal came back as {err:?}"),
+    }
+    assert_eq!(head_of(writer.path()), after);
+
+    // (2) A collection another handle declares after the readers opened.
+    writer
+        .create_collection("late_topics".into(), document(), None)
+        .await
+        .unwrap()
+        .add(
+            "t1".into(),
+            rec(json!({ "body": "kryptonite mineral" })),
+            None,
+        )
+        .await
+        .unwrap();
+    let topics = reader.collection("late_topics").unwrap();
+    assert_eq!(topics.name(), "late_topics");
+    reader.wait_indexed(WAIT).await.unwrap();
+    let vector_only = scheda::SearchQuery::default()
+        .with_text("kryptonite")
+        .with_lexical_weight(0.0);
+    let hits = reader
+        .search(vec!["late_topics".into()], vector_only.clone(), None)
+        .await
+        .unwrap();
+    let ids: Vec<_> = hits
+        .hits
+        .iter()
+        .filter_map(|hit| hit.id.as_deref())
+        .collect();
+    assert_eq!(ids, ["t1"]);
+    assert_eq!(hits.vector_leg, Some(VectorLeg::Ran.into()));
+
+    // (3) Vector-only from a reader whose embedder has another model: no
+    // hits, and the reply says the vectors were not searched.
+    other_model.wait_indexed(WAIT).await.unwrap();
+    let hits = other_model
+        .search(vec!["late_topics".into()], vector_only, None)
+        .await
+        .unwrap();
+    assert!(hits.hits.is_empty(), "{hits:?}");
+    assert_eq!(hits.vector_leg, Some(VectorLeg::ModelMismatch.into()));
+    for vault in [writer, reader, other_model] {
+        vault.close().await.unwrap();
+    }
+}

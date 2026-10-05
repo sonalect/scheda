@@ -236,15 +236,15 @@ closure, `commit` on one blocking thread; the closure returns
 
 ### F5. Acceptance
 
-- [ ] A consumer-shaped test in `rust/scheda/tests/consumer.rs`, from a
+- [x] A consumer-shaped test in `rust/scheda/tests/consumer.rs`, from a
       `#[tokio::test]` on an `AsyncVault`: (1) a writer applies a batch in
       `transaction` with its own error enum, then replays it: one commit,
       the replay is `Ok`; (2) a reader opened before another handle
       creates a collection finds that collection and, after
       `wait_indexed`, its Records by `search`; (3) a vector-only `search`
       from a reader whose embedder has another model returns the mismatch
-      state of F2.
-- [ ] All *Check:* of F1–F4 green under `bazel test //...`; `cargo test`
+      state of F2. (`an_async_writer_and_readers_share_a_vault`.)
+- [x] All *Check:* of F1–F4 green under `bazel test //...`; `cargo test`
       for the thin builds (`--no-default-features`, `--features find`).
 
 ---

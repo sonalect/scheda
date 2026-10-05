@@ -322,6 +322,7 @@ rust_test(
     deps = [
         ":scheda",
         "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
     ],
 )
 
