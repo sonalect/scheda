@@ -10,26 +10,11 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
-- Work-order `docs/17-background-index-and-tokio.md`. Part B moves Index
-  updates out of `add` / `replace` / `remove` / `commit` into a background
-  thread that follows git `HEAD`: it indexes the diff since the last indexed
-  commit, catches up on `open`, and leaves `reindex` as the only explicit call
-  (embedder-model change, repair). It adds `index_status` / `wait_indexed` and
-  makes `find` / `search` freshness eventual. Part T adds an opt-in `tokio`
-  feature with an async API next to the unchanged sync one. Decisions D16–D22
-  record what the code review added (journal `id` map follows `HEAD`,
-  `replace` / `remove` resolve from the Record file, the indexer reads from
-  commits, format 5 layout).
 - Each Index generation records the commit every leg reflects, in
   `{vault}/.scheda/index/<gen>/marks/` (`lexical`, `vector`, `ids`, and
   `isolated-` for the nested repository). `reindex` writes them with the
   commits it built from; the vector mark only when an embedder filled that
   leg (without one, the previous vectors and their mark are carried over).
-- Internal: the diff the background indexer will apply. Between two commits
-  it lists changed Records per collection (journals line by line, renames as
-  delete plus add), asks for a whole collection when its declaration file
-  changed, and for a full rebuild when the older commit was pruned. Reads
-  git objects only, never the work tree.
 - `Vault::index_status()` and `Vault::wait_indexed(timeout)` (`find`
   feature), with `IndexStatus`: `HEAD` of the Vault and of
   `{vault}/.isolated/`, the commit each Index leg has reached, how many
@@ -72,7 +57,7 @@ API or on-disk format changes bump the minor.
   (`io_other`), and is `locked` while the Vault holds a transaction on
   another thread. `AsyncVault::wait_indexed` holds no blocking thread
   while it waits: it wakes on the handle's indexer rounds, and a bounded
-  wait needs the runtime's time driver. Adds `tokio 1.53.1` as an optional
+  wait needs the runtime's time driver. Adds `tokio 1.53.2` as an optional
   dependency.
 - `Vault::close()`: stop and join the indexer (at most one embedder call in
   flight), then drop the handle, with an error where `Drop` has none. Scheda
@@ -81,6 +66,12 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
+- `commit` stages all its paths in one git call, and `history` and
+  `path_has_history` use a fixed number of git processes (the log, one object
+  check, one batch read of the requested page) instead of one process per
+  path or per commit. Results are unchanged. Git commands no longer write
+  `core.longpaths` before every commit, `discard`, and reset: it is passed on
+  each command and written once when `open` creates or clones a Vault.
 - `find` and `search` are eventually consistent: `add` / `replace` /
   `remove` / `commit` no longer update the Index, the background indexer
   does after the commit. Call `Vault::wait_indexed(timeout)` before a query
@@ -105,7 +96,10 @@ API or on-disk format changes bump the minor.
   and atomically: `vector/<seq>/` plus a `vector/current` pointer, so a
   reader never loads half of a save.
 - CLI `find` / `search` wait up to 60 s for the Index to reach `HEAD`.
-- Index format is `5`; an older Index is rebuilt automatically.
+- Index format is `6` (`5` before this release); an older Index is rebuilt
+  automatically. The first `open` on a Vault whose Index is in format `5`
+  or older builds a new generation in the background; `find` / `search`
+  fail with `index_version` until it is published, as for any older format.
 - `reindex` (with `find`) builds the new generation from the commits at
   `HEAD`, the Vault's and `{vault}/.isolated/`'s, not from the files: a
   file edit no commit holds, or an open transaction's write, is not
@@ -121,6 +115,132 @@ API or on-disk format changes bump the minor.
   `find` / `search` fail with `index_lexical` / `index_vector` as before.
 - `search` with an embedder of another model than the Index vectors no
   longer embeds the query: that leg is off until `reindex`.
+- `create_collection` over an existing declaration with another kind is
+  `invalid` (kind never changes in place); before it rewrote the declaration
+  and the Record files were read as the new kind. Changing `isolated` on a
+  collection that already holds Record files (document or singleton files,
+  journal segments) is `invalid` too, as for `encrypted`; the declaration file
+  and the files are left untouched. An empty collection may still change
+  `isolated`.
+- `SearchQuery.k` and `SearchQuery.rerank_limit` are at most 10000; a larger
+  value is `invalid`. Before they were unbounded, and a huge value made
+  `search` allocate for hits that cannot exist. `FuzzyTerm.distance` is at
+  most 2 (Tantivy's limit); 3 to 255 was accepted and failed at search time
+  with `index_lexical`, and now is `invalid` up front.
+- Indexer performance. The vector dump is saved once when a vector pass ends
+  or stops (and at geometrically spaced checkpoints during a long first
+  pass), not after every embedder batch, so embedding N slots writes O(N)
+  bytes instead of O(N²). Journal `id` map changes of a pass, and of a
+  restore, are written once per collection; owner-only modes are applied to
+  the files written, and the whole `.scheda/` tree is walked only after a
+  Tantivy commit. A journal segment is read and parsed once per pass, and a
+  Record is projected once per leg, with `format` and the projector dump
+  checked once per pass instead of per Record.
+- CLI embedder `model_id` no longer carries the URL or the directory path.
+  `--embedder-openai-url` / `--embedder-model` now store the model name
+  alone (`--embedder-model`, exactly), so an API key in the URL query or
+  userinfo never reaches the Index and a changed host is not a model change.
+  `--model2vec-embedder` stores `model2vec:` plus 16 hex digits of the
+  SHA-256 of `config.json` and the byte length of `model.safetensors`, so
+  moving the model directory is not a model change. **Action:** an existing
+  CLI Index built with an embedder reports `model_mismatch` (vectors off,
+  `search` lexical only) until you run `reindex` once with the same embedder
+  flags.
+- CLI `--file` no longer reads stdin. A command spawned with an open stdin
+  pipe that nobody closes used to block forever; a non-empty stdin together
+  with `--file` is no longer `invalid`, it is ignored. A `--file` or stdin
+  read failure now carries the I/O code of the OS error (`io_not_found`,
+  `io_permission`, `io_is_a_directory`, ...) instead of `io_other`; the file
+  path is in the message and `path` stays unset.
+- CLI HTTP embedder and reranker check the HTTP status before reading the
+  body: a non-JSON error page (an HTML 502) is reported as the status, not as
+  a parse failure, and the body is never put in the message. 408, 429 and 5xx
+  are retryable (`io_timed_out`, `io_resource_busy`, `io_other`, `repeat`
+  allowed); 401 and 403 are `io_permission` with `repeat` forbidden; other
+  statuses are `invalid`.
+- `Debug` of `Encryption` (and so `OpenOptions`) prints the secret as
+  `[REDACTED]` (`debug_redact` on the `passphrase` / `identity` fields), so
+  `format!("{:?}", options)` and `tracing::debug!(?options)` no longer leak
+  it. The Protobuf JSON mapping (`Serialize`) still carries the secret in
+  clear text; do not log or persist that form.
+
+### Fixed
+
+- `pull` (and so `sync`, `pull_isolated`, and the `auto_sync` pull on `open`)
+  on a branch with no upstream setting, which is a Vault created by `open`
+  with `origin` added later, took the first branch git fetched instead of the
+  current one. With a Remote that has another branch sorted first it failed
+  with `not_fast_forward` although the current branch was up to date.
+  `pull` and `pull_isolated` now fetch the current branch by name; on a
+  branch the Remote does not have they fail with `git_not_found`.
+- `Vault::info().remote` reported the alphabetically first remote. It is
+  `origin` when that remote exists, otherwise empty.
+- `range` on a Projector column of kind `integer` or `number` compared the
+  numbers as text, so `n >= 5` over the values 9 and 10 returned only 9, and
+  negative numbers and fractions ordered wrongly. It now compares by value
+  (`integer` columns are exact over the whole `i64` range); a bound that is
+  not a finite number is `invalid`. `term` and `term_set` are unchanged.
+  This needs Index format `6`, which the background indexer builds on the
+  first `open`.
+- `check`, `get`, `lines`, and the background indexer no longer treat the text
+  `<<<<<<<` or `>>>>>>>` inside a line as a git conflict. A conflict marker is
+  a line that starts with `<<<<<<<` or `>>>>>>>` followed by a space or the
+  end of the line. Before, one journal line quoting a diff made every other
+  line of its segment unreadable by `get`, stopped `lines`, and dropped the
+  segment from the Index; a document that merely contained the text failed
+  `check`. A real conflicted file still fails `check` with `conflict_markers`.
+- Record I/O no longer follows symlinks. A symlink as a Record file, as a
+  journal segment, as a directory between the collection directory and the
+  file, or as the collection directory or `.isolated/` made `get` read, and
+  `add` / `replace` write, outside the Vault. These calls now fail with
+  `invalid` and the link's Vault-relative `path`. `check` reports such a link
+  as `invalid` with its path; `documents`, `ids`, and `lines` skip a symlinked
+  file as before.
+- `find` with a huge `count` or `offset` (`u32::MAX`) aborted the process
+  while Tantivy reserved memory for the page. The page is now clamped to the
+  documents that exist; an `offset` past the end is an empty page with the
+  true `total`. `search` clamps each leg's pool the same way.
+- `search` with a `filter` ranked the text query first and dropped the
+  Records the filter excluded afterwards, so a filter that matched few
+  Records could return nothing while `find` found them. The lexical leg now
+  runs the filter as a clause next to the text query; ranking is still the
+  text query's BM25.
+- `search` with a reranker failed with `not_found` for the whole call when
+  the Index still listed a Record whose file was just removed. That hit is
+  skipped, as `find` skips it.
+- A `regex_phrase` pattern Tantivy rejects, or any query Tantivy refuses
+  as an invalid argument, failed at search time as `index_lexical` and
+  flagged the Index generation as damaged, so the indexer ran a full check.
+  It is `invalid` now (a `regex_phrase` pattern when the Filter is compiled)
+  and flags nothing.
+- `open` treated an Index it could not read (broken Tantivy files, an
+  unreadable `ord.json` or vector dump) as an empty one, so `find` returned
+  nothing and the ordering counters restarted. The handle now keeps the
+  failure: `find` and `search` return its `index_*` code, and the generation
+  is flagged so the lexical-role indexer rebuilds it.
+- The vector leg changed USearch's search expansion on every query while
+  several readers shared the index, a data race in the C++ library. The
+  expansion is set once, when the index is created or restored.
+- Journal order was corrupted when the lexical and the vector leg were held
+  by different processes. The vector process rewrote (or, with an empty
+  in-memory map, deleted) `ord.json`, the journal `ord` counters of the
+  lexical process, so lines got equal `ord` values and `find` over a
+  `journal` lost append order. Only the handle that advanced a counter now
+  saves `ord.json`.
+- Crash leftovers of another process were not restored. A handle read
+  `tx.log` once, at `open`, so a write that a process left uncommitted after
+  that was neither restored by this handle's next `begin`, `discard`, or
+  write nor kept: the handle overwrote `tx.log` and the file stayed in the
+  work tree, readable by `get` and never indexed. The handle now re-reads
+  `tx.log` each time it takes `write.lock`.
+- A restore that failed (a read-only directory, a git error) emptied
+  `tx.log` first, so the list of leftover paths was lost. The list is now
+  emptied only after the files are restored. `Vault` and `Collection` use
+  one restore and commit routine instead of two copies.
+- `find` and `search` on a handle that had not itself written to a `journal`
+  skipped lines another handle or process appended after it opened (the
+  reply carried the right `total` and fewer records). The handle reads the
+  journal `id` map again when its file changed.
 
 ### Removed
 

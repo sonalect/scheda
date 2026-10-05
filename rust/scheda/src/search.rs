@@ -1,9 +1,7 @@
 //! Hybrid lexical + vector search.
 
 use std::cmp::Reverse;
-use std::collections::BTreeMap;
-#[cfg(feature = "search")]
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, RwLock};
@@ -17,9 +15,9 @@ use sha1::{Digest, Sha1};
 #[cfg(feature = "search")]
 use tantivy::collector::DocSetCollector;
 use tantivy::collector::{Count, TopDocs};
-#[cfg(feature = "search")]
-use tantivy::query::QueryParser;
 use tantivy::query::{BooleanQuery, Occur, Query, TermQuery, TermSetQuery};
+#[cfg(feature = "search")]
+use tantivy::query::{ConstScoreQuery, QueryParser};
 use tantivy::schema::{
     FAST, Field, INDEXED, IndexRecordOption, STORED, STRING, Schema as TantivySchema, TEXT,
     Value as TantivyValue,
@@ -55,11 +53,27 @@ const VECTOR_KEYS: &str = "keys.json";
 #[cfg(feature = "search")]
 const VECTOR_CURRENT: &str = "current";
 const ORD_FILE: &str = "ord.json";
+/// Slots a vector pass may add before its first checkpoint save of the
+/// vector dump. A save writes the whole dump (`index.usearch`, `keys.json`,
+/// meta), so saving after every embedder batch makes a first pass over N
+/// slots write O(N²) bytes. A pass saves the dump when it ends or stops, and
+/// in between only when the slots added since the last save reach this many
+/// or half the slots the store holds, whichever is more. Saves then come at
+/// geometric sizes (about 2N bytes in all for a pass over N slots), and a
+/// killed process loses at most that share of the pass. A save never moves a
+/// mark.
+#[cfg(feature = "search")]
+const VECTOR_CHECKPOINT_FLOOR: usize = 256;
+/// Replaces [`VECTOR_CHECKPOINT_FLOOR`] in tests that kill a process
+/// mid-pass and need a checkpoint within a few Records.
+#[cfg(all(test, feature = "search"))]
+pub(crate) static TEST_CHECKPOINT_FLOOR: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(VECTOR_CHECKPOINT_FLOOR);
 /// Heap budget for one Tantivy `IndexWriter`. Opening a writer allocates
 /// this and starts a merge thread, so the engine keeps a writer only while
-/// a transaction (or one autocommit) is in progress and drops it when that
-/// work ends. Holding it for the handle lifetime would block every other
-/// writer on the directory lock.
+/// an indexer round (or a generation build) is applying commits and drops
+/// it when that work ends. Holding it for the handle lifetime would block
+/// every other process's indexer on the directory lock.
 const WRITER_HEAP: usize = 16_000_000;
 #[cfg(feature = "search")]
 const RRF_K: f64 = 60.0;
@@ -94,11 +108,41 @@ struct Inner {
     /// not overwrite a dump another process keeps current.
     #[cfg(feature = "search")]
     vector_dirty: bool,
+    /// Slots added to or dropped from the vector store since its last save:
+    /// what [`VECTOR_CHECKPOINT_FLOOR`] counts.
+    #[cfg(feature = "search")]
+    vector_unsaved: usize,
+    /// Saves of the vector dump so far.
+    #[cfg(all(test, feature = "search"))]
+    vector_saves: u64,
     dirty: bool,
+    /// Format and projector-dump checks the current pass already ran.
+    checked: Option<Checked>,
+    /// `next_ord` holds counters this handle advanced and has not saved.
+    /// Only the lexical role advances them, so only it may write `ord.json`.
+    ord_dirty: bool,
     can_write: bool,
     next_ord: BTreeMap<String, u64>,
+    /// Why the Tantivy files or `ord.json` of this generation did not load
+    /// at `open`. Queries return it instead of answering from an engine
+    /// that silently has no lexical leg.
+    load_error: Option<Error>,
+    /// Why the vector dump did not load at `open`. `search` returns it when
+    /// it needs vectors and none were loaded since.
+    #[cfg(feature = "search")]
+    vector_error: Option<Error>,
     #[cfg(test)]
     writer_opens: u64,
+}
+
+/// What one pass already verified in generation `dir`, so a Record does not
+/// repeat it: the `format` file, and the projector dump line of each
+/// collection. The indexer starts every leg pass with
+/// [`SearchEngine::begin_pass`], which forgets it.
+struct Checked {
+    dir: PathBuf,
+    format: bool,
+    collections: BTreeSet<String>,
 }
 
 struct Lexical {
@@ -114,6 +158,7 @@ struct Lexical {
     f_path: Field,
     f_text: Field,
     f_eq: Field,
+    f_num: Field,
     f_exists: Field,
     f_null: Field,
     f_tok: Field,
@@ -292,6 +337,17 @@ struct VectorMeta {
     next_key: u64,
 }
 
+/// The Filter of a `search` call, for both legs: the lexical leg runs it as
+/// a clause of its query, the vector leg searches only `allowed`.
+#[cfg(feature = "search")]
+pub(crate) struct SearchFilter<'a> {
+    pub(crate) filter: &'a Filter,
+    /// `(collection, id)` pairs the Filter matches.
+    pub(crate) allowed: &'a BTreeMap<String, BTreeSet<String>>,
+    /// Source text of a `more_like_this` document.
+    pub(crate) mlt_fts: &'a dyn Fn(&CollectionDecl, &str) -> Result<String, Error>,
+}
+
 #[cfg(feature = "search")]
 struct LegHit {
     collection: String,
@@ -326,15 +382,43 @@ impl SearchEngine {
         can_write: bool,
         projector: Option<Arc<dyn crate::Projector>>,
     ) -> Result<Self, Error> {
+        // The engine stays openable when a file does not read, so the
+        // indexer can start and rebuild the generation. The failure is kept
+        // and reported by the first query, and the generation is flagged.
+        let mut load_error = None;
+        let lexical = kept(open_lexical(index_dir), &mut load_error);
+        let next_ord = kept(load_next_ord(index_dir).map(Some), &mut load_error);
+        #[cfg(feature = "search")]
+        let mut vector_error = None;
+        #[cfg(feature = "search")]
+        let vector = kept(load_vector(index_dir), &mut vector_error);
+        #[cfg_attr(not(feature = "search"), allow(unused_mut))]
+        let mut damaged = load_error.as_ref().is_some_and(index::is_damage);
+        #[cfg(feature = "search")]
+        {
+            damaged = damaged || vector_error.as_ref().is_some_and(index::is_damage);
+        }
+        if damaged {
+            index::flag_damaged(index_dir);
+        }
         let inner = Inner {
-            lexical: open_lexical(index_dir).ok().flatten(),
+            lexical,
             #[cfg(feature = "search")]
-            vector: load_vector(index_dir).ok().flatten(),
+            vector,
             #[cfg(feature = "search")]
             vector_dirty: false,
+            #[cfg(feature = "search")]
+            vector_unsaved: 0,
+            #[cfg(all(test, feature = "search"))]
+            vector_saves: 0,
             dirty: false,
+            checked: None,
+            ord_dirty: false,
             can_write,
-            next_ord: load_next_ord(index_dir).unwrap_or_default(),
+            next_ord: next_ord.unwrap_or_default(),
+            load_error,
+            #[cfg(feature = "search")]
+            vector_error,
             #[cfg(test)]
             writer_opens: 0,
         };
@@ -345,7 +429,7 @@ impl SearchEngine {
         })
     }
 
-    fn dir(&self) -> Result<PathBuf, Error> {
+    pub(crate) fn dir(&self) -> Result<PathBuf, Error> {
         Ok(crate::error::rw_read(&self.index_dir, "[SearchEngine] lock index dir")?.clone())
     }
 
@@ -366,9 +450,18 @@ impl SearchEngine {
                 vector: None,
                 #[cfg(feature = "search")]
                 vector_dirty: false,
+                #[cfg(feature = "search")]
+                vector_unsaved: 0,
+                #[cfg(all(test, feature = "search"))]
+                vector_saves: 0,
                 dirty: false,
+                checked: None,
+                ord_dirty: false,
                 can_write: false,
                 next_ord: BTreeMap::new(),
+                load_error: None,
+                #[cfg(feature = "search")]
+                vector_error: None,
                 #[cfg(test)]
                 writer_opens: 0,
             }),
@@ -403,7 +496,9 @@ impl SearchEngine {
     }
 
     /// Upsert `record` into the legs named by `legs` only. The embedder is
-    /// called only for the vector leg.
+    /// called only for the vector leg. The Record is projected once; the
+    /// `format` file and the projector dump are checked once per pass for
+    /// each collection (see [`begin_pass`](Self::begin_pass)).
     pub(crate) fn upsert_legs(
         &self,
         decl: &CollectionDecl,
@@ -416,9 +511,15 @@ impl SearchEngine {
         }
         #[cfg(not(feature = "search"))]
         let _ = embedder;
+        let projection = project_record(
+            self.projector.as_deref(),
+            decl,
+            record,
+            legs.vector && decl.vector_indexed(),
+        )?;
         #[cfg(feature = "search")]
         let batch = if legs.vector {
-            embed_changed_slots(self, decl, record, embedder)?
+            embed_changed_slots(self, decl, record, embedder, &projection)?
         } else {
             VectorBatch::empty()
         };
@@ -429,26 +530,19 @@ impl SearchEngine {
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
-        let first_write = match index::format_version(&index_dir)? {
-            Some(v) if v != index::FORMAT_VERSION => {
-                return Err(Error::index_version(format!(
-                    "index format {v} is not {}",
-                    index::FORMAT_VERSION
-                ))
-                .context("[SearchEngine::upsert] check version"));
-            }
-            Some(_) => false,
-            None => true,
-        };
-        index::ensure_format(&index_dir)?;
-        self.ensure_projector_dump(&index_dir, first_write, &decl.name)?;
+        self.prepare_write(
+            &mut inner,
+            &index_dir,
+            Some(&decl.name),
+            "[SearchEngine::upsert] check version",
+        )?;
         upsert_record(
             &mut inner,
             &index_dir,
             decl,
             record,
             embedder.map(|embedder| (embedder, &batch)),
-            self.projector.as_deref(),
+            &projection,
             legs,
         )?;
         Ok(())
@@ -469,17 +563,71 @@ impl SearchEngine {
         if !inner.can_write {
             bail!(Error::index_lexical("search index is not open for write"));
         }
-        match index::format_version(&index_dir)? {
-            Some(v) if v != index::FORMAT_VERSION => {
-                return Err(Error::index_version(format!(
-                    "index format {v} is not {}",
-                    index::FORMAT_VERSION
-                ))
-                .context("[SearchEngine::forget] check version"));
-            }
-            _ => index::ensure_format(&index_dir)?,
-        }
+        self.prepare_write(
+            &mut inner,
+            &index_dir,
+            None,
+            "[SearchEngine::forget] check version",
+        )?;
         forget_record(&mut inner, &decl.name, id, legs)?;
+        Ok(())
+    }
+
+    /// Forget what the previous pass verified: the next write checks the
+    /// `format` file and each collection's projector dump line again. The
+    /// indexer calls it at the start of every leg pass, so a change another
+    /// process made between passes is seen, and a pass costs one check
+    /// instead of one per Record.
+    pub(crate) fn begin_pass(&self) -> Result<(), Error> {
+        crate::error::rw_write(&self.inner, "[SearchEngine::begin_pass] lock")?.checked = None;
+        Ok(())
+    }
+
+    /// Check, once per pass, that the generation at `index_dir` has the
+    /// current `format` (writing the file when it is new) and, for
+    /// `collection`, that the projector dump agrees with this engine's
+    /// projector (adding the collection's line when the dump lacks it).
+    /// `index_version` on a mismatch.
+    fn prepare_write(
+        &self,
+        inner: &mut Inner,
+        index_dir: &Path,
+        collection: Option<&str>,
+        frame: &'static str,
+    ) -> Result<(), Error> {
+        let mut checked = match inner.checked.take() {
+            Some(checked) if checked.dir == index_dir => checked,
+            _ => Checked {
+                dir: index_dir.to_path_buf(),
+                format: false,
+                collections: BTreeSet::new(),
+            },
+        };
+        let mut first_write = false;
+        if !checked.format {
+            match index::format_version(index_dir)? {
+                Some(v) if v != index::FORMAT_VERSION => {
+                    return Err(Error::index_version(format!(
+                        "index format {v} is not {}",
+                        index::FORMAT_VERSION
+                    ))
+                    .context(frame));
+                }
+                Some(_) => {}
+                None => {
+                    index::write_format(index_dir)?;
+                    first_write = true;
+                }
+            }
+            checked.format = true;
+        }
+        if let Some(collection) = collection
+            && !checked.collections.contains(collection)
+        {
+            self.ensure_projector_dump(index_dir, first_write, collection)?;
+            checked.collections.insert(collection.to_owned());
+        }
+        inner.checked = Some(checked);
         Ok(())
     }
 
@@ -692,8 +840,9 @@ impl SearchEngine {
     }
 
     /// Mark this engine as writable. The Tantivy writer is not opened
-    /// here: the first indexed write opens it, and [`release_writer`]
-    /// drops it when the Vault write lock is released.
+    /// here: the first indexed write of the indexer round opens it, and
+    /// [`release_writer`](Self::release_writer) drops it when the round
+    /// ends.
     pub(crate) fn enable_write(&self) -> Result<(), Error> {
         let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::enable_write] lock")?;
         let was = std::mem::replace(&mut inner.can_write, true);
@@ -714,28 +863,36 @@ impl SearchEngine {
         let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::flush] lock")?;
         let can_write = inner.can_write;
         let index_dir = self.dir()?;
-        inner.commit(&index_dir, can_write)
+        inner.commit(&index_dir, can_write, VectorSave::Now)
+    }
+
+    /// [`flush`](Self::flush) between two batches of one pass: Tantivy is
+    /// committed at once, but the vector dump is saved only at a checkpoint
+    /// (see [`VECTOR_CHECKPOINT_FLOOR`]). The end of the
+    /// pass ([`release_writer`](Self::release_writer)) saves what is left.
+    pub(crate) fn flush_batch(&self) -> Result<(), Error> {
+        let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::flush_batch] lock")?;
+        let can_write = inner.can_write;
+        let index_dir = self.dir()?;
+        inner.commit(&index_dir, can_write, VectorSave::Checkpoint)
     }
 
     /// Commit buffered index writes and drop the Tantivy `IndexWriter`.
     ///
-    /// The writer holds a directory lock for as long as it lives. After a
-    /// transaction (or one autocommit) ends, this releases that lock so
-    /// another handle can open a writer without waiting out `LockBusy`
-    /// retries. The `Index` and reader stay; the next mutating call opens
-    /// a writer again.
+    /// The writer holds a directory lock for as long as it lives. At the
+    /// end of an indexer round (or of a generation build) this releases
+    /// that lock so another process's indexer can open a writer without
+    /// waiting out `LockBusy` retries. The `Index` and reader stay; the
+    /// next round opens a writer again.
     ///
-    /// Opening a writer allocates a 16 MiB heap and starts a merge
-    /// thread, so this is not free. A batch of Record writes inside one
-    /// transaction still pays it once. Autocommit pays it per call; that
-    /// sits next to a git commit, which already dominates. Holding the
-    /// writer for the handle lifetime was cheaper per write and left a
-    /// consumer no way to free the lock without dropping the handle.
+    /// Opening a writer allocates a 16 MiB heap and starts a merge thread,
+    /// so this is not free. A round applies every pending commit with one
+    /// writer, so the cost is paid once per round, not per Record.
     pub(crate) fn release_writer(&self) -> Result<(), Error> {
         let mut inner = crate::error::rw_write(&self.inner, "[SearchEngine::release_writer] lock")?;
         let can_write = inner.can_write;
         let index_dir = self.dir()?;
-        inner.commit(&index_dir, can_write)?;
+        inner.commit(&index_dir, can_write, VectorSave::Now)?;
         let writer = take_lexical_writer(inner.lexical.as_ref())?;
         drop(inner);
         if let Some(writer) = writer {
@@ -763,7 +920,7 @@ impl SearchEngine {
         {
             let mut inner =
                 crate::error::rw_write(&self.inner, "[SearchEngine::follow_disk] lock")?;
-            if !inner.dirty {
+            if !inner.ord_dirty {
                 inner.next_ord = load_next_ord(&index_dir)?;
             }
         }
@@ -780,6 +937,17 @@ impl SearchEngine {
         Ok(inner.vector.as_ref().is_some_and(|store| {
             store.model_id == embedder.model_id() && store.dimensions == embedder.dimensions().get()
         }))
+    }
+
+    /// The failure that kept the vector dump from loading at `open`, when
+    /// no dump has loaded since.
+    #[cfg(feature = "search")]
+    fn require_vector_loaded(&self) -> Result<(), Error> {
+        let inner = crate::error::rw_read(&self.inner, "[SearchEngine::search] lock vectors")?;
+        match (&inner.vector, &inner.vector_error) {
+            (None, Some(err)) => Err(err.clone()),
+            _ => Ok(()),
+        }
     }
 
     /// Load the vector dump of `index_dir` when another handle saved a
@@ -827,6 +995,14 @@ impl SearchEngine {
         vector_seq(&self.dir().ok()?.join(VECTOR_DIR))
     }
 
+    /// Saves of the vector dump this engine has made.
+    #[cfg(all(test, feature = "search"))]
+    pub(crate) fn vector_saves(&self) -> u64 {
+        crate::error::rw_read(&self.inner, "[SearchEngine::vector_saves] lock")
+            .map(|inner| inner.vector_saves)
+            .unwrap_or(0)
+    }
+
     #[cfg(test)]
     pub(crate) fn lexical_writer_opens(&self) -> u64 {
         crate::error::rw_read(&self.inner, "[SearchEngine::lexical_writer_opens] lock")
@@ -847,6 +1023,9 @@ impl SearchEngine {
     ) -> Result<T, Error> {
         {
             let inner = crate::error::rw_read(&self.inner, frame)?;
+            if let Some(err) = &inner.load_error {
+                return Err(err.clone());
+            }
             if inner.query_ready() {
                 return f(&inner);
             }
@@ -875,7 +1054,7 @@ impl SearchEngine {
                 // allocates `2 * limit` scored slots (~64 GiB) and aborts on CI.
                 let addrs = searcher
                     .search(query, &DocSetCollector)
-                    .context(Code::IndexLexical, "[SearchEngine::find_ids] search")?;
+                    .map_err(|err| query_error(err, "[SearchEngine::find_ids] search"))?;
                 let mut allowed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
                 for (collection, id) in ids_from_addrs(
                     searcher,
@@ -912,7 +1091,21 @@ impl SearchEngine {
             mlt_fts,
             "[SearchEngine::find] reload reader",
             |searcher, query, lexical| {
-                let off = offset as usize;
+                // `TopDocs` reserves slots for `limit + offset` hits up front
+                // (`u32::MAX` aborts the process). A page cannot hold more
+                // than the live documents, so both are clamped to them.
+                let live = usize::try_from(searcher.num_docs()).unwrap_or(usize::MAX);
+                let off = (offset as usize).min(live);
+                let limit = limit.min(live - off);
+                if limit == 0 {
+                    let n = searcher
+                        .search(query, &Count)
+                        .map_err(|err| query_error(err, "[SearchEngine::find] count"))?;
+                    return Ok(FindPage {
+                        ids: Vec::new(),
+                        total: u32::try_from(n).unwrap_or(u32::MAX),
+                    });
+                }
                 let (n, addrs): (usize, Vec<tantivy::DocAddress>) = if journal_ord {
                     let (n, top) = searcher
                         .search(
@@ -924,12 +1117,12 @@ impl SearchEngine {
                                     .order_by_fast_field::<u64>("ord", Order::Asc),
                             ),
                         )
-                        .context(Code::IndexLexical, "[SearchEngine::find] search")?;
+                        .map_err(|err| query_error(err, "[SearchEngine::find] search"))?;
                     (n, top.into_iter().map(|(_, addr)| addr).collect())
                 } else {
                     let (n, top) = searcher
                         .search(query, &(Count, top_by_score_then_ord(limit, off)))
-                        .context(Code::IndexLexical, "[SearchEngine::find] search")?;
+                        .map_err(|err| query_error(err, "[SearchEngine::find] search"))?;
                     (n, top.into_iter().map(|(_, addr)| addr).collect())
                 };
                 Ok(FindPage {
@@ -962,21 +1155,6 @@ impl SearchEngine {
         index::require_current_format(&index_dir)?;
         self.require_projector_dump(&index_dir)?;
         self.with_query(&index_dir, "[SearchEngine::with_find] lock", |inner| {
-            Self::find_in(inner, collections, decls, filter, &mlt_fts, reload_frame, f)
-        })
-        .inspect_err(|err| note_damage(&index_dir, err))
-    }
-
-    fn find_in<T>(
-        inner: &Inner,
-        collections: &[&str],
-        decls: &[CollectionDecl],
-        filter: &Filter,
-        mlt_fts: &impl Fn(&CollectionDecl, &str) -> Result<String, Error>,
-        reload_frame: &'static str,
-        f: impl FnOnce(&tantivy::Searcher, &BooleanQuery, &Lexical) -> Result<T, Error>,
-    ) -> Result<Option<T>, Error> {
-        {
             let Some(lexical) = inner.lexical.as_ref() else {
                 return Ok(None);
             };
@@ -984,50 +1162,19 @@ impl SearchEngine {
                 .reader
                 .reload()
                 .context(Code::IndexLexical, reload_frame)?;
-            let fields = FindFields {
-                id: lexical.f_id,
-                eq: lexical.f_eq,
-                exists: lexical.f_exists,
-                null: lexical.f_null,
-                tok: lexical.f_tok,
-                text: lexical.f_text,
-            };
-            let query = if decls.len() == 1 {
-                let compiled = query::compile(&decls[0], &fields, &lexical.index, filter, &|id| {
-                    mlt_fts(&decls[0], id)
-                })?;
-                BooleanQuery::new(vec![
-                    (
-                        Occur::Must,
-                        collection_query(lexical.f_collection, collections),
-                    ),
-                    (Occur::Must, compiled),
-                ])
-            } else {
-                let mut clauses = Vec::with_capacity(decls.len());
-                for decl in decls {
-                    let compiled = query::compile(decl, &fields, &lexical.index, filter, &|id| {
-                        mlt_fts(decl, id)
-                    })?;
-                    clauses.push((
-                        Occur::Should,
-                        Box::new(BooleanQuery::new(vec![
-                            (
-                                Occur::Must,
-                                Box::new(TermQuery::new(
-                                    Term::from_field_text(lexical.f_collection, &decl.name),
-                                    IndexRecordOption::Basic,
-                                )),
-                            ),
-                            (Occur::Must, compiled),
-                        ])) as Box<dyn Query>,
-                    ));
-                }
-                BooleanQuery::new(clauses)
-            };
+            let refs: Vec<&CollectionDecl> = decls.iter().collect();
+            let query = filter_query(
+                lexical,
+                self.projector.as_deref(),
+                collections,
+                &refs,
+                filter,
+                &mlt_fts,
+            )?;
             let searcher = lexical.reader.searcher();
             Ok(Some(f(&searcher, &query, lexical)?))
-        }
+        })
+        .inspect_err(|err| note_damage(&index_dir, err))
     }
 
     #[cfg(feature = "search")]
@@ -1036,12 +1183,13 @@ impl SearchEngine {
         decls: &[CollectionDecl],
         query: &SearchQuery,
         embedder: Option<&dyn Embedder>,
-        allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
+        filter: Option<&SearchFilter<'_>>,
         has_reranker: bool,
     ) -> Result<SearchHits, Error> {
-        let lexical_names: Vec<&str> = decls
+        let lexical_decls: Vec<&CollectionDecl> =
+            decls.iter().filter(|decl| decl.lexical_indexed()).collect();
+        let lexical_names: Vec<&str> = lexical_decls
             .iter()
-            .filter(|decl| decl.lexical_indexed())
             .map(|decl| decl.name.as_str())
             .collect();
         let vector_names: Vec<&str> = decls
@@ -1073,6 +1221,7 @@ impl SearchEngine {
             // vectors than this handle loaded.
             self.refresh_vector(&index_dir)
                 .inspect_err(|err| note_damage(&index_dir, err))?;
+            self.require_vector_loaded()?;
         }
         // Vectors of another model are not searched: do not pay for
         // embedding a query that cannot use them.
@@ -1084,7 +1233,15 @@ impl SearchEngine {
         };
         self.with_query(&index_dir, "[SearchEngine::search] lock", |inner| {
             let lexical_hits = if lexical_weight > 0.0 && !lexical_names.is_empty() {
-                lexical_search(inner, &lexical_names, text, pool, allowed)?
+                lexical_search(
+                    inner,
+                    self.projector.as_deref(),
+                    &lexical_names,
+                    &lexical_decls,
+                    text,
+                    pool,
+                    filter,
+                )?
             } else {
                 Vec::new()
             };
@@ -1095,7 +1252,7 @@ impl SearchEngine {
                     query_vec.as_deref(),
                     pool,
                     embedder,
-                    allowed,
+                    filter.map(|set| set.allowed),
                 )?
             } else {
                 Vec::new()
@@ -1113,8 +1270,107 @@ impl SearchEngine {
     }
 }
 
+/// The query `filter` stands for over `decls`, limited to the collections
+/// in `collections`. One Filter is compiled once per collection, because
+/// its field names resolve against that collection's Projector columns.
+fn filter_query(
+    lexical: &Lexical,
+    projector: Option<&dyn crate::Projector>,
+    collections: &[&str],
+    decls: &[&CollectionDecl],
+    filter: &Filter,
+    mlt_fts: &impl Fn(&CollectionDecl, &str) -> Result<String, Error>,
+) -> Result<BooleanQuery, Error> {
+    let fields = FindFields {
+        id: lexical.f_id,
+        eq: lexical.f_eq,
+        num: lexical.f_num,
+        exists: lexical.f_exists,
+        null: lexical.f_null,
+        tok: lexical.f_tok,
+        text: lexical.f_text,
+    };
+    if let [decl] = decls {
+        let schema = column_schema(projector, decl);
+        let compiled = query::compile(
+            decl,
+            schema.as_ref(),
+            &fields,
+            &lexical.index,
+            filter,
+            &|id| mlt_fts(decl, id),
+        )?;
+        return Ok(BooleanQuery::new(vec![
+            (
+                Occur::Must,
+                collection_query(lexical.f_collection, collections),
+            ),
+            (Occur::Must, compiled),
+        ]));
+    }
+    let mut clauses = Vec::with_capacity(decls.len());
+    for decl in decls {
+        let schema = column_schema(projector, decl);
+        let compiled = query::compile(
+            decl,
+            schema.as_ref(),
+            &fields,
+            &lexical.index,
+            filter,
+            &|id| mlt_fts(decl, id),
+        )?;
+        clauses.push((
+            Occur::Should,
+            Box::new(BooleanQuery::new(vec![
+                (
+                    Occur::Must,
+                    Box::new(TermQuery::new(
+                        Term::from_field_text(lexical.f_collection, &decl.name),
+                        IndexRecordOption::Basic,
+                    )) as Box<dyn Query>,
+                ),
+                (Occur::Must, compiled),
+            ])) as Box<dyn Query>,
+        ));
+    }
+    Ok(BooleanQuery::new(clauses))
+}
+
+/// The Projector schema of `decl`, for the column kinds a Filter compiles
+/// against. `None` without a Projector or when its `schema` fails: validation
+/// has already rejected a Filter field that needs it.
+fn column_schema(
+    projector: Option<&dyn crate::Projector>,
+    decl: &CollectionDecl,
+) -> Option<IndexSchema> {
+    projector?.schema(&decl.name).ok()
+}
+
+/// `Ok` value of `result`; on `Err` the error goes to `slot` (the first one
+/// stays) and the value is `None`.
+fn kept<T>(result: Result<Option<T>, Error>, slot: &mut Option<Error>) -> Option<T> {
+    match result {
+        Ok(value) => value,
+        Err(err) => {
+            slot.get_or_insert(err);
+            None
+        }
+    }
+}
+
+/// Map a failure of running a query. Tantivy reports a query it cannot run
+/// because of what the caller put in it (a regex it rejects) as
+/// `InvalidArgument`: that is `invalid`, not damage to the Index files.
+fn query_error(err: tantivy::TantivyError, frame: &'static str) -> Error {
+    let code = match err {
+        tantivy::TantivyError::InvalidArgument(_) => Code::Invalid,
+        _ => Code::IndexLexical,
+    };
+    Error::new(code, err.to_string()).context(frame)
+}
+
 /// Flag `index_dir` when a query could not read it, so the indexer that
-/// holds the lexical role checks it and rebuilds it if it is damaged (D8).
+/// holds the lexical role checks it and rebuilds it if it is damaged.
 fn note_damage(index_dir: &Path, err: &Error) {
     if index::is_damage(err) {
         index::flag_damaged(index_dir);
@@ -1153,9 +1409,18 @@ fn empty_inner(can_write: bool) -> Inner {
         vector: None,
         #[cfg(feature = "search")]
         vector_dirty: false,
+        #[cfg(feature = "search")]
+        vector_unsaved: 0,
+        #[cfg(all(test, feature = "search"))]
+        vector_saves: 0,
         dirty: false,
+        checked: None,
+        ord_dirty: false,
         can_write,
         next_ord: BTreeMap::new(),
+        load_error: None,
+        #[cfg(feature = "search")]
+        vector_error: None,
         #[cfg(test)]
         writer_opens: 0,
     }
@@ -1194,7 +1459,7 @@ impl Drop for SearchEngine {
             return;
         };
         let can_write = inner.can_write;
-        let _ = inner.commit(&index_dir, can_write);
+        let _ = inner.commit(&index_dir, can_write, VectorSave::Now);
         let lexical = inner.lexical.take();
         shutdown_lexical(lexical);
     }
@@ -1207,7 +1472,7 @@ impl Inner {
 
     fn prepare_query(&mut self, index_dir: &Path) -> Result<(), Error> {
         let can_write = self.can_write;
-        self.commit(index_dir, can_write)?;
+        self.commit(index_dir, can_write, VectorSave::Now)?;
         if self.lexical.is_none() {
             self.lexical = open_lexical(index_dir)?;
         }
@@ -1233,10 +1498,43 @@ impl Inner {
         Ok(())
     }
 
-    fn commit(&mut self, index_dir: &Path, can_write: bool) -> Result<(), Error> {
-        if !self.dirty || !can_write {
+    /// Whether the vector dump must be saved by a commit that asked for
+    /// `mode`.
+    fn vector_save_due(&self, mode: VectorSave) -> bool {
+        #[cfg(feature = "search")]
+        {
+            self.vector_dirty
+                && match mode {
+                    VectorSave::Now => true,
+                    VectorSave::Checkpoint => {
+                        #[cfg(test)]
+                        let floor =
+                            TEST_CHECKPOINT_FLOOR.load(std::sync::atomic::Ordering::Relaxed);
+                        #[cfg(not(test))]
+                        let floor = VECTOR_CHECKPOINT_FLOOR;
+                        let held = self.vector.as_ref().map_or(0, |store| store.keys.len());
+                        self.vector_unsaved >= floor.max(held / 2)
+                    }
+                }
+        }
+        #[cfg(not(feature = "search"))]
+        {
+            let _ = mode;
+            false
+        }
+    }
+
+    /// Commit Tantivy, save the vector dump when `vector` says so, and save
+    /// `ord.json`. A pending vector change keeps `vector_dirty` set until
+    /// it is saved, so a later commit with [`VectorSave::Now`] writes it.
+    /// Owner-only modes: the whole tree after a Tantivy commit (it creates
+    /// files this crate never opened), only the files written otherwise.
+    fn commit(&mut self, index_dir: &Path, can_write: bool, mode: VectorSave) -> Result<(), Error> {
+        let save_dump = self.vector_save_due(mode);
+        if !can_write || !(self.dirty || save_dump) {
             return Ok(());
         }
+        let mut committed = false;
         if let Some(lexical) = &self.lexical {
             {
                 let mut slot =
@@ -1245,6 +1543,7 @@ impl Inner {
                     writer
                         .commit()
                         .context(Code::IndexLexical, "[SearchEngine::commit] lexical commit")?;
+                    committed = true;
                 }
             }
             lexical
@@ -1253,17 +1552,94 @@ impl Inner {
                 .context(Code::IndexLexical, "[SearchEngine::commit] reload reader")?;
         }
         #[cfg(feature = "search")]
-        if self.vector_dirty {
+        if save_dump {
             if let Some(vector) = self.vector.as_mut() {
                 vector.seq = Some(save_vector(index_dir, vector)?);
+                #[cfg(test)]
+                {
+                    self.vector_saves = self.vector_saves.saturating_add(1);
+                }
             }
             self.vector_dirty = false;
+            self.vector_unsaved = 0;
         }
-        save_next_ord(index_dir, &self.next_ord)?;
+        #[cfg(not(feature = "search"))]
+        let _ = save_dump;
+        if self.ord_dirty {
+            save_next_ord(index_dir, &self.next_ord)?;
+            self.ord_dirty = false;
+        }
         self.dirty = false;
-        index::restrict_index_tree(index_dir)?;
+        if committed {
+            index::restrict_index_tree(index_dir)?;
+        }
         Ok(())
     }
+}
+
+/// When a commit saves the vector dump.
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum VectorSave {
+    /// Whenever it has unsaved changes.
+    Now,
+    /// Only when enough slots changed since the last save (see
+    /// [`VECTOR_CHECKPOINT_FLOOR`]).
+    Checkpoint,
+}
+
+/// A Record as the projector sees it: computed once per upsert and shared
+/// by the embedding step and the Index write.
+struct Projection {
+    /// The projected values; `None` when the projector gives this Record no
+    /// columns (or fails), so it has no Index entry. Without a projector,
+    /// an empty document.
+    doc: Option<IndexDoc>,
+    /// The projector's schema for the collection, when it has a valid one.
+    /// Read only when it is used: for a Record that has a document, or for
+    /// the vector leg of a vector-indexed collection.
+    schema: Option<IndexSchema>,
+    /// The engine has a projector. Only then does the vector leg write.
+    has_projector: bool,
+}
+
+/// Project `record` of `decl` once. `need_schema` asks for the schema even
+/// when the Record has no document (the vector leg of a vector-indexed
+/// collection); an invalid schema is an error then too.
+fn project_record(
+    projector: Option<&dyn crate::Projector>,
+    decl: &CollectionDecl,
+    record: &Record,
+    need_schema: bool,
+) -> Result<Projection, Error> {
+    let Some(projector) = projector else {
+        return Ok(Projection {
+            doc: Some(IndexDoc::default()),
+            schema: None,
+            has_projector: false,
+        });
+    };
+    let raw = record.raw.as_deref().unwrap_or(&[]);
+    let id = record.id.as_deref().unwrap_or("");
+    let doc = match projector.project(&decl.name, id, raw) {
+        Ok(doc) if !doc.values.is_empty() => Some(doc),
+        _ => None,
+    };
+    let schema = if doc.is_some() || need_schema {
+        match projector.schema(&decl.name) {
+            Ok(schema) => {
+                schema.require_valid()?;
+                Some(schema)
+            }
+            Err(_) => None,
+        }
+    } else {
+        None
+    };
+    Ok(Projection {
+        doc,
+        schema,
+        has_projector: true,
+    })
 }
 
 #[cfg(feature = "search")]
@@ -1272,27 +1648,15 @@ fn embed_changed_slots(
     decl: &CollectionDecl,
     record: &Record,
     embedder: Option<&dyn Embedder>,
+    projection: &Projection,
 ) -> Result<VectorBatch, Error> {
     if !decl.vector_indexed() {
         return Ok(VectorBatch::empty());
     }
-    let Some(projector) = engine.projector.as_deref() else {
+    let (Some(schema), Some(doc)) = (projection.schema.as_ref(), projection.doc.as_ref()) else {
         return Ok(VectorBatch::empty());
     };
-    let schema = match projector.schema(&decl.name) {
-        Ok(schema) => {
-            schema.require_valid()?;
-            schema
-        }
-        Err(_) => return Ok(VectorBatch::empty()),
-    };
-    let raw = record.raw.as_deref().unwrap_or(&[]);
-    let id = record.id.as_deref().unwrap_or("");
-    let doc = match projector.project(&decl.name, id, raw) {
-        Ok(doc) if !doc.values.is_empty() => doc,
-        _ => return Ok(VectorBatch::empty()),
-    };
-    let pieces = projector::vector_pieces(&schema, &doc);
+    let pieces = projector::vector_pieces(schema, doc);
     let to_embed = {
         let inner = crate::error::rw_read(&engine.inner, "[SearchEngine] lock vector store")?;
         slots_needing_embed(
@@ -1308,9 +1672,9 @@ fn embed_changed_slots(
 }
 
 fn write_projector_dump(index_dir: &Path, dump: &str) -> Result<(), Error> {
-    fs::write(index_dir.join(PROJECTOR_FILE), dump)
-        .context("[SearchEngine] write projector dump")?;
-    index::restrict_index_tree(index_dir)
+    let path = index_dir.join(PROJECTOR_FILE);
+    fs::write(&path, dump).context("[SearchEngine] write projector dump")?;
+    store::restrict_file(&path)
 }
 
 fn read_projector_dump(index_dir: &Path) -> Result<Option<ProjectorDump>, Error> {
@@ -1327,49 +1691,30 @@ fn upsert_record(
     decl: &CollectionDecl,
     record: &Record,
     vector: Option<(&dyn Embedder, &VectorBatch)>,
-    projector: Option<&dyn crate::Projector>,
+    projection: &Projection,
     legs: Legs,
 ) -> Result<(), Error> {
+    let has_projector = projection.has_projector;
     let Some(id) = record.id.as_deref().filter(|id| !id.is_empty()) else {
         return Ok(());
     };
-    let raw = match record.raw.as_deref() {
-        Some(raw) => raw,
-        None => &[],
-    };
-    let projected = match projector {
-        None => Some(IndexDoc::default()),
-        Some(projector) => match projector.project(&decl.name, id, raw) {
-            Ok(doc) if doc.values.is_empty() => None,
-            Ok(doc) => Some(doc),
-            Err(_) => None,
-        },
-    };
     let can_write = inner.can_write;
-    if projected.is_none() {
+    let Some(projected) = projection.doc.as_ref() else {
         if can_write {
             forget_record(inner, &decl.name, id, legs)?;
         }
         #[cfg(not(feature = "search"))]
-        let _ = vector;
+        let _ = (vector, has_projector);
         return Ok(());
-    }
-    let find_schema = match projector {
-        Some(projector) => match projector.schema(&decl.name) {
-            Ok(schema) => {
-                schema.require_valid()?;
-                Some(schema)
-            }
-            Err(_) => None,
-        },
-        None => None,
     };
-    let fts_text = match (projected.as_ref(), find_schema.as_ref()) {
-        (Some(doc), Some(schema)) => projector::fts_blob(schema, doc),
-        _ => String::new(),
-    };
+    let find_schema = projection.schema.as_ref();
     if can_write {
         if decl.lexical_indexed() && legs.lexical {
+            // The full-text blob is only for the lexical leg.
+            let fts_text = match find_schema {
+                Some(schema) => projector::fts_blob(schema, projected),
+                None => String::new(),
+            };
             if inner.lexical.is_none() {
                 inner.lexical = Some(create_lexical(index_dir)?);
             }
@@ -1378,6 +1723,7 @@ fn upsert_record(
             inner
                 .next_ord
                 .insert(decl.name.clone(), ord.saturating_add(1));
+            inner.ord_dirty = true;
             if let Some(lexical) = inner.lexical.as_mut() {
                 index_lexical(
                     lexical,
@@ -1385,8 +1731,8 @@ fn upsert_record(
                     record,
                     &fts_text,
                     ord,
-                    projected.as_ref(),
-                    find_schema.as_ref(),
+                    Some(projected),
+                    find_schema,
                 )?;
                 inner.dirty = true;
             }
@@ -1394,11 +1740,10 @@ fn upsert_record(
         #[cfg(feature = "search")]
         if legs.vector
             && decl.vector_indexed()
-            && projector.is_some()
+            && has_projector
             && let Some((embedder, batch)) = vector
         {
             let names = find_schema
-                .as_ref()
                 .map(projector::vector_slot_names)
                 .unwrap_or_default();
             upsert_vector(inner, embedder, decl, record, batch, &names)?;
@@ -1406,7 +1751,7 @@ fn upsert_record(
         }
     }
     #[cfg(not(feature = "search"))]
-    let _ = vector;
+    let _ = (vector, has_projector);
     Ok(())
 }
 
@@ -1511,6 +1856,11 @@ fn index_find_fields(
                     continue;
                 }
                 doc.add_text(lexical.f_exists, name);
+                if let Some(key) =
+                    query::numeric_key(column.kind.as_ref().and_then(|kind| kind.as_known()), value)
+                {
+                    doc.add_text(lexical.f_num, query::num_term(name, &key)?);
+                }
                 for text in &texts {
                     doc.add_text(lexical.f_eq, query::eq_term(name, text)?);
                     query::add_field_tokens(doc, lexical.f_tok, name, text, analyzer)?;
@@ -1741,6 +2091,7 @@ fn upsert_vector(
         }
         None => Vec::new(),
     };
+    let mut unsaved = vanished.len();
     for key in vanished {
         store.drop_ann_slot(key)?;
         changed = true;
@@ -1779,6 +2130,7 @@ fn upsert_vector(
                 },
             );
             changed = true;
+            unsaved += 1;
         } else if let Some(key) = store.slot_key(&decl.name, id, field)
             && let Some(doc) = store.keys.get_mut(&key)
             && doc.path != path
@@ -1792,6 +2144,7 @@ fn upsert_vector(
     store.field_ids.extend(vector_names.iter().cloned());
     if changed || store.field_ids != fields_before {
         inner.vector_dirty = true;
+        inner.vector_unsaved = inner.vector_unsaved.saturating_add(unsaved);
     }
     Ok(())
 }
@@ -1859,10 +2212,12 @@ fn fusion_pool(k: usize, rerank_limit: Option<u32>) -> usize {
 #[cfg(feature = "search")]
 fn lexical_search(
     inner: &Inner,
+    projector: Option<&dyn crate::Projector>,
     collections: &[&str],
+    decls: &[&CollectionDecl],
     text: &str,
     pool: usize,
-    allowed: Option<&BTreeMap<String, BTreeSet<String>>>,
+    filter: Option<&SearchFilter<'_>>,
 ) -> Result<Vec<LegHit>, Error> {
     let Some(lexical) = inner.lexical.as_ref() else {
         return Ok(Vec::new());
@@ -1877,19 +2232,39 @@ fn lexical_search(
         Some(query) => query,
         None => return Ok(Vec::new()),
     };
-    let query = BooleanQuery::new(vec![
+    let mut clauses = vec![
         (
             Occur::Must,
             collection_query(lexical.f_collection, collections),
         ),
         (Occur::Must, parsed),
-    ]);
+    ];
+    if let Some(set) = filter {
+        // The Filter narrows the candidates before ranking, so the top
+        // `pool` hits are the best of the matching Records. It adds no
+        // score: ranking stays the text query's.
+        let compiled = filter_query(
+            lexical,
+            projector,
+            collections,
+            decls,
+            set.filter,
+            &set.mlt_fts,
+        )?;
+        clauses.push((
+            Occur::Must,
+            Box::new(ConstScoreQuery::new(Box::new(compiled), 0.0)),
+        ));
+    }
+    let query = BooleanQuery::new(clauses);
+    // `TopDocs` reserves its slots up front: ask for no more than exist.
+    let pool = pool.min(usize::try_from(searcher.num_docs()).unwrap_or(usize::MAX));
     if pool == 0 {
         return Ok(Vec::new());
     }
     let top = searcher
         .search(&query, &top_by_score_then_ord(pool, 0))
-        .context(Code::IndexLexical, "[SearchEngine::lexical_search] search")?;
+        .map_err(|err| query_error(err, "[SearchEngine::lexical_search] search"))?;
     let mut hits = Vec::new();
     for ((score, _), addr) in top {
         let doc: TantivyDocument = searcher.doc(addr).context(
@@ -1902,9 +2277,6 @@ fn lexical_search(
         let Some(id) = stored_str(&doc, lexical.f_id) else {
             continue;
         };
-        if allowed.is_some_and(|set| !allowed_has(set, &collection, &id)) {
-            continue;
-        }
         hits.push(LegHit {
             collection,
             id,
@@ -1946,6 +2318,8 @@ fn vector_search(
         )));
     }
     let names: BTreeSet<&str> = collections.iter().copied().collect();
+    // No leg can return more hits than there are vector slots.
+    let pool = pool.min(store.ann.len());
     let slot_k = pool.max(crate::ann::AnnIndex::EXPANSION_SEARCH);
     let raw = store.ann.filtered_search(query, slot_k, |key| {
         store.keys.get(&key).is_some_and(|doc| {
@@ -2214,6 +2588,7 @@ fn lexical_schema() -> TantivySchema {
     builder.add_text_field("path", STRING | STORED);
     builder.add_text_field("text", TEXT);
     builder.add_text_field("eq", STRING);
+    builder.add_text_field("num", STRING);
     builder.add_text_field("exists", STRING);
     builder.add_text_field("null", STRING);
     builder.add_text_field("tok", TEXT);
@@ -2297,6 +2672,9 @@ fn bind_lexical(index: Index) -> Result<Lexical, Error> {
     let f_eq = schema
         .get_field("eq")
         .context(Code::IndexLexical, "[SearchEngine::bind_lexical] field eq")?;
+    let f_num = schema
+        .get_field("num")
+        .context(Code::IndexLexical, "[SearchEngine::bind_lexical] field num")?;
     let f_exists = schema.get_field("exists").context(
         Code::IndexLexical,
         "[SearchEngine::bind_lexical] field exists",
@@ -2329,6 +2707,7 @@ fn bind_lexical(index: Index) -> Result<Lexical, Error> {
         f_path,
         f_text,
         f_eq,
+        f_num,
         f_exists,
         f_null,
         f_tok,
@@ -2411,6 +2790,9 @@ fn save_vector(index_dir: &Path, store: &VectorStore) -> Result<u64, Error> {
     write_vector_files(&dir, store)?;
     store::atomic_write(&root.join(VECTOR_CURRENT), format!("{seq}\n").as_bytes())?;
     drop_old_vector_dumps(&root, seq)?;
+    // Owner-only modes on what this save wrote: `vector/` is small (two
+    // dumps), unlike the whole Index tree.
+    store::restrict_tree(&root)?;
     Ok(seq)
 }
 
@@ -2495,7 +2877,8 @@ fn save_next_ord(index_dir: &Path, next_ord: &BTreeMap<String, u64>) -> Result<(
     } else {
         let bytes = serde_json::to_vec(next_ord)
             .context(Code::Invalid, "[SearchEngine::save_next_ord] encode ord")?;
-        store::atomic_write(&path, &bytes)
+        store::atomic_write(&path, &bytes)?;
+        store::restrict_file(&path)
     }
 }
 
@@ -2520,5 +2903,75 @@ mod blob_oid_tests {
             super::blob_oid(b"hello\n"),
             "ce013625030ba8dba906f756967f9e9ca394464a"
         );
+    }
+}
+
+#[cfg(test)]
+mod ord_tests {
+    use std::collections::BTreeMap;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use super::{ORD_FILE, empty_inner};
+
+    fn scratch(name: &str) -> PathBuf {
+        let base = std::env::var_os("TEST_TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let root = base.join(format!("scheda-ord-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        // `<vault>/.scheda/index/<generation>`: the commit restricts `.scheda`.
+        let dir = root.join(".scheda").join("index").join("1");
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn remove(dir: &std::path::Path) {
+        // Only the scratch root `scratch` made: never a parent of it.
+        if let Some(root) = dir.ancestors().nth(3)
+            && root
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("scheda-ord-"))
+        {
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    /// A commit of vector writes alone must leave the `ord.json` another
+    /// process keeps for the lexical leg exactly as it is, even when this
+    /// handle never loaded it (an empty in-memory map would delete it).
+    #[test]
+    fn commit_without_lexical_writes_leaves_ord_json_alone() {
+        let dir = scratch("untouched");
+        fs::write(dir.join(ORD_FILE), br#"{"j":7}"#).unwrap();
+        let mut inner = empty_inner(true);
+        inner.dirty = true;
+        inner.commit(&dir, true, super::VectorSave::Now).unwrap();
+        assert!(!inner.dirty);
+        assert_eq!(fs::read(dir.join(ORD_FILE)).unwrap(), br#"{"j":7}"#);
+
+        inner.next_ord = BTreeMap::from([(String::from("j"), 1)]);
+        inner.dirty = true;
+        inner.commit(&dir, true, super::VectorSave::Now).unwrap();
+        assert_eq!(
+            fs::read(dir.join(ORD_FILE)).unwrap(),
+            br#"{"j":7}"#,
+            "counters this handle did not advance are not saved"
+        );
+        remove(&dir);
+    }
+
+    #[test]
+    fn commit_after_lexical_writes_saves_ord_json_once() {
+        let dir = scratch("saved");
+        let mut inner = empty_inner(true);
+        inner.dirty = true;
+        inner.ord_dirty = true;
+        inner.next_ord = BTreeMap::from([(String::from("j"), 3)]);
+        inner.commit(&dir, true, super::VectorSave::Now).unwrap();
+        assert!(!inner.ord_dirty);
+        assert_eq!(fs::read(dir.join(ORD_FILE)).unwrap(), br#"{"j":3}"#);
+        remove(&dir);
     }
 }

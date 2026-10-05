@@ -144,6 +144,8 @@ pub use error::{Code, Repeat};
 pub use indexer::IndexStatus;
 pub use journal::JournalLines;
 pub use json::{schema_from_json, schema_from_value};
+#[cfg(feature = "tokio")]
+pub use nonblocking::{AsyncCollection, AsyncVault};
 pub use projector::{IndexDoc, IndexValue, Projector};
 #[doc(inline)]
 pub use scheda_api::api::collection::v1::{CollectionInfo, Journal, Schema, Singleton, Unit};
@@ -161,8 +163,6 @@ pub use scheda_api::api::v1::{SearchHits, SearchQuery, search_hits};
 pub use schema::Kind;
 pub use store::CollectionDocuments;
 pub use vault::{Collection, Vault};
-#[cfg(feature = "tokio")]
-pub use nonblocking::{AsyncCollection, AsyncVault};
 
 #[cfg(feature = "encrypt")]
 pub use crypto::parse_age_identity;

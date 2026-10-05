@@ -74,6 +74,39 @@ impl ::protovalidate_buffa::Validate for SearchQuery {
                 }
             }
         }
+        if let Some(v) = self.k {
+            if v > 10000u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("k")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("lte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.lte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+        }
         if let Some(inner) = self.filter.as_option() {
             if let Err(sub) = inner.validate() {
                 violations
@@ -194,6 +227,37 @@ impl ::protovalidate_buffa::Validate for SearchQuery {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            if v > 10000u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(7i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("rerank_limit")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("lte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.lte"),
                         message: ::std::borrow::Cow::Borrowed(""),
                         for_key: false,
                     });
@@ -358,6 +422,39 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SearchQueryView<'_> {
                 }
             }
         }
+        if let Some(v) = self.k {
+            if v > 10000u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(2i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("k")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("lte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.lte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+        }
         if let Some(inner) = self.filter.as_option() {
             if let Err(sub) = inner.validate() {
                 violations
@@ -478,6 +575,37 @@ impl ::protovalidate_buffa::Validate for __buffa::view::SearchQueryView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("uint32.gte"),
+                        message: ::std::borrow::Cow::Borrowed(""),
+                        for_key: false,
+                    });
+            }
+            if v > 10000u32 {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(7i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("rerank_limit")),
+                                field_type : Some(::protovalidate_buffa::FieldType::Uint32),
+                                key_type : None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule: ::protovalidate_buffa::FieldPath {
+                            elements: ::std::vec![
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(5i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("uint32")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                None, value_type : None, subscript : None, },
+                                ::protovalidate_buffa::FieldPathElement { field_number :
+                                Some(3i32), field_name :
+                                Some(::std::borrow::Cow::Borrowed("lte")), field_type :
+                                Some(::protovalidate_buffa::FieldType::Uint32), key_type :
+                                None, value_type : None, subscript : None, },
+                            ],
+                        },
+                        rule_id: ::std::borrow::Cow::Borrowed("uint32.lte"),
                         message: ::std::borrow::Cow::Borrowed(""),
                         for_key: false,
                     });

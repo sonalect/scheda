@@ -77,7 +77,7 @@ jobs:
           install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
 
       - name: Check out repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ubuntu-latest guarantees 14 GB free. Restoring bazel-debian13-cas-*
       # (several GiB compressed) extracts on top of that and fills the disk.
@@ -85,7 +85,7 @@ jobs:
         run: bash .github/scripts/free-host-disk.sh
 
       - name: Cache Bazel
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ env.BAZEL_DISK_CACHE }}
@@ -131,7 +131,7 @@ jobs:
     timeout-minutes: 90
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install dependencies
         run: |
@@ -167,7 +167,7 @@ jobs:
       # assigned). It is valid in steps.with / $RUNNER_TEMP. Paths must stay
       # outside the checkout: Bazel 9 refuses --repository_cache inside the repo.
       - name: Cache Bazel
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ runner.temp }}/bazel-disk
@@ -217,7 +217,7 @@ jobs:
       BAZEL_SH: C:/Program Files/Git/bin/bash.exe
     steps:
       - name: Check out repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Git for Windows is on PATH; Scheda invokes the `git` executable.
       - name: Install Bazelisk
@@ -233,7 +233,7 @@ jobs:
           echo "$(cygpath -w "/c/Program Files/Git/usr/bin")" >> "${GITHUB_PATH}"
 
       - name: Cache Bazel
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ runner.temp }}/bazel-disk

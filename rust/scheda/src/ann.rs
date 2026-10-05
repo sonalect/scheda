@@ -9,8 +9,8 @@ use crate::error::{Code, Context, ContextAs, ensure};
 
 /// Approximate nearest-neighbour index over `f32` cosine vectors.
 ///
-/// Keys are `u64` hashes of `(collection, id)`. Hidden from rustdoc; not a
-/// library operation name.
+/// Keys are `u64` counters the store assigns, one per vector slot of a
+/// `(collection, id)` Record. Hidden from rustdoc; not a library operation name.
 #[doc(hidden)]
 pub struct AnnIndex {
     inner: Index,
@@ -57,6 +57,11 @@ impl AnnIndex {
         };
         let inner =
             Index::new(&options).context(Code::IndexVector, "[AnnIndex::new] create new index")?;
+        // Set once, here and in `restore`. The query path never changes them:
+        // readers share the index under a read lock and USearch writes these
+        // fields without synchronization.
+        inner.change_expansion_add(Self::EXPANSION_ADD);
+        inner.change_expansion_search(Self::EXPANSION_SEARCH);
         inner
             .reserve(Self::INITIAL_CAPACITY)
             .with_context(Code::IndexVector, || {
@@ -165,7 +170,6 @@ impl AnnIndex {
         if k == 0 {
             return Ok(Vec::new());
         }
-        self.apply_expansion();
         let walk = k.max(Self::EXPANSION_SEARCH);
         let hits = self
             .inner
@@ -195,7 +199,6 @@ impl AnnIndex {
         if k == 0 {
             return Ok(Vec::new());
         }
-        self.apply_expansion();
         let walk = k.max(Self::EXPANSION_SEARCH);
         let hits = self
             .inner

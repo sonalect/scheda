@@ -146,6 +146,7 @@ pub(crate) fn insert_journal(
     fs::create_dir_all(&dir).context("[Journal::insert] create dir")?;
     crate::isolated::restrict_record(vault, &dir)?;
     let path = open_segment_path(&dir, decl, line.len() as u64, maps, writer)?;
+    store::reject_symlinks(vault, &path)?;
     append_line(&path, &line)?;
     crate::isolated::restrict_record(vault, &path)?;
     maps.add_segment_line(&path);
@@ -215,6 +216,7 @@ fn resolve_segment(vault: &Path, decl: &CollectionDecl, rel: &str) -> Result<Pat
                 .context("[Journal::find] resolve segment")
         );
     }
+    store::reject_symlinks(vault, &path)?;
     Ok(path)
 }
 
@@ -239,27 +241,9 @@ pub(crate) fn find_in_segment(
     )))
 }
 
-#[cfg(not(feature = "find"))]
-/// Number of segment files in Schema sequence. Missing directory → 0.
-#[cfg(feature = "find")]
-pub(crate) fn segment_count(vault: &Path, decl: &CollectionDecl) -> Result<u64, Error> {
-    Ok(list_segments(&journal_dir(vault, decl)?)?.len() as u64)
-}
-
-#[cfg(not(feature = "find"))]
-/// Walk every parsed line as a Record, one at a time. `visit` receives the
-/// Record and the vault-relative POSIX path of its segment. Returns `false`
-/// to stop. Does not collect the collection in memory.
-#[cfg(feature = "find")]
-pub(crate) fn for_each_record(
-    vault: &Path,
-    decl: &CollectionDecl,
-    mut visit: impl FnMut(Record, &str) -> Result<bool, Error>,
-) -> Result<(), Error> {
-    for_each_parsed(vault, decl, |path, parsed| {
-        let rel = store::rel_posix(vault, path)?;
-        visit(record_from_parsed(decl, parsed), &rel)
-    })
+/// Whether the journal has at least one segment file on disk.
+pub(crate) fn has_segments(vault: &Path, decl: &CollectionDecl) -> Result<bool, Error> {
+    Ok(!list_segments(&journal_dir(vault, decl)?)?.is_empty())
 }
 
 pub(crate) fn check_journals(vault: &Path, decls: &Decls) -> Result<(), Error> {
@@ -267,6 +251,7 @@ pub(crate) fn check_journals(vault: &Path, decls: &Decls) -> Result<(), Error> {
         if decl.kind != Kind::Journal {
             continue;
         }
+        store::check_no_symlinks(vault, decl)?;
         let mut seen = BTreeSet::new();
         for path in list_segments(&journal_dir(vault, decl)?)? {
             let rel = store::rel_posix(vault, &path)?;
@@ -326,8 +311,12 @@ fn prepare_line(record: &Record) -> Result<(String, Vec<u8>), Error> {
     Ok((id.to_owned(), line))
 }
 
+/// Segment directory of a journal. A symlink on the way (the collection
+/// directory, `.isolated/`) is `invalid`.
 fn journal_dir(vault: &Path, decl: &CollectionDecl) -> Result<PathBuf, Error> {
-    crate::isolated::records_dir(vault, decl)
+    let dir = crate::isolated::records_dir(vault, decl)?;
+    store::reject_symlinks(vault, &dir)?;
+    Ok(dir)
 }
 
 fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
@@ -348,7 +337,11 @@ fn list_segments(dir: &Path) -> Result<Vec<PathBuf>, Error> {
         let Some(name) = path.file_name().and_then(|s| s.to_str()) else {
             continue;
         };
-        if name.starts_with('.') || !name.ends_with(".jsonl") || !path.is_file() {
+        if name.starts_with('.') || !name.ends_with(".jsonl") {
+            continue;
+        }
+        let is_file = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file());
+        if !is_file {
             continue;
         }
         out.push(path);
@@ -707,6 +700,9 @@ pub(crate) fn ids_in_segment(path: &Path) -> Result<Vec<String>, Error> {
 }
 
 fn parse_segment(path: &Path) -> Result<Vec<ParsedLine>, Error> {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return Ok(Vec::new());
+    }
     let raw = match fs::read(path) {
         Ok(raw) => raw,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -741,12 +737,12 @@ fn parse_segment_bytes(raw: &[u8]) -> Vec<ParsedLine> {
     let Ok(text) = str::from_utf8(raw) else {
         return Vec::new();
     };
-    if store::has_conflict_markers(text) {
-        return Vec::new();
-    }
     let (complete, _) = split_complete(text);
     let mut out = Vec::new();
     for line in complete {
+        if store::is_conflict_marker_line(line) {
+            continue;
+        }
         match parse_line(line) {
             Ok(parsed) => out.push(parsed),
             Err(_) => continue,
@@ -803,7 +799,7 @@ fn record_from_parsed(decl: &CollectionDecl, parsed: ParsedLine) -> Record {
         .with_raw(parsed.raw)
 }
 
-/// Vault-relative POSIX path of the segment that holds `id` (IDX-5 map).
+/// Vault-relative POSIX path of the segment that holds `id` (the journal id map).
 pub(crate) fn segment_rel(
     vault: &Path,
     decl: &CollectionDecl,

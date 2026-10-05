@@ -19,13 +19,14 @@ use tantivy::schema::{Field, IndexRecordOption, OwnedValue};
 use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, TokenStream};
 
 use crate::error::{Code, ContextAs, bail};
-use crate::projector::find_marked_column;
+use crate::projector::{IndexValue, find_marked_column};
 use crate::schema::CollectionDecl;
 use crate::{ColumnKind, Error, Filter, IndexSchema, Projector};
 
 pub(crate) struct FindFields {
     pub id: Field,
     pub eq: Field,
+    pub num: Field,
     pub exists: Field,
     pub null: Field,
     pub tok: Field,
@@ -496,16 +497,18 @@ fn load_index_schema(
 
 pub(crate) fn compile(
     decl: &CollectionDecl,
+    schema: Option<&IndexSchema>,
     fields: &FindFields,
     index: &Index,
     filter: &Filter,
     mlt_fts: &dyn Fn(&str) -> Result<String, Error>,
 ) -> Result<Box<dyn Query>, Error> {
-    compile_kind(decl, fields, index, filter, mlt_fts)
+    compile_kind(decl, schema, fields, index, filter, mlt_fts)
 }
 
 fn compile_kind(
     decl: &CollectionDecl,
+    schema: Option<&IndexSchema>,
     fields: &FindFields,
     index: &Index,
     filter: &Filter,
@@ -602,7 +605,7 @@ fn compile_kind(
             ) {
                 Ok(Box::new(EmptyQuery))
             } else {
-                compile_range(fields, range)
+                compile_range(fields, schema, range)
             }
         }
         Kind::Exists(exists) => {
@@ -616,16 +619,16 @@ fn compile_kind(
                 compile_exists(fields, exists)
             }
         }
-        Kind::Boolean(boolean) => compile_boolean(decl, fields, index, boolean, mlt_fts),
+        Kind::Boolean(boolean) => compile_boolean(decl, schema, fields, index, boolean, mlt_fts),
         Kind::Boost(boost) => {
-            let inner = compile_kind(decl, fields, index, &boost.query, mlt_fts)?;
+            let inner = compile_kind(decl, schema, fields, index, &boost.query, mlt_fts)?;
             Ok(Box::new(BoostQuery::new(
                 inner,
                 boost.factor.unwrap_or(1.0),
             )))
         }
         Kind::ConstScore(inner) => {
-            let query = compile_kind(decl, fields, index, &inner.query, mlt_fts)?;
+            let query = compile_kind(decl, schema, fields, index, &inner.query, mlt_fts)?;
             Ok(Box::new(ConstScoreQuery::new(
                 query,
                 inner.score.unwrap_or(1.0),
@@ -634,7 +637,7 @@ fn compile_kind(
         Kind::DisjunctionMax(inner) => {
             let mut queries = Vec::new();
             for nested in &inner.queries {
-                queries.push(compile_kind(decl, fields, index, nested, mlt_fts)?);
+                queries.push(compile_kind(decl, schema, fields, index, nested, mlt_fts)?);
             }
             Ok(Box::new(DisjunctionMaxQuery::with_tie_breaker(
                 queries,
@@ -809,6 +812,13 @@ fn compile_regex_phrase(
         .iter()
         .map(|pattern| field_token_regex(name, pattern))
         .collect();
+    // Tantivy compiles the patterns when it weights the query, and reports a
+    // broken one as a search failure. `RegexQuery` uses the same regex
+    // engine, so a pattern it rejects is the caller's mistake, found here.
+    for pattern in &patterns {
+        RegexQuery::from_pattern(pattern, fields.tok)
+            .context(Code::Invalid, "[Filter] regex_phrase pattern")?;
+    }
     let mut query = RegexPhraseQuery::new(fields.tok, patterns);
     if let Some(slop) = phrase.slop {
         query.set_slop(slop);
@@ -819,16 +829,119 @@ fn compile_regex_phrase(
     Ok(Box::new(query))
 }
 
-fn compile_range(fields: &FindFields, range: &filter::Range) -> Result<Box<dyn Query>, Error> {
+fn compile_range(
+    fields: &FindFields,
+    schema: Option<&IndexSchema>,
+    range: &filter::Range,
+) -> Result<Box<dyn Query>, Error> {
     let name = range.field.as_deref().unwrap_or("");
     if name == "id" {
         let lower = range_bound(fields.id, None, range.lower.as_option(), false)?;
         let upper = range_bound(fields.id, None, range.upper.as_option(), true)?;
         return Ok(Box::new(RangeQuery::new(lower, upper)));
     }
+    let kind = schema
+        .and_then(|schema| find_marked_column(schema, name))
+        .and_then(|column| column.kind.as_ref().and_then(|kind| kind.as_known()));
+    match kind {
+        Some(ColumnKind::Integer) => return compile_range_integer(fields, name, range),
+        Some(ColumnKind::Number) => return compile_range_number(fields, name, range),
+        _ => {}
+    }
     let lower = range_bound(fields.eq, Some(name), range.lower.as_option(), false)?;
     let upper = range_bound(fields.eq, Some(name), range.upper.as_option(), true)?;
     Ok(Box::new(RangeQuery::new(lower, upper)))
+}
+
+/// The number a range bound on a numeric column `name` carries, and whether
+/// the bound excludes it. `None` is an open end.
+fn numeric_bound(name: &str, bound: Option<&filter::Bound>) -> Result<Option<(f64, bool)>, Error> {
+    let Some(bound) = bound else {
+        return Ok(None);
+    };
+    let (value, excluded) = match bound.kind.as_ref() {
+        Some(BoundKind::Included(value)) => (value, false),
+        Some(BoundKind::Excluded(value)) => (value, true),
+        None => return Ok(None),
+    };
+    match value.kind.as_ref() {
+        Some(ValueKind::NumberValue(n)) if n.is_finite() => Ok(Some((*n, excluded))),
+        _ => bail!(Error::invalid(format!(
+            "range bound on numeric field {name} must be a finite number"
+        ))),
+    }
+}
+
+/// `range` on a `number` column: the bounds compare as `f64` keys of the
+/// `num` field, whose byte order is the numeric order.
+fn compile_range_number(
+    fields: &FindFields,
+    name: &str,
+    range: &filter::Range,
+) -> Result<Box<dyn Query>, Error> {
+    let lower = numeric_bound(name, range.lower.as_option())?;
+    let upper = numeric_bound(name, range.upper.as_option())?;
+    let term = |value: f64| -> Result<Term, Error> {
+        Ok(Term::from_field_text(
+            fields.num,
+            &num_term(name, &f64_key(value))?,
+        ))
+    };
+    let lower = match lower {
+        None => StdBound::Included(term(f64::NEG_INFINITY)?),
+        Some((value, true)) => StdBound::Excluded(term(value)?),
+        Some((value, false)) => StdBound::Included(term(value)?),
+    };
+    let upper = match upper {
+        None => StdBound::Included(term(f64::INFINITY)?),
+        Some((value, true)) => StdBound::Excluded(term(value)?),
+        Some((value, false)) => StdBound::Included(term(value)?),
+    };
+    Ok(Box::new(RangeQuery::new(lower, upper)))
+}
+
+/// `range` on an `integer` column: the bounds become an inclusive `i64`
+/// interval (a fractional bound rounds inwards), so every `i64` is exact.
+fn compile_range_integer(
+    fields: &FindFields,
+    name: &str,
+    range: &filter::Range,
+) -> Result<Box<dyn Query>, Error> {
+    let lower = numeric_bound(name, range.lower.as_option())?;
+    let upper = numeric_bound(name, range.upper.as_option())?;
+    let mut lo = i128::from(i64::MIN);
+    let mut hi = i128::from(i64::MAX);
+    if let Some((value, excluded)) = lower {
+        // Float to integer casts saturate, which is far outside `i64`.
+        lo = lo.max(if excluded {
+            value.floor() as i128 + 1
+        } else {
+            value.ceil() as i128
+        });
+    }
+    if let Some((value, excluded)) = upper {
+        hi = hi.min(if excluded {
+            value.ceil() as i128 - 1
+        } else {
+            value.floor() as i128
+        });
+    }
+    let (Ok(lo), Ok(hi)) = (i64::try_from(lo), i64::try_from(hi)) else {
+        return Ok(Box::new(EmptyQuery));
+    };
+    if lo > hi {
+        return Ok(Box::new(EmptyQuery));
+    }
+    let term = |value: i64| -> Result<Term, Error> {
+        Ok(Term::from_field_text(
+            fields.num,
+            &num_term(name, &i64_key(value))?,
+        ))
+    };
+    Ok(Box::new(RangeQuery::new(
+        StdBound::Included(term(lo)?),
+        StdBound::Included(term(hi)?),
+    )))
 }
 
 fn range_bound(
@@ -883,6 +996,7 @@ fn range_term(
 
 fn compile_boolean(
     decl: &CollectionDecl,
+    schema: Option<&IndexSchema>,
     fields: &FindFields,
     index: &Index,
     boolean: &filter::Boolean,
@@ -904,7 +1018,7 @@ fn compile_boolean(
         };
         clauses.push((
             occur,
-            compile_kind(decl, fields, index, &clause.query, mlt_fts)?,
+            compile_kind(decl, schema, fields, index, &clause.query, mlt_fts)?,
         ));
     }
     let mut query = BooleanQuery::new(clauses);
@@ -1011,6 +1125,49 @@ pub(crate) fn eq_term(field: &str, value: &str) -> Result<String, Error> {
         return Err(Error::invalid("filter field or value must not contain NUL"));
     }
     Ok(format!("{field}\0{value}"))
+}
+
+/// A `num` term: `{field}\0{key}`.
+pub(crate) fn num_term(field: &str, key: &str) -> Result<String, Error> {
+    eq_term(field, key)
+}
+
+/// Fixed-width hex of `i64`, in the order of the numbers.
+fn i64_key(value: i64) -> String {
+    format!("{:016x}", (value as u64) ^ (1 << 63))
+}
+
+/// Fixed-width hex of `f64`, in the order of the numbers: the sign bit is
+/// flipped for a positive value and every bit for a negative one. `-0.0`
+/// and `0.0` share a key.
+fn f64_key(value: f64) -> String {
+    let bits = if value == 0.0 {
+        0.0f64.to_bits()
+    } else {
+        value.to_bits()
+    };
+    let key = if bits >> 63 == 1 {
+        !bits
+    } else {
+        bits ^ (1 << 63)
+    };
+    format!("{key:016x}")
+}
+
+/// The `num` key of `value` in a column of `kind`, or `None` when the
+/// column is not numeric or the value has no finite number in it.
+pub(crate) fn numeric_key(kind: Option<ColumnKind>, value: &IndexValue) -> Option<String> {
+    match (kind?, value) {
+        (ColumnKind::Integer, IndexValue::Integer(n)) => Some(i64_key(*n)),
+        (ColumnKind::Integer, IndexValue::Number(n))
+            if n.is_finite() && n.fract() == 0.0 && n.abs() < 9.2e18 =>
+        {
+            Some(i64_key(*n as i64))
+        }
+        (ColumnKind::Number, IndexValue::Number(n)) if n.is_finite() => Some(f64_key(*n)),
+        (ColumnKind::Number, IndexValue::Integer(n)) => Some(f64_key(*n as f64)),
+        _ => None,
+    }
 }
 
 pub(crate) fn add_field_tokens(

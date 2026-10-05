@@ -265,10 +265,11 @@ pub struct Schema {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub exclude_lexical_index: ::core::option::Option<bool>,
-    /// Default false: eligible columns are embedded on write. `true`: no
-    /// Record of this collection is embedded or stored in the vector
-    /// Index; `add` / `replace` do not call the embedder. `search` then
-    /// uses the lexical leg only. Redundant on `encrypted` and allowed.
+    /// Default false: eligible columns are embedded by the background
+    /// indexer after the write commits. `true`: no Record of this
+    /// collection is embedded or stored in the vector Index; the indexer
+    /// never calls the embedder for it. `search` then uses the lexical leg
+    /// only. Redundant on `encrypted` and allowed.
     /// A `journal` may set it.
     ///
     /// Field 8: `exclude_vector_index`

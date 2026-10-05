@@ -548,7 +548,7 @@ struct Worker {
     in_vector: bool,
     /// The vector leg is backing off from a failure: leave it this round.
     skip_vector: bool,
-    /// Generation the last check found readable (D8).
+    /// Generation the last check found readable.
     probed: Option<PathBuf>,
 }
 
@@ -614,7 +614,7 @@ impl Worker {
         result
     }
 
-    /// Whether `generation` is damaged (D8): read-only checks, a quick one
+    /// Whether `generation` is damaged: read-only checks, a quick one
     /// once per generation and a full one (vectors included) whenever a
     /// handle flagged it. A check that passes clears the flag.
     fn damaged(&mut self, generation: &Path) -> Result<bool, Error> {
@@ -779,7 +779,7 @@ pub(crate) struct Built {
 }
 
 /// Fill a new generation from the commits in `spec.heads`, git objects
-/// only (D19): a write no commit holds yet is not read, and whatever
+/// only: a write no commit holds yet is not read, and whatever
 /// reaches `HEAD` after those commits is the indexer's to apply once the
 /// generation is live, since its marks name them. Shared by `reindex` and
 /// the indexer's own rebuild. `None` when `spec.stop` ended it.
@@ -911,6 +911,15 @@ pub(crate) fn build_generation(spec: &BuildSpec<'_>) -> Result<Option<Built>, Er
     }))
 }
 
+/// Changes to one collection's journal `id` map found in one pass.
+#[derive(Default)]
+struct IdBatch {
+    /// `(id, vault-relative segment path)` of lines to remember.
+    remember: Vec<(String, String)>,
+    /// Ids of lines to forget.
+    forget: Vec<String>,
+}
+
 /// Inputs of one round, shared by every leg and repository it applies.
 struct Job<'a> {
     shared: &'a Shared,
@@ -945,6 +954,11 @@ impl Job<'_> {
                 .get(name)
                 .filter(|decl| decl.kind == Kind::Journal && !decl.encrypted)
         };
+        // Collect the changes of each collection first, then write each
+        // collection's `ids` file once: one lock, one rewrite or one append
+        // batch, instead of a file write per line.
+        let mut batches: BTreeMap<&str, IdBatch> = BTreeMap::new();
+        let mut seen = 0usize;
         for name in &found.whole {
             let Some(decl) = journal(name) else {
                 continue;
@@ -952,45 +966,48 @@ impl Job<'_> {
             let Some((decl_dir, decl_head)) = self.heads.for_decl(decl) else {
                 continue;
             };
-            for (i, change) in diff::collection(decl_dir, decl, decl_head)?
-                .iter()
-                .enumerate()
-            {
-                if i % LEXICAL_BATCH == 0 && self.shared.stopping() {
+            for change in &diff::collection(decl_dir, decl, decl_head)? {
+                if seen.is_multiple_of(LEXICAL_BATCH) && self.shared.stopping() {
                     return Ok(Pass::Stopped);
                 }
+                seen += 1;
                 if let Change::Upsert { path, .. } = &change.change {
-                    let mut maps = lock(&ctx.journal_ids);
-                    index::remember_id(
-                        self.generation,
-                        &mut maps,
-                        &decl.name,
-                        &change.id,
-                        &vault_rel(decl, path),
-                    )?;
+                    batches
+                        .entry(decl.name.as_str())
+                        .or_default()
+                        .remember
+                        .push((change.id.clone(), vault_rel(decl, path)));
                 }
             }
         }
-        for (i, change) in found.changes.iter().enumerate() {
-            if i % LEXICAL_BATCH == 0 && self.shared.stopping() {
+        for change in &found.changes {
+            if seen.is_multiple_of(LEXICAL_BATCH) && self.shared.stopping() {
                 return Ok(Pass::Stopped);
             }
+            seen += 1;
             let Some(decl) = journal(&change.collection) else {
                 continue;
             };
-            let mut maps = lock(&ctx.journal_ids);
+            let batch = batches.entry(decl.name.as_str()).or_default();
             match &change.change {
-                Change::Upsert { path, .. } => index::remember_id(
-                    self.generation,
-                    &mut maps,
-                    &decl.name,
-                    &change.id,
-                    &vault_rel(decl, path),
-                )?,
-                Change::Delete => {
-                    index::forget_remembered(self.generation, &mut maps, &decl.name, &change.id)?;
-                }
+                Change::Upsert { path, .. } => batch
+                    .remember
+                    .push((change.id.clone(), vault_rel(decl, path))),
+                Change::Delete => batch.forget.push(change.id.clone()),
             }
+        }
+        for (name, batch) in batches {
+            if self.shared.stopping() {
+                return Ok(Pass::Stopped);
+            }
+            let mut maps = lock(&ctx.journal_ids);
+            index::apply_id_changes(
+                self.generation,
+                &mut maps,
+                name,
+                &batch.remember,
+                &batch.forget,
+            )?;
         }
         marks::write(self.generation, Leg::Ids, repo, head)?;
         Ok(Pass::Done)
@@ -1031,6 +1048,9 @@ impl Job<'_> {
         if found.rebuild {
             return Ok(Pass::Rebuild);
         }
+        // The format file and projector dump are checked once per pass,
+        // not once per Record.
+        engine.begin_pass()?;
         let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for name in &found.whole {
             let decl = decls.get(name).filter(|decl| leg_wanted(decl, leg));
@@ -1126,7 +1146,7 @@ fn switch_to(
 
 /// Make generation `dir`, with its `engine` and journal `maps`, the one a
 /// handle answers from. Journal lines the handle wrote that `maps` lack
-/// are carried over (D27).
+/// are carried over.
 pub(crate) fn install(
     handle: &IndexHandle,
     search: &SearchEngine,
@@ -1277,9 +1297,17 @@ fn vault_rel(decl: &CollectionDecl, path: &str) -> String {
     }
 }
 
+/// Parsed lines of one journal segment: id → (line number, payload).
+type SegmentLines = BTreeMap<String, (usize, Vec<u8>)>;
+
 /// Apply `changes`, read from the repository at `dir`, to `engine` in
-/// batches; commit after each batch and stop between batches when the
-/// handle drops.
+/// batches; stop between batches when the handle drops.
+///
+/// Each batch is committed (`flush_batch`: Tantivy commits at once, the
+/// vector dump is saved only when a checkpoint is due; the end of the leg's
+/// pass saves it). A journal segment is read and parsed once per call, not
+/// once per batch: its parsed lines stay until the last change that names
+/// the segment has used them.
 fn apply_changes(
     stop: &dyn Fn() -> bool,
     engine: &SearchEngine,
@@ -1293,26 +1321,61 @@ fn apply_changes(
         Some(embedder) if legs.vector => embedder.many_limit().get(),
         _ => LEXICAL_BATCH,
     };
+    let is_journal = |change: &RecordChange| {
+        decls
+            .get(&change.collection)
+            .is_some_and(|decl| decl.kind == Kind::Journal)
+    };
+    // Changes still to come per journal segment blob.
+    let mut remaining: BTreeMap<&str, usize> = BTreeMap::new();
+    for change in changes {
+        if let Change::Upsert { blob, .. } = &change.change
+            && is_journal(change)
+        {
+            *remaining.entry(blob.as_str()).or_insert(0) += 1;
+        }
+    }
+    let mut segments: BTreeMap<String, SegmentLines> = BTreeMap::new();
     for chunk in changes.chunks(batch) {
         if stop() {
             return Ok(Pass::Stopped);
         }
-        let blobs: Vec<String> = chunk
-            .iter()
-            .filter_map(|change| match &change.change {
-                Change::Upsert { blob, .. } => Some(blob.clone()),
-                Change::Delete => None,
-            })
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
-        let bytes: BTreeMap<String, Vec<u8>> = blobs
-            .iter()
-            .cloned()
-            .zip(tree::read_blobs(dir, &blobs)?)
-            .filter_map(|(oid, bytes)| bytes.map(|bytes| (oid, bytes)))
-            .collect();
-        let mut segments: BTreeMap<&str, BTreeMap<String, (usize, Vec<u8>)>> = BTreeMap::new();
+        // Blobs to read for this batch: a segment only if it is not cached
+        // yet. The flags say whether a journal line, a whole file, or both
+        // (identical content in two collections) are taken from it.
+        let mut wanted: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
+        for change in chunk {
+            let Change::Upsert { blob, .. } = &change.change else {
+                continue;
+            };
+            if decls.get(&change.collection).is_none() {
+                continue;
+            }
+            let journal_line = is_journal(change);
+            if journal_line && segments.contains_key(blob.as_str()) {
+                continue;
+            }
+            let flags = wanted.entry(blob.as_str()).or_default();
+            if journal_line {
+                flags.0 = true;
+            } else {
+                flags.1 = true;
+            }
+        }
+        let oids: Vec<String> = wanted.keys().map(|oid| (*oid).to_owned()).collect();
+        let files = tree::read_blobs(dir, &oids)?;
+        let mut bytes: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        for (oid, file) in oids.into_iter().zip(files) {
+            let (journal_line, whole_file) = wanted.get(oid.as_str()).copied().unwrap_or_default();
+            // A blob git cannot give leaves its changes skipped.
+            if journal_line {
+                let lines = file.as_deref().map(journal::segment_lines);
+                segments.insert(oid.clone(), lines.unwrap_or_default());
+            }
+            if whole_file && let Some(file) = file {
+                bytes.insert(oid, file);
+            }
+        }
         for change in chunk {
             let Some(decl) = decls.get(&change.collection) else {
                 continue;
@@ -1324,19 +1387,26 @@ fn apply_changes(
                         // At most one embedder call in flight on close.
                         return Ok(Pass::Stopped);
                     }
-                    let Some(file) = bytes.get(blob) else {
-                        continue;
-                    };
                     let raw = if decl.kind == Kind::Journal {
-                        let lines = segments
-                            .entry(blob.as_str())
-                            .or_insert_with(|| journal::segment_lines(file));
-                        match lines.get(&change.id) {
-                            Some((_, payload)) => payload.clone(),
+                        let payload = segments
+                            .get_mut(blob.as_str())
+                            .and_then(|lines| lines.remove(&change.id))
+                            .map(|(_, payload)| payload);
+                        if let Some(left) = remaining.get_mut(blob.as_str()) {
+                            *left = left.saturating_sub(1);
+                            if *left == 0 {
+                                segments.remove(blob.as_str());
+                            }
+                        }
+                        match payload {
+                            Some(payload) => payload,
                             None => continue,
                         }
                     } else {
-                        file.clone()
+                        match bytes.get(blob) {
+                            Some(file) => file.clone(),
+                            None => continue,
+                        }
                     };
                     let record = Record::default()
                         .with_collection(decl.name.as_str())
@@ -1346,7 +1416,7 @@ fn apply_changes(
                 }
             }
         }
-        engine.flush()?;
+        engine.flush_batch()?;
     }
     Ok(Pass::Done)
 }

@@ -15,8 +15,8 @@ use std::sync::Arc;
 
 use clap::{Parser, error::ErrorKind as ClapErrorKind};
 use scheda::{
-    Author, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, Reranker, SearchQuery,
-    Vault, parse_age_identity, schema_from_json,
+    Author, Code, Embedder, Encryption, Error, Filter, FindQuery, OpenOptions, Reranker,
+    SearchQuery, Vault, parse_age_identity, schema_from_json,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -47,8 +47,7 @@ fn run(args: impl IntoIterator<Item = impl Into<OsString> + Clone>) -> Result<()
                     | ClapErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
                     | ClapErrorKind::DisplayVersion
             ) {
-                err.print()
-                    .map_err(|io_err| Error::io_other(io_err.to_string()))?;
+                err.print().map_err(|io_err| io_error(&io_err, None))?;
                 return Ok(());
             }
             return Err(Error::invalid(err.to_string()));
@@ -58,7 +57,7 @@ fn run(args: impl IntoIterator<Item = impl Into<OsString> + Clone>) -> Result<()
 }
 
 fn dispatch(cli: Cli) -> Result<(), Error> {
-    let vault = cli.vault.ok_or_else(|| Error::invalid("missing --vault"))?;
+    let path = cli.vault.ok_or_else(|| Error::invalid("missing --vault"))?;
     let Cli {
         vault: _,
         auto_sync,
@@ -86,43 +85,35 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
         embedder_api_key_env_var.as_deref(),
         model2vec_embedder.as_deref(),
     )?;
+    if let Command::Open { remote_repo } = command {
+        open_vault(
+            &path,
+            auto_sync,
+            remote_repo,
+            author_name,
+            author_email,
+            encryption,
+            embedder,
+        )?;
+        return Ok(());
+    }
+    let vault = open_existing(
+        &path,
+        auto_sync,
+        author_name,
+        author_email,
+        encryption,
+        embedder,
+    )?;
     match command {
-        Command::Open { remote_repo } => {
-            let _vault = open_vault(
-                &vault,
-                auto_sync,
-                remote_repo,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?;
-            Ok(())
-        }
-        Command::Info => emit_json(
-            &open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?
-            .info()?,
-        ),
+        // Handled above: `open` is the one command that may clone.
+        Command::Open { .. } => Ok(()),
+        Command::Info => emit_json(&vault.info()?),
         Command::CreateCollection {
             name,
             schema,
             message,
         } => {
-            let vault = open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?;
             let schema = schema_from_json(&json_input(
                 schema.as_deref(),
                 "missing Schema JSON (pass --schema or stdin)",
@@ -130,60 +121,12 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             let collection = vault.create_collection(&name, schema, message.as_deref())?;
             emit_json(&collection.schema()?)
         }
-        Command::Collection { name, command } => collection_dispatch(
-            &open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?,
-            &name,
-            command,
-            wait,
-        ),
-        Command::Check => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .check(),
-        Command::Reindex => emit_json(
-            &open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?
-            .reindex()?,
-        ),
-        Command::IndexStatus => emit_json(&status_json(
-            &open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?
-            .index_status()?,
-        )),
+        Command::Collection { name, command } => collection_dispatch(&vault, &name, command, wait),
+        Command::Check => vault.check(),
+        Command::Reindex => emit_json(&vault.reindex()?),
+        Command::IndexStatus => emit_json(&status_json(&vault.index_status()?)),
         Command::WaitIndexed { timeout_secs } => emit_json(&status_json(
-            &open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?
-            .wait_indexed(std::time::Duration::from_secs(timeout_secs))?,
+            &vault.wait_indexed(std::time::Duration::from_secs(timeout_secs))?,
         )),
         Command::Find {
             collections,
@@ -192,14 +135,6 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             count,
             include_raw,
         } => {
-            let vault = open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?;
             let names = collection_names(&collections);
             let query = parse_find_query(filter.as_deref(), include_raw)?;
             wait_indexed(&vault, wait)?;
@@ -209,14 +144,6 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             collections,
             search,
         } => {
-            let vault = open_existing(
-                &vault,
-                auto_sync,
-                author_name,
-                author_email,
-                encryption,
-                embedder,
-            )?;
             let names = collection_names(&collections);
             let query = parse_search_query(
                 search.query.as_deref(),
@@ -231,60 +158,12 @@ fn dispatch(cli: Cli) -> Result<(), Error> {
             wait_indexed(&vault, wait)?;
             emit_json(&vault.search(&names, &query, reranker.as_deref())?)
         }
-        Command::Push => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .push(),
-        Command::Pull => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .pull(),
-        Command::Sync => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .sync(),
-        Command::PushIsolated => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .push_isolated(),
-        Command::PullIsolated => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .pull_isolated(),
-        Command::SyncIsolated => open_existing(
-            &vault,
-            auto_sync,
-            author_name,
-            author_email,
-            encryption,
-            embedder,
-        )?
-        .sync_isolated(),
+        Command::Push => vault.push(),
+        Command::Pull => vault.pull(),
+        Command::Sync => vault.sync(),
+        Command::PushIsolated => vault.push_isolated(),
+        Command::PullIsolated => vault.pull_isolated(),
+        Command::SyncIsolated => vault.sync_isolated(),
     }
 }
 
@@ -607,35 +486,43 @@ fn parse_search_query(
     Ok(query)
 }
 
+/// Record bytes from `--file`, or from stdin when no file is given.
+/// With `--file`, stdin is not read at all: an open pipe that nobody
+/// closes must not block the command.
 fn read_raw_bytes(file: Option<&Path>) -> Result<Vec<u8>, Error> {
     match file {
-        Some(path) => {
-            refuse_stdin_with_file()?;
-            std::fs::read(path).map_err(|err| Error::io_other(format!("{}: {err}", path.display())))
-        }
+        Some(path) => std::fs::read(path).map_err(|err| io_error(&err, Some(path))),
         None => {
             let mut buf = Vec::new();
             io::stdin()
                 .read_to_end(&mut buf)
-                .map_err(|err| Error::io_other(err.to_string()))?;
+                .map_err(|err| io_error(&err, None))?;
             Ok(buf)
         }
     }
 }
 
-fn refuse_stdin_with_file() -> Result<(), Error> {
-    use std::io::IsTerminal;
-    if io::stdin().is_terminal() {
-        return Ok(());
-    }
-    let mut buf = Vec::new();
-    io::stdin()
-        .read_to_end(&mut buf)
-        .map_err(|err| Error::io_other(err.to_string()))?;
-    if buf.is_empty() {
-        Ok(())
-    } else {
-        Err(Error::invalid("--file and stdin together"))
+/// `std::io::Error` as a typed `Error` through the library's I/O code
+/// table. The code follows `ErrorKind`; the message carries the OS text
+/// and, for `--file`, the path as the user typed it. `Error.path` stays
+/// unset: it is for Vault-relative paths only.
+fn io_error(err: &io::Error, file: Option<&Path>) -> Error {
+    let code = match err.kind() {
+        io::ErrorKind::NotFound => Code::IoNotFound,
+        io::ErrorKind::PermissionDenied => Code::IoPermission,
+        io::ErrorKind::IsADirectory => Code::IoIsADirectory,
+        io::ErrorKind::NotADirectory => Code::IoNotADirectory,
+        io::ErrorKind::InvalidData => Code::IoInvalidData,
+        io::ErrorKind::InvalidInput => Code::IoInvalidInput,
+        io::ErrorKind::Interrupted => Code::IoInterrupted,
+        io::ErrorKind::BrokenPipe => Code::IoBrokenPipe,
+        io::ErrorKind::TimedOut => Code::IoTimedOut,
+        io::ErrorKind::UnexpectedEof => Code::IoUnexpectedEof,
+        _ => Code::IoOther,
+    };
+    match file {
+        Some(path) => Error::new(code, format!("{}: {err}", path.display())),
+        None => Error::new(code, err.to_string()),
     }
 }
 
@@ -646,7 +533,7 @@ fn json_input(flag: Option<&str>, missing: &str) -> Result<String, Error> {
             let mut buf = String::new();
             io::stdin()
                 .read_to_string(&mut buf)
-                .map_err(|err| Error::io_other(err.to_string()))?;
+                .map_err(|err| io_error(&err, None))?;
             if buf.trim().is_empty() {
                 Err(Error::invalid(missing))
             } else {
@@ -664,15 +551,13 @@ fn emit_raw(bytes: &[u8]) -> Result<(), Error> {
     io::stdout()
         .lock()
         .write_all(bytes)
-        .map_err(|err| Error::io_other(err.to_string()))
+        .map_err(|err| io_error(&err, None))
 }
 
 fn emit_json(value: &impl Serialize) -> Result<(), Error> {
     let mut stdout = io::stdout().lock();
     serde_json::to_writer(&mut stdout, value).map_err(|err| Error::invalid(err.to_string()))?;
-    stdout
-        .write_all(b"\n")
-        .map_err(|err| Error::io_other(err.to_string()))
+    stdout.write_all(b"\n").map_err(|err| io_error(&err, None))
 }
 
 fn emit_error(err: &Error) {

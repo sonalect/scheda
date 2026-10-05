@@ -1,4 +1,4 @@
-//! F19: opaque document files, Index wipe, YAML projector, encrypt/isolated.
+//! Opaque document files, Index wipe, YAML projector, encrypt/isolated.
 //! Collection names here must not appear in `rust/scheda/src`.
 
 mod common;

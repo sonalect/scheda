@@ -15,7 +15,6 @@ use crate::{CollectionInfo, Error, Journal, Schema, Singleton, Unit, VaultInfo};
 
 const MIB: u64 = 1024 * 1024;
 pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = 8 * MIB;
-pub(crate) const MAX_SEGMENT_MAX_BYTES: u64 = 32 * MIB;
 const COLLECTION_YAML: &str = ".collection.yaml";
 const COLLECTION_YML: &str = ".collection.yml";
 const COLLECTION_JSON: &str = ".collection.json";
@@ -272,13 +271,6 @@ fn load_collection_text(text: &str, yaml: bool, path: &Path) -> Result<Collectio
     } else {
         serde_json::from_str(text).context(Code::Invalid, "[Decls::load] parse collection JSON")?
     };
-    let version: scheda_api::api::Version = serde_json::from_value(value.clone())
-        .context(Code::Invalid, "[Decls::load] parse collection version")?;
-    version.require_valid()?;
-    let n = version.version.unwrap_or(0);
-    if n != 1 {
-        bail!(Error::invalid(format!("version {n} is not implemented")));
-    }
     let info = collection_info_from_value(&value)?;
     let name = info.name.as_deref().unwrap_or("");
     require_slug("collection name", name).with_context(|| format!("schema {loc}: name"))?;
@@ -367,8 +359,7 @@ pub(crate) fn put_collection(vault: &Path, name: &str, incoming: &Schema) -> Res
         None => format!("{}/{COLLECTION_YAML}", collection_dir(name)),
     };
     let path = join_inside(vault, &rel)?;
-    let mut decls = load(vault)?;
-    decls.collections.insert(decl.name.clone(), decl.clone());
+    load(vault)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).context("[Decls::put_collection] create collection dir")?;
     }
@@ -380,12 +371,24 @@ pub(crate) fn put_collection(vault: &Path, name: &str, incoming: &Schema) -> Res
                 existing.name
             )));
         }
+        if existing.kind != decl.kind {
+            bail!(Error::invalid(format!(
+                "cannot change the kind of collection {}: it is declared as {}",
+                decl.name,
+                existing.kind.as_str()
+            )));
+        }
         if existing.encrypted != decl.encrypted
             && matches!(existing.kind, Kind::Document | Kind::Singleton)
             && !store::collection_ids(vault, &existing)?.is_empty()
         {
             bail!(Error::invalid(
                 "cannot set or clear encrypted on a collection that already holds Record files"
+            ));
+        }
+        if existing.isolated != decl.isolated && holds_record_files(vault, &existing)? {
+            bail!(Error::invalid(
+                "cannot set or clear isolated on a collection that already holds Record files"
             ));
         }
     }
@@ -400,6 +403,14 @@ pub(crate) fn put_collection(vault: &Path, name: &str, incoming: &Schema) -> Res
     Ok(rel)
 }
 
+/// Whether the collection has any Record file or journal segment on disk.
+fn holds_record_files(vault: &Path, decl: &CollectionDecl) -> Result<bool, Error> {
+    match decl.kind {
+        Kind::Document | Kind::Singleton => Ok(!store::collection_ids(vault, decl)?.is_empty()),
+        Kind::Journal => crate::journal::has_segments(vault, decl),
+    }
+}
+
 fn decl_from_proto(name: &str, incoming: &Schema) -> Result<CollectionDecl, Error> {
     use scheda_api::api::collection::v1::__buffa::oneof::schema::Kind as DeclKind;
     let (kind, singleton_id, segment_max_bytes, segment_max_lines, segment_rotate) =
@@ -409,9 +420,6 @@ fn decl_from_proto(name: &str, incoming: &Schema) -> Result<CollectionDecl, Erro
                 let cap = journal
                     .segment_max_bytes
                     .unwrap_or(DEFAULT_SEGMENT_MAX_BYTES);
-                if cap == 0 || cap > MAX_SEGMENT_MAX_BYTES {
-                    bail!(Error::invalid("schema: segment_max_bytes out of range"));
-                }
                 (
                     Kind::Journal,
                     None,

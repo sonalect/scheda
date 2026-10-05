@@ -1,4 +1,4 @@
-//! USearch ANN smoke tests (IDX-7). Not CollectionHandle::search.
+//! USearch ANN smoke tests. Not CollectionHandle::search.
 
 mod common;
 

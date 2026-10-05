@@ -1,6 +1,6 @@
-//! C3: `document` / `singleton` writes and `find_one` (`03`, `07`, `11`).
+//! `document` / `singleton` writes and `find_one`.
 //! Collection names here and in `testdata/document/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 
@@ -1322,6 +1322,89 @@ fn empty_raw_round_trips() {
     collection.add("empty", b"", None).unwrap();
     let got = collection.get("empty").unwrap();
     assert_eq!(got.raw.as_deref(), Some(b"".as_slice()));
+}
+
+#[test]
+fn marker_text_inside_a_line_passes_check() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection
+        .add(
+            "quote",
+            b"a diff ends with >>>>>>> theirs and starts with <<<<<<< ours\n=======\n",
+            None,
+        )
+        .unwrap();
+    assert_eq!(
+        collection.get("quote").unwrap().id.as_deref(),
+        Some("quote")
+    );
+    vault.check().unwrap();
+}
+
+#[test]
+fn conflict_marker_lines_fail_check() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("north_notes").unwrap();
+    collection.add("a", b"mine\n", None).unwrap();
+    fs::write(
+        scratch.coll_file("north_notes", "a"),
+        "<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> branch\n",
+    )
+    .unwrap();
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::ConflictMarkers));
+    assert!(err.to_string().contains("north_notes/a"), "{err}");
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_record_file_is_not_followed() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let outside = scratch.root.join("secret");
+    fs::write(&outside, b"outside bytes").unwrap();
+    symlink(&outside, scratch.coll_file("north_notes", "leak")).unwrap();
+    let collection = vault.collection("north_notes").unwrap();
+    let err = collection.get("leak").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(err.path.as_deref(), Some("north_notes/leak"));
+    let err = collection.add("leak", b"x", None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = collection.replace("leak", b"x", None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = collection.remove("leak", None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(fs::read(&outside).unwrap(), b"outside bytes");
+    // Listing skips the link, as before.
+    assert!(collection.ids().unwrap().is_empty());
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(err.path.as_deref(), Some("north_notes/leak"));
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_subdirectory_is_not_written_through() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let outside = scratch.root.join("elsewhere");
+    fs::create_dir_all(&outside).unwrap();
+    symlink(&outside, scratch.coll_file("north_notes", "dir")).unwrap();
+    let collection = vault.collection("north_notes").unwrap();
+    let err = collection.add("dir/x", b"payload", None).unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(err.path.as_deref(), Some("north_notes/dir"));
+    assert_eq!(fs::read_dir(&outside).unwrap().count(), 0);
+    let err = collection.get("dir/x").unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(err.path.as_deref(), Some("north_notes/dir"));
 }
 
 fn peek_schema_name(body: &str) -> String {

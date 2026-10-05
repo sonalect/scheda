@@ -8,7 +8,7 @@ pub struct SearchQuery {
     /// Field 1: `text`
     #[serde(rename = "text", skip_serializing_if = "::core::option::Option::is_none")]
     pub text: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Unset or `0` → 10.
+    /// Unset or `0` → 10. At most 10000.
     ///
     /// Field 2: `k`
     #[serde(
@@ -56,8 +56,8 @@ pub struct SearchQuery {
     /// When set with a reranker, both Index legs retrieve max(k, 50, N) and
     /// the reranker scores the first N fused candidates (alternating legs
     /// when both ran). Unset → pool stays max(k, 50) and every fused hit is
-    /// scored. Ignored when no reranker is passed. Zero is invalid. N larger
-    /// than the corpus is not an error.
+    /// scored. Ignored when no reranker is passed. Zero is invalid. At most
+    /// 10000. N larger than the corpus is not an error.
     ///
     /// Field 7: `rerank_limit`
     #[serde(

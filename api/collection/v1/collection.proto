@@ -71,10 +71,11 @@ message Schema {
   // `encrypted` (ciphertext is never indexed) and allowed. A `journal`
   // may set it.
   bool exclude_lexical_index = 7;
-  // Default false: eligible columns are embedded on write. `true`: no
-  // Record of this collection is embedded or stored in the vector
-  // Index; `add` / `replace` do not call the embedder. `search` then
-  // uses the lexical leg only. Redundant on `encrypted` and allowed.
+  // Default false: eligible columns are embedded by the background
+  // indexer after the write commits. `true`: no Record of this
+  // collection is embedded or stored in the vector Index; the indexer
+  // never calls the embedder for it. `search` then uses the lexical leg
+  // only. Redundant on `encrypted` and allowed.
   // A `journal` may set it.
   bool exclude_vector_index = 8;
 }

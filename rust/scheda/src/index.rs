@@ -26,10 +26,12 @@ use crate::schema::{self, Decls, Kind};
 use crate::store;
 
 /// On-disk Index format. Bumped to 4 when the Index became generational,
-/// and to 5 when each generation recorded the commit every leg has reached
-/// (`<gen>/marks/`). An older `format` file is `index_version`; the caller
-/// runs `reindex`.
-pub(crate) const FORMAT_VERSION: u32 = 5;
+/// to 5 when each generation recorded the commit every leg has reached
+/// (`<gen>/marks/`), and to 6 when `integer` / `number` columns got the
+/// order-preserving `num` field that `range` reads. An older `format` file
+/// is `index_version`; the background indexer rebuilds it into a new
+/// generation.
+pub(crate) const FORMAT_VERSION: u32 = 6;
 const FORMAT_FILE: &str = "format";
 const CURRENT_FILE: &str = "current";
 const JOURNAL_DIR: &str = "journal";
@@ -129,15 +131,6 @@ impl JournalIdMaps {
         self.collections.insert(collection, ids);
     }
 
-    #[cfg(not(feature = "find"))]
-    /// Take another map's collections. Used to merge the search-engine walk
-    /// into the maps `reindex` already built for journals that are not indexed.
-    #[cfg(feature = "find")]
-    pub(crate) fn absorb(&mut self, other: Self) {
-        self.collections.extend(other.collections);
-        self.segment_lines.extend(other.segment_lines);
-    }
-
     pub(crate) fn forget_id(&mut self, collection: &str, id: &str) {
         if let Some(ids) = self.collections.get_mut(collection) {
             ids.remove(id);
@@ -207,7 +200,7 @@ fn is_legacy_layout(root: &Path) -> bool {
 ///
 /// Flag file a handle leaves in a generation whose Tantivy or vector files
 /// failed to read; the lexical-role indexer, in whatever process, then
-/// checks the generation and rebuilds it if it is damaged (D8).
+/// checks the generation and rebuilds it if it is damaged.
 #[cfg(feature = "find")]
 const DAMAGED_FILE: &str = "damaged";
 
@@ -491,7 +484,7 @@ fn lock_ids(index_dir: &Path, collection: &str) -> Result<fs::File, Error> {
         .truncate(false)
         .open(&path)
         .context("[Index::lock_ids] open ids lock")?;
-    store::restrict_file(&path)?;
+    store::restrict_file_below(index_dir, &path)?;
     file.lock().context("[Index::lock_ids] lock ids")?;
     Ok(file)
 }
@@ -550,11 +543,6 @@ pub(crate) fn rebuild(
     for decl in decls.collections().filter(|decl| !decl.encrypted) {
         match decl.kind {
             Kind::Journal => {
-                #[cfg(feature = "find")]
-                if decl.any_indexed() {
-                    // The search-engine walk builds this map in the same pass.
-                    continue;
-                }
                 let (records, invalid, segments, ids) = journal::reindex_map(vault, decl)?;
                 records_read += records;
                 skipped_invalid += invalid;
@@ -563,17 +551,12 @@ pub(crate) fn rebuild(
                 maps.replace_collection(decl.name.clone(), ids);
             }
             Kind::Document | Kind::Singleton => {
-                #[cfg(feature = "find")]
-                continue;
-                #[cfg(not(feature = "find"))]
-                {
-                    if !decl.any_indexed() {
-                        continue;
-                    }
-                    let (records, invalid) = store::reindex_stats(vault, decl)?;
-                    records_read += records;
-                    skipped_invalid += invalid;
+                if !decl.any_indexed() {
+                    continue;
                 }
+                let (records, invalid) = store::reindex_stats(vault, decl)?;
+                records_read += records;
+                skipped_invalid += invalid;
             }
         }
     }
@@ -618,7 +601,8 @@ fn scheda_dir(index_dir: &Path) -> Option<&Path> {
 }
 
 /// Remember in `into` (and its `ids` files under `index_dir`) every line
-/// `from` maps that `into` does not, for collections `into` knows.
+/// `from` maps that `into` does not, for collections `into` knows. One
+/// write per collection.
 #[cfg(feature = "find")]
 pub(crate) fn carry_over(
     index_dir: &Path,
@@ -626,15 +610,19 @@ pub(crate) fn carry_over(
     into: &mut JournalIdMaps,
 ) -> Result<(), Error> {
     for (collection, ids) in &from.collections {
-        for (id, rel) in ids {
-            if into.contains(collection, id) == Some(false) {
-                remember_id(index_dir, into, collection, id, rel)?;
-            }
+        let missing: Vec<(String, String)> = ids
+            .iter()
+            .filter(|(id, _)| into.contains(collection, id) == Some(false))
+            .map(|(id, rel)| (id.clone(), rel.clone()))
+            .collect();
+        if !missing.is_empty() {
+            apply_id_changes(index_dir, into, collection, &missing, &[])?;
         }
     }
     Ok(())
 }
 
+/// Remember one line of `collection`'s `ids` map.
 pub(crate) fn remember_id(
     index_dir: &Path,
     maps: &mut JournalIdMaps,
@@ -642,38 +630,55 @@ pub(crate) fn remember_id(
     id: &str,
     rel: &str,
 ) -> Result<(), Error> {
-    let _lock = lock_ids(index_dir, collection)?;
-    refresh_named(index_dir, maps, collection)?;
-    remember_locked(index_dir, maps, collection, id, rel)?;
-    note_stamp(index_dir, maps, collection);
-    Ok(())
+    apply_id_changes(
+        index_dir,
+        maps,
+        collection,
+        &[(id.to_owned(), rel.to_owned())],
+        &[],
+    )
 }
 
-fn remember_locked(
+/// Make every change of `remember` (id and segment path) and `forget` (ids)
+/// to `collection`'s `ids` map and file under one `ids.lock`.
+///
+/// Lines the map did not know are appended in one write with one `fsync`;
+/// a line that moved to another segment, or any id to forget, rewrites the
+/// file once. A change the map already holds writes nothing, so applying
+/// the same batch twice is harmless. The files written get owner-only modes
+/// at once, without a walk of the Index tree.
+pub(crate) fn apply_id_changes(
     index_dir: &Path,
     maps: &mut JournalIdMaps,
     collection: &str,
-    id: &str,
-    rel: &str,
+    remember: &[(String, String)],
+    forget: &[String],
 ) -> Result<(), Error> {
-    let previous = match maps.lookup(collection, id) {
-        MapLookup::Path(old) => Some(old.to_owned()),
-        MapLookup::UnknownId | MapLookup::MissingMap => None,
-    };
-    if let Some(old) = previous {
-        maps.put(collection.to_owned(), id.to_owned(), rel.to_owned());
-        if old != rel {
-            let ids = maps
-                .collections
-                .get(collection)
-                .cloned()
-                .unwrap_or_default();
-            write_ids_file(index_dir, collection, &ids)?;
+    let _lock = lock_ids(index_dir, collection)?;
+    refresh_named(index_dir, maps, collection)?;
+    let mut appended: Vec<(&str, &str)> = Vec::new();
+    let mut rewrite = !forget.is_empty();
+    for (id, rel) in remember {
+        match maps.lookup(collection, id) {
+            MapLookup::Path(old) => rewrite = rewrite || old != rel.as_str(),
+            MapLookup::UnknownId | MapLookup::MissingMap => appended.push((id, rel)),
         }
-        return Ok(());
+        maps.put(collection.to_owned(), id.clone(), rel.clone());
     }
-    append_ids_line(index_dir, collection, id, rel)?;
-    maps.put(collection.to_owned(), id.to_owned(), rel.to_owned());
+    for id in forget {
+        maps.forget_id(collection, id);
+    }
+    if rewrite {
+        let ids = maps
+            .collections
+            .get(collection)
+            .cloned()
+            .unwrap_or_default();
+        write_ids_file(index_dir, collection, &ids)?;
+    } else if !appended.is_empty() {
+        append_ids_lines(index_dir, collection, &appended)?;
+    }
+    note_stamp(index_dir, maps, collection);
     Ok(())
 }
 
@@ -752,25 +757,6 @@ pub(crate) fn check_journal_id_maps(index_dir: &Path, decls: &Decls) -> Result<(
     Ok(())
 }
 
-pub(crate) fn forget_remembered(
-    index_dir: &Path,
-    maps: &mut JournalIdMaps,
-    collection: &str,
-    id: &str,
-) -> Result<(), Error> {
-    let _lock = lock_ids(index_dir, collection)?;
-    refresh_named(index_dir, maps, collection)?;
-    maps.forget_id(collection, id);
-    let ids = maps
-        .collections
-        .get(collection)
-        .cloned()
-        .unwrap_or_default();
-    write_ids_file(index_dir, collection, &ids)?;
-    note_stamp(index_dir, maps, collection);
-    Ok(())
-}
-
 pub(crate) fn rewrite_collection(
     index_dir: &Path,
     maps: &mut JournalIdMaps,
@@ -820,41 +806,57 @@ fn write_ids_file(
     let path = ids_path(index_dir, collection);
     let mut bytes = Vec::new();
     for (id, rel) in ids {
-        let line = IdMapLine {
-            id: id.clone(),
-            path: rel.clone(),
-        };
-        let mut encoded = serde_json::to_vec(&line)
-            .context(Code::Invalid, "[Index::write_ids_file] encode line")?;
-        encoded.push(b'\n');
-        bytes.extend_from_slice(&encoded);
+        encode_id_line(&mut bytes, id, rel, "[Index::write_ids_file] encode line")?;
     }
     store::atomic_write(&path, &bytes)?;
-    restrict_index_tree(index_dir)
+    store::restrict_file_below(index_dir, &path)
 }
 
-fn append_ids_line(index_dir: &Path, collection: &str, id: &str, rel: &str) -> Result<(), Error> {
+/// Append `lines` (id, segment path) to `collection`'s `ids` file: one
+/// write, one `fsync`.
+fn append_ids_lines(
+    index_dir: &Path,
+    collection: &str,
+    lines: &[(&str, &str)],
+) -> Result<(), Error> {
     let path = ids_path(index_dir, collection);
     if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).context("[Index::append_ids_line] create dir")?;
+        fs::create_dir_all(dir).context("[Index::append_ids_lines] create dir")?;
     }
-    let line = IdMapLine {
-        id: id.to_owned(),
-        path: rel.to_owned(),
-    };
-    let mut encoded =
-        serde_json::to_vec(&line).context(Code::Invalid, "[Index::append_ids_line] encode line")?;
-    encoded.push(b'\n');
+    let mut encoded = Vec::new();
+    for (id, rel) in lines {
+        encode_id_line(
+            &mut encoded,
+            id,
+            rel,
+            "[Index::append_ids_lines] encode line",
+        )?;
+    }
     let mut file = OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path)
-        .context("[Index::append_ids_line] open ids")?;
+        .context("[Index::append_ids_lines] open ids")?;
     file.write_all(&encoded)
-        .context("[Index::append_ids_line] write ids")?;
+        .context("[Index::append_ids_lines] write ids")?;
     file.sync_all()
-        .context("[Index::append_ids_line] fsync ids")?;
-    restrict_index_tree(index_dir)
+        .context("[Index::append_ids_lines] fsync ids")?;
+    store::restrict_file_below(index_dir, &path)
+}
+
+fn encode_id_line(
+    out: &mut Vec<u8>,
+    id: &str,
+    rel: &str,
+    frame: &'static str,
+) -> Result<(), Error> {
+    let line = IdMapLine {
+        id: id.to_owned(),
+        path: rel.to_owned(),
+    };
+    serde_json::to_writer(&mut *out, &line).context(Code::Invalid, frame)?;
+    out.push(b'\n');
+    Ok(())
 }
 
 #[cfg(feature = "find")]
@@ -986,6 +988,46 @@ mod tests {
         let hits = text.lines().filter(|line| line.contains("\"a\"")).count();
         assert_eq!(hits, 1, "{text}");
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn id_changes_of_one_collection_are_one_write_with_owner_only_modes() {
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let base = std::env::var_os("TEST_TMPDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let root = base.join(format!("scheda-ids-batch-{}-{n}", std::process::id()));
+        let dir = root.join(".scheda").join("index").join("1");
+        fs::create_dir_all(&dir).unwrap();
+        let mut maps = JournalIdMaps::default();
+        maps.replace_collection("log".into(), BTreeMap::new());
+        let lines: Vec<(String, String)> = (0..50)
+            .map(|i| (format!("id-{i:02}"), "log/2024-01-01.jsonl".to_owned()))
+            .collect();
+        apply_id_changes(&dir, &mut maps, "log", &lines, &[]).unwrap();
+        let path = ids_path(&dir, "log");
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 50);
+        // The same batch again writes nothing new.
+        apply_id_changes(&dir, &mut maps, "log", &lines, &[]).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap().lines().count(), 50);
+        // Forgets and a moved line are one rewrite.
+        let moved = [("id-00".to_owned(), "log/2024-01-02.jsonl".to_owned())];
+        let gone: Vec<String> = (1..=10).map(|i| format!("id-{i:02}")).collect();
+        apply_id_changes(&dir, &mut maps, "log", &moved, &gone).unwrap();
+        let text = fs::read_to_string(&path).unwrap();
+        assert_eq!(text.lines().count(), 40, "{text}");
+        assert!(text.contains("2024-01-02"));
+        assert_eq!(maps.contains("log", "id-05"), Some(false));
+        assert_eq!(maps.contains("log", "id-20"), Some(true));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode(&path), 0o600);
+            assert_eq!(mode(path.parent().unwrap()), 0o700);
+            assert_eq!(mode(&dir.join(JOURNAL_DIR)), 0o700);
+        }
+        let _ = fs::remove_dir_all(&root);
     }
 
     fn journal_decl(name: &str, isolated: bool) -> schema::CollectionDecl {

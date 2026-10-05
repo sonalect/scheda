@@ -4,9 +4,25 @@
 pub mod encryption {
     #[allow(unused_imports)]
     use super::*;
-    #[derive(Clone, Debug)]
+    #[derive(Clone)]
     pub enum Secret<'a> {
         Passphrase(&'a str),
         Identity(&'a str),
+    }
+    impl<'a> ::core::fmt::Debug for Secret<'a> {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            match self {
+                Self::Passphrase(_) => {
+                    f.debug_tuple("Passphrase")
+                        .field(&::core::format_args!("[REDACTED]"))
+                        .finish()
+                }
+                Self::Identity(_) => {
+                    f.debug_tuple("Identity")
+                        .field(&::core::format_args!("[REDACTED]"))
+                        .finish()
+                }
+            }
+        }
     }
 }

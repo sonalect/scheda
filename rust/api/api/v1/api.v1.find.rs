@@ -2486,7 +2486,8 @@ pub mod filter {
             skip_serializing_if = "::core::option::Option::is_none"
         )]
         pub term: ::core::option::Option<::buffa::alloc::string::String>,
-        /// Max edits. Tantivy `u8`. Unset or `0` → exact.
+        /// Max edits, 0 to 2 (Tantivy's Levenshtein automaton supports no more).
+        /// Unset or `0` → exact.
         ///
         /// Field 3: `distance`
         #[serde(
@@ -3571,7 +3572,9 @@ pub mod filter {
         pub use super::super::__buffa::view::oneof::filter::bound::Kind as KindView;
     }
     /// `RangeQuery`. At least one term in `[lower, upper]`. Unset bound is
-    /// unbounded. Score 1.0.
+    /// unbounded. Score 1.0. On an `integer` / `number` column the bounds are
+    /// numbers and compare by value; on text columns and `id` they compare as
+    /// text.
     #[derive(Clone, PartialEq, Default)]
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]

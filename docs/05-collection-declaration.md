@@ -95,9 +95,11 @@ layout of that collection. Required integer. No default: omit, a
 non-integer, `0`, or a generation the library does not implement →
 `invalid`. This plan implements **1** only. `create_collection` writes
 `1`; the proto argument does not carry `version`. Field-schema `read_as`
-/ migrate stays retired. Kind still does not change in place (MOD-2).
-Flipping `encrypted` on a non-empty collection is already `invalid`
-(ISO-11). Journal caps may change inside generation 1 (SCH-14). *Check:*
+/ migrate stays retired. Kind does not change in place (MOD-2):
+`create_collection` over an existing declaration of another kind is
+`invalid`, empty collection or not, and the declaration file is left as it
+was. Flipping `encrypted` or `isolated` on a collection that holds Record
+files is `invalid` (ISO-11, SCH-15). Journal caps may change inside generation 1 (SCH-14). *Check:*
 missing `version` → `invalid`. *Check:* `version: 2` → `invalid` until
 the library implements 2. *Check:* `create_collection` writes
 `version: 1`.
@@ -125,8 +127,9 @@ from `get`; `add` of those bytes succeeds.
 of the Tantivy Index (`find`, filters, BM25). `find` that names it is
 `unsupported`, not an empty hit list. The journal id map is a separate
 file and is still written, so keyed `get` does not need Tantivy.
-`exclude_vector_index: true` skips the embedder on `add` / `replace` and
-keeps Records out of the vector Index; `search` then uses the lexical
+`exclude_vector_index: true` keeps Records out of the vector Index: the
+background indexer, the only caller of the embedder, never embeds that
+collection; `search` then uses the lexical
 leg only. Either flag, or both. `search` is `unsupported` only when the
 collection has no remaining search leg (both flags, or encrypted —
 SCH-16). Both flags are redundant on `encrypted` and allowed. A
@@ -176,7 +179,13 @@ return nothing of theirs; naming one is an ordinary query, because
 identity (and Projector columns, when a Projector is present) sit in the
 one Vault Index, which is owner-only for that reason (ISO-4). `info`
 lists the collection as isolated; there is no field catalog to omit
-(ISO-3). *Check:* fixture with gitignored `.isolated/`; a query with no
+(ISO-3). Changing `isolated` on a collection that already holds Record
+files (document or singleton files, journal segments) is `invalid` and
+leaves the declaration and the files untouched, as for `encrypted`
+(ISO-11); on an empty collection it is allowed. *Check:* changing
+`isolated` on a non-empty collection is `invalid` and the declaration file
+is byte-identical afterwards; on an empty collection it succeeds.
+*Check:* fixture with gitignored `.isolated/`; a query with no
 collection named returns no isolated Records while one naming that
 collection returns them; `open` does not require `.isolated/` to exist.
 

@@ -1,6 +1,6 @@
-//! P4: unencrypted isolated nested git (ISO-2, ISO-4, ISO-6, IDX-4).
+//! Unencrypted isolated nested git.
 //! Collection names here and in `testdata/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 
@@ -904,4 +904,108 @@ schema:
     .unwrap();
     let err = Vault::open(scratch.vault(), scratch.options(), None).unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn document_schema(isolated: bool) -> Schema {
+    let mut value = json!({"version": 1, "document": {}});
+    if isolated {
+        value["isolated"] = json!(true);
+    }
+    serde_json::from_value(value).unwrap()
+}
+
+fn declaration_bytes(scratch: &Scratch, name: &str) -> Vec<u8> {
+    fs::read(scratch.vault().join(name).join(".collection.yaml")).unwrap()
+}
+
+#[test]
+fn changing_the_kind_of_a_declared_collection_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+    vault
+        .create_collection("plain_docs", document_schema(false), Some("create"))
+        .unwrap();
+    // An empty collection does not change kind either.
+    let before = declaration_bytes(&scratch, "plain_docs");
+    let err = vault
+        .create_collection("plain_docs", title_schema(false), Some("flip"))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(declaration_bytes(&scratch, "plain_docs"), before);
+    vault
+        .collection("plain_docs")
+        .unwrap()
+        .add("a", rec(json!({"title": "A"})), Some("add"))
+        .unwrap();
+    let err = vault
+        .create_collection("plain_docs", title_schema(false), Some("flip"))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(declaration_bytes(&scratch, "plain_docs"), before);
+    assert_eq!(
+        vault
+            .collection("plain_docs")
+            .unwrap()
+            .get("a")
+            .unwrap()
+            .id
+            .as_deref(),
+        Some("a")
+    );
+    // The same kind is still accepted.
+    vault
+        .create_collection("plain_docs", document_schema(false), Some("again"))
+        .unwrap();
+}
+
+#[test]
+fn changing_isolated_needs_an_empty_collection() {
+    let scratch = Scratch::new();
+    let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+    // Document collection with a Record: refused, declaration untouched.
+    vault
+        .create_collection("plain_docs", document_schema(false), Some("create"))
+        .unwrap();
+    vault
+        .collection("plain_docs")
+        .unwrap()
+        .add("a", rec(json!({"title": "A"})), Some("add"))
+        .unwrap();
+    let before = declaration_bytes(&scratch, "plain_docs");
+    let err = vault
+        .create_collection("plain_docs", document_schema(true), Some("flip"))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(declaration_bytes(&scratch, "plain_docs"), before);
+    // Journal collection with a segment: refused too.
+    vault
+        .create_collection("plain_log", title_schema(false), Some("create"))
+        .unwrap();
+    vault
+        .collection("plain_log")
+        .unwrap()
+        .add("a", rec(json!({"msg": "one"})), Some("add"))
+        .unwrap();
+    let before = declaration_bytes(&scratch, "plain_log");
+    let err = vault
+        .create_collection("plain_log", title_schema(true), Some("flip"))
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(declaration_bytes(&scratch, "plain_log"), before);
+    // Empty collections may change `isolated` in both directions.
+    vault
+        .create_collection("empty_docs", document_schema(false), Some("create"))
+        .unwrap();
+    vault
+        .create_collection("empty_docs", document_schema(true), Some("flip"))
+        .unwrap();
+    vault
+        .create_collection("empty_docs", document_schema(false), Some("flip back"))
+        .unwrap();
+    vault
+        .create_collection("empty_log", title_schema(false), Some("create"))
+        .unwrap();
+    vault
+        .create_collection("empty_log", title_schema(true), Some("flip"))
+        .unwrap();
 }

@@ -72,11 +72,11 @@ A column without the `find` mark cannot appear in a Filter leaf. `id` cannot be 
 
 1. Validate `FindQuery` (`Filter.kind` required). `count == 0` → `invalid`. Resolve `collections` (empty → non-isolated on this handle). Apply Filter field names above. Explicit name that cannot accept the `Filter` → `invalid`. Empty set: omit collections that reject it.
 2. Run that Query on the vault Tantivy index with `MUST` collection in the resolved names.
-3. Collector: `(Count, TopDocs::with_limit(count).and_offset(offset))` in one `search()`. `Count` is indexed hits (`FindResult.total`).
+3. Collector: `(Count, TopDocs::with_limit(count).and_offset(offset))` in one `search()`. `Count` is indexed hits (`FindResult.total`). `TopDocs` reserves memory for `count + offset` hits before it looks at one, so both are clamped to the number of live documents first: `count` `u32::MAX` is the whole result, and an `offset` at or past the live count skips `TopDocs` and returns an empty page with the true `total`.
 4. Order: exactly one resolved collection and it is `journal` → append order (`order_by_fast_field` on segment+line ordinal). Otherwise score descending, equal scores broken by that same ordinal ascending (`tweak_score`), never by `DocAddress` — an address depends on segment layout, which varies between runs, so paging on it could repeat or skip a Record. Rotation does not reorder old lines.
 5. Open files for those `(collection, id)`s. Return one `FindResult` page. Past the end → empty `records`; `total` is still the match count. A missing file is omitted from `records` and does not decrease `total`. Unset or false `include_raw` omits `Record.raw`; true fills it (`get` always returns `raw`).
 
-`Filter` is a Tantivy 0.26 Query tree (`all`, `empty`, `term`, `term_set`, `phrase`, `phrase_prefix`, `fuzzy`, `regex`, `regex_phrase`, `range`, `exists`, `boolean` with `must` / `should` / `must_not`, `boost`, `const_score`, `disjunction_max`, `more_like_this`). No QueryParser string. AND = `OCCUR_MUST`, OR = `OCCUR_SHOULD`. Field `id` is Record identity (`term`, `term_set`, `range` only).
+`Filter` is a Tantivy 0.26 Query tree (`all`, `empty`, `term`, `term_set`, `phrase`, `phrase_prefix`, `fuzzy`, `regex`, `regex_phrase`, `range`, `exists`, `boolean` with `must` / `should` / `must_not`, `boost`, `const_score`, `disjunction_max`, `more_like_this`). No QueryParser string. AND = `OCCUR_MUST`, OR = `OCCUR_SHOULD`. Field `id` is Record identity (`term`, `term_set`, `range` only). `range` on a Projector column of kind `integer` or `number` compares by numeric value, negatives and fractions included; the bounds must be finite JSON numbers (a string or boolean bound is `invalid`), and a fractional bound on an `integer` column rounds inwards (`n > 9.5` is `n >= 10`). `integer` columns are exact over the whole `i64` range. `term` and `term_set` on those columns match the number (`10` matches `Integer(10)` and `Number(10.0)`). `range` on a `text` / `text list` column and on `id` compares as text, byte order. The kind is the column's own in each collection, so one Filter over collections that name a column alike but declare it differently compiles per collection. The Index keeps a sortable key per numeric value beside the text term (Index format `6`).
 
 `more_like_this` has two source forms and they must produce comparable queries. With `fields`, the caller supplies the text. With `id`, Scheda reads that Record and builds the terms from the **same** full-text the Index holds for it (Projector columns marked `fts`), then hands it to the `fields` path. It does not ask Tantivy to recover the source from the Index: Scheda's full-text is indexed and not stored, so a stored-field extraction would find only Scheda's own bookkeeping — `key`, `path`, `collection` — and "similar" would collapse into "in the same collection", every Record of it tying on one score. An unknown source `id` is `not_found`. A Record that exists but yields no full-text (no `fts` columns, or `project` omitted them) matches nothing, which is an empty page rather than an error.
 
@@ -105,7 +105,7 @@ Zero is not representable in either size. Absence of a vector leg is no embedder
 
 CLI hook (`14`): `--embedder-openai-url` plus `--embedder-model` and
 `--embedder-dimensions` (OpenAI `POST` `{URL}embeddings`), or
-`--model2vec-embedder DIR`. All three HTTP flags or none. Unset → lexical
+`--model2vec-embedder DIR`. All three HTTP flags or none. The CLI's `model_id` is the `--embedder-model` name (HTTP) or an identity of the model files (Model2Vec), never a URL or a path (`14`). Unset → lexical
 only. The CLI is that program; Scheda still does not ship weights.
 
 Scheda does not ship weights or a chat LLM.
@@ -137,14 +137,14 @@ The embedder runs on the background indexer's thread, never inside `add` / `repl
 
 `SearchQuery.text` is the query. Not a vector **instead of** text. The library embeds that text when the vector leg is on.
 
-`k` unset or `0` → 10. `lexical_weight` / `vector_weight` unset → 1; **0 turns that leg off**. Without a reranker those weights also scale Reciprocal Rank Fusion (order and truncation). With a reranker they no longer decide pool membership: each running leg's ranks fill the pool by alternation.
+`k` unset or `0` → 10, at most 10000; `rerank_limit` is at most 10000 too (larger is `invalid`). Each leg's pool is also clamped to the documents or vector slots that exist, so a large `k` costs nothing extra on a small corpus. `lexical_weight` / `vector_weight` unset → 1; **0 turns that leg off**. Without a reranker those weights also scale Reciprocal Rank Fusion (order and truncation). With a reranker they no longer decide pool membership: each running leg's ranks fill the pool by alternation.
 
 Without a Projector, there are no FTS/vector slots: step 2 has nothing to rank, step 3 is off.
 
 Steps:
 
-1. Resolve `collections` as in `find`. If `filter` is set: Tantivy runs `Filter` (same field-name rules as §3) → allow-set of `(collection, id)`s. Both legs search **only** that set. Unset `filter` → the selected collections, not other collections in the same Index.
-2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on Projector columns marked `fts` (`Must(filter)` if filtered). Top pool by score.
+1. Resolve `collections` as in `find`. If `filter` is set: Tantivy runs `Filter` (same field-name rules as §3) → allow-set of `(collection, id)`s for the vector leg; the lexical leg compiles the same Filter into its own query (step 2). Both legs search **only** the Records the Filter matches. Unset `filter` → the selected collections, not other collections in the same Index.
+2. Lexical (weight > 0): Tantivy `Must(collections)` plus BM25 on Projector columns marked `fts`, and `Must(filter)` if filtered. The Filter is a clause of the query, wrapped in a constant score of zero so it narrows the candidates without changing the ranking; the top pool is taken from the Records that match both, never from a larger top list filtered afterwards.
 3. Vector (weight > 0 and embedder set): `embed_query(text)` once. USearch `filtered_search` on the allow-set and selected collections (predicate during HNSW, not drop-after-top-k). The HNSW walk width is a binding floor (search expansion), not the caller's `k`; the engine retrieves at least that many slots, then truncates to the fusion pool, so asking for a deeper page does not reshuffle the head of a shallower one (IDX-7). Tiny allow-set may brute-force those vectors only, never the whole table at OPS-1.
 4. Fuse. Candidate pool is **larger than `k`**: at least `max(k, 50)` (or all fused hits if fewer). When a reranker is passed and `rerank_limit` is set above that floor, the pool is `max(k, 50, rerank_limit)` and both Index legs retrieve to that depth. Reciprocal Rank Fusion scores are always computed and reported on each hit.
    - **No reranker:** weighted RRF both orders the fused list and truncates it to the pool (ties: collection, then id). That order is the page.
@@ -152,7 +152,7 @@ Steps:
 5. If a **reranker** is passed to `search`: cut the fused list to `rerank_limit` when it is set, then `get` each remaining Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`); `rerank_limit` does not change the pool.
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
 
-Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids.
+Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids. An Index that `open` could not read (Tantivy files, `ord.json`, or the vector dump the vector leg needs) is not read as empty: `find` and `search` return that Index code until the lexical-role indexer has rebuilt the generation, which the failed `open` flags. A query Tantivy refuses because of what the caller put in it (a `regex_phrase` pattern, a `fuzzy.distance` above 2) is `invalid`, never an Index code, and does not flag the generation.
 
 ### Reranker
 

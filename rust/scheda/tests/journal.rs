@@ -1,5 +1,5 @@
-//! C4: `journal` segments (`03`, `04`, `07`, `11`). Collection names here and
-//! in `testdata/journal/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
+//! `journal` segments. Collection names here and
+//! in `testdata/journal/` must not appear in `rust/scheda/src`.
 
 mod common;
 
@@ -916,6 +916,102 @@ fn foreign_thread_cannot_join_open_transaction() {
     assert_eq!(
         collection.get("b").unwrap_err().known_code(),
         Some(Code::NotFound)
+    );
+}
+
+#[test]
+fn payload_with_marker_text_keeps_other_lines_readable() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let collection = vault.collection("south_lines").unwrap();
+    let quoted = rec_fields(json!({"n": 2, "note": "quoting a diff: >>>>>>> theirs <<<<<<< ours"}));
+    collection
+        .add("a", rec_fields(json!({"n": 1})), None)
+        .unwrap();
+    collection.add("b", &quoted, None).unwrap();
+    collection
+        .add("c", rec_fields(json!({"n": 3})), None)
+        .unwrap();
+    let segment = scratch.lines_dir().join(seq_jsonl(&vault, 1));
+    let text = fs::read_to_string(&segment).unwrap();
+    assert!(text.contains(">>>>>>> theirs"), "{text}");
+    for id in ["a", "b", "c"] {
+        assert_eq!(collection.get(id).unwrap().id.as_deref(), Some(id));
+    }
+    assert_eq!(
+        collection.get("b").unwrap().raw.as_deref(),
+        Some(quoted.as_slice())
+    );
+    let ids: Vec<String> = collection
+        .lines()
+        .unwrap()
+        .map(|record| record.unwrap().id.unwrap())
+        .collect();
+    assert_eq!(ids, ["a", "b", "c"]);
+    common::indexed(&vault);
+    let found = collection.find(&FindQuery::all(), 0, 10).unwrap();
+    assert_eq!(found.total, Some(3));
+    drop(vault);
+    let vault = scratch.reopen();
+    common::indexed(&vault);
+    let collection = vault.collection("south_lines").unwrap();
+    assert_eq!(
+        collection.find(&FindQuery::all(), 0, 10).unwrap().total,
+        Some(3)
+    );
+    assert_eq!(collection.get("a").unwrap().id.as_deref(), Some("a"));
+    vault.check().unwrap();
+}
+
+#[test]
+fn conflict_marker_line_in_segment_fails_check() {
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let collection = vault.collection("south_lines").unwrap();
+    collection
+        .add("a", rec_fields(json!({"n": 1})), None)
+        .unwrap();
+    let segment = scratch.lines_dir().join(seq_jsonl(&vault, 1));
+    let mut text = fs::read_to_string(&segment).unwrap();
+    text.push_str("<<<<<<< HEAD\nb: {\"n\":2}\n=======\nb: {\"n\":3}\n>>>>>>> theirs\n");
+    fs::write(&segment, text).unwrap();
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::ConflictMarkers));
+    assert!(err.to_string().contains("south_lines/"), "{err}");
+    let lines: Vec<_> = collection.lines().unwrap().collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(
+        lines[1].as_ref().unwrap_err().known_code(),
+        Some(Code::ConflictMarkers)
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinked_segment_is_not_followed_on_append_and_check_names_it() {
+    use std::os::unix::fs::symlink;
+    let scratch = Scratch::new();
+    let vault = open_lines(&scratch);
+    let outside = scratch.root.join("outside.jsonl");
+    fs::write(&outside, "z: {\"n\":9}\n").unwrap();
+    let link = scratch.lines_dir().join(seq_jsonl(&vault, 1));
+    symlink(&outside, &link).unwrap();
+    let collection = vault.collection("south_lines").unwrap();
+    let err = collection
+        .add("a", rec_fields(json!({"n": 1})), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(
+        err.path.as_deref(),
+        Some(format!("south_lines/{}", seq_jsonl(&vault, 1)).as_str())
+    );
+    assert_eq!(fs::read_to_string(&outside).unwrap(), "z: {\"n\":9}\n");
+    assert_eq!(collection.lines().unwrap().count(), 0);
+    let err = vault.check().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    assert_eq!(
+        err.path.as_deref(),
+        Some(format!("south_lines/{}", seq_jsonl(&vault, 1)).as_str())
     );
 }
 

@@ -91,13 +91,12 @@ pub(crate) fn io_code(err: &std::io::Error) -> Code {
     }
 }
 
-/// Map a git CLI failure (`exit` + `stderr`) onto [`Code`].
+/// Map a git CLI failure (its `stderr`) onto [`Code`].
 ///
 /// Patterns are matched on lower-cased `stderr` (Scheda runs git with
 /// `LC_ALL=C`). More specific classes win over [`Code::GitGeneric`].
 #[must_use]
-pub(crate) fn git_code(status: Option<i32>, stderr: &str) -> Code {
-    let _ = status;
+pub(crate) fn git_code(stderr: &str) -> Code {
     let text = stderr.to_ascii_lowercase();
     let hay = text.as_str();
     if matches_auth(hay) {
@@ -678,11 +677,8 @@ mod tests {
             ),
         ];
         for (stderr, want) in cases {
-            assert_eq!(git_code(Some(128), stderr), *want, "{stderr}");
+            assert_eq!(git_code(stderr), *want, "{stderr}");
         }
-        assert_eq!(
-            git_code(Some(1), "some unrecognized git failure"),
-            Code::GitGeneric
-        );
+        assert_eq!(git_code("some unrecognized git failure"), Code::GitGeneric);
     }
 }

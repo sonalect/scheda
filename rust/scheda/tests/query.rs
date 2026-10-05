@@ -1,6 +1,6 @@
-//! C5: SCH-8 `find`, `scan`, `check`, `reindex`.
+//! `find`, `scan`, `check`, `reindex`.
 //! Collection names here and in `testdata/query/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 
@@ -437,7 +437,7 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(counts.skipped_invalid, Some(0));
     let live = live_index(&vault);
     let format = fs::read_to_string(live.join("format")).unwrap();
-    assert_eq!(format.trim(), "5");
+    assert_eq!(format.trim(), "6");
     fs::write(live.join("format"), "999\n").unwrap();
     fs::write(live.join("stolen.json"), r#"{"id":"foreign"}"#).unwrap();
     // Whatever moment the query lands in — before the indexer replaces the
@@ -457,7 +457,7 @@ fn reindex_rebuilds_format_and_counts() {
     assert_ne!(rebuilt, live);
     assert_eq!(
         fs::read_to_string(rebuilt.join("format")).unwrap().trim(),
-        "5"
+        "6"
     );
     assert!(!rebuilt.join("stolen.json").exists());
     let page = collection.find(&FindQuery::all(), 0, 10).unwrap();
@@ -466,7 +466,7 @@ fn reindex_rebuilds_format_and_counts() {
     assert_eq!(counts.records_read, Some(2));
     let live = live_index(&vault);
     let format = fs::read_to_string(live.join("format")).unwrap();
-    assert_eq!(format.trim(), "5");
+    assert_eq!(format.trim(), "6");
     assert!(!live.join("stolen.json").exists());
     collection.get("a").unwrap();
 }
@@ -949,6 +949,94 @@ fn journal_rejects_body_filter() {
     assert_eq!(err.known_code(), Some(Code::Invalid));
 }
 
+/// `TopDocs` reserves slots for `count + offset` hits; `u32::MAX` once
+/// aborted the process.
+#[test]
+fn find_with_huge_count_or_offset_returns() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    for (id, tag) in [("a", "red"), ("b", "red"), ("c", "blue")] {
+        collection
+            .add(id, rec(json!({"title": id, "tag": tag})), None)
+            .unwrap();
+    }
+    common::indexed(&vault);
+    let red = filter(json!({"term":{"field":"tag","value":"red"}}));
+    for query in [FindQuery::from(Filter::all()), red] {
+        let all = collection.find(&query, 0, u32::MAX).unwrap();
+        assert_eq!(all.records.len() as u32, all.total.unwrap());
+        let past = collection.find(&query, u32::MAX, 1).unwrap();
+        assert!(past.records.is_empty());
+        assert_eq!(past.total, all.total, "an empty page keeps the true total");
+        let both = collection.find(&query, u32::MAX, u32::MAX).unwrap();
+        assert!(both.records.is_empty());
+        assert_eq!(both.total, all.total);
+        let at_end = collection.find(&query, all.total.unwrap(), 5).unwrap();
+        assert!(at_end.records.is_empty());
+        assert_eq!(at_end.total, all.total);
+    }
+    let first = collection.find(&Filter::all().into(), 0, u32::MAX).unwrap();
+    assert_eq!(first.records.len(), 3);
+    let tail = collection.find(&Filter::all().into(), 2, u32::MAX).unwrap();
+    assert_eq!(tail.records.len(), 1);
+}
+
+#[test]
+fn fuzzy_distance_above_two_is_invalid() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "panda"})), None)
+        .unwrap();
+    common::indexed(&vault);
+    for distance in [3, 255] {
+        let err = collection
+            .find(
+                &filter(json!({"fuzzy":{"field":"title","term":"pnda","distance":distance}})),
+                0,
+                10,
+            )
+            .unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "distance {distance}");
+    }
+    let ok = collection
+        .find(
+            &filter(json!({"fuzzy":{"field":"title","term":"pnda","distance":2}})),
+            0,
+            10,
+        )
+        .unwrap();
+    assert_eq!(ids(&ok), ["a"]);
+    assert!(!live_index(&vault).join("damaged").exists());
+}
+
+/// A regex Tantivy rejects is the caller's mistake: `invalid`, and the
+/// generation is not flagged for the indexer's damage check.
+#[test]
+fn broken_regex_patterns_are_invalid_and_do_not_flag_damage() {
+    let scratch = Scratch::new();
+    let vault = open_notes(&scratch);
+    let collection = vault.collection("query_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "panda"})), None)
+        .unwrap();
+    common::indexed(&vault);
+    for query in [
+        json!({"regexPhrase":{"field":"title","patterns":["pand.*","(unclosed"]}}),
+        json!({"regex":{"field":"title","pattern":"(unclosed"}}),
+    ] {
+        let err = collection.find(&filter(query), 0, 10).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid), "{err:?}");
+    }
+    assert!(!live_index(&vault).join("damaged").exists());
+    assert_eq!(
+        ids(&collection.find(&Filter::all().into(), 0, 10).unwrap()),
+        ["a"]
+    );
+}
+
 fn live_index(vault: &Vault) -> PathBuf {
     let root = vault.index_dir();
     match fs::read_to_string(root.join("current")) {
@@ -1192,7 +1280,7 @@ fn legacy_format_3_is_rebuilt_in_the_background() {
     let second = live_index(&vault);
     assert_eq!(
         fs::read_to_string(second.join("format")).unwrap().trim(),
-        "5"
+        "6"
     );
     let page = vault
         .collection("query_notes")

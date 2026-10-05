@@ -5,10 +5,26 @@ pub mod encryption {
     #[allow(unused_imports)]
     use super::*;
     /// Exactly one arm. Empty string is invalid.
-    #[derive(Clone, PartialEq, Debug)]
+    #[derive(Clone, PartialEq)]
     pub enum Secret {
         Passphrase(::buffa::alloc::string::String),
         Identity(::buffa::alloc::string::String),
+    }
+    impl ::core::fmt::Debug for Secret {
+        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+            match self {
+                Self::Passphrase(_) => {
+                    f.debug_tuple("Passphrase")
+                        .field(&::core::format_args!("[REDACTED]"))
+                        .finish()
+                }
+                Self::Identity(_) => {
+                    f.debug_tuple("Identity")
+                        .field(&::core::format_args!("[REDACTED]"))
+                        .finish()
+                }
+            }
+        }
     }
     impl ::buffa::Oneof for Secret {}
     impl ::serde::Serialize for Secret {

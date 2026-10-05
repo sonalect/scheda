@@ -1,5 +1,5 @@
-//! C2: Schema load and reject (`05`, `11`). Collection names here and in
-//! `testdata/schema/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
+//! Schema load and reject. Collection names here and in
+//! `testdata/schema/` must not appear in `rust/scheda/src`.
 
 mod common;
 

@@ -34,7 +34,9 @@ not install it when a program passes no Projector.
 | `--embedder-dimensions N` | Positive integer. `Embedder.dimensions` (no probe). Response length must match. With the other two HTTP embedder flags, or none. |
 | `--embedder-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP embedder flags. Unset → no auth. Missing or empty var → `invalid`. Not with `--model2vec-embedder`. |
 | `--no-wait` | `find` / `search` query the Index as it is. Without it they first call `wait_indexed` for up to 60 s: each CLI command is its own process, and the commits of earlier commands are indexed by this one's background indexer (`06` IDX-9). |
-| `--model2vec-embedder DIR` | Directory with Model2Vec files (`config.json`, `tokenizer.json`, `model.safetensors`). CLI loads them (`model2vec-rs`, no Hub download), implements `Embedder`, passes it to `open`. Missing a required file → `invalid`. Extra files (README) are allowed. Hidden names are ignored. Not with the HTTP embedder flags. |
+| `--model2vec-embedder DIR` | Directory with Model2Vec files (`config.json`, `tokenizer.json`, `model.safetensors`). CLI loads them (`model2vec-rs`, no Hub download), implements `Embedder`, passes it to `open`. Missing a required file → `invalid`. Extra files (README) are allowed. Hidden names are ignored. Not with the HTTP embedder flags. Its `model_id` is `model2vec:` plus 16 hex digits of the SHA-256 of `config.json` and the byte length of `model.safetensors`, so moving or renaming the directory is not a model change. |
+
+The HTTP embedder's `model_id` is exactly `--embedder-model`: no URL, query, or userinfo is stored in the Index, and a host change alone is not a model change. HTTP status is checked before the body is read; the error message is `HTTP {status} from {host}` and never the body. 408, 429, and 5xx are retryable (`io_timed_out`, `io_resource_busy`, `io_other`, `repeat` allowed); 401 and 403 are `io_permission` with `repeat` forbidden; other statuses are `invalid`.
 
 HTTP embedder body is `{ "model": <embedder-model>, "input": "<text>" }` for one text, or `"input": ["…", …]` for a batch of at most 2048. Rerank body is `{ "model": <reranker-model>, "query": "…", "documents": ["…", …] }` for one Record or a batch of at most 1000.
 
@@ -139,7 +141,7 @@ Defaults fit both processes on one 16 GiB GPU (`--gpu-memory-utilization
 | Subcommand | Args |
 |---|---|
 | `schema` | Print this collection's Schema as protobuf JSON (kind, perimeter, caps). No field list. |
-| `add` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. `raw` is those UTF-8 bytes. Not a JSON `fields` object. `--file` and a non-empty stdin together → `invalid`. Empty bytes are allowed. |
+| `add` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. `raw` is those UTF-8 bytes. Not a JSON `fields` object. With `--file`, stdin is not read (an open pipe nobody closes cannot block the command). A `--file` that cannot be read fails with the I/O code of the OS error (`io_not_found`, `io_permission`, `io_is_a_directory`, …); the path is in the message, `path` stays unset because it is not Vault-relative. Empty bytes are allowed. |
 | `get` | `--id ID`. Stdout is `Record.raw` (UTF-8 bytes), not a JSON envelope. Errors are protobuf JSON on stderr. |
 | `history` | `--id ID --offset N --count N`. JSON `History`. |
 | `replace` | `--id ID` (`--file PATH` or stdin bytes) [`--message TEXT`]. Same bytes rule as `add`. `journal` → `unsupported`. |
@@ -224,7 +226,7 @@ sidecars (`bazel run //python/vllm:embedder` on `:8080`, `:reranker` on
 `Qwen/Qwen3-Reranker-0.6B`). `cli_jina` uses
 `//python/vllm:embedder_jina` / `:reranker_jina` on the same ports
 (CC BY-NC). Embedder flags go on every `scheda` call
-so `add` / `reindex` / `search` fill or query `index/vector/`. Reranker
+so `add` / `reindex` / `search` fill or query `.scheda/index/<generation>/vector/`. Reranker
 flags are on `search` only for `cli_LLMs` (`--no-reranker` leaves RRF).
 `cli_model2vec` `search` passes `--model2vec-embedder` so the query is
 embedded (RRF; no local reranker). `--lexical-only` turns embedder and

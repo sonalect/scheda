@@ -32,6 +32,7 @@ rust_library(
 
 rust_test(
     name = "generated_v1_test",
+    size = "small",
     crate = ":generated_v1",
     visibility = ["//rust:__pkg__"],
 )
@@ -39,6 +40,7 @@ rust_test(
 # Every proto field named `version` must be field number 1 (`int32 version = 2` fails).
 rust_test(
     name = "version_field_test",
+    size = "small",
     srcs = ["tests/version_field.rs"],
     crate_root = "tests/version_field.rs",
     data = [

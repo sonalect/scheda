@@ -68,6 +68,7 @@ The design is a numbered package in `docs/`, in English.
 | [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8); its queue is replaced by `17` |
 | [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F19 done). |
 | [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature with an async API (T1–T4 done) |
+| [18-review-fixes.md](docs/18-review-fixes.md) | Rust work order: fixes from the 5 October 2026 full review (S1–S8) |
 
 ## Layout
 
@@ -254,7 +255,7 @@ bazel run //python/cli:cli_LLMs -- reindex
 `import` `open`s `.vault-test-LLMs` if needed, `create-collection` from
 each `.collection.yaml`, then `add`s missing document files. Embedder
 flags go on `add` / `reindex` / `search`, so the background indexer of
-each command fills `index/vector/` after its commit. `reindex` rebuilds
+each command fills `.scheda/index/<generation>/vector/` after its commit. `reindex` rebuilds
 lexical and vector indexes from the commits (use it after a change of
 embedder model, or if you imported without the embedder; an old Index
 format is rebuilt by itself).
@@ -360,7 +361,7 @@ bazel run //python/cli:cli_model2vec -- reindex
 `import` `open`s `.vault-test-model2vec` if needed, `create-collection`
 from each `.collection.yaml`, then `add`s missing document files. It
 does not load Model2Vec. `reindex` downloads the cache if needed, loads
-the embedder once, and fills `index/vector/`. A later `reindex` rebuilds
+the embedder once, and fills `.scheda/index/<generation>/vector/`. A later `reindex` rebuilds
 lexical and vector indexes after a change of embedder model. Stdout of
 `reindex` is `ReindexResult` YAML. The CLI default Projector is one text
 column `body` (the whole UTF-8 Record).

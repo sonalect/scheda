@@ -3106,7 +3106,8 @@ pub mod filter {
         ///
         /// Field 2: `term`
         pub term: ::core::option::Option<&'a str>,
-        /// Max edits. Tantivy `u8`. Unset or `0` → exact.
+        /// Max edits, 0 to 2 (Tantivy's Levenshtein automaton supports no more).
+        /// Unset or `0` → exact.
         ///
         /// Field 3: `distance`
         pub distance: ::core::option::Option<u32>,
@@ -3440,7 +3441,8 @@ pub mod filter {
         pub fn term(&self) -> ::core::option::Option<&'_ str> {
             self.0.reborrow().term
         }
-        /// Max edits. Tantivy `u8`. Unset or `0` → exact.
+        /// Max edits, 0 to 2 (Tantivy's Levenshtein automaton supports no more).
+        /// Unset or `0` → exact.
         ///
         /// Field 3: `distance`
         #[must_use]
@@ -4590,7 +4592,9 @@ pub mod filter {
         }
     }
     /// `RangeQuery`. At least one term in `[lower, upper]`. Unset bound is
-    /// unbounded. Score 1.0.
+    /// unbounded. Score 1.0. On an `integer` / `number` column the bounds are
+    /// numbers and compare by value; on text columns and `id` they compare as
+    /// text.
     #[derive(Clone, Debug, Default)]
     pub struct RangeView<'a> {
         /// Projector column name or Record identity `id`. Not a path.

@@ -13,7 +13,6 @@ use std::time::Duration;
 
 use crate::Error;
 use crate::error::{ContextIo, io_code};
-use crate::id;
 use crate::schema::{Decls, Kind};
 use crate::store;
 
@@ -92,19 +91,16 @@ pub(crate) fn journal_ids_in(
 ) -> Result<BTreeSet<(String, String)>, Error> {
     let mut ids = BTreeSet::new();
     for rel in rels {
-        for (collection, id) in ids_from_restored(vault, decls, rel)? {
-            let Some(decl) = decls.get(&collection) else {
-                continue;
-            };
-            if decl.kind == Kind::Journal {
-                ids.insert((collection, id));
-            }
+        for (collection, id) in journal_ids_in_file(vault, decls, rel)? {
+            ids.insert((collection, id));
         }
     }
     Ok(ids)
 }
 
-fn ids_from_restored(
+/// The journal ids in one restored path; empty when the path is not a
+/// `*.jsonl` segment of a journal collection or no longer exists.
+fn journal_ids_in_file(
     vault: &Path,
     decls: &Decls,
     rel: &str,
@@ -120,37 +116,15 @@ fn ids_from_restored(
     let Some(decl) = decls.get(name) else {
         return Ok(Vec::new());
     };
-    match decl.kind {
-        Kind::Document => {
-            if file.starts_with('.') {
-                return Ok(Vec::new());
-            }
-            if id::require_document_id(file).is_err() {
-                return Ok(Vec::new());
-            }
-            Ok(vec![(decl.name.clone(), file.to_owned())])
-        }
-        Kind::Singleton => {
-            let Some(id) = decl.singleton_id.as_deref() else {
-                return Ok(Vec::new());
-            };
-            if file != id {
-                return Ok(Vec::new());
-            }
-            Ok(vec![(decl.name.clone(), id.to_owned())])
-        }
-        Kind::Journal => {
-            if !file.ends_with(".jsonl") {
-                return Ok(Vec::new());
-            }
-            let path = vault.join(rel);
-            if !path.is_file() {
-                return Ok(Vec::new());
-            }
-            crate::journal::ids_in_segment(&path)
-                .map(|ids| ids.into_iter().map(|id| (decl.name.clone(), id)).collect())
-        }
+    if decl.kind != Kind::Journal || !file.ends_with(".jsonl") {
+        return Ok(Vec::new());
     }
+    let path = vault.join(rel);
+    if !path.is_file() {
+        return Ok(Vec::new());
+    }
+    crate::journal::ids_in_segment(&path)
+        .map(|ids| ids.into_iter().map(|id| (decl.name.clone(), id)).collect())
 }
 
 #[cfg(test)]

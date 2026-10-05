@@ -5,8 +5,8 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 
-use scheda::{redact_remote_text, Embedder, Error, Record, Reranker};
-use serde_json::{json, Value};
+use scheda::{Embedder, Error, Record, Repeat, Reranker, redact_remote_text};
+use serde_json::{Value, json};
 
 const EMBEDDINGS_LEAF: &str = "embeddings";
 const RERANK_LEAF: &str = "rerank";
@@ -21,7 +21,9 @@ pub fn load_embedder(
     let dimensions = NonZeroUsize::new(dimensions)
         .ok_or_else(|| Error::invalid("--embedder-dimensions must be a positive integer"))?;
     let url = join_url(url, EMBEDDINGS_LEAF)?;
-    let model_id = format!("{url} {model}");
+    // The model name alone: the URL may carry userinfo or an API key in its
+    // query, and a host change is not a model change.
+    let model_id = model.clone();
     Ok(Arc::new(OpenAiEmbedder {
         agent: http_agent(),
         url,
@@ -304,15 +306,30 @@ fn post_json(
         .send_json(&body)
         .map_err(|err| map_ureq(err, frame))?;
     let status = response.status();
-    let value: Value = response
+    if !status.is_success() {
+        // The body is not read: an error page may echo the request, and the
+        // request carries the API key.
+        return Err(status_error(status.as_u16(), &host_for_error(url)).context(frame));
+    }
+    response
         .body_mut()
         .read_json()
-        .map_err(|err| map_ureq(err, frame))?;
-    if !status.is_success() {
-        let host = host_for_error(url);
-        return Err(Error::invalid(format!("HTTP {status} from {host}")).context(frame));
+        .map_err(|err| map_ureq(err, frame))
+}
+
+/// A non-success HTTP status as an `Error`. The message is the status and
+/// the host only. 408, 429 and 5xx are transient (`Repeat::Allowed`); 401
+/// and 403 are `io_permission` that a retry does not fix; any other status
+/// is `invalid`.
+fn status_error(status: u16, host: &str) -> Error {
+    let message = format!("HTTP {status} from {host}");
+    match status {
+        408 | 504 => Error::io_timed_out(message),
+        429 => Error::io_resource_busy(message),
+        500..=599 => Error::io_other(message).with_repeat(Repeat::Allowed),
+        401 | 403 => Error::io_permission(message).with_repeat(Repeat::Forbidden),
+        _ => Error::invalid(message),
     }
-    Ok(value)
 }
 
 fn host_for_error(url: &str) -> String {
@@ -351,7 +368,78 @@ fn map_ureq(err: ureq::Error, frame: &str) -> Error {
 
 #[cfg(test)]
 mod tests {
-    use super::host_for_error;
+    use scheda::{Code, Repeat};
+
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
+
+    use super::{host_for_error, http_agent, post_json, status_error};
+
+    /// A server that answers once with an HTML error page, as a proxy does.
+    #[test]
+    fn post_json_checks_status_before_parsing_the_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            // Read the whole request (headers, then the `{}` body) so the
+            // close below is not a reset.
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.ends_with(b"{}") {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => request.extend_from_slice(&chunk[..n]),
+                }
+            }
+            let body = "<html><body>Bad Gateway key=sk-leak</body></html>";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        let url = format!("http://{addr}/v1/embeddings");
+        let err = post_json(
+            &http_agent(),
+            &url,
+            None,
+            serde_json::json!({}),
+            "[test] POST",
+        )
+        .unwrap_err();
+        server.join().unwrap();
+        assert_eq!(err.known_code(), Some(Code::IoOther));
+        assert_eq!(err.known_repeat(), Some(Repeat::Allowed));
+        let message = err.message.as_deref().unwrap_or_default();
+        assert_eq!(message, format!("HTTP 502 from {addr}"));
+        assert!(!message.contains("sk-leak"));
+    }
+
+    #[test]
+    fn status_error_maps_transient_and_permanent_statuses() {
+        for (status, code, repeat) in [
+            (408, Code::IoTimedOut, Repeat::Allowed),
+            (429, Code::IoResourceBusy, Repeat::Allowed),
+            (500, Code::IoOther, Repeat::Allowed),
+            (502, Code::IoOther, Repeat::Allowed),
+            (503, Code::IoOther, Repeat::Allowed),
+            (504, Code::IoTimedOut, Repeat::Allowed),
+            (401, Code::IoPermission, Repeat::Forbidden),
+            (403, Code::IoPermission, Repeat::Forbidden),
+            (400, Code::Invalid, Repeat::Forbidden),
+            (404, Code::Invalid, Repeat::Forbidden),
+            (422, Code::Invalid, Repeat::Forbidden),
+        ] {
+            let err = status_error(status, "api.example.test");
+            assert_eq!(err.known_code(), Some(code), "status {status}");
+            assert_eq!(err.known_repeat(), Some(repeat), "status {status}");
+            assert_eq!(
+                err.message.as_deref(),
+                Some(format!("HTTP {status} from api.example.test").as_str())
+            );
+        }
+    }
 
     #[test]
     fn host_for_error_drops_userinfo_path_and_query() {

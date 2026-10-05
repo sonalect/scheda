@@ -35,7 +35,7 @@ _MODEL2VEC_REPO = "minishlab/potion-multilingual-128M"
 _DEFAULT_MODEL2VEC_DIR = (
     Path(".cache") / "model2vec" / _MODEL2VEC_REPO.rsplit("/", 1)[-1]
 )
-_MODEL2VEC_REVISION = "main"
+_MODEL2VEC_REVISION = "73908c3438cf03b6a01bcb9611d62b23d0726f08"
 _MODEL2VEC_FILES = ("config.json", "tokenizer.json", "model.safetensors")
 _DEFAULT_FIXTURE = Path("python") / "cli" / "testdata" / "animals"
 _WORKSPACE_MARKERS = ("MODULE.bazel", "Cargo.toml")

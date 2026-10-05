@@ -2634,7 +2634,7 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
             }
         }
         if let Some(v) = self.distance {
-            if v > 255u32 {
+            if v > 2u32 {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -2856,7 +2856,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
             }
         }
         if let Some(v) = self.distance {
-            if v > 255u32 {
+            if v > 2u32 {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {

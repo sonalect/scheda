@@ -1,6 +1,6 @@
-//! C9: hybrid search, edges, incremental Index (SCH-9–11, IDX-3, IDX-6–9, QRY-3–6, REL-1–3).
+//! Hybrid search, edges, and the incremental Index.
 //! Collection names here and in `testdata/search/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 
@@ -62,6 +62,12 @@ version: 1
 name: token_extra
 schema:
   journal: {}
+";
+const PAGES: &str = "\
+version: 1
+name: search_pages
+schema:
+  document: {}
 ";
 const WALK_SRC: &str = include_str!("../testdata/search/walk_src.yaml");
 const WALK_DST: &str = include_str!("../testdata/search/walk_dst.yaml");
@@ -1186,6 +1192,182 @@ fn filter_applies_before_ranking() {
     assert_eq!(ids, ["keep"]);
 }
 
+/// 80 Records outrank the one filtered-in Record on BM25. A post-filter of
+/// the top pool would return nothing.
+#[test]
+fn filter_selects_before_the_pool_is_cut() {
+    let scratch = Scratch::new();
+    let vault = open_tokens(&scratch, None);
+    let collection = vault.collection("token_notes").unwrap();
+    vault.begin().unwrap();
+    for i in 0..80 {
+        collection
+            .add(
+                &format!("loud{i:02}"),
+                rec(json!({"title": "alpha alpha", "tag": "x"})),
+                None,
+            )
+            .unwrap();
+    }
+    collection
+        .add(
+            "target",
+            rec(json!({"title": "alpha among many other words here", "tag": "y"})),
+            None,
+        )
+        .unwrap();
+    vault.commit("pool").unwrap();
+    common::indexed(&vault);
+    let query: SearchQuery = serde_json::from_value(json!({
+        "text": "alpha",
+        "k": 5,
+        "filter": {"term":{"field":"tag","value":"y"}}
+    }))
+    .unwrap();
+    let found = collection
+        .find(&filter(json!({"term":{"field":"tag","value":"y"}})), 0, 10)
+        .unwrap();
+    assert_eq!(found.records.len(), 1);
+    let hits = collection.search(&query, None).unwrap();
+    assert_eq!(hit_ids(&hits), ["target"]);
+    assert!(hits.hits[0].lexical_score.is_some_and(|score| score > 0.0));
+}
+
+#[test]
+fn search_k_and_rerank_limit_have_an_upper_bound() {
+    let scratch = Scratch::new();
+    let embedder = Arc::new(MapEmbedder {
+        pairs: vec![(String::from("kryptonite"), vec![1.0, 0.0, 0.0, 0.0])],
+    });
+    let vault = open_tokens(&scratch, Some(embedder));
+    let collection = vault.collection("token_notes").unwrap();
+    collection
+        .add("a", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    collection
+        .add("b", rec(json!({"title": "kryptonite"})), None)
+        .unwrap();
+    common::indexed(&vault);
+    let hits = collection.search(&q("kryptonite", 10_000), None).unwrap();
+    assert_eq!(hits.hits.len(), 2);
+    let reranker = PreferIdReranker(String::from("a"));
+    let hits = collection
+        .search(
+            &q("kryptonite", 10_000).with_rerank_limit(10_000),
+            Some(&reranker),
+        )
+        .unwrap();
+    assert_eq!(hit_ids(&hits), ["a", "b"]);
+    let err = collection
+        .search(&q("kryptonite", 10_001), None)
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+    let err = collection
+        .search(
+            &q("kryptonite", 5).with_rerank_limit(10_001),
+            Some(&reranker),
+        )
+        .unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+/// The Index lags a `remove`: the hit's file is gone when the reranker
+/// would read it. The search skips that hit, as `find` does.
+#[test]
+fn reranked_search_skips_a_record_removed_before_the_indexer_saw_it() {
+    let scratch = Scratch::new();
+    drop(open_proj(scratch.vault(), None));
+    scratch.write_declaration("pages.yaml", PAGES);
+    let vault = open_proj(scratch.vault(), None);
+    let collection = vault.collection("search_pages").unwrap();
+    collection
+        .add("gone", rec(json!({"title": "kryptonite mineral"})), None)
+        .unwrap();
+    collection
+        .add("kept", rec(json!({"title": "kryptonite"})), None)
+        .unwrap();
+    common::indexed(&vault);
+    fs::remove_file(scratch.vault().join("search_pages").join("gone")).unwrap();
+    let reranker = PreferIdReranker(String::from("gone"));
+    let hits = collection
+        .search(&q("kryptonite", 5), Some(&reranker))
+        .unwrap();
+    assert_eq!(hit_ids(&hits), ["kept"]);
+    let hits = collection
+        .search(&q("kryptonite", 5).with_include_raw(true), Some(&reranker))
+        .unwrap();
+    assert_eq!(hit_ids(&hits), ["kept"]);
+    assert!(hits.hits[0].raw.is_some());
+}
+
+/// Damage that `open` meets is kept and reported, not read as an empty
+/// Index, and the generation is flagged for the lexical-role indexer. A
+/// second handle holds that role, so the reader fails first and the
+/// rebuild is observed after.
+fn damaged_reader_fails_then_recovers(file: &str, bytes: &[u8], codes: &[Code]) {
+    let scratch = Scratch::new();
+    drop(open_proj(scratch.vault(), None));
+    scratch.write_declaration("pages.yaml", PAGES);
+    let holder = open_proj(scratch.vault(), None);
+    holder
+        .collection("search_pages")
+        .unwrap()
+        .add("a", rec(json!({"title": "kryptonite"})), None)
+        .unwrap();
+    common::indexed(&holder);
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !holder.index_status().unwrap().lexical_role {
+        assert!(Instant::now() < deadline, "no lexical role");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let damaged = live_index(&holder);
+    let path = if file == "meta.json" {
+        damaged.join("lexical").join(file)
+    } else {
+        damaged.join(file)
+    };
+    fs::write(&path, bytes).unwrap();
+    let reader = open_proj(scratch.vault(), None);
+    let pages = reader.collection("search_pages").unwrap();
+    let err = pages
+        .find(&filter(json!({"all":{}})), 0, 10)
+        .expect_err("a damaged Index must not read as empty");
+    assert!(
+        err.known_code().is_some_and(|code| codes.contains(&code)),
+        "{err:?}"
+    );
+    let err = pages.search(&q("kryptonite", 5), None).unwrap_err();
+    assert!(
+        err.known_code().is_some_and(|code| codes.contains(&code)),
+        "{err:?}"
+    );
+    assert!(damaged.join("damaged").is_file(), "generation not flagged");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match pages.find(&filter(json!({"all":{}})), 0, 10) {
+            Ok(page) if page.records.len() == 1 => break,
+            Ok(_) | Err(_) => {}
+        }
+        assert!(Instant::now() < deadline, "never rebuilt");
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_ne!(live_index(&reader), damaged);
+}
+
+#[test]
+fn unreadable_tantivy_files_fail_find_and_are_rebuilt() {
+    damaged_reader_fails_then_recovers(
+        "meta.json",
+        b"not tantivy",
+        &[Code::IndexLexical, Code::IndexCorrupt],
+    );
+}
+
+#[test]
+fn unreadable_ord_file_fails_find_and_is_rebuilt() {
+    damaged_reader_fails_then_recovers("ord.json", b"[not json", &[Code::IndexCorrupt]);
+}
+
 #[test]
 fn search_omits_raw_unless_include_raw() {
     let scratch = Scratch::new();
@@ -1240,8 +1422,7 @@ schema:
     assert!(ids.contains(&"old"), "{ids:?}");
 }
 
-/// B6 check (replaces IDX-9 "add then search without reindex"): a
-/// write is visible to `search`, on both legs, once `wait_indexed` returns.
+/// A write is visible to `search`, on both legs, once `wait_indexed` returns.
 #[test]
 fn add_then_wait_indexed_then_search_finds() {
     let scratch = Scratch::new();

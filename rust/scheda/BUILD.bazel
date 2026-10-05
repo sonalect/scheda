@@ -61,6 +61,7 @@ rust_library(
 
 rust_test(
     name = "core_test",
+    size = "small",
     srcs = ["tests/core.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
@@ -77,6 +78,7 @@ rust_test(
 
 rust_test(
     name = "nonblocking_test",
+    size = "small",
     srcs = ["tests/nonblocking.rs"] + _TEST_COMMON,
     crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/nonblocking.rs",
@@ -90,6 +92,7 @@ rust_test(
 
 rust_test(
     name = "document_test",
+    size = "small",
     srcs = ["tests/document.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -103,6 +106,7 @@ rust_test(
 
 rust_test(
     name = "query_test",
+    size = "small",
     srcs = ["tests/query.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -116,6 +120,7 @@ rust_test(
 
 rust_test(
     name = "git_test",
+    size = "small",
     srcs = ["tests/git.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -129,6 +134,7 @@ rust_test(
 
 rust_test(
     name = "ann_test",
+    size = "small",
     srcs = ["tests/ann.rs"] + _TEST_COMMON,
     crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/ann.rs",
@@ -141,7 +147,7 @@ rust_test(
 
 rust_test(
     name = "ops_test",
-    size = "large",
+    size = "medium",
     srcs = ["tests/ops.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -155,6 +161,7 @@ rust_test(
 
 rust_test(
     name = "projector_test",
+    size = "small",
     srcs = ["tests/projector.rs"] + _TEST_COMMON,
     crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/projector.rs",
@@ -167,6 +174,7 @@ rust_test(
 
 rust_test(
     name = "opaque_test",
+    size = "small",
     srcs = ["tests/opaque.rs"] + _TEST_COMMON,
     crate_features = _SCHEDA_FEATURES,
     crate_root = "tests/opaque.rs",
@@ -179,6 +187,7 @@ rust_test(
 
 rust_test(
     name = "remote_test",
+    size = "small",
     srcs = ["tests/remote.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -192,6 +201,7 @@ rust_test(
 
 rust_test(
     name = "scheda_test",
+    size = "small",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
     crate_features = _SCHEDA_FEATURES,
@@ -199,6 +209,7 @@ rust_test(
 
 rust_test(
     name = "journal_test",
+    size = "small",
     srcs = ["tests/journal.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -212,6 +223,7 @@ rust_test(
 
 rust_test(
     name = "search_test",
+    size = "small",
     srcs = ["tests/search.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -225,7 +237,7 @@ rust_test(
 
 rust_test(
     name = "reindex_test",
-    size = "large",
+    size = "small",
     srcs = ["tests/reindex.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -239,6 +251,7 @@ rust_test(
 
 rust_test(
     name = "schema_test",
+    size = "small",
     srcs = ["tests/schema.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -252,6 +265,7 @@ rust_test(
 
 rust_test(
     name = "encrypt_test",
+    size = "small",
     srcs = ["tests/encrypt.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -265,6 +279,7 @@ rust_test(
 
 rust_test(
     name = "isolated_test",
+    size = "small",
     srcs = ["tests/isolated.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_features = _SCHEDA_FEATURES,
@@ -278,6 +293,7 @@ rust_test(
 
 rust_test(
     name = "catalog_test",
+    size = "small",
     srcs = ["tests/catalog.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
@@ -294,7 +310,7 @@ rust_test(
 
 rust_test(
     name = "consumer_test",
-    size = "large",
+    size = "medium",
     srcs = ["tests/consumer.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
@@ -311,6 +327,7 @@ rust_test(
 
 rust_test(
     name = "consumer_thin_test",
+    size = "small",
     srcs = ["tests/consumer.rs"] + _TEST_COMMON,
     compile_data = glob([
         "src/**/*.rs",
@@ -326,6 +343,7 @@ rust_test(
 
 rust_test(
     name = "thin_test",
+    size = "small",
     srcs = ["tests/thin.rs"] + _TEST_COMMON,
     compile_data = glob(["testdata/**"]),
     crate_root = "tests/thin.rs",
@@ -338,6 +356,7 @@ rust_test(
 
 rust_test(
     name = "scheda_thin_test",
+    size = "small",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda_thin",
     crate_features = _SCHEDA_THIN_FEATURES,
@@ -352,7 +371,7 @@ rust_doc(
 
 rust_doc_test(
     name = "scheda_doc_test",
-    size = "large",
+    size = "small",
     crate = ":scheda",
     crate_features = _SCHEDA_FEATURES,
 )

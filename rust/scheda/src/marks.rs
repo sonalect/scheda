@@ -17,7 +17,6 @@ use std::path::{Path, PathBuf};
 use crate::Error;
 #[cfg(any(test, feature = "find"))]
 use crate::error::ContextIo;
-use crate::index;
 use crate::store;
 
 const MARKS_DIR: &str = "marks";
@@ -98,11 +97,9 @@ pub(crate) fn write(generation: &Path, leg: Leg, repo: Repo, oid: &str) -> Resul
         return Err(Error::invalid(format!("not a commit id: {oid:?}"))
             .context("[Marks::write] check commit id"));
     }
-    store::atomic_write(
-        &mark_path(generation, leg, repo),
-        format!("{oid}\n").as_bytes(),
-    )?;
-    index::restrict_index_tree(generation)
+    let path = mark_path(generation, leg, repo);
+    store::atomic_write(&path, format!("{oid}\n").as_bytes())?;
+    store::restrict_file_below(generation, &path)
 }
 
 #[cfg(test)]

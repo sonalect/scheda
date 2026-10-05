@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -279,7 +279,6 @@ impl Vault {
             &path,
             options.writer.as_deref(),
         )?);
-        let _ = fs::remove_file(path.join(".scheda").join("index").join("txn"));
         #[cfg(feature = "find")]
         let search = Arc::new(SearchEngine::open(&generation, false, projector.clone())?);
         let encryption = options.encryption.as_option().cloned();
@@ -565,9 +564,9 @@ impl Vault {
     /// True during an open transaction and while a mutating call is in
     /// progress. False after `commit`, `discard`, a mutating call that
     /// autocommits, and `open`. Dropping the handle releases the lock
-    /// before Index teardown waits on merge threads. The lexical Index
-    /// writer is released with the lock, so another handle can write
-    /// without waiting on Tantivy's directory lock.
+    /// before the rest of the handle is torn down. Only git writes take the
+    /// lock: the background indexer holds no write lock, so another handle
+    /// can write as soon as it is released.
     #[must_use]
     pub fn holds_write_lock(&self) -> bool {
         match self.write_lock.lock() {
@@ -812,16 +811,13 @@ impl Vault {
     /// message is empty, or there is nothing to commit.
     ///
     /// Holds the write lock through `auto_sync` push, then releases it
-    /// and the lexical Index writer before returning. A later `open` on
-    /// this path can write immediately, including from a second handle
-    /// that is still concurrent with this one.
+    /// before returning. A later `open` on this path can write
+    /// immediately, including from a second handle that is still
+    /// concurrent with this one.
     ///
-    /// Opening a Tantivy writer allocates a 16 MiB heap and starts a merge
-    /// thread. This handle keeps one writer for the whole transaction and
-    /// drops it here, not per Record. Autocommit does the same per call;
-    /// that cost sits next to a git commit. The vector Index is an
-    /// in-memory USearch dump with no directory lock, so it is not
-    /// released here.
+    /// The commit does not write the lexical or vector Index. The
+    /// background indexer applies it afterwards; `wait_indexed` returns
+    /// once it has.
     pub fn commit(&self, message: &str) -> Result<(), Error> {
         self.require_write_lock("commit")?;
         self.conclude_write((|| {
@@ -841,8 +837,9 @@ impl Vault {
     /// call outside a transaction restores them.
     ///
     /// Takes the write lock and holds it until `commit`, `discard`, or drop.
-    /// The lexical Index writer is opened on the first indexed write and
-    /// kept until that point. Discards leftover Scheda writes first.
+    /// Writes inside the transaction only change files; the lexical and
+    /// vector Index see them after `commit` creates the git commit. Discards leftover
+    /// Scheda writes first.
     /// `invalid` if a transaction is already open on this handle.
     /// A mutating call, `commit`, or `discard` from another thread while a
     /// transaction is open is `locked` (retryable); it does not join this
@@ -860,11 +857,12 @@ impl Vault {
     }
 
     /// Restore Scheda-recorded paths to HEAD in the repository that owns
-    /// each path, end the transaction if any on this handle, reload Schema,
-    /// and rebuild the Index. Allowed without an open transaction so a later
-    /// process can clear crash leftovers.
+    /// each path, end the transaction if any on this handle, and reload
+    /// Schema. The lexical and vector Index are not rebuilt: they only ever
+    /// reflect commits, and the discarded writes were never committed. Allowed without an open
+    /// transaction so a later process can clear crash leftovers.
     ///
-    /// Releases the write lock and the lexical Index writer before returning.
+    /// Releases the write lock before returning.
     pub fn discard(&self) -> Result<(), Error> {
         self.require_write_lock("discard")?;
         self.conclude_write((|| {
@@ -875,38 +873,23 @@ impl Vault {
     }
 
     fn commit_recorded(&self, message: &str) -> Result<(), Error> {
-        let paths: Vec<String> = {
-            let set = crate::error::mutex(&self.written, "[Vault] lock written")?;
-            set.iter().cloned().collect()
-        };
-        isolated::commit_recorded(&self.path, message, &paths, &self.identity)?;
-        let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
-        set.clear();
-        persist_written(&self.path, &set)?;
+        commit_written(&self.path, &self.written, message, &self.identity)?;
         self.wake_indexer();
         Ok(())
     }
 
     fn restore_recorded(&self) -> Result<(), Error> {
-        let paths: Vec<String> = {
-            let mut set = crate::error::mutex(&self.written, "[Vault] lock written")?;
-            let paths: Vec<String> = set.iter().cloned().collect();
-            set.clear();
-            persist_written(&self.path, &set)?;
-            paths
-        };
-        if paths.is_empty() {
-            return Ok(());
-        }
         let decls = self.decls_arc()?;
-        let loaded = restore_paths(
+        let restored = restore_written(
             &self.path,
+            &self.written,
             &decls,
-            &paths,
             &self.generation_dir()?,
             &self.journal_ids,
         )?;
-        *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
+        if let Some(loaded) = restored {
+            *crate::error::mutex(&self.decls, "[Vault] lock decls")? = Arc::new(loaded);
+        }
         Ok(())
     }
 
@@ -960,8 +943,9 @@ impl Vault {
         self.conclude_write(git::push(&self.path))
     }
 
-    /// `git pull` from `origin`, then reload Schema and rebuild the Index.
-    /// Takes the write lock for this call. Outside a transaction the lock
+    /// `git pull` from `origin`, then reload Schema. The background
+    /// indexer brings the Index up to the new `HEAD`. Takes the write lock
+    /// for this call. Outside a transaction the lock
     /// is released before return.
     pub fn pull(&self) -> Result<(), Error> {
         self.require_write_lock("pull")?;
@@ -986,19 +970,17 @@ impl Vault {
     ///
     /// Vault `push` never reaches this nested repository. Missing nested
     /// work tree → `invalid`. No Remote → `invalid`. Takes the write lock
-    /// for this call. Not `locked` while `reindex` is in flight: no Record
-    /// file is written.
+    /// for this call.
     pub fn push_isolated(&self) -> Result<(), Error> {
         self.require_write_lock("push_isolated")?;
         self.conclude_write(git::push(&self.isolated_work_tree()?))
     }
 
     /// `git pull` of `{vault}/.isolated/` from its own `origin`, then reload
-    /// Schema and rebuild the Index.
-    ///
-    /// Isolated Records live in the one Vault Index, so this call is
-    /// `locked` while `reindex` is in flight. Missing nested work tree →
-    /// `invalid`.
+    /// Schema. The background indexer brings the Index up to the new
+    /// `HEAD`. Takes the write lock for this call; without the `find`
+    /// feature `reindex` holds it too, so this call is `locked` while that
+    /// runs. Missing nested work tree → `invalid`.
     pub fn pull_isolated(&self) -> Result<(), Error> {
         self.require_write_lock("pull_isolated")?;
         self.conclude_write((|| {
@@ -1029,7 +1011,7 @@ impl Vault {
     fn require_write_lock(&self, op: &str) -> Result<(), Error> {
         let mut slot = crate::error::mutex(&self.write_lock, "[Vault] lock write lock")
             .with_context(|| format!("[Vault::{op}] take write lock"))?;
-        take_write_slot(&mut slot, &self.path, "Vault", op)
+        take_write_slot(&mut slot, &self.path, &self.written, "Vault", op)
     }
 
     fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
@@ -1042,7 +1024,7 @@ impl Vault {
         {
             let mut slot = crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
             if !slot.is_held() {
-                take_write_slot(&mut slot, &self.path, "Vault", "open")?;
+                take_write_slot(&mut slot, &self.path, &self.written, "Vault", "open")?;
             }
         }
         let result = (|| {
@@ -1092,8 +1074,16 @@ impl Vault {
     }
 
     /// Proto snapshot (`api.v1.VaultInfo`): vault attrs plus the collection list.
+    ///
+    /// `remote` is `origin` when that remote exists, otherwise empty, whatever
+    /// other remotes are configured.
     pub fn info(&self) -> Result<VaultInfo, Error> {
-        let remote = self.remotes.first().cloned().unwrap_or_default();
+        let remote = self
+            .remotes
+            .iter()
+            .find(|name| name.as_str() == "origin")
+            .cloned()
+            .unwrap_or_default();
         let info = schema::to_vault_info(
             &self.path,
             &self.index.root,
@@ -1227,7 +1217,7 @@ impl Vault {
         })?;
         index::remove_legacy_isolated_index(&self.path)?;
         // No round of this handle's indexer may keep writing the previous
-        // generation's diff into the engine this swaps (D28).
+        // generation's diff into the engine this swaps.
         let _paused = self.indexer.as_ref().map(|indexer| indexer.pause());
         index::publish_generation(&self.index.root, &built.dir)?;
         crate::indexer::install(
@@ -1366,10 +1356,11 @@ impl std::fmt::Debug for Collection {
     }
 }
 
-#[cfg(feature = "find")]
 /// Releases `{vault}/.scheda/write.lock` when this is the last handle that
-/// shares it, before Index teardown waits on merge threads. An open
-/// transaction ends without a git commit.
+/// shares it, before the rest of the handle is torn down. An open
+/// transaction ends without a git commit. The unlock is explicit: a process
+/// that forks while the descriptor is open would otherwise keep the lock a
+/// moment after the handle is gone.
 impl Drop for Vault {
     fn drop(&mut self) {
         if Arc::strong_count(&self.write_lock) > 1 {
@@ -1380,7 +1371,7 @@ impl Drop for Vault {
 }
 
 /// Releases `{vault}/.scheda/write.lock` when this is the last handle that
-/// shares it, before Index teardown waits on merge threads.
+/// shares it, before the rest of the handle is torn down.
 impl Drop for Collection {
     fn drop(&mut self) {
         if Arc::strong_count(&self.write_lock) > 1 {
@@ -1485,7 +1476,7 @@ impl Collection {
     fn require_write(&self, op: &str) -> Result<(), Error> {
         let mut slot = crate::error::mutex(&self.write_lock, "[Collection] lock write lock")
             .with_context(|| format!("[Collection::{op}] take write lock"))?;
-        take_write_slot(&mut slot, &self.vault, "Collection", op)
+        take_write_slot(&mut slot, &self.vault, &self.written, "Collection", op)
     }
 
     fn conclude_write<T>(&self, result: Result<T, Error>) -> Result<T, Error> {
@@ -1502,24 +1493,7 @@ impl Collection {
         if flag(&self.in_txn)? {
             return Ok(());
         }
-        let paths: Vec<String> = {
-            let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
-            let paths: Vec<String> = set.iter().cloned().collect();
-            set.clear();
-            persist_written(&self.vault, &set)?;
-            paths
-        };
-        if paths.is_empty() {
-            return Ok(());
-        }
-        restore_paths(
-            &self.vault,
-            &self.decls,
-            &paths,
-            &self.generation_dir()?,
-            &self.journal_ids,
-        )?;
-        Ok(())
+        self.drain_recorded()
     }
 
     fn prepare_isolated_write(&self) -> Result<(), Error> {
@@ -1536,20 +1510,13 @@ impl Collection {
         if flag(&self.in_txn)? {
             return Ok(());
         }
-        let paths: Vec<String> = {
-            let set = crate::error::mutex(&self.written, "[Collection] lock written")?;
-            set.iter().cloned().collect()
-        };
-        match isolated::commit_recorded(
+        match commit_written(
             &self.vault,
+            &self.written,
             autocommit_subject(message),
-            &paths,
             &self.identity,
         ) {
             Ok(()) => {
-                let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
-                set.clear();
-                persist_written(&self.vault, &set)?;
                 #[cfg(feature = "find")]
                 if let Some(indexer) = &self.indexer {
                     indexer.wake();
@@ -1560,21 +1527,24 @@ impl Collection {
                 Ok(())
             }
             Err(err) => {
-                let paths: Vec<String> = {
-                    let mut set = crate::error::mutex(&self.written, "[Collection] lock written")?;
-                    let paths: Vec<String> = set.iter().cloned().collect();
-                    set.clear();
-                    persist_written(&self.vault, &set)?;
-                    paths
-                };
-                if !paths.is_empty() {
-                    let dir = self.generation_dir()?;
-                    let _ =
-                        restore_paths(&self.vault, &self.decls, &paths, &dir, &self.journal_ids);
-                }
+                // A failed restore leaves the paths in `tx.log` for the next
+                // mutating call; the commit failure is what the caller sees.
+                let _ = self.drain_recorded();
                 Err(err)
             }
         }
+    }
+
+    /// Restore what this handle recorded, whether or not a transaction is open.
+    fn drain_recorded(&self) -> Result<(), Error> {
+        restore_written(
+            &self.vault,
+            &self.written,
+            &self.decls,
+            &self.generation_dir()?,
+            &self.journal_ids,
+        )?;
+        Ok(())
     }
 
     fn require_encryption_secret(&self) -> Result<(), Error> {
@@ -1615,8 +1585,11 @@ impl Collection {
     ///
     /// Encrypted collections write age armor after the UTF-8 plaintext
     /// is built. A missing secret is `crypto`. The temp file never holds
-    /// plaintext. `exclude_lexical_index` skips the Tantivy write;
-    /// `exclude_vector_index` skips the embedder and the vector Index.
+    /// plaintext. The write commits to git and returns; the background
+    /// indexer applies the commit later. `exclude_lexical_index` keeps the
+    /// collection out of the lexical leg of that work and
+    /// `exclude_vector_index` out of the vector leg (the embedder is not
+    /// called for it).
     ///
     /// `raw` is the UTF-8 file / payload bytes. Empty is allowed. Non-UTF-8
     /// is refused and writes no file.
@@ -1625,7 +1598,7 @@ impl Collection {
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
-    /// call, and the lexical Index writer is released with it.
+    /// call.
     pub fn add(&self, id: &str, raw: impl AsRef<[u8]>, message: Option<&str>) -> Result<(), Error> {
         require_caller_id(self.decl.kind, id)?;
         self.require_encryption_secret()?;
@@ -1734,8 +1707,9 @@ impl Collection {
 
     /// Replace a whole `document` or `singleton`. `journal` → `unsupported`.
     ///
-    /// `exclude_lexical_index` skips the Tantivy write; `exclude_vector_index`
-    /// skips the embedder and the vector Index.
+    /// The write commits to git and returns; the background indexer applies
+    /// the commit later, leaving the collection out of the lexical or vector
+    /// leg per `exclude_lexical_index` / `exclude_vector_index`.
     ///
     /// `raw` is the UTF-8 file bytes. Empty is allowed. Non-UTF-8 is
     /// refused and writes no file.
@@ -1744,7 +1718,7 @@ impl Collection {
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
-    /// call, and the lexical Index writer is released with it.
+    /// call.
     pub fn replace(
         &self,
         id: &str,
@@ -1795,7 +1769,7 @@ impl Collection {
     /// `scheda`. Present but empty → `invalid` before any file is written.
     /// Inside a transaction the argument is ignored; `commit` supplies the
     /// subject. Outside a transaction the write lock is held only for this
-    /// call, and the lexical Index writer is released with it.
+    /// call.
     pub fn remove(&self, id: &str, message: Option<&str>) -> Result<(), Error> {
         require_caller_id(self.decl.kind, id)?;
         self.require_encryption_secret()?;
@@ -2119,28 +2093,6 @@ fn apply_filter_decls(
         .collect())
 }
 
-#[cfg(feature = "find")]
-fn read_record(
-    vault: &Path,
-    decls: &Decls,
-    journal_ids: &Mutex<JournalIdMaps>,
-    collection: &str,
-    id: &str,
-) -> Result<Record, Error> {
-    let Some(decl) = decls.get(collection) else {
-        bail!(Error::not_found(format!(
-            "collection {collection} is not in the declaration"
-        )));
-    };
-    match decl.kind {
-        Kind::Journal => {
-            let maps = crate::error::mutex(journal_ids, "[Vault] lock journal ids")?;
-            journal::find_journal(vault, decl, id, &maps)
-        }
-        Kind::Document | Kind::Singleton => store::find_document(vault, decl, id, None),
-    }
-}
-
 /// Full-text blob of a `moreLikeThis` source `id`, same text the Index holds.
 ///
 /// Missing `id` is `not_found`. An encrypted or lexically excluded
@@ -2165,7 +2117,7 @@ fn more_like_this_source_text(
             decl.name
         )));
     }
-    let record = match read_record(ctx.vault, ctx.decls, ctx.journal_ids, &decl.name, id) {
+    let record = match ctx.read_record(&decl.name, id) {
         Ok(record) => record,
         Err(err)
             if matches!(
@@ -2210,6 +2162,25 @@ struct QueryCtx<'a> {
 
 #[cfg(feature = "find")]
 impl QueryCtx<'_> {
+    /// Read one Record of `collection` as the files hold it. A journal line
+    /// another handle or process appended is found: the `id` map is read
+    /// again when its file changed.
+    fn read_record(&self, collection: &str, id: &str) -> Result<Record, Error> {
+        let Some(decl) = self.decls.get(collection) else {
+            bail!(Error::not_found(format!(
+                "collection {collection} is not in the declaration"
+            )));
+        };
+        match decl.kind {
+            Kind::Journal => {
+                let mut maps = crate::error::mutex(self.journal_ids, "[Vault] lock journal ids")?;
+                index::refresh_ids(&self.engine.dir()?, &mut maps, decl)?;
+                journal::find_journal(self.vault, decl, id, &maps)
+            }
+            Kind::Document | Kind::Singleton => store::find_document(self.vault, decl, id, None),
+        }
+    }
+
     fn find(
         &self,
         names: &[&str],
@@ -2256,7 +2227,7 @@ impl QueryCtx<'_> {
         )?;
         let mut records = Vec::new();
         for (collection, id) in page.ids {
-            match read_record(self.vault, self.decls, self.journal_ids, &collection, &id) {
+            match self.read_record(&collection, &id) {
                 Ok(record) => records.push(if include_raw {
                     record
                 } else {
@@ -2340,11 +2311,17 @@ impl QueryCtx<'_> {
                     })?,
             )
         };
+        let mlt_fts = |decl: &CollectionDecl, id: &str| more_like_this_source_text(self, decl, id);
+        let narrowed = allowed.as_ref().map(|allowed| crate::search::SearchFilter {
+            filter,
+            allowed,
+            mlt_fts: &mlt_fts,
+        });
         let mut hits = self.engine.search(
             &decls,
             query,
             embedder,
-            allowed.as_ref(),
+            narrowed.as_ref(),
             reranker.is_some(),
         )?;
         let include_raw = query.include_raw == Some(true);
@@ -2359,21 +2336,25 @@ impl QueryCtx<'_> {
             hits.hits.truncate(limit as usize);
         }
         let text = query.text.as_deref().unwrap_or("");
+        // The Index may lag a `remove`: a hit whose file is gone is dropped
+        // before scoring, as `find` drops it.
         let mut records = Vec::with_capacity(hits.hits.len());
-        for hit in &hits.hits {
-            records.push(read_record(
-                self.vault,
-                self.decls,
-                self.journal_ids,
-                hit_collection(hit),
-                hit.id.as_deref().unwrap_or(""),
-            )?);
+        let mut candidates = Vec::with_capacity(hits.hits.len());
+        for hit in hits.hits {
+            match self.read_record(hit_collection(&hit), hit.id.as_deref().unwrap_or("")) {
+                Ok(record) => {
+                    records.push(record);
+                    candidates.push(hit);
+                }
+                Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
+                Err(err) => bail!(err),
+            }
         }
         let refs: Vec<&Record> = records.iter().collect();
         let scores = crate::embed::score_all(reranker, text, &refs)?;
         let mut scored: Vec<_> = scores
             .into_iter()
-            .zip(hits.hits)
+            .zip(candidates)
             .zip(records)
             .map(|((score, mut hit), record)| {
                 if include_raw {
@@ -2399,13 +2380,7 @@ impl QueryCtx<'_> {
     fn fill_hit_raw(&self, hits: &mut SearchHits) -> Result<(), Error> {
         for hit in &mut hits.hits {
             let collection = hit_collection(hit);
-            match read_record(
-                self.vault,
-                self.decls,
-                self.journal_ids,
-                collection,
-                hit.id.as_deref().unwrap_or(""),
-            ) {
+            match self.read_record(collection, hit.id.as_deref().unwrap_or("")) {
                 Ok(record) => hit.raw = record.raw,
                 Err(err) if err.known_code() == Some(crate::Code::NotFound) => {}
                 Err(err) => bail!(err),
@@ -2525,20 +2500,24 @@ fn prepare_new_work_tree(path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// Which of the `.scheda` and `.isolated` entries `text` already ignores.
+fn gitignore_entries(text: &str) -> (bool, bool) {
+    let has = |dir: &str, slashed: &str| {
+        text.lines().any(|line| {
+            let line = line.trim();
+            line == slashed || line == dir
+        })
+    };
+    (has(".scheda", ".scheda/"), has(".isolated", ".isolated/"))
+}
+
 fn gitignore_needs_write(vault: &Path) -> Result<bool, Error> {
     let path = vault.join(".gitignore");
     if !path.exists() {
         return Ok(true);
     }
     let text = fs::read_to_string(&path).context("[Vault::open] read gitignore")?;
-    let already_scheda = text.lines().any(|line| {
-        let line = line.trim();
-        line == ".scheda/" || line == ".scheda"
-    });
-    let already_isolated = text.lines().any(|line| {
-        let line = line.trim();
-        line == ".isolated/" || line == ".isolated"
-    });
+    let (already_scheda, already_isolated) = gitignore_entries(&text);
     Ok(!(already_scheda && already_isolated))
 }
 
@@ -2549,14 +2528,7 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
     } else {
         String::new()
     };
-    let already_scheda = text.lines().any(|line| {
-        let line = line.trim();
-        line == ".scheda/" || line == ".scheda"
-    });
-    let already_isolated = text.lines().any(|line| {
-        let line = line.trim();
-        line == ".isolated/" || line == ".isolated"
-    });
+    let (already_scheda, already_isolated) = gitignore_entries(&text);
     if already_scheda && already_isolated {
         return Ok(false);
     }
@@ -2667,11 +2639,60 @@ fn restore_paths(
     {
         let mut maps = crate::error::mutex(journal_ids, "[Vault] lock journal ids")?;
         maps.clear_segment_lines();
+        // `difference` is sorted by collection, so each collection's ids
+        // are one run: one lock and one rewrite of its `ids` file.
+        let mut removed: BTreeMap<&str, Vec<String>> = BTreeMap::new();
         for (collection, id) in before.difference(&after) {
-            index::forget_remembered(index_dir, &mut maps, collection, id)?;
+            removed.entry(collection).or_default().push(id.clone());
+        }
+        for (collection, ids) in removed {
+            index::apply_id_changes(index_dir, &mut maps, collection, &[], &ids)?;
         }
     }
     Ok(loaded)
+}
+
+/// Commit every path in the `written` set, then empty the set and `tx.log`.
+/// A failed commit leaves both as they were.
+fn commit_written(
+    vault: &Path,
+    written: &Mutex<BTreeSet<String>>,
+    message: &str,
+    identity: &git::CommitIdentity,
+) -> Result<(), Error> {
+    let paths: Vec<String> = {
+        let set = crate::error::mutex(written, "[Vault] lock written")?;
+        set.iter().cloned().collect()
+    };
+    isolated::commit_recorded(vault, message, &paths, identity)?;
+    let mut set = crate::error::mutex(written, "[Vault] lock written")?;
+    set.clear();
+    persist_written(vault, &set)
+}
+
+/// Restore every path in the `written` set to `HEAD`, then empty the set and
+/// `tx.log`. The list is cleared only after the files are back: a restore
+/// that fails keeps the paths for the next attempt. Returns the declarations
+/// as the files hold them afterwards, `None` when nothing was recorded.
+fn restore_written(
+    vault: &Path,
+    written: &Mutex<BTreeSet<String>>,
+    decls: &Decls,
+    index_dir: &Path,
+    journal_ids: &Mutex<JournalIdMaps>,
+) -> Result<Option<Decls>, Error> {
+    let paths: Vec<String> = {
+        let set = crate::error::mutex(written, "[Vault] lock written")?;
+        set.iter().cloned().collect()
+    };
+    if paths.is_empty() {
+        return Ok(None);
+    }
+    let loaded = restore_paths(vault, decls, &paths, index_dir, journal_ids)?;
+    let mut set = crate::error::mutex(written, "[Vault] lock written")?;
+    set.clear();
+    persist_written(vault, &set)?;
+    Ok(Some(loaded))
 }
 
 fn load_written(vault: &Path) -> Result<BTreeSet<String>, Error> {
@@ -2772,7 +2793,18 @@ fn release_write_lock_on_drop(slot: &Mutex<WriteLock>) {
     let _ = release_held_write_lock_in(&mut guard);
 }
 
-fn take_write_slot(slot: &mut WriteLock, vault: &Path, kind: &str, op: &str) -> Result<(), Error> {
+/// Take `write.lock` for this handle. When the lock is newly acquired, the
+/// `written` set is re-read from `tx.log`: another process may have left
+/// recorded paths there since this handle opened, and the set a call
+/// restores or persists must be the file's. A call that finds the lock
+/// already held by this thread (inside a transaction) keeps its own set.
+fn take_write_slot(
+    slot: &mut WriteLock,
+    vault: &Path,
+    written: &Mutex<BTreeSet<String>>,
+    kind: &str,
+    op: &str,
+) -> Result<(), Error> {
     let me = thread::current().id();
     if slot.is_held() {
         if slot.owner != Some(me) {
@@ -2785,6 +2817,9 @@ fn take_write_slot(slot: &mut WriteLock, vault: &Path, kind: &str, op: &str) -> 
     }
     let file =
         acquire_write_lock(vault).with_context(|| format!("[{kind}::{op}] take write lock"))?;
+    // Dropping `file` on error releases the lock.
+    let on_disk = load_written(vault).with_context(|| format!("[{kind}::{op}] read tx.log"))?;
+    *crate::error::mutex(written, "[Vault] lock written")? = on_disk;
     slot.file = Some(file);
     slot.owner = Some(me);
     Ok(())
@@ -3566,7 +3601,7 @@ mod tests {
             err.stack
         );
         // With `find`, `reindex` builds from commits and takes no
-        // `write.lock` (D34); without it, it holds the lock for the call.
+        // `write.lock`; without it, it holds the lock for the call.
         let reindex = reader.reindex();
         if cfg!(feature = "find") {
             reindex.unwrap();
@@ -3826,7 +3861,7 @@ mod tests {
             .collect()
     }
 
-    /// D34: the build reads commits and takes no `write.lock`; a write made
+    /// The build reads commits and takes no `write.lock`; a write made
     /// during it reaches `N+1` through the marks after publish.
     #[cfg(feature = "find")]
     #[test]
@@ -4244,7 +4279,7 @@ mod tests {
             fs::read_to_string(live_dir(&vault).join("format"))
                 .unwrap()
                 .trim(),
-            "5"
+            "6"
         );
     }
 
@@ -4383,7 +4418,7 @@ mod tests {
             vault.reindex().unwrap();
         });
         // Another handle's line: in the map once the indexer applied the
-        // commit, as for any line that reached `HEAD` another way (D16).
+        // commit, as for any line that reached `HEAD` another way.
         indexed(&vault);
         let got = vault.collection("j").unwrap().get("queued").unwrap();
         assert_eq!(got.id.as_deref(), Some("queued"));
@@ -4543,6 +4578,109 @@ mod tests {
         );
         let err = vault.collection("j").unwrap().get("lost").unwrap_err();
         assert_eq!(err.known_code(), Some(Code::NotFound));
+    }
+
+    /// A writer in another process that died mid-transaction: it recorded
+    /// `c/{id}` in `tx.log` and wrote the file, but never committed. The
+    /// handle is dropped, which releases `write.lock` and keeps `tx.log`.
+    fn leave_crash_leftover(scratch: &Scratch, id: &str) {
+        let dead = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        dead.begin().unwrap();
+        dead.collection("c")
+            .unwrap()
+            .add(id, empty_add(), None)
+            .unwrap();
+        drop(dead);
+        let tx = scratch.vault().join(".scheda").join("tx.log");
+        assert_eq!(fs::read_to_string(tx).unwrap(), format!("c/{id}\n"));
+    }
+
+    /// Files the last commit of the Vault touched.
+    fn last_commit_files(dir: &Path) -> Vec<String> {
+        let out = std::process::Command::new("git")
+            .current_dir(dir)
+            .args(["show", "--name-only", "--format=", "HEAD"])
+            .output()
+            .unwrap();
+        assert!(out.status.success());
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// A handle opened before another process crashed still restores that
+    /// process's leftovers on its next write, and commits only its own path.
+    #[test]
+    fn crash_leftover_of_another_handle_is_restored_by_the_next_write() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        leave_crash_leftover(&scratch, "ghost");
+        let ghost = scratch.vault().join("c").join("ghost");
+        assert!(
+            ghost.is_file(),
+            "the dead writer's file is in the work tree"
+        );
+        let c = vault.collection("c").unwrap();
+        assert!(c.get("ghost").is_ok(), "uncommitted bytes are readable");
+        c.add("beta", empty_add(), None).unwrap();
+        assert!(!ghost.exists(), "the leftover is restored");
+        assert!(
+            !scratch.vault().join(".scheda").join("tx.log").exists(),
+            "tx.log is emptied once the files are back"
+        );
+        assert_eq!(last_commit_files(&scratch.vault()), ["c/beta"]);
+        assert_eq!(
+            c.get("ghost").unwrap_err().known_code(),
+            Some(Code::NotFound)
+        );
+    }
+
+    /// `begin` on a handle opened before the crash restores the leftover too.
+    #[test]
+    fn begin_restores_the_leftover_of_another_handle() {
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        leave_crash_leftover(&scratch, "ghost");
+        vault.begin().unwrap();
+        assert!(!scratch.vault().join("c").join("ghost").exists());
+        vault.discard().unwrap();
+    }
+
+    /// A restore that fails keeps the paths in `tx.log`; the next call that
+    /// can restore them does.
+    #[cfg(unix)]
+    #[test]
+    fn failed_restore_keeps_the_paths_in_tx_log() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let scratch = Scratch::new();
+        let vault = seeded(&scratch);
+        leave_crash_leftover(&scratch, "ghost");
+        let dir = scratch.vault().join("c");
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o555)).unwrap();
+        if fs::write(dir.join("probe"), b"").is_ok() {
+            // A superuser ignores the mode: the restore cannot be made to fail.
+            fs::remove_file(dir.join("probe")).unwrap();
+            fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+            return;
+        }
+        let tx = scratch.vault().join(".scheda").join("tx.log");
+        let c = vault.collection("c").unwrap();
+        let err = c.add("beta", empty_add(), None).unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::IoPermission), "{err:?}");
+        assert_eq!(fs::read_to_string(&tx).unwrap(), "c/ghost\n");
+        let err = vault.begin().unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::IoPermission), "{err:?}");
+        assert_eq!(fs::read_to_string(&tx).unwrap(), "c/ghost\n");
+        assert!(!vault.holds_write_lock(), "a failed begin keeps no lock");
+
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o755)).unwrap();
+        c.add("beta", empty_add(), None).unwrap();
+        assert!(!dir.join("ghost").exists());
+        assert!(!tx.exists());
+        assert_eq!(last_commit_files(&scratch.vault()), ["c/beta"]);
     }
 
     /// The background indexer, started by `open` on threads that ask for it.
@@ -4741,7 +4879,45 @@ mod tests {
             vault.wait_indexed(WAIT).unwrap();
             let new = live_dir(&vault);
             assert_ne!(new, old);
-            assert_eq!(fs::read_to_string(new.join("format")).unwrap().trim(), "5");
+            assert_eq!(fs::read_to_string(new.join("format")).unwrap().trim(), "6");
+            assert_eq!(find_ids(&vault, "c"), ["alpha"]);
+        }
+
+        #[test]
+        fn format_5_generation_is_rebuilt_in_the_background() {
+            use tantivy::schema::{FAST, INDEXED, STORED, STRING, TEXT};
+            let scratch = Scratch::new();
+            let plain = seeded(&scratch);
+            let old = live_dir(&plain);
+            drop(plain);
+            // A generation a format 5 release wrote: no `num` field.
+            fs::write(old.join("format"), "5\n").unwrap();
+            let lexical = old.join("lexical");
+            fs::remove_dir_all(&lexical).unwrap();
+            fs::create_dir_all(&lexical).unwrap();
+            let mut builder = tantivy::schema::Schema::builder();
+            for name in ["key", "collection", "id", "path"] {
+                builder.add_text_field(name, STRING | STORED);
+            }
+            builder.add_text_field("text", TEXT);
+            for name in ["eq", "exists", "null"] {
+                builder.add_text_field(name, STRING);
+            }
+            builder.add_text_field("tok", TEXT);
+            builder.add_u64_field("ord", FAST | INDEXED | STORED);
+            tantivy::Index::create_in_dir(&lexical, builder.build()).unwrap();
+            let vault = open_indexed(&scratch.vault(), poll_never());
+            let deadline = std::time::Instant::now() + WAIT;
+            while live_dir(&vault) == old {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "no new generation published"
+                );
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            vault.wait_indexed(WAIT).unwrap();
+            let new = live_dir(&vault);
+            assert_eq!(fs::read_to_string(new.join("format")).unwrap().trim(), "6");
             assert_eq!(find_ids(&vault, "c"), ["alpha"]);
         }
 
@@ -5074,6 +5250,103 @@ mod tests {
             assert_eq!(sorted_ids(&polled, "c"), ["r1", "r2"]);
         }
 
+        /// Embeds two texts per call and counts the Records the projector
+        /// is asked about.
+        #[cfg(feature = "search")]
+        struct SmallBatchEmbedder;
+
+        #[cfg(feature = "search")]
+        impl Embedder for SmallBatchEmbedder {
+            fn model_id(&self) -> &str {
+                "m1"
+            }
+
+            fn dimensions(&self) -> NonZeroUsize {
+                NonZeroUsize::new(4).unwrap()
+            }
+
+            fn many_limit(&self) -> NonZeroUsize {
+                NonZeroUsize::new(2).unwrap()
+            }
+
+            fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
+                Ok(texts.iter().copied().map(counting_vector).collect())
+            }
+        }
+
+        /// [`TagProjector`] that counts `project` calls.
+        #[cfg(feature = "search")]
+        struct CountingProjector {
+            projects: AtomicU64,
+        }
+
+        #[cfg(feature = "search")]
+        impl crate::Projector for CountingProjector {
+            fn schema(&self, collection: &str) -> Result<crate::IndexSchema, Error> {
+                TagProjector.schema(collection)
+            }
+
+            fn project(
+                &self,
+                collection: &str,
+                id: &str,
+                raw: &[u8],
+            ) -> Result<crate::IndexDoc, Error> {
+                self.projects.fetch_add(1, Ordering::Relaxed);
+                TagProjector.project(collection, id, raw)
+            }
+        }
+
+        /// A pass over many embedder batches saves the vector dump once, not
+        /// once per batch, and each Record is projected once per leg.
+        #[cfg(feature = "search")]
+        #[test]
+        fn a_pass_over_many_batches_saves_the_vector_dump_once() {
+            const RECORDS: u64 = 20;
+            let scratch = Scratch::new();
+            let projector = Arc::new(CountingProjector {
+                projects: AtomicU64::new(0),
+            });
+            let embedder: Arc<dyn Embedder> = Arc::new(SmallBatchEmbedder);
+            let vault = Vault::open_with(
+                scratch.vault(),
+                poll_never(),
+                Some(embedder),
+                Some(Arc::clone(&projector) as Arc<dyn crate::Projector>),
+            )
+            .unwrap();
+            vault
+                .create_collection("c", document_schema(), None)
+                .unwrap();
+            vault.wait_indexed(WAIT).unwrap();
+            let saves = vault.search.vector_saves();
+            let collection = vault.collection("c").unwrap();
+            vault.begin().unwrap();
+            for i in 0..RECORDS {
+                collection
+                    .add(&format!("row-{i:02}"), rec_tag(&format!("tag {i}")), None)
+                    .unwrap();
+            }
+            let projected = projector.projects.load(Ordering::Relaxed);
+            vault.commit("rows").unwrap();
+            let status = vault.wait_indexed(WAIT).unwrap();
+            assert_eq!(
+                status.vector.as_deref(),
+                Some(head_of(vault.path()).as_str())
+            );
+            assert_eq!(
+                vault.search.vector_saves() - saves,
+                1,
+                "{RECORDS} Records in batches of two save the dump once"
+            );
+            assert_eq!(
+                projector.projects.load(Ordering::Relaxed) - projected,
+                2 * RECORDS,
+                "one projection per Record for each of the two legs"
+            );
+            assert_eq!(vector_hits(&vault, "c", "tag 3").len(), 10);
+        }
+
         /// The role passes to a handle opened before the last holder wrote:
         /// it must write on top of that holder's vectors and journal order,
         /// not over them with what it loaded at open.
@@ -5121,6 +5394,95 @@ mod tests {
                 hits.sort();
                 assert_eq!(hits, ["r1", "r2"], "r1's vector survives the hand-over");
             }
+        }
+
+        /// Child of `split_roles_in_two_processes_keep_journal_order`: holds
+        /// the lexical role only (no embedder, so never the vector role)
+        /// and reports `ready` once it has it; held until killed (at most
+        /// one minute).
+        #[cfg(feature = "search")]
+        #[test]
+        #[ignore = "run as the child process of split_roles_in_two_processes_keep_journal_order"]
+        fn lexical_only_child_process() {
+            let Some(root) = std::env::var_os(CHILD_ENV).map(PathBuf::from) else {
+                return;
+            };
+            crate::git::isolate_test_git_env();
+            let vault =
+                Vault::open_with(root.join("vault"), poll_fast(), None, Some(tag_projector()))
+                    .unwrap();
+            let deadline = Instant::now() + WAIT;
+            while !vault.index_status().unwrap().lexical_role {
+                assert!(
+                    Instant::now() < deadline,
+                    "child never took the lexical role"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            fs::write(root.join("ready"), b"").unwrap();
+            let deadline = Instant::now() + Duration::from_secs(60);
+            while Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        /// `index.lock` and `vector.lock` held by two processes: the vector
+        /// process never writes `ord.json`, so journal lines keep their
+        /// append order and unique `ord` values through several rounds.
+        #[cfg(feature = "search")]
+        #[test]
+        fn split_roles_in_two_processes_keep_journal_order() {
+            let scratch = Scratch::new();
+            {
+                let setup = open_search(scratch.vault(), scratch.options(), None);
+                setup
+                    .create_collection("j", journal_schema(), None)
+                    .unwrap();
+            }
+            let mut child = spawn_child(
+                &scratch.root,
+                "vault::tests::background::lexical_only_child_process",
+            );
+            wait_for_child_file(&mut child, &scratch.root, "ready");
+            let vector = open_reader(&scratch.vault(), poll_fast());
+            let deadline = Instant::now() + WAIT;
+            while !vector.index_status().unwrap().vector_role {
+                assert!(Instant::now() < deadline, "vector role never taken");
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            let status = vector.index_status().unwrap();
+            assert!(
+                !status.lexical_role,
+                "the child holds index.lock: {status:?}"
+            );
+            // Holds no role (the child and `vector` have them): only appends.
+            let writer = open_search(scratch.vault(), poll_never(), None);
+
+            let ord_file = live_dir(&vector).join("ord.json");
+            let mut expected = Vec::new();
+            for round in 0..3 {
+                let author = if round == 1 { &writer } else { &vector };
+                let journal = author.collection("j").unwrap();
+                for n in 0..2 {
+                    let id = format!("l{}", round * 2 + n + 1);
+                    journal.add(&id, tagged(&id), None).unwrap();
+                    expected.push(id);
+                }
+                vector.wait_indexed(WAIT).unwrap();
+                assert_eq!(find_ids(&vector, "j"), expected, "round {round}");
+                assert!(ord_file.is_file(), "ord.json vanished in round {round}");
+            }
+            let ord: std::collections::BTreeMap<String, u64> =
+                serde_json::from_slice(&fs::read(&ord_file).unwrap()).unwrap();
+            assert_eq!(
+                ord,
+                std::collections::BTreeMap::from([(String::from("j"), 6)]),
+                "one counter step per line"
+            );
+            let mut hits = vector_hits(&vector, "j", "l1");
+            hits.sort();
+            assert_eq!(hits, ["l1", "l2", "l3", "l4", "l5", "l6"]);
+            assert!(vector.index_status().unwrap().vector_role);
         }
 
         fn tagged(text: &str) -> Vec<u8> {
@@ -5305,7 +5667,7 @@ mod tests {
                 .unwrap()
         }
 
-        /// B8 check (D7): an embedder of another model changes nothing on
+        /// An embedder of another model changes nothing on
         /// its own, and two processes on two models do not take turns
         /// rebuilding; `reindex` from the new one moves the Index over.
         #[cfg(feature = "search")]
@@ -5367,7 +5729,7 @@ mod tests {
             assert_eq!(hits, ["r1", "r2"]);
         }
 
-        /// D8: a generation whose Tantivy files no longer read is rebuilt by
+        /// A generation whose Tantivy files no longer read is rebuilt by
         /// the lexical-role indexer; queries fail closed until then.
         #[test]
         fn damaged_lexical_index_is_rebuilt_in_the_background() {
@@ -5409,7 +5771,7 @@ mod tests {
             assert_eq!(status.lexical, status.head);
         }
 
-        /// D8: a vector dump that no longer loads is found by a handle that
+        /// A vector dump that no longer loads is found by a handle that
         /// reads it, and the lexical-role indexer rebuilds the generation.
         #[cfg(feature = "search")]
         #[test]
@@ -5457,7 +5819,22 @@ mod tests {
                 assert!(Instant::now() < deadline, "vectors never came back");
                 std::thread::sleep(Duration::from_millis(10));
             }
-            assert!(reader.index_status().unwrap().last_error.is_none());
+            // The reader's rounds failed while its generation was damaged;
+            // its next round on the rebuilt one clears that error. Under
+            // load that round may land after the search above succeeds.
+            let deadline = Instant::now() + WAIT;
+            loop {
+                let status = reader.index_status().unwrap();
+                if status.last_error.is_none() {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "error never cleared: {:?}",
+                    status.last_error
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
         }
 
         /// Embeds one text per batch, slowly, and reports progress in
@@ -5504,6 +5881,9 @@ mod tests {
                 return;
             };
             crate::git::isolate_test_git_env();
+            // Checkpoint after a few Records, not after hundreds: the parent
+            // kills this process within a handful of them.
+            crate::search::TEST_CHECKPOINT_FLOOR.store(4, Ordering::Relaxed);
             let embedder: Arc<dyn Embedder> = Arc::new(ProgressEmbedder {
                 root: root.clone(),
                 calls: AtomicU64::new(0),
@@ -5521,7 +5901,7 @@ mod tests {
             }
         }
 
-        /// D23: `kill -9` in the middle of a diff breaks nothing. The marks
+        /// `kill -9` in the middle of a diff breaks nothing. The marks
         /// stay where the last durable write put them, and the next handle
         /// finishes from the saved vectors instead of from scratch.
         #[cfg(feature = "search")]

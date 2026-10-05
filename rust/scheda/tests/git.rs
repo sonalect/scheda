@@ -1,6 +1,6 @@
-//! C6: local `commit` and `history` (GIT-2, GIT-3, LIB-12, LIB-17).
+//! Local `commit` and `history`.
 //! Collection names here and in `testdata/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 

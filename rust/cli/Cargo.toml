@@ -21,6 +21,7 @@ model2vec-rs = { workspace = true }
 scheda = { workspace = true, features = ["find", "search", "simd", "encrypt"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = { workspace = true }
 ureq = { workspace = true }
 
 [lints]

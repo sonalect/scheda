@@ -1,6 +1,6 @@
-//! P0 / P10: a fixture Vault shaped like a first consumer's primary layer.
+//! A fixture Vault shaped like a first consumer's primary layer.
 //! Collection names here and in `testdata/consumer/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1). That grep is library source only;
+//! `rust/scheda/src`. That grep is library source only;
 //! test data must not be able to turn it red.
 
 mod common;
@@ -102,7 +102,7 @@ const FIXTURE_NAMES: [&str; 11] = [
 const OPS_JOURNAL: u64 = 1_000;
 #[cfg(feature = "find")]
 const OPS_DOCS: u64 = 100;
-// OPS-1 is milliseconds, not hundreds. Unix CI is quiet enough for 100ms.
+// A single operation is milliseconds, not hundreds. Unix CI is quiet enough for 100ms.
 // Windows GHA NTFS next to parallel tests in this binary is not: 161ms
 // failed a 100ms cap after a merge-thread wait on the same runner.
 #[cfg(all(feature = "find", windows))]
@@ -745,7 +745,7 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
     let got = started.elapsed();
     assert!(
         got < OPS_BUDGET,
-        "sample get on the OPS-1 fixture took {got:?}, want < {OPS_BUDGET:?}"
+        "sample get on the budget fixture took {got:?}, want < {OPS_BUDGET:?}"
     );
 
     // Time `add` inside a transaction: outside one, autocommit fsyncs git
@@ -759,7 +759,7 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
     vault.commit("extra").unwrap();
     assert!(
         added < OPS_BUDGET,
-        "journal add on the OPS-1 fixture took {added:?}, want < {OPS_BUDGET:?}"
+        "journal add on the budget fixture took {added:?}, want < {OPS_BUDGET:?}"
     );
 }
 

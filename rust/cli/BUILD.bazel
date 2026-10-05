@@ -14,12 +14,14 @@ rust_binary(
         "@scheda_cargo//:model2vec-rs",
         "@scheda_cargo//:serde",
         "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:sha2",
         "@scheda_cargo//:ureq",
     ],
 )
 
 rust_test(
     name = "http_test",
+    size = "small",
     srcs = glob(["src/**/*.rs"]),
     crate_name = "scheda_cli",
     crate_root = "src/main.rs",
@@ -31,12 +33,14 @@ rust_test(
         "@scheda_cargo//:model2vec-rs",
         "@scheda_cargo//:serde",
         "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:sha2",
         "@scheda_cargo//:ureq",
     ],
 )
 
 rust_test(
     name = "cli_test",
+    size = "small",
     srcs = [
         "tests/cli.rs",
         "tests/common/mod.rs",
@@ -56,6 +60,7 @@ rust_test(
 
 rust_test(
     name = "agent_test",
+    size = "small",
     srcs = [
         "tests/agent.rs",
         "tests/common/mod.rs",

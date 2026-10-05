@@ -62,6 +62,7 @@ pub(crate) fn git_addr(vault: &Path, rel: &str) -> (PathBuf, String) {
 /// created or repaired, so the caller can record it for `commit`.
 pub(crate) fn ensure(vault: &Path) -> Result<Option<String>, Error> {
     let root = root(vault);
+    crate::store::reject_symlinks(vault, &root)?;
     fs::create_dir_all(&root).context("[Isolated] create .isolated")?;
     crate::store::restrict_dir(&root)?;
     if !git::is_work_tree(&root) {

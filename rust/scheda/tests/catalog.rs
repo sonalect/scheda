@@ -1,5 +1,5 @@
-//! A1: `catalog` from Schema (`08` AGT-1, `12`). Collection names here and in
-//! `testdata/schema/` must not appear in `rust/scheda/src` (MOD-1, SCH-1).
+//! `catalog` from Schema. Collection names here and in
+//! `testdata/schema/` must not appear in `rust/scheda/src`.
 
 mod common;
 

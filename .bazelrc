@@ -25,3 +25,7 @@ common:macos --deleted_packages=python/cli,python/vllm
 # `target_compatible_with` does not stop `//...` from loading these packages.
 # Deleted, they are invisible, so the uv host is not fetched.
 common:windows --deleted_packages=python,python/cli,python/vllm
+# Test sizes follow local run times (small: under ~45 s, medium: the two
+# Vault-wide suites). CI runners, Windows in particular, spawn git far more
+# slowly, so every timeout gets three times the default headroom.
+test --test_timeout=180,900,2700,3600

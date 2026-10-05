@@ -162,6 +162,7 @@ pub(crate) fn check_documents(
                 )));
             }
         }
+        check_no_symlinks(vault, decl)?;
         let mut seen = std::collections::BTreeSet::new();
         for path in list_files(vault, decl)? {
             let rel = rel_posix(vault, &path)?;
@@ -229,6 +230,7 @@ fn prepare_write(vault: &Path, decl: &CollectionDecl, record: &Record) -> Result
     let rel = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
     let path = crate::schema::join_inside(&dir, &rel)?;
+    reject_symlinks(vault, &path)?;
     let bytes = match decl.kind {
         Kind::Document | Kind::Singleton => {
             utf8_raw(record, "[store::prepare_write] decode UTF-8")?.to_vec()
@@ -383,11 +385,13 @@ pub(crate) fn locate_file(
     let file = record_file(decl, id)?;
     let dir = crate::isolated::records_dir(vault, decl)?;
     let path = crate::schema::join_inside(&dir, &file)?;
+    reject_symlinks(vault, &path)?;
     Ok(path.is_file().then_some(path))
 }
 
 pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<PathBuf>, Error> {
     let dir = crate::isolated::records_dir(vault, decl)?;
+    reject_symlinks(vault, &dir)?;
     if !dir.is_dir() {
         return Ok(Vec::new());
     }
@@ -401,7 +405,8 @@ pub(crate) fn list_files(vault: &Path, decl: &CollectionDecl) -> Result<Vec<Path
             };
             let file = record_file(decl, id)?;
             let path = crate::schema::join_inside(&dir, &file)?;
-            Ok(path.is_file().then_some(path).into_iter().collect())
+            let is_file = fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file());
+            Ok(is_file.then_some(path).into_iter().collect())
         }
         Kind::Document => list_document_files(&dir),
         Kind::Journal => Ok(Vec::new()),
@@ -707,8 +712,87 @@ pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
     Ok(out)
 }
 
+/// Whether one line is a git conflict marker: `<<<<<<<` or `>>>>>>>`
+/// followed by a space or the end of the line. `=======` is not counted on
+/// its own: a conflict always has an opening and a closing marker, and a
+/// bare `=======` is also a Markdown heading underline or a rule.
+pub(crate) fn is_conflict_marker_line(line: &str) -> bool {
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    for marker in ["<<<<<<<", ">>>>>>>"] {
+        if let Some(rest) = line.strip_prefix(marker)
+            && (rest.is_empty() || rest.starts_with(' '))
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Whether any line of `text` is a git conflict marker line. A marker
+/// inside a line (a quoted diff in a journal payload, a code sample) does
+/// not count.
 pub(crate) fn has_conflict_markers(text: &str) -> bool {
-    text.contains("<<<<<<<") || text.contains(">>>>>>>")
+    text.split('\n').any(is_conflict_marker_line)
+}
+
+/// Refuse a path that goes through a symlink below the Vault root.
+///
+/// Walks every component of `path` under `vault` (the collection
+/// directory, any `.isolated/` directory, subdirectories, the file) with
+/// `symlink_metadata`. A symlink is `invalid` and names its vault-relative
+/// path. A component that does not exist ends the walk: nothing below it
+/// can be a link. The Vault root itself may be reached through a link.
+pub(crate) fn reject_symlinks(vault: &Path, path: &Path) -> Result<(), Error> {
+    let Ok(rest) = path.strip_prefix(vault) else {
+        return Ok(());
+    };
+    let mut cur = vault.to_path_buf();
+    for component in rest.components() {
+        cur.push(component);
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                let rel = rel_posix(vault, &cur)?;
+                bail!(Error::invalid(format!("{rel} is a symlink")).with_path(&rel));
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => {
+                let rel = rel_posix(vault, &cur)?;
+                return Err(err)
+                    .context("[store::reject_symlinks] stat component")
+                    .map_err(|err| err.with_path(&rel));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// `check` of one collection: the records directory and everything under
+/// it must be free of symlinks. Reports the first link with its path.
+pub(crate) fn check_no_symlinks(vault: &Path, decl: &CollectionDecl) -> Result<(), Error> {
+    let dir = crate::isolated::records_dir(vault, decl)?;
+    reject_symlinks(vault, &dir)?;
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    walk_no_symlinks(vault, &dir)
+}
+
+fn walk_no_symlinks(vault: &Path, dir: &Path) -> Result<(), Error> {
+    let entries = fs::read_dir(dir).context("[store::check] read collection")?;
+    for entry in entries {
+        let entry = entry.context("[store::check] read entry")?;
+        let path = entry.path();
+        let meta = fs::symlink_metadata(&path).context("[store::check] stat entry")?;
+        if meta.file_type().is_symlink() {
+            let rel = rel_posix(vault, &path)?;
+            bail!(Error::invalid(format!("{rel} is a symlink")).with_path(&rel));
+        }
+        if meta.is_dir() {
+            walk_no_symlinks(vault, &path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Owner-only file mode (`0600` on Unix). Other systems leave ACLs unchanged.
@@ -719,6 +803,24 @@ pub(crate) fn restrict_file(path: &Path) -> Result<(), Error> {
 /// Owner-only directory mode (`0700` on Unix). Other systems leave ACLs unchanged.
 pub(crate) fn restrict_dir(path: &Path) -> Result<(), Error> {
     set_mode(path, 0o700)
+}
+
+/// Owner-only mode on `file` and on every directory between `base` and it
+/// (`base` itself excluded). For a file this crate just wrote under a
+/// directory it may have just created: two or three `chmod` calls instead
+/// of a walk of the whole tree. A `file` outside `base` gets its own mode
+/// only.
+pub(crate) fn restrict_file_below(base: &Path, file: &Path) -> Result<(), Error> {
+    if let Some(parent) = file.parent()
+        && let Ok(rel) = parent.strip_prefix(base)
+    {
+        let mut dir = base.to_path_buf();
+        for part in rel.components() {
+            dir.push(part);
+            restrict_dir(&dir)?;
+        }
+    }
+    restrict_file(file)
 }
 
 /// Walk `root` and apply owner-only modes to every directory and file.

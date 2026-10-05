@@ -1,6 +1,6 @@
-//! C10: core acceptance gates (`10` §2, `11` C10).
+//! Core acceptance gates.
 //! Collection names here and in `testdata/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1). That grep is library source only;
+//! `rust/scheda/src`. That grep is library source only;
 //! test data must not be able to turn it red.
 
 mod common;

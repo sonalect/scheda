@@ -78,7 +78,7 @@ jobs:
           install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
 
       - name: Check out repository
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # ubuntu-latest guarantees 14 GB free. Restoring bazel-debian13-cas-*
       # (several GiB compressed) extracts on top of that and fills the disk.
@@ -86,7 +86,7 @@ jobs:
         run: bash .github/scripts/free-host-disk.sh
 
       - name: Restore Bazel cache
-        uses: actions/cache/restore@v6.1.0
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ env.BAZEL_DISK_CACHE }}
@@ -113,7 +113,7 @@ jobs:
           cp -R -L "$(bazel info bazel-bin)/rust/scheda/pages/." "${site}/"
 
       - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v5.0.0
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: ${{ runner.temp }}/pages
           include-hidden-files: true
@@ -132,4 +132,4 @@ jobs:
     steps:
       - name: Deploy
         id: deployment
-        uses: actions/deploy-pages@v5.0.0
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0

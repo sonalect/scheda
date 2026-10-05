@@ -1,5 +1,5 @@
-//! A7: agent acceptance gates (`10` §4, `12` A7). Collection names here
-//! must not appear in `rust/cli/src` (SCH-1).
+//! Agent acceptance gates. Collection names here
+//! must not appear in `rust/cli/src`.
 
 mod common;
 

@@ -1,5 +1,5 @@
-//! A4/A5/A6: thin CLI (`08` AGT-2–5, ISO-3, `12`, `14`). Collection names here
-//! must not appear in `rust/cli/src` (SCH-1).
+//! Thin CLI. Collection names here
+//! must not appear in `rust/cli/src`.
 
 mod common;
 
@@ -839,6 +839,83 @@ fn create_collection_then_add_without_handwritten_yaml() {
     ]);
     assert_eq!(got.status, 0, "stderr={}", got.stderr);
     assert_eq!(got.stdout.as_bytes(), rec(json!({"title":"A","tag":"t"})));
+}
+
+/// `--file` must not read stdin: a pipe that nobody closes (a parent that
+/// keeps stdin open) would block the command forever.
+#[test]
+fn file_does_not_read_an_open_stdin_pipe() {
+    use std::process::Stdio;
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let payload = scratch.payload_file("payload", rec(json!({"title":"Piped"})));
+    let mut child = Command::new(scheda_bin())
+        .args([
+            "--vault",
+            &path,
+            "collection",
+            "agent_notes",
+            "add",
+            "--id",
+            "piped",
+            "--file",
+            &payload,
+        ])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("spawn scheda");
+    // Keep the write end open until the process has exited.
+    let _stdin = child.stdin.take();
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("--file blocked on an open stdin pipe");
+        }
+        thread::sleep(Duration::from_millis(50));
+    };
+    assert!(status.success());
+    assert!(scratch.vault().join("agent_notes").join("piped").is_file());
+}
+
+#[test]
+fn file_errors_use_the_io_code_table() {
+    let scratch = fixture_with_note();
+    let path = vault_arg(&scratch);
+    let missing = scratch.root.join("no-such-payload");
+    let args = |file: &str| {
+        run(&[
+            "--vault",
+            &path,
+            "collection",
+            "agent_notes",
+            "add",
+            "--id",
+            "x",
+            "--file",
+            file,
+        ])
+    };
+    let err = error_json(&args(&missing.display().to_string()));
+    assert_eq!(err["code"], "CODE_IO_NOT_FOUND");
+    assert!(
+        err["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("no-such-payload")
+    );
+    assert!(err.get("path").is_none(), "{err}");
+
+    let dir = scratch.root.join("a-directory");
+    fs::create_dir_all(&dir).unwrap();
+    let err = error_json(&args(&dir.display().to_string()));
+    assert_eq!(err["code"], "CODE_IO_IS_A_DIRECTORY");
 }
 
 #[test]
@@ -1963,7 +2040,7 @@ impl HttpEmbedder {
     fn new(base: &str) -> Self {
         let url = join_leaf(base, "embeddings");
         Self {
-            model_id: format!("{url} {HTTP_MODEL}"),
+            model_id: HTTP_MODEL.to_owned(),
             url,
             model: HTTP_MODEL.to_owned(),
         }

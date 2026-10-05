@@ -463,6 +463,10 @@ impl api::v1::OpenOptions {
     /// (`unsupported_encryption`) before any directory is created.
     /// With that feature, `open` stores the secret on the handle for
     /// I/O of collections whose declaration marks `encrypted`.
+    ///
+    /// `Debug` prints the secret as `[REDACTED]`. `Serialize` (the
+    /// Protobuf JSON mapping) carries it in clear text: do not log or
+    /// persist the JSON form.
     #[must_use]
     pub fn encryption(mut self, encryption: api::v1::Encryption) -> Self {
         self.encryption = ::buffa::MessageField::some(encryption);
@@ -525,6 +529,10 @@ impl api::v1::Encryption {
     }
 
     /// Symmetric secret. Age scrypt wrapping.
+    ///
+    /// `Debug` prints it as `[REDACTED]`. `Serialize` (the Protobuf JSON
+    /// mapping) carries it in clear text: do not log or persist the JSON
+    /// form.
     #[must_use]
     pub fn passphrase(mut self, passphrase: impl Into<String>) -> Self {
         self.secret = Some(api::v1::encryption::Secret::Passphrase(passphrase.into()));
@@ -684,6 +692,18 @@ mod tests {
         assert!(json["encryption"].get("identity").is_none());
         assert!(json.get("encrypt").is_none());
         assert!(json.get("secret").is_none());
+    }
+
+    #[test]
+    fn debug_redacts_encryption_secret() {
+        let pass = OpenOptions::new().encryption(Encryption::new().passphrase("s3cret-pw"));
+        let text = format!("{pass:?}");
+        assert!(!text.contains("s3cret-pw"), "{text}");
+        assert!(text.contains("REDACTED"), "{text}");
+        let id = OpenOptions::new().encryption(Encryption::new().identity("AGE-SECRET-KEY-s3cret"));
+        let text = format!("{id:?}");
+        assert!(!text.contains("s3cret"), "{text}");
+        assert!(text.contains("REDACTED"), "{text}");
     }
 
     #[test]

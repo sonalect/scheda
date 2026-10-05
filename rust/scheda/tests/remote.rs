@@ -1,6 +1,6 @@
-//! C7: clone, auto_sync, push/pull/sync (GIT-8–12, LIB-13, LIB-14, ISO-1).
+//! Clone, auto_sync, push/pull/sync.
 //! Collection names here and in `testdata/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 
@@ -403,4 +403,95 @@ fn push_without_remote_is_invalid() {
     let vault = Vault::open(scratch.dir("vault"), OpenOptions::new(), None).unwrap();
     let err = vault.push().unwrap_err();
     assert_eq!(err.known_code(), Some(Code::Invalid));
+}
+
+fn current_branch(dir: &Path) -> String {
+    git_stdout(dir, &["symbolic-ref", "--short", "HEAD"])
+        .trim()
+        .to_owned()
+}
+
+/// Publish an unrelated branch `aaa-other`, which sorts before every real
+/// branch name, to `bare`. Returns the commit it points at.
+fn publish_other_branch(scratch: &Scratch, bare: &Path) -> String {
+    let work = scratch.dir("other-work");
+    git_ok(
+        scratch.dir("").as_path(),
+        &["init", "--", &work.to_string_lossy()],
+    );
+    fs::write(work.join("unrelated.txt"), "unrelated").unwrap();
+    commit_all(&work, "unrelated root");
+    let tip = head_id(&work);
+    git_ok(&work, &["push", &as_url(bare), "HEAD:refs/heads/aaa-other"]);
+    tip
+}
+
+#[test]
+fn pull_without_upstream_takes_only_the_current_branch() {
+    let scratch = Scratch::new();
+    let (_source, bare) = pair_with_bare(&scratch);
+    let remote = as_url(&bare);
+    let a = scratch.dir("a");
+    let b = scratch.dir("b");
+    drop(Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap());
+    let branch = current_branch(&a);
+    // A Vault whose branch has no upstream: `init`, then `origin` added.
+    git_ok(&a, &["branch", "--unset-upstream"]);
+    let other = publish_other_branch(&scratch, &bare);
+    let before = head_id(&a);
+
+    let vault = Vault::open(&a, OpenOptions::new(), None).unwrap();
+    // Up to date on the current branch; the other branch must not matter.
+    vault.pull().unwrap();
+    assert_eq!(head_id(&a), before);
+
+    // The current branch moves on; the other branch still must not matter.
+    let second = Vault::open(&b, OpenOptions::new().remote_repo(&remote), None).unwrap();
+    insert_and_commit(&second, "from-b", "from b", "from b");
+    second.push().unwrap();
+    drop(second);
+    vault.pull().unwrap();
+    assert_eq!(
+        head_id(&a),
+        git_stdout(&bare, &["rev-parse", &branch]).trim()
+    );
+    assert_ne!(head_id(&a), other);
+}
+
+#[test]
+fn pull_when_remote_lacks_the_branch_fails() {
+    let scratch = Scratch::new();
+    let (_source, bare) = pair_with_bare(&scratch);
+    let remote = as_url(&bare);
+    let a = scratch.dir("a");
+    drop(Vault::open(&a, OpenOptions::new().remote_repo(&remote), None).unwrap());
+    git_ok(&a, &["checkout", "-b", "feature"]);
+    let vault = Vault::open(&a, OpenOptions::new(), None).unwrap();
+    let err = vault.pull().unwrap_err();
+    assert_eq!(err.known_code(), Some(Code::GitNotFound));
+}
+
+#[test]
+fn info_remote_is_origin_or_empty() {
+    let scratch = Scratch::new();
+    let vault = scratch.dir("vault");
+    drop(Vault::open(&vault, OpenOptions::new(), None).unwrap());
+    let remote = |dir: &Path| {
+        Vault::open(dir, OpenOptions::new(), None)
+            .unwrap()
+            .info()
+            .unwrap()
+            .remote
+    };
+    assert_eq!(remote(&vault), None);
+    git_ok(
+        &vault,
+        &["remote", "add", "backup", "file:///nowhere/backup"],
+    );
+    assert_eq!(remote(&vault), None);
+    git_ok(
+        &vault,
+        &["remote", "add", "origin", "file:///nowhere/origin"],
+    );
+    assert_eq!(remote(&vault).as_deref(), Some("origin"));
 }

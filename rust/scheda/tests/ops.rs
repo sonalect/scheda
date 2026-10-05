@@ -1,6 +1,6 @@
-//! C8: journal `id` map and OPS-1 / OPS-3 size (IDX-5, LIB-16).
+//! Journal `id` map and operation size and timing budgets.
 //! Collection names here and in `testdata/` must not appear in
-//! `rust/scheda/src` (MOD-1, SCH-1).
+//! `rust/scheda/src`.
 
 mod common;
 
@@ -204,7 +204,7 @@ fn ops_fixture_find_and_insert_and_reindex() {
     )
     .unwrap();
     // One transaction: the check is Index / get / reindex / search on this
-    // volume, not a git commit per Record. GIT-2: that batch is one commit.
+    // volume, not a git commit per Record. That batch is one commit.
     let commits_before = log_len(vault.path());
     vault.begin().unwrap();
     let log = vault.collection("ops_log").unwrap();
@@ -266,7 +266,7 @@ fn ops_fixture_find_and_insert_and_reindex() {
     assert_eq!(counts.skipped_invalid, Some(0));
     assert_eq!(counts.segments_seen, Some(OPS_JOURNAL / 100 + 2));
     let format = fs::read_to_string(live_index(&vault).join("format")).unwrap();
-    assert_eq!(format.trim(), "5");
+    assert_eq!(format.trim(), "6");
     let mid_doc = OPS_DOCS / 2;
     let mid_title = format!("t{mid_doc}");
     let mid_id = format!("d{mid_doc:04}");

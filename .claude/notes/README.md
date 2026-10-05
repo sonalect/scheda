@@ -9,5 +9,7 @@ Project state, deferred work, and measurements that outlive one session
 
 ## Pointers
 
-- Current work order: `docs/17-background-index-and-tokio.md` (background
-  Index, `tokio` feature), written 4 October 2026 from Knowqore's needs.
+- Current work order: `docs/18-review-fixes.md` (fixes from the
+  5 October 2026 full review, S1–S8).
+- Previous: `docs/17-background-index-and-tokio.md` (background Index,
+  `tokio` feature), done.
