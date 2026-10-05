@@ -900,6 +900,79 @@ impl Vault {
         })())
     }
 
+    /// Run `f` as one transaction on this thread: [`begin`](Self::begin),
+    /// `f(self)`, then one git commit per repository the writes changed,
+    /// with `message` as the subject. Every write `f` makes through this
+    /// `Vault`, or through a collection from it, joins the transaction.
+    ///
+    /// When `f` succeeds and its writes leave both repositories as at
+    /// `HEAD` (it wrote nothing, or only bytes `HEAD` already holds), no
+    /// commit is made and `f`'s value is returned: a batch replayed after a
+    /// crash is `Ok`. [`commit`](Self::commit) on its own stays strict.
+    ///
+    /// `f` returns the caller's own error type. When it returns an error,
+    /// the writes are discarded and that error is returned as is. Scheda's
+    /// own failures (`begin`, the commit, `locked`, an empty `message`,
+    /// which fails before `f` runs) reach the caller through
+    /// `E::from`; a failed commit discards the writes first. When `f`
+    /// panics, the writes are discarded and the panic resumes.
+    ///
+    /// While this `Vault` holds a transaction on another thread, the result
+    /// is `E::from(locked)` at once and `f` does not run; on this thread,
+    /// `invalid` (a transaction is already open).
+    pub fn transaction<T, E, F>(&self, message: &str, f: F) -> Result<T, E>
+    where
+        F: FnOnce(&Self) -> Result<T, E>,
+        E: From<Error>,
+    {
+        const FRAME: &str = "[Vault::transaction]";
+        let scheda = |err: Error| E::from(err.context(FRAME));
+        require_commit_message(Some(message)).map_err(scheda)?;
+        self.begin().map_err(scheda)?;
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
+        match outcome {
+            Ok(Ok(value)) => match self.end_transaction(message) {
+                Ok(()) => Ok(value),
+                Err(err) => {
+                    // The error the caller sees is the one that ended the
+                    // transaction; a failed discard leaves leftovers that
+                    // the next `begin` or mutating call restores.
+                    let _ = self.discard();
+                    Err(scheda(err))
+                }
+            },
+            Ok(Err(err)) => {
+                let _ = self.discard();
+                Err(err)
+            }
+            Err(panic) => {
+                let _ = self.discard();
+                std::panic::resume_unwind(panic)
+            }
+        }
+    }
+
+    /// Close the transaction `transaction` opened: commit what changed,
+    /// nothing when nothing did, then release the write lock.
+    fn end_transaction(&self, message: &str) -> Result<(), Error> {
+        self.require_write_lock("transaction")?;
+        self.conclude_write((|| {
+            if !flag(&self.in_txn)? {
+                bail!(Error::invalid(
+                    "the transaction was ended inside its closure"
+                ));
+            }
+            let changed =
+                commit_written_if_changed(&self.path, &self.written, message, &self.identity)?;
+            set_in_txn(&self.in_txn, false)?;
+            if !changed {
+                return Ok(());
+            }
+            self.wake_indexer();
+            self.push_if_auto_sync()
+        })())
+    }
+
     fn commit_recorded(&self, message: &str) -> Result<(), Error> {
         commit_written(&self.path, &self.written, message, &self.identity)?;
         self.wake_indexer();
@@ -2690,11 +2763,32 @@ fn commit_written(
     message: &str,
     identity: &git::CommitIdentity,
 ) -> Result<(), Error> {
-    let paths: Vec<String> = {
-        let set = crate::error::mutex(written, "[Vault] lock written")?;
-        set.iter().cloned().collect()
-    };
+    let paths = written_paths(written)?;
     isolated::commit_recorded(vault, message, &paths, identity)?;
+    clear_written(vault, written)
+}
+
+/// [`commit_written`] where nothing to commit is no failure: `false` when
+/// the set is empty or its paths leave both repositories as at `HEAD`.
+/// The set and `tx.log` are emptied either way.
+fn commit_written_if_changed(
+    vault: &Path,
+    written: &Mutex<BTreeSet<String>>,
+    message: &str,
+    identity: &git::CommitIdentity,
+) -> Result<bool, Error> {
+    let paths = written_paths(written)?;
+    let changed = isolated::commit_recorded_if_changed(vault, message, &paths, identity)?;
+    clear_written(vault, written)?;
+    Ok(changed)
+}
+
+fn written_paths(written: &Mutex<BTreeSet<String>>) -> Result<Vec<String>, Error> {
+    let set = crate::error::mutex(written, "[Vault] lock written")?;
+    Ok(set.iter().cloned().collect())
+}
+
+fn clear_written(vault: &Path, written: &Mutex<BTreeSet<String>>) -> Result<(), Error> {
     let mut set = crate::error::mutex(written, "[Vault] lock written")?;
     set.clear();
     persist_written(vault, &set)
@@ -3232,6 +3326,186 @@ mod tests {
         assert_ne!(vault_a.path(), vault_b.path());
         assert!(!vault_a.holds_write_lock());
         assert!(!vault_b.holds_write_lock());
+    }
+
+    /// `replace` with the bytes `HEAD` already holds, inside a
+    /// transaction: `commit` stages a tree equal to `HEAD`'s and makes no
+    /// commit.
+    #[test]
+    fn identical_replace_in_a_transaction_commits_nothing() {
+        let scratch = Scratch::new();
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let c = vault
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        c.add("alpha", b"one", None).unwrap();
+        let before = head(vault.path());
+        vault.begin().unwrap();
+        c.replace("alpha", b"one", None).unwrap();
+        vault.commit("same bytes").unwrap();
+        assert_eq!(head(vault.path()), before);
+        assert!(!vault.holds_write_lock());
+        assert!(!super::tx_log(vault.path()).exists());
+    }
+
+    /// A caller's own error type for `transaction`.
+    #[derive(Debug)]
+    enum CallerError {
+        Refused,
+        Scheda(Error),
+    }
+
+    impl From<Error> for CallerError {
+        fn from(err: Error) -> Self {
+            Self::Scheda(err)
+        }
+    }
+
+    fn with_notes(scratch: &Scratch) -> (Vault, Collection) {
+        let vault = Vault::open(scratch.vault(), scratch.options(), None).unwrap();
+        let c = vault
+            .create_collection("c", document_schema(), None)
+            .unwrap();
+        c.add("alpha", b"one", None).unwrap();
+        (vault, c)
+    }
+
+    #[test]
+    fn transaction_that_writes_nothing_is_ok_and_commits_nothing() {
+        let scratch = Scratch::new();
+        let (vault, _) = with_notes(&scratch);
+        let before = head(vault.path());
+        let value = vault.transaction("nothing", |_| Ok::<_, Error>(5)).unwrap();
+        assert_eq!(value, 5);
+        assert_eq!(head(vault.path()), before);
+        assert!(!vault.holds_write_lock());
+        // A strict `commit` still refuses an empty transaction.
+        vault.begin().unwrap();
+        let err = vault.commit("empty").unwrap_err();
+        assert_eq!(err.known_code(), Some(Code::Invalid));
+        vault.discard().unwrap();
+    }
+
+    #[test]
+    fn transaction_with_identical_bytes_commits_nothing_in_either_repository() {
+        let scratch = Scratch::new();
+        let (vault, c) = with_notes(&scratch);
+        let hidden = Schema {
+            isolated: Some(true),
+            ..document_schema()
+        };
+        vault
+            .create_collection("hidden", hidden, None)
+            .unwrap()
+            .add("beta", b"two", None)
+            .unwrap();
+        let nested = isolated::root(vault.path());
+        let before = (head(vault.path()), head(&nested));
+        vault
+            .transaction("same bytes", |vault| {
+                c.replace("alpha", b"one", None)?;
+                vault.collection("hidden")?.replace("beta", b"two", None)
+            })
+            .unwrap();
+        assert_eq!((head(vault.path()), head(&nested)), before);
+        assert!(!super::tx_log(vault.path()).exists());
+        // A batch that changes something still commits, once.
+        vault
+            .transaction("changed", |_| c.replace("alpha", b"uno", None))
+            .unwrap();
+        assert_ne!(head(vault.path()), before.0);
+        assert_eq!(last_commit_files(vault.path()), ["c/alpha"]);
+    }
+
+    #[test]
+    fn transaction_returns_the_callers_error_and_discards_its_writes() {
+        let scratch = Scratch::new();
+        let (vault, c) = with_notes(&scratch);
+        let before = head(vault.path());
+        let err = vault
+            .transaction("refused", |_| -> Result<(), CallerError> {
+                c.add("beta", b"two", None)?;
+                Err(CallerError::Refused)
+            })
+            .unwrap_err();
+        assert!(matches!(err, CallerError::Refused), "{err:?}");
+        assert_eq!(head(vault.path()), before);
+        assert_eq!(
+            c.get("beta").unwrap_err().known_code(),
+            Some(Code::NotFound)
+        );
+        assert!(!vault.holds_write_lock());
+        // Scheda's own failure arrives through `From`.
+        let err = vault
+            .transaction("", |_| Ok::<_, CallerError>(()))
+            .unwrap_err();
+        match err {
+            CallerError::Scheda(err) => assert_eq!(err.known_code(), Some(Code::Invalid)),
+            CallerError::Refused => panic!("an empty message is Scheda's failure"),
+        }
+    }
+
+    #[test]
+    fn transaction_while_another_thread_holds_one_is_locked_through_from() {
+        let scratch = Scratch::new();
+        let (vault, _) = with_notes(&scratch);
+        let vault = std::sync::Arc::new(vault);
+        let (begun_tx, begun_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let holder = {
+            let vault = std::sync::Arc::clone(&vault);
+            std::thread::spawn(move || {
+                vault
+                    .transaction("held", |vault| {
+                        vault.collection("c")?.add("held", b"x", None)?;
+                        begun_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok::<_, Error>(())
+                    })
+                    .unwrap();
+            })
+        };
+        begun_rx.recv().unwrap();
+        let mut ran = false;
+        let err = vault
+            .transaction("second", |_| {
+                ran = true;
+                Ok::<_, CallerError>(())
+            })
+            .unwrap_err();
+        match err {
+            CallerError::Scheda(err) => assert_eq!(err.known_code(), Some(Code::Locked)),
+            CallerError::Refused => panic!("locked is Scheda's failure"),
+        }
+        assert!(!ran);
+        release_tx.send(()).unwrap();
+        holder.join().unwrap();
+        assert_eq!(last_commit_files(vault.path()), ["c/held"]);
+    }
+
+    #[test]
+    fn transaction_panic_discards_then_resumes() {
+        let scratch = Scratch::new();
+        let (vault, c) = with_notes(&scratch);
+        let before = head(vault.path());
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            vault.transaction("panics", |_| -> Result<(), Error> {
+                c.add("beta", b"two", None)?;
+                panic!("caller bug");
+            })
+        }));
+        let payload = caught.unwrap_err();
+        assert_eq!(payload.downcast_ref::<&str>(), Some(&"caller bug"));
+        assert_eq!(head(vault.path()), before);
+        assert_eq!(
+            c.get("beta").unwrap_err().known_code(),
+            Some(Code::NotFound)
+        );
+        assert!(!vault.holds_write_lock());
+        vault
+            .transaction("after", |_| c.add("gamma", b"three", None))
+            .unwrap();
+        assert_eq!(last_commit_files(vault.path()), ["c/gamma"]);
     }
 
     #[test]

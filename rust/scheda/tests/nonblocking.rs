@@ -448,7 +448,7 @@ async fn an_error_or_a_panic_discards_the_transaction() {
         assert_eq!(err.known_code(), Some(Code::NotFound), "{id}");
     }
     let value = vault
-        .transaction("works", |vault| {
+        .transaction("works", |vault| -> Result<i32, scheda::Error> {
             vault.collection("notes")?.add("c", b"three", None)?;
             Ok(7)
         })
@@ -491,7 +491,7 @@ async fn a_sync_transaction_on_another_thread_makes_it_locked() {
     let err = {
         let ran = std::sync::Arc::clone(&ran);
         vault
-            .transaction("async", move |_vault| {
+            .transaction("async", move |_vault| -> Result<(), scheda::Error> {
                 ran.store(true, Ordering::SeqCst);
                 Ok(())
             })
@@ -748,4 +748,105 @@ async fn search_embeds_and_reranks_on_one_blocking_thread() {
     assert_eq!(threads[0].1, threads[1].1);
     assert_ne!(threads[0].1, std::thread::current().id());
     vault.close().await.unwrap();
+}
+
+fn head_of(dir: &std::path::Path) -> String {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
+/// A caller's own error type for `transaction`.
+#[derive(Debug)]
+enum CallerError {
+    Refused,
+    Scheda(scheda::Error),
+}
+
+impl From<scheda::Error> for CallerError {
+    fn from(err: scheda::Error) -> Self {
+        Self::Scheda(err)
+    }
+}
+
+/// A transaction with nothing to commit, or only bytes `HEAD` holds, is
+/// `Ok` and leaves `git log` as it was: a replayed batch succeeds.
+#[tokio::test(flavor = "current_thread")]
+async fn a_transaction_with_nothing_to_commit_is_ok() {
+    let scratch = Scratch::new();
+    let vault = AsyncVault::open(scratch.vault(), OpenOptions::new(), None)
+        .await
+        .unwrap();
+    let notes = vault
+        .create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    notes.add("a".into(), b"one".to_vec(), None).await.unwrap();
+    let before = head_of(vault.path());
+    let value = vault
+        .transaction("nothing", |_| Ok::<_, scheda::Error>("done"))
+        .await
+        .unwrap();
+    assert_eq!(value, "done");
+    vault
+        .transaction("same bytes", |vault| {
+            vault.collection("notes")?.replace("a", b"one", None)
+        })
+        .await
+        .unwrap();
+    assert_eq!(head_of(vault.path()), before);
+}
+
+/// The closure's own error comes back as that variant with the writes
+/// discarded; Scheda's `locked` arrives through `From`.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_transaction_keeps_the_callers_error_type() {
+    let scratch = Scratch::new();
+    let vault = AsyncVault::open(scratch.vault(), OpenOptions::new(), None)
+        .await
+        .unwrap();
+    let notes = vault
+        .create_collection("notes".into(), document_schema(), None)
+        .await
+        .unwrap();
+    let err = vault
+        .transaction("refused", |vault| -> Result<(), CallerError> {
+            vault.collection("notes")?.add("a", b"one", None)?;
+            Err(CallerError::Refused)
+        })
+        .await
+        .unwrap_err();
+    assert!(matches!(err, CallerError::Refused), "{err:?}");
+    let missing = notes.get("a".into()).await.unwrap_err();
+    assert_eq!(missing.known_code(), Some(Code::NotFound));
+    let (begun_tx, begun_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+    let holder = {
+        let vault = vault.clone();
+        std::thread::spawn(move || {
+            let sync = vault.as_vault();
+            sync.begin().unwrap();
+            begun_tx.send(()).unwrap();
+            release_rx.recv().unwrap();
+            sync.discard().unwrap();
+        })
+    };
+    begun_rx.await.unwrap();
+    let err = vault
+        .transaction("second", |_| Ok::<_, CallerError>(()))
+        .await
+        .unwrap_err();
+    match err {
+        CallerError::Scheda(err) => assert_eq!(err.known_code(), Some(Code::Locked)),
+        CallerError::Refused => panic!("locked is Scheda's failure"),
+    }
+    release_tx.send(()).unwrap();
+    tokio::task::spawn_blocking(move || holder.join().unwrap())
+        .await
+        .unwrap();
 }

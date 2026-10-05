@@ -17,9 +17,28 @@ API or on-disk format changes bump the minor.
   embedder of another model than the Index vectors. Decided from what the
   handle already holds, without extra I/O. A vector-only query with no hits
   can now tell "nothing matched" from "the vectors were not searched".
+- Sync `Vault::transaction(message, f)`: `begin`, `f(&vault)`, then one
+  commit per repository the writes changed. `f` returns the caller's own
+  error type (`E: From<scheda::Error>`); its error is returned as is after
+  the writes are discarded, and Scheda's failures (`begin`, the commit,
+  `locked`, an empty message) arrive through `E::from`. A panic in `f`
+  discards the writes and resumes the unwind.
 
 ### Changed
 
+- `AsyncVault::transaction` now takes `F: FnOnce(&Vault) -> Result<T, E>`
+  with `E: From<scheda::Error> + Send + 'static` and returns `Result<T, E>`,
+  and runs `Vault::transaction` on one blocking thread. A closure whose
+  error type was only implied by `?` needs an annotation, for example
+  `|vault| -> Result<_, scheda::Error> { … }`. A panic is still
+  `E::from(io_other)` and a cancelled task `E::from(io_interrupted)`;
+  Scheda errors no longer carry the `[AsyncVault::transaction]` frame.
+- `transaction` (sync and async) whose writes leave both repositories as at
+  `HEAD` — nothing written, or only bytes `HEAD` already holds — returns
+  `Ok` with the closure's value and makes no commit, where the async form
+  used to fail with `invalid` ("nothing to commit"). A replayed batch is
+  `Ok`. `Vault::commit` on its own is unchanged: `invalid` when there is
+  nothing to commit.
 - An `index_version` failure caused by a generation another projector built
   (or none) now carries `repeat: forbidden`, and its message names
   `reindex` from a handle with the projector the Index should follow:

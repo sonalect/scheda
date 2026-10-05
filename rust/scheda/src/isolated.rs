@@ -87,21 +87,59 @@ pub(crate) fn commit_recorded(
     if main.is_empty() && nested.is_empty() {
         bail!(Error::invalid("nothing to commit"));
     }
-    if !nested.is_empty() {
-        ensure(vault)?;
-        let nested_root = root(vault);
-        let previous = git::peel_head_oid(&nested_root)?;
-        git::commit(&nested_root, message, &nested, identity)?;
-        if !main.is_empty()
-            && let Err(err) = git::commit(vault, message, &main, identity)
-        {
-            git::reset_head_to(&nested_root, previous.as_deref())
-                .map_err(|reset_err| reset_err.context("[Isolated] rollback nested git"))?;
-            return Err(err);
+    commit_split(vault, &main, &nested, |dir, paths| {
+        git::commit(dir, message, paths, identity).map(|()| true)
+    })?;
+    Ok(())
+}
+
+/// [`commit_recorded`] that takes "nothing to commit" as an answer: no
+/// path, or paths that leave both repositories as at `HEAD`, commit
+/// nothing and return `false`. `true` when either repository got a commit.
+pub(crate) fn commit_recorded_if_changed(
+    vault: &Path,
+    message: &str,
+    paths: &[String],
+    identity: &git::CommitIdentity,
+) -> Result<bool, Error> {
+    let (main, nested) = split_paths(paths);
+    commit_split(vault, &main, &nested, |dir, paths| {
+        git::commit_if_changed(dir, message, paths, identity)
+    })
+}
+
+/// Commit `nested` in the nested repository, then `main` in the Vault, with
+/// `commit` (which returns whether it made a commit). A failed main commit
+/// resets a nested commit made here.
+fn commit_split(
+    vault: &Path,
+    main: &[String],
+    nested: &[String],
+    commit: impl Fn(&Path, &[String]) -> Result<bool, Error>,
+) -> Result<bool, Error> {
+    if nested.is_empty() {
+        if main.is_empty() {
+            return Ok(false);
         }
-        return Ok(());
+        return commit(vault, main);
     }
-    git::commit(vault, message, &main, identity)
+    ensure(vault)?;
+    let nested_root = root(vault);
+    let previous = git::peel_head_oid(&nested_root)?;
+    let nested_changed = commit(&nested_root, nested)?;
+    if main.is_empty() {
+        return Ok(nested_changed);
+    }
+    match commit(vault, main) {
+        Ok(main_changed) => Ok(nested_changed || main_changed),
+        Err(err) => {
+            if nested_changed {
+                git::reset_head_to(&nested_root, previous.as_deref())
+                    .map_err(|reset_err| reset_err.context("[Isolated] rollback nested git"))?;
+            }
+            Err(err)
+        }
+    }
 }
 
 /// Restore recorded paths in each repo that owns them.

@@ -623,13 +623,51 @@ pub(crate) fn commit(
     if message.trim().is_empty() {
         bail!(Error::invalid("commit message is empty"));
     }
+    if !stageable(dir, paths)? {
+        bail!(Error::invalid("nothing to commit"));
+    }
+    commit_staged(dir, message, paths, identity)?;
+    Ok(())
+}
+
+/// [`commit`] that takes "nothing to commit" as an answer, not a failure:
+/// `false` when no path can be staged or the staged tree equals `HEAD`'s,
+/// `true` when a commit was made.
+pub(crate) fn commit_if_changed(
+    dir: &Path,
+    message: &str,
+    paths: &[String],
+    identity: &CommitIdentity,
+) -> Result<bool, Error> {
+    if message.trim().is_empty() {
+        bail!(Error::invalid("commit message is empty"));
+    }
+    if !stageable(dir, paths)? {
+        return Ok(false);
+    }
+    commit_staged(dir, message, paths, identity)
+}
+
+/// Whether at least one of `paths` is a file or is tracked: something
+/// `git update-index` can stage.
+fn stageable(dir: &Path, paths: &[String]) -> Result<bool, Error> {
     if paths.is_empty() {
-        bail!(Error::invalid("nothing to commit"));
+        return Ok(false);
     }
-    let any_file = paths.iter().any(|rel| dir.join(rel).is_file());
-    if !any_file && !any_tracked(dir, paths)? {
-        bail!(Error::invalid("nothing to commit"));
+    if paths.iter().any(|rel| dir.join(rel).is_file()) {
+        return Ok(true);
     }
+    any_tracked(dir, paths)
+}
+
+/// Stage `paths` and commit them unless the tree equals `HEAD`'s; `true`
+/// when a commit was made.
+fn commit_staged(
+    dir: &Path,
+    message: &str,
+    paths: &[String],
+    identity: &CommitIdentity,
+) -> Result<bool, Error> {
     let mut input = Vec::new();
     for rel in paths {
         input.extend_from_slice(rel.as_bytes());
@@ -651,7 +689,7 @@ pub(crate) fn commit(
         .run("[Git::commit] write tree")?;
     let tree_id = tree.stdout_trim("[Git::commit] write tree")?;
     if head_tree_oid(dir)?.as_deref() == Some(tree_id) {
-        return Ok(());
+        return Ok(false);
     }
     git()
         .current_dir(dir)
@@ -666,7 +704,7 @@ pub(crate) fn commit(
         .env("GIT_COMMITTER_NAME", &identity.name)
         .env("GIT_COMMITTER_EMAIL", &identity.email)
         .run("[Git::commit] create commit")?;
-    Ok(())
+    Ok(true)
 }
 
 /// Whether the index tracks at least one of `paths`, each taken literally.

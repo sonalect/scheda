@@ -202,19 +202,26 @@ closure, `commit` on one blocking thread; the closure returns
 (`git.rs`, `isolated.rs`: "nothing to commit"). There is no sync
 `Vault::transaction`.
 
-- [ ] `Vault::transaction(message, f)` per D5, D6, D7: `begin`, `f(&self)`,
+- [x] `Vault::transaction(message, f)` per D5, D6, D7: `begin`, `f(&self)`,
       then `commit` when there is something to commit, otherwise
       `discard`; on `Err` from `f` or a failed `commit`, `discard` and
       return the error; on a panic, `discard` and resume the unwind.
       "Nothing to commit" is decided from the recorded writes and the
       tree, not by matching an error message. Covers the isolated
-      repository the same way.
-- [ ] `AsyncVault::transaction` delegates to it, with
+      repository the same way. (`git::commit_if_changed`,
+      `isolated::commit_recorded_if_changed`; tests
+      `vault::tests::transaction_*`.)
+- [x] `AsyncVault::transaction` delegates to it, with
       `E: From<scheda::Error> + Send + 'static`; a cancelled task is
       `E::from(io_interrupted)`, a panic `E::from(io_other)` (`17` D42).
-- [ ] The `locked` rules of `17` D43 hold for both forms.
-- [ ] Write first a test of what an identical-bytes `replace` inside a
+- [x] The `locked` rules of `17` D43 hold for both forms.
+      (`transaction_while_another_thread_holds_one_is_locked_through_from`,
+      `a_transaction_keeps_the_callers_error_type`,
+      `a_sync_transaction_on_another_thread_makes_it_locked`.)
+- [x] Write first a test of what an identical-bytes `replace` inside a
       transaction does today; D5 makes it commit nothing either way.
+      (`identical_replace_in_a_transaction_commits_nothing`: before the
+      change, `commit` staged a tree equal to `HEAD`'s and made no commit.)
 - *Check:* a closure that writes nothing → `Ok(value)`, `git log`
   unchanged, sync and async.
 - *Check:* a closure that replaces a Record with identical bytes → no new
