@@ -1325,7 +1325,9 @@ type SegmentLines = BTreeMap<String, (usize, Vec<u8>)>;
 /// vector dump is saved only when a checkpoint is due; the end of the leg's
 /// pass saves it). A journal segment is read and parsed once per call, not
 /// once per batch: its parsed lines stay until the last change that names
-/// the segment has used them.
+/// the segment has used them. Parsed lines are kept per collection: two
+/// journals whose segments hold the same bytes share one blob, and each
+/// takes its own lines from it.
 fn apply_changes(
     stop: &dyn Fn() -> bool,
     engine: &SearchEngine,
@@ -1344,24 +1346,27 @@ fn apply_changes(
             .get(&change.collection)
             .is_some_and(|decl| decl.kind == Kind::Journal)
     };
-    // Changes still to come per journal segment blob.
-    let mut remaining: BTreeMap<&str, usize> = BTreeMap::new();
+    // Changes still to come per `(collection, segment blob)`.
+    let mut remaining: BTreeMap<(&str, &str), usize> = BTreeMap::new();
     for change in changes {
         if let Change::Upsert { blob, .. } = &change.change
             && is_journal(change)
         {
-            *remaining.entry(blob.as_str()).or_insert(0) += 1;
+            *remaining
+                .entry((change.collection.as_str(), blob.as_str()))
+                .or_insert(0) += 1;
         }
     }
-    let mut segments: BTreeMap<String, SegmentLines> = BTreeMap::new();
+    let mut segments: BTreeMap<(&str, &str), SegmentLines> = BTreeMap::new();
     for chunk in changes.chunks(batch) {
         if stop() {
             return Ok(Pass::Stopped);
         }
-        // Blobs to read for this batch: a segment only if it is not cached
-        // yet. The flags say whether a journal line, a whole file, or both
-        // (identical content in two collections) are taken from it.
-        let mut wanted: BTreeMap<&str, (bool, bool)> = BTreeMap::new();
+        // Blobs to read for this batch: a segment only if some collection
+        // has not parsed it yet. Each blob is read once; the journals that
+        // parse it and whether a whole file is taken from it (identical
+        // content in a document collection) are noted per blob.
+        let mut wanted: BTreeMap<&str, (BTreeSet<&str>, bool)> = BTreeMap::new();
         for change in chunk {
             let Change::Upsert { blob, .. } = &change.change else {
                 continue;
@@ -1369,28 +1374,41 @@ fn apply_changes(
             if decls.get(&change.collection).is_none() {
                 continue;
             }
+            let collection = change.collection.as_str();
             let journal_line = is_journal(change);
-            if journal_line && segments.contains_key(blob.as_str()) {
+            if journal_line && segments.contains_key(&(collection, blob.as_str())) {
                 continue;
             }
-            let flags = wanted.entry(blob.as_str()).or_default();
+            let (journals, whole_file) = wanted.entry(blob.as_str()).or_default();
             if journal_line {
-                flags.0 = true;
+                journals.insert(collection);
             } else {
-                flags.1 = true;
+                *whole_file = true;
             }
         }
         let oids: Vec<String> = wanted.keys().map(|oid| (*oid).to_owned()).collect();
         let files = tree::read_blobs(dir, &oids)?;
         let mut bytes: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         for (oid, file) in oids.into_iter().zip(files) {
-            let (journal_line, whole_file) = wanted.get(oid.as_str()).copied().unwrap_or_default();
+            let Some((oid_ref, (journals, whole_file))) = wanted.get_key_value(oid.as_str()) else {
+                continue;
+            };
             // A blob git cannot give leaves its changes skipped.
-            if journal_line {
-                let lines = file.as_deref().map(journal::segment_lines);
-                segments.insert(oid.clone(), lines.unwrap_or_default());
+            let mut lines = if journals.is_empty() {
+                None
+            } else {
+                file.as_deref().map(journal::segment_lines)
+            };
+            for (n, collection) in journals.iter().enumerate() {
+                // Copies only for a blob that more than one journal shares.
+                let parsed = if n + 1 == journals.len() {
+                    lines.take()
+                } else {
+                    lines.clone()
+                };
+                segments.insert((collection, oid_ref), parsed.unwrap_or_default());
             }
-            if whole_file && let Some(file) = file {
+            if *whole_file && let Some(file) = file {
                 bytes.insert(oid, file);
             }
         }
@@ -1406,14 +1424,15 @@ fn apply_changes(
                         return Ok(Pass::Stopped);
                     }
                     let raw = if decl.kind == Kind::Journal {
+                        let key = (change.collection.as_str(), blob.as_str());
                         let payload = segments
-                            .get_mut(blob.as_str())
+                            .get_mut(&key)
                             .and_then(|lines| lines.remove(&change.id))
                             .map(|(_, payload)| payload);
-                        if let Some(left) = remaining.get_mut(blob.as_str()) {
+                        if let Some(left) = remaining.get_mut(&key) {
                             *left = left.saturating_sub(1);
                             if *left == 0 {
-                                segments.remove(blob.as_str());
+                                segments.remove(&key);
                             }
                         }
                         match payload {

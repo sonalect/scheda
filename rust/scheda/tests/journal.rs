@@ -1027,3 +1027,43 @@ fn peek_schema_name(body: &str) -> String {
         .and_then(|v| v.get("name")?.as_str().map(str::to_owned))
         .expect("schema fixture name")
 }
+
+/// Two journals whose segments hold the same bytes share one git blob;
+/// the Index still holds the line of each.
+#[test]
+fn identical_segments_in_two_journals_are_both_indexed() {
+    let scratch = Scratch::new();
+    drop(scratch.init());
+    scratch.write_declaration("log.yaml", LOG);
+    scratch.write_declaration("lines.yaml", LINES);
+    let vault = scratch.reopen();
+    for name in ["south_log", "south_lines"] {
+        vault
+            .collection(name)
+            .unwrap()
+            .add("same", rec("x"), None)
+            .unwrap();
+    }
+    let segments: Vec<Vec<u8>> = [scratch.log_dir(), scratch.lines_dir()]
+        .iter()
+        .map(|dir| {
+            let name = &jsonl_names(dir)[0];
+            fs::read(dir.join(name)).unwrap()
+        })
+        .collect();
+    assert_eq!(segments[0], segments[1], "the two segments share one blob");
+    common::indexed(&vault);
+    for name in ["south_log", "south_lines"] {
+        let page = vault
+            .collection(name)
+            .unwrap()
+            .find(&FindQuery::all(), 0, 10)
+            .unwrap();
+        let ids: Vec<_> = page
+            .records
+            .iter()
+            .filter_map(|r| r.id.as_deref())
+            .collect();
+        assert_eq!(ids, ["same"], "{name}");
+    }
+}

@@ -5,7 +5,7 @@ Project state, deferred work, and measurements that outlive one session
 
 | Note | Topic |
 |---|---|
-| [journal-identical-segment-blob.md](journal-identical-segment-blob.md) | Deferred indexer defect: two journals with byte-identical segments |
+| — | No notes yet. |
 
 ## Pointers
 

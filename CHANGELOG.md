@@ -58,6 +58,15 @@ API or on-disk format changes bump the minor.
   read, so a handle's own uncommitted declaration stays. A `Collection`
   handle keeps the declaration it was made with.
 
+### Fixed
+
+- The background indexer no longer drops a journal line when two journal
+  collections hold segments with the same bytes (same writer, `id`, and
+  payload): git stores them as one blob, and only the first collection's
+  line reached the Index although the marks moved to `HEAD`. Each journal
+  now takes its own lines from a shared blob. A Vault indexed by an earlier
+  release keeps the gap until `reindex`.
+
 ## [0.19.0] - 2026-10-05
 
 ### Added

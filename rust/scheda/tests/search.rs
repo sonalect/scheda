@@ -2495,7 +2495,6 @@ fn leg_vault(scratch: &Scratch, model: Option<&'static str>) -> Vault {
         vault
             .collection(name)
             .unwrap()
-            // Distinct bytes per collection: each journal gets its own segment blob.
             .add(
                 "alpha",
                 rec(json!({"title": "kryptonite mineral", "tag": name})),
