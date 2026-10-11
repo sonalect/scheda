@@ -1,6 +1,5 @@
 load("@bazel_utils_bazel//:bazel.bzl", "buildifier_format", "buildifier_test")
 load("@bazel_utils_md//:markdown.bzl", "markdownlint_test")
-load(":compat.bzl", "NOT_WINDOWS")
 
 buildifier_test(
     name = "lint",
@@ -9,7 +8,6 @@ buildifier_test(
         "./.bazel/*",
         "./.venv/*",
     ],
-    target_compatible_with = NOT_WINDOWS,
 )
 
 buildifier_format(
@@ -23,7 +21,6 @@ buildifier_format(
 markdownlint_test(
     name = "markdown",
     size = "small",
-    target_compatible_with = NOT_WINDOWS,
 )
 
 exports_files(["rustdoc_pages_index.html"])

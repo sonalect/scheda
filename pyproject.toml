@@ -12,7 +12,7 @@ dependencies = ["vllm==0.30.0", "huggingface-hub==1.33.0"]
 [tool.uv]
 package = false
 # vLLM publishes manylinux wheels only. macOS CI keeps `//python` for ruff /
-# pip-audit and deletes `python/cli` and `python/vllm` in `.bazelrc`.
+# uv audit and deletes `python/cli` and `python/vllm` in `.bazelrc`.
 environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'linux' and platform_machine == 'aarch64'",

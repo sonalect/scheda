@@ -17,13 +17,13 @@ git_override(
 
 bazel_dep(name = "bazel_lib", version = "3.7.2")
 bazel_dep(name = "bazel_skylib", version = "1.9.2")
-bazel_dep(name = "bazel_utils_bazel", version = "0.2.11")
-bazel_dep(name = "bazel_utils_buf", version = "0.2.11")
-bazel_dep(name = "bazel_utils_core", version = "0.2.11")
-bazel_dep(name = "bazel_utils_md", version = "0.2.11")
-bazel_dep(name = "bazel_utils_protoc", version = "0.2.11")
-bazel_dep(name = "bazel_utils_python", version = "0.2.11")
-bazel_dep(name = "bazel_utils_rust", version = "0.2.11")
+bazel_dep(name = "bazel_utils_bazel", version = "0.3.0")
+bazel_dep(name = "bazel_utils_buf", version = "0.3.0")
+bazel_dep(name = "bazel_utils_core", version = "0.3.0")
+bazel_dep(name = "bazel_utils_md", version = "0.3.0")
+bazel_dep(name = "bazel_utils_protoc", version = "0.3.0")
+bazel_dep(name = "bazel_utils_python", version = "0.3.0")
+bazel_dep(name = "bazel_utils_rust", version = "0.3.0")
 bazel_dep(name = "platforms", version = "1.1.0")
 bazel_dep(name = "protobuf", version = "36.2")
 bazel_dep(name = "rules_python", version = "2.3.4")
@@ -37,47 +37,47 @@ git_override(
     module_name = "bazel_utils_bazel",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "bazel",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )
 
 git_override(
     module_name = "bazel_utils_buf",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "buf",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )
 
 git_override(
     module_name = "bazel_utils_core",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "core",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )
 
 git_override(
     module_name = "bazel_utils_md",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "markdown",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )
 
 git_override(
     module_name = "bazel_utils_protoc",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "protoc",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )
 
 git_override(
     module_name = "bazel_utils_python",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "python",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )
 
 git_override(
     module_name = "bazel_utils_rust",
     remote = "https://github.com/sonalect/bazel_utils.git",
     strip_prefix = "rust",
-    tag = "v0.2.11",
+    tag = "v0.3.0",
 )

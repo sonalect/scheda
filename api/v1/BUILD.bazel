@@ -1,6 +1,5 @@
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("@bazel_utils_buf//:buf.bzl", "buf_format", "buf_generate", "buf_lint_test", "buf_module")
-load("//bazel:compat.bzl", "NOT_WINDOWS")
 
 filegroup(
     name = "protos",
@@ -25,7 +24,6 @@ buf_lint_test(
     name = "lint",
     size = "small",
     module = ":module",
-    target_compatible_with = NOT_WINDOWS,
 )
 
 buf_format(

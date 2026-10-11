@@ -162,7 +162,7 @@ bazel test //python:lint        # ruff
 bazel test //bazel:lint         # Starlark (buildifier)
 bazel test //bazel:markdown     # markdownlint-cli2
 bazel test //rust:vuln          # cargo-audit (needs network)
-bazel test //python:vuln        # pip-audit (needs network)
+bazel test //python:vuln        # uv audit (needs network)
 
 bazel run //api:format //api/v1:format //api/collection/v1:format       # buf format
 bazel run //python:format       # ruff format

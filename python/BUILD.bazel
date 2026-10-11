@@ -1,6 +1,5 @@
 load("@aspect_rules_py//py:defs.bzl", "py_library")
-load("@bazel_utils_python//:python.bzl", "pip_audit_test", "ruff_format", "ruff_test")
-load("//bazel:compat.bzl", "NOT_WINDOWS")
+load("@bazel_utils_python//:python.bzl", "ruff_format", "ruff_test", "uv_audit_test")
 
 # Workspace-root imports so `python.vllm...` resolves.
 _IMPORTS = [".."]
@@ -9,7 +8,6 @@ py_library(
     name = "python_pkg",
     srcs = ["__init__.py"],
     imports = _IMPORTS,
-    target_compatible_with = NOT_WINDOWS,
     visibility = ["//python:__subpackages__"],
 )
 
@@ -17,7 +15,6 @@ ruff_test(
     name = "lint",
     size = "small",
     dirs = ["//python"],
-    target_compatible_with = NOT_WINDOWS,
 )
 
 ruff_format(
@@ -25,14 +22,13 @@ ruff_format(
     dirs = ["//python"],
 )
 
-pip_audit_test(
+uv_audit_test(
     name = "vuln",
     size = "small",
-    # vllm==0.27.1 requires setuptools>=77.0.3,<81; PYSEC-2026-3447 is
+    # vllm==0.30.0 requires setuptools>=77.0.3,<81; PYSEC-2026-3447 is
     # fixed in 83.0.0, which that cap cannot take.
     flags = [
-        "--ignore-vuln",
+        "--ignore",
         "PYSEC-2026-3447",
     ],
-    target_compatible_with = NOT_WINDOWS,
 )

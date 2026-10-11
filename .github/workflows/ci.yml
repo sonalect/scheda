@@ -208,9 +208,8 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 120
     env:
-      # Git for Windows bash. Native sh_test / run_shell look this up;
-      # bazel_utils `.bash` test rules still cannot CreateProcess those
-      # scripts (they are target_compatible_with Windows-incompatible).
+      # Git for Windows bash for native sh_test / run_shell (rules_rust).
+      # bazel_utils rules do not need it: they run through busybox-w32.
       # Python packages are `--deleted_packages` in `.bazelrc` on Windows
       # so `//...` does not load python/ BUILD files. uv host still runs
       # via python.MODULE.bazel; patched to stub msvc instead of fail().

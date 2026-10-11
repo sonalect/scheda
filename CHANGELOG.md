@@ -8,6 +8,21 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Update `bazel_utils_*` modules from `v0.2.11` to `v0.3.0`. Their lint,
+  format, and audit rules now run on all six platforms (Windows through
+  busybox-w32, no host bash), so `//bazel:lint`, `//bazel:markdown`, the
+  three `buf` lint tests, and `//rust:vuln` are no longer skipped on
+  Windows. `bazel/compat.bzl` drops `NOT_WINDOWS`.
+- `//python:vuln` runs `uv audit` on `uv.lock` (`uv_audit_test`) instead
+  of pip-audit, which `bazel_utils` 0.3.0 removed.
+
+### Fixed
+
+- `uv.lock`: `multidict` from 6.7.1 to 6.9.1 (GHSA-54p9-h82j-f925), which
+  `uv audit` reports and pip-audit did not.
+
 ## [0.20.0] - 2026-10-05
 
 ### Added
