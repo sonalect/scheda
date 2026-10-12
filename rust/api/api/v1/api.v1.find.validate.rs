@@ -1141,7 +1141,8 @@ impl ::protovalidate_buffa::Validate for filter::Term {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -1168,7 +1169,11 @@ impl ::protovalidate_buffa::Validate for filter::Term {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -1202,7 +1207,7 @@ impl ::protovalidate_buffa::Validate for filter::Term {
         }
         if self.value.is_set() {}
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1229,7 +1234,11 @@ impl ::protovalidate_buffa::Validate for filter::Term {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -1296,7 +1305,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermView<'_> {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -1323,7 +1333,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -1357,7 +1371,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermView<'_> {
         }
         if self.value.is_set() {}
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1384,7 +1398,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -1451,7 +1469,8 @@ impl ::protovalidate_buffa::Validate for filter::TermSet {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -1478,7 +1497,11 @@ impl ::protovalidate_buffa::Validate for filter::TermSet {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -1512,7 +1535,7 @@ impl ::protovalidate_buffa::Validate for filter::TermSet {
         }
         if self.values.is_set() {}
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1539,7 +1562,11 @@ impl ::protovalidate_buffa::Validate for filter::TermSet {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -1606,7 +1633,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermSetView<'_> 
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -1633,7 +1661,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermSetView<'_> 
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -1667,7 +1699,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermSetView<'_> 
         }
         if self.values.is_set() {}
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1694,7 +1726,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::TermSetView<'_> 
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -1761,7 +1797,8 @@ impl ::protovalidate_buffa::Validate for filter::Phrase {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -1788,7 +1825,11 @@ impl ::protovalidate_buffa::Validate for filter::Phrase {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -1831,7 +1872,7 @@ impl ::protovalidate_buffa::Validate for filter::Phrase {
                 });
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1858,7 +1899,11 @@ impl ::protovalidate_buffa::Validate for filter::Phrase {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -1925,7 +1970,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhraseView<'_> {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -1952,7 +1998,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhraseView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -1995,7 +2045,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhraseView<'_> {
                 });
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -2022,7 +2072,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhraseView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -2089,7 +2143,8 @@ impl ::protovalidate_buffa::Validate for filter::PhrasePrefix {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2116,7 +2171,11 @@ impl ::protovalidate_buffa::Validate for filter::PhrasePrefix {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -2186,7 +2245,8 @@ impl ::protovalidate_buffa::Validate for filter::PhrasePrefix {
         }
         if self.prefix.is_some() {
             if let Some(v) = self.prefix.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2213,14 +2273,18 @@ impl ::protovalidate_buffa::Validate for filter::PhrasePrefix {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -2247,7 +2311,11 @@ impl ::protovalidate_buffa::Validate for filter::PhrasePrefix {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -2314,7 +2382,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhrasePrefixView
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2341,7 +2410,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhrasePrefixView
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -2411,7 +2484,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhrasePrefixView
         }
         if self.prefix.is_some() {
             if let Some(v) = self.prefix.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2438,14 +2512,18 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhrasePrefixView
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -2472,7 +2550,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::PhrasePrefixView
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -2539,7 +2621,8 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2566,7 +2649,11 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -2600,7 +2687,8 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
         }
         if self.term.is_some() {
             if let Some(v) = self.term.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2627,7 +2715,11 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -2667,7 +2759,7 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -2694,7 +2786,11 @@ impl ::protovalidate_buffa::Validate for filter::FuzzyTerm {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -2761,7 +2857,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2788,7 +2885,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -2822,7 +2923,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
         }
         if self.term.is_some() {
             if let Some(v) = self.term.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -2849,7 +2951,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -2889,7 +2995,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -2916,7 +3022,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::FuzzyTermView<'_
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -2983,7 +3093,8 @@ impl ::protovalidate_buffa::Validate for filter::Regex {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3010,7 +3121,11 @@ impl ::protovalidate_buffa::Validate for filter::Regex {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -3044,7 +3159,8 @@ impl ::protovalidate_buffa::Validate for filter::Regex {
         }
         if self.pattern.is_some() {
             if let Some(v) = self.pattern.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3071,14 +3187,18 @@ impl ::protovalidate_buffa::Validate for filter::Regex {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -3105,7 +3225,11 @@ impl ::protovalidate_buffa::Validate for filter::Regex {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -3172,7 +3296,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexView<'_> {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3199,7 +3324,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -3233,7 +3362,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexView<'_> {
         }
         if self.pattern.is_some() {
             if let Some(v) = self.pattern.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3260,14 +3390,18 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -3294,7 +3428,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -3361,7 +3499,8 @@ impl ::protovalidate_buffa::Validate for filter::RegexPhrase {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3388,7 +3527,11 @@ impl ::protovalidate_buffa::Validate for filter::RegexPhrase {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -3431,7 +3574,7 @@ impl ::protovalidate_buffa::Validate for filter::RegexPhrase {
                 });
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -3458,7 +3601,11 @@ impl ::protovalidate_buffa::Validate for filter::RegexPhrase {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -3525,7 +3672,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexPhraseView<
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3552,7 +3700,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexPhraseView<
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -3595,7 +3747,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexPhraseView<
                 });
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -3622,7 +3774,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RegexPhraseView<
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -3797,7 +3953,8 @@ impl ::protovalidate_buffa::Validate for filter::Range {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -3824,7 +3981,11 @@ impl ::protovalidate_buffa::Validate for filter::Range {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -3883,7 +4044,7 @@ impl ::protovalidate_buffa::Validate for filter::Range {
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -3910,7 +4071,11 @@ impl ::protovalidate_buffa::Validate for filter::Range {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -3977,7 +4142,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RangeView<'_> {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -4004,7 +4170,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RangeView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -4063,7 +4233,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RangeView<'_> {
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -4090,7 +4260,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::RangeView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -4157,7 +4331,8 @@ impl ::protovalidate_buffa::Validate for filter::Exists {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -4184,14 +4359,18 @@ impl ::protovalidate_buffa::Validate for filter::Exists {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -4218,7 +4397,11 @@ impl ::protovalidate_buffa::Validate for filter::Exists {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -4285,7 +4468,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::ExistsView<'_> {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -4312,14 +4496,18 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::ExistsView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
         }
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -4346,7 +4534,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::ExistsView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -5561,7 +5753,8 @@ impl ::protovalidate_buffa::Validate for filter::MoreLikeThis {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         match &self.source {
             Some(__buffa::oneof::filter::more_like_this::Source::Id(v)) => {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -5588,7 +5781,11 @@ impl ::protovalidate_buffa::Validate for filter::MoreLikeThis {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -5708,7 +5905,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::MoreLikeThisView
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         match &self.source {
             Some(__buffa::view::oneof::filter::more_like_this::Source::Id(v)) => {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -5735,7 +5933,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::filter::MoreLikeThisView
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -6078,7 +6280,8 @@ impl ::protovalidate_buffa::Validate for filter::more_like_this::fields::Field {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -6105,7 +6308,11 @@ impl ::protovalidate_buffa::Validate for filter::more_like_this::fields::Field {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -6139,7 +6346,7 @@ impl ::protovalidate_buffa::Validate for filter::more_like_this::fields::Field {
         }
         if self.values.is_set() {}
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -6166,7 +6373,11 @@ impl ::protovalidate_buffa::Validate for filter::more_like_this::fields::Field {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
@@ -6234,7 +6445,8 @@ for __buffa::view::filter::more_like_this::fields::FieldView<'_> {
         }
         if self.field.is_some() {
             if let Some(v) = self.field.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -6261,7 +6473,11 @@ for __buffa::view::filter::more_like_this::fields::FieldView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -6295,7 +6511,7 @@ for __buffa::view::filter::more_like_this::fields::FieldView<'_> {
         }
         if self.values.is_set() {}
         if let Some(v) = self.collection.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -6322,7 +6538,11 @@ for __buffa::view::filter::more_like_this::fields::FieldView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }

@@ -109,7 +109,8 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
         }
         if self.name.is_some() {
             if let Some(v) = self.name.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -136,7 +137,11 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -302,7 +307,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
         }
         if self.name.is_some() {
             if let Some(v) = self.name.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -329,7 +335,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }

@@ -1,5 +1,5 @@
 {
-  "checksum": "8bd76e00c93f95f84cc17aeb952d46e6fef95e82e7f7bc448934c0f1009410d3",
+  "checksum": "15995a696d649d362eb989e8e6fdf15f84a7ad6057ac02d365308829da878431",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -260,7 +260,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -413,7 +413,7 @@
             "target": "i18n_embed"
           },
           {
-            "id": "lazy_static 1.5.0",
+            "id": "lazy_static 1.5.1",
             "target": "lazy_static"
           },
           {
@@ -437,7 +437,7 @@
             "target": "rand"
           },
           {
-            "id": "rust-embed 8.12.0",
+            "id": "rust-embed 8.13.0",
             "target": "rust_embed"
           },
           {
@@ -461,7 +461,7 @@
             "target": "x25519_dalek"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -591,7 +591,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -603,7 +603,7 @@
               "target": "serde"
             },
             {
-              "id": "zerocopy 0.8.57",
+              "id": "zerocopy 0.8.62",
               "target": "zerocopy"
             }
           ],
@@ -728,7 +728,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "libc 0.2.189",
+            "id": "libc 0.2.190",
             "target": "libc"
           }
         ],
@@ -1080,7 +1080,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -1576,7 +1576,7 @@
       ],
       "version": "0.12.1"
     },
-    "bon 3.10.1": {
+    "bon 3.10.2": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -1586,7 +1586,7 @@
         "edition": "2024",
         "proc_macro_deps": [
           {
-            "id": "bon-macros 3.10.1",
+            "id": "bon-macros 3.10.2",
             "target": "bon_macros"
           }
         ]
@@ -1602,8 +1602,8 @@
       "package_url": "https://github.com/elastio/bon",
       "repository": {
         "Http": {
-          "sha256": "60eafe0d77c3a2fc292c1d1346c3041b33c0a108085a2afabf672b70f69dbbc9",
-          "url": "https://static.crates.io/crates/bon/3.10.1/download"
+          "sha256": "214f5df094ce551a10a30ffb9c70243d61f121a3d985a6495933e181dee6a7d2",
+          "url": "https://static.crates.io/crates/bon/3.10.2/download"
         }
       },
       "targets": [
@@ -1614,9 +1614,9 @@
           }
         }
       ],
-      "version": "3.10.1"
+      "version": "3.10.2"
     },
-    "bon-macros 3.10.1": {
+    "bon-macros 3.10.2": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -1645,7 +1645,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -1662,8 +1662,8 @@
       "package_url": "https://github.com/elastio/bon",
       "repository": {
         "Http": {
-          "sha256": "bd0f9631d8aaaee112c41985d675ef269e02acbd4f33122836af4f0c5f699ff6",
-          "url": "https://static.crates.io/crates/bon-macros/3.10.1/download"
+          "sha256": "2706da6c749998cc555d04184909608956a69ad3f8ab1a076fbc867b4a3c3ce5",
+          "url": "https://static.crates.io/crates/bon-macros/3.10.2/download"
         }
       },
       "targets": [
@@ -1674,7 +1674,7 @@
           }
         }
       ],
-      "version": "3.10.1"
+      "version": "3.10.2"
     },
     "borrow-or-share 0.2.4": {
       "common_attrs": {
@@ -1750,7 +1750,7 @@
             "target": "smoothutf8"
           },
           {
-            "id": "thiserror 2.0.20",
+            "id": "thiserror 2.0.21",
             "target": "thiserror"
           }
         ],
@@ -1810,7 +1810,7 @@
             "target": "serde_json"
           },
           {
-            "id": "thiserror 2.0.20",
+            "id": "thiserror 2.0.21",
             "target": "thiserror"
           }
         ],
@@ -1974,7 +1974,7 @@
       ],
       "version": "0.2.4"
     },
-    "cc 1.4.6": {
+    "cc 1.7.0": {
       "common_attrs": {
         "crate_features": [
           "parallel"
@@ -1982,7 +1982,7 @@
         "deps": {
           "common": [
             {
-              "id": "find-msvc-tools 0.1.12",
+              "id": "find-msvc-tools 0.1.14",
               "target": "find_msvc_tools"
             },
             {
@@ -1997,25 +1997,25 @@
           "selects": {
             "aarch64-apple-darwin": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "aarch64-unknown-linux-gnu": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "x86_64-unknown-linux-gnu": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "x86_64-unknown-nixos-gnu": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -2034,8 +2034,8 @@
       "package_url": "https://github.com/rust-lang/cc-rs",
       "repository": {
         "Http": {
-          "sha256": "a3eb0f42d6c360dc3f8a821f6bf2fdea7f72bfd36b3076eb0e6d1e9e0752fff4",
-          "url": "https://static.crates.io/crates/cc/1.4.6/download"
+          "sha256": "50a649af8a827553c29fb0cb4bd4a6f1a0dd695bd3232b9bc98bd9c8a3ffbb8b",
+          "url": "https://static.crates.io/crates/cc/1.7.0/download"
         }
       },
       "targets": [
@@ -2046,7 +2046,7 @@
           }
         }
       ],
-      "version": "1.4.6"
+      "version": "1.7.0"
     },
     "census 0.4.2": {
       "common_attrs": {
@@ -2076,7 +2076,7 @@
       ],
       "version": "0.4.2"
     },
-    "cfg-if 1.0.4": {
+    "cfg-if 1.0.5": {
       "common_attrs": {
         "edition": "2018"
       },
@@ -2091,8 +2091,8 @@
       "package_url": "https://github.com/rust-lang/cfg-if",
       "repository": {
         "Http": {
-          "sha256": "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801",
-          "url": "https://static.crates.io/crates/cfg-if/1.0.4/download"
+          "sha256": "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600",
+          "url": "https://static.crates.io/crates/cfg-if/1.0.5/download"
         }
       },
       "targets": [
@@ -2103,7 +2103,7 @@
           }
         }
       ],
-      "version": "1.0.4"
+      "version": "1.0.5"
     },
     "chacha20 0.10.2": {
       "common_attrs": {
@@ -2113,7 +2113,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -2165,7 +2165,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -2235,7 +2235,7 @@
             "target": "poly1305"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -2360,7 +2360,7 @@
             "target": "inout"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -2462,7 +2462,7 @@
             "target": "anstyle"
           },
           {
-            "id": "clap_lex 1.1.0",
+            "id": "clap_lex 1.1.1",
             "target": "clap_lex"
           },
           {
@@ -2516,7 +2516,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -2547,7 +2547,7 @@
       ],
       "version": "4.6.7"
     },
-    "clap_lex 1.1.0": {
+    "clap_lex 1.1.1": {
       "common_attrs": {
         "edition": "2024"
       },
@@ -2562,8 +2562,8 @@
       "package_url": "https://github.com/clap-rs/clap",
       "repository": {
         "Http": {
-          "sha256": "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9",
-          "url": "https://static.crates.io/crates/clap_lex/1.1.0/download"
+          "sha256": "1c133bc6a41be0d194c306b5506d15e6feeea7b1d6604bd3f8310dfb2ca96486",
+          "url": "https://static.crates.io/crates/clap_lex/1.1.1/download"
         }
       },
       "targets": [
@@ -2574,7 +2574,7 @@
           }
         }
       ],
-      "version": "1.1.0"
+      "version": "1.1.1"
     },
     "codespan-reporting 0.13.1": {
       "common_attrs": {
@@ -2661,7 +2661,7 @@
             "target": "castaway"
           },
           {
-            "id": "cfg-if 1.0.4",
+            "id": "cfg-if 1.0.5",
             "target": "cfg_if"
           },
           {
@@ -2722,7 +2722,7 @@
         "deps": {
           "common": [
             {
-              "id": "libc 0.2.189",
+              "id": "libc 0.2.190",
               "target": "libc"
             },
             {
@@ -3019,25 +3019,25 @@
           "selects": {
             "aarch64-linux-android": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(target_arch = \"aarch64\", target_vendor = \"apple\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -3077,25 +3077,25 @@
           "selects": {
             "cfg(all(target_arch = \"aarch64\", target_os = \"android\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(target_arch = \"aarch64\", target_vendor = \"apple\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -3128,7 +3128,7 @@
       ],
       "version": "0.3.1"
     },
-    "crc32fast 1.5.1": {
+    "crc32fast 1.5.2": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -3137,7 +3137,7 @@
         ],
         "deps": [
           {
-            "id": "cfg-if 1.0.4",
+            "id": "cfg-if 1.0.5",
             "target": "cfg_if"
           }
         ],
@@ -3157,8 +3157,8 @@
       "package_url": "https://github.com/srijs/rust-crc32fast",
       "repository": {
         "Http": {
-          "sha256": "8498c871161e1742aaa9d52551b2d6ebdd4c3d45a3be423e3728f33b955be550",
-          "url": "https://static.crates.io/crates/crc32fast/1.5.1/download"
+          "sha256": "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78",
+          "url": "https://static.crates.io/crates/crc32fast/1.5.2/download"
         }
       },
       "targets": [
@@ -3175,7 +3175,7 @@
           }
         }
       ],
-      "version": "1.5.1"
+      "version": "1.5.2"
     },
     "crossbeam-channel 0.5.17": {
       "common_attrs": {
@@ -3424,7 +3424,7 @@
             "target": "subtle"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -3591,7 +3591,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -3599,7 +3599,7 @@
               "target": "subtle"
             },
             {
-              "id": "zeroize 1.9.0",
+              "id": "zeroize 1.9.1",
               "target": "zeroize"
             }
           ],
@@ -3707,7 +3707,7 @@
       ],
       "version": "0.1.1"
     },
-    "cxx 1.0.202": {
+    "cxx 1.0.205": {
       "additive_build_file_content": "load(\"@rules_cc//cc:defs.bzl\", \"cc_library\")\ncc_library(\n    name = \"cxx_cc\",\n    srcs = [\"src/cxx.cc\"],\n    hdrs = [\"include/cxx.h\"],\n    include_prefix = \"rust\",\n    includes = [\"include\"],\n    linkstatic = True,\n    strip_include_prefix = \"include\",\n    visibility = [\"//visibility:public\"],\n)\n",
       "build_script_attrs": {
         "build_script_env": {
@@ -3724,18 +3724,18 @@
         "deps": {
           "common": [
             {
-              "id": "cc 1.4.6",
+              "id": "cc 1.7.0",
               "target": "cc"
             },
             {
-              "id": "cxxbridge-flags 1.0.202",
+              "id": "cxxbridge-flags 1.0.205",
               "target": "cxxbridge_flags"
             }
           ],
           "selects": {
             "cfg(any())": [
               {
-                "id": "cxx-build 1.0.202",
+                "id": "cxx-build 1.0.205",
                 "target": "cxx_build"
               }
             ]
@@ -3771,7 +3771,7 @@
         ],
         "proc_macro_deps": [
           {
-            "id": "cxxbridge-macro 1.0.202",
+            "id": "cxxbridge-macro 1.0.205",
             "target": "cxxbridge_macro"
           }
         ]
@@ -3791,7 +3791,7 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+            "Rev": "65a98c7fd7a4858582d8902e12ee6ed45c21fe39"
           },
           "remote": "https://github.com/sonalect/cxx"
         }
@@ -3810,14 +3810,14 @@
           }
         }
       ],
-      "version": "1.0.202"
+      "version": "1.0.205"
     },
-    "cxx-build 1.0.202": {
+    "cxx-build 1.0.205": {
       "build_script_attrs": {},
       "common_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           },
           {
@@ -3841,7 +3841,7 @@
             "target": "scratch"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -3862,7 +3862,7 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+            "Rev": "65a98c7fd7a4858582d8902e12ee6ed45c21fe39"
           },
           "remote": "https://github.com/sonalect/cxx",
           "strip_prefix": "bridge/build"
@@ -3882,9 +3882,9 @@
           }
         }
       ],
-      "version": "1.0.202"
+      "version": "1.0.205"
     },
-    "cxxbridge-flags 1.0.202": {
+    "cxxbridge-flags 1.0.205": {
       "common_attrs": {
         "crate_features": [
           "default"
@@ -3903,7 +3903,7 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+            "Rev": "65a98c7fd7a4858582d8902e12ee6ed45c21fe39"
           },
           "remote": "https://github.com/sonalect/cxx",
           "strip_prefix": "flags"
@@ -3917,9 +3917,9 @@
           }
         }
       ],
-      "version": "1.0.202"
+      "version": "1.0.205"
     },
-    "cxxbridge-macro 1.0.202": {
+    "cxxbridge-macro 1.0.205": {
       "build_script_attrs": {},
       "common_attrs": {
         "deps": [
@@ -3936,7 +3936,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -3957,7 +3957,7 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "b2e964d163f296cba15fdcf4c4d8a9146c543ef8"
+            "Rev": "65a98c7fd7a4858582d8902e12ee6ed45c21fe39"
           },
           "remote": "https://github.com/sonalect/cxx",
           "strip_prefix": "macro"
@@ -3977,7 +3977,7 @@
           }
         }
       ],
-      "version": "1.0.202"
+      "version": "1.0.205"
     },
     "darling 0.20.11": {
       "common_attrs": {
@@ -4149,7 +4149,7 @@
             "target": "strsim"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -4233,7 +4233,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -4442,7 +4442,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "thiserror 2.0.20",
+            "id": "thiserror 2.0.21",
             "target": "thiserror"
           }
         ],
@@ -4484,7 +4484,7 @@
             "target": "const_oid"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -4799,7 +4799,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -4899,7 +4899,7 @@
       ],
       "version": "2.0.2"
     },
-    "either 1.18.0": {
+    "either 1.19.0": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -4919,8 +4919,8 @@
       "package_url": "https://github.com/rayon-rs/either",
       "repository": {
         "Http": {
-          "sha256": "252afb9ae5eaa683babdc6a068b3f5726eb19e05070c731f9b2a23a7c3e8ed34",
-          "url": "https://static.crates.io/crates/either/1.18.0/download"
+          "sha256": "0e9c71c2167ca323c882b99918929403426e2373ea17242ff5653e0d5e1058be",
+          "url": "https://static.crates.io/crates/either/1.19.0/download"
         }
       },
       "targets": [
@@ -4931,7 +4931,7 @@
           }
         }
       ],
-      "version": "1.18.0"
+      "version": "1.19.0"
     },
     "elliptic-curve 0.13.8": {
       "common_attrs": {
@@ -4986,7 +4986,7 @@
             "target": "subtle"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -5151,25 +5151,25 @@
           "selects": {
             "cfg(target_os = \"hermit\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"wasi\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(unix)": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ]
@@ -5206,7 +5206,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           }
         ]
@@ -5466,7 +5466,7 @@
       ],
       "version": "0.6.3"
     },
-    "find-msvc-tools 0.1.12": {
+    "find-msvc-tools 0.1.14": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -5481,8 +5481,8 @@
       "package_url": "https://github.com/rust-lang/cc-rs",
       "repository": {
         "Http": {
-          "sha256": "3e0f1c7c3a72c66fd80abe965175f7523475c0489a87d3ff9d6e8c87d87a9d2d",
-          "url": "https://static.crates.io/crates/find-msvc-tools/0.1.12/download"
+          "sha256": "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484",
+          "url": "https://static.crates.io/crates/find-msvc-tools/0.1.14/download"
         }
       },
       "targets": [
@@ -5493,7 +5493,7 @@
           }
         }
       ],
-      "version": "0.1.12"
+      "version": "0.1.14"
     },
     "flate2 1.1.10": {
       "common_attrs": {
@@ -5506,7 +5506,7 @@
         ],
         "deps": [
           {
-            "id": "crc32fast 1.5.1",
+            "id": "crc32fast 1.5.2",
             "target": "crc32fast"
           },
           {
@@ -5611,7 +5611,7 @@
             "target": "self_cell"
           },
           {
-            "id": "smallvec 1.16.0",
+            "id": "smallvec 1.16.3",
             "target": "smallvec"
           },
           {
@@ -5694,7 +5694,7 @@
             "target": "memchr"
           },
           {
-            "id": "thiserror 2.0.20",
+            "id": "thiserror 2.0.21",
             "target": "thiserror"
           }
         ],
@@ -5910,7 +5910,7 @@
           "selects": {
             "cfg(not(windows))": [
               {
-                "id": "rustix 1.1.4",
+                "id": "rustix 1.1.5",
                 "target": "rustix"
               }
             ],
@@ -6184,7 +6184,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -6386,7 +6386,7 @@
             "target": "typenum"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -6433,7 +6433,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             }
           ],
@@ -6446,7 +6446,7 @@
             ],
             "cfg(unix)": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -6488,14 +6488,14 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             }
           ],
           "selects": {
             "cfg(all(any(target_os = \"linux\", target_os = \"android\"), not(any(all(target_os = \"linux\", target_env = \"\"), getrandom_backend = \"custom\", getrandom_backend = \"linux_raw\", getrandom_backend = \"rdrand\", getrandom_backend = \"rndr\"))))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -6513,43 +6513,43 @@
             ],
             "cfg(any(target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"hurd\", target_os = \"illumos\", target_os = \"cygwin\", all(target_os = \"horizon\", target_arch = \"arm\")))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(any(target_os = \"haiku\", target_os = \"redox\", target_os = \"nto\", target_os = \"aix\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(any(target_os = \"ios\", target_os = \"visionos\", target_os = \"watchos\", target_os = \"tvos\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(any(target_os = \"macos\", target_os = \"openbsd\", target_os = \"vita\", target_os = \"emscripten\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"netbsd\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"solaris\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"vxworks\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -6601,7 +6601,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -6612,7 +6612,7 @@
           "selects": {
             "cfg(all(any(target_os = \"linux\", target_os = \"android\"), not(any(all(target_os = \"linux\", target_env = \"\"), getrandom_backend = \"custom\", getrandom_backend = \"linux_raw\", getrandom_backend = \"rdrand\", getrandom_backend = \"rndr\"))))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -6624,43 +6624,43 @@
             ],
             "cfg(any(target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"hurd\", target_os = \"illumos\", target_os = \"cygwin\", all(target_os = \"horizon\", target_arch = \"arm\")))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(any(target_os = \"haiku\", target_os = \"redox\", target_os = \"nto\", target_os = \"aix\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(any(target_os = \"ios\", target_os = \"visionos\", target_os = \"watchos\", target_os = \"tvos\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(any(target_os = \"macos\", target_os = \"openbsd\", target_os = \"vita\", target_os = \"emscripten\"))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"netbsd\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"solaris\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(target_os = \"vxworks\")": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -6794,11 +6794,11 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
-              "id": "zerocopy 0.8.57",
+              "id": "zerocopy 0.8.62",
               "target": "zerocopy"
             }
           ],
@@ -7112,7 +7112,7 @@
             "target": "subtle"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -7450,7 +7450,7 @@
               "target": "parking_lot"
             },
             {
-              "id": "rust-embed 8.12.0",
+              "id": "rust-embed 8.13.0",
               "target": "rust_embed"
             },
             {
@@ -7668,7 +7668,7 @@
           "selects": {
             "cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))": [
               {
-                "id": "js-sys 0.3.105",
+                "id": "js-sys 0.3.106",
                 "target": "js_sys"
               },
               {
@@ -7676,7 +7676,7 @@
                 "target": "log"
               },
               {
-                "id": "wasm-bindgen 0.2.128",
+                "id": "wasm-bindgen 0.2.129",
                 "target": "wasm_bindgen"
               }
             ],
@@ -7737,7 +7737,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           }
         ]
@@ -7895,7 +7895,7 @@
             "target": "icu_provider"
           },
           {
-            "id": "smallvec 1.16.0",
+            "id": "smallvec 1.16.3",
             "target": "smallvec"
           },
           {
@@ -8150,7 +8150,7 @@
             "target": "idna_adapter"
           },
           {
-            "id": "smallvec 1.16.0",
+            "id": "smallvec 1.16.3",
             "target": "smallvec"
           },
           {
@@ -8453,7 +8453,7 @@
       ],
       "version": "7.0.2"
     },
-    "inventory 0.3.24": {
+    "inventory 0.3.25": {
       "common_attrs": {
         "edition": "2021",
         "proc_macro_deps": {
@@ -8479,8 +8479,8 @@
       "package_url": "https://github.com/dtolnay/inventory",
       "repository": {
         "Http": {
-          "sha256": "a4f0c30c76f2f4ccee3fe55a2435f691ca00c0e4bd87abe4f4a851b1d4dac39b",
-          "url": "https://static.crates.io/crates/inventory/0.3.24/download"
+          "sha256": "6928282826c822ad91bf1c9a1cb90a30ba1c26770749929b4656cd6be829cd7c",
+          "url": "https://static.crates.io/crates/inventory/0.3.25/download"
         }
       },
       "targets": [
@@ -8491,7 +8491,7 @@
           }
         }
       ],
-      "version": "0.3.24"
+      "version": "0.3.25"
     },
     "io_tee 0.1.1": {
       "common_attrs": {
@@ -8595,7 +8595,7 @@
         ],
         "deps": [
           {
-            "id": "either 1.18.0",
+            "id": "either 1.19.0",
             "target": "either"
           }
         ],
@@ -8655,13 +8655,13 @@
       ],
       "version": "1.0.18"
     },
-    "jiff 0.2.35": {
+    "jiff 0.2.38": {
       "common_attrs": {
         "deps": {
           "common": [
             {
               "alias": "jcore",
-              "id": "jiff-core 0.1.0",
+              "id": "jiff-core 0.1.1",
               "target": "jiff_core"
             }
           ],
@@ -8684,7 +8684,7 @@
           "selects": {
             "cfg(any())": [
               {
-                "id": "jiff-static 0.2.35",
+                "id": "jiff-static 0.2.38",
                 "target": "jiff_static"
               }
             ]
@@ -8702,8 +8702,8 @@
       "package_url": "https://github.com/BurntSushi/jiff",
       "repository": {
         "Http": {
-          "sha256": "668b7183bd07af9a4885f5c35b0cc5c83c4607a913c16b7e17291832910d2dcc",
-          "url": "https://static.crates.io/crates/jiff/0.2.35/download"
+          "sha256": "b2b005715dcbeb0089a3c0dab99f2ff1cc3b2525323552703d648585d342a383",
+          "url": "https://static.crates.io/crates/jiff/0.2.38/download"
         }
       },
       "targets": [
@@ -8714,9 +8714,9 @@
           }
         }
       ],
-      "version": "0.2.35"
+      "version": "0.2.38"
     },
-    "jiff-core 0.1.0": {
+    "jiff-core 0.1.1": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -8737,8 +8737,8 @@
       "package_url": "https://github.com/BurntSushi/jiff",
       "repository": {
         "Http": {
-          "sha256": "7feca88439efe53da3754500c1851dedf3cb36c524dd5cf8225cc0794de95d09",
-          "url": "https://static.crates.io/crates/jiff-core/0.1.0/download"
+          "sha256": "5e52fe76043ccecc9005d2305ebaadf7d7fc0cc89ca6baa10a94d6bc68c7128c",
+          "url": "https://static.crates.io/crates/jiff-core/0.1.1/download"
         }
       },
       "targets": [
@@ -8749,14 +8749,14 @@
           }
         }
       ],
-      "version": "0.1.0"
+      "version": "0.1.1"
     },
-    "jiff-static 0.2.35": {
+    "jiff-static 0.2.38": {
       "common_attrs": {
         "deps": [
           {
             "alias": "jcore",
-            "id": "jiff-core 0.1.0",
+            "id": "jiff-core 0.1.1",
             "target": "jiff_core"
           },
           {
@@ -8785,8 +8785,8 @@
       "package_url": "https://github.com/BurntSushi/jiff",
       "repository": {
         "Http": {
-          "sha256": "3a69dcb3a21cfb32ce1cd056169337ca284af0766dd766e7878819b251a49204",
-          "url": "https://static.crates.io/crates/jiff-static/0.2.35/download"
+          "sha256": "2cc9817253cf7c7ee4684451bd327e88d6f3658014e54a29198625590650695c",
+          "url": "https://static.crates.io/crates/jiff-static/0.2.38/download"
         }
       },
       "targets": [
@@ -8797,7 +8797,7 @@
           }
         }
       ],
-      "version": "0.2.35"
+      "version": "0.2.38"
     },
     "jobserver 0.1.35": {
       "common_attrs": {
@@ -8806,7 +8806,7 @@
           "selects": {
             "cfg(unix)": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -8845,7 +8845,7 @@
       ],
       "version": "0.1.35"
     },
-    "js-sys 0.3.105": {
+    "js-sys 0.3.106": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -8854,7 +8854,7 @@
         ],
         "deps": [
           {
-            "id": "cfg-if 1.0.4",
+            "id": "cfg-if 1.0.5",
             "target": "cfg_if"
           },
           {
@@ -8862,7 +8862,7 @@
             "target": "futures_util"
           },
           {
-            "id": "wasm-bindgen 0.2.128",
+            "id": "wasm-bindgen 0.2.129",
             "target": "wasm_bindgen"
           }
         ],
@@ -8879,8 +8879,8 @@
       "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/js-sys",
       "repository": {
         "Http": {
-          "sha256": "ce57d20d1ea864ce2ac172ab472d409214f4fd359f0b2a2775abdf522e2af99e",
-          "url": "https://static.crates.io/crates/js-sys/0.3.105/download"
+          "sha256": "7883d941dae510fb2d978fc3fe018c71c9e2892fd38854de3e8b92c2e5ad9cc5",
+          "url": "https://static.crates.io/crates/js-sys/0.3.106/download"
         }
       },
       "targets": [
@@ -8891,7 +8891,7 @@
           }
         }
       ],
-      "version": "0.3.105"
+      "version": "0.3.106"
     },
     "keccak 0.1.6": {
       "common_attrs": {
@@ -8941,7 +8941,7 @@
             "target": "rand_core"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -8972,7 +8972,7 @@
       ],
       "version": "0.3.0-pre.0"
     },
-    "lazy_static 1.5.0": {
+    "lazy_static 1.5.1": {
       "common_attrs": {
         "edition": "2015"
       },
@@ -8987,8 +8987,8 @@
       "package_url": "https://github.com/rust-lang-nursery/lazy-static.rs",
       "repository": {
         "Http": {
-          "sha256": "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe",
-          "url": "https://static.crates.io/crates/lazy_static/1.5.0/download"
+          "sha256": "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb",
+          "url": "https://static.crates.io/crates/lazy_static/1.5.1/download"
         }
       },
       "targets": [
@@ -8999,7 +8999,7 @@
           }
         }
       ],
-      "version": "1.5.0"
+      "version": "1.5.1"
     },
     "levenshtein_automata 0.2.1": {
       "common_attrs": {
@@ -9029,7 +9029,7 @@
       ],
       "version": "0.2.1"
     },
-    "libc 0.2.189": {
+    "libc 0.2.190": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -9052,8 +9052,8 @@
       "package_url": "https://github.com/rust-lang/libc",
       "repository": {
         "Http": {
-          "sha256": "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2",
-          "url": "https://static.crates.io/crates/libc/0.2.189/download"
+          "sha256": "ce5d3ddc6d3fa000eb1536d85e147bfe31aacaba692ed6a876f95cb7c855be78",
+          "url": "https://static.crates.io/crates/libc/0.2.190/download"
         }
       },
       "targets": [
@@ -9070,7 +9070,7 @@
           }
         }
       ],
-      "version": "0.2.189"
+      "version": "0.2.190"
     },
     "libyaml-rs 0.3.0": {
       "common_attrs": {
@@ -9104,7 +9104,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           }
         ],
@@ -9582,7 +9582,7 @@
           "selects": {
             "cfg(unix)": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -9619,7 +9619,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           }
         ]
@@ -9699,7 +9699,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "unicase 2.9.0",
+            "id": "unicase 2.10.0",
             "target": "unicase"
           }
         ]
@@ -9715,7 +9715,7 @@
             "target": "mime"
           },
           {
-            "id": "unicase 2.9.0",
+            "id": "unicase 2.10.0",
             "target": "unicase"
           }
         ],
@@ -10379,11 +10379,11 @@
       ],
       "version": "0.4.0"
     },
-    "numkong 7.8.3": {
+    "numkong 7.8.5": {
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           }
         ],
@@ -10409,7 +10409,7 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "25d5098772f3004c66631c6921a5e5a72f0ea4a4"
+            "Rev": "ec39a575007a5360d186aad87e2b4e544f400c83"
           },
           "remote": "https://github.com/sonalect/NumKong"
         }
@@ -10428,7 +10428,7 @@
           }
         }
       ],
-      "version": "7.8.3"
+      "version": "7.8.5"
     },
     "once_cell 1.21.4": {
       "common_attrs": {
@@ -10722,11 +10722,11 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
-              "id": "smallvec 1.16.0",
+              "id": "smallvec 1.16.3",
               "target": "smallvec"
             }
           ],
@@ -10739,7 +10739,7 @@
             ],
             "cfg(unix)": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -11122,7 +11122,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -11286,7 +11286,7 @@
       ],
       "version": "0.1.6"
     },
-    "powerfmt 0.2.0": {
+    "powerfmt 0.2.1": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -11301,8 +11301,8 @@
       "package_url": "https://github.com/jhpratt/powerfmt",
       "repository": {
         "Http": {
-          "sha256": "439ee305def115ba05938db6eb1644ff94165c5ab5e9420d1c1bcedbba909391",
-          "url": "https://static.crates.io/crates/powerfmt/0.2.0/download"
+          "sha256": "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958",
+          "url": "https://static.crates.io/crates/powerfmt/0.2.1/download"
         }
       },
       "targets": [
@@ -11313,7 +11313,7 @@
           }
         }
       ],
-      "version": "0.2.0"
+      "version": "0.2.1"
     },
     "ppv-lite86 0.2.21": {
       "common_attrs": {
@@ -11323,7 +11323,7 @@
         ],
         "deps": [
           {
-            "id": "zerocopy 0.8.57",
+            "id": "zerocopy 0.8.62",
             "target": "zerocopy"
           }
         ],
@@ -11365,7 +11365,7 @@
             "target": "proc_macro2"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -11496,7 +11496,7 @@
           },
           {
             "alias": "syn3",
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -11543,7 +11543,7 @@
         ],
         "deps": [
           {
-            "id": "unicode-ident 1.0.24",
+            "id": "unicode-ident 1.0.26",
             "target": "unicode_ident"
           }
         ],
@@ -11619,7 +11619,7 @@
             "target": "ulid"
           },
           {
-            "id": "uuid 1.26.1",
+            "id": "uuid 1.28.0",
             "target": "uuid"
           }
         ],
@@ -11667,7 +11667,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -11804,7 +11804,7 @@
       ],
       "version": "6.0.0"
     },
-    "rand 0.10.2": {
+    "rand 0.10.3": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -11841,8 +11841,8 @@
       "package_url": "https://github.com/rust-random/rand",
       "repository": {
         "Http": {
-          "sha256": "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80",
-          "url": "https://static.crates.io/crates/rand/0.10.2/download"
+          "sha256": "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af",
+          "url": "https://static.crates.io/crates/rand/0.10.3/download"
         }
       },
       "targets": [
@@ -11853,7 +11853,7 @@
           }
         }
       ],
-      "version": "0.10.2"
+      "version": "0.10.3"
     },
     "rand 0.8.8": {
       "common_attrs": {
@@ -11880,25 +11880,25 @@
           "selects": {
             "aarch64-apple-darwin": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "aarch64-unknown-linux-gnu": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "x86_64-unknown-linux-gnu": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "x86_64-unknown-nixos-gnu": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -12204,7 +12204,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "either 1.18.0",
+            "id": "either 1.19.0",
             "target": "either"
           },
           {
@@ -12243,7 +12243,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "either 1.18.0",
+            "id": "either 1.19.0",
             "target": "either"
           },
           {
@@ -12424,7 +12424,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -12638,7 +12638,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           }
         ],
@@ -12653,7 +12653,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -12674,13 +12674,13 @@
             ],
             "cfg(all(all(target_arch = \"aarch64\", target_endian = \"little\"), target_vendor = \"apple\", any(target_os = \"ios\", target_os = \"macos\", target_os = \"tvos\", target_os = \"visionos\", target_os = \"watchos\")))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
             "cfg(all(any(all(target_arch = \"aarch64\", target_endian = \"little\"), all(target_arch = \"arm\", target_endian = \"little\")), any(target_os = \"android\", target_os = \"linux\")))": [
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -12722,11 +12722,11 @@
       ],
       "version": "0.17.14"
     },
-    "rust-embed 8.12.0": {
+    "rust-embed 8.13.0": {
       "common_attrs": {
         "deps": [
           {
-            "id": "rust-embed-utils 8.12.0",
+            "id": "rust-embed-utils 8.13.0",
             "target": "rust_embed_utils"
           },
           {
@@ -12737,7 +12737,7 @@
         "edition": "2018",
         "proc_macro_deps": [
           {
-            "id": "rust-embed-impl 8.12.0",
+            "id": "rust-embed-impl 8.13.0",
             "target": "rust_embed_impl"
           }
         ]
@@ -12752,8 +12752,8 @@
       "package_url": "https://pyrossh.dev/repos/rust-embed",
       "repository": {
         "Http": {
-          "sha256": "e9e7760e252aaba7b09f4be00e36476cf585bdb68a53552ac954cdf504ab4bc9",
-          "url": "https://static.crates.io/crates/rust-embed/8.12.0/download"
+          "sha256": "19afa5b4b6a611de00bd1bdae6ae6f39084c9399f0679c3f52d8469cf335cc23",
+          "url": "https://static.crates.io/crates/rust-embed/8.13.0/download"
         }
       },
       "targets": [
@@ -12764,9 +12764,9 @@
           }
         }
       ],
-      "version": "8.12.0"
+      "version": "8.13.0"
     },
-    "rust-embed-impl 8.12.0": {
+    "rust-embed-impl 8.13.0": {
       "common_attrs": {
         "deps": [
           {
@@ -12782,7 +12782,7 @@
             "target": "quote"
           },
           {
-            "id": "rust-embed-utils 8.12.0",
+            "id": "rust-embed-utils 8.13.0",
             "target": "rust_embed_utils"
           },
           {
@@ -12806,8 +12806,8 @@
       "package_url": "https://pyrossh.dev/repos/rust-embed",
       "repository": {
         "Http": {
-          "sha256": "3bcfc4d6f53af43755f7a723e4b6b8794fcce052a178dd8c6c1dadc5f5343097",
-          "url": "https://static.crates.io/crates/rust-embed-impl/8.12.0/download"
+          "sha256": "e0d8afda6374eac59e066abee06d265247ebbaf3006cf878e2879e8356e34053",
+          "url": "https://static.crates.io/crates/rust-embed-impl/8.13.0/download"
         }
       },
       "targets": [
@@ -12818,9 +12818,9 @@
           }
         }
       ],
-      "version": "8.12.0"
+      "version": "8.13.0"
     },
-    "rust-embed-utils 8.12.0": {
+    "rust-embed-utils 8.13.0": {
       "common_attrs": {
         "deps": [
           {
@@ -12844,8 +12844,8 @@
       "package_url": "https://pyrossh.dev/repos/rust-embed",
       "repository": {
         "Http": {
-          "sha256": "42ffa149f6aa81b58a5b3011d01a857c4ed12c7a732d2c51947a4c7c692185f0",
-          "url": "https://static.crates.io/crates/rust-embed-utils/8.12.0/download"
+          "sha256": "0d84e8ba78bd384263e5922f084cbe1b081c3b7e69add59c8fb097b879ba968a",
+          "url": "https://static.crates.io/crates/rust-embed-utils/8.13.0/download"
         }
       },
       "targets": [
@@ -12856,7 +12856,7 @@
           }
         }
       ],
-      "version": "8.12.0"
+      "version": "8.13.0"
     },
     "rust-stemmers 1.2.0": {
       "common_attrs": {
@@ -12967,7 +12967,7 @@
       ],
       "version": "0.4.1"
     },
-    "rustix 1.1.4": {
+    "rustix 1.1.5": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -12991,7 +12991,7 @@
                 "target": "errno"
               },
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -13014,7 +13014,7 @@
                 "target": "errno"
               },
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -13025,7 +13025,7 @@
                 "target": "errno"
               },
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ],
@@ -13036,7 +13036,7 @@
                 "target": "errno"
               },
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
@@ -13047,7 +13047,7 @@
                 "target": "errno"
               },
               {
-                "id": "libc 0.2.189",
+                "id": "libc 0.2.190",
                 "target": "libc"
               }
             ]
@@ -13069,8 +13069,8 @@
       "package_url": "https://github.com/bytecodealliance/rustix",
       "repository": {
         "Http": {
-          "sha256": "b6fe4565b9518b83ef4f91bb47ce29620ca828bd32cb7e408f0062e9930ba190",
-          "url": "https://static.crates.io/crates/rustix/1.1.4/download"
+          "sha256": "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d",
+          "url": "https://static.crates.io/crates/rustix/1.1.5/download"
         }
       },
       "targets": [
@@ -13087,7 +13087,7 @@
           }
         }
       ],
-      "version": "1.1.4"
+      "version": "1.1.5"
     },
     "rustls 0.23.45": {
       "build_script_attrs": {
@@ -13133,7 +13133,7 @@
             "target": "subtle"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -13183,7 +13183,7 @@
         ],
         "deps": [
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -13447,7 +13447,7 @@
       ],
       "version": "1.0.6"
     },
-    "scheda 0.20.0": {
+    "scheda 0.20.1": {
       "common_attrs": {
         "crate_features": [
           "encrypt",
@@ -13469,7 +13469,7 @@
             "target": "buffa_types"
           },
           {
-            "id": "cxx 1.0.202",
+            "id": "cxx 1.0.205",
             "target": "cxx"
           },
           {
@@ -13497,7 +13497,7 @@
             "target": "tantivy"
           },
           {
-            "id": "usearch 2.26.2",
+            "id": "usearch 2.26.4",
             "target": "usearch"
           },
           {
@@ -13529,9 +13529,9 @@
           }
         }
       ],
-      "version": "0.20.0"
+      "version": "0.20.1"
     },
-    "scheda-api 0.20.0": {
+    "scheda-api 0.20.1": {
       "common_attrs": {
         "deps": [
           {
@@ -13573,9 +13573,9 @@
           }
         }
       ],
-      "version": "0.20.0"
+      "version": "0.20.1"
     },
-    "scheda-cli 0.20.0": {
+    "scheda-cli 0.20.1": {
       "common_attrs": {
         "deps": [
           {
@@ -13621,7 +13621,7 @@
       "package_url": "https://github.com/amsokol/scheda",
       "repository": null,
       "targets": [],
-      "version": "0.20.0"
+      "version": "0.20.1"
     },
     "scopeguard 1.2.0": {
       "common_attrs": {
@@ -13761,7 +13761,7 @@
             "target": "subtle"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -13796,7 +13796,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -14017,7 +14017,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -14130,7 +14130,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -14183,7 +14183,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -14237,7 +14237,7 @@
         "deps": {
           "common": [
             {
-              "id": "cfg-if 1.0.4",
+              "id": "cfg-if 1.0.5",
               "target": "cfg_if"
             },
             {
@@ -14486,7 +14486,7 @@
       ],
       "version": "0.4.12"
     },
-    "smallvec 1.16.0": {
+    "smallvec 1.16.3": {
       "common_attrs": {
         "edition": "2018"
       },
@@ -14501,8 +14501,8 @@
       "package_url": "https://github.com/servo/rust-smallvec",
       "repository": {
         "Http": {
-          "sha256": "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f",
-          "url": "https://static.crates.io/crates/smallvec/1.16.0/download"
+          "sha256": "5b3dc8af474f516a851ff4bd12db780f948b9250ad37211e4eec0bccea54e01b",
+          "url": "https://static.crates.io/crates/smallvec/1.16.3/download"
         }
       },
       "targets": [
@@ -14513,7 +14513,7 @@
           }
         }
       ],
-      "version": "1.16.0"
+      "version": "1.16.3"
     },
     "smoothutf8 0.2.3": {
       "common_attrs": {
@@ -14729,7 +14729,6 @@
           "default",
           "derive",
           "extra-traits",
-          "fold",
           "full",
           "parsing",
           "printing",
@@ -14747,7 +14746,7 @@
             "target": "quote"
           },
           {
-            "id": "unicode-ident 1.0.24",
+            "id": "unicode-ident 1.0.26",
             "target": "unicode_ident"
           }
         ],
@@ -14778,13 +14777,14 @@
       ],
       "version": "2.0.119"
     },
-    "syn 3.0.5": {
+    "syn 3.0.7": {
       "common_attrs": {
         "crate_features": [
           "clone-impls",
           "default",
           "derive",
           "extra-traits",
+          "fold",
           "full",
           "parsing",
           "printing",
@@ -14802,7 +14802,7 @@
             "target": "quote"
           },
           {
-            "id": "unicode-ident 1.0.24",
+            "id": "unicode-ident 1.0.26",
             "target": "unicode_ident"
           }
         ],
@@ -14819,8 +14819,8 @@
       "package_url": "https://github.com/dtolnay/syn",
       "repository": {
         "Http": {
-          "sha256": "12df2e0110f65b775f769bb17ef989067a1d931b2eb822bd4346631eeada89f9",
-          "url": "https://static.crates.io/crates/syn/3.0.5/download"
+          "sha256": "d62a2e0561533f2ca2561d0cf27fd9fedb640a1bf2616ff5d5c80d99017faadc",
+          "url": "https://static.crates.io/crates/syn/3.0.7/download"
         }
       },
       "targets": [
@@ -14831,9 +14831,9 @@
           }
         }
       ],
-      "version": "3.0.5"
+      "version": "3.0.7"
     },
-    "synstructure 0.13.2": {
+    "synstructure 0.14.0": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -14849,7 +14849,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 2.0.119",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -14865,8 +14865,8 @@
       "package_url": "https://github.com/mystor/synstructure",
       "repository": {
         "Http": {
-          "sha256": "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2",
-          "url": "https://static.crates.io/crates/synstructure/0.13.2/download"
+          "sha256": "901704edd0dfe137f1987838ee4f259e4e063c31371bdb423f7ae38ec6f77f02",
+          "url": "https://static.crates.io/crates/synstructure/0.14.0/download"
         }
       },
       "targets": [
@@ -14877,7 +14877,7 @@
           }
         }
       ],
-      "version": "0.13.2"
+      "version": "0.14.0"
     },
     "tantivy 0.26.2": {
       "common_attrs": {
@@ -14913,7 +14913,7 @@
               "target": "bitpacking"
             },
             {
-              "id": "bon 3.10.1",
+              "id": "bon 3.10.2",
               "target": "bon"
             },
             {
@@ -14925,7 +14925,7 @@
               "target": "census"
             },
             {
-              "id": "crc32fast 1.5.1",
+              "id": "crc32fast 1.5.2",
               "target": "crc32fast"
             },
             {
@@ -15021,7 +15021,7 @@
               "target": "sketches_ddsketch"
             },
             {
-              "id": "smallvec 1.16.0",
+              "id": "smallvec 1.16.3",
               "target": "smallvec"
             },
             {
@@ -15062,7 +15062,7 @@
               "target": "tempfile"
             },
             {
-              "id": "thiserror 2.0.20",
+              "id": "thiserror 2.0.21",
               "target": "thiserror"
             },
             {
@@ -15074,7 +15074,7 @@
               "target": "typetag"
             },
             {
-              "id": "uuid 1.26.1",
+              "id": "uuid 1.28.0",
               "target": "uuid"
             }
           ],
@@ -15510,49 +15510,49 @@
           "selects": {
             "aarch64-apple-darwin": [
               {
-                "id": "getrandom 0.4.3",
+                "id": "getrandom 0.3.4",
                 "target": "getrandom"
               }
             ],
             "aarch64-unknown-linux-gnu": [
               {
-                "id": "getrandom 0.4.3",
+                "id": "getrandom 0.3.4",
                 "target": "getrandom"
               }
             ],
             "cfg(any(unix, target_os = \"wasi\"))": [
               {
-                "id": "rustix 1.1.4",
+                "id": "rustix 1.1.5",
                 "target": "rustix"
               }
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ],
             "wasm32-wasip1": [
               {
-                "id": "getrandom 0.4.3",
+                "id": "getrandom 0.3.4",
                 "target": "getrandom"
               }
             ],
             "x86_64-pc-windows-msvc": [
               {
-                "id": "getrandom 0.4.3",
+                "id": "getrandom 0.3.4",
                 "target": "getrandom"
               }
             ],
             "x86_64-unknown-linux-gnu": [
               {
-                "id": "getrandom 0.4.3",
+                "id": "getrandom 0.3.4",
                 "target": "getrandom"
               }
             ],
             "x86_64-unknown-nixos-gnu": [
               {
-                "id": "getrandom 0.4.3",
+                "id": "getrandom 0.3.4",
                 "target": "getrandom"
               }
             ]
@@ -15670,7 +15670,7 @@
       ],
       "version": "1.0.69"
     },
-    "thiserror 2.0.20": {
+    "thiserror 2.0.21": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -15683,7 +15683,7 @@
         ],
         "proc_macro_deps": [
           {
-            "id": "thiserror-impl 2.0.20",
+            "id": "thiserror-impl 2.0.21",
             "target": "thiserror_impl"
           }
         ]
@@ -15699,8 +15699,8 @@
       "package_url": "https://github.com/dtolnay/thiserror",
       "repository": {
         "Http": {
-          "sha256": "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f",
-          "url": "https://static.crates.io/crates/thiserror/2.0.20/download"
+          "sha256": "09e52cb86a36cede5cb101bf8908837b3e4c6e5e59fe7fd85c23fb56200d189e",
+          "url": "https://static.crates.io/crates/thiserror/2.0.21/download"
         }
       },
       "targets": [
@@ -15717,7 +15717,7 @@
           }
         }
       ],
-      "version": "2.0.20"
+      "version": "2.0.21"
     },
     "thiserror-impl 1.0.69": {
       "common_attrs": {
@@ -15762,7 +15762,7 @@
       ],
       "version": "1.0.69"
     },
-    "thiserror-impl 2.0.20": {
+    "thiserror-impl 2.0.21": {
       "common_attrs": {
         "deps": [
           {
@@ -15774,7 +15774,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -15791,8 +15791,8 @@
       "package_url": "https://github.com/dtolnay/thiserror",
       "repository": {
         "Http": {
-          "sha256": "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af",
-          "url": "https://static.crates.io/crates/thiserror-impl/2.0.20/download"
+          "sha256": "fe5197923287db20a58125f0bc85c062f7f2c892de97b18c356f9efb14b28524",
+          "url": "https://static.crates.io/crates/thiserror-impl/2.0.21/download"
         }
       },
       "targets": [
@@ -15803,7 +15803,7 @@
           }
         }
       ],
-      "version": "2.0.20"
+      "version": "2.0.21"
     },
     "time 0.3.55": {
       "common_attrs": {
@@ -15826,7 +15826,7 @@
             "target": "num_conv"
           },
           {
-            "id": "powerfmt 0.2.0",
+            "id": "powerfmt 0.2.1",
             "target": "powerfmt"
           },
           {
@@ -16065,7 +16065,7 @@
             "target": "spm_precompiled"
           },
           {
-            "id": "thiserror 2.0.20",
+            "id": "thiserror 2.0.21",
             "target": "thiserror"
           },
           {
@@ -16173,7 +16173,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -16356,7 +16356,7 @@
             "target": "erased_serde"
           },
           {
-            "id": "inventory 0.3.24",
+            "id": "inventory 0.3.25",
             "target": "inventory"
           },
           {
@@ -16422,7 +16422,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -16462,7 +16462,7 @@
         "deps": {
           "common": [
             {
-              "id": "rand 0.10.2",
+              "id": "rand 0.10.3",
               "target": "rand"
             }
           ],
@@ -16647,7 +16647,7 @@
       ],
       "version": "0.9.6"
     },
-    "unicase 2.9.0": {
+    "unicase 2.10.0": {
       "common_attrs": {
         "edition": "2018"
       },
@@ -16662,8 +16662,8 @@
       "package_url": "https://github.com/seanmonstar/unicase",
       "repository": {
         "Http": {
-          "sha256": "dbc4bc3a9f746d862c45cb89d705aa10f187bb96c76001afab07a0d35ce60142",
-          "url": "https://static.crates.io/crates/unicase/2.9.0/download"
+          "sha256": "357cc3acc6a036009fd6c973ed009037c732d60d0b4f6c673e9041497482a28f",
+          "url": "https://static.crates.io/crates/unicase/2.10.0/download"
         }
       },
       "targets": [
@@ -16674,9 +16674,9 @@
           }
         }
       ],
-      "version": "2.9.0"
+      "version": "2.10.0"
     },
-    "unicode-ident 1.0.24": {
+    "unicode-ident 1.0.26": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -16692,8 +16692,8 @@
       "package_url": "https://github.com/dtolnay/unicode-ident",
       "repository": {
         "Http": {
-          "sha256": "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75",
-          "url": "https://static.crates.io/crates/unicode-ident/1.0.24/download"
+          "sha256": "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954",
+          "url": "https://static.crates.io/crates/unicode-ident/1.0.26/download"
         }
       },
       "targets": [
@@ -16704,13 +16704,13 @@
           }
         }
       ],
-      "version": "1.0.24"
+      "version": "1.0.26"
     },
     "unicode-normalization-alignments 0.1.12": {
       "common_attrs": {
         "deps": [
           {
-            "id": "smallvec 1.16.0",
+            "id": "smallvec 1.16.3",
             "target": "smallvec"
           }
         ],
@@ -16946,7 +16946,7 @@
             "target": "serde_json"
           },
           {
-            "id": "ureq-proto 0.6.3",
+            "id": "ureq-proto 0.6.4",
             "target": "ureq_proto"
           },
           {
@@ -16985,7 +16985,7 @@
       ],
       "version": "3.4.2"
     },
-    "ureq-proto 0.6.3": {
+    "ureq-proto 0.6.4": {
       "common_attrs": {
         "crate_features": [
           "client"
@@ -17021,8 +17021,8 @@
       "package_url": "https://github.com/algesten/ureq-proto",
       "repository": {
         "Http": {
-          "sha256": "5b0809a01d1ca5a51ca70db32bb2a19157582a526505ef3c19e3b343a59aa5ad",
-          "url": "https://static.crates.io/crates/ureq-proto/0.6.3/download"
+          "sha256": "f86fd172ccca569e458f61b6bdd6220965a9ef36e672a6852953b51a0e1583be",
+          "url": "https://static.crates.io/crates/ureq-proto/0.6.4/download"
         }
       },
       "targets": [
@@ -17033,7 +17033,7 @@
           }
         }
       ],
-      "version": "0.6.3"
+      "version": "0.6.4"
     },
     "url 2.5.8": {
       "common_attrs": {
@@ -17078,7 +17078,7 @@
       ],
       "version": "2.5.8"
     },
-    "usearch 2.26.2": {
+    "usearch 2.26.4": {
       "build_script_attrs": {
         "build_script_env": {
           "common": {},
@@ -17093,17 +17093,17 @@
         },
         "deps": [
           {
-            "id": "cxx-build 1.0.202",
+            "id": "cxx-build 1.0.205",
             "target": "cxx_build"
           }
         ],
         "link_deps": [
           {
-            "id": "cxx 1.0.202",
+            "id": "cxx 1.0.205",
             "target": "cxx"
           },
           {
-            "id": "numkong 7.8.3",
+            "id": "numkong 7.8.5",
             "target": "numkong"
           }
         ]
@@ -17114,11 +17114,11 @@
         ],
         "deps": [
           {
-            "id": "cxx 1.0.202",
+            "id": "cxx 1.0.205",
             "target": "cxx"
           },
           {
-            "id": "numkong 7.8.3",
+            "id": "numkong 7.8.5",
             "target": "numkong"
           }
         ],
@@ -17138,7 +17138,7 @@
       "repository": {
         "Git": {
           "commitish": {
-            "Rev": "465a334f9e7ad2da304704e660698a81e2ef0ce2"
+            "Rev": "a70d064c8ae47da68d6afdee15585d5fe171da3f"
           },
           "remote": "https://github.com/sonalect/USearch"
         }
@@ -17157,7 +17157,7 @@
           }
         }
       ],
-      "version": "2.26.2"
+      "version": "2.26.4"
     },
     "utf8-ranges 1.0.5": {
       "common_attrs": {
@@ -17282,7 +17282,7 @@
       ],
       "version": "0.2.2"
     },
-    "uuid 1.26.1": {
+    "uuid 1.28.0": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -17350,8 +17350,8 @@
       "package_url": "https://github.com/uuid-rs/uuid",
       "repository": {
         "Http": {
-          "sha256": "2ef6dac1e96601b4fb3acccccff2139741fcb757cb9a36089bf5be91cfb285ce",
-          "url": "https://static.crates.io/crates/uuid/1.26.1/download"
+          "sha256": "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606",
+          "url": "https://static.crates.io/crates/uuid/1.28.0/download"
         }
       },
       "targets": [
@@ -17362,7 +17362,7 @@
           }
         }
       ],
-      "version": "1.26.1"
+      "version": "1.28.0"
     },
     "version_check 0.9.5": {
       "common_attrs": {
@@ -17502,11 +17502,11 @@
       ],
       "version": "1.0.4+wasi-0.2.12"
     },
-    "wasm-bindgen 0.2.128": {
+    "wasm-bindgen 0.2.129": {
       "build_script_attrs": {
         "link_deps": [
           {
-            "id": "wasm-bindgen-shared 0.2.128",
+            "id": "wasm-bindgen-shared 0.2.129",
             "target": "wasm_bindgen_shared"
           }
         ],
@@ -17524,7 +17524,7 @@
         ],
         "deps": [
           {
-            "id": "cfg-if 1.0.4",
+            "id": "cfg-if 1.0.5",
             "target": "cfg_if"
           },
           {
@@ -17532,7 +17532,7 @@
             "target": "once_cell"
           },
           {
-            "id": "wasm-bindgen-shared 0.2.128",
+            "id": "wasm-bindgen-shared 0.2.129",
             "target": "wasm_bindgen_shared"
           }
         ],
@@ -17542,7 +17542,7 @@
         ],
         "proc_macro_deps": [
           {
-            "id": "wasm-bindgen-macro 0.2.128",
+            "id": "wasm-bindgen-macro 0.2.129",
             "target": "wasm_bindgen_macro"
           }
         ]
@@ -17558,8 +17558,8 @@
       "package_url": "https://github.com/wasm-bindgen/wasm-bindgen",
       "repository": {
         "Http": {
-          "sha256": "aecb87a33d3b0c5e3b7aa46336eaf486cffafbd281b195e4c8b80d50df2351bf",
-          "url": "https://static.crates.io/crates/wasm-bindgen/0.2.128/download"
+          "sha256": "9bb54f33acc68fd454578d9820b0bde1a1a3d17aa17bb7b6595806d02886d409",
+          "url": "https://static.crates.io/crates/wasm-bindgen/0.2.129/download"
         }
       },
       "targets": [
@@ -17576,9 +17576,9 @@
           }
         }
       ],
-      "version": "0.2.128"
+      "version": "0.2.129"
     },
-    "wasm-bindgen-macro 0.2.128": {
+    "wasm-bindgen-macro 0.2.129": {
       "common_attrs": {
         "deps": [
           {
@@ -17586,7 +17586,7 @@
             "target": "quote"
           },
           {
-            "id": "wasm-bindgen-macro-support 0.2.128",
+            "id": "wasm-bindgen-macro-support 0.2.129",
             "target": "wasm_bindgen_macro_support"
           }
         ],
@@ -17603,8 +17603,8 @@
       "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro",
       "repository": {
         "Http": {
-          "sha256": "a690d511e3c1a8b3a55e33511e3c2c00c78415cd23650f32b808627f5696b9ed",
-          "url": "https://static.crates.io/crates/wasm-bindgen-macro/0.2.128/download"
+          "sha256": "2e29d0c35b16e224a7eeb5cd2d25e3e1968fbd65604117b44d3b789d00ee8535",
+          "url": "https://static.crates.io/crates/wasm-bindgen-macro/0.2.129/download"
         }
       },
       "targets": [
@@ -17615,9 +17615,9 @@
           }
         }
       ],
-      "version": "0.2.128"
+      "version": "0.2.129"
     },
-    "wasm-bindgen-macro-support 0.2.128": {
+    "wasm-bindgen-macro-support 0.2.129": {
       "common_attrs": {
         "deps": [
           {
@@ -17633,11 +17633,11 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           },
           {
-            "id": "wasm-bindgen-shared 0.2.128",
+            "id": "wasm-bindgen-shared 0.2.129",
             "target": "wasm_bindgen_shared"
           }
         ],
@@ -17654,8 +17654,8 @@
       "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/main/crates/macro-support",
       "repository": {
         "Http": {
-          "sha256": "411e4887f0071ef2d2164a9d5fdf2d20efbef78fccd3a78b0c10a1dc5295e48a",
-          "url": "https://static.crates.io/crates/wasm-bindgen-macro-support/0.2.128/download"
+          "sha256": "6f501a8bc3719dba86ef8ae4728879c08001bea749eb1333ac5b91e040e2a6b7",
+          "url": "https://static.crates.io/crates/wasm-bindgen-macro-support/0.2.129/download"
         }
       },
       "targets": [
@@ -17666,16 +17666,16 @@
           }
         }
       ],
-      "version": "0.2.128"
+      "version": "0.2.129"
     },
-    "wasm-bindgen-shared 0.2.128": {
+    "wasm-bindgen-shared 0.2.129": {
       "build_script_attrs": {
         "links": "wasm_bindgen"
       },
       "common_attrs": {
         "deps": [
           {
-            "id": "unicode-ident 1.0.24",
+            "id": "unicode-ident 1.0.26",
             "target": "unicode_ident"
           }
         ],
@@ -17695,8 +17695,8 @@
       "package_url": "https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/shared",
       "repository": {
         "Http": {
-          "sha256": "81941cd78d0c92026c33e5e01312845a4cb1e9af3407f9134b100dd03144103e",
-          "url": "https://static.crates.io/crates/wasm-bindgen-shared/0.2.128/download"
+          "sha256": "23f0c9c52aa7cd7d77769a4cfe2a9adb1b331f489a41d912ce14513d5ab995c6",
+          "url": "https://static.crates.io/crates/wasm-bindgen-shared/0.2.129/download"
         }
       },
       "targets": [
@@ -17713,7 +17713,7 @@
           }
         }
       ],
-      "version": "0.2.128"
+      "version": "0.2.129"
     },
     "web-time 1.1.0": {
       "common_attrs": {
@@ -17722,11 +17722,11 @@
           "selects": {
             "cfg(all(target_family = \"wasm\", target_os = \"unknown\"))": [
               {
-                "id": "js-sys 0.3.105",
+                "id": "js-sys 0.3.106",
                 "target": "js_sys"
               },
               {
-                "id": "wasm-bindgen 0.2.128",
+                "id": "wasm-bindgen 0.2.129",
                 "target": "wasm_bindgen"
               }
             ]
@@ -17895,7 +17895,7 @@
           "selects": {
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.61.2",
+                "id": "windows-sys 0.52.0",
                 "target": "windows_sys"
               }
             ]
@@ -18206,6 +18206,16 @@
     },
     "windows-sys 0.52.0": {
       "common_attrs": {
+        "crate_features": [
+          "Win32",
+          "Win32_Foundation",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
+          "Win32_System",
+          "Win32_System_Console",
+          "Win32_System_SystemInformation",
+          "default"
+        ],
         "deps": [
           {
             "id": "windows-targets 0.52.6",
@@ -18292,11 +18302,8 @@
         "crate_features": [
           "Win32",
           "Win32_Foundation",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
           "Win32_System",
           "Win32_System_Console",
-          "Win32_System_SystemInformation",
           "default"
         ],
         "deps": [
@@ -18812,7 +18819,7 @@
             "target": "rand_core"
           },
           {
-            "id": "zeroize 1.9.0",
+            "id": "zeroize 1.9.1",
             "target": "zeroize"
           }
         ],
@@ -18931,7 +18938,7 @@
       ],
       "version": "0.8.3"
     },
-    "yoke-derive 0.8.2": {
+    "yoke-derive 0.8.4": {
       "common_attrs": {
         "deps": [
           {
@@ -18943,11 +18950,11 @@
             "target": "quote"
           },
           {
-            "id": "syn 2.0.119",
+            "id": "syn 3.0.7",
             "target": "syn"
           },
           {
-            "id": "synstructure 0.13.2",
+            "id": "synstructure 0.14.0",
             "target": "synstructure"
           }
         ],
@@ -18963,8 +18970,8 @@
       "package_url": "https://github.com/unicode-org/icu4x",
       "repository": {
         "Http": {
-          "sha256": "de844c262c8848816172cef550288e7dc6c7b7814b4ee56b3e1553f275f1858e",
-          "url": "https://static.crates.io/crates/yoke-derive/0.8.2/download"
+          "sha256": "ec8ebde2db3681e8c9980cc27822030e68752690ddfa9473e739aeb4dbde6d71",
+          "url": "https://static.crates.io/crates/yoke-derive/0.8.4/download"
         }
       },
       "targets": [
@@ -18975,9 +18982,9 @@
           }
         }
       ],
-      "version": "0.8.2"
+      "version": "0.8.4"
     },
-    "zerocopy 0.8.57": {
+    "zerocopy 0.8.62": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -18991,7 +18998,7 @@
         ],
         "proc_macro_deps": [
           {
-            "id": "zerocopy-derive 0.8.57",
+            "id": "zerocopy-derive 0.8.62",
             "target": "zerocopy_derive"
           }
         ]
@@ -19008,8 +19015,8 @@
       "package_url": "https://github.com/google/zerocopy",
       "repository": {
         "Http": {
-          "sha256": "d35102a9f36d089ccae9e4c6802bc118be4487b80aaffc0ab4e0cf5ce92d2873",
-          "url": "https://static.crates.io/crates/zerocopy/0.8.57/download"
+          "sha256": "86502bf56ac7c77571a32e2647bb2a15894565e981fb2a48d7bde2d91c965a9d",
+          "url": "https://static.crates.io/crates/zerocopy/0.8.62/download"
         }
       },
       "targets": [
@@ -19026,9 +19033,9 @@
           }
         }
       ],
-      "version": "0.8.57"
+      "version": "0.8.62"
     },
-    "zerocopy-derive 0.8.57": {
+    "zerocopy-derive 0.8.62": {
       "common_attrs": {
         "deps": [
           {
@@ -19058,8 +19065,8 @@
       "package_url": "https://github.com/google/zerocopy",
       "repository": {
         "Http": {
-          "sha256": "146c01f5ab44258da43cf276c74a2763db2ff3969c9c652c3f2de07041d0b2bc",
-          "url": "https://static.crates.io/crates/zerocopy-derive/0.8.57/download"
+          "sha256": "5457206954b06561e2608c7e19cf58b1926586d999c246eebe4502f7e2039d1a",
+          "url": "https://static.crates.io/crates/zerocopy-derive/0.8.62/download"
         }
       },
       "targets": [
@@ -19070,7 +19077,7 @@
           }
         }
       ],
-      "version": "0.8.57"
+      "version": "0.8.62"
     },
     "zerofrom 0.1.8": {
       "common_attrs": {
@@ -19100,7 +19107,7 @@
       ],
       "version": "0.1.8"
     },
-    "zerofrom-derive 0.1.7": {
+    "zerofrom-derive 0.1.8": {
       "common_attrs": {
         "deps": [
           {
@@ -19112,11 +19119,11 @@
             "target": "quote"
           },
           {
-            "id": "syn 2.0.119",
+            "id": "syn 3.0.7",
             "target": "syn"
           },
           {
-            "id": "synstructure 0.13.2",
+            "id": "synstructure 0.14.0",
             "target": "synstructure"
           }
         ],
@@ -19132,8 +19139,8 @@
       "package_url": "https://github.com/unicode-org/icu4x",
       "repository": {
         "Http": {
-          "sha256": "11532158c46691caf0f2593ea8358fed6bbf68a0315e80aae9bd41fbade684a1",
-          "url": "https://static.crates.io/crates/zerofrom-derive/0.1.7/download"
+          "sha256": "f75b4683f6c7f45248d4d64056a24298c6281e0993356d7d1b4a1a962ef10d4a",
+          "url": "https://static.crates.io/crates/zerofrom-derive/0.1.8/download"
         }
       },
       "targets": [
@@ -19144,9 +19151,9 @@
           }
         }
       ],
-      "version": "0.1.7"
+      "version": "0.1.8"
     },
-    "zeroize 1.9.0": {
+    "zeroize 1.9.1": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -19172,8 +19179,8 @@
       "package_url": "https://github.com/RustCrypto/utils",
       "repository": {
         "Http": {
-          "sha256": "e13c156562582aa81c60cb29407084cdb54c4164760106ab78e6c5b0858cf64e",
-          "url": "https://static.crates.io/crates/zeroize/1.9.0/download"
+          "sha256": "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879",
+          "url": "https://static.crates.io/crates/zeroize/1.9.1/download"
         }
       },
       "targets": [
@@ -19184,7 +19191,7 @@
           }
         }
       ],
-      "version": "1.9.0"
+      "version": "1.9.1"
     },
     "zeroize_derive 1.5.0": {
       "common_attrs": {
@@ -19309,7 +19316,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.5",
+            "id": "syn 3.0.7",
             "target": "syn"
           }
         ],
@@ -19339,7 +19346,7 @@
       ],
       "version": "0.11.6"
     },
-    "zlib-rs 0.6.7": {
+    "zlib-rs 0.6.8": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -19353,8 +19360,8 @@
       "package_url": "https://github.com/trifectatechfoundation/zlib-rs",
       "repository": {
         "Http": {
-          "sha256": "34b31d188d9d685a4f9c7b46d6e36631b07058d2cfe190267adce54dc230bf12",
-          "url": "https://static.crates.io/crates/zlib-rs/0.6.7/download"
+          "sha256": "b268e58e7c693d7c271f93ffc4ba3b380412554231c85bf61ca7af91042a4112",
+          "url": "https://static.crates.io/crates/zlib-rs/0.6.8/download"
         }
       },
       "targets": [
@@ -19365,7 +19372,7 @@
           }
         }
       ],
-      "version": "0.6.7"
+      "version": "0.6.8"
     },
     "zmij 1.0.23": {
       "build_script_attrs": {},
@@ -19450,7 +19457,7 @@
       "build_script_attrs": {
         "link_deps": [
           {
-            "id": "zstd-sys 2.1.0+zstd.1.5.7",
+            "id": "zstd-sys 2.1.1+zstd.1.5.7",
             "target": "zstd_sys"
           }
         ]
@@ -19465,7 +19472,7 @@
         ],
         "deps": [
           {
-            "id": "zstd-sys 2.1.0+zstd.1.5.7",
+            "id": "zstd-sys 2.1.1+zstd.1.5.7",
             "target": "zstd_sys"
           }
         ],
@@ -19504,11 +19511,11 @@
       ],
       "version": "7.3.0"
     },
-    "zstd-sys 2.1.0+zstd.1.5.7": {
+    "zstd-sys 2.1.1+zstd.1.5.7": {
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.4.6",
+            "id": "cc 1.7.0",
             "target": "cc"
           },
           {
@@ -19540,8 +19547,8 @@
       "package_url": "https://github.com/gyscos/zstd-rs",
       "repository": {
         "Http": {
-          "sha256": "0ef0a8027ec3ee71300ab3bcbcd0393f434aa72b91ca6d635a39941deae8eea0",
-          "url": "https://static.crates.io/crates/zstd-sys/2.1.0+zstd.1.5.7/download"
+          "sha256": "aeec9eaf2dffbbd09201e23bd0ffcbaa33bb8e9266a10734fd7ed90a85eca078",
+          "url": "https://static.crates.io/crates/zstd-sys/2.1.1+zstd.1.5.7/download"
         }
       },
       "targets": [
@@ -19558,7 +19565,7 @@
           }
         }
       ],
-      "version": "2.1.0+zstd.1.5.7"
+      "version": "2.1.1+zstd.1.5.7"
     }
   },
   "direct_deps": [
@@ -19566,7 +19573,7 @@
     "buffa 0.9.2",
     "buffa-types 0.9.2",
     "clap 4.6.7",
-    "cxx 1.0.202",
+    "cxx 1.0.205",
     "mimalloc 3.5.3",
     "model2vec-rs 0.3.0",
     "protovalidate-buffa 0.7.2",
@@ -19577,15 +19584,15 @@
     "sha2 0.11.0",
     "tantivy 0.26.2",
     "ureq 3.4.2",
-    "usearch 2.26.2",
+    "usearch 2.26.4",
     "yaml_serde 0.10.7"
   ],
   "direct_dev_deps": [
     "tokio 1.53.2"
   ],
   "workspace_members": {
-    "scheda 0.20.0": "rust/scheda",
-    "scheda-api 0.20.0": "rust/api",
-    "scheda-cli 0.20.0": "rust/cli"
+    "scheda 0.20.1": "rust/scheda",
+    "scheda-api 0.20.1": "rust/api",
+    "scheda-cli 0.20.1": "rust/cli"
   }
 }

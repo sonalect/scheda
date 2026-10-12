@@ -7,7 +7,7 @@ edition = "2024"
 rust-version = "1.99.0"
 license = "Apache-2.0"
 repository = "https://github.com/amsokol/scheda"
-version = "0.20.0"
+version = "0.20.1"
 
 [workspace.dependencies]
 age = { version = "=0.12.1", default-features = false, features = ["armor"] }
@@ -17,7 +17,7 @@ buffa-types = { version = "=0.9.2", default-features = false, features = [
     "std",
 ] }
 clap = { version = "=4.6.7", features = ["derive"] }
-cxx = "=1.0.202"
+cxx = "=1.0.205"
 mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.3", features = [
     "override",
 ] }
@@ -36,7 +36,7 @@ sha2 = "=0.11.0"
 ureq = { version = "=3.4.2", features = ["json"] }
 tantivy = "=0.26.2"
 tokio = { version = "=1.53.2", default-features = false }
-usearch = { version = "=2.26.2", default-features = false }
+usearch = { version = "=2.26.4", default-features = false }
 yaml_serde = "=0.10.7"
 
 [workspace.lints.rust]
@@ -46,10 +46,10 @@ warnings = "deny"
 all = "deny"
 
 [patch.crates-io]
-cxx = { git = "https://github.com/sonalect/cxx", tag = "1.0.202-bazel-sandbox-fix-2" }
-cxx-build = { git = "https://github.com/sonalect/cxx", tag = "1.0.202-bazel-sandbox-fix-2" }
-numkong = { git = "https://github.com/sonalect/NumKong", tag = "v7.8.3-bazel-sandbox-fix" }
-usearch = { git = "https://github.com/sonalect/USearch", tag = "v2.26.2-bazel-sandbox-fix" }
+cxx = { git = "https://github.com/sonalect/cxx", tag = "1.0.205-bazel-sandbox-fix" }
+cxx-build = { git = "https://github.com/sonalect/cxx", tag = "1.0.205-bazel-sandbox-fix" }
+numkong = { git = "https://github.com/sonalect/NumKong", tag = "v7.8.5-bazel-sandbox-fix" }
+usearch = { git = "https://github.com/sonalect/USearch", tag = "v2.26.4-bazel-sandbox-fix" }
 
 # Cargo `--release` only. Bazel rustc flags are unchanged.
 [profile.release]

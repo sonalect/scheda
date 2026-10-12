@@ -68,7 +68,7 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
             }
         }
         if let Some(v) = self.writer.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -95,11 +95,15 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
-            if v.chars().count() > 32usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() > 32usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -126,22 +130,26 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.max_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at most {} characters", 32usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
             {
-                static RE_ONEOF_WRITER: ::std::sync::OnceLock<
+                static RE_WRITER: ::std::sync::OnceLock<
                     ::protovalidate_buffa::regex::Regex,
                 > = ::std::sync::OnceLock::new();
-                let re = RE_ONEOF_WRITER
+                let re = RE_WRITER
                     .get_or_init(|| {
                         ::protovalidate_buffa::regex::Regex::new(
                                 "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
                             )
                             .expect("pattern regex compiled at code-gen time")
                     });
-                if !re.is_match(::core::convert::AsRef::<str>::as_ref(v)) {
+                if !re.is_match(::core::convert::AsRef::<str>::as_ref(&(v))) {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -168,7 +176,12 @@ impl ::protovalidate_buffa::Validate for OpenOptions {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value must match pattern /{}/",
+                                    "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -365,7 +378,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
             }
         }
         if let Some(v) = self.writer.as_deref() {
-            if v.chars().count() < 1usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -392,11 +405,15 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at least {} characters", 1usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
-            if v.chars().count() > 32usize {
+            if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() > 32usize {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -423,22 +440,26 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed("string.max_len"),
-                        message: ::std::borrow::Cow::Borrowed(""),
+                        message: ::std::borrow::Cow::Owned(
+                            ::std::format!(
+                                "value length must be at most {} characters", 32usize
+                            ),
+                        ),
                         for_key: false,
                     });
             }
             {
-                static RE_ONEOF_WRITER: ::std::sync::OnceLock<
+                static RE_WRITER: ::std::sync::OnceLock<
                     ::protovalidate_buffa::regex::Regex,
                 > = ::std::sync::OnceLock::new();
-                let re = RE_ONEOF_WRITER
+                let re = RE_WRITER
                     .get_or_init(|| {
                         ::protovalidate_buffa::regex::Regex::new(
                                 "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$",
                             )
                             .expect("pattern regex compiled at code-gen time")
                     });
-                if !re.is_match(::core::convert::AsRef::<str>::as_ref(v)) {
+                if !re.is_match(::core::convert::AsRef::<str>::as_ref(&(v))) {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -465,7 +486,12 @@ impl ::protovalidate_buffa::Validate for __buffa::view::OpenOptionsView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value must match pattern /{}/",
+                                    "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+                                ),
+                            ),
                             for_key: false,
                         });
                 }

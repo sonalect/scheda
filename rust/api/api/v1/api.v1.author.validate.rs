@@ -41,7 +41,8 @@ impl ::protovalidate_buffa::Validate for Author {
         }
         if self.name.is_some() {
             if let Some(v) = self.name.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -68,20 +69,24 @@ impl ::protovalidate_buffa::Validate for Author {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
                 {
-                    static RE_ONEOF_NAME: ::std::sync::OnceLock<
+                    static RE_NAME: ::std::sync::OnceLock<
                         ::protovalidate_buffa::regex::Regex,
                     > = ::std::sync::OnceLock::new();
-                    let re = RE_ONEOF_NAME
+                    let re = RE_NAME
                         .get_or_init(|| {
                             ::protovalidate_buffa::regex::Regex::new("^[^<>\\n]+$")
                                 .expect("pattern regex compiled at code-gen time")
                         });
-                    if !re.is_match(::core::convert::AsRef::<str>::as_ref(v)) {
+                    if !re.is_match(::core::convert::AsRef::<str>::as_ref(&(v))) {
                         violations
                             .push(::protovalidate_buffa::Violation {
                                 field: ::protovalidate_buffa::FieldPath {
@@ -108,7 +113,11 @@ impl ::protovalidate_buffa::Validate for Author {
                                     ],
                                 },
                                 rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
-                                message: ::std::borrow::Cow::Borrowed(""),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value must match pattern /{}/", "^[^<>\\n]+$"
+                                    ),
+                                ),
                                 for_key: false,
                             });
                     }
@@ -141,7 +150,73 @@ impl ::protovalidate_buffa::Validate for Author {
                     for_key: false,
                 });
         }
-        if self.email.is_some() {}
+        if self.email.is_some() {
+            if let Some(v) = self.email.as_deref() {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).is_empty() {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(14i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(12i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("string.email_empty"),
+                            message: ::std::borrow::Cow::Borrowed(""),
+                            for_key: false,
+                        });
+                } else if !::protovalidate_buffa::rules::string::is_email(
+                    ::core::convert::AsRef::<str>::as_ref(&(v)),
+                ) {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(14i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(12i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("string.email"),
+                            message: ::std::borrow::Cow::Borrowed(""),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.email.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
             if !(::protovalidate_buffa::rules::string::is_email(((__cel_this)))) {
@@ -236,7 +311,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::AuthorView<'_> {
         }
         if self.name.is_some() {
             if let Some(v) = self.name.as_deref() {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -263,20 +339,24 @@ impl ::protovalidate_buffa::Validate for __buffa::view::AuthorView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
                 {
-                    static RE_ONEOF_NAME: ::std::sync::OnceLock<
+                    static RE_NAME: ::std::sync::OnceLock<
                         ::protovalidate_buffa::regex::Regex,
                     > = ::std::sync::OnceLock::new();
-                    let re = RE_ONEOF_NAME
+                    let re = RE_NAME
                         .get_or_init(|| {
                             ::protovalidate_buffa::regex::Regex::new("^[^<>\\n]+$")
                                 .expect("pattern regex compiled at code-gen time")
                         });
-                    if !re.is_match(::core::convert::AsRef::<str>::as_ref(v)) {
+                    if !re.is_match(::core::convert::AsRef::<str>::as_ref(&(v))) {
                         violations
                             .push(::protovalidate_buffa::Violation {
                                 field: ::protovalidate_buffa::FieldPath {
@@ -303,7 +383,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::AuthorView<'_> {
                                     ],
                                 },
                                 rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
-                                message: ::std::borrow::Cow::Borrowed(""),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value must match pattern /{}/", "^[^<>\\n]+$"
+                                    ),
+                                ),
                                 for_key: false,
                             });
                     }
@@ -336,7 +420,73 @@ impl ::protovalidate_buffa::Validate for __buffa::view::AuthorView<'_> {
                     for_key: false,
                 });
         }
-        if self.email.is_some() {}
+        if self.email.is_some() {
+            if let Some(v) = self.email.as_deref() {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).is_empty() {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(14i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(12i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("string.email_empty"),
+                            message: ::std::borrow::Cow::Borrowed(""),
+                            for_key: false,
+                        });
+                } else if !::protovalidate_buffa::rules::string::is_email(
+                    ::core::convert::AsRef::<str>::as_ref(&(v)),
+                ) {
+                    violations
+                        .push(::protovalidate_buffa::Violation {
+                            field: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(2i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::String), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule: ::protovalidate_buffa::FieldPath {
+                                elements: ::std::vec![
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(14i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                    None, value_type : None, subscript : None, },
+                                    ::protovalidate_buffa::FieldPathElement { field_number :
+                                    Some(12i32), field_name :
+                                    Some(::std::borrow::Cow::Borrowed("email")), field_type :
+                                    Some(::protovalidate_buffa::FieldType::Bool), key_type :
+                                    None, value_type : None, subscript : None, },
+                                ],
+                            },
+                            rule_id: ::std::borrow::Cow::Borrowed("string.email"),
+                            message: ::std::borrow::Cow::Borrowed(""),
+                            for_key: false,
+                        });
+                }
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.email.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
             if !(::protovalidate_buffa::rules::string::is_email(((__cel_this)))) {

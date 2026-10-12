@@ -8,13 +8,24 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.20.1] - 2026-10-12
+
 ### Changed
 
-- Update `bazel_utils_*` modules from `v0.2.11` to `v0.3.0`. Their lint,
+- Update `bazel_utils_*` modules from `v0.2.11` to `v0.3.4`. Their lint,
   format, and audit rules now run on all six platforms (Windows through
   busybox-w32, no host bash), so `//bazel:lint`, `//bazel:markdown`, the
   three `buf` lint tests, and `//rust:vuln` are no longer skipped on
   Windows. `bazel/compat.bzl` drops `NOT_WINDOWS`.
+- Update the Sonalect forks that patch the build: `cxx` / `cxx-build` to
+  `1.0.205-bazel-sandbox-fix` (`cxx` 1.0.205), `numkong` to
+  `v7.8.5-bazel-sandbox-fix` and `usearch` to `v2.26.4-bazel-sandbox-fix`
+  (`usearch` 2.26.4). The vector index (`search`) now builds against these.
+- Update the transitive crates in `Cargo.lock` and the Python lock
+  (`vllm` 0.31.0 and the rest of `uv.lock`), `rules_python` 2.4.1, Bazel
+  9.3.0, `actions/deploy-pages` v5.0.1, and `protoc-gen-protovalidate-buffa`
+  to `v0.10.3`. The generated `*.validate.rs` files under `rust/api/` are
+  regenerated; the validation rules in `api/**/*.proto` are unchanged.
 - `//python:vuln` runs `uv audit` on `uv.lock` (`uv_audit_test`) instead
   of pip-audit, which `bazel_utils` 0.3.0 removed.
 
@@ -2015,7 +2026,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.20.0...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.20.1...HEAD
+[0.20.1]: https://github.com/amsokol/scheda/releases/tag/v0.20.1
 [0.20.0]: https://github.com/amsokol/scheda/releases/tag/v0.20.0
 [0.19.0]: https://github.com/amsokol/scheda/releases/tag/v0.19.0
 [0.18.6]: https://github.com/amsokol/scheda/releases/tag/v0.18.6

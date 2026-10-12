@@ -15,7 +15,8 @@ impl ::protovalidate_buffa::Validate for Encryption {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         match &self.secret {
             Some(__buffa::oneof::encryption::Secret::Passphrase(v)) => {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -42,13 +43,18 @@ impl ::protovalidate_buffa::Validate for Encryption {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
             Some(__buffa::oneof::encryption::Secret::Identity(v)) => {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -75,7 +81,11 @@ impl ::protovalidate_buffa::Validate for Encryption {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
@@ -137,7 +147,8 @@ impl ::protovalidate_buffa::Validate for __buffa::view::EncryptionView<'_> {
         let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         match &self.secret {
             Some(__buffa::view::oneof::encryption::Secret::Passphrase(v)) => {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -164,13 +175,18 @@ impl ::protovalidate_buffa::Validate for __buffa::view::EncryptionView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }
             }
             Some(__buffa::view::oneof::encryption::Secret::Identity(v)) => {
-                if v.chars().count() < 1usize {
+                if (::core::convert::AsRef::<str>::as_ref(&(v))).chars().count() < 1usize
+                {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -197,7 +213,11 @@ impl ::protovalidate_buffa::Validate for __buffa::view::EncryptionView<'_> {
                                 ],
                             },
                             rule_id: ::std::borrow::Cow::Borrowed("string.min_len"),
-                            message: ::std::borrow::Cow::Borrowed(""),
+                            message: ::std::borrow::Cow::Owned(
+                                ::std::format!(
+                                    "value length must be at least {} characters", 1usize
+                                ),
+                            ),
                             for_key: false,
                         });
                 }

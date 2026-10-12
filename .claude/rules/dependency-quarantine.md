@@ -16,3 +16,13 @@ This is a quiet quarantine against freshly published malicious releases.
 - Applies to new packages and to version bumps of existing ones, git-tag
   pins of forks included. Does not apply to this repo's own workspace /
   path dependencies.
+
+## Exempt: the Sonalect organization
+
+Releases and tags of repositories in the `sonalect` GitHub organization
+(`bazel_utils`, `rules_py`, `cxx`, `NumKong`, `USearch`, `knowqore*`, and
+any other) skip the 2-day wait. Update them to the latest tag whenever the
+owner asks, and without waiting when a pin is behind. A fork's tag is
+exempt; the upstream version it carries is still reported with its age, but
+does not block the bump. Forks outside the organization (for example
+`amsokol/mimalloc`) are not exempt.
