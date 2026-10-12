@@ -10,8 +10,11 @@ use serde_json::Value;
 
 use crate::error::bail;
 use crate::{CollectionInfo, Error, Schema};
+use scheda_api::api::v1::VaultMarker;
 
 const COLLECTION_INFO_KEYS: &[&str] = &["version", "name", "schema"];
+
+const VAULT_MARKER_KEYS: &[&str] = &["version"];
 
 const SCHEMA_KEYS: &[&str] = &[
     "isolated",
@@ -63,6 +66,16 @@ pub(crate) fn collection_info_from_value(value: &Value) -> Result<CollectionInfo
         serde_json::from_value(value.clone()).map_err(|err| Error::invalid(err.to_string()))?;
     info.require_valid()?;
     Ok(info)
+}
+
+/// Parse a JSON value as the on-disk `VaultMarker` and refuse unknown keys.
+pub(crate) fn vault_marker_from_value(value: &Value) -> Result<VaultMarker, Error> {
+    let map = object(value, "marker")?;
+    reject_keys(map, VAULT_MARKER_KEYS, "marker")?;
+    let marker: VaultMarker =
+        serde_json::from_value(value.clone()).map_err(|err| Error::invalid(err.to_string()))?;
+    marker.require_valid()?;
+    Ok(marker)
 }
 
 fn reject_collection_info(value: &Value) -> Result<(), Error> {

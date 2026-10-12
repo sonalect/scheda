@@ -15,6 +15,7 @@ use crate::git;
 use crate::index::{self, JournalIdMaps};
 use crate::isolated;
 use crate::journal;
+use crate::marker;
 use crate::marks;
 #[cfg(feature = "find")]
 use crate::query;
@@ -118,7 +119,21 @@ impl Vault {
     /// is not added or rewritten. Unset `remote_repo` attaches and does not
     /// change `origin`. Path missing + `remote_repo` → clone. A set
     /// `remote_repo` is an absolute URI or an scp-style `git@host:path`. Path
-    /// missing → `git init`. Path exists but is not a Vault → `invalid`.
+    /// missing → `git init`. Path exists but is not a git work tree →
+    /// `invalid`.
+    ///
+    /// A Vault is a git work tree with the marker file `{vault}/.scheda.yaml`
+    /// (`version: 1`), committed to git so a clone carries it. By default
+    /// `open` writes the marker into the first commit of a new or cloned Vault,
+    /// and adds it in one commit to a git work tree that lacks it (a Vault
+    /// made before the marker existed, a clone of such a Vault, or an ordinary
+    /// repository), then opens. A marker that cannot be read, or whose
+    /// `version` is not 1, is `invalid` and nothing is written.
+    /// `OpenOptions.existing_only` opens only a work tree that already has the
+    /// marker: a missing path is `not_found`, a folder without the marker or
+    /// that is not a git work tree is `not_a_vault`, and it never runs
+    /// `git init` or `git clone`. A refused folder is left exactly as it was.
+    ///
     /// Optional caller embedder. Turns on the vector leg of `search`.
     /// Without the `search` crate feature, a `Some` value fails
     /// (`index_vector`): that leg is absent. The signature is the same in
@@ -181,16 +196,50 @@ impl Vault {
             );
         }
         let path = path.as_ref();
+        let existing_only = options.existing_only.unwrap_or(false);
         if path.exists() {
             if !git::is_work_tree(path) {
+                if existing_only {
+                    bail!(
+                        Error::not_a_vault(format!(
+                            "path is not a git work tree: {}",
+                            path.display()
+                        ))
+                        .context("[Vault::open] existing only")
+                    );
+                }
                 bail!(Error::invalid(format!(
                     "path exists but is not a Vault: {}",
                     path.display()
                 )));
             }
+            // Everything up to `open_existing` only reads, so a refused
+            // folder is left as it was.
+            let marked = marker::read(path)?;
+            if existing_only && !marked {
+                bail!(
+                    Error::not_a_vault(format!("no {} marker in {}", marker::FILE, path.display()))
+                        .context("[Vault::open] existing only")
+                );
+            }
             require_matching_origin(path, &options)?;
             let identity = git::identity_from_open(&options, path)?;
-            return Self::open_existing(path, options, embedder, projector, identity);
+            let marker_pending =
+                !existing_only && (!marked || !git::is_tracked(path, marker::FILE)?);
+            return Self::open_existing(
+                path,
+                options,
+                embedder,
+                projector,
+                identity,
+                marker_pending,
+            );
+        }
+        if existing_only {
+            bail!(
+                Error::not_found(format!("no Vault at {}", path.display()))
+                    .context("[Vault::open] existing only")
+            );
         }
         let remote = remote_repo_url(&options).map(str::to_owned);
         if let Some(url) = remote {
@@ -208,8 +257,8 @@ impl Vault {
         prepare_new_work_tree(path)?;
         git::init(path)?;
         let identity = git::identity_from_open(&options, path)?;
-        commit_gitignore_if_needed(path, &identity)?;
-        Self::open_existing(path, options, embedder, projector, identity)
+        commit_service_files(path, &identity)?;
+        Self::open_existing(path, options, embedder, projector, identity, false)
     }
 
     fn clone_into(
@@ -226,13 +275,14 @@ impl Vault {
         prepare_new_work_tree(path)?;
         git::clone(url, path)?;
         let identity = git::identity_from_open(&options, path)?;
-        commit_gitignore_if_needed(path, &identity)?;
+        commit_service_files(path, &identity)?;
         Self::open_existing(
             path,
             without_remote_repo(options),
             embedder,
             projector,
             identity,
+            false,
         )
     }
 
@@ -242,6 +292,7 @@ impl Vault {
         embedder: Option<Arc<dyn Embedder>>,
         projector: Option<Arc<dyn Projector>>,
         identity: git::CommitIdentity,
+        marker_pending: bool,
     ) -> Result<Self, Error> {
         #[cfg(not(feature = "search"))]
         if embedder.is_some() {
@@ -307,8 +358,8 @@ impl Vault {
             #[cfg(feature = "find")]
             indexer: None,
         };
-        if gitignore_pending {
-            vault.write_gitignore_under_lock()?;
+        if gitignore_pending || marker_pending {
+            vault.write_service_files_under_lock(marker_pending, gitignore_pending)?;
         }
         #[cfg(feature = "find")]
         let vault = {
@@ -1135,9 +1186,10 @@ impl Vault {
         release_lock_unless_in_transaction(&self.write_lock, &self.in_txn, result)
     }
 
-    /// Patch `.gitignore` on an existing Vault. Takes `write.lock` for that
-    /// write, then `unlock`s so `open` does not keep the writer lock.
-    fn write_gitignore_under_lock(&self) -> Result<(), Error> {
+    /// Write the marker and patch `.gitignore` on an existing Vault, in one
+    /// commit. Takes `write.lock` for that write, then `unlock`s so `open`
+    /// does not keep the writer lock.
+    fn write_service_files_under_lock(&self, marker: bool, gitignore: bool) -> Result<(), Error> {
         {
             let mut slot = crate::error::mutex(&self.write_lock, "[Vault::open] lock write lock")?;
             if !slot.is_held() {
@@ -1145,8 +1197,17 @@ impl Vault {
             }
         }
         let result = (|| {
-            if ensure_gitignore(&self.path)? {
+            let mut noted = false;
+            if marker {
+                marker::ensure(&self.path)?;
+                self.note_write(String::from(marker::FILE))?;
+                noted = true;
+            }
+            if gitignore && ensure_gitignore(&self.path)? {
                 self.note_write(String::from(".gitignore"))?;
+                noted = true;
+            }
+            if noted {
                 self.finish_mutation(None)?;
             }
             Ok(())
@@ -2671,17 +2732,22 @@ fn ensure_gitignore(vault: &Path) -> Result<bool, Error> {
     Ok(true)
 }
 
-/// Write `.scheda/` and `.isolated/` into `.gitignore` and commit when this
-/// tree is new (init or clone). No writer exists yet, so this does not take
-/// `write.lock`. A later mutating call is then the first `try_lock`.
-fn commit_gitignore_if_needed(vault: &Path, identity: &git::CommitIdentity) -> Result<(), Error> {
+/// Write the marker, and `.scheda/` and `.isolated/` into `.gitignore`, and
+/// commit what changed in one commit, when this tree is new (init or clone).
+/// A marker that came with a clone is validated first and kept. No writer
+/// exists yet, so this does not take `write.lock`. A later mutating call is
+/// then the first `try_lock`.
+fn commit_service_files(vault: &Path, identity: &git::CommitIdentity) -> Result<(), Error> {
+    marker::read(vault)?;
+    let mut paths = Vec::new();
+    if marker::ensure(vault)? {
+        paths.push(String::from(marker::FILE));
+    }
     if ensure_gitignore(vault)? {
-        git::commit(
-            vault,
-            AUTO_COMMIT_MESSAGE,
-            &[String::from(".gitignore")],
-            identity,
-        )?;
+        paths.push(String::from(".gitignore"));
+    }
+    if !paths.is_empty() {
+        git::commit(vault, AUTO_COMMIT_MESSAGE, &paths, identity)?;
     }
     Ok(())
 }

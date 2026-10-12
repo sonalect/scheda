@@ -343,6 +343,32 @@ rust_test(
 )
 
 rust_test(
+    name = "marker_test",
+    size = "small",
+    srcs = ["tests/marker.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/marker.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
+    ],
+)
+
+rust_test(
+    name = "marker_thin_test",
+    size = "small",
+    srcs = ["tests/marker.rs"] + _TEST_COMMON,
+    crate_root = "tests/marker.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "thin_test",
     size = "small",
     srcs = ["tests/thin.rs"] + _TEST_COMMON,

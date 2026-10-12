@@ -124,7 +124,7 @@ mod validate {
             use crate::api::v1::{
                 Author, ColumnKind, Encryption, Error, Filter, FindQuery, FindResult, History,
                 IndexColumn, IndexSchema, OpenOptions, Record, ReindexResult, SearchHits,
-                SearchQuery, VaultInfo, filter, history, search_hits,
+                SearchQuery, VaultInfo, VaultMarker, filter, history, search_hits,
             };
 
             pub mod __buffa {
@@ -141,7 +141,8 @@ mod validate {
                         IndexSchemaView, OpenOptionsOwnedView, OpenOptionsView, RecordOwnedView,
                         RecordView, ReindexResultOwnedView, ReindexResultView, SearchHitsOwnedView,
                         SearchHitsView, SearchQueryOwnedView, SearchQueryView, VaultInfoOwnedView,
-                        VaultInfoView, filter, history, search_hits,
+                        VaultInfoView, VaultMarkerOwnedView, VaultMarkerView, filter, history,
+                        search_hits,
                     };
                     pub mod oneof {
                         pub use crate::api::v1::__buffa::view::oneof::filter::more_like_this;
@@ -169,6 +170,7 @@ mod validate {
             include!("api/v1/api.v1.find.validate.rs");
             include!("api/v1/api.v1.history.validate.rs");
             include!("api/v1/api.v1.index.validate.rs");
+            include!("api/v1/api.v1.marker.validate.rs");
             include!("api/v1/api.v1.options.validate.rs");
             include!("api/v1/api.v1.search.validate.rs");
             include!("api/v1/api.v1.vault.validate.rs");
@@ -276,6 +278,7 @@ impl api::v1::Error {
             | Code::IndexCorrupt => Repeat::Allowed,
             Code::Unspecified
             | Code::NotFound
+            | Code::NotAVault
             | Code::DuplicateId
             | Code::ConflictMarkers
             | Code::Invalid
@@ -316,6 +319,7 @@ impl api::v1::Error {
 
     error_ctors! {
         not_found => NotFound,
+        not_a_vault => NotAVault,
         duplicate_id => DuplicateId,
         conflict_markers => ConflictMarkers,
         invalid => Invalid,
@@ -447,6 +451,25 @@ impl api::v1::OpenOptions {
         self.with_auto_sync(auto_sync)
     }
 
+    /// Open only a Vault that already exists. Unset means off: `open` opens
+    /// or creates.
+    ///
+    /// With `true`, `open` accepts only a git work tree that holds the
+    /// marker file `{vault}/.scheda.yaml`. A missing path is `not_found`; a
+    /// folder without the marker (a plain git repository, a folder that is
+    /// not a git work tree) is `not_a_vault`. It never runs `git init` and
+    /// never clones, and a refused folder is left exactly as it was: no
+    /// `.scheda/`, no `.gitignore` change, no commit.
+    ///
+    /// With `false` or unset, a missing path is created or cloned and the
+    /// marker is written into the first commit; a git work tree without the
+    /// marker gets it in one commit, then opens. A marker that cannot be
+    /// read, or whose `version` is not 1, is `invalid` in both modes.
+    #[must_use]
+    pub fn existing_only(self, existing_only: bool) -> Self {
+        self.with_existing_only(existing_only)
+    }
+
     /// Clone URL when `open` path does not exist. Unset means local `git init`.
     /// A set value must be an absolute URI (`https://…`, `ssh://…`,
     /// `file:///…`) or an scp-style address (`git@host:path`).
@@ -488,6 +511,13 @@ impl api::v1::OpenOptions {
         self.with_writer(writer)
     }
 
+    /// Fail if this message does not satisfy `api/v1` field rules.
+    pub fn require_valid(&self) -> Result<(), api::v1::Error> {
+        require_valid(self)
+    }
+}
+
+impl api::v1::VaultMarker {
     /// Fail if this message does not satisfy `api/v1` field rules.
     pub fn require_valid(&self) -> Result<(), api::v1::Error> {
         require_valid(self)
@@ -962,9 +992,7 @@ mod tests {
     #[test]
     fn kind_is_required() {
         assert!(Schema::default().validate().is_err());
-        let err = Schema::default()
-            .require_valid()
-            .expect_err("missing kind");
+        let err = Schema::default().require_valid().expect_err("missing kind");
         assert_eq!(err.known_code(), Some(super::api::v1::error::Code::Invalid));
         let ok = Schema {
             kind: Unit::default().into(),

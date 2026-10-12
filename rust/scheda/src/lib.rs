@@ -121,6 +121,7 @@ mod indexer;
 mod isolated;
 mod journal;
 mod json;
+mod marker;
 mod marks;
 #[cfg(feature = "tokio")]
 pub mod nonblocking;

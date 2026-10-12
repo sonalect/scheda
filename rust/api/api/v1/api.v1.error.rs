@@ -287,6 +287,9 @@ pub mod error {
         CODE_NOT_FOUND = 101i32,
         CODE_DUPLICATE_ID = 102i32,
         CODE_CONFLICT_MARKERS = 103i32,
+        /// `open` with `existing_only`: the folder is not a Vault (it has no
+        /// `.scheda.yaml` marker, or it is not a git work tree).
+        CODE_NOT_A_VAULT = 104i32,
         /// Caller or collection declaration. Detail is `message` (and `path` when a file).
         CODE_INVALID = 201i32,
         CODE_NOT_UTF8 = 202i32,
@@ -376,6 +379,9 @@ pub mod error {
         ///Idiomatic alias for [`Self::CODE_CONFLICT_MARKERS`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const ConflictMarkers: Self = Self::CODE_CONFLICT_MARKERS;
+        ///Idiomatic alias for [`Self::CODE_NOT_A_VAULT`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const NotAVault: Self = Self::CODE_NOT_A_VAULT;
         ///Idiomatic alias for [`Self::CODE_INVALID`]; `Debug` prints the variant name.
         #[allow(non_upper_case_globals)]
         pub const Invalid: Self = Self::CODE_INVALID;
@@ -667,6 +673,7 @@ pub mod error {
                 101i32 => ::core::option::Option::Some(Self::CODE_NOT_FOUND),
                 102i32 => ::core::option::Option::Some(Self::CODE_DUPLICATE_ID),
                 103i32 => ::core::option::Option::Some(Self::CODE_CONFLICT_MARKERS),
+                104i32 => ::core::option::Option::Some(Self::CODE_NOT_A_VAULT),
                 201i32 => ::core::option::Option::Some(Self::CODE_INVALID),
                 202i32 => ::core::option::Option::Some(Self::CODE_NOT_UTF8),
                 301i32 => ::core::option::Option::Some(Self::CODE_UNSUPPORTED),
@@ -751,6 +758,7 @@ pub mod error {
                 Self::CODE_NOT_FOUND => "CODE_NOT_FOUND",
                 Self::CODE_DUPLICATE_ID => "CODE_DUPLICATE_ID",
                 Self::CODE_CONFLICT_MARKERS => "CODE_CONFLICT_MARKERS",
+                Self::CODE_NOT_A_VAULT => "CODE_NOT_A_VAULT",
                 Self::CODE_INVALID => "CODE_INVALID",
                 Self::CODE_NOT_UTF8 => "CODE_NOT_UTF8",
                 Self::CODE_UNSUPPORTED => "CODE_UNSUPPORTED",
@@ -830,6 +838,9 @@ pub mod error {
                 }
                 "CODE_CONFLICT_MARKERS" => {
                     ::core::option::Option::Some(Self::CODE_CONFLICT_MARKERS)
+                }
+                "CODE_NOT_A_VAULT" => {
+                    ::core::option::Option::Some(Self::CODE_NOT_A_VAULT)
                 }
                 "CODE_INVALID" => ::core::option::Option::Some(Self::CODE_INVALID),
                 "CODE_NOT_UTF8" => ::core::option::Option::Some(Self::CODE_NOT_UTF8),
@@ -1014,6 +1025,7 @@ pub mod error {
                 Self::CODE_NOT_FOUND,
                 Self::CODE_DUPLICATE_ID,
                 Self::CODE_CONFLICT_MARKERS,
+                Self::CODE_NOT_A_VAULT,
                 Self::CODE_INVALID,
                 Self::CODE_NOT_UTF8,
                 Self::CODE_UNSUPPORTED,

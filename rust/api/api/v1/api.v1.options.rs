@@ -73,6 +73,32 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub index_poll_ms: ::core::option::Option<u32>,
+    /// Open only a Vault that already exists. Unset means off: `open` opens
+    /// or creates.
+    ///
+    /// Set: `open` accepts only a git work tree that holds the marker file
+    /// `{vault}/.scheda.yaml`. A missing path is `not_found`;
+    /// a folder without the marker (a plain git repository, a folder that is
+    /// not a git work tree) is `not_a_vault`. It never runs `git init`, never
+    /// clones (`remote_repo` is not used to create), and writes nothing to the
+    /// folder before it has accepted it: no `.scheda/`, no `.gitignore` change,
+    /// no commit.
+    ///
+    /// Unset: a missing path is created or cloned, and the marker is written
+    /// into the first commit. A git work tree without the marker gets the
+    /// marker in one commit, then opens. A folder that exists and is not a git
+    /// work tree is `invalid`.
+    ///
+    /// A marker that cannot be read, or whose `version` is not 1, is refused
+    /// in both modes (`invalid`).
+    ///
+    /// Field 7: `existing_only`
+    #[serde(
+        rename = "existingOnly",
+        alias = "existing_only",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub existing_only: ::core::option::Option<bool>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -86,6 +112,7 @@ impl ::core::fmt::Debug for OpenOptions {
             .field("author", &self.author)
             .field("writer", &self.writer)
             .field("index_poll_ms", &self.index_poll_ms)
+            .field("existing_only", &self.existing_only)
             .finish()
     }
 }
@@ -129,6 +156,13 @@ impl OpenOptions {
     ///Sets [`Self::index_poll_ms`] to `Some(value)`, consuming and returning `self`.
     pub fn with_index_poll_ms(mut self, value: u32) -> Self {
         self.index_poll_ms = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::existing_only`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_existing_only(mut self, value: bool) -> Self {
+        self.existing_only = Some(value);
         self
     }
 }
@@ -180,6 +214,9 @@ impl ::buffa::Message for OpenOptions {
         if let Some(v) = self.index_poll_ms {
             size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
         }
+        if self.existing_only.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -217,6 +254,9 @@ impl ::buffa::Message for OpenOptions {
         }
         if let Some(v) = self.index_poll_ms {
             ::buffa::types::put_uint32_field(6u32, v, buf);
+        }
+        if let Some(v) = self.existing_only {
+            ::buffa::types::put_bool_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -293,6 +333,15 @@ impl ::buffa::Message for OpenOptions {
                     ::buffa::types::decode_uint32(buf)?,
                 );
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.existing_only = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -307,6 +356,7 @@ impl ::buffa::Message for OpenOptions {
         self.author = ::buffa::MessageField::none();
         self.writer = ::core::option::Option::None;
         self.index_poll_ms = ::core::option::Option::None;
+        self.existing_only = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

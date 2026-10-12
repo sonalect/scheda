@@ -20,6 +20,9 @@ message Error {
     CODE_NOT_FOUND = 101;
     CODE_DUPLICATE_ID = 102;
     CODE_CONFLICT_MARKERS = 103;
+    // `open` with `existing_only`: the folder is not a Vault (it has no
+    // `.scheda.yaml` marker, or it is not a git work tree).
+    CODE_NOT_A_VAULT = 104;
 
     // Caller or collection declaration. Detail is `message` (and `path` when a file).
     CODE_INVALID = 201;

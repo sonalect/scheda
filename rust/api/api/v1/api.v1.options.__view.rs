@@ -48,6 +48,27 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 6: `index_poll_ms`
     pub index_poll_ms: ::core::option::Option<u32>,
+    /// Open only a Vault that already exists. Unset means off: `open` opens
+    /// or creates.
+    ///
+    /// Set: `open` accepts only a git work tree that holds the marker file
+    /// `{vault}/.scheda.yaml`. A missing path is `not_found`;
+    /// a folder without the marker (a plain git repository, a folder that is
+    /// not a git work tree) is `not_a_vault`. It never runs `git init`, never
+    /// clones (`remote_repo` is not used to create), and writes nothing to the
+    /// folder before it has accepted it: no `.scheda/`, no `.gitignore` change,
+    /// no commit.
+    ///
+    /// Unset: a missing path is created or cloned, and the marker is written
+    /// into the first commit. A git work tree without the marker gets the
+    /// marker in one commit, then opens. A folder that exists and is not a git
+    /// work tree is `invalid`.
+    ///
+    /// A marker that cannot be read, or whose `version` is not 1, is refused
+    /// in both modes (`invalid`).
+    ///
+    /// Field 7: `existing_only`
+    pub existing_only: ::core::option::Option<bool>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -150,6 +171,13 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 )?;
                 view.index_poll_ms = Some(::buffa::types::decode_uint32(&mut cur)?);
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.existing_only = Some(::buffa::types::decode_bool(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -194,6 +222,7 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
             },
             writer: self.writer.map(|s| s.to_string()),
             index_poll_ms: self.index_poll_ms,
+            existing_only: self.existing_only,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -233,6 +262,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         if let Some(v) = self.index_poll_ms {
             size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
         }
+        if self.existing_only.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -271,6 +303,9 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
         }
         if let Some(v) = self.index_poll_ms {
             ::buffa::types::put_uint32_field(6u32, v, buf);
+        }
+        if let Some(v) = self.existing_only {
+            ::buffa::types::put_bool_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -318,6 +353,9 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
                     "indexPollMs",
                     &::buffa::json_helpers::ProtoJson(&__v),
                 )?;
+        }
+        if let ::core::option::Option::Some(__v) = self.existing_only {
+            __map.serialize_entry("existingOnly", &__v)?;
         }
         __map.end()
     }
@@ -474,6 +512,30 @@ impl OpenOptionsOwnedView {
     #[must_use]
     pub fn index_poll_ms(&self) -> ::core::option::Option<u32> {
         self.0.reborrow().index_poll_ms
+    }
+    /// Open only a Vault that already exists. Unset means off: `open` opens
+    /// or creates.
+    ///
+    /// Set: `open` accepts only a git work tree that holds the marker file
+    /// `{vault}/.scheda.yaml`. A missing path is `not_found`;
+    /// a folder without the marker (a plain git repository, a folder that is
+    /// not a git work tree) is `not_a_vault`. It never runs `git init`, never
+    /// clones (`remote_repo` is not used to create), and writes nothing to the
+    /// folder before it has accepted it: no `.scheda/`, no `.gitignore` change,
+    /// no commit.
+    ///
+    /// Unset: a missing path is created or cloned, and the marker is written
+    /// into the first commit. A git work tree without the marker gets the
+    /// marker in one commit, then opens. A folder that exists and is not a git
+    /// work tree is `invalid`.
+    ///
+    /// A marker that cannot be read, or whose `version` is not 1, is refused
+    /// in both modes (`invalid`).
+    ///
+    /// Field 7: `existing_only`
+    #[must_use]
+    pub fn existing_only(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().existing_only
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

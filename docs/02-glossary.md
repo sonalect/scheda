@@ -38,7 +38,7 @@ Do not confuse with the Vault. Scheda is the code. The Vault is the directory.
 
 ## 2. Units on disk
 
-**Vault** — a git working tree that holds collections.
+**Vault** — a git working tree that holds collections and the marker file `.scheda.yaml` (`version: 1`, committed to git).
 
 The Vault root is a git repository. Records are ordinary UTF-8 files in that tree. A remote is optional. A person opens the Vault in an editor and in `git` without the library.
 

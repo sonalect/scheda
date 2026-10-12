@@ -8,6 +8,42 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.21.0] - 2026-10-12
+
+### Added
+
+- A Vault is now recognised by a marker: the file `.scheda.yaml` at its
+  root, committed to git, with the content `version: 1` (the generation of
+  the Vault format; `api.v1.VaultMarker`). It survives a clone, unlike
+  `.scheda/`. A marker that cannot be read (not UTF-8, not YAML, an unknown
+  key, a directory in its place) or whose `version` is not 1 makes `open`
+  fail in both modes (`invalid`, `not_utf8`, or the I/O code, with `path`
+  `.scheda.yaml`) before anything is written.
+- `OpenOptions.existing_only` (`OpenOptions::existing_only(bool)`, unset
+  means off), a second open mode for a caller that must not change a folder
+  it opens by mistake. It opens only a git work tree that already holds the
+  marker. A missing path is `not_found`, and a folder without the marker
+  (an ordinary git repository, a folder that is not a git work tree, an
+  empty folder, a file) is the new error code `not_a_vault`
+  (`CODE_NOT_A_VAULT = 104`, `Error::not_a_vault`, `repeat` forbidden). It
+  never runs `git init` and never clones, even with `remote_repo` set, and
+  every refusal happens before anything is written: no `.scheda/`, no
+  `.gitignore` change, no commit. `Vault` and `AsyncVault` behave the same.
+
+### Changed
+
+- `open` in the default mode (`existing_only` unset) now writes and commits
+  the marker. A new Vault has it in its first commit with `.gitignore`; a
+  clone of a remote without it gets it in one commit on top of the clone; a
+  Vault made by an earlier version, and any other git work tree
+  (an ordinary repository included), gets one commit that adds
+  `.scheda.yaml` (and the `.gitignore` entries when they are missing),
+  taken under the write lock like the `.gitignore` repair, and nothing
+  else changes. A Vault that already tracks a valid marker is not committed
+  to. A caller that counts commits or lists the files of a Vault sees the
+  new file and, once, the extra commit. A caller that wants the old
+  "refuse what is not mine" behaviour sets `existing_only`.
+
 ## [0.20.1] - 2026-10-12
 
 ### Changed
@@ -2026,7 +2062,8 @@ API or on-disk format changes bump the minor.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.20.1...HEAD
+[Unreleased]: https://github.com/amsokol/scheda/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/amsokol/scheda/releases/tag/v0.21.0
 [0.20.1]: https://github.com/amsokol/scheda/releases/tag/v0.20.1
 [0.20.0]: https://github.com/amsokol/scheda/releases/tag/v0.20.0
 [0.19.0]: https://github.com/amsokol/scheda/releases/tag/v0.19.0

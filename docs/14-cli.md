@@ -54,7 +54,7 @@ on stderr).
 
 | Command | Args |
 |---|---|
-| `open` | [`--remote-repo URL`] (absolute URI or scp-style `git@host:path` when set) |
+| `open` | [`--remote-repo URL`] (absolute URI or scp-style `git@host:path` when set). Opens in the default mode: a git working tree without the marker `.scheda.yaml` gets it in one commit (`04` GIT-14). There is no flag for `OpenOptions.existing_only`. |
 | `info` | |
 | `create-collection` | `NAME --schema JSON` (or stdin) [`--message TEXT`]. JSON is Protobuf JSON `Schema` (`api.collection.v1.Schema`). A `fields` or `version` key is `invalid`. |
 | `collection` | `NAME <subcommand>` |

@@ -446,6 +446,7 @@ mod tests {
     #[test]
     fn default_repeat_forbids_input_and_identity() {
         assert_eq!(Error::default_repeat(Code::NotFound), Repeat::Forbidden);
+        assert_eq!(Error::default_repeat(Code::NotAVault), Repeat::Forbidden);
         assert_eq!(Error::default_repeat(Code::Invalid), Repeat::Forbidden);
         assert_eq!(Error::default_repeat(Code::Unsupported), Repeat::Forbidden);
         assert_eq!(

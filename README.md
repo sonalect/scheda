@@ -13,7 +13,11 @@ declaration** in the Vault names write mode and perimeter, not Record
 fields. Columns for `find` / `search` come from a caller **Projector** at
 `open`. The library does not know a consumer's types or file format. The
 **Index** is derived, lives under `{vault}/.scheda/` (gitignored), and can
-be deleted and rebuilt from files. The public API is CRUD-shaped
+be deleted and rebuilt from files. A folder is a Vault when it is a git
+working tree with the committed marker file `.scheda.yaml` (`version: 1`);
+`open` creates a missing Vault, and adds the marker in one commit to a git
+working tree that lacks it, unless `OpenOptions.existing_only` asks it to
+refuse such a folder untouched (`not_a_vault`). The public API is CRUD-shaped
 (`open`, `add`, `get`, `replace`, `remove`, `find`, `search`, `begin`, `commit`,
 `discard`). The CLI encodes those operations except `begin` / `commit` /
 `discard` (each mutating CLI command autocommits). It is not a compatibility layer for MongoDB, CouchDB, or SQL.

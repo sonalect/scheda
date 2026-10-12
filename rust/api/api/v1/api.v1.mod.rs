@@ -7,6 +7,7 @@ include!("api.v1.record.rs");
 include!("api.v1.find.rs");
 include!("api.v1.history.rs");
 include!("api.v1.index.rs");
+include!("api.v1.marker.rs");
 include!("api.v1.options.rs");
 include!("api.v1.search.rs");
 include!("api.v1.vault.rs");
@@ -34,6 +35,7 @@ pub mod __buffa {
         include!("api.v1.find.__view.rs");
         include!("api.v1.history.__view.rs");
         include!("api.v1.index.__view.rs");
+        include!("api.v1.marker.__view.rs");
         include!("api.v1.options.__view.rs");
         include!("api.v1.search.__view.rs");
         include!("api.v1.vault.__view.rs");
@@ -84,6 +86,7 @@ pub mod __buffa {
         reg.register_json_any(super::__REINDEX_RESULT_JSON_ANY);
         reg.register_json_any(super::__INDEX_COLUMN_JSON_ANY);
         reg.register_json_any(super::__INDEX_SCHEMA_JSON_ANY);
+        reg.register_json_any(super::__VAULT_MARKER_JSON_ANY);
         reg.register_json_any(super::__OPEN_OPTIONS_JSON_ANY);
         reg.register_json_any(super::__SEARCH_QUERY_JSON_ANY);
         reg.register_json_any(super::__SEARCH_HITS_JSON_ANY);
@@ -135,6 +138,10 @@ pub use self::__buffa::view::IndexColumnOwnedView;
 pub use self::__buffa::view::IndexSchemaView;
 #[doc(inline)]
 pub use self::__buffa::view::IndexSchemaOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::VaultMarkerView;
+#[doc(inline)]
+pub use self::__buffa::view::VaultMarkerOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::OpenOptionsView;
 #[doc(inline)]

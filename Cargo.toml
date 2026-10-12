@@ -7,7 +7,7 @@ edition = "2024"
 rust-version = "1.99.0"
 license = "Apache-2.0"
 repository = "https://github.com/amsokol/scheda"
-version = "0.20.1"
+version = "0.21.0"
 
 [workspace.dependencies]
 age = { version = "=0.12.1", default-features = false, features = ["armor"] }

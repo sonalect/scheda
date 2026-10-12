@@ -62,4 +62,23 @@ message OpenOptions {
       lte: 3600000
     }
   }];
+  // Open only a Vault that already exists. Unset means off: `open` opens
+  // or creates.
+  //
+  // Set: `open` accepts only a git work tree that holds the marker file
+  // `{vault}/.scheda.yaml`. A missing path is `not_found`;
+  // a folder without the marker (a plain git repository, a folder that is
+  // not a git work tree) is `not_a_vault`. It never runs `git init`, never
+  // clones (`remote_repo` is not used to create), and writes nothing to the
+  // folder before it has accepted it: no `.scheda/`, no `.gitignore` change,
+  // no commit.
+  //
+  // Unset: a missing path is created or cloned, and the marker is written
+  // into the first commit. A git work tree without the marker gets the
+  // marker in one commit, then opens. A folder that exists and is not a git
+  // work tree is `invalid`.
+  //
+  // A marker that cannot be read, or whose `version` is not 1, is refused
+  // in both modes (`invalid`).
+  bool existing_only = 7;
 }
