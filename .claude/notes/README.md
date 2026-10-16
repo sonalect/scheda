@@ -5,7 +5,7 @@ Project state, deferred work, and measurements that outlive one session
 
 | Note | Topic |
 |---|---|
-| — | No notes yet. |
+| [flaky-tests.md](flaky-tests.md) | Races the tmpfs gate exposed; two still open |
 
 ## Pointers
 
