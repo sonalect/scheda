@@ -11,7 +11,7 @@ use std::process::Command;
 #[cfg(feature = "search")]
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(feature = "find")]
+#[cfg(feature = "search")]
 use std::time::Duration;
 
 use scheda::{Code, OpenOptions, Vault};

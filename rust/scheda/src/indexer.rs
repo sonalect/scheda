@@ -752,11 +752,23 @@ impl Worker {
             stop: &stop,
             hook: None,
         };
-        let Some(built) = build_generation(&spec)? else {
+        let Some(Built {
+            dir, engine, mut maps, ..
+        }) = build_generation(&spec)?
+        else {
             return Ok(());
         };
-        index::publish_generation(&ctx.index.root, &built.dir)?;
-        switch_to(ctx, built.dir, built.engine, built.maps)
+        // Journal lines appended to the live generation after `heads`, as
+        // `reindex` carries them.
+        let retired = index::current_dir(&ctx.index.root)?.filter(|live| live.is_dir());
+        if let Some(retired) = &retired {
+            index::carry_retired(retired, &dir, &mut maps)?;
+        }
+        index::publish_generation(&ctx.index.root, &dir)?;
+        if let Some(retired) = &retired {
+            index::carry_retired(retired, &dir, &mut maps)?;
+        }
+        switch_to(ctx, dir, engine, maps)
     }
 }
 

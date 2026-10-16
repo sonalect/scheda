@@ -157,11 +157,14 @@ fn index_fail_closed(code: Option<Code>) -> bool {
     )
 }
 
-fn find_fail_closed(result: Result<FindResult, Error>) {
+/// Before the Index is rebuilt `find` fails closed; the background
+/// indexer may already have rebuilt it from the commits, and then the page
+/// is the whole truth (`all`), never a partial or stale one.
+fn find_fail_closed_or_rebuilt(result: Result<FindResult, Error>, all: &[&str]) {
     match result {
         Ok(page) => assert!(
-            page.records.is_empty(),
-            "find must fail closed; got ids {:?}",
+            page.records.is_empty() || sorted_ids(&page) == all,
+            "find must fail closed or match the files; got ids {:?}",
             ids(&page)
         ),
         Err(err) => assert!(
@@ -172,11 +175,15 @@ fn find_fail_closed(result: Result<FindResult, Error>) {
     }
 }
 
-fn search_fail_closed(result: Result<SearchHits, Error>) {
+/// Like [`find_fail_closed_or_rebuilt`]: no hit names a Record outside
+/// `all`.
+fn search_fail_closed_or_rebuilt(result: Result<SearchHits, Error>, all: &[&str]) {
     match result {
         Ok(hits) => assert!(
-            hits.hits.is_empty(),
-            "search must fail closed; got {hits:?}"
+            hits.hits
+                .iter()
+                .all(|hit| hit.id.as_deref().is_some_and(|id| all.contains(&id))),
+            "search must fail closed or match the files; got {hits:?}"
         ),
         Err(err) => assert!(
             index_fail_closed(err.known_code()),
@@ -312,7 +319,7 @@ fn mixed_extensions_round_trip_and_git_diff_after_replace() {
 }
 
 #[test]
-fn wipe_index_files_stay_find_search_fail_until_reindex() {
+fn wipe_index_files_find_search_fail_closed_until_rebuilt() {
     let scratch = Scratch::new();
     let vault = open_with(&scratch, Some(title_projector()));
     seed_mixed_notes(&vault);
@@ -350,15 +357,16 @@ fn wipe_index_files_stay_find_search_fail_until_reindex() {
     );
     assert_eq!(document_ids(&notes), expected_note_ids());
 
-    find_fail_closed(notes.find(&Filter::all().into(), 0, 10));
-    search_fail_closed(notes.search(&SearchQuery::default().with_text("txt-only-token"), None));
+    let all = ["note.md", "note.toml", "note.txt", "note.yaml"];
+    find_fail_closed_or_rebuilt(notes.find(&Filter::all().into(), 0, 10), &all);
+    search_fail_closed_or_rebuilt(
+        notes.search(&SearchQuery::default().with_text("txt-only-token"), None),
+        &all,
+    );
 
     vault.reindex().unwrap();
-    let all = notes.find(&Filter::all().into(), 0, 10).unwrap();
-    assert_eq!(
-        sorted_ids(&all),
-        ["note.md", "note.toml", "note.txt", "note.yaml"]
-    );
+    let found = notes.find(&Filter::all().into(), 0, 10).unwrap();
+    assert_eq!(sorted_ids(&found), all);
 }
 
 #[test]
@@ -366,6 +374,7 @@ fn yaml_title_projector_hits_yaml_omits_txt() {
     let scratch = Scratch::new();
     let vault = open_with(&scratch, Some(Arc::new(YamlTitleProjector)));
     seed_mixed_notes(&vault);
+    common::indexed(&vault);
     let collection = vault.collection("mixed_notes").unwrap();
     let hit = collection
         .find(

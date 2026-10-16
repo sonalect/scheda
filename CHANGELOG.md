@@ -8,6 +8,21 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Fixed
+
+- `find` / `search` in one handle or process could fail with `index_missing`,
+  or with `index_version` and `repeat: forbidden`, while another started an
+  Index generation or indexed a new collection: the `format` file and the
+  projector dump were read half-written. Both are now written whole, and
+  `format` last.
+- A journal line another handle appended while `reindex` (or the background
+  rebuild) built a new generation was missing from the new `id` map, so `get`
+  answered `not_found` for a committed Record until the indexer caught up.
+  The lines are now carried into the new generation, and a handle still on
+  the replaced one repeats its `id` map changes on the live one.
+- CLI: an HTTP embedder or reranker request interrupted by a signal (`EINTR`)
+  is sent again, up to three times, instead of failing the command.
+
 ### Changed
 
 - Dependencies updated to the newest versions at least 2 days old:

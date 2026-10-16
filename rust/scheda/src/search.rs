@@ -27,7 +27,7 @@ use tantivy::{
     Term,
 };
 
-use crate::error::{Code, ContextAs, ContextIo, Repeat, bail};
+use crate::error::{Code, Context, ContextAs, ContextIo, Repeat, bail};
 use crate::index;
 use crate::projector::{self, IndexDoc, IndexValue, ProjectorDump};
 use crate::query::{self, FindFields};
@@ -616,12 +616,8 @@ impl SearchEngine {
                     .context(frame));
                 }
                 Some(_) => {}
-                None => {
-                    index::write_format(index_dir)?;
-                    first_write = true;
-                }
+                None => first_write = true,
             }
-            checked.format = true;
         }
         if let Some(collection) = collection
             && !checked.collections.contains(collection)
@@ -629,6 +625,13 @@ impl SearchEngine {
             self.ensure_projector_dump(index_dir, first_write, collection)?;
             checked.collections.insert(collection.to_owned());
         }
+        // `format` last: a reader that finds it also finds the dump, so it
+        // never takes a generation still being started for one another
+        // projector built.
+        if first_write {
+            index::write_format(index_dir)?;
+        }
+        checked.format = true;
         inner.checked = Some(checked);
         Ok(())
     }
@@ -715,14 +718,14 @@ impl SearchEngine {
     /// engine is about to fill from nothing, as a full rebuild does first.
     pub(crate) fn init_generation(&self, decls: &Decls) -> Result<(), Error> {
         let index_dir = self.dir()?;
-        index::ensure_format(&index_dir)?;
         write_projector_dump(
             &index_dir,
             &projector::encode_dump(
                 self.projector.as_deref(),
                 decls.collections().map(|decl| decl.name.as_str()),
             )?,
-        )
+        )?;
+        index::ensure_format(&index_dir)
     }
 
     /// Whether this engine's projector may write the lexical leg of the
@@ -1708,9 +1711,11 @@ fn embed_changed_slots(
     Ok(VectorBatch { pieces, vectors })
 }
 
+/// Replace the projector dump whole: a reader in another handle or process
+/// sees the old dump or the new one, never a truncated file.
 fn write_projector_dump(index_dir: &Path, dump: &str) -> Result<(), Error> {
     let path = index_dir.join(PROJECTOR_FILE);
-    fs::write(&path, dump).context("[SearchEngine] write projector dump")?;
+    store::atomic_write(&path, dump.as_bytes()).context("[SearchEngine] write projector dump")?;
     store::restrict_file(&path)
 }
 

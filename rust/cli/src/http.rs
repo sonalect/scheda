@@ -290,6 +290,9 @@ fn http_agent() -> ureq::Agent {
         .new_agent()
 }
 
+/// POST `body` and parse the JSON answer. A request a signal interrupted
+/// (`EINTR`) is sent again, up to [`INTERRUPTED_ATTEMPTS`] times: the
+/// embedding and rerank calls are idempotent.
 fn post_json(
     agent: &ureq::Agent,
     url: &str,
@@ -297,24 +300,53 @@ fn post_json(
     body: Value,
     frame: &str,
 ) -> Result<Value, Error> {
+    let mut attempt = 1;
+    loop {
+        match post_json_once(agent, url, key, &body, frame) {
+            Err(Sent::Interrupted(_)) if attempt < INTERRUPTED_ATTEMPTS => attempt += 1,
+            Err(Sent::Interrupted(err)) => return Err(map_ureq(err, frame)),
+            Err(Sent::Failed(err)) => return Err(err),
+            Ok(value) => return Ok(value),
+        }
+    }
+}
+
+const INTERRUPTED_ATTEMPTS: u32 = 3;
+
+/// How one POST failed: interrupted by a signal, or for good.
+enum Sent {
+    Interrupted(ureq::Error),
+    Failed(Error),
+}
+
+fn post_json_once(
+    agent: &ureq::Agent,
+    url: &str,
+    key: Option<&str>,
+    body: &Value,
+    frame: &str,
+) -> Result<Value, Sent> {
+    let failed = |err: ureq::Error| match &err {
+        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::Interrupted => {
+            Sent::Interrupted(err)
+        }
+        _ => Sent::Failed(map_ureq(err, frame)),
+    };
     let mut request = agent.post(url);
     request = request.header("Content-Type", "application/json");
     if let Some(key) = key {
         request = request.header("Authorization", format!("Bearer {key}"));
     }
-    let mut response = request
-        .send_json(&body)
-        .map_err(|err| map_ureq(err, frame))?;
+    let mut response = request.send_json(body).map_err(failed)?;
     let status = response.status();
     if !status.is_success() {
         // The body is not read: an error page may echo the request, and the
         // request carries the API key.
-        return Err(status_error(status.as_u16(), &host_for_error(url)).context(frame));
+        return Err(Sent::Failed(
+            status_error(status.as_u16(), &host_for_error(url)).context(frame),
+        ));
     }
-    response
-        .body_mut()
-        .read_json()
-        .map_err(|err| map_ureq(err, frame))
+    response.body_mut().read_json().map_err(failed)
 }
 
 /// A non-success HTTP status as an `Error`. The message is the status and

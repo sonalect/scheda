@@ -1395,7 +1395,12 @@ impl Vault {
             stop: &never,
             hook: hook.as_deref().map(|hook| hook as &dyn Fn(&str)),
         };
-        let built = crate::indexer::build_generation(&spec)?.ok_or_else(|| {
+        let crate::indexer::Built {
+            dir,
+            engine,
+            mut maps,
+            counts,
+        } = crate::indexer::build_generation(&spec)?.ok_or_else(|| {
             Error::new(Code::IndexLexical, "the generation build stopped")
                 .context("[Vault::reindex] build")
         })?;
@@ -1403,16 +1408,27 @@ impl Vault {
         // No round of this handle's indexer may keep writing the previous
         // generation's diff into the engine this swaps.
         let _paused = self.indexer.as_ref().map(|indexer| indexer.pause());
-        index::publish_generation(&self.index.root, &built.dir)?;
+        // Journal lines any handle appended to the live generation after
+        // `heads` was read: copied before the swap, so `get` finds them at
+        // once, and again after it for the ones that landed in between. A
+        // later append to the retired generation is forwarded by its writer.
+        let retired = index::current_dir(&self.index.root)?.filter(|live| live.is_dir());
+        if let Some(retired) = &retired {
+            index::carry_retired(retired, &dir, &mut maps)?;
+        }
+        index::publish_generation(&self.index.root, &dir)?;
+        if let Some(retired) = &retired {
+            index::carry_retired(retired, &dir, &mut maps)?;
+        }
         crate::indexer::install(
             &self.index,
             &self.search,
             &self.journal_ids,
-            built.dir,
-            built.engine,
-            built.maps,
+            dir,
+            engine,
+            maps,
         )?;
-        Ok(built.counts)
+        Ok(counts)
     }
 
     #[cfg(not(feature = "find"))]
@@ -6152,11 +6168,15 @@ mod tests {
         }
 
         /// Fails its first `fails` batches, then embeds like
-        /// [`CountingEmbedder`]. Counts every call.
+        /// [`CountingEmbedder`] once [`release`](Self::release) is called,
+        /// so a test can see the error before the retry clears it. Counts
+        /// every call.
         #[cfg(feature = "search")]
         struct FlakyEmbedder {
             fails: u64,
             calls: std::sync::Mutex<Vec<Instant>>,
+            released: std::sync::Mutex<bool>,
+            release: std::sync::Condvar,
         }
 
         #[cfg(feature = "search")]
@@ -6165,7 +6185,14 @@ mod tests {
                 Arc::new(Self {
                     fails,
                     calls: std::sync::Mutex::new(Vec::new()),
+                    released: std::sync::Mutex::new(false),
+                    release: std::sync::Condvar::new(),
                 })
+            }
+
+            fn release(&self) {
+                *self.released.lock().unwrap() = true;
+                self.release.notify_all();
             }
 
             fn calls(&self) -> Vec<Instant> {
@@ -6188,11 +6215,20 @@ mod tests {
             }
 
             fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
-                let mut calls = self.calls.lock().unwrap();
-                calls.push(Instant::now());
-                if calls.len() as u64 <= self.fails {
+                let call = {
+                    let mut calls = self.calls.lock().unwrap();
+                    calls.push(Instant::now());
+                    calls.len() as u64
+                };
+                if call <= self.fails {
                     return Err(Error::invalid("embedding service unavailable"));
                 }
+                let released = self.released.lock().unwrap();
+                drop(
+                    self.release
+                        .wait_timeout_while(released, WAIT, |released| !*released)
+                        .unwrap(),
+                );
                 Ok(texts.iter().copied().map(counting_vector).collect())
             }
 
@@ -6249,6 +6285,7 @@ mod tests {
                 "find works while vectors fail"
             );
 
+            flaky.release();
             let status = vault.wait_indexed(WAIT).unwrap();
             assert_eq!(status.vector.as_deref(), Some(head.as_str()));
             assert!(status.last_error.is_none(), "{status:?}");

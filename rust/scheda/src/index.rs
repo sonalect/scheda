@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::Error;
 #[cfg(not(feature = "find"))]
 use crate::ReindexResult;
-use crate::error::{Code, ContextAs, ContextIo, bail};
+use crate::error::{Code, Context, ContextAs, ContextIo, bail};
 #[cfg(not(feature = "find"))]
 use crate::journal;
 use crate::schema::{self, Decls, Kind};
@@ -646,7 +646,8 @@ pub(crate) fn remember_id(
 /// a line that moved to another segment, or any id to forget, rewrites the
 /// file once. A change the map already holds writes nothing, so applying
 /// the same batch twice is harmless. The files written get owner-only modes
-/// at once, without a walk of the Index tree.
+/// at once, without a walk of the Index tree. A change to a generation a
+/// `reindex` has since replaced is repeated on the live one.
 pub(crate) fn apply_id_changes(
     index_dir: &Path,
     maps: &mut JournalIdMaps,
@@ -654,7 +655,25 @@ pub(crate) fn apply_id_changes(
     remember: &[(String, String)],
     forget: &[String],
 ) -> Result<(), Error> {
-    let _lock = lock_ids(index_dir, collection)?;
+    let live = {
+        let _lock = lock_ids(index_dir, collection)?;
+        write_id_changes(index_dir, maps, collection, remember, forget)?;
+        live_after(index_dir)?
+    };
+    match live {
+        Some(live) => forward_id_changes(&live, collection, remember, forget),
+        None => Ok(()),
+    }
+}
+
+/// The body of [`apply_id_changes`], under `ids.lock`.
+fn write_id_changes(
+    index_dir: &Path,
+    maps: &mut JournalIdMaps,
+    collection: &str,
+    remember: &[(String, String)],
+    forget: &[String],
+) -> Result<(), Error> {
     refresh_named(index_dir, maps, collection)?;
     let mut appended: Vec<(&str, &str)> = Vec::new();
     let mut rewrite = !forget.is_empty();
@@ -763,10 +782,103 @@ pub(crate) fn rewrite_collection(
     collection: &str,
     ids: BTreeMap<String, String>,
 ) -> Result<(), Error> {
-    let _lock = lock_ids(index_dir, collection)?;
-    write_ids_file(index_dir, collection, &ids)?;
-    maps.replace_collection(collection.to_owned(), ids);
-    note_stamp(index_dir, maps, collection);
+    let (live, remember) = {
+        let _lock = lock_ids(index_dir, collection)?;
+        write_ids_file(index_dir, collection, &ids)?;
+        let live = live_after(index_dir)?;
+        let remember: Vec<(String, String)> = if live.is_some() {
+            ids.iter()
+                .map(|(id, rel)| (id.clone(), rel.clone()))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        maps.replace_collection(collection.to_owned(), ids);
+        note_stamp(index_dir, maps, collection);
+        (live, remember)
+    };
+    match live {
+        // The live generation keeps its own forgets; only lines are added.
+        Some(live) => forward_id_changes(&live, collection, &remember, &[]),
+        None => Ok(()),
+    }
+}
+
+/// The live generation when `current` names one newer than `index_dir`,
+/// so `index_dir` is retired and an `ids` change made there must reach the
+/// live one too. Read under `index_dir`'s `ids.lock`: a `reindex` that
+/// publishes later copies the retired `ids` file under that lock and finds
+/// the change; one that published earlier is seen here. `None` for the live
+/// generation, one not yet published, and the legacy layout.
+fn live_after(index_dir: &Path) -> Result<Option<PathBuf>, Error> {
+    let generation = index_dir
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(parse_generation);
+    let (Some(root), Some(n)) = (index_dir.parent(), generation) else {
+        return Ok(None);
+    };
+    Ok(read_current(root)?
+        .filter(|live| *live > n)
+        .map(|live| root.join(live.to_string())))
+}
+
+/// Repeat an `ids` change on the live generation for a handle still bound
+/// to a retired one. A live generation without this collection's `ids`
+/// file has no map to keep current: its lookups scan.
+fn forward_id_changes(
+    live: &Path,
+    collection: &str,
+    remember: &[(String, String)],
+    forget: &[String],
+) -> Result<(), Error> {
+    if !ids_path(live, collection).is_file() {
+        return Ok(());
+    }
+    apply_id_changes(
+        live,
+        &mut JournalIdMaps::default(),
+        collection,
+        remember,
+        forget,
+    )
+}
+
+/// Add to `maps`, the journal maps of generation `into`, every line the
+/// `ids` files of generation `from` hold and `maps` lacks. `into` was built
+/// from commits; another handle may have appended to `from` meanwhile. Each
+/// file of `from` is read under its `ids.lock`.
+#[cfg(feature = "find")]
+pub(crate) fn carry_retired(
+    from: &Path,
+    into: &Path,
+    maps: &mut JournalIdMaps,
+) -> Result<(), Error> {
+    let collections: Vec<String> = maps.collections.keys().cloned().collect();
+    for collection in collections {
+        let path = ids_path(from, &collection);
+        if !path.is_file() {
+            continue;
+        }
+        let ids = {
+            let _lock = lock_ids(from, &collection)?;
+            read_ids_file(&path)?
+        };
+        let Some(ids) = ids else {
+            continue;
+        };
+        let missing: Vec<(String, String)> = ids
+            .into_iter()
+            .filter(|(id, rel)| {
+                maps.contains(&collection, id) == Some(false)
+                    && crate::id::require_slug("id", id).is_ok()
+                    && id_map_rel_ok_for_name(&collection, rel)
+            })
+            .collect();
+        if !missing.is_empty() {
+            apply_id_changes(into, maps, &collection, &missing, &[])?;
+        }
+    }
     Ok(())
 }
 
@@ -905,11 +1017,12 @@ pub(crate) fn ensure_format(index_dir: &Path) -> Result<(), Error> {
     }
 }
 
+/// Write the `format` file whole: a reader in another handle or process
+/// sees no file or the full version, never an empty one.
 pub(crate) fn write_format(index_dir: &Path) -> Result<(), Error> {
-    fs::create_dir_all(index_dir).context("[Index::write_format] create dir")?;
     let path = index_dir.join(FORMAT_FILE);
-    fs::write(&path, format!("{FORMAT_VERSION}\n"))
-        .context("[Index::write_format] write format")?;
+    store::atomic_write(&path, format!("{FORMAT_VERSION}\n").as_bytes())
+        .with_context(|| "[Index::write_format] write format")?;
     restrict_index_tree(index_dir)
 }
 
@@ -973,6 +1086,62 @@ mod tests {
         assert_eq!(start_generation(&root, &previous).unwrap(), root.join("2"));
         assert!(!root.join("7").exists());
         assert!(previous.join("marker").is_file());
+        let _ = fs::remove_dir_all(root.parent().unwrap().parent().unwrap());
+    }
+
+    fn ids_of(index_dir: &Path, collection: &str) -> BTreeMap<String, String> {
+        read_ids_file(&ids_path(index_dir, collection))
+            .unwrap()
+            .unwrap()
+    }
+
+    fn one(id: &str) -> BTreeMap<String, String> {
+        BTreeMap::from([(id.to_owned(), "log/s.jsonl".to_owned())])
+    }
+
+    /// A handle still bound to generation 1 after a `reindex` published 2
+    /// appends a journal line: generation 2 gets it too, or a handle on 2
+    /// answers `not_found` for a committed Record.
+    #[test]
+    fn a_line_written_to_a_retired_generation_reaches_the_live_one() {
+        let retired = scratch_dir();
+        let root = retired.parent().unwrap().to_path_buf();
+        let mut old = JournalIdMaps::default();
+        rewrite_collection(&retired, &mut old, "log", one("a")).unwrap();
+        let live = root.join("2");
+        let mut new = JournalIdMaps::default();
+        rewrite_collection(&live, &mut new, "log", one("a")).unwrap();
+        // Not published yet: nothing is forwarded into a generation in build.
+        remember_id(&retired, &mut old, "log", "early", "log/s.jsonl").unwrap();
+        assert!(!ids_of(&live, "log").contains_key("early"));
+
+        write_current(&root, 2).unwrap();
+        remember_id(&retired, &mut old, "log", "late", "log/s.jsonl").unwrap();
+        assert!(ids_of(&retired, "log").contains_key("late"));
+        assert!(ids_of(&live, "log").contains_key("late"));
+        // The live generation itself forwards nowhere.
+        remember_id(&live, &mut new, "log", "own", "log/s.jsonl").unwrap();
+        assert!(!ids_of(&retired, "log").contains_key("own"));
+        let _ = fs::remove_dir_all(root.parent().unwrap().parent().unwrap());
+    }
+
+    /// `reindex` builds from commits; a line another handle appended to the
+    /// live generation meanwhile is copied into the new one.
+    #[cfg(feature = "find")]
+    #[test]
+    fn carry_retired_copies_the_lines_the_new_generation_lacks() {
+        let retired = scratch_dir();
+        let root = retired.parent().unwrap().to_path_buf();
+        let mut old = JournalIdMaps::default();
+        let mut both = one("a");
+        both.extend(one("queued"));
+        rewrite_collection(&retired, &mut old, "log", both).unwrap();
+        let built = root.join("2");
+        let mut maps = JournalIdMaps::default();
+        rewrite_collection(&built, &mut maps, "log", one("a")).unwrap();
+        carry_retired(&retired, &built, &mut maps).unwrap();
+        assert_eq!(maps.contains("log", "queued"), Some(true));
+        assert!(ids_of(&built, "log").contains_key("queued"));
         let _ = fs::remove_dir_all(root.parent().unwrap().parent().unwrap());
     }
 

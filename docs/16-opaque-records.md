@@ -753,7 +753,9 @@ Close only after F18.
       `.toml`, `.txt`. `add` / `get` / `ids` round-trip. `git diff` after
       `replace` of one file shows that file's text.
 - [x] Delete `.scheda/`:`get` / `history` / `lines` / `documents` still
-      match the files; `find` / `search` fail closed until `reindex`.
+      match the files; `find` / `search` fail closed until the Index is
+      rebuilt (by the background indexer or `reindex`), and never answer
+      from a partial one.
 - [x] With an `Projector` that exposes one string column from a YAML key,
       `find` hits that Record; a `.txt` file in the same collection is
       omitted from that column and still `get`s.
