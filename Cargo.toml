@@ -4,7 +4,7 @@ members = ["rust/api", "rust/cli", "rust/scheda"]
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.99.0"
+rust-version = "1.99.1"
 license = "Apache-2.0"
 repository = "https://github.com/amsokol/scheda"
 version = "0.21.0"
@@ -30,12 +30,12 @@ regex = "=1.13.1"
 scheda = { path = "rust/scheda" }
 scheda-api = { path = "rust/api" }
 serde = { version = "=1.0.229", features = ["derive"] }
-serde_json = "=1.0.151"
+serde_json = "=1.0.154"
 sha1 = "=0.11.0"
-sha2 = "=0.11.0"
+sha2 = "=0.11.1"
 ureq = { version = "=3.4.2", features = ["json"] }
 tantivy = "=0.26.2"
-tokio = { version = "=1.53.2", default-features = false }
+tokio = { version = "=1.53.3", default-features = false }
 usearch = { version = "=2.26.4", default-features = false }
 yaml_serde = "=0.10.7"
 

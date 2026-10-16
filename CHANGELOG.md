@@ -8,6 +8,17 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- Dependencies updated to the newest versions at least 2 days old:
+  `serde_json` 1.0.154, `sha2` 0.11.1, `tokio` 1.53.3 (with compatible
+  transitive crate updates), `rules_python` 2.4.2, `bazel_utils` 0.4.0,
+  Buf CLI v1.74.0, `protoc-gen-protovalidate-buffa` v0.10.4 (generated
+  code unchanged), and patch and minor updates in the Python sidecar lock
+  (`uv.lock`). No API or format change.
+- Rust toolchain and `rust-version` (MSRV) raised from 1.99.0 to 1.99.1:
+  build Scheda with Rust 1.99.1 or newer.
+
 ## [0.21.0] - 2026-10-12
 
 ### Added

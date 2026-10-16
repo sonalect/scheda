@@ -1,5 +1,5 @@
 {
-  "checksum": "c49a21cd8a63c6a538fe867d2f6b8405ca3abb7427bb6a435899335f9e1c0cc2",
+  "checksum": "7be0c893053aa7dfc53c29dc4d94f3ae8da59c14c1f6635a668ddd52363c73fa",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -603,7 +603,7 @@
               "target": "serde"
             },
             {
-              "id": "zerocopy 0.8.62",
+              "id": "zerocopy 0.8.63",
               "target": "zerocopy"
             }
           ],
@@ -1080,7 +1080,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -1645,7 +1645,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -1742,7 +1742,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
@@ -1806,7 +1806,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
@@ -1974,7 +1974,7 @@
       ],
       "version": "0.2.4"
     },
-    "cc 1.7.0": {
+    "cc 1.8.0": {
       "common_attrs": {
         "crate_features": [
           "parallel"
@@ -2034,8 +2034,8 @@
       "package_url": "https://github.com/rust-lang/cc-rs",
       "repository": {
         "Http": {
-          "sha256": "50a649af8a827553c29fb0cb4bd4a6f1a0dd695bd3232b9bc98bd9c8a3ffbb8b",
-          "url": "https://static.crates.io/crates/cc/1.7.0/download"
+          "sha256": "6651c9ed80effdc7db0ff72512157f901af5e3549e341e24b1dd4887d836d838",
+          "url": "https://static.crates.io/crates/cc/1.8.0/download"
         }
       },
       "targets": [
@@ -2046,7 +2046,7 @@
           }
         }
       ],
-      "version": "1.7.0"
+      "version": "1.8.0"
     },
     "census 0.4.2": {
       "common_attrs": {
@@ -2516,7 +2516,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -3724,7 +3724,7 @@
         "deps": {
           "common": [
             {
-              "id": "cc 1.7.0",
+              "id": "cc 1.8.0",
               "target": "cc"
             },
             {
@@ -3817,7 +3817,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           },
           {
@@ -3841,7 +3841,7 @@
             "target": "scratch"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -3936,7 +3936,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -4149,7 +4149,7 @@
             "target": "strsim"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -4233,7 +4233,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -4515,7 +4515,7 @@
       ],
       "version": "0.7.10"
     },
-    "deranged 0.5.8": {
+    "deranged 0.5.9": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -4527,7 +4527,7 @@
             "target": "serde_core"
           }
         ],
-        "edition": "2021"
+        "edition": "2024"
       },
       "library_target_name": "deranged",
       "license": "MIT OR Apache-2.0",
@@ -4540,8 +4540,8 @@
       "package_url": "https://github.com/jhpratt/deranged",
       "repository": {
         "Http": {
-          "sha256": "7cd812cc2bc1d69d4764bd80df88b4317eaef9e773c75226407d9bc0876b211c",
-          "url": "https://static.crates.io/crates/deranged/0.5.8/download"
+          "sha256": "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e",
+          "url": "https://static.crates.io/crates/deranged/0.5.9/download"
         }
       },
       "targets": [
@@ -4552,7 +4552,7 @@
           }
         }
       ],
-      "version": "0.5.8"
+      "version": "0.5.9"
     },
     "derive_builder 0.20.2": {
       "common_attrs": {
@@ -4799,7 +4799,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -4834,7 +4834,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "litrs 1.0.0",
+            "id": "litrs 1.0.1",
             "target": "litrs"
           }
         ],
@@ -5050,7 +5050,7 @@
       ],
       "version": "1.0.0"
     },
-    "equivalent 1.0.2": {
+    "equivalent 1.0.3": {
       "common_attrs": {
         "edition": "2015"
       },
@@ -5065,8 +5065,8 @@
       "package_url": "https://github.com/indexmap-rs/equivalent",
       "repository": {
         "Http": {
-          "sha256": "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f",
-          "url": "https://static.crates.io/crates/equivalent/1.0.2/download"
+          "sha256": "00d174d5400e5e8fd687ad1049e2f578285fa914201b1af7e8b112a4546bd826",
+          "url": "https://static.crates.io/crates/equivalent/1.0.3/download"
         }
       },
       "targets": [
@@ -5077,7 +5077,7 @@
           }
         }
       ],
-      "version": "1.0.2"
+      "version": "1.0.3"
     },
     "erased-serde 0.4.10": {
       "build_script_attrs": {},
@@ -5169,7 +5169,7 @@
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ]
@@ -5206,7 +5206,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           }
         ]
@@ -6184,7 +6184,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -6798,7 +6798,7 @@
               "target": "cfg_if"
             },
             {
-              "id": "zerocopy 0.8.62",
+              "id": "zerocopy 0.8.63",
               "target": "zerocopy"
             }
           ],
@@ -6897,7 +6897,7 @@
             "target": "allocator_api2"
           },
           {
-            "id": "equivalent 1.0.2",
+            "id": "equivalent 1.0.3",
             "target": "equivalent"
           },
           {
@@ -7737,7 +7737,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           }
         ]
@@ -8250,7 +8250,7 @@
         },
         "deps": [
           {
-            "id": "equivalent 1.0.2",
+            "id": "equivalent 1.0.3",
             "target": "equivalent"
           },
           {
@@ -9104,7 +9104,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           }
         ],
@@ -9215,7 +9215,7 @@
       ],
       "version": "0.8.3"
     },
-    "litrs 1.0.0": {
+    "litrs 1.0.1": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -9230,8 +9230,8 @@
       "package_url": "https://github.com/LukasKalbertodt/litrs",
       "repository": {
         "Http": {
-          "sha256": "11d3d7f243d5c5a8b9bb5d6dd2b1602c0cb0b9db1621bafc7ed66e35ff9fe092",
-          "url": "https://static.crates.io/crates/litrs/1.0.0/download"
+          "sha256": "4744e383959f0db86ede514b809b1c53251889093803c05267acc7d4e7030d70",
+          "url": "https://static.crates.io/crates/litrs/1.0.1/download"
         }
       },
       "targets": [
@@ -9242,7 +9242,7 @@
           }
         }
       ],
-      "version": "1.0.0"
+      "version": "1.0.1"
     },
     "lock_api 0.4.14": {
       "common_attrs": {
@@ -9619,7 +9619,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           }
         ]
@@ -9912,7 +9912,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
@@ -10383,7 +10383,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           }
         ],
@@ -11323,7 +11323,7 @@
         ],
         "deps": [
           {
-            "id": "zerocopy 0.8.62",
+            "id": "zerocopy 0.8.63",
             "target": "zerocopy"
           }
         ],
@@ -11365,7 +11365,7 @@
             "target": "proc_macro2"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -11496,7 +11496,7 @@
           },
           {
             "alias": "syn3",
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -11543,7 +11543,7 @@
         ],
         "deps": [
           {
-            "id": "unicode-ident 1.0.26",
+            "id": "unicode-ident 1.0.27",
             "target": "unicode_ident"
           }
         ],
@@ -11667,7 +11667,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -12424,7 +12424,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -12638,7 +12638,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           }
         ],
@@ -12824,7 +12824,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "sha2 0.11.0",
+            "id": "sha2 0.11.1",
             "target": "sha2"
           },
           {
@@ -13025,7 +13025,7 @@
                 "target": "errno"
               },
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ],
@@ -13089,7 +13089,7 @@
       ],
       "version": "1.1.5"
     },
-    "rustls 0.23.45": {
+    "rustls 0.23.46": {
       "build_script_attrs": {
         "link_deps": [
           {
@@ -13154,8 +13154,8 @@
       "package_url": "https://github.com/rustls/rustls",
       "repository": {
         "Http": {
-          "sha256": "0d41d731c7d2f962d1ccc364cec258de3c0e93b38c2fb3ba97ac74513048d634",
-          "url": "https://static.crates.io/crates/rustls/0.23.45/download"
+          "sha256": "48e13bd8c0e9365c43cfa5c9e8f9ad49d3c8444926c9aac819e0e4dc503c8fdf",
+          "url": "https://static.crates.io/crates/rustls/0.23.46/download"
         }
       },
       "targets": [
@@ -13172,7 +13172,7 @@
           }
         }
       ],
-      "version": "0.23.45"
+      "version": "0.23.46"
     },
     "rustls-pki-types 1.15.1": {
       "common_attrs": {
@@ -13342,7 +13342,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           }
         ],
@@ -13481,7 +13481,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
@@ -13489,7 +13489,7 @@
             "target": "sha1"
           },
           {
-            "id": "sha2 0.11.0",
+            "id": "sha2 0.11.1",
             "target": "sha2"
           },
           {
@@ -13507,7 +13507,7 @@
         ],
         "deps_dev": [
           {
-            "id": "tokio 1.53.2",
+            "id": "tokio 1.53.3",
             "target": "tokio"
           }
         ],
@@ -13551,7 +13551,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           }
         ],
@@ -13599,11 +13599,11 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
-            "id": "sha2 0.11.0",
+            "id": "sha2 0.11.1",
             "target": "sha2"
           },
           {
@@ -14017,7 +14017,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -14048,7 +14048,7 @@
       ],
       "version": "1.0.229"
     },
-    "serde_json 1.0.151": {
+    "serde_json 1.0.154": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -14100,8 +14100,8 @@
       "package_url": "https://github.com/serde-rs/json",
       "repository": {
         "Http": {
-          "sha256": "c841b55ecdae098c80dcae9cf767f6f8a0c2cdb3416bbef72181df4d0fe73f14",
-          "url": "https://static.crates.io/crates/serde_json/1.0.151/download"
+          "sha256": "e7e9cc8b1b85264074fbcc02a88680c4096b1e47df8f739dceb03bf482f04bd6",
+          "url": "https://static.crates.io/crates/serde_json/1.0.154/download"
         }
       },
       "targets": [
@@ -14118,7 +14118,7 @@
           }
         }
       ],
-      "version": "1.0.151"
+      "version": "1.0.154"
     },
     "sha1 0.11.0": {
       "common_attrs": {
@@ -14227,7 +14227,7 @@
       ],
       "version": "0.10.9"
     },
-    "sha2 0.11.0": {
+    "sha2 0.11.1": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -14267,8 +14267,8 @@
       "package_url": "https://github.com/RustCrypto/hashes",
       "repository": {
         "Http": {
-          "sha256": "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4",
-          "url": "https://static.crates.io/crates/sha2/0.11.0/download"
+          "sha256": "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19",
+          "url": "https://static.crates.io/crates/sha2/0.11.1/download"
         }
       },
       "targets": [
@@ -14279,7 +14279,7 @@
           }
         }
       ],
-      "version": "0.11.0"
+      "version": "0.11.1"
     },
     "sha3 0.10.9": {
       "common_attrs": {
@@ -14746,7 +14746,7 @@
             "target": "quote"
           },
           {
-            "id": "unicode-ident 1.0.26",
+            "id": "unicode-ident 1.0.27",
             "target": "unicode_ident"
           }
         ],
@@ -14777,7 +14777,7 @@
       ],
       "version": "2.0.119"
     },
-    "syn 3.0.7": {
+    "syn 3.0.9": {
       "common_attrs": {
         "crate_features": [
           "clone-impls",
@@ -14802,7 +14802,7 @@
             "target": "quote"
           },
           {
-            "id": "unicode-ident 1.0.26",
+            "id": "unicode-ident 1.0.27",
             "target": "unicode_ident"
           }
         ],
@@ -14819,8 +14819,8 @@
       "package_url": "https://github.com/dtolnay/syn",
       "repository": {
         "Http": {
-          "sha256": "d62a2e0561533f2ca2561d0cf27fd9fedb640a1bf2616ff5d5c80d99017faadc",
-          "url": "https://static.crates.io/crates/syn/3.0.7/download"
+          "sha256": "d78c8dee4c7bf0e14673097256fed6142ce9d3b85a408189d07482442145823b",
+          "url": "https://static.crates.io/crates/syn/3.0.9/download"
         }
       },
       "targets": [
@@ -14831,7 +14831,7 @@
           }
         }
       ],
-      "version": "3.0.7"
+      "version": "3.0.9"
     },
     "synstructure 0.14.0": {
       "common_attrs": {
@@ -14849,7 +14849,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -15013,7 +15013,7 @@
               "target": "serde"
             },
             {
-              "id": "serde_json 1.0.151",
+              "id": "serde_json 1.0.154",
               "target": "serde_json"
             },
             {
@@ -15332,7 +15332,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           }
         ],
@@ -15510,13 +15510,13 @@
           "selects": {
             "aarch64-apple-darwin": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "aarch64-unknown-linux-gnu": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
@@ -15528,31 +15528,31 @@
             ],
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ],
             "wasm32-wasip1": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "x86_64-pc-windows-msvc": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "x86_64-unknown-linux-gnu": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ],
             "x86_64-unknown-nixos-gnu": [
               {
-                "id": "getrandom 0.3.4",
+                "id": "getrandom 0.4.3",
                 "target": "getrandom"
               }
             ]
@@ -15774,7 +15774,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -15818,7 +15818,7 @@
         ],
         "deps": [
           {
-            "id": "deranged 0.5.8",
+            "id": "deranged 0.5.9",
             "target": "deranged"
           },
           {
@@ -16057,7 +16057,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
@@ -16113,7 +16113,7 @@
       ],
       "version": "0.21.4"
     },
-    "tokio 1.53.2": {
+    "tokio 1.53.3": {
       "common_attrs": {
         "crate_features": [
           "macros",
@@ -16147,8 +16147,8 @@
       "package_url": "https://github.com/tokio-rs/tokio",
       "repository": {
         "Http": {
-          "sha256": "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044",
-          "url": "https://static.crates.io/crates/tokio/1.53.2/download"
+          "sha256": "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e",
+          "url": "https://static.crates.io/crates/tokio/1.53.3/download"
         }
       },
       "targets": [
@@ -16159,7 +16159,7 @@
           }
         }
       ],
-      "version": "1.53.2"
+      "version": "1.53.3"
     },
     "tokio-macros 2.7.2": {
       "common_attrs": {
@@ -16173,7 +16173,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -16422,7 +16422,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -16676,7 +16676,7 @@
       ],
       "version": "2.10.0"
     },
-    "unicode-ident 1.0.26": {
+    "unicode-ident 1.0.27": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -16692,8 +16692,8 @@
       "package_url": "https://github.com/dtolnay/unicode-ident",
       "repository": {
         "Http": {
-          "sha256": "d245f478577f809a851594d02313b640fb437e0bb33866753cff937863096954",
-          "url": "https://static.crates.io/crates/unicode-ident/1.0.26/download"
+          "sha256": "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563",
+          "url": "https://static.crates.io/crates/unicode-ident/1.0.27/download"
         }
       },
       "targets": [
@@ -16704,7 +16704,7 @@
           }
         }
       ],
-      "version": "1.0.26"
+      "version": "1.0.27"
     },
     "unicode-normalization-alignments 0.1.12": {
       "common_attrs": {
@@ -16930,7 +16930,7 @@
             "target": "percent_encoding"
           },
           {
-            "id": "rustls 0.23.45",
+            "id": "rustls 0.23.46",
             "target": "rustls"
           },
           {
@@ -16942,7 +16942,7 @@
             "target": "serde"
           },
           {
-            "id": "serde_json 1.0.151",
+            "id": "serde_json 1.0.154",
             "target": "serde_json"
           },
           {
@@ -17633,7 +17633,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           },
           {
@@ -17675,7 +17675,7 @@
       "common_attrs": {
         "deps": [
           {
-            "id": "unicode-ident 1.0.26",
+            "id": "unicode-ident 1.0.27",
             "target": "unicode_ident"
           }
         ],
@@ -17895,7 +17895,7 @@
           "selects": {
             "cfg(windows)": [
               {
-                "id": "windows-sys 0.52.0",
+                "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
               }
             ]
@@ -18206,16 +18206,6 @@
     },
     "windows-sys 0.52.0": {
       "common_attrs": {
-        "crate_features": [
-          "Win32",
-          "Win32_Foundation",
-          "Win32_Storage",
-          "Win32_Storage_FileSystem",
-          "Win32_System",
-          "Win32_System_Console",
-          "Win32_System_SystemInformation",
-          "default"
-        ],
         "deps": [
           {
             "id": "windows-targets 0.52.6",
@@ -18302,8 +18292,11 @@
         "crate_features": [
           "Win32",
           "Win32_Foundation",
+          "Win32_Storage",
+          "Win32_Storage_FileSystem",
           "Win32_System",
           "Win32_System_Console",
+          "Win32_System_SystemInformation",
           "default"
         ],
         "deps": [
@@ -18950,7 +18943,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           },
           {
@@ -18984,7 +18977,7 @@
       ],
       "version": "0.8.4"
     },
-    "zerocopy 0.8.62": {
+    "zerocopy 0.8.63": {
       "build_script_attrs": {},
       "common_attrs": {
         "crate_features": [
@@ -18998,7 +18991,7 @@
         ],
         "proc_macro_deps": [
           {
-            "id": "zerocopy-derive 0.8.62",
+            "id": "zerocopy-derive 0.8.63",
             "target": "zerocopy_derive"
           }
         ]
@@ -19015,8 +19008,8 @@
       "package_url": "https://github.com/google/zerocopy",
       "repository": {
         "Http": {
-          "sha256": "86502bf56ac7c77571a32e2647bb2a15894565e981fb2a48d7bde2d91c965a9d",
-          "url": "https://static.crates.io/crates/zerocopy/0.8.62/download"
+          "sha256": "e5fe1f8f1b06191a00962174c61aa5005e0bb391a6d80d07e24d115c01a92ed8",
+          "url": "https://static.crates.io/crates/zerocopy/0.8.63/download"
         }
       },
       "targets": [
@@ -19033,9 +19026,9 @@
           }
         }
       ],
-      "version": "0.8.62"
+      "version": "0.8.63"
     },
-    "zerocopy-derive 0.8.62": {
+    "zerocopy-derive 0.8.63": {
       "common_attrs": {
         "deps": [
           {
@@ -19065,8 +19058,8 @@
       "package_url": "https://github.com/google/zerocopy",
       "repository": {
         "Http": {
-          "sha256": "5457206954b06561e2608c7e19cf58b1926586d999c246eebe4502f7e2039d1a",
-          "url": "https://static.crates.io/crates/zerocopy-derive/0.8.62/download"
+          "sha256": "863ad3ac83293fb4d740aedbfdc9240dd8d1a50c1099acd76ce80ce7c7230c7f",
+          "url": "https://static.crates.io/crates/zerocopy-derive/0.8.63/download"
         }
       },
       "targets": [
@@ -19077,7 +19070,7 @@
           }
         }
       ],
-      "version": "0.8.62"
+      "version": "0.8.63"
     },
     "zerofrom 0.1.8": {
       "common_attrs": {
@@ -19119,7 +19112,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           },
           {
@@ -19316,7 +19309,7 @@
             "target": "quote"
           },
           {
-            "id": "syn 3.0.7",
+            "id": "syn 3.0.9",
             "target": "syn"
           }
         ],
@@ -19515,7 +19508,7 @@
       "build_script_attrs": {
         "deps": [
           {
-            "id": "cc 1.7.0",
+            "id": "cc 1.8.0",
             "target": "cc"
           },
           {
@@ -19579,16 +19572,16 @@
     "protovalidate-buffa 0.7.2",
     "regex 1.13.1",
     "serde 1.0.229",
-    "serde_json 1.0.151",
+    "serde_json 1.0.154",
     "sha1 0.11.0",
-    "sha2 0.11.0",
+    "sha2 0.11.1",
     "tantivy 0.26.2",
     "ureq 3.4.2",
     "usearch 2.26.4",
     "yaml_serde 0.10.7"
   ],
   "direct_dev_deps": [
-    "tokio 1.53.2"
+    "tokio 1.53.3"
   ],
   "workspace_members": {
     "scheda 0.21.0": "rust/scheda",
