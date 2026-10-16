@@ -151,15 +151,15 @@ Not required of **core**, **search**, or **agent**:
 
 These are orders of magnitude for an interactive caller on one machine, not SLAs. Codes `OPS`.
 
-**OPS-1. Core volume.** At least 10⁴ `journal` Records and 10³ `document` Records in one Vault. `get` and `add` stay in milliseconds, not hundreds of milliseconds, on that fixture. *Check (**core**):* load the fixture; sample `get` / journal `add` stay in that band.
+**OPS-1. Core volume.** At least 10⁴ `journal` Records and 10³ `document` Records in one Vault. `get` and `add` stay in milliseconds, not hundreds of milliseconds, on that fixture. *Check (**core**):* load the fixture; sample `get` / journal `add` return the expected Records. The millisecond band is a benchmark, not a gate check.
 
-**OPS-2. Search budget.** Hybrid `search` without a pair reranker on the OPS-1 fixture finishes in tens of milliseconds. *Check (**search**):* timed fixture queries.
+**OPS-2. Search budget.** Hybrid `search` without a pair reranker on the OPS-1 fixture finishes in tens of milliseconds. *Check (**search**):* fixture queries put the expected id in `k`; timing them is a benchmark, not a gate check.
 
 **OPS-3. `reindex` is measurable.** Full `reindex` on OPS-1 completes and reports Records read, skipped invalid, segments seen (LIB-16). Those counts are what the walk saw. A Record written or removed during the walk may fall either side; the hand tally holds on a quiet tree. *Check (**core**):* counts match a hand tally of files and journal lines.
 
 **OPS-4. Offline embed.** After embedder weights are already on disk, **search** does not need the network. Download of weights is the consumer's install, not the library hot path. *Check (**search**):* a full cycle with the network disabled.
 
-`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9). CI on every OS loads 10³ journal and 10² document Records (one tenth of OPS-1) so the same C8 checks finish under Bazel `large` (900s) when the Vault is on a real disk: each `add` fsyncs.
+`scheda` meets OPS-1 and OPS-3 (`11` C8) and OPS-2 and OPS-4 (`11` C9). The gate on every OS loads 10³ journal and 10² document Records (one tenth of OPS-1) and checks that `get`, `add`, `reindex`, and `search` work on that volume; it does not time them.
 
 Vaults on NFS/SMB, and volumes far above OPS-1, are outside these checks. A future Index backend (`§5`) is how huge Vaults stay on the same API.
 

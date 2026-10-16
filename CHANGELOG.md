@@ -18,6 +18,8 @@ API or on-disk format changes bump the minor.
   (`uv.lock`). No API or format change.
 - Rust toolchain and `rust-version` (MSRV) raised from 1.99.0 to 1.99.1:
   build Scheda with Rust 1.99.1 or newer.
+- The test gate checks behaviour only: the OPS-1 / OPS-2 timing bands are
+  a benchmark, not a gate check.
 
 ## [0.21.0] - 2026-10-12
 

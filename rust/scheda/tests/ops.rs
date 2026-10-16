@@ -57,10 +57,9 @@ impl Drop for Scratch {
 
 const LOG: &str = include_str!("../testdata/journal/log.yaml");
 
-// CI loads 10³ journal / 10² document on every OS so get / extra add /
-// reindex / search finish under Bazel `large` (900s) when the Vault is
-// on a real disk: each add fsyncs. Bulk insert uses one transaction; a
-// git commit per Record is not this check.
+// 10³ journal / 10² document: get / extra add / reindex / search work on
+// that volume. Timing is a benchmark, not a gate check. Bulk insert uses
+// one transaction; a git commit per Record is not this check.
 const OPS_JOURNAL: u64 = 1_000;
 const OPS_DOCS: u64 = 100;
 

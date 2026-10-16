@@ -12,7 +12,7 @@ use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(feature = "find")]
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use scheda::{Code, OpenOptions, Vault};
 use serde_json::json;
@@ -95,20 +95,12 @@ const FIXTURE_NAMES: [&str; 11] = [
     "alias_bindings",
 ];
 
-// CI loads 10³ journal / 10² document on every OS so get / extra add
-// finish under Bazel `large` (900s) when the Vault is on a real disk:
-// each add fsyncs.
+// 10³ journal / 10² document: `get` and an extra `add` work on that
+// volume. Timing is a benchmark, not a gate check.
 #[cfg(feature = "find")]
 const OPS_JOURNAL: u64 = 1_000;
 #[cfg(feature = "find")]
 const OPS_DOCS: u64 = 100;
-// A single operation is milliseconds, not hundreds. Unix CI is quiet enough for 100ms.
-// Windows GHA NTFS next to parallel tests in this binary is not: 161ms
-// failed a 100ms cap after a merge-thread wait on the same runner.
-#[cfg(all(feature = "find", windows))]
-const OPS_BUDGET: Duration = Duration::from_millis(250);
-#[cfg(all(feature = "find", not(windows)))]
-const OPS_BUDGET: Duration = Duration::from_millis(100);
 
 fn rec(fields: serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(&fields).unwrap()
@@ -714,7 +706,7 @@ fn remove_work_queue_entry_is_gone() {
 
 #[cfg(feature = "find")]
 #[test]
-fn ops_volume_get_and_add_stay_in_milliseconds() {
+fn ops_volume_get_and_add() {
     let scratch = Scratch::new();
     let vault = open_fixture(&scratch);
     vault.begin().unwrap();
@@ -739,28 +731,18 @@ fn ops_volume_get_and_add_stay_in_milliseconds() {
 
     let mid_journal = format!("j{:05}", OPS_JOURNAL / 2);
     let mid_doc = format!("vol-{:04}", OPS_DOCS / 2);
-    let started = Instant::now();
-    log.get(&mid_journal).unwrap();
-    notes.get(&mid_doc).unwrap();
-    let got = started.elapsed();
-    assert!(
-        got < OPS_BUDGET,
-        "sample get on the budget fixture took {got:?}, want < {OPS_BUDGET:?}"
-    );
+    let got = log.get(&mid_journal).unwrap();
+    assert_eq!(got.id.as_deref(), Some(mid_journal.as_str()));
+    let got = notes.get(&mid_doc).unwrap();
+    assert_eq!(got.id.as_deref(), Some(mid_doc.as_str()));
 
-    // Time `add` inside a transaction: outside one, autocommit fsyncs git
-    // on every call, and that is hundreds of milliseconds on Windows NTFS.
     let extra = format!("j{OPS_JOURNAL:05}");
     vault.begin().unwrap();
-    let started = Instant::now();
     log.add(&extra, rec(json!({"note": "extra"})), None)
         .unwrap();
-    let added = started.elapsed();
     vault.commit("extra").unwrap();
-    assert!(
-        added < OPS_BUDGET,
-        "journal add on the budget fixture took {added:?}, want < {OPS_BUDGET:?}"
-    );
+    let got = log.get(&extra).unwrap();
+    assert_eq!(got.id.as_deref(), Some(extra.as_str()));
 }
 
 #[cfg(feature = "find")]

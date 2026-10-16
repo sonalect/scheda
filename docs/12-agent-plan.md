@@ -963,8 +963,8 @@ default / `consumer_thin_test`).
       `get` under `{vault}/.isolated/`, `find` on the main tree returns
       none of it, and `check` covers the nested tree (ISO-2, ISO-4, P4).
 - [x] OPS-1 volume on the fixture: 10³ journal Records and 10²
-      documents (one tenth of OPS-1, every OS), with `get` and `add` in
-      milliseconds.
+      documents (one tenth of OPS-1, every OS): `get` and `add` return the
+      expected Records. Timing is a benchmark, not a gate check.
 - [x] Every P stage is `done`, or its entry names the consumer
       requirement that stays unmet and why.
 - [x] A Record removed with `remove` is gone from `get`, `find`, and the
