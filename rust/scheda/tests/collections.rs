@@ -12,7 +12,7 @@ use scheda::v1::{
     Collection, CollectionDeletion, CollectionKey, CollectionOperation, OpenOptions,
     VaultErrorCode as Code,
 };
-use scheda::{Error, Fault, Vault};
+use scheda::{Error, Fault, Ports, Vault};
 use serde_json::{Value, json};
 
 use common::{Scratch, git, snapshot, vault, work_tree, write};
@@ -50,7 +50,7 @@ fn operation(value: Value) -> CollectionOperation {
 fn fresh(name: &str) -> (Scratch, PathBuf, Vault) {
     let scratch = Scratch::new(name);
     let path = scratch.join("vault");
-    let vault = Vault::open(&path, OpenOptions::default()).unwrap();
+    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     (scratch, path, vault)
 }
 
@@ -100,7 +100,7 @@ fn create_returns_the_collection_with_defaults_and_writes_none() {
     assert_settled(&path, &[]);
     assert_eq!(vault.get_collection(key("log")).unwrap(), made);
     // Another handle opens the Vault and reads the same declaration.
-    let other = Vault::open(&path, OpenOptions::default()).unwrap();
+    let other = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     assert_eq!(other.get_collection(key("log")).unwrap(), made);
 }
 
@@ -203,7 +203,7 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
             ),
         ],
     );
-    let vault = Vault::open(&path, OpenOptions::default()).unwrap();
+    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     // The declaration in memory has the default; the file has not.
     let stored = vault.get_collection(key("cache")).unwrap();
     assert_eq!(
@@ -549,8 +549,8 @@ fn a_collection_declared_by_another_handle_or_by_hand_is_seen() {
     let scratch = Scratch::new("fresh");
     let path = scratch.join("vault");
     vault(&path);
-    let first = Vault::open(&path, OpenOptions::default()).unwrap();
-    let second = Vault::open(&path, OpenOptions::default()).unwrap();
+    let first = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let second = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     assert_eq!(
         first
             .list_collections(Empty::default())

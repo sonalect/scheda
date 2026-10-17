@@ -132,6 +132,7 @@ mod tests {
     use super::{problem, problem_of, run};
     use crate::error::Fault;
     use crate::git::{git, isolate_test_git_env};
+    use crate::ports::Ports;
     use crate::vault::Vault;
 
     /// A Vault work tree made with plain git, removed when the test ends.
@@ -202,7 +203,7 @@ mod tests {
         }
 
         fn open(&self) -> Vault {
-            let vault = Vault::open(&self.0, OpenOptions::default()).unwrap();
+            let vault = Vault::open(&self.0, OpenOptions::default(), Ports::default()).unwrap();
             // `open` makes `.scheda/` owner-only.
             vault
         }

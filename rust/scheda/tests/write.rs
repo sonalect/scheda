@@ -12,8 +12,8 @@ use std::sync::{Arc, Barrier};
 use std::time::{Duration, Instant};
 
 use buffa_types::google::protobuf::Empty;
-use scheda::Vault;
 use scheda::v1::{Collection, OpenMode, OpenOptions, VaultErrorCode as Code};
+use scheda::{Ports, Vault};
 
 use common::{Scratch, git, snapshot, vault, work_tree, write};
 use probe::{assert_settled, commits, git_out};
@@ -23,7 +23,7 @@ fn standard(name: &str) -> Collection {
 }
 
 fn open(path: &Path) -> Vault {
-    Vault::open(path, OpenOptions::default()).unwrap()
+    Vault::open(path, OpenOptions::default(), Ports::default()).unwrap()
 }
 
 /// The marker is of generation 2 and `.gitignore` ignores Scheda's folders.
@@ -68,6 +68,7 @@ fn an_empty_folder_becomes_a_vault_in_one_commit() {
     let vault = Vault::open(
         &path,
         OpenOptions::default().with_mode(OpenMode::OPEN_MODE_CREATE_NEW),
+        Ports::default(),
     )
     .unwrap();
     assert_marked(&path);
@@ -131,7 +132,7 @@ fn two_opens_of_one_new_path_at_once_make_one_vault_and_both_open_it() {
                 .map(|_| {
                     scope.spawn(|| {
                         barrier.wait();
-                        Vault::open(&path, OpenOptions::default())
+                        Vault::open(&path, OpenOptions::default(), Ports::default())
                     })
                 })
                 .collect();
@@ -160,7 +161,12 @@ fn two_opens_of_one_new_path_at_once_make_one_vault_and_both_open_it() {
 fn a_call_that_cannot_take_the_lock_in_time_is_aborted_and_stores_nothing() {
     let scratch = Scratch::new("timeout");
     let path = scratch.join("vault");
-    let vault = Vault::open(&path, OpenOptions::default().with_write_timeout_ms(150)).unwrap();
+    let vault = Vault::open(
+        &path,
+        OpenOptions::default().with_write_timeout_ms(150),
+        Ports::default(),
+    )
+    .unwrap();
     let before = commits(&path);
     let held = File::options()
         .read(true)
@@ -244,7 +250,7 @@ fn sixty_six_writes_from_three_processes_are_each_stored_whole() {
     if let Ok(path) = std::env::var(CHILD_VAULT) {
         // The role of a child process: write into the Vault of the parent.
         let index = std::env::var(CHILD_INDEX).unwrap();
-        let vault = Arc::new(Vault::open(&path, OpenOptions::default()).unwrap());
+        let vault = Arc::new(Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap());
         std::thread::scope(|scope| {
             for half in 0..2 {
                 let vault = Arc::clone(&vault);

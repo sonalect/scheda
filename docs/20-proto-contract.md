@@ -1378,7 +1378,7 @@ D6, D14.
 
 D3, D4, D5, D10, D18.
 
-- [ ] `Ports` and `Port` (D3, D4); `Vault::open(path, options, ports)`,
+- [x] `Ports` and `Port` (D3, D4); `Vault::open(path, options, ports)`,
       `set_embedder`; the embedder's `Describe` read and validated once
       per install; `Embed` and `Score` fed as streams, the portions left
       to the implementation; the fixed-portion adapter; the reranker on

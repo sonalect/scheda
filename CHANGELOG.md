@@ -119,6 +119,16 @@ changes; they grow with each part of the move.
   the mirror without touching the network. With `auto_sync`, a failed
   pull at `open` or push after a write fails neither: the write is stored
   and the handle keeps the failure.
+- Ports: `Vault::open(path, options, ports)` takes the caller's
+  `Embedder`, `Reranker`, and `Projector` as `Ports`, each in its sync or
+  async form (`Port::Sync`, or `Port::Async` with `tokio`, installed
+  inside a runtime); `set_embedder` replaces the embedder. The traits are
+  the generated contract (`EmbedderSync`, …): the embedder and the
+  reranker take their items as a stream and form their own portions,
+  `FixedEmbedder` and `FixedReranker` turn a portion function into one,
+  and the embedder's `Describe` is read once per install. The reranker is
+  the handle's, not an argument of a search. A port in a build without the
+  feature that uses it is `UNIMPLEMENTED`.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

@@ -1073,6 +1073,7 @@ mod tests {
     use super::{Document, Error, Operation, first_line, message, trailer};
     use crate::commit::hooks;
     use crate::git::{git, spawned};
+    use crate::ports::Ports;
     use crate::vault::Vault;
 
     /// A Vault on disk made by `Vault::open`, removed when the test ends.
@@ -1088,7 +1089,12 @@ mod tests {
         }
 
         fn open(&self) -> Vault {
-            Vault::open(&self.0, OpenOptions::default().with_write_timeout_ms(2000)).unwrap()
+            Vault::open(
+                &self.0,
+                OpenOptions::default().with_write_timeout_ms(2000),
+                Ports::default(),
+            )
+            .unwrap()
         }
 
         fn out(&self, dir: &str, args: &[&str]) -> String {

@@ -23,6 +23,7 @@ mod isolated;
 mod journal;
 mod marker;
 mod mirror;
+mod ports;
 mod repo;
 mod stored;
 mod vault;
@@ -31,5 +32,6 @@ mod writer;
 #[cfg(feature = "encrypt")]
 pub use crypto::parse_age_identity;
 pub use error::{Context, Error, Fault, redact_remote_text};
+pub use ports::{FixedEmbedder, FixedReranker, Port, Ports};
 pub use scheda_api::v1;
 pub use vault::Vault;

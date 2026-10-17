@@ -9,12 +9,15 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use git2::Oid;
-use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode};
+use scheda_api::v1::{
+    DynEmbedderAsync, EmbedderSync, Encryption, OpenMode, OpenOptions, VaultErrorCode,
+};
 
 use crate::collection::{self, Declarations};
 use crate::commit::{Change, Committer};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
+use crate::ports::{Installed, Port, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
 use crate::{git, marker, stored, writer};
 
@@ -46,6 +49,8 @@ pub struct Vault {
     /// The last failure of a pull at `open` or a push after a write, until a
     /// later pull or push succeeds.
     sync_failure: Mutex<Option<Error>>,
+    /// The ports the handle was opened with, and the embedder it has now.
+    ports: Installed,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -74,7 +79,13 @@ impl Vault {
     /// Opens the Vault at `path`, or, as `options.mode` allows, makes one.
     ///
     /// `options` is checked first (`INVALID_ARGUMENT`); `options.encryption`
-    /// in a build without the `encrypt` feature is `UNIMPLEMENTED`. Then
+    /// in a build without the `encrypt` feature is `UNIMPLEMENTED`. The
+    /// `ports` are installed before the path is looked at, so a refusal of
+    /// a port writes nothing: an embedder or a reranker needs the `search`
+    /// feature and a projector the `find` feature (`UNIMPLEMENTED`
+    /// otherwise); an async port needs a current Tokio runtime
+    /// (`INVALID_ARGUMENT` without one); and the descriptor of the embedder
+    /// is read once and must satisfy its rules (`INVALID_ARGUMENT`). Then
     /// `options.mode` decides what the path may be (unset is
     /// `OPEN_MODE_OPEN_OR_CREATE`):
     ///
@@ -136,8 +147,34 @@ impl Vault {
     /// The codes above; `ABORTED` when the write lock is not free within
     /// `write_timeout_ms`; `STORAGE` or `REPLICATION` when the path or git
     /// cannot be read or written.
-    pub fn open(path: impl AsRef<Path>, options: OpenOptions) -> Result<Vault, Error> {
-        open(path.as_ref(), options)
+    pub fn open(
+        path: impl AsRef<Path>,
+        options: OpenOptions,
+        ports: Ports,
+    ) -> Result<Vault, Error> {
+        let ports = Installed::new(ports).context("Vault::open: install the ports")?;
+        let mut vault = open(path.as_ref(), options)?;
+        vault.ports = ports;
+        Ok(vault)
+    }
+
+    /// Replaces the embedder of the handle; `None` removes it.
+    ///
+    /// The new embedder is installed as at [`Vault::open`]: its descriptor
+    /// is read once and validated, and nothing asks it to describe itself
+    /// again. A failure leaves the embedder the handle had.
+    ///
+    /// # Errors
+    ///
+    /// `UNIMPLEMENTED` in a build without the `search` feature;
+    /// `INVALID_ARGUMENT` for an async port outside a Tokio runtime and for
+    /// a descriptor that breaks its rules; the failure of the embedder when
+    /// it cannot describe itself.
+    pub fn set_embedder(
+        &self,
+        embedder: Option<Port<dyn EmbedderSync, DynEmbedderAsync>>,
+    ) -> Result<(), Error> {
+        self.ports.set_embedder(embedder)
     }
 
     /// The canonical path of the work tree.
@@ -233,6 +270,15 @@ impl Vault {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
+    }
+
+    /// The ports of the handle.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "the indexer and the search use it")
+    )]
+    pub(crate) fn ports(&self) -> &Installed {
+        &self.ports
     }
 
     /// The age secret the handle was opened with, if any.
@@ -611,6 +657,7 @@ fn finish(
         })),
         writer,
         sync_failure: Mutex::new(None),
+        ports: Installed::default(),
     })
 }
 
@@ -648,6 +695,7 @@ mod tests {
 
     use super::Vault;
     use crate::git::{git, isolate_test_git_env};
+    use crate::ports::{Port, Ports};
 
     /// A Vault on disk, made with plain git, removed when the test ends.
     struct Scratch(PathBuf);
@@ -680,7 +728,7 @@ mod tests {
     #[test]
     fn an_existing_vault_opens_with_its_collections_and_a_writer_and_closes() {
         let scratch = Scratch::vault("open");
-        let vault = Vault::open(&scratch.0, OpenOptions::default()).unwrap();
+        let vault = Vault::open(&scratch.0, OpenOptions::default(), Ports::default()).unwrap();
         assert_eq!(vault.path, scratch.0.canonicalize().unwrap());
         let declarations = vault.declarations_now().unwrap();
         assert_eq!(declarations.len(), 1);
@@ -689,8 +737,70 @@ mod tests {
         assert_eq!(vault.options.mirror, None);
         vault.close().unwrap();
         assert!(scratch.0.join(".scheda/writer").is_file());
-        let again = Vault::open(&scratch.0, OpenOptions::default().with_writer("alice")).unwrap();
+        let again = Vault::open(
+            &scratch.0,
+            OpenOptions::default().with_writer("alice"),
+            Ports::default(),
+        )
+        .unwrap();
         assert_eq!(again.writer, "alice");
+    }
+
+    #[test]
+    fn a_handle_opened_without_ports_has_none() {
+        let scratch = Scratch::vault("no-ports");
+        let vault = Vault::open(&scratch.0, OpenOptions::default(), Ports::default()).unwrap();
+        assert!(vault.ports().embedder().unwrap().is_none());
+        assert!(vault.ports().reranker().is_none());
+        assert!(vault.ports().projector().is_none());
+        vault.set_embedder(None).unwrap();
+    }
+
+    #[test]
+    fn a_port_that_cannot_be_installed_fails_open_before_the_path_is_touched() {
+        let scratch = Scratch::vault("bad-ports");
+        let missing = scratch.0.join("nowhere");
+        let ports = Ports {
+            embedder: Some(Port::Sync(std::sync::Arc::new(NoDescriptor))),
+            ..Ports::default()
+        };
+        let error = Vault::open(&missing, OpenOptions::default(), ports).unwrap_err();
+        assert!(
+            error.is(VaultErrorCode::InvalidArgument) || error.is(VaultErrorCode::Unimplemented)
+        );
+        assert!(!missing.exists());
+    }
+
+    /// An embedder whose descriptor breaks its rules.
+    struct NoDescriptor;
+
+    impl scheda_api::v1::EmbedderSync for NoDescriptor {
+        fn describe(
+            &self,
+            _empty: buffa_types::google::protobuf::Empty,
+        ) -> Result<scheda_api::v1::EmbedderDescriptor, crate::error::Error> {
+            Ok(scheda_api::v1::EmbedderDescriptor::default())
+        }
+
+        fn embed(
+            &self,
+            _texts: protocontract::BoxIter<
+                'static,
+                Result<scheda_api::v1::Text, crate::error::Error>,
+            >,
+        ) -> Result<
+            protocontract::BoxIter<'static, Result<scheda_api::v1::Vector, crate::error::Error>>,
+            crate::error::Error,
+        > {
+            Ok(Box::new(std::iter::empty()))
+        }
+
+        fn embed_query(
+            &self,
+            _query: scheda_api::v1::Query,
+        ) -> Result<scheda_api::v1::Vector, crate::error::Error> {
+            Ok(scheda_api::v1::Vector::default())
+        }
     }
 
     #[test]
@@ -698,7 +808,7 @@ mod tests {
         let scratch = Scratch::vault("mirror");
         let url = "https://example.test/org/repo.git";
         let options = || OpenOptions::default().with_mirror(url);
-        let error = Vault::open(&scratch.0, options()).unwrap_err();
+        let error = Vault::open(&scratch.0, options(), Ports::default()).unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument), "no origin yet");
         git()
             .current_dir(Path::new(&scratch.0))
@@ -708,9 +818,9 @@ mod tests {
             .arg(url)
             .run()
             .unwrap();
-        Vault::open(&scratch.0, options()).unwrap();
+        Vault::open(&scratch.0, options(), Ports::default()).unwrap();
         let other = OpenOptions::default().with_mirror("https://example.test/org/other.git");
-        let error = Vault::open(&scratch.0, other).unwrap_err();
+        let error = Vault::open(&scratch.0, other, Ports::default()).unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
@@ -722,7 +832,7 @@ mod tests {
             OpenOptions::default().with_mirror("not a url"),
             OpenOptions::default().with_index_poll_ms(1),
         ] {
-            let error = Vault::open(&scratch.0, options).unwrap_err();
+            let error = Vault::open(&scratch.0, options, Ports::default()).unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));
         }
         assert!(

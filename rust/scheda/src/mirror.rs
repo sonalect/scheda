@@ -419,6 +419,7 @@ mod tests {
     };
 
     use crate::git::{git, isolate_test_git_env};
+    use crate::ports::Ports;
     use crate::vault::Vault;
 
     /// A scratch folder that is removed when the test ends.
@@ -508,6 +509,7 @@ mod tests {
             OpenOptions::default()
                 .with_auto_sync(true)
                 .with_write_timeout_ms(5000),
+            Ports::default(),
         )
         .unwrap()
     }

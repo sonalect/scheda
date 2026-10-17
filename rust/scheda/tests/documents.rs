@@ -18,7 +18,7 @@ use scheda::v1::{
     Collection, Document, DocumentCreation, DocumentDeletion, DocumentKey, DocumentOperation,
     DocumentUpdate, DocumentUpsert, OpenOptions, VaultErrorCode as Code,
 };
-use scheda::{Error, Fault, Vault};
+use scheda::{Error, Fault, Ports, Vault};
 use serde_json::{Value, json};
 
 use common::{Scratch, command, git, snapshot, vault as built_vault, work_tree, write};
@@ -167,7 +167,12 @@ fn declare(vault: &Vault, value: Value) {
 fn fresh(name: &str) -> (Scratch, PathBuf, Vault) {
     let scratch = Scratch::new(name);
     let path = scratch.join("vault");
-    let vault = Vault::open(&path, OpenOptions::default().with_write_timeout_ms(30_000)).unwrap();
+    let vault = Vault::open(
+        &path,
+        OpenOptions::default().with_write_timeout_ms(30_000),
+        Ports::default(),
+    )
+    .unwrap();
     declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
     declare(&vault, json!({"name": "log", "schema": {"journal": {}}}));
     declare(
@@ -553,7 +558,12 @@ fn any_bytes_round_trip_in_standard_and_singleton_collections() {
 fn a_request_that_breaks_a_rule_fails_before_the_lock_is_taken() {
     let scratch = Scratch::new("prelock");
     let path = scratch.join("vault");
-    let vault = Vault::open(&path, OpenOptions::default().with_write_timeout_ms(150)).unwrap();
+    let vault = Vault::open(
+        &path,
+        OpenOptions::default().with_write_timeout_ms(150),
+        Ports::default(),
+    )
+    .unwrap();
     declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
     declare(&vault, json!({"name": "log", "schema": {"journal": {}}}));
     declare(
@@ -1040,7 +1050,7 @@ fn a_repository_with_gpgsign_gets_unsigned_commits_and_the_write_succeeds() {
 #[test]
 fn a_handle_reads_a_collection_another_handle_declared_and_writes_in_it() {
     let (_scratch, path, first) = fresh("two-handles");
-    let second = Vault::open(&path, OpenOptions::default()).unwrap();
+    let second = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     declare(&first, json!({"name": "late", "schema": {"standard": {}}}));
     // The second handle has never seen `late`: it reads the collections
     // again, once, for the name it does not know.
@@ -1074,7 +1084,7 @@ fn a_vault_built_by_hand_takes_document_writes_and_keeps_a_person_s_files() {
     built_vault(&path);
     write(&path, "draft.txt", "a person's file, not committed");
     write(&path, "notes/scratch.md", "a person's file in a collection");
-    let vault = Vault::open(&path, OpenOptions::default()).unwrap();
+    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     let before = commits(&path);
     vault
         .create_document(creation("notes", "a.md", b"A", "n"))
@@ -1116,7 +1126,7 @@ fn a_document_committed_by_a_person_is_read_replaced_and_deleted() {
             ("notes/a.md", "by hand"),
         ],
     );
-    let vault = Vault::open(&path, OpenOptions::default()).unwrap();
+    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
     let got = vault.get_document(key("notes", "a.md")).unwrap();
     assert_eq!(got.raw.as_deref(), Some(&b"by hand"[..]));
     let before = commits(&path);
@@ -1516,7 +1526,12 @@ fn the_trailers_of_a_batch_name_each_document_with_its_own_note() {
 fn a_call_that_cannot_take_the_lock_in_time_is_aborted_and_stores_nothing() {
     let scratch = Scratch::new("timeout");
     let path = scratch.join("vault");
-    let vault = Vault::open(&path, OpenOptions::default().with_write_timeout_ms(150)).unwrap();
+    let vault = Vault::open(
+        &path,
+        OpenOptions::default().with_write_timeout_ms(150),
+        Ports::default(),
+    )
+    .unwrap();
     declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
     let before = commits(&path);
     let held = File::options()
@@ -1613,7 +1628,12 @@ fn sixty_six_document_writes_from_three_processes_are_each_stored_whole() {
         // The role of a child process: write into the Vault of the parent.
         let index = std::env::var(CHILD_INDEX).unwrap();
         let vault = Arc::new(
-            Vault::open(&path, OpenOptions::default().with_write_timeout_ms(120_000)).unwrap(),
+            Vault::open(
+                &path,
+                OpenOptions::default().with_write_timeout_ms(120_000),
+                Ports::default(),
+            )
+            .unwrap(),
         );
         std::thread::scope(|scope| {
             for half in 0..2 {
@@ -1791,7 +1811,7 @@ mod encrypted {
             "writeTimeoutMs": 60000
         }))
         .unwrap();
-        let vault = Vault::open(&path, options).unwrap();
+        let vault = Vault::open(&path, options, Ports::default()).unwrap();
         declare(
             &vault,
             json!({"name": "secrets", "schema": {"standard": {}, "encrypted": true}}),
@@ -1897,7 +1917,7 @@ mod encrypted {
         let before = commits(&path);
         let wrong: OpenOptions =
             serde_json::from_value(json!({"encryption": {"passphrase": "nope"}})).unwrap();
-        let other = Vault::open(&path, wrong).unwrap();
+        let other = Vault::open(&path, wrong, Ports::default()).unwrap();
         assert!(
             other
                 .get_document(key("secrets", "a"))

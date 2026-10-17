@@ -1247,6 +1247,7 @@ mod tests {
 
     use super::{Change, FileMode, Repo, check_relative, hooks, pending};
     use crate::git::git;
+    use crate::ports::Ports;
     use crate::vault::Vault;
 
     /// A Vault on disk made by `Vault::open`, removed when the test ends.
@@ -1262,7 +1263,12 @@ mod tests {
         }
 
         fn open(&self) -> Vault {
-            Vault::open(&self.0, OpenOptions::default().with_write_timeout_ms(2000)).unwrap()
+            Vault::open(
+                &self.0,
+                OpenOptions::default().with_write_timeout_ms(2000),
+                Ports::default(),
+            )
+            .unwrap()
         }
 
         fn out(&self, args: &[&str]) -> String {
