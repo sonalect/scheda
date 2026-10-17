@@ -1,0 +1,4 @@
+# Cargo in this directory uses the compiler Bazel uses. Keep in step with
+# RUST_VERSION in rust.MODULE.bazel and rust-version in Cargo.toml.
+[toolchain]
+channel = "1.99.1"

@@ -2,6 +2,7 @@
 
 RUST_EDITION = "2024"
 
+# Keep in step with rust-toolchain.toml and rust-version in Cargo.toml.
 RUST_VERSION = "1.99.1"
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
