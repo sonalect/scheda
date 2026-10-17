@@ -6,7 +6,7 @@ mod common;
 use scheda::Vault;
 use scheda::v1::{OpenMode, OpenOptions, VaultErrorCode as Code};
 
-use common::{Scratch, git, snapshot, vault, work_tree, write};
+use common::{Scratch, command, git, snapshot, vault, work_tree, write};
 
 fn options(mode: OpenMode) -> OpenOptions {
     OpenOptions::default().with_mode(mode)
@@ -251,5 +251,34 @@ fn signing_is_not_built_yet_and_refuses_to_open() {
         let error = Vault::open(&path, options).unwrap_err();
         assert!(error.is(Code::Unimplemented), "{key}: {error}");
         assert_eq!(snapshot(&path), before);
+    }
+}
+
+#[test]
+fn a_repository_the_library_cannot_read_is_unimplemented_in_every_mode() {
+    for (name, flag) in [
+        ("sha256", "--object-format=sha256"),
+        ("reftable", "--ref-format=reftable"),
+    ] {
+        let scratch = Scratch::new(name);
+        let path = scratch.join("tree");
+        std::fs::create_dir_all(&path).unwrap();
+        let made = command(&path, &["init", "--quiet", flag])
+            .status()
+            .unwrap()
+            .success();
+        if !made {
+            // The installed git cannot make such a repository.
+            continue;
+        }
+        write(&path, "readme.md", "a person's file");
+        for mode in [
+            OpenMode::OPEN_MODE_OPEN_EXISTING,
+            OpenMode::OPEN_MODE_CREATE_NEW,
+            OpenMode::OPEN_MODE_OPEN_OR_CREATE,
+            OpenMode::OPEN_MODE_UNSPECIFIED,
+        ] {
+            refused(&path, mode, Code::Unimplemented);
+        }
     }
 }

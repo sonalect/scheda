@@ -67,6 +67,7 @@ return Err(Fault::new(VaultErrorCode::NotFound, "no such collection").into());
 | Add a frame | `.context(frame)`; lazy: `.with_context(\|\| format!(…))` |
 | `std::io::Error` | `.map_err(error::io)` (then `.with_path`, `.context`) |
 | git CLI failure (stderr) | `error::git_fault(stderr)`; branch inside Scheda with `git_failure(&err)` |
+| git library failure (`git2::Error`) | `error::lib_fault(err)`: a locked file (`ErrorCode::Locked`) -> `ABORTED`; class `Os`, `Filesystem`, `NoMemory` -> `STORAGE`; the rest -> `REPLICATION`; the library error is the source. A repository of a format the library cannot read (SHA-256, reftable) is `UNIMPLEMENTED`, raised where it is opened (`repo`) |
 | Other foreign error (serde, Tantivy, USearch, UTF-8) | `.or_fault(code, message)` / `.or_fault_with(code, \|\| …)` |
 | Poisoned lock | `error::mutex(&m, frame)` (`RuntimeCode::Panicked`) |
 | Guard / early return | `ensure!(cond, fault)` / `bail!(fault)` (anything `Into<Error>`) |
@@ -87,7 +88,8 @@ everything else to `STORAGE` (retryable for `Interrupted`, `WouldBlock`,
 `ResourceBusy`). `git_fault` classes: auth, certificate -> `UNAUTHENTICATED`;
 timeout, host unreachable -> `UNAVAILABLE`; not fast-forward ->
 `MIRROR_AHEAD`; conflicts -> `MIRROR_CONFLICT`; locked -> `ABORTED`; the
-rest -> `REPLICATION`. Do not define a second `context` method on
+rest -> `REPLICATION`. `lib_fault` follows the same table by the library's
+own code and class, not by text. Do not define a second `context` method on
 `Result<_, io::Error>`: it collides with `protocontract::Context`.
 
 ## Stack frames

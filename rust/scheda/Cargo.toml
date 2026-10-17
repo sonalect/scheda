@@ -30,6 +30,8 @@ age = { workspace = true, optional = true }
 buffa = { workspace = true }
 buffa-types = { workspace = true }
 cxx = { workspace = true, optional = true }
+git2 = { workspace = true }
+libgit2-sys = { workspace = true }
 protocontract = { workspace = true }
 protovalidate-buffa = { workspace = true }
 regex = { workspace = true }
@@ -38,7 +40,6 @@ serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true, optional = true }
-sha2 = { workspace = true }
 tantivy = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
 usearch = { workspace = true, optional = true }

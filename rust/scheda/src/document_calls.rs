@@ -23,8 +23,7 @@
 use std::borrow::Cow;
 use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use buffa_types::google::protobuf::Empty;
@@ -38,11 +37,11 @@ use scheda_api::v1::{
 use serde_json::json;
 
 use crate::collection::{Declaration, Declarations, Kind};
-use crate::commit::{Change, Repo};
+use crate::commit::Change;
 use crate::documents::{self, Found, Plain};
-use crate::error::{Context, Error, Fault, io};
-use crate::fs::rel_of;
+use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
+use crate::repo::{Repo, Snap};
 use crate::{isolated, journal, stored};
 
 /// One write of a Document, as the single calls and the batch carry it.
@@ -344,15 +343,16 @@ fn frame(indexed: bool, index: usize) -> String {
 }
 
 impl crate::Vault {
-    /// One Document, read from its file, not from the Index.
+    /// One Document, read from the commit `HEAD` names, not from the Index
+    /// and not from the work tree.
     ///
-    /// A `standard` or `singleton` Document is the file in the work tree,
-    /// opened for an encrypted collection; a journal line is found by a scan
-    /// of the segments. `raw` is always set. `revision` is the SHA-256, in
-    /// lowercase hex, of the bytes of the stored file (the armor, for an
-    /// encrypted collection); a journal line has none. The read uses the
-    /// collections as the handle holds them, and reads them again, once,
-    /// only for a collection it does not know.
+    /// A `standard` or `singleton` Document is the blob at its path in the
+    /// tree of that commit, opened for an encrypted collection; a journal
+    /// line is found by a scan of the segments. `raw` is always set.
+    /// `revision` is the id of the blob, in lowercase hex (what `git
+    /// rev-parse HEAD:path` prints; the blob of the armor, for an encrypted
+    /// collection); a journal line has none. A person's uncommitted edit is
+    /// not seen, and a commit made by hand is seen at once.
     ///
     /// # Errors
     ///
@@ -365,9 +365,7 @@ impl crate::Vault {
         stored::validate(&document_key).context("get a Document")?;
         let collection = document_key.collection.unwrap_or_default();
         let id = document_key.id.unwrap_or_default();
-        let declarations = self
-            .declarations_knowing([collection.as_str()])
-            .context("get a Document")?;
+        let declarations = self.declarations_now().context("get a Document")?;
         let decl = declarations.get(&collection).ok_or_else(|| {
             Fault::new(
                 VaultErrorCode::NotFound,
@@ -380,9 +378,13 @@ impl crate::Vault {
                 format!("the Document {id} is not in the collection {collection}"),
             )
         };
+        let snap = self
+            .repos()
+            .snapshot(decl.repo())
+            .context("get a Document")?;
         if decl.kind() == Kind::Journal {
             require_slug("id", &id).context("get a Document")?;
-            let line = journal::find_journal_scan(self.path(), decl, &id)
+            let line = journal::find_journal_scan(&snap, decl, &id)
                 .context("get a Document")?
                 .ok_or_else(absent)?;
             return Ok(Document {
@@ -392,7 +394,7 @@ impl crate::Vault {
                 ..Default::default()
             });
         }
-        let found = documents::read_found(self.path(), decl, &id, self.encryption())
+        let found = documents::read_found(&snap, decl, &id, self.encryption())
             .context("get a Document")?
             .ok_or_else(absent)?;
         let revision = found.revision();
@@ -511,19 +513,6 @@ impl crate::Vault {
         })
     }
 
-    /// The collections the handle holds, or, when one of `names` is not
-    /// among them, the collections read again once.
-    fn declarations_knowing<'a>(
-        &self,
-        names: impl IntoIterator<Item = &'a str>,
-    ) -> Result<Arc<Declarations>, Error> {
-        let cached = self.declarations_cached()?;
-        if names.into_iter().all(|name| cached.get(name).is_some()) {
-            return Ok(cached);
-        }
-        self.declarations_now()
-    }
-
     /// One write, as the single calls make it.
     fn write_document(&self, write: Write) -> Result<Document, Error> {
         let mut outcomes = self.write_documents(vec![write], false)?;
@@ -547,17 +536,27 @@ impl crate::Vault {
                 .map_err(Error::from)
                 .with_context(|| frame(indexed, index))?;
         }
-        let before = self.declarations_knowing(writes.iter().map(|write| write.key().0))?;
+        let before = self.declarations_now()?;
         let (mut inspected, mut repo) = inspect_all(&writes, &before, encryption, indexed)?;
         let first_note = first_line(writes.first().map_or("", Write::note));
         let lock = self.committer().lock().context("take the write lock")?;
-        let declarations = self.declarations_locked(&lock)?;
+        let main = lock.snapshot(Repo::Main)?;
+        let declarations = self.declarations_in(&main)?;
         if !Arc::ptr_eq(&before, &declarations) {
             // The collections changed since the checks: do them again
             // against the ones that are in force now.
             (inspected, repo) = inspect_all(&writes, &declarations, encryption, indexed)?;
         }
-        let mut ledger = Ledger::new(self.path(), &declarations, encryption, self.writer());
+        // The checks and the commit read one state of the repository the
+        // write goes to: this snapshot, taken under the lock.
+        let mut snap = match repo {
+            Repo::Main => main,
+            Repo::Isolated => {
+                drop(main);
+                lock.snapshot(Repo::Isolated)?
+            }
+        };
+        let mut ledger = Ledger::new(&snap, &declarations, encryption, self.writer());
         ledger.count(&inspected);
         let mut drafts = Vec::with_capacity(writes.len());
         for (index, (write, inspected)) in writes.into_iter().zip(inspected).enumerate() {
@@ -571,18 +570,20 @@ impl crate::Vault {
         if changes.is_empty() {
             return drafts.into_iter().map(|draft| draft.settle(None)).collect();
         }
-        let root = self.path();
         if repo == Repo::Isolated {
-            let mut with_ignore = isolated::ensure(root)?;
+            isolated::ensure(self.path())?;
+            if snap.repository().is_none() {
+                // The nested repository was made just now: it is empty.
+                snap = lock.snapshot(Repo::Isolated)?;
+            }
+            let mut with_ignore = isolated::gitignore_change(&snap)?;
             with_ignore.append(&mut changes);
             changes = with_ignore;
         }
-        let head = lock.commit_in(repo, &message(&first_note, &trailers), &changes)?;
-        let main_head = match repo {
-            Repo::Main => head,
-            Repo::Isolated => lock.head()?,
-        };
-        self.remember(main_head, declarations)?;
+        let head = lock.commit_in(&snap, &message(&first_note, &trailers), &changes)?;
+        if repo == Repo::Main {
+            self.remember(head, declarations)?;
+        }
         let mut files = take_files(&drafts, changes);
         drafts
             .into_iter()
@@ -704,7 +705,7 @@ struct JournalState {
 /// The state of a write call under the lock: the files it touches, as the
 /// operations so far leave them.
 struct Ledger<'a> {
-    vault: &'a Path,
+    snap: &'a Snap,
     declarations: &'a Declarations,
     encryption: Option<&'a Encryption>,
     writer: &'a str,
@@ -717,13 +718,13 @@ struct Ledger<'a> {
 
 impl<'a> Ledger<'a> {
     fn new(
-        vault: &'a Path,
+        snap: &'a Snap,
         declarations: &'a Declarations,
         encryption: Option<&'a Encryption>,
         writer: &'a str,
     ) -> Ledger<'a> {
         Ledger {
-            vault,
+            snap,
             declarations,
             encryption,
             writer,
@@ -773,7 +774,7 @@ impl<'a> Ledger<'a> {
         let state = match self.journals.entry(step.collection.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(JournalState {
-                ids: journal::stored_ids(self.vault, decl)?,
+                ids: journal::stored_ids(self.snap, decl)?,
                 pending: BTreeMap::new(),
             }),
         };
@@ -797,7 +798,7 @@ impl<'a> Ledger<'a> {
                         .find(|stored| stored.id == step.id)
                 })
                 .map_or_else(
-                    || journal::find_journal_scan(self.vault, decl, &step.id),
+                    || journal::find_journal_scan(self.snap, decl, &step.id),
                     |stored| Ok(Some(stored)),
                 )?
                 .ok_or_else(|| storage("a line of the journal could not be read again"))?
@@ -811,7 +812,7 @@ impl<'a> Ledger<'a> {
         }
         let today = journal::today_utc()?;
         let path = journal::segment_for_append_in(
-            self.vault,
+            self.snap,
             decl,
             line.len() as u64,
             self.writer,
@@ -820,7 +821,7 @@ impl<'a> Ledger<'a> {
         )?;
         let content = match state.pending.entry(path.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
-            Entry::Vacant(entry) => entry.insert(read_segment(self.vault, &path)?),
+            Entry::Vacant(entry) => entry.insert(read_segment(self.snap, &path)?),
         };
         content.extend_from_slice(line);
         state.ids.insert(step.id.clone());
@@ -837,7 +838,7 @@ impl<'a> Ledger<'a> {
     /// One write of a `standard` or `singleton` Document.
     fn write_file(&mut self, decl: &Declaration, step: Step, path: String) -> Result<Draft, Error> {
         if !self.slots.contains_key(&path) {
-            let original = documents::read_found(self.vault, decl, &step.id, self.encryption)
+            let original = documents::read_found(self.snap, decl, &step.id, self.encryption)
                 .map_err(|fault| fault.with_path(path.clone()))?;
             self.slots.insert(
                 path.clone(),
@@ -930,29 +931,26 @@ impl<'a> Ledger<'a> {
         };
         let (found, revision, reply) = match sealed {
             Some(file) => {
-                let revision = documents::revision_of(&file);
                 let (plain, reply) = if repeated {
                     (Plain::Opened(raw.clone()), Raw::Value(raw))
                 } else {
                     (Plain::Unknown, Raw::Value(raw))
                 };
-                (Found { file, plain }, revision, reply)
+                let found =
+                    Found::new(file, plain).map_err(|fault| fault.with_path(path.clone()))?;
+                let revision = found.revision();
+                (found, revision, reply)
             }
             None => {
-                let revision = documents::revision_of(&raw);
                 let reply = if repeated {
                     Raw::Value(raw.clone())
                 } else {
                     Raw::File(path.clone())
                 };
-                (
-                    Found {
-                        file: raw,
-                        plain: Plain::Same,
-                    },
-                    revision,
-                    reply,
-                )
+                let found =
+                    Found::new(raw, Plain::Same).map_err(|fault| fault.with_path(path.clone()))?;
+                let revision = found.revision();
+                (found, revision, reply)
             }
         };
         slot.replaced = Some(Some(found));
@@ -990,7 +988,7 @@ impl<'a> Ledger<'a> {
         }
         for state in self.journals.into_values() {
             for (path, bytes) in state.pending {
-                changes.push(Change::put(rel_of(self.vault, &path)?, bytes));
+                changes.push(Change::put(journal::rel_str(&path), bytes));
             }
         }
         Ok(changes)
@@ -1029,13 +1027,15 @@ fn check_revision(
     }
 }
 
-/// The bytes of a journal segment, empty when it is not there yet.
-fn read_segment(vault: &Path, path: &Path) -> Result<Vec<u8>, Error> {
-    match fs::read(path) {
-        Ok(bytes) => Ok(bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-        Err(err) => Err(io(err).with_path(rel_of(vault, path)?).into()),
-    }
+/// The bytes of a journal segment in the commit of `snap`, empty when it is
+/// not there yet.
+fn read_segment(snap: &Snap, path: &std::path::Path) -> Result<Vec<u8>, Error> {
+    let rel = journal::rel_str(path);
+    Ok(snap
+        .read(&rel)
+        .map_err(|fault| fault.with_path(rel))?
+        .map(|blob| blob.bytes)
+        .unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -1043,11 +1043,11 @@ mod tests {
     use std::path::PathBuf;
 
     use scheda_api::v1::{
-        Collection, DocumentCreation, DocumentDeletion, DocumentKey, DocumentUpsert, OpenOptions,
-        VaultErrorCode,
+        Collection, DocumentCreation, DocumentDeletion, DocumentKey, DocumentOperation,
+        DocumentUpsert, OpenOptions, VaultErrorCode,
     };
 
-    use super::{Document, first_line, message, trailer};
+    use super::{Document, Error, Operation, first_line, message, trailer};
     use crate::commit::hooks;
     use crate::git::{git, spawned};
     use crate::vault::Vault;
@@ -1135,12 +1135,36 @@ mod tests {
     }
 
     #[test]
-    fn a_read_starts_no_git_process_for_a_collection_it_holds() {
-        let scratch = Scratch::new("read-no-git");
+    fn a_read_and_a_write_without_a_mirror_start_no_process() {
+        let scratch = Scratch::new("no-process");
         let vault = scratch.open();
-        declare(&vault, "notes", false);
-        vault.upsert_document(upsert("notes", "a.md", "x")).unwrap();
         let before = spawned();
+        declare(&vault, "notes", false);
+        declare(&vault, "diary", true);
+        vault.upsert_document(upsert("notes", "a.md", "x")).unwrap();
+        vault
+            .create_document(creation("notes", "b.md", "y"))
+            .unwrap();
+        vault
+            .create_document(creation("diary", "d", "secret"))
+            .unwrap();
+        let operations: Vec<Result<DocumentOperation, Error>> = vec![
+            Ok(DocumentOperation {
+                operation: Some(Operation::Upsert(Box::new(upsert("notes", "c.md", "z")))),
+                ..Default::default()
+            }),
+            Ok(DocumentOperation {
+                operation: Some(Operation::Delete(Box::new(DocumentDeletion {
+                    document: key("notes", "b.md").into(),
+                    note: Some("gone".to_owned()),
+                    ..Default::default()
+                }))),
+                ..Default::default()
+            }),
+        ];
+        vault
+            .batch_documents(Box::new(operations.into_iter()))
+            .unwrap();
         for _ in 0..3 {
             let got = vault.get_document(key("notes", "a.md")).unwrap();
             assert_eq!(got.raw.as_deref(), Some(&b"x"[..]));
@@ -1151,15 +1175,21 @@ mod tests {
                 .unwrap_err()
                 .is(VaultErrorCode::NotFound)
         );
-        assert_eq!(
-            spawned(),
-            before,
-            "a read of a known collection runs no git"
+        assert!(
+            vault
+                .get_document(key("unknown", "a"))
+                .unwrap_err()
+                .is(VaultErrorCode::NotFound)
         );
-        // A collection the handle does not know is looked for once.
-        let error = vault.get_document(key("unknown", "a")).unwrap_err();
-        assert!(error.is(VaultErrorCode::NotFound));
-        assert!(spawned() > before);
+        assert_eq!(
+            vault
+                .get_document(key("diary", "d"))
+                .unwrap()
+                .raw
+                .as_deref(),
+            Some(&b"secret"[..])
+        );
+        assert_eq!(spawned(), before, "no call started a git process");
     }
 
     #[test]

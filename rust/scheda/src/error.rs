@@ -366,6 +366,26 @@ pub(crate) fn git_fault(stderr: &str) -> Fault {
     })
 }
 
+/// A [`Fault`] for a failure of the git library. The code comes from what
+/// the library says went wrong, not from its message: a lock file held by
+/// another process is `ABORTED`, an operating-system or file-system failure
+/// is `STORAGE`, anything else is `REPLICATION`. The library's error stays
+/// the source; the message has remote URLs redacted.
+#[must_use]
+pub(crate) fn lib_fault(err: git2::Error) -> Fault {
+    let code = if err.code() == git2::ErrorCode::Locked {
+        VaultErrorCode::Aborted
+    } else if matches!(
+        err.class(),
+        git2::ErrorClass::Os | git2::ErrorClass::Filesystem | git2::ErrorClass::NoMemory
+    ) {
+        VaultErrorCode::Storage
+    } else {
+        VaultErrorCode::Replication
+    };
+    Fault::new(code, redact_remote_text(err.message())).with_source(err)
+}
+
 /// The class of the git failure behind `err`, when it came from
 /// [`git_fault`]. For branching inside Scheda; a caller branches on the
 /// code.
@@ -928,6 +948,44 @@ mod tests {
             assert!(!text.contains("user:"), "{text}");
             assert!(text.contains("https://example.test"), "{text}");
         }
+    }
+
+    #[test]
+    fn a_library_failure_maps_by_its_code_and_class() {
+        use git2::{ErrorClass, ErrorCode};
+        use scheda_api::v1::VaultErrorCode;
+
+        use super::lib_fault;
+
+        let fault = |code, class| {
+            Error::from(lib_fault(git2::Error::new(
+                code,
+                class,
+                "the library said so",
+            )))
+        };
+        let locked = fault(ErrorCode::Locked, ErrorClass::Index);
+        assert!(locked.is(VaultErrorCode::Aborted));
+        assert!(locked.retryable());
+        for class in [ErrorClass::Os, ErrorClass::Filesystem, ErrorClass::NoMemory] {
+            let storage = fault(ErrorCode::GenericError, class);
+            assert!(storage.is(VaultErrorCode::Storage), "{class:?}");
+        }
+        for class in [ErrorClass::Odb, ErrorClass::Reference, ErrorClass::Index] {
+            let other = fault(ErrorCode::GenericError, class);
+            assert!(other.is(VaultErrorCode::Replication), "{class:?}");
+            assert!(!other.retryable());
+        }
+        // The library's error stays reachable, and the message has no
+        // credential in a URL.
+        let leaked = Error::from(lib_fault(git2::Error::new(
+            ErrorCode::GenericError,
+            ErrorClass::Net,
+            "failed to connect to https://user:secret@example.test/repo.git",
+        )));
+        assert!(!leaked.to_string().contains("secret"));
+        let source = std::error::Error::source(&leaked).unwrap();
+        assert!(source.downcast_ref::<git2::Error>().is_some());
     }
 
     #[test]

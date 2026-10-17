@@ -1,5 +1,6 @@
 //! Collection declarations: the file `{vault}/{name}/.collection.yaml` (also
-//! `.yml` or `.json`) of every collection, read from the work tree.
+//! `.yml` or `.json`) of every collection, read from the commit `HEAD`
+//! names, never from the work tree.
 //!
 //! The declaration in memory is the contract's `Collection`, normalized when
 //! it is loaded so that every default is filled in, kept together with the
@@ -16,14 +17,14 @@
 )]
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::Path;
 
 use scheda_api::v1::schema::Kind as SchemaKind;
 use scheda_api::v1::{Collection, Journal, VaultErrorCode};
 
-use crate::error::{Context, Error, Fault, io};
+use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
+use crate::repo::{Child, NodeKind, Repo, Snap};
 use crate::stored::{self, Format, Unknowns};
 
 const MIB: u64 = 1024 * 1024;
@@ -93,6 +94,15 @@ impl Declaration {
         match self.collection.schema.as_option()?.kind.as_ref()? {
             SchemaKind::Journal(journal) => Some(journal),
             SchemaKind::Standard(_) | SchemaKind::Singleton(_) => None,
+        }
+    }
+
+    /// The repository the Documents live in.
+    pub(crate) fn repo(&self) -> Repo {
+        if self.isolated() {
+            Repo::Isolated
+        } else {
+            Repo::Main
         }
     }
 
@@ -171,45 +181,41 @@ impl Declarations {
     }
 }
 
-/// Reads the declarations of the work tree at `vault`.
+/// Reads the declarations of the commit of `snap`.
 ///
 /// Every directory at the root whose name does not start with `.` and that
 /// holds one declaration file is a collection. A directory with two
 /// declaration files, a leftover `.schema.*` file, a file that is not a
 /// valid `Collection`, or a directory name other than the collection's
 /// `name` is `INVALID_ARGUMENT`, with the path of the file; one bad file
-/// fails the whole load. A missing `vault` has no declarations.
-pub(crate) fn load(vault: &Path) -> Result<Declarations, Error> {
+/// fails the whole load. A commit with no tree (an unborn branch) has no
+/// declarations.
+pub(crate) fn load(snap: &Snap) -> Result<Declarations, Error> {
     let mut collections = BTreeMap::new();
-    let entries = match fs::read_dir(vault) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Declarations::default());
-        }
-        Err(err) => return Err(io(err)).context("read the Vault directory"),
+    let Some(entries) = snap.list("").context("read the root of the Vault")? else {
+        return Ok(Declarations::default());
     };
     for entry in entries {
-        let entry = entry
-            .map_err(io)
-            .context("read an entry of the Vault directory")?;
-        let path = entry.path();
-        if !path.is_dir() {
+        if entry.node.kind != NodeKind::Dir || entry.name.starts_with('.') {
             continue;
         }
-        let Some(dir_name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        if dir_name.starts_with('.') {
-            continue;
-        }
-        refuse_leftover_schema_file(&path, &dir_name)?;
-        let Some(file_name) = find_declaration_file(&path, &dir_name)? else {
+        let dir_name = entry.name;
+        let files = snap
+            .list(&dir_name)
+            .map_err(|fault| fault.with_path(dir_name.clone()))
+            .context("read a collection directory")?
+            .unwrap_or_default();
+        refuse_leftover_schema_file(&files, &dir_name)?;
+        let Some(file_name) = find_declaration_file(&files, &dir_name)? else {
             continue;
         };
         let rel = format!("{dir_name}/{file_name}");
-        let bytes = fs::read(path.join(file_name))
-            .map_err(|err| io(err).with_path(rel.clone()))
-            .context("read a collection file")?;
+        let bytes = snap
+            .read(&rel)
+            .map_err(|fault| fault.with_path(rel.clone()))
+            .context("read a collection file")?
+            .map(|blob| blob.bytes)
+            .unwrap_or_default();
         let declaration = declare(&bytes, &rel, &dir_name)
             .map_err(|fault| fault.with_path(rel))
             .context("load a collection")?;
@@ -317,9 +323,17 @@ fn normalize(collection: &mut Collection) -> Result<Kind, Fault> {
     }
 }
 
-fn refuse_leftover_schema_file(dir: &Path, dir_name: &str) -> Result<(), Error> {
+/// Whether `files` (the entries of a collection directory) holds a file
+/// called `name`.
+fn has_file(files: &[Child], name: &str) -> bool {
+    files
+        .iter()
+        .any(|child| child.name == name && child.node.kind == NodeKind::File)
+}
+
+fn refuse_leftover_schema_file(files: &[Child], dir_name: &str) -> Result<(), Error> {
     for name in LEFTOVER_SCHEMA_FILENAMES {
-        if dir.join(name).is_file() {
+        if has_file(files, name) {
             return Err(Fault::new(
                 VaultErrorCode::InvalidArgument,
                 format!("{dir_name} holds the leftover schema file {name}"),
@@ -331,10 +345,10 @@ fn refuse_leftover_schema_file(dir: &Path, dir_name: &str) -> Result<(), Error> 
     Ok(())
 }
 
-fn find_declaration_file(dir: &Path, dir_name: &str) -> Result<Option<&'static str>, Error> {
+fn find_declaration_file(files: &[Child], dir_name: &str) -> Result<Option<&'static str>, Error> {
     let mut found = None;
     for name in COLLECTION_FILENAMES {
-        if !dir.join(name).is_file() {
+        if !has_file(files, name) {
             continue;
         }
         if found.is_some() {
@@ -358,6 +372,7 @@ mod tests {
 
     use super::{DEFAULT_SEGMENT_MAX_BYTES, Kind, declare, encode, load};
     use crate::error::{Error, Fault};
+    use crate::repo::fixture;
     use crate::stored::{Format, path_string};
 
     /// A scratch Vault directory that is removed when the test ends.
@@ -378,11 +393,30 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
+
+        /// The declarations of what the files hold once committed.
+        fn load(&self) -> Result<super::Declarations, Error> {
+            fixture::commit_all(&self.0);
+            load(&fixture::snap(&self.0))
+        }
     }
 
     impl Drop for Scratch {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
         }
     }
 
@@ -541,7 +575,7 @@ mod tests {
         vault.write(".scheda/x/.collection.yaml", "not read");
         vault.write(".isolated/y/.collection.yaml", "not read");
         vault.write("file.txt", "x");
-        let declarations = load(&vault.0).unwrap();
+        let declarations = vault.load().unwrap();
         assert_eq!(declarations.len(), 2);
         let names: Vec<&str> = declarations.iter().map(|d| d.name()).collect();
         assert_eq!(names, ["log", "notes"]);
@@ -551,7 +585,16 @@ mod tests {
         );
         assert_eq!(declarations.get("log").unwrap().file.format, Format::Json);
         assert!(declarations.get("missing").is_none());
-        assert_eq!(load(&vault.0.join("nowhere")).unwrap().len(), 0);
+        // A commit that does not exist yet has no declarations.
+        let empty = Scratch::new("unborn");
+        std::fs::create_dir_all(empty.0.join("notes")).unwrap();
+        std::fs::write(
+            empty.0.join("notes/.collection.yaml"),
+            "name: notes\nschema:\n  standard: {}\n",
+        )
+        .unwrap();
+        fixture::init(&empty.0);
+        assert_eq!(load(&fixture::snap(&empty.0)).unwrap().len(), 0);
     }
 
     #[test]
@@ -565,7 +608,7 @@ mod tests {
             "bad/.collection.yaml",
             "name: bad\nschema:\n  document: {}\n",
         );
-        let error = load(&vault.0).unwrap_err();
+        let error = vault.load().unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
         let fault = error.downcast_ref::<Fault>().unwrap();
         assert_eq!(fault.path(), Some("bad/.collection.yaml"));
@@ -579,7 +622,8 @@ mod tests {
             "name: pages\nschema:\n  standard: {}\n",
         );
         assert!(
-            load(&vault.0)
+            vault
+                .load()
                 .unwrap_err()
                 .is(VaultErrorCode::InvalidArgument)
         );
@@ -595,7 +639,8 @@ mod tests {
             r#"{"name":"notes","schema":{"standard":{}}}"#,
         );
         assert!(
-            load(&vault.0)
+            vault
+                .load()
                 .unwrap_err()
                 .is(VaultErrorCode::InvalidArgument)
         );
@@ -610,7 +655,8 @@ mod tests {
         );
         vault.write("notes/.schema.yaml", "fields: []\n");
         assert!(
-            load(&vault.0)
+            vault
+                .load()
                 .unwrap_err()
                 .is(VaultErrorCode::InvalidArgument)
         );
@@ -620,7 +666,9 @@ mod tests {
     fn the_fixtures_of_generation_two_load() {
         let consumer = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/consumer");
         if consumer.is_dir() {
-            let declarations = load(&consumer).unwrap();
+            let vault = Scratch::new("fixtures");
+            copy_tree(&consumer, &vault.0);
+            let declarations = vault.load().unwrap();
             assert!(declarations.len() >= 10);
             assert_eq!(
                 declarations.get("run_heads").unwrap().singleton_id(),

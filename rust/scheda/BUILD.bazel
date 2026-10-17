@@ -37,13 +37,14 @@ _SCHEDA_DEPS = [
     "//rust/api:generated_v1",
     "@scheda_cargo//:buffa",
     "@scheda_cargo//:buffa-types",
+    "@scheda_cargo//:git2",
+    "@scheda_cargo//:libgit2-sys",
     "@scheda_cargo//:protocontract",
     "@scheda_cargo//:protovalidate-buffa",
     "@scheda_cargo//:regex",
     "@scheda_cargo//:serde",
     "@scheda_cargo//:serde_ignored",
     "@scheda_cargo//:serde_json",
-    "@scheda_cargo//:sha2",
     "@scheda_cargo//:yaml_serde",
 ]
 
@@ -99,7 +100,6 @@ rust_test(
     deps = [
         ":scheda",
         "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:sha2",
     ],
 )
 
@@ -112,7 +112,6 @@ rust_test(
     deps = [
         ":scheda_thin",
         "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:sha2",
     ],
 )
 

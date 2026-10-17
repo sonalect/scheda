@@ -7,9 +7,10 @@
 //!
 //! The paths follow the id: the file of `work/meeting.md` in `notes` is
 //! `notes/work/meeting.md` (under `.isolated/` for an isolated collection),
-//! and a `singleton` has the one file named by its declared id. Writing a
-//! file to the work tree belongs to the committer; [`encode`] only says
-//! which path and which bytes.
+//! and a `singleton` has the one file named by its declared id. Everything
+//! is read from a snapshot of the commit `HEAD` names, never from the work
+//! tree; writing is the committer's, and [`encode`] only says which path
+//! and which bytes.
 
 // The layers that write and index Documents call the rest.
 #![cfg_attr(
@@ -21,18 +22,16 @@
 )]
 
 use std::borrow::Cow;
-use std::fs;
-use std::path::{Path, PathBuf};
 
+use git2::{ObjectType, Oid};
 use scheda_api::v1::{Encryption, Problem, VaultErrorCode};
-use sha2::{Digest, Sha256};
 
 use crate::check::{problem, problem_of};
 use crate::collection::{Declaration, Declarations, Kind};
-use crate::error::{Context, Error, Fault, io};
-use crate::fs::{find_symlinks, reject_symlinks};
+use crate::error::{Context, Error, Fault, lib_fault};
 use crate::id::{require_document_id, require_slug};
 use crate::isolated;
+use crate::repo::{NodeKind, Snap, Views};
 
 fn invalid(message: impl Into<String>) -> Fault {
     Fault::new(VaultErrorCode::InvalidArgument, message)
@@ -82,8 +81,8 @@ pub(crate) fn path_of(decl: &Declaration, id: &str) -> Result<String, Fault> {
     Ok(isolated::vault_rel(decl, id))
 }
 
-/// Reads the Document `id`: the bytes of its file, or, in an encrypted
-/// collection, the bytes the armor holds.
+/// Reads the Document `id`: the bytes of its file in the commit of `snap`,
+/// or, in an encrypted collection, the bytes the armor holds.
 ///
 /// An absent Document is `None`, not an error: no file, a directory where
 /// the file would be, or (for a `singleton`) an id other than its own. A
@@ -91,7 +90,7 @@ pub(crate) fn path_of(decl: &Declaration, id: &str) -> Result<String, Fault> {
 /// the secret of the handle (`CRYPTO`); a build without the `encrypt`
 /// feature cannot read one (`UNIMPLEMENTED`).
 pub(crate) fn read(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     id: &str,
     encryption: Option<&Encryption>,
@@ -101,41 +100,21 @@ pub(crate) fn read(
         return Ok(None);
     }
     let rel = path_of(decl, id)?;
-    let path = vault.join(&rel);
-    reject_symlinks(vault, &path)?;
-    read_file(&path, &rel, decl, encryption)
+    read_file(snap, &rel, decl, encryption)
 }
 
-/// Reads the file at `path` (Vault-relative `rel`): `None` when it is not
-/// there or is not a file.
+/// Reads the file at the Vault-relative `rel`: `None` when the commit holds
+/// no file there.
 fn read_file(
-    path: &Path,
+    snap: &Snap,
     rel: &str,
     decl: &Declaration,
     encryption: Option<&Encryption>,
 ) -> Result<Option<Vec<u8>>, Fault> {
-    let Some(stored) = read_bytes(path, rel)? else {
+    let Some(blob) = snap.read(rel)? else {
         return Ok(None);
     };
-    unseal(decl, stored, encryption, rel).map(Some)
-}
-
-/// The bytes of the file at `path`, as they lie on disk; `None` when it is
-/// not there or is not a file.
-fn read_bytes(path: &Path, rel: &str) -> Result<Option<Vec<u8>>, Fault> {
-    use std::io::ErrorKind;
-    match fs::read(path) {
-        Ok(bytes) => Ok(Some(bytes)),
-        Err(err)
-            if matches!(
-                err.kind(),
-                ErrorKind::NotFound | ErrorKind::IsADirectory | ErrorKind::NotADirectory
-            ) =>
-        {
-            Ok(None)
-        }
-        Err(err) => Err(io(err).with_path(rel)),
-    }
+    unseal(decl, blob.bytes, encryption, rel).map(Some)
 }
 
 /// What the Document held in a file, as the caller knows it.
@@ -149,20 +128,28 @@ pub(crate) enum Plain {
     Unknown,
 }
 
-/// A Document file: the bytes on disk, and what they hold.
+/// A Document file: the bytes in the commit, and what they hold.
 #[derive(Debug)]
 pub(crate) struct Found {
     /// The bytes of the file (the armor, in an encrypted collection).
     pub(crate) file: Vec<u8>,
     /// The Document in them.
     pub(crate) plain: Plain,
+    /// The id of the blob that holds the file.
+    id: Oid,
 }
 
 impl Found {
-    /// The revision of the Document: the SHA-256 of the bytes of the file,
-    /// in lowercase hex.
+    /// A file that is to be stored with `file` as its bytes: its blob id is
+    /// worked out, not looked up.
+    pub(crate) fn new(file: Vec<u8>, plain: Plain) -> Result<Found, Fault> {
+        let id = blob_id(&file)?;
+        Ok(Found { file, plain, id })
+    }
+
+    /// The revision of the Document: the id of its blob, in lowercase hex.
     pub(crate) fn revision(&self) -> String {
-        revision_of(&self.file)
+        self.id.to_string()
     }
 
     /// The bytes of the Document, if they are known.
@@ -184,25 +171,18 @@ impl Found {
     }
 }
 
-/// The SHA-256 of `file`, in lowercase hex: the revision of a Document
-/// whose file holds those bytes.
-pub(crate) fn revision_of(file: &[u8]) -> String {
-    use std::fmt::Write;
-    let digest = Sha256::digest(file);
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest.iter() {
-        let _ = write!(hex, "{byte:02x}");
-    }
-    hex
+/// The id git gives a blob of `file`, without storing it.
+fn blob_id(file: &[u8]) -> Result<Oid, Fault> {
+    Oid::hash_object(ObjectType::Blob, file).map_err(lib_fault)
 }
 
-/// Reads the file of Document `id` and opens it: the bytes on disk and the
-/// Document in them. An absent Document is `None`, as for [`read`], and a
-/// symlink on the way is `INVALID_ARGUMENT`. An encrypted collection needs
-/// the secret of the handle (`CRYPTO`) and a build with the `encrypt`
-/// feature (`UNIMPLEMENTED`).
+/// Reads the file of Document `id` in the commit of `snap` and opens it: the
+/// bytes there and the Document in them. An absent Document is `None`, as
+/// for [`read`], and a symlink on the way is `INVALID_ARGUMENT`. An
+/// encrypted collection needs the secret of the handle (`CRYPTO`) and a
+/// build with the `encrypt` feature (`UNIMPLEMENTED`).
 pub(crate) fn read_found(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     id: &str,
     encryption: Option<&Encryption>,
@@ -212,21 +192,18 @@ pub(crate) fn read_found(
         return Ok(None);
     }
     let rel = path_of(decl, id)?;
-    let path = vault.join(&rel);
-    reject_symlinks(vault, &path)?;
-    let Some(file) = read_bytes(&path, &rel)? else {
+    let Some(blob) = snap.read(&rel)? else {
         return Ok(None);
     };
-    if !decl.encrypted() {
-        return Ok(Some(Found {
-            file,
-            plain: Plain::Same,
-        }));
-    }
-    let plain = open_armor(decl, &file, encryption, &rel)?;
+    let plain = if decl.encrypted() {
+        Plain::Opened(open_armor(decl, &blob.bytes, encryption, &rel)?)
+    } else {
+        Plain::Same
+    };
     Ok(Some(Found {
-        file,
-        plain: Plain::Opened(plain),
+        file: blob.bytes,
+        plain,
+        id: blob.id,
     }))
 }
 
@@ -389,18 +366,18 @@ struct Level {
 /// byte order of the whole id, the path below the collection directory with
 /// its extension.
 ///
-/// It lists one directory at a time, only when the walk reaches it, and
-/// sorts that directory alone. No file is opened to find an id; [`Walk::read`]
-/// opens the file of the current one. A directory whose name is not a slug,
-/// a name that starts with `.`, a name that is not UTF-8, and a symlink are
-/// not part of a collection and are passed over. A `singleton` yields its
-/// one id when its file exists. A missing collection directory yields
-/// nothing.
+/// It reads the commit of the snapshot it was given, so it sees one state
+/// of the Vault from its first id to its last, whatever is committed
+/// meanwhile. It lists one tree at a time, only when the walk reaches it,
+/// and sorts that tree alone. No blob is read to find an id; [`Walk::read`]
+/// reads the blob of the current one. A directory whose name is not a slug,
+/// a name that starts with `.`, and a symlink are not part of a collection
+/// and are passed over. A `singleton` yields its one id when its file
+/// exists. A collection with no directory in the commit yields nothing.
 pub(crate) struct Walk<'a> {
-    vault: &'a Path,
+    snap: &'a Snap,
     decl: &'a Declaration,
     encryption: Option<&'a Encryption>,
-    dir: PathBuf,
     stack: Vec<Level>,
     current: Option<String>,
     started: bool,
@@ -408,21 +385,20 @@ pub(crate) struct Walk<'a> {
 }
 
 impl<'a> Walk<'a> {
-    /// Starts a walk of `decl`. A symlink on the way to the collection
-    /// directory is `INVALID_ARGUMENT`; a `journal` collection is too.
+    /// Starts a walk of `decl` over `snap`. A symlink on the way to the
+    /// collection directory is `INVALID_ARGUMENT`; a `journal` collection is
+    /// too.
     pub(crate) fn new(
-        vault: &'a Path,
+        snap: &'a Snap,
         decl: &'a Declaration,
         encryption: Option<&'a Encryption>,
     ) -> Result<Walk<'a>, Fault> {
         require_files(decl)?;
-        let dir = isolated::records_dir(vault, decl);
-        reject_symlinks(vault, &dir)?;
+        snap.lookup(&isolated::vault_rel(decl, ""))?;
         Ok(Walk {
-            vault,
+            snap,
             decl,
             encryption,
-            dir,
             stack: Vec::new(),
             current: None,
             started: false,
@@ -459,14 +435,14 @@ impl<'a> Walk<'a> {
     }
 
     /// Reads the Document the walk is at, as [`read`] does by id but
-    /// without checking the id again: `None` when the file has gone since
-    /// it was listed, or the walk is at no Document.
+    /// without checking the id again: `None` when the walk is at no
+    /// Document.
     pub(crate) fn read(&self) -> Result<Option<Vec<u8>>, Fault> {
         let Some(id) = self.current.as_deref() else {
             return Ok(None);
         };
         let rel = isolated::vault_rel(self.decl, id);
-        read_file(&self.vault.join(&rel), &rel, self.decl, self.encryption)
+        read_file(self.snap, &rel, self.decl, self.encryption)
     }
 
     fn advance(&mut self) -> Result<Option<String>, Fault> {
@@ -506,46 +482,43 @@ impl<'a> Walk<'a> {
         let Some(id) = self.decl.singleton_id() else {
             return Ok(None);
         };
-        match fs::symlink_metadata(self.dir.join(id)) {
-            Ok(meta) if meta.is_file() => Ok(Some(id.to_owned())),
+        let rel = isolated::vault_rel(self.decl, id);
+        match self.snap.lookup(&rel) {
+            Ok(Some(node)) if node.kind == NodeKind::File => Ok(Some(id.to_owned())),
             Ok(_) => Ok(None),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(err) => Err(io(err).with_path(isolated::vault_rel(self.decl, id))),
+            // The file itself is a symlink: not a Document.
+            Err(fault) if fault.path() == Some(rel.as_str()) => Ok(None),
+            Err(fault) => Err(fault),
         }
     }
 
-    /// Lists the directory `prefix` below the collection directory (`""` is
-    /// the collection directory itself), sorted for the walk. `None` when it
-    /// has gone or holds nothing the walk visits.
+    /// Lists the tree `prefix` below the collection directory (`""` is the
+    /// collection directory itself), sorted for the walk. `None` when the
+    /// commit holds no such tree or nothing the walk visits in it.
     fn list(&self, prefix: String) -> Result<Option<Level>, Fault> {
-        let dir = self.dir.join(&prefix);
         let rel = isolated::vault_rel(self.decl, &prefix);
-        let read = match fs::read_dir(&dir) {
-            Ok(read) => read,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(err) => return Err(io(err).with_path(rel.trim_end_matches('/'))),
+        let Some(children) = self.snap.list(&rel)? else {
+            return Ok(None);
         };
         let mut entries = Vec::new();
-        for entry in read {
-            let entry = entry.map_err(|err| io(err).with_path(rel.trim_end_matches('/')))?;
-            let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-                continue;
-            };
-            if name.starts_with('.') {
+        for child in children {
+            if child.name.starts_with('.') {
                 continue;
             }
-            let kind = entry
-                .file_type()
-                .map_err(|err| io(err).with_path(format!("{rel}{name}")))?;
-            if kind.is_symlink() {
-                continue;
-            }
-            if kind.is_dir() {
-                if require_slug("id", &name).is_ok() {
-                    entries.push(Entry { name, dir: true });
+            match child.node.kind {
+                NodeKind::Dir => {
+                    if require_slug("id", &child.name).is_ok() {
+                        entries.push(Entry {
+                            name: child.name,
+                            dir: true,
+                        });
+                    }
                 }
-            } else if kind.is_file() {
-                entries.push(Entry { name, dir: false });
+                NodeKind::File => entries.push(Entry {
+                    name: child.name,
+                    dir: false,
+                }),
+                NodeKind::Link | NodeKind::Other => {}
             }
         }
         if entries.is_empty() {
@@ -568,7 +541,8 @@ impl<'a> Walk<'a> {
 }
 
 /// Checks the Document files of every `standard` and `singleton`
-/// collection and collects what is wrong, in collection and id order:
+/// collection, as the commits of `views` hold them, and collects what is
+/// wrong, in collection and id order:
 ///
 /// - a symlink under the collection directory (`INVALID_ARGUMENT`, with the
 ///   link's path);
@@ -582,7 +556,7 @@ impl<'a> Walk<'a> {
 /// build has no `encrypt` feature (`UNIMPLEMENTED`), because then its files
 /// cannot be opened to be checked.
 pub(crate) fn check_documents(
-    vault: &Path,
+    views: &Views,
     declarations: &Declarations,
     encryption: Option<&Encryption>,
 ) -> Result<Vec<Problem>, Error> {
@@ -594,10 +568,12 @@ pub(crate) fn check_documents(
         if decl.encrypted() {
             require_openable(decl, encryption)?;
         }
-        let dir = isolated::records_dir(vault, decl);
-        let links = find_symlinks(vault, &dir).context("check_documents: look for symlinks")?;
+        let snap = views.of(decl.repo());
         let dir_rel = isolated::vault_rel(decl, "");
         let dir_rel = dir_rel.trim_end_matches('/');
+        let links = snap
+            .symlinks_below(dir_rel)
+            .context("check_documents: look for symlinks")?;
         let blocked = links
             .iter()
             .any(|link| dir_rel == link || dir_rel.starts_with(&format!("{link}/")));
@@ -612,19 +588,19 @@ pub(crate) fn check_documents(
         if blocked {
             continue;
         }
-        check_files(vault, decl, encryption, &mut problems)
+        check_files(snap, decl, encryption, &mut problems)
             .context("check_documents: check the files")?;
     }
     Ok(problems)
 }
 
 fn check_files(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     encryption: Option<&Encryption>,
     problems: &mut Vec<Problem>,
 ) -> Result<(), Fault> {
-    let mut walk = Walk::new(vault, decl, encryption)?;
+    let mut walk = Walk::new(snap, decl, encryption)?;
     while walk.next_id()?.is_some() {
         let Some(id) = walk.id() else { break };
         let rel = isolated::vault_rel(decl, id);
@@ -680,7 +656,7 @@ mod tests {
     use super::{Walk, check_documents, encode, path_of, read};
     use crate::collection::{self, Declaration, Declarations};
     use crate::error::Error;
-    use crate::fs::atomic_write;
+    use crate::repo::{Repos, Snap, Views, fixture};
 
     /// A temporary Vault directory that holds collection files and
     /// Document files.
@@ -712,8 +688,32 @@ mod tests {
             std::fs::write(path, bytes).unwrap();
         }
 
+        /// Commits what the files hold, in the Vault and in the nested
+        /// repository when there is one: reads see commits only.
+        fn commit(&self) {
+            // The nested repository is never tracked by the Vault.
+            self.write(".gitignore", b".scheda/\n.isolated/\n");
+            fixture::commit_all(&self.0);
+            if self.0.join(".isolated").is_dir() {
+                fixture::commit_all(&self.0.join(".isolated"));
+            }
+        }
+
         fn declarations(&self) -> Declarations {
-            collection::load(&self.0).unwrap()
+            self.commit();
+            collection::load(&fixture::snap(&self.0)).unwrap()
+        }
+
+        /// A snapshot of the commit that holds the files now, in the
+        /// repository `decl` lives in.
+        fn snap(&self, decl: &Declaration) -> Snap {
+            self.commit();
+            Repos::new(&self.0).snapshot(decl.repo()).unwrap()
+        }
+
+        fn views(&self) -> Views {
+            self.commit();
+            Repos::new(&self.0).views().unwrap()
         }
     }
 
@@ -794,7 +794,7 @@ mod tests {
             Some(VaultErrorCode::InvalidArgument)
         );
         assert_eq!(
-            code_of(read(&scratch.0, &log, "a", None).unwrap_err()),
+            code_of(read(&scratch.snap(&log), &log, "a", None).unwrap_err()),
             Some(VaultErrorCode::InvalidArgument)
         );
     }
@@ -813,13 +813,12 @@ mod tests {
             ("inbox", "today"),
         ] {
             let decl = decl(&declarations, name);
-            assert_eq!(read(&scratch.0, &decl, id, None).unwrap(), None);
+            assert_eq!(read(&scratch.snap(&decl), &decl, id, None).unwrap(), None);
             let encoded = encode(&decl, id, &png, None).unwrap();
             assert_eq!(&*encoded.bytes, png.as_slice());
-            atomic_write(&scratch.0.join(&encoded.path), &encoded.bytes).unwrap();
-            assert_eq!(std::fs::read(scratch.0.join(&encoded.path)).unwrap(), png);
+            scratch.write(&encoded.path, &encoded.bytes);
             assert_eq!(
-                read(&scratch.0, &decl, id, None).unwrap(),
+                read(&scratch.snap(&decl), &decl, id, None).unwrap(),
                 Some(png.clone())
             );
         }
@@ -831,11 +830,12 @@ mod tests {
         scratch.declare("notes", "  standard: {}\n");
         scratch.write("notes/a/b", b"x");
         let notes = decl(&scratch.declarations(), "notes");
-        assert_eq!(read(&scratch.0, &notes, "missing", None).unwrap(), None);
-        assert_eq!(read(&scratch.0, &notes, "a", None).unwrap(), None);
-        assert_eq!(read(&scratch.0, &notes, "a/b/c", None).unwrap(), None);
+        let snap = scratch.snap(&notes);
+        assert_eq!(read(&snap, &notes, "missing", None).unwrap(), None);
+        assert_eq!(read(&snap, &notes, "a", None).unwrap(), None);
+        assert_eq!(read(&snap, &notes, "a/b/c", None).unwrap(), None);
         assert_eq!(
-            read(&scratch.0, &notes, "a/b", None).unwrap(),
+            read(&snap, &notes, "a/b", None).unwrap(),
             Some(b"x".to_vec())
         );
     }
@@ -849,7 +849,7 @@ mod tests {
         std::os::unix::fs::symlink(scratch.0.join("outside"), scratch.0.join("notes/link"))
             .unwrap();
         let notes = decl(&scratch.declarations(), "notes");
-        let fault = read(&scratch.0, &notes, "link", None).unwrap_err();
+        let fault = read(&scratch.snap(&notes), &notes, "link", None).unwrap_err();
         assert_eq!(fault.path(), Some("notes/link"));
         assert_eq!(code_of(fault), Some(VaultErrorCode::InvalidArgument));
     }
@@ -877,17 +877,18 @@ mod tests {
                     .bytes
                     .starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----")
             );
-            atomic_write(&scratch.0.join(&encoded.path), &encoded.bytes).unwrap();
+            scratch.write(&encoded.path, &encoded.bytes);
+            let snap = scratch.snap(&decl);
             assert_eq!(
-                read(&scratch.0, &decl, id, Some(&secret)).unwrap(),
+                read(&snap, &decl, id, Some(&secret)).unwrap(),
                 Some(png.clone())
             );
             assert_eq!(
-                code_of(read(&scratch.0, &decl, id, None).unwrap_err()),
+                code_of(read(&snap, &decl, id, None).unwrap_err()),
                 Some(VaultErrorCode::Crypto)
             );
             let wrong = test_passphrase("wrong");
-            let fault = read(&scratch.0, &decl, id, Some(&wrong)).unwrap_err();
+            let fault = read(&snap, &decl, id, Some(&wrong)).unwrap_err();
             assert_eq!(fault.path(), Some(encoded.path.as_str()));
             assert_eq!(code_of(fault), Some(VaultErrorCode::Crypto));
             assert_eq!(
@@ -910,11 +911,11 @@ mod tests {
             Some(VaultErrorCode::Unimplemented)
         );
         assert_eq!(
-            code_of(read(&scratch.0, &decl, "a", Some(&secret)).unwrap_err()),
+            code_of(read(&scratch.snap(&decl), &decl, "a", Some(&secret)).unwrap_err()),
             Some(VaultErrorCode::Unimplemented)
         );
         assert_eq!(
-            code_of(check_documents(&scratch.0, &scratch.declarations(), None).unwrap_err()),
+            code_of(check_documents(&scratch.views(), &scratch.declarations(), None).unwrap_err()),
             Some(VaultErrorCode::Unimplemented)
         );
     }
@@ -932,7 +933,6 @@ mod tests {
             "notes/a/y.md",
             "notes/c/d/e/f",
             "notes/.hidden",
-            "notes/.git/ignored",
             "notes/-/under",
             "notes/Z",
         ] {
@@ -941,7 +941,8 @@ mod tests {
         // A directory that is not a slug is not part of the collection.
         scratch.write("notes/ bad/q", b"q");
         let notes = decl(&scratch.declarations(), "notes");
-        let mut walk = Walk::new(&scratch.0, &notes, None).unwrap();
+        let snap = scratch.snap(&notes);
+        let mut walk = Walk::new(&snap, &notes, None).unwrap();
         let walked = ids(&mut walk);
         let mut sorted = walked.clone();
         sorted.sort();
@@ -955,49 +956,47 @@ mod tests {
     }
 
     #[test]
-    fn the_walk_opens_a_file_only_when_asked_to_read_the_current_one() {
+    fn the_walk_reads_a_blob_only_when_asked_to_read_the_current_one() {
         let scratch = Scratch::new("lazy");
         scratch.declare("notes", "  standard: {}\n  encrypted: false\n");
         scratch.write("notes/a", b"first");
         scratch.write("notes/b", b"second");
         let notes = decl(&scratch.declarations(), "notes");
-        let mut walk = Walk::new(&scratch.0, &notes, None).unwrap();
+        let snap = scratch.snap(&notes);
+        // The object of `a` is gone: listing it is no obstacle, reading it is.
+        let id = snap.lookup("notes/a").unwrap().unwrap().id.to_string();
+        std::fs::remove_file(scratch.0.join(".git/objects").join(&id[..2]).join(&id[2..])).unwrap();
+        let mut walk = Walk::new(&snap, &notes, None).unwrap();
         assert_eq!(walk.read().unwrap(), None, "before the first id");
-        // A file that cannot be opened is no obstacle to listing it.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let path = scratch.0.join("notes/a");
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
-            assert_eq!(walk.next_id().unwrap(), Some("a"));
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
-        }
-        #[cfg(not(unix))]
         assert_eq!(walk.next_id().unwrap(), Some("a"));
-        assert_eq!(walk.read().unwrap(), Some(b"first".to_vec()));
+        assert!(walk.read().is_err());
         assert_eq!(walk.next_id().unwrap(), Some("b"));
         assert_eq!(walk.read().unwrap(), Some(b"second".to_vec()));
-        std::fs::remove_file(scratch.0.join("notes/b")).unwrap();
-        assert_eq!(
-            walk.read().unwrap(),
-            None,
-            "the file went after it was listed"
-        );
         assert_eq!(walk.next_id().unwrap(), None);
     }
 
     #[test]
-    fn the_walk_lists_a_directory_when_it_reaches_it() {
+    fn the_walk_reads_the_commit_it_started_on_whatever_is_committed_after() {
         let scratch = Scratch::new("deferred");
         scratch.declare("notes", "  standard: {}\n");
         scratch.write("notes/a/x", b"x");
         scratch.write("notes/b/y", b"y");
         let notes = decl(&scratch.declarations(), "notes");
-        let mut walk = Walk::new(&scratch.0, &notes, None).unwrap();
+        let snap = scratch.snap(&notes);
+        let mut walk = Walk::new(&snap, &notes, None).unwrap();
         assert_eq!(walk.next_id().unwrap(), Some("a/x"));
-        // A file added to a directory the walk has not reached is seen.
+        // A commit made after the walk started: a file added to a folder the
+        // walk has not reached, one changed, one gone.
         scratch.write("notes/b/w", b"w");
-        assert_eq!(ids(&mut walk), ["b/w", "b/y"]);
+        scratch.write("notes/a/x", b"changed");
+        std::fs::remove_file(scratch.0.join("notes/b/y")).unwrap();
+        scratch.commit();
+        assert_eq!(walk.read().unwrap(), Some(b"x".to_vec()));
+        assert_eq!(ids(&mut walk), ["b/y"]);
+        assert_eq!(walk.read().unwrap(), None, "the walk is at its end");
+        let again = scratch.snap(&notes);
+        let mut next = Walk::new(&again, &notes, None).unwrap();
+        assert_eq!(ids(&mut next), ["a/x", "b/w"]);
     }
 
     #[test]
@@ -1009,12 +1008,14 @@ mod tests {
         let declarations = scratch.declarations();
         for name in ["notes", "diary", "inbox"] {
             let decl = decl(&declarations, name);
-            let mut walk = Walk::new(&scratch.0, &decl, None).unwrap();
+            let snap = scratch.snap(&decl);
+            let mut walk = Walk::new(&snap, &decl, None).unwrap();
             assert_eq!(walk.next_id().unwrap(), None, "{name}");
         }
         std::fs::remove_dir_all(scratch.0.join("notes")).unwrap();
         let notes = decl(&declarations, "notes");
-        let mut walk = Walk::new(&scratch.0, &notes, None).unwrap();
+        let snap = scratch.snap(&notes);
+        let mut walk = Walk::new(&snap, &notes, None).unwrap();
         assert_eq!(walk.next_id().unwrap(), None);
     }
 
@@ -1029,12 +1030,11 @@ mod tests {
         scratch.write("diary/not-here", b"4");
         let declarations = scratch.declarations();
         let inbox = decl(&declarations, "inbox");
-        assert_eq!(
-            ids(&mut Walk::new(&scratch.0, &inbox, None).unwrap()),
-            ["only"]
-        );
+        let snap = scratch.snap(&inbox);
+        assert_eq!(ids(&mut Walk::new(&snap, &inbox, None).unwrap()), ["only"]);
         let diary = decl(&declarations, "diary");
-        let mut walk = Walk::new(&scratch.0, &diary, None).unwrap();
+        let snap = scratch.snap(&diary);
+        let mut walk = Walk::new(&snap, &diary, None).unwrap();
         assert_eq!(walk.next_id().unwrap(), Some("a/b"));
         assert_eq!(walk.read().unwrap(), Some(b"3".to_vec()));
         assert_eq!(walk.next_id().unwrap(), None);
@@ -1045,8 +1045,9 @@ mod tests {
         let scratch = Scratch::new("journal");
         scratch.declare("log", "  journal: {}\n");
         let log = decl(&scratch.declarations(), "log");
+        let snap = scratch.snap(&log);
         assert_eq!(
-            code_of(Walk::new(&scratch.0, &log, None).err().unwrap()),
+            code_of(Walk::new(&snap, &log, None).err().unwrap()),
             Some(VaultErrorCode::InvalidArgument)
         );
     }
@@ -1071,7 +1072,7 @@ mod tests {
         bytes.extend_from_slice(b"\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n");
         scratch.write("notes/img.png", &bytes);
         scratch.write("notes/text.md", b"<<<<<<< HEAD\nx\n>>>>>>> y\n");
-        let problems = check_documents(&scratch.0, &scratch.declarations(), None).unwrap();
+        let problems = check_documents(&scratch.views(), &scratch.declarations(), None).unwrap();
         assert!(problems.is_empty(), "{problems:?}");
     }
 
@@ -1094,7 +1095,7 @@ mod tests {
             )
             .unwrap();
         }
-        let problems = check_documents(&scratch.0, &scratch.declarations(), None).unwrap();
+        let problems = check_documents(&scratch.views(), &scratch.declarations(), None).unwrap();
         let mut expected = vec![
             (
                 VaultErrorCode::InvalidArgument,
@@ -1132,17 +1133,18 @@ mod tests {
         for id in ["a", "b"] {
             let plain = binary();
             let encoded = encode(&vault, id, &plain, Some(&right)).unwrap();
-            atomic_write(&scratch.0.join(&encoded.path), &encoded.bytes).unwrap();
+            scratch.write(&encoded.path, &encoded.bytes);
         }
         scratch.write("vault/plain", b"not armor");
+        let views = scratch.views();
         assert!(
-            check_documents(&scratch.0, &declarations, Some(&right))
+            check_documents(&views, &declarations, Some(&right))
                 .unwrap()
                 .len()
                 == 1
         );
         let wrong = test_passphrase("wrong");
-        let problems = check_documents(&scratch.0, &declarations, Some(&wrong)).unwrap();
+        let problems = check_documents(&views, &declarations, Some(&wrong)).unwrap();
         assert_eq!(
             codes_and_paths(&problems),
             [
@@ -1152,10 +1154,10 @@ mod tests {
             ]
         );
         // Without a secret the files cannot be opened: the check cannot run.
-        let error = check_documents(&scratch.0, &declarations, None).unwrap_err();
+        let error = check_documents(&views, &declarations, None).unwrap_err();
         assert!(error.is(VaultErrorCode::Crypto));
         let none = Encryption::default();
-        let error = check_documents(&scratch.0, &declarations, Some(&none)).unwrap_err();
+        let error = check_documents(&views, &declarations, Some(&none)).unwrap_err();
         assert!(error.is(VaultErrorCode::Crypto));
     }
 }

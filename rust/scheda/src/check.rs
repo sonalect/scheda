@@ -12,16 +12,15 @@
     expect(dead_code, reason = "the Check call is not built yet")
 )]
 
-use std::path::Path;
-
 use scheda_api::v1::{Problem, VaultErrorCode};
 
+use crate::collection::Declarations;
 use crate::documents::check_documents;
 use crate::error::{Context, Error, Fault};
 use crate::fs::check_scheda_owner_only;
-use crate::git;
-use crate::isolated::check_perimeter;
+use crate::isolated::{self, check_perimeter};
 use crate::journal::check_journals;
+use crate::repo::{self, Repo, Repos};
 use crate::vault::Vault;
 
 /// A problem with `code`, about the file at `path` (Vault-relative, POSIX)
@@ -48,8 +47,11 @@ pub(crate) fn problem_of(fault: &Fault) -> Problem {
 /// finished. The answer is git's own state; the bytes of a file are not
 /// looked at, so a binary file, or text that happens to look like a conflict
 /// marker, is not a conflict.
-pub(crate) fn check_unmerged(vault: &Path) -> Result<Vec<Problem>, Error> {
-    let paths = git::unmerged_paths(vault).context("check_unmerged: ask git")?;
+pub(crate) fn check_unmerged(repos: &Repos) -> Result<Vec<Problem>, Error> {
+    let Some(lease) = repos.lease(Repo::Main)? else {
+        return Ok(Vec::new());
+    };
+    let paths = repo::unmerged_paths(&lease).context("check_unmerged: ask git")?;
     Ok(paths
         .into_iter()
         .map(|path| {
@@ -62,20 +64,62 @@ pub(crate) fn check_unmerged(vault: &Path) -> Result<Vec<Problem>, Error> {
         .collect())
 }
 
+/// Every file of the collections of the Vault that a person changed and did
+/// not commit is a `FAILED_PRECONDITION` problem with its path: a file
+/// modified, deleted, staged, or new inside a collection directory differs
+/// from what the Vault stores, which is the commit `HEAD` names. The
+/// Vault's reads do not see such a file and its writes do not commit it.
+pub(crate) fn check_changed(
+    repos: &Repos,
+    declarations: &Declarations,
+) -> Result<Vec<Problem>, Error> {
+    let mut problems = Vec::new();
+    for repo in [Repo::Main, Repo::Isolated] {
+        let dirs: Vec<String> = declarations
+            .iter()
+            .filter(|decl| decl.repo() == repo)
+            .map(|decl| decl.name().to_owned())
+            .collect();
+        let Some(lease) = repos.lease(repo)? else {
+            continue;
+        };
+        for path in repo::changed_paths(&lease, &dirs).context("check_changed: ask git")? {
+            let path = match repo {
+                Repo::Main => path,
+                Repo::Isolated => format!("{}/{path}", isolated::DIR),
+            };
+            let message = format!("{path} differs from what the Vault stores");
+            problems.push(problem(
+                VaultErrorCode::FailedPrecondition,
+                Some(&path),
+                message,
+            ));
+        }
+    }
+    Ok(problems)
+}
+
 /// Runs every check over `vault` and returns the problems, in the order of
 /// the layers: the owner-only modes of `.scheda/`, the unmerged entries, the
 /// perimeter of the isolated tree, the Document files, the journal
-/// segments. No problem means the Vault is sound as far as the checks go.
+/// segments (the last two over the commits `HEAD` names), and the files a
+/// person changed and did not commit. No problem means the Vault is sound as
+/// far as the checks go.
 ///
 /// It fails only when a check cannot run; see the checks for when.
 pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
     let path = vault.path();
+    let repos = vault.repos();
     let mut problems = check_scheda_owner_only(path).context("check: .scheda")?;
-    problems.extend(check_unmerged(path)?);
-    problems.extend(check_perimeter(path)?);
-    let declarations = vault.declarations_now().context("check: the collections")?;
-    problems.extend(check_documents(path, &declarations, vault.encryption())?);
-    problems.extend(check_journals(path, &declarations)?);
+    problems.extend(check_unmerged(repos)?);
+    problems.extend(check_perimeter(repos)?);
+    let views = repos.views()?;
+    let declarations = vault
+        .declarations_in(views.of(Repo::Main))
+        .context("check: the collections")?;
+    problems.extend(check_documents(&views, &declarations, vault.encryption())?);
+    problems.extend(check_journals(&views, &declarations)?);
+    problems.extend(check_changed(repos, &declarations)?);
     Ok(problems)
 }
 
@@ -245,8 +289,8 @@ mod tests {
     fn two_problems_in_one_vault_are_both_reported() {
         let scratch = Scratch::vault("both");
         scratch.write("log/00000001-w.jsonl", b"a: 1\nbroken\n");
-        conflict(&scratch, "notes/clash.md");
         scratch.write("notes/ bad name", b"x");
+        conflict(&scratch, "notes/clash.md");
         let vault = scratch.open();
         let problems = run(&vault).unwrap();
         assert_eq!(
@@ -298,6 +342,83 @@ mod tests {
                 ]
             );
         }
+    }
+
+    #[test]
+    fn files_a_person_changed_and_did_not_commit_are_listed_and_a_write_does_not_clear_them() {
+        use scheda_api::v1::{Document, DocumentCreation, DocumentUpsert};
+
+        let write_of = |collection: &str, id: &str, raw: &[u8]| DocumentUpsert {
+            document: Document {
+                collection: Some(collection.to_owned()),
+                id: Some(id.to_owned()),
+                raw: Some(raw.to_vec()),
+                ..Default::default()
+            }
+            .into(),
+            note: Some("test".to_owned()),
+            ..Default::default()
+        };
+        let scratch = Scratch::vault("changed");
+        for rel in ["notes/a.md", "notes/b.md", "notes/c.md"] {
+            scratch.write(rel, b"one");
+        }
+        scratch.write("draft.txt", b"outside the collections");
+        scratch.commit("fixture");
+        let vault = scratch.open();
+        vault
+            .create_document(DocumentCreation {
+                document: write_of("diary", "d", b"secret").document,
+                note: Some("test".to_owned()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(run(&vault).unwrap().is_empty());
+        scratch.write("notes/a.md", b"modified");
+        std::fs::remove_file(scratch.0.join("notes/b.md")).unwrap();
+        scratch.write("notes/c.md", b"staged");
+        assert!(scratch.git(&["add", "notes/c.md"]));
+        scratch.write("notes/new.md", b"new");
+        scratch.write("draft.txt", b"outside, edited");
+        scratch.write(".isolated/diary/d", b"edited secret");
+        let expected = [
+            (
+                VaultErrorCode::FailedPrecondition,
+                ".isolated/diary/d".to_owned(),
+            ),
+            (VaultErrorCode::FailedPrecondition, "notes/a.md".to_owned()),
+            (VaultErrorCode::FailedPrecondition, "notes/b.md".to_owned()),
+            (VaultErrorCode::FailedPrecondition, "notes/c.md".to_owned()),
+            (
+                VaultErrorCode::FailedPrecondition,
+                "notes/new.md".to_owned(),
+            ),
+        ];
+        assert_eq!(found(&run(&vault).unwrap()), expected);
+        // A write of the same Document lands in HEAD; the person's file still
+        // differs from what the Vault stores.
+        vault
+            .upsert_document(write_of("notes", "a.md", b"by the API"))
+            .unwrap();
+        assert_eq!(found(&run(&vault).unwrap()), expected);
+        // Once the person commits what they have, nothing differs.
+        assert!(scratch.git(&["add", "--all"]));
+        assert!(scratch.git(&["commit", "--quiet", "--message", "by hand"]));
+        let nested = scratch.0.join(".isolated");
+        let mut cmd = git().current_dir(&nested);
+        for arg in ["commit", "--quiet", "--all", "--message", "by hand"] {
+            cmd = cmd.arg(arg);
+        }
+        assert!(
+            cmd.env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.test")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.test")
+                .spawn()
+                .unwrap()
+                .success()
+        );
+        assert!(run(&vault).unwrap().is_empty());
     }
 
     #[test]

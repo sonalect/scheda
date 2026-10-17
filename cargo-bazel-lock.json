@@ -1,5 +1,5 @@
 {
-  "checksum": "1c930c197c79cdc244e090433f5de9773f9778644723fa3a1720f50a1bae1767",
+  "checksum": "caade3a43465f0a52ee8d6a6faeb5ca6ee78dde3506cb50365a004d018f8de5f",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -1438,9 +1438,29 @@
     },
     "bitflags 2.13.2": {
       "common_attrs": {
-        "crate_features": [
-          "std"
-        ],
+        "crate_features": {
+          "common": [],
+          "selects": {
+            "aarch64-apple-darwin": [
+              "std"
+            ],
+            "aarch64-unknown-linux-gnu": [
+              "std"
+            ],
+            "wasm32-unknown-unknown": [
+              "std"
+            ],
+            "wasm32-wasip1": [
+              "std"
+            ],
+            "x86_64-unknown-linux-gnu": [
+              "std"
+            ],
+            "x86_64-unknown-nixos-gnu": [
+              "std"
+            ]
+          }
+        },
         "edition": "2021"
       },
       "library_target_name": "bitflags",
@@ -6742,6 +6762,56 @@
       ],
       "version": "0.5.1"
     },
+    "git2 0.21.0": {
+      "common_attrs": {
+        "crate_features": [
+          "vendored-libgit2"
+        ],
+        "deps": [
+          {
+            "id": "bitflags 2.13.2",
+            "target": "bitflags"
+          },
+          {
+            "id": "libc 0.2.190",
+            "target": "libc"
+          },
+          {
+            "id": "libgit2-sys 0.18.8+1.9.7",
+            "target": "libgit2_sys"
+          },
+          {
+            "id": "log 0.4.34",
+            "target": "log"
+          }
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "git2",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "git2",
+      "package_url": "https://github.com/rust-lang/git2-rs",
+      "repository": {
+        "Http": {
+          "sha256": "ddddbf932745a6be37109b6112d3ee09696106f848449069d3a57bba937ab82e",
+          "url": "https://static.crates.io/crates/git2/0.21.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "git2",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.21.0"
+    },
     "group 0.13.0": {
       "common_attrs": {
         "deps": [
@@ -9073,6 +9143,76 @@
       ],
       "version": "0.2.190"
     },
+    "libgit2-sys 0.18.8+1.9.7": {
+      "build_script_attrs": {
+        "deps": [
+          {
+            "id": "cc 1.8.0",
+            "target": "cc"
+          },
+          {
+            "id": "pkg-config 0.3.34",
+            "target": "pkg_config"
+          }
+        ],
+        "link_deps": [
+          {
+            "id": "libz-sys 1.1.30",
+            "target": "libz_sys"
+          }
+        ],
+        "links": "git2"
+      },
+      "common_attrs": {
+        "crate_features": [
+          "vendored"
+        ],
+        "deps": [
+          {
+            "id": "libc 0.2.190",
+            "target": "libc"
+          },
+          {
+            "id": "libz-sys 1.1.30",
+            "target": "libz_sys"
+          }
+        ],
+        "edition": "2021",
+        "extra_deps": [
+          ":build_script_build"
+        ]
+      },
+      "library_target_name": "libgit2_sys",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "libgit2-sys",
+      "package_url": "https://github.com/rust-lang/git2-rs",
+      "repository": {
+        "Http": {
+          "sha256": "7f7c568b25d7489bc3fb2988ed69ab111d2944d2f5fec3d5c987fe545ea97b50",
+          "url": "https://static.crates.io/crates/libgit2-sys/0.18.8+1.9.7/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "libgit2_sys",
+            "crate_root": "lib.rs"
+          }
+        },
+        {
+          "BuildScript": {
+            "crate_name": "build_script_build",
+            "crate_root": "build.rs"
+          }
+        }
+      ],
+      "version": "0.18.8+1.9.7"
+    },
     "libyaml-rs 0.3.0": {
       "common_attrs": {
         "edition": "2021"
@@ -9100,6 +9240,70 @@
         }
       ],
       "version": "0.3.0"
+    },
+    "libz-sys 1.1.30": {
+      "build_script_attrs": {
+        "deps": [
+          {
+            "id": "cc 1.8.0",
+            "target": "cc"
+          },
+          {
+            "id": "pkg-config 0.3.34",
+            "target": "pkg_config"
+          },
+          {
+            "id": "vcpkg 0.2.15",
+            "target": "vcpkg"
+          }
+        ],
+        "links": "z"
+      },
+      "common_attrs": {
+        "crate_features": [
+          "libc"
+        ],
+        "deps": [
+          {
+            "id": "libc 0.2.190",
+            "target": "libc"
+          }
+        ],
+        "edition": "2018",
+        "extra_deps": [
+          ":build_script_build"
+        ]
+      },
+      "library_target_name": "libz_sys",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "libz-sys",
+      "package_url": "https://github.com/rust-lang/libz-sys",
+      "repository": {
+        "Http": {
+          "sha256": "f710a23e6dbf193214fd46ca56a9d6864e550abe86202184532ae7275e46de19",
+          "url": "https://static.crates.io/crates/libz-sys/1.1.30/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "libz_sys",
+            "crate_root": "src/lib.rs"
+          }
+        },
+        {
+          "BuildScript": {
+            "crate_name": "build_script_build",
+            "crate_root": "build.rs"
+          }
+        }
+      ],
+      "version": "1.1.30"
     },
     "link-cplusplus 1.0.12": {
       "build_script_attrs": {
@@ -13518,6 +13722,14 @@
             "target": "cxx"
           },
           {
+            "id": "git2 0.21.0",
+            "target": "git2"
+          },
+          {
+            "id": "libgit2-sys 0.18.8+1.9.7",
+            "target": "libgit2_sys"
+          },
+          {
             "id": "protocontract 0.3.1",
             "target": "protocontract"
           },
@@ -13544,10 +13756,6 @@
           {
             "id": "sha1 0.11.0",
             "target": "sha1"
-          },
-          {
-            "id": "sha2 0.11.1",
-            "target": "sha2"
           },
           {
             "id": "tantivy 0.26.2",
@@ -17470,6 +17678,35 @@
       ],
       "version": "1.28.0"
     },
+    "vcpkg 0.2.15": {
+      "common_attrs": {
+        "edition": "2015"
+      },
+      "library_target_name": "vcpkg",
+      "license": "MIT/Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "vcpkg",
+      "package_url": "https://github.com/mcgoo/vcpkg-rs",
+      "repository": {
+        "Http": {
+          "sha256": "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426",
+          "url": "https://static.crates.io/crates/vcpkg/0.2.15/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "vcpkg",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.2.15"
+    },
     "version_check 0.9.5": {
       "common_attrs": {
         "edition": "2015"
@@ -19673,6 +19910,8 @@
     "buffa-types 0.9.2",
     "clap 4.6.7",
     "cxx 1.0.205",
+    "git2 0.21.0",
+    "libgit2-sys 0.18.8+1.9.7",
     "mimalloc 3.5.3",
     "model2vec-rs 0.3.0",
     "protocontract 0.3.1",

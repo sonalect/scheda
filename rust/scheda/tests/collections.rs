@@ -61,6 +61,19 @@ fn put_document(path: &Path, rel: &str) {
     git(path, &["commit", "--quiet", "--message", "a Document"]);
 }
 
+/// A Document file put into the nested repository of the isolated
+/// collections by plain git, as a person does. `rel` is below `.isolated/`.
+fn put_isolated_document(path: &Path, rel: &str) {
+    let nested = path.join(".isolated");
+    std::fs::create_dir_all(&nested).unwrap();
+    if !nested.join(".git").exists() {
+        git(&nested, &["init", "--quiet"]);
+    }
+    write(&nested, rel, "a Document");
+    git(&nested, &["add", "--all"]);
+    git(&nested, &["commit", "--quiet", "--message", "a Document"]);
+}
+
 fn subject(path: &Path) -> String {
     git_out(path, &["log", "-1", "--format=%s"])
 }
@@ -236,7 +249,7 @@ fn the_kind_isolated_and_encrypted_change_only_while_the_collection_is_empty() {
     vault.create_collection(standard("notes")).unwrap();
     vault.create_collection(isolated("iso")).unwrap();
     put_document(&path, "notes/a.md");
-    write(&path, ".isolated/iso/a.md", "a Document");
+    put_isolated_document(&path, "iso/a.md");
     let before = commits(&path);
     for changed in [
         json!({"name": "notes", "schema": {"journal": {}}}),
@@ -275,7 +288,7 @@ fn delete_refuses_a_collection_with_documents_and_changes_nothing() {
     vault.create_collection(isolated("iso")).unwrap();
     put_document(&path, "notes/a.md");
     put_document(&path, "log/00000001-w.jsonl");
-    write(&path, ".isolated/iso/a.md", "a Document");
+    put_isolated_document(&path, "iso/a.md");
     let before = commits(&path);
     for name in ["notes", "log", "iso"] {
         let error = vault.delete_collection(deletion(name)).unwrap_err();

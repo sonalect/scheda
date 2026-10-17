@@ -9,8 +9,10 @@
 //! `{date}-{seq}-{writer}.jsonl`; the writer in the name keeps two clones of
 //! one Vault from appending to the same file.
 //!
-//! This module reads segments, names them, and decides when one is full.
-//! Appending a line, and the id maps of the Index, belong to the writes.
+//! This module reads segments, names them, and decides when one is full. It
+//! reads the segments of a snapshot of the commit `HEAD` names, never the
+//! work tree. Appending a line, and the id maps of the Index, belong to the
+//! writes. A segment is named here by its Vault-relative path.
 
 // The layers that append lines and index journals call the rest.
 #![cfg_attr(
@@ -22,8 +24,6 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
-use std::fs::{self, File};
-use std::io::{BufRead, BufReader, Read};
 use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -32,10 +32,10 @@ use scheda_api::v1::{Problem, VaultErrorCode};
 
 use crate::check::problem;
 use crate::collection::{DEFAULT_SEGMENT_MAX_BYTES, Declaration, Declarations, Kind};
-use crate::error::{Context, Error, Fault, io};
-use crate::fs::{find_symlinks, reject_symlinks, rel_of};
+use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
 use crate::isolated;
+use crate::repo::{NodeKind, Snap, Views};
 
 fn invalid(message: impl Into<String>) -> Fault {
     Fault::new(VaultErrorCode::InvalidArgument, message)
@@ -154,37 +154,43 @@ impl Limits {
 
 /// The segment files of a journal, in append order: sequence files before
 /// daily ones, then by date, sequence, writer, and name. Only plain
-/// `*.jsonl` files count; a hidden name and a symlink do not. A missing
-/// directory has none; a symlink on the way to it is `INVALID_ARGUMENT`.
-pub(crate) fn list_segments(vault: &Path, decl: &Declaration) -> Result<Vec<PathBuf>, Fault> {
+/// `*.jsonl` files count; a hidden name and a symlink do not. A journal with
+/// no directory in the commit has none; a symlink on the way to it is
+/// `INVALID_ARGUMENT`. The paths are Vault-relative.
+pub(crate) fn list_segments(snap: &Snap, decl: &Declaration) -> Result<Vec<PathBuf>, Fault> {
     require_journal(decl)?;
-    let dir = isolated::records_dir(vault, decl);
-    reject_symlinks(vault, &dir)?;
-    let rel = rel_of(vault, &dir)?;
-    let meta = match fs::metadata(&dir) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(io(err).with_path(rel)),
-    };
-    if !meta.is_dir() {
-        return Err(invalid("the journal is not a directory").with_path(rel));
+    let dir = isolated::vault_rel(decl, "");
+    let dir = dir.trim_end_matches('/');
+    match snap.lookup(dir)? {
+        None => return Ok(Vec::new()),
+        Some(node) if node.kind != NodeKind::Dir => {
+            return Err(invalid("the journal is not a directory").with_path(dir));
+        }
+        Some(_) => {}
     }
     let mut out = Vec::new();
-    for entry in fs::read_dir(&dir).map_err(|err| io(err).with_path(rel.as_str()))? {
-        let entry = entry.map_err(|err| io(err).with_path(rel.as_str()))?;
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        if name.starts_with('.') || !name.ends_with(".jsonl") {
+    for child in snap.list(dir)?.unwrap_or_default() {
+        if child.name.starts_with('.') || !child.name.ends_with(".jsonl") {
             continue;
         }
-        let is_file = entry.file_type().is_ok_and(|kind| kind.is_file());
-        if is_file {
-            out.push(entry.path());
+        if child.node.kind == NodeKind::File {
+            out.push(PathBuf::from(format!("{dir}/{}", child.name)));
         }
     }
     out.sort_by_cached_key(|path| segment_order(path));
     Ok(out)
+}
+
+/// The Vault-relative form of a segment path, with `/` on every platform.
+pub(crate) fn rel_str(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+/// The bytes of the segment `path` in the commit of `snap`; `None` when the
+/// commit holds no such file.
+fn read_segment(snap: &Snap, path: &Path) -> Result<Option<Vec<u8>>, Fault> {
+    let rel = rel_str(path);
+    Ok(snap.read(&rel)?.map(|blob| blob.bytes))
 }
 
 fn require_journal(decl: &Declaration) -> Result<(), Fault> {
@@ -199,29 +205,28 @@ fn require_journal(decl: &Declaration) -> Result<(), Fault> {
 }
 
 /// A lazy walk of the lines of a journal in append order: segment by
-/// segment, line by line. A segment is opened when the walk reaches it and
-/// read through a buffer; no line is held after it is returned.
+/// segment, line by line, over the commit of the snapshot it was given. A
+/// segment is read when the walk reaches it; no line is held after it is
+/// returned.
 ///
 /// A tail without `\n` and a line that does not parse are
 /// `INVALID_ARGUMENT` with the path of the segment, and end the walk.
 pub(crate) struct JournalLines<'a> {
-    vault: &'a Path,
+    snap: &'a Snap,
     segments: Vec<PathBuf>,
     next_segment: usize,
-    reader: Option<(BufReader<File>, String)>,
-    buf: Vec<u8>,
+    open: Option<(Vec<u8>, usize, String)>,
     done: bool,
 }
 
 impl<'a> JournalLines<'a> {
     /// Starts a walk of `decl`, a journal.
-    pub(crate) fn new(vault: &'a Path, decl: &Declaration) -> Result<JournalLines<'a>, Fault> {
+    pub(crate) fn new(snap: &'a Snap, decl: &Declaration) -> Result<JournalLines<'a>, Fault> {
         Ok(JournalLines {
-            vault,
-            segments: list_segments(vault, decl)?,
+            snap,
+            segments: list_segments(snap, decl)?,
             next_segment: 0,
-            reader: None,
-            buf: Vec::new(),
+            open: None,
             done: false,
         })
     }
@@ -229,36 +234,34 @@ impl<'a> JournalLines<'a> {
     /// The next line, or `None` at the end.
     pub(crate) fn next_line(&mut self) -> Result<Option<Line>, Fault> {
         loop {
-            let (mut reader, rel) = match self.reader.take() {
+            let (bytes, at, rel) = match self.open.take() {
                 Some(open) => open,
                 None => {
                     let Some(path) = self.segments.get(self.next_segment) else {
                         return Ok(None);
                     };
                     self.next_segment += 1;
-                    let rel = rel_of(self.vault, path)?;
-                    let file = File::open(path).map_err(|err| io(err).with_path(rel.as_str()))?;
-                    (BufReader::new(file), rel)
+                    let rel = rel_str(path);
+                    let Some(bytes) = read_segment(self.snap, path)? else {
+                        continue;
+                    };
+                    (bytes, 0, rel)
                 }
             };
-            self.buf.clear();
-            let read = reader
-                .read_until(b'\n', &mut self.buf)
-                .map_err(|err| io(err).with_path(rel.as_str()))?;
-            if read == 0 {
+            if at >= bytes.len() {
                 continue;
             }
-            if self.buf.pop() != Some(b'\n') {
+            let Some(len) = bytes[at..].iter().position(|byte| *byte == b'\n') else {
                 return Err(invalid("the segment ends in a line without a newline").with_path(rel));
-            }
-            let line = parse_line(&self.buf).map_err(|fault| {
+            };
+            let line = parse_line(&bytes[at..at + len]).map_err(|fault| {
                 invalid(format!(
                     "the segment has a broken line: {}",
                     fault.message()
                 ))
                 .with_path(rel.as_str())
             })?;
-            self.reader = Some((reader, rel));
+            self.open = Some((bytes, at + len + 1, rel));
             return Ok(Some(line));
         }
     }
@@ -291,15 +294,13 @@ impl FusedIterator for JournalLines<'_> {}
 /// does not parse and a torn tail are passed over. The first line with the
 /// id is the answer; `None` when there is none.
 pub(crate) fn find_journal_scan(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     id: &str,
 ) -> Result<Option<Line>, Fault> {
-    for path in list_segments(vault, decl)? {
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => return Err(io(err).with_path(rel_of(vault, &path)?)),
+    for path in list_segments(snap, decl)? {
+        let Some(bytes) = read_segment(snap, &path)? else {
+            continue;
         };
         if let Some(line) = parse_segment(&bytes).into_iter().find(|line| line.id == id) {
             return Ok(Some(line));
@@ -428,26 +429,32 @@ fn segment_date_stem(stem: &str) -> Option<&str> {
     }
 }
 
-/// Whether the segment at `path` cannot take a line of `line_len` bytes
-/// more. A segment that does not exist or is empty is never full. Otherwise
-/// it is full when:
+/// Whether the segment at `path` (Vault-relative), as the commit of `snap`
+/// holds it, cannot take a line of `line_len` bytes more. A segment that
+/// does not exist or is empty is never full. Otherwise it is full when:
 ///
 /// - the collection rotates daily and the segment is not from `today`
 ///   (`YYYY-MM-DD`, UTC);
 /// - the line would take it over the byte limit;
 /// - it already holds the most lines the limit allows.
 pub(crate) fn segment_is_full(
+    snap: &Snap,
     path: &Path,
     limits: &Limits,
     line_len: u64,
     today: &str,
 ) -> Result<bool, Fault> {
-    let size = match fs::metadata(path) {
-        Ok(meta) => meta.len(),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(err) => return Err(io(err)),
+    let Some(size) = snap.size(&rel_str(path))? else {
+        return Ok(false);
     };
-    segment_is_full_by(path, size, || count_newlines(path), limits, line_len, today)
+    segment_is_full_by(
+        path,
+        size,
+        || count_newlines(snap, path),
+        limits,
+        line_len,
+        today,
+    )
 }
 
 /// [`segment_is_full`] for a segment whose size is known and whose lines
@@ -477,17 +484,9 @@ fn segment_is_full_by(
     Ok(false)
 }
 
-fn count_newlines(path: &Path) -> Result<u64, Fault> {
-    let mut file = File::open(path).map_err(io)?;
-    let mut buf = [0u8; 8192];
-    let mut lines = 0u64;
-    loop {
-        let n = file.read(&mut buf).map_err(io)?;
-        if n == 0 {
-            return Ok(lines);
-        }
-        lines += buf[..n].iter().filter(|byte| **byte == b'\n').count() as u64;
-    }
+fn count_newlines(snap: &Snap, path: &Path) -> Result<u64, Fault> {
+    let bytes = read_segment(snap, path)?.unwrap_or_default();
+    Ok(bytes.iter().filter(|byte| **byte == b'\n').count() as u64)
 }
 
 /// The name of the segment `writer` starts next, given the segments it
@@ -559,13 +558,13 @@ pub(crate) fn next_segment_name(
 /// segment, unless that is full, otherwise a new one named by
 /// [`next_segment_name`]. A segment of another writer is never chosen.
 pub(crate) fn segment_for_append(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     line_len: u64,
     writer: &str,
     today: &str,
 ) -> Result<PathBuf, Fault> {
-    segment_for_append_in(vault, decl, line_len, writer, today, &BTreeMap::new())
+    segment_for_append_in(snap, decl, line_len, writer, today, &BTreeMap::new())
 }
 
 /// [`segment_for_append`] for a call that appends several lines before any
@@ -573,7 +572,7 @@ pub(crate) fn segment_for_append(
 /// has appended to so far, by path. A segment in it is measured by those
 /// bytes, and one that is not on disk yet counts as a segment of the writer.
 pub(crate) fn segment_for_append_in(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     line_len: u64,
     writer: &str,
@@ -581,8 +580,8 @@ pub(crate) fn segment_for_append_in(
     pending: &BTreeMap<PathBuf, Vec<u8>>,
 ) -> Result<PathBuf, Fault> {
     let limits = Limits::of(decl)?;
-    let dir = isolated::records_dir(vault, decl);
-    let mut mine: Vec<PathBuf> = list_segments(vault, decl)?
+    let dir = PathBuf::from(isolated::vault_rel(decl, "").trim_end_matches('/'));
+    let mut mine: Vec<PathBuf> = list_segments(snap, decl)?
         .into_iter()
         .filter(|path| segment_belongs_to(path, writer))
         .collect();
@@ -605,7 +604,7 @@ pub(crate) fn segment_for_append_in(
                 line_len,
                 today,
             )?,
-            None => segment_is_full(last, &limits, line_len, today)?,
+            None => segment_is_full(snap, last, &limits, line_len, today)?,
         };
         if !full {
             return Ok(last.clone());
@@ -615,15 +614,13 @@ pub(crate) fn segment_for_append_in(
     Ok(dir.join(name))
 }
 
-/// Every id the lines of a journal have, from its segments. A line that
-/// does not parse and a torn tail are passed over.
-pub(crate) fn stored_ids(vault: &Path, decl: &Declaration) -> Result<HashSet<String>, Fault> {
+/// Every id the lines of a journal have, from its segments in the commit of
+/// `snap`. A line that does not parse and a torn tail are passed over.
+pub(crate) fn stored_ids(snap: &Snap, decl: &Declaration) -> Result<HashSet<String>, Fault> {
     let mut ids = HashSet::new();
-    for path in list_segments(vault, decl)? {
-        let bytes = match fs::read(&path) {
-            Ok(bytes) => bytes,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => return Err(io(err).with_path(rel_of(vault, &path)?)),
+    for path in list_segments(snap, decl)? {
+        let Some(bytes) = read_segment(snap, &path)? else {
+            continue;
         };
         ids.extend(parse_segment(&bytes).into_iter().map(|line| line.id));
     }
@@ -671,7 +668,7 @@ fn civil_from_unix_days(days: u64) -> (i64, u32, u32) {
 /// The payload is never checked: it is bytes (D20). The call fails only
 /// when it cannot run (an I/O failure).
 pub(crate) fn check_journals(
-    vault: &Path,
+    views: &Views,
     declarations: &Declarations,
 ) -> Result<Vec<Problem>, Error> {
     let mut problems = Vec::new();
@@ -679,10 +676,12 @@ pub(crate) fn check_journals(
         if decl.kind() != Kind::Journal {
             continue;
         }
-        let dir = isolated::records_dir(vault, decl);
-        let links = find_symlinks(vault, &dir).context("check_journals: look for symlinks")?;
+        let snap = views.of(decl.repo());
         let dir_rel = isolated::vault_rel(decl, "");
         let dir_rel = dir_rel.trim_end_matches('/');
+        let links = snap
+            .symlinks_below(dir_rel)
+            .context("check_journals: look for symlinks")?;
         let blocked = links
             .iter()
             .any(|link| dir_rel == link || dir_rel.starts_with(&format!("{link}/")));
@@ -697,20 +696,20 @@ pub(crate) fn check_journals(
         if blocked {
             continue;
         }
-        check_segments(vault, decl, &mut problems).context("check_journals: check the segments")?;
+        check_segments(snap, decl, &mut problems).context("check_journals: check the segments")?;
     }
     Ok(problems)
 }
 
 fn check_segments(
-    vault: &Path,
+    snap: &Snap,
     decl: &Declaration,
     problems: &mut Vec<Problem>,
 ) -> Result<(), Fault> {
     let mut seen = BTreeSet::new();
-    for path in list_segments(vault, decl)? {
-        let rel = rel_of(vault, &path)?;
-        let bytes = fs::read(&path).map_err(|err| io(err).with_path(rel.as_str()))?;
+    for path in list_segments(snap, decl)? {
+        let rel = rel_str(&path);
+        let bytes = read_segment(snap, &path)?.unwrap_or_default();
         let (lines, tail) = split_lines(&bytes);
         for (n, line) in lines.into_iter().enumerate() {
             match parse_line(line) {
@@ -758,9 +757,9 @@ mod tests {
         segment_belongs_to, segment_for_append, segment_is_full, segment_order, segment_writer,
         split_lines, today_utc,
     };
-    use crate::collection::{self, Declaration};
+    use crate::collection::{self, Declaration, Declarations};
     use crate::error::{Error, Fault};
-    use crate::fs::atomic_write;
+    use crate::repo::{Repos, Snap, Views, fixture};
 
     struct Scratch(PathBuf);
 
@@ -782,11 +781,35 @@ mod tests {
                 format!("name: {name}\nschema:\n{schema}"),
             )
             .unwrap();
-            collection::load(&self.0)
-                .unwrap()
-                .get(name)
-                .unwrap()
-                .clone()
+            self.declarations().get(name).unwrap().clone()
+        }
+
+        /// Commits what the files hold, in the Vault and in the nested
+        /// repository when there is one: reads see commits only.
+        fn commit(&self) {
+            // The nested repository is never tracked by the Vault.
+            self.write(".gitignore", b".scheda/\n.isolated/\n");
+            fixture::commit_all(&self.0);
+            if self.0.join(".isolated").is_dir() {
+                fixture::commit_all(&self.0.join(".isolated"));
+            }
+        }
+
+        fn declarations(&self) -> Declarations {
+            self.commit();
+            collection::load(&fixture::snap(&self.0)).unwrap()
+        }
+
+        /// A snapshot of the commit that holds the files now, in the
+        /// repository `decl` lives in.
+        fn snap(&self, decl: &Declaration) -> Snap {
+            self.commit();
+            Repos::new(&self.0).snapshot(decl.repo()).unwrap()
+        }
+
+        fn views(&self) -> Views {
+            self.commit();
+            Repos::new(&self.0).views().unwrap()
         }
 
         fn write(&self, rel: &str, bytes: &[u8]) {
@@ -869,13 +892,12 @@ mod tests {
         let mut bytes = encode_line("first", b"plain").unwrap();
         bytes.extend(encode_line("second", &payload).unwrap());
         assert_eq!(parse_segment(&bytes)[1].payload, payload, "parsed back");
-        atomic_write(&scratch.0.join("log/00000001-w.jsonl"), &bytes).unwrap();
-        let found = find_journal_scan(&scratch.0, &log, "second")
-            .unwrap()
-            .unwrap();
+        scratch.write("log/00000001-w.jsonl", &bytes);
+        let snap = scratch.snap(&log);
+        let found = find_journal_scan(&snap, &log, "second").unwrap().unwrap();
         assert_eq!(found.id, "second");
         assert_eq!(found.payload, payload);
-        assert_eq!(find_journal_scan(&scratch.0, &log, "third").unwrap(), None);
+        assert_eq!(find_journal_scan(&snap, &log, "third").unwrap(), None);
     }
 
     #[test]
@@ -908,7 +930,8 @@ mod tests {
         scratch.write("log/00000001-w.jsonl", b"a: 1\nb: 2\n");
         scratch.write("log/notes.txt", b"ignored: x\n");
         scratch.write("log/.hidden.jsonl", b"ignored: x\n");
-        let lines: Vec<_> = JournalLines::new(&scratch.0, &log)
+        let snap = scratch.snap(&log);
+        let lines: Vec<_> = JournalLines::new(&snap, &log)
             .unwrap()
             .map(|line| line.unwrap())
             .map(|line| (line.id, line.payload))
@@ -925,18 +948,42 @@ mod tests {
     }
 
     #[test]
+    fn the_line_walk_reads_the_commit_it_started_on() {
+        let scratch = Scratch::new("walk-commit");
+        let log = scratch.declare("log", "  journal: {}\n");
+        scratch.write("log/00000001-w.jsonl", b"a: 1\nb: 2\n");
+        let snap = scratch.snap(&log);
+        let mut walk = JournalLines::new(&snap, &log).unwrap();
+        assert_eq!(walk.next().unwrap().unwrap().id, "a");
+        // A line appended, a segment added, after the walk started.
+        scratch.write("log/00000001-w.jsonl", b"a: 1\nb: 2\nc: 3\n");
+        scratch.write("log/00000002-w.jsonl", b"d: 4\n");
+        scratch.commit();
+        let rest: Vec<_> = walk.map(|line| line.unwrap().id).collect();
+        assert_eq!(rest, ["b"]);
+        let again = scratch.snap(&log);
+        let all: Vec<_> = JournalLines::new(&again, &log)
+            .unwrap()
+            .map(|line| line.unwrap().id)
+            .collect();
+        assert_eq!(all, ["a", "b", "c", "d"]);
+    }
+
+    #[test]
     fn a_torn_tail_or_a_broken_line_ends_the_walk_with_the_segment_path() {
         let scratch = Scratch::new("torn");
         let log = scratch.declare("log", "  journal: {}\n");
         scratch.write("log/00000001-w.jsonl", b"a: 1\nb: 2");
-        let mut walk = JournalLines::new(&scratch.0, &log).unwrap();
+        let snap = scratch.snap(&log);
+        let mut walk = JournalLines::new(&snap, &log).unwrap();
         assert_eq!(walk.next().unwrap().unwrap().id, "a");
         let fault = walk.next().unwrap().unwrap_err();
         assert_eq!(fault.path(), Some("log/00000001-w.jsonl"));
         assert!(invalid(fault));
         assert!(walk.next().is_none());
         scratch.write("log/00000001-w.jsonl", b"a: 1\nnonsense\nc: 3\n");
-        let mut walk = JournalLines::new(&scratch.0, &log).unwrap();
+        let snap = scratch.snap(&log);
+        let mut walk = JournalLines::new(&snap, &log).unwrap();
         assert_eq!(walk.next().unwrap().unwrap().id, "a");
         assert!(invalid(walk.next().unwrap().unwrap_err()));
         assert!(walk.next().is_none());
@@ -946,29 +993,22 @@ mod tests {
     fn an_empty_or_missing_journal_yields_no_line() {
         let scratch = Scratch::new("empty");
         let log = scratch.declare("log", "  journal: {}\n");
-        assert!(
-            JournalLines::new(&scratch.0, &log)
-                .unwrap()
-                .next()
-                .is_none()
-        );
+        let snap = scratch.snap(&log);
+        assert!(JournalLines::new(&snap, &log).unwrap().next().is_none());
         std::fs::remove_dir_all(scratch.0.join("log")).unwrap();
-        assert!(
-            JournalLines::new(&scratch.0, &log)
-                .unwrap()
-                .next()
-                .is_none()
-        );
-        assert!(list_segments(&scratch.0, &log).unwrap().is_empty());
+        let snap = scratch.snap(&log);
+        assert!(JournalLines::new(&snap, &log).unwrap().next().is_none());
+        assert!(list_segments(&snap, &log).unwrap().is_empty());
     }
 
     #[test]
     fn a_collection_that_is_not_a_journal_is_invalid_argument() {
         let scratch = Scratch::new("kind");
         let notes = scratch.declare("notes", "  standard: {}\n");
-        assert!(invalid(list_segments(&scratch.0, &notes).unwrap_err()));
+        let snap = scratch.snap(&notes);
+        assert!(invalid(list_segments(&snap, &notes).unwrap_err()));
         assert!(invalid(Limits::of(&notes).unwrap_err()));
-        assert!(JournalLines::new(&scratch.0, &notes).is_err());
+        assert!(JournalLines::new(&snap, &notes).is_err());
     }
 
     #[test]
@@ -1085,37 +1125,49 @@ mod tests {
         let log = scratch.declare("log", "  journal:\n    segmentMaxBytes: 40\n");
         let limits = Limits::of(&log).unwrap();
         let today = "2026-09-15";
-        let first = scratch.0.join("log/00000001-w.jsonl");
+        let first = PathBuf::from("log/00000001-w.jsonl");
         // No segment yet: the first one is named.
+        let snap = scratch.snap(&log);
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 10, "w", today).unwrap(),
+            segment_for_append(&snap, &log, 10, "w", today).unwrap(),
             first
         );
         let line = encode_line("a", &[b'x'; 17]).unwrap();
         assert_eq!(line.len(), 21);
-        atomic_write(&first, &line).unwrap();
-        assert!(!segment_is_full(&first, &limits, 19, today).unwrap());
-        assert!(segment_is_full(&first, &limits, 20, today).unwrap());
+        scratch.write("log/00000001-w.jsonl", &line);
+        let snap = scratch.snap(&log);
+        assert!(!segment_is_full(&snap, &first, &limits, 19, today).unwrap());
+        assert!(segment_is_full(&snap, &first, &limits, 20, today).unwrap());
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 19, "w", today).unwrap(),
+            segment_for_append(&snap, &log, 19, "w", today).unwrap(),
             first
         );
-        let second = scratch.0.join("log/00000002-w.jsonl");
+        let second = PathBuf::from("log/00000002-w.jsonl");
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 20, "w", today).unwrap(),
+            segment_for_append(&snap, &log, 20, "w", today).unwrap(),
             second
         );
-        assert_eq!(std::fs::read(&first).unwrap(), line);
+        assert_eq!(std::fs::read(scratch.0.join(&first)).unwrap(), line);
         // Another writer starts its own sequence and never takes mine.
-        let other = scratch.0.join("log/00000001-v.jsonl");
+        let other = PathBuf::from("log/00000001-v.jsonl");
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 1, "v", today).unwrap(),
+            segment_for_append(&snap, &log, 1, "v", today).unwrap(),
             other
         );
         // An empty segment is never full, however long the line.
-        atomic_write(&first, b"").unwrap();
-        assert!(!segment_is_full(&first, &limits, 1000, today).unwrap());
-        assert!(!segment_is_full(&scratch.0.join("log/missing.jsonl"), &limits, 1, today).unwrap());
+        scratch.write("log/00000001-w.jsonl", b"");
+        let snap = scratch.snap(&log);
+        assert!(!segment_is_full(&snap, &first, &limits, 1000, today).unwrap());
+        assert!(
+            !segment_is_full(
+                &snap,
+                &PathBuf::from("log/missing.jsonl"),
+                &limits,
+                1,
+                today
+            )
+            .unwrap()
+        );
     }
 
     #[test]
@@ -1125,14 +1177,16 @@ mod tests {
         let limits = Limits::of(&log).unwrap();
         assert_eq!(limits.max_lines, Some(2));
         let today = "2026-09-15";
-        let first = scratch.0.join("log/00000001-w.jsonl");
-        atomic_write(&first, b"a: 1\n").unwrap();
-        assert!(!segment_is_full(&first, &limits, 5, today).unwrap());
-        atomic_write(&first, b"a: 1\nb: 2\n").unwrap();
-        assert!(segment_is_full(&first, &limits, 5, today).unwrap());
+        let first = PathBuf::from("log/00000001-w.jsonl");
+        scratch.write("log/00000001-w.jsonl", b"a: 1\n");
+        let snap = scratch.snap(&log);
+        assert!(!segment_is_full(&snap, &first, &limits, 5, today).unwrap());
+        scratch.write("log/00000001-w.jsonl", b"a: 1\nb: 2\n");
+        let snap = scratch.snap(&log);
+        assert!(segment_is_full(&snap, &first, &limits, 5, today).unwrap());
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 5, "w", today).unwrap(),
-            scratch.0.join("log/00000002-w.jsonl")
+            segment_for_append(&snap, &log, 5, "w", today).unwrap(),
+            PathBuf::from("log/00000002-w.jsonl")
         );
     }
 
@@ -1146,26 +1200,29 @@ mod tests {
             limits.max_bytes,
             crate::collection::DEFAULT_SEGMENT_MAX_BYTES
         );
-        let monday = scratch.0.join("log/2026-09-14-w.jsonl");
+        let monday = PathBuf::from("log/2026-09-14-w.jsonl");
+        let snap = scratch.snap(&log);
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 5, "w", "2026-09-14").unwrap(),
+            segment_for_append(&snap, &log, 5, "w", "2026-09-14").unwrap(),
             monday
         );
-        atomic_write(&monday, b"a: 1\n").unwrap();
-        assert!(!segment_is_full(&monday, &limits, 5, "2026-09-14").unwrap());
-        assert!(segment_is_full(&monday, &limits, 5, "2026-09-15").unwrap());
+        scratch.write("log/2026-09-14-w.jsonl", b"a: 1\n");
+        let snap = scratch.snap(&log);
+        assert!(!segment_is_full(&snap, &monday, &limits, 5, "2026-09-14").unwrap());
+        assert!(segment_is_full(&snap, &monday, &limits, 5, "2026-09-15").unwrap());
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 5, "w", "2026-09-14").unwrap(),
+            segment_for_append(&snap, &log, 5, "w", "2026-09-14").unwrap(),
             monday
         );
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 5, "w", "2026-09-15").unwrap(),
-            scratch.0.join("log/2026-09-15-w.jsonl")
+            segment_for_append(&snap, &log, 5, "w", "2026-09-15").unwrap(),
+            PathBuf::from("log/2026-09-15-w.jsonl")
         );
         // A sequence segment is not from today in a daily journal.
-        let seq = scratch.0.join("log/00000001-w.jsonl");
-        atomic_write(&seq, b"a: 1\n").unwrap();
-        assert!(segment_is_full(&seq, &limits, 5, "2026-09-14").unwrap());
+        let seq = PathBuf::from("log/00000001-w.jsonl");
+        scratch.write("log/00000001-w.jsonl", b"a: 1\n");
+        let snap = scratch.snap(&log);
+        assert!(segment_is_full(&snap, &seq, &limits, 5, "2026-09-14").unwrap());
     }
 
     #[test]
@@ -1174,14 +1231,15 @@ mod tests {
         let log = scratch.declare("log", "  journal: {}\n  isolated: true\n");
         scratch.write(".isolated/log/00000001-w.jsonl", b"a: 1\n");
         scratch.write("log/00000001-w.jsonl", b"stray: 1\n");
-        let lines: Vec<_> = JournalLines::new(&scratch.0, &log)
+        let snap = scratch.snap(&log);
+        let lines: Vec<_> = JournalLines::new(&snap, &log)
             .unwrap()
             .map(|line| line.unwrap().id)
             .collect();
         assert_eq!(lines, ["a"]);
         assert_eq!(
-            segment_for_append(&scratch.0, &log, 5, "w", "2026-09-15").unwrap(),
-            scratch.0.join(".isolated/log/00000001-w.jsonl")
+            segment_for_append(&snap, &log, 5, "w", "2026-09-15").unwrap(),
+            PathBuf::from(".isolated/log/00000001-w.jsonl")
         );
     }
 
@@ -1205,9 +1263,9 @@ mod tests {
         bytes.extend(encode_line("c", &[0xFF, 0xFE, 0x00]).unwrap());
         bytes.extend_from_slice(b"d: =======\n");
         scratch.write("log/00000001-w.jsonl", &bytes);
-        let declarations = collection::load(&scratch.0).unwrap();
+        let declarations = scratch.declarations();
         assert!(
-            check_journals(&scratch.0, &declarations)
+            check_journals(&scratch.views(), &declarations)
                 .unwrap()
                 .is_empty()
         );
@@ -1227,8 +1285,8 @@ mod tests {
             scratch.0.join("log/00000003-w.jsonl"),
         )
         .unwrap();
-        let declarations = collection::load(&scratch.0).unwrap();
-        let problems = check_journals(&scratch.0, &declarations).unwrap();
+        let declarations = scratch.declarations();
+        let problems = check_journals(&scratch.views(), &declarations).unwrap();
         let mut expected = vec![
             (
                 VaultErrorCode::InvalidArgument,

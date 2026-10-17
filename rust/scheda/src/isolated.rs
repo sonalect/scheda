@@ -3,7 +3,8 @@
 //! repository never tracks.
 //!
 //! This module holds the paths, the checks, and the making of the nested
-//! repository. Committing in it is `commit::WriteLock::commit_in`.
+//! repository. Reading it is a snapshot of `repo::Repo::Isolated`, and
+//! committing in it is `commit::WriteLock::commit_in`.
 
 // The layers that write Documents call the rest.
 #![cfg_attr(
@@ -24,7 +25,7 @@ use crate::collection::Declaration;
 use crate::commit::Change;
 use crate::error::{Context, Error, io};
 use crate::fs::{reject_symlinks, restrict_dir, restrict_file};
-use crate::git;
+use crate::repo::{self, Repo, Repos, Snap};
 
 /// Vault-relative directory that holds the isolated Documents.
 pub(crate) const DIR: &str = ".isolated";
@@ -69,34 +70,33 @@ pub(crate) fn nested_rel(rel: &str) -> Option<&str> {
 }
 
 /// Makes `{vault}/.isolated/` a git work tree of its own, owner-only, when
-/// it is not one yet, and returns the change that gives it its
-/// `.gitignore` (`.scheda/`) when it lacks the entry. The write that needs
-/// the nested repository puts that change in its commit. Nothing is made for
-/// a write that stores nothing: the caller asks only when it has changes.
+/// it is not one yet. Nothing is made for a write that stores nothing: the
+/// caller asks only when it has changes. Its `.gitignore` is
+/// [`gitignore_change`], which the write puts in its commit.
 ///
 /// A symlink where `.isolated/` should be is `INVALID_ARGUMENT`.
-pub(crate) fn ensure(vault: &Path) -> Result<Vec<Change>, Error> {
+pub(crate) fn ensure(vault: &Path) -> Result<(), Error> {
     let nested = root(vault);
     reject_symlinks(vault, &nested).context("check .isolated")?;
     fs::create_dir_all(&nested)
         .map_err(io)
         .context("create .isolated")?;
     restrict_dir(&nested)?;
-    if !git::is_work_tree(&nested) {
-        git::git()
-            .arg("init")
-            .arg("--")
-            .arg(&nested)
-            .run()
-            .context("make the isolated repository")?;
-        git::enable_long_paths(&nested)?;
+    if !repo::is_work_tree(&nested)? {
+        repo::init_repository(&nested).context("make the isolated repository")?;
     }
-    let ignore_path = nested.join(".gitignore");
-    let current = match fs::read(&ignore_path) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(err) => return Err(io(err).with_path(format!("{DIR}/.gitignore")).into()),
-    };
+    Ok(())
+}
+
+/// The change that gives the nested repository its `.gitignore` (`.scheda/`)
+/// when the commit of `snap`, a snapshot of it, lacks the entry. The write
+/// that needs the nested repository puts that change in its commit.
+pub(crate) fn gitignore_change(snap: &Snap) -> Result<Vec<Change>, Error> {
+    let current = snap
+        .read(&format!("{DIR}/.gitignore"))
+        .map_err(|fault| fault.with_path(format!("{DIR}/.gitignore")))?
+        .map(|blob| blob.bytes)
+        .unwrap_or_default();
     let has = current
         .split(|byte| *byte == b'\n')
         .any(|line| line.trim_ascii() == b".scheda/");
@@ -136,8 +136,11 @@ pub(crate) fn restrict_record(vault: &Path, path: &Path) -> Result<(), Error> {
 /// tracked path there is an `INVALID_ARGUMENT` problem, because isolated
 /// Documents must stay out of the repository that has a mirror. The nested
 /// repository may have a remote of its own.
-pub(crate) fn check_perimeter(vault: &Path) -> Result<Vec<Problem>, Error> {
-    let tracked = git::index_has_prefix(vault, DIR).context("check_perimeter: read the index")?;
+pub(crate) fn check_perimeter(repos: &Repos) -> Result<Vec<Problem>, Error> {
+    let Some(lease) = repos.lease(Repo::Main)? else {
+        return Ok(Vec::new());
+    };
+    let tracked = repo::index_has_prefix(&lease, DIR).context("check_perimeter: read the index")?;
     let mut problems = Vec::new();
     if tracked {
         problems.push(problem(
@@ -158,6 +161,7 @@ mod tests {
     use super::{check_perimeter, nested_rel, records_dir, restrict_record, root, vault_rel};
     use crate::collection::{Declaration, Declarations};
     use crate::git::{git, isolate_test_git_env};
+    use crate::repo::{Repos, fixture};
 
     struct Scratch(PathBuf);
 
@@ -186,7 +190,9 @@ mod tests {
             format!("name: {name}\nschema:\n{schema}"),
         )
         .unwrap();
-        let declarations: Declarations = crate::collection::load(&scratch.0).unwrap();
+        fixture::commit_all(&scratch.0);
+        let declarations: Declarations =
+            crate::collection::load(&fixture::snap(&scratch.0)).unwrap();
         declarations.get(name).unwrap().clone()
     }
 
@@ -246,7 +252,7 @@ mod tests {
             .arg("--all")
             .run()
             .unwrap();
-        assert!(check_perimeter(vault).unwrap().is_empty());
+        assert!(check_perimeter(&Repos::new(vault)).unwrap().is_empty());
         git()
             .current_dir(vault)
             .arg("add")
@@ -254,7 +260,7 @@ mod tests {
             .arg(".isolated/diary/a")
             .run()
             .unwrap();
-        let problems = check_perimeter(vault).unwrap();
+        let problems = check_perimeter(&Repos::new(vault)).unwrap();
         assert_eq!(problems.len(), 1);
         assert_eq!(
             problems[0].code.and_then(|code| code.as_known()),

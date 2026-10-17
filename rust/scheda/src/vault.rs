@@ -7,13 +7,15 @@ use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
+use git2::Oid;
 use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode};
 
 use crate::collection::{self, Declarations};
-use crate::commit::{self, Change, Committer, WriteLock};
+use crate::commit::{Change, Committer};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
-use crate::{git, marker, stored, writer};
+use crate::repo::{self, Repo, Repos, Snap};
+use crate::{marker, stored, writer};
 
 /// The message of the commit that makes a work tree a Vault.
 const MARK_MESSAGE: &str = "mark the work tree as a Vault";
@@ -33,15 +35,16 @@ pub struct Vault {
     path: PathBuf,
     options: OpenOptions,
     committer: Committer,
-    /// The declarations as of the `HEAD` they were loaded at.
+    repos: Arc<Repos>,
+    /// The declarations as of the commit they were read from.
     loaded: Mutex<Option<Loaded>>,
     writer: String,
 }
 
-/// The declarations of the work tree, with the `HEAD` they were read at.
+/// The declarations of a commit, with the commit they were read from.
 #[derive(Debug)]
 struct Loaded {
-    head: Option<String>,
+    head: Option<Oid>,
     declarations: Arc<Declarations>,
 }
 
@@ -68,11 +71,13 @@ impl Vault {
     /// `options.mode` decides what the path may be (unset is
     /// `OPEN_MODE_OPEN_OR_CREATE`):
     ///
-    /// - A Vault, a git work tree with the marker `.scheda.yaml`: the marker
-    ///   is read before any other file, and a marker of another generation
-    ///   is `GENERATION` in every mode. `OPEN_MODE_CREATE_NEW` is
+    /// - A Vault, a git work tree whose commit `HEAD` names holds the marker
+    ///   `.scheda.yaml`: the marker is read before any other file, from that
+    ///   commit and not from the work tree, and a marker of another
+    ///   generation is `GENERATION` in every mode. `OPEN_MODE_CREATE_NEW` is
     ///   `ALREADY_EXISTS`; the other modes open it.
-    /// - A git work tree without the marker: `OPEN_MODE_OPEN_EXISTING` is
+    /// - A git work tree without the marker in the commit `HEAD` names (a
+    ///   branch with no commit yet is one): `OPEN_MODE_OPEN_EXISTING` is
     ///   `NOT_A_VAULT`, `OPEN_MODE_CREATE_NEW` is `ALREADY_EXISTS`, and
     ///   `OPEN_MODE_OPEN_OR_CREATE` adds the marker `.scheda.yaml` and the
     ///   missing entries of `.gitignore` in one commit on top of `HEAD`.
@@ -81,9 +86,9 @@ impl Vault {
     ///   `OPEN_MODE_CREATE_NEW` is `ALREADY_EXISTS`, and
     ///   `OPEN_MODE_OPEN_OR_CREATE` is `INVALID_ARGUMENT`.
     /// - An empty folder: `OPEN_MODE_OPEN_EXISTING` is `NOT_A_VAULT`; the
-    ///   other modes make a new Vault there: `git init`, then one commit
-    ///   with the marker and a `.gitignore` that ignores `.scheda/` and
-    ///   `.isolated/`.
+    ///   other modes make a new Vault there: a git repository on the branch
+    ///   `init.defaultBranch` names (else `main`), then one commit with the
+    ///   marker and a `.gitignore` that ignores `.scheda/` and `.isolated/`.
     /// - A missing path: `OPEN_MODE_OPEN_EXISTING` is `NOT_FOUND`; the other
     ///   modes create the folder and make a new Vault as above.
     ///
@@ -95,11 +100,14 @@ impl Vault {
     ///
     /// When it opens a Vault, `options.mirror`, if set, must be the fetch
     /// URL of the remote `origin` (`INVALID_ARGUMENT` otherwise, without
-    /// contacting the network). The collection files are read (an invalid
-    /// one fails `open`), `.scheda/` is created owner-only, and the writer
-    /// identity is read or made. If a writer died between its commit and its
-    /// files, `open` takes the write lock and brings those files to what
-    /// `HEAD` holds; otherwise it takes no write lock. `open` pulls nothing.
+    /// contacting the network). The collection files of `HEAD` are read (an
+    /// invalid one fails `open`), `.scheda/` is created owner-only, and the
+    /// writer identity is read or made. If a writer died between its commit
+    /// and its files, `open` takes the write lock and brings those files to
+    /// what `HEAD` holds, leaving a file a person changed meanwhile as it is;
+    /// otherwise it takes no write lock. `open` pulls nothing. A repository
+    /// that uses SHA-256 objects or reftable references, which the bundled
+    /// git library cannot read, is `UNIMPLEMENTED` in every mode.
     ///
     /// # Errors
     ///
@@ -115,47 +123,24 @@ impl Vault {
         &self.path
     }
 
-    /// The collections the root directories declare, as the Vault holds
-    /// them now. They are kept with the `HEAD` they were read at and read
-    /// again when `HEAD` has moved (another handle or process wrote).
+    /// The collections the root directories declare in the commit `HEAD`
+    /// names now. They are kept with the commit they were read from and read
+    /// again when `HEAD` names another (another handle or process wrote, or
+    /// a person committed); resolving `HEAD` costs no process.
     pub(crate) fn declarations_now(&self) -> Result<Arc<Declarations>, Error> {
-        let head = commit::read_head(&self.path)?;
-        if let Some(declarations) = self.cached(&head)? {
-            return Ok(declarations);
-        }
-        let (loaded, settled) = snapshot(&self.path)?;
-        let declarations = Arc::clone(&loaded.declarations);
-        if settled {
-            *error::mutex(&self.loaded, "keep the declarations")? = Some(loaded);
-        }
-        Ok(declarations)
+        let snap = self.repos.snapshot(Repo::Main)?;
+        self.declarations_in(&snap)
     }
 
-    /// The collections as this handle last read them, without asking git
-    /// whether `HEAD` has moved since: a read does not pay a process for
-    /// that. A handle that has read none yet reads them now.
-    pub(crate) fn declarations_cached(&self) -> Result<Arc<Declarations>, Error> {
-        let kept = error::mutex(&self.loaded, "read the declarations")?
-            .as_ref()
-            .map(|loaded| Arc::clone(&loaded.declarations));
-        match kept {
-            Some(declarations) => Ok(declarations),
-            None => self.declarations_now(),
-        }
-    }
-
-    /// The collections, with the write lock held: read again when `HEAD`
-    /// is not the one they were read at. Nothing writes meanwhile, and the
-    /// lock has recovered any unfinished write.
-    pub(crate) fn declarations_locked(
-        &self,
-        lock: &WriteLock<'_>,
-    ) -> Result<Arc<Declarations>, Error> {
-        let head = lock.head()?;
-        if let Some(declarations) = self.cached(&head)? {
+    /// The collections declared in the commit of `snap`, a snapshot of the
+    /// main repository: the ones this handle kept for that commit, else read
+    /// from it and kept.
+    pub(crate) fn declarations_in(&self, snap: &Snap) -> Result<Arc<Declarations>, Error> {
+        let head = snap.commit();
+        if let Some(declarations) = self.cached(head)? {
             return Ok(declarations);
         }
-        let declarations = Arc::new(collection::load(&self.path)?);
+        let declarations = Arc::new(collection::load(snap)?);
         self.remember(head, Arc::clone(&declarations))?;
         Ok(declarations)
     }
@@ -164,19 +149,24 @@ impl Vault {
     /// handle that moved `HEAD` there.
     pub(crate) fn remember(
         &self,
-        head: Option<String>,
+        head: Option<Oid>,
         declarations: Arc<Declarations>,
     ) -> Result<(), Error> {
         *error::mutex(&self.loaded, "keep the declarations")? = Some(Loaded { head, declarations });
         Ok(())
     }
 
-    fn cached(&self, head: &Option<String>) -> Result<Option<Arc<Declarations>>, Error> {
+    fn cached(&self, head: Option<Oid>) -> Result<Option<Arc<Declarations>>, Error> {
         let guard = error::mutex(&self.loaded, "read the declarations")?;
         Ok(guard
             .as_ref()
-            .filter(|loaded| loaded.head == *head)
+            .filter(|loaded| loaded.head == head)
             .map(|loaded| Arc::clone(&loaded.declarations)))
+    }
+
+    /// The repositories of the Vault.
+    pub(crate) fn repos(&self) -> &Repos {
+        &self.repos
     }
 
     /// The write path of this handle.
@@ -205,18 +195,6 @@ impl Vault {
     pub fn close(self) -> Result<(), Error> {
         Ok(())
     }
-}
-
-/// Reads the declarations of `root` with the `HEAD` they belong to. The
-/// second value says whether the reading is a settled state to keep: no
-/// write was in flight (the lock file held no paths) and `HEAD` did not move
-/// meanwhile.
-fn snapshot(root: &Path) -> Result<(Loaded, bool), Error> {
-    let before = commit::pending(root)?;
-    let head = commit::read_head(root)?;
-    let declarations = Arc::new(collection::load(root)?);
-    let settled = !before && !commit::pending(root)? && commit::read_head(root)? == head;
-    Ok((Loaded { head, declarations }, settled))
 }
 
 fn open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
@@ -318,10 +296,10 @@ fn classify(path: &Path) -> Result<Spot, Error> {
     if entries.next().is_none() {
         return Ok(Spot::Empty);
     }
-    if !git::is_work_tree(path) && !becomes_work_tree(path) {
+    if !repo::is_work_tree(path)? && !becomes_work_tree(path)? {
         return Ok(Spot::Other);
     }
-    match marker::read(path)? {
+    match marker::read(&Repos::new(path).snapshot(Repo::Main)?)? {
         Some(_) => Ok(Spot::Vault),
         None => Ok(Spot::WorkTree),
     }
@@ -330,14 +308,21 @@ fn classify(path: &Path) -> Result<Spot, Error> {
 /// Whether the folder, which holds a `.git` that is not a repository yet,
 /// becomes a work tree within a moment: another `open` is running
 /// `git init` in it.
-fn becomes_work_tree(path: &Path) -> bool {
-    path.join(".git").is_dir() && wait_for_work_tree(path).is_ok()
+fn becomes_work_tree(path: &Path) -> Result<bool, Error> {
+    if !path.join(".git").is_dir() {
+        return Ok(false);
+    }
+    match wait_for_work_tree(path) {
+        Ok(()) => Ok(true),
+        Err(error) if error.is(VaultErrorCode::Aborted) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Waits until `path` is a git work tree, which another `open` is making.
 fn wait_for_work_tree(path: &Path) -> Result<(), Error> {
     let deadline = Instant::now() + OTHER_OPEN_WAIT;
-    while !git::is_work_tree(path) {
+    while !repo::is_work_tree(path)? {
         if Instant::now() >= deadline {
             return Err(refusal(
                 VaultErrorCode::Aborted,
@@ -377,19 +362,13 @@ fn make_new(path: &Path, options: OpenOptions, mode: OpenMode) -> Result<Vault, 
     mark_and_open(path, options)
 }
 
-/// `git init` in `path`, whose `.git` this call has just made.
+/// Makes the git repository in `path`, whose `.git` this call has just made.
 fn init_repository(path: &Path) -> Result<(), Error> {
-    let made = git::git()
-        .arg("init")
-        .arg("--")
-        .arg(path)
-        .run()
-        .context("run git init")
-        .and_then(|_| git::enable_long_paths(path));
+    let made = repo::init_repository(path);
     if made.is_err() {
         let _ = fs::remove_dir_all(path.join(".git"));
     }
-    made
+    made.map_err(Error::from).context("make the repository")
 }
 
 /// Gives the git work tree at `path` its marker and the missing entries of
@@ -405,28 +384,31 @@ fn mark_and_open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
         check_mirror(&canonical, mirror)?;
     }
     prepare_scheda(&canonical)?;
-    let committer = Committer::new(&canonical, &options)?;
+    let repos = Arc::new(Repos::new(&canonical));
+    let committer = Committer::new(&canonical, &options, Arc::clone(&repos))?;
     {
         let lock = committer.lock().context("take the write lock")?;
         // A second look, now that nobody else writes: another `open` may
         // have made the Vault meanwhile.
-        if marker::read(&canonical)?.is_none() {
-            let changes = service_changes(&canonical)?;
-            lock.commit(MARK_MESSAGE, &changes)
+        let snap = lock.snapshot(Repo::Main)?;
+        if marker::read(&snap)?.is_none() {
+            let changes = service_changes(&snap)?;
+            lock.commit_in(&snap, MARK_MESSAGE, &changes)
                 .context("commit the marker")?;
         }
     }
-    finish(canonical, options, committer)
+    finish(canonical, options, committer, repos)
 }
 
-/// The marker, and `.gitignore` with the entries Scheda needs.
-fn service_changes(root: &Path) -> Result<Vec<Change>, Error> {
+/// The marker, and `.gitignore` with the entries Scheda needs, as the commit
+/// of `snap` holds it.
+fn service_changes(snap: &Snap) -> Result<Vec<Change>, Error> {
     let mut changes = vec![Change::put(marker::FILE, marker::make()?)];
-    let current = match fs::read(root.join(".gitignore")) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-        Err(err) => return Err(io(err).with_path(".gitignore").into()),
-    };
+    let current = snap
+        .read(".gitignore")
+        .map_err(|fault| fault.with_path(".gitignore"))?
+        .map(|blob| blob.bytes)
+        .unwrap_or_default();
     if let Some(updated) = with_ignore_entries(&current) {
         changes.push(Change::put(".gitignore", updated));
     }
@@ -479,24 +461,35 @@ fn open_existing(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
     if let Some(mirror) = options.mirror.as_deref() {
         check_mirror(&canonical, mirror)?;
     }
-    let committer = Committer::new(&canonical, &options)?;
-    finish(canonical, options, committer)
+    let repos = Arc::new(Repos::new(&canonical));
+    let committer = Committer::new(&canonical, &options, Arc::clone(&repos))?;
+    finish(canonical, options, committer, repos)
 }
 
 /// Completes the handle of the Vault at `canonical`: recovers a write a
-/// dead writer left, reads the collection files (an invalid one fails here,
-/// before anything is created), then creates `.scheda/` and the writer
-/// identity.
-fn finish(canonical: PathBuf, options: OpenOptions, committer: Committer) -> Result<Vault, Error> {
+/// dead writer left, reads the collection files of `HEAD` (an invalid one
+/// fails here, before anything is created), then creates `.scheda/` and the
+/// writer identity.
+fn finish(
+    canonical: PathBuf,
+    options: OpenOptions,
+    committer: Committer,
+    repos: Arc<Repos>,
+) -> Result<Vault, Error> {
     committer.recover_pending()?;
-    let (loaded, settled) = snapshot(&canonical)?;
+    let snap = repos.snapshot(Repo::Main)?;
+    let declarations = Arc::new(collection::load(&snap)?);
     prepare_scheda(&canonical)?;
     let writer = writer::load_or_create(&canonical, options.writer.as_deref())?;
     Ok(Vault {
         path: canonical,
         options,
         committer,
-        loaded: Mutex::new(settled.then_some(loaded)),
+        repos,
+        loaded: Mutex::new(Some(Loaded {
+            head: snap.commit(),
+            declarations,
+        })),
         writer,
     })
 }
@@ -504,7 +497,7 @@ fn finish(canonical: PathBuf, options: OpenOptions, committer: Committer) -> Res
 /// The mirror a caller names must be the fetch URL of `origin`. Reads the
 /// local configuration only.
 fn check_mirror(vault: &Path, mirror: &str) -> Result<(), Error> {
-    let origin = git::origin_url(vault).context("read the mirror of the Vault")?;
+    let origin = repo::origin_url(vault).context("read the mirror of the Vault")?;
     match origin {
         Some(url) if url == mirror => Ok(()),
         Some(url) => Err(Fault::new(
@@ -547,13 +540,13 @@ mod tests {
             let dir = base.join(format!("scheda-vault-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("notes")).unwrap();
-            git().arg("init").arg("--").arg(&dir).run().unwrap();
             std::fs::write(dir.join(".scheda.yaml"), "version: 2\nfuture: 1\n").unwrap();
             std::fs::write(
                 dir.join("notes/.collection.yaml"),
                 "name: notes\nschema:\n  standard: {}\n",
             )
             .unwrap();
+            crate::repo::fixture::commit_all(&dir);
             Scratch(dir)
         }
     }

@@ -26,6 +26,7 @@ use crate::commit::Change;
 use crate::documents::Walk;
 use crate::error::{Context, Error, Fault, io};
 use crate::fs::restrict_dir;
+use crate::repo::{NodeKind, Repo, Repos, Snap};
 use crate::stored::{self, Unknowns};
 use crate::{isolated, journal};
 
@@ -76,13 +77,13 @@ impl crate::Vault {
     /// Every declared collection, isolated ones included, in name order.
     ///
     /// Each one is as stored, with its defaults filled in. The declarations
-    /// are those of the work tree as the Vault holds them now: a collection
-    /// another handle or process declared is listed.
+    /// are those of the commit `HEAD` names now: a collection another handle
+    /// or process declared is listed, one a person has not committed is not.
     ///
     /// # Errors
     ///
     /// `INVALID_ARGUMENT` when a collection file is not valid; `STORAGE` or
-    /// `REPLICATION` when the work tree or git cannot be read.
+    /// `REPLICATION` when git cannot be read.
     pub fn list_collections(&self, empty: Empty) -> Result<Collections, Error> {
         let _ = empty;
         let declarations = self.declarations_now().context("list the collections")?;
@@ -228,7 +229,8 @@ impl crate::Vault {
             return Ok(Vec::new());
         }
         let lock = self.committer().lock().context("take the write lock")?;
-        let mut declarations = Declarations::clone(&*self.declarations_locked(&lock)?);
+        let snap = lock.snapshot(Repo::Main)?;
+        let mut declarations = Declarations::clone(&*self.declarations_in(&snap)?);
         let root = self.path();
         let mut changes: BTreeMap<String, Change> = BTreeMap::new();
         let mut places = Places::default();
@@ -236,7 +238,8 @@ impl crate::Vault {
         let mut outcomes = Vec::with_capacity(writes.len());
         for (index, write) in writes.iter().enumerate() {
             let outcome = apply(
-                root,
+                self.repos(),
+                &snap,
                 write,
                 &mut declarations,
                 &mut changes,
@@ -247,7 +250,7 @@ impl crate::Vault {
             outcomes.push(outcome);
         }
         let changes: Vec<Change> = changes.into_values().collect();
-        let head = lock.commit(&message(&lines), &changes)?;
+        let head = lock.commit_in(&snap, &message(&lines), &changes)?;
         places.finish(root)?;
         self.remember(head, Arc::new(declarations))?;
         Ok(outcomes)
@@ -263,15 +266,18 @@ fn frame(indexed: bool, index: usize) -> String {
 }
 
 /// Applies one write to the in-memory `declarations` and records what it
-/// changes in the work tree.
+/// changes in the work tree. `snap` is the commit the write is checked
+/// against and built on.
 fn apply(
-    root: &Path,
+    repos: &Repos,
+    snap: &Snap,
     write: &Write,
     declarations: &mut Declarations,
     changes: &mut BTreeMap<String, Change>,
     places: &mut Places,
     lines: &mut Vec<String>,
 ) -> Result<Outcome, Error> {
+    let root = repos.root();
     match write {
         Write::Create(collection) => {
             let name = collection.name.as_deref().unwrap_or("");
@@ -282,7 +288,7 @@ fn apply(
                 )
                 .into());
             }
-            refuse_file_in_the_way(root, name)?;
+            refuse_file_in_the_way(snap, name)?;
             let file = collection::new_file(name);
             let (bytes, declaration) =
                 collection::declare_new(collection, &Unknowns::none(), file)?;
@@ -309,7 +315,7 @@ fn apply(
             let moves = declaration.kind() != existing.kind()
                 || declaration.isolated() != existing.isolated()
                 || declaration.encrypted() != existing.encrypted();
-            if moves && holds_documents(root, existing)? {
+            if moves && holds_documents(repos, existing)? {
                 return Err(Fault::new(
                     VaultErrorCode::FailedPrecondition,
                     format!(
@@ -343,7 +349,7 @@ fn apply(
                 }
                 return Err(not_found(name));
             };
-            if holds_documents(root, existing)? {
+            if holds_documents(repos, existing)? {
                 return Err(Fault::new(
                     VaultErrorCode::FailedPrecondition,
                     format!("the collection {name} holds Documents; delete them first"),
@@ -376,26 +382,27 @@ fn not_found(name: &str) -> Error {
 }
 
 /// A file named like the new collection's directory is in the way.
-fn refuse_file_in_the_way(root: &Path, name: &str) -> Result<(), Error> {
-    match fs::metadata(root.join(name)) {
-        Ok(meta) if !meta.is_dir() => Err(Fault::new(
+fn refuse_file_in_the_way(snap: &Snap, name: &str) -> Result<(), Error> {
+    match snap.lookup(name) {
+        Ok(Some(node)) if node.kind != NodeKind::Dir => Err(Fault::new(
             VaultErrorCode::AlreadyExists,
             format!("a file named {name} is in the way"),
         )
         .with_path(name)
         .into()),
         Ok(_) => Ok(()),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(err) => Err(io(err)).context("look at the collection directory"),
+        Err(fault) => Err(fault.into()),
     }
 }
 
-/// Whether `declaration` has any Document, or any journal segment, on disk.
-fn holds_documents(root: &Path, declaration: &Declaration) -> Result<bool, Error> {
+/// Whether `declaration` has any Document, or any journal segment, in the
+/// commit `HEAD` of its repository names now.
+fn holds_documents(repos: &Repos, declaration: &Declaration) -> Result<bool, Error> {
+    let snap = repos.snapshot(declaration.repo())?;
     if declaration.kind() == Kind::Journal {
-        return Ok(!journal::list_segments(root, declaration)?.is_empty());
+        return Ok(!journal::list_segments(&snap, declaration)?.is_empty());
     }
-    let mut walk = Walk::new(root, declaration, None)?;
+    let mut walk = Walk::new(&snap, declaration, None)?;
     Ok(walk.next_id()?.is_some())
 }
 

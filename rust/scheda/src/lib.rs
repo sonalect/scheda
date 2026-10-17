@@ -22,6 +22,7 @@ mod id;
 mod isolated;
 mod journal;
 mod marker;
+mod repo;
 mod stored;
 mod vault;
 mod writer;

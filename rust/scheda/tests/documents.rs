@@ -20,9 +20,8 @@ use scheda::v1::{
 };
 use scheda::{Error, Fault, Vault};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
-use common::{Scratch, command, snapshot, vault as built_vault, work_tree, write};
+use common::{Scratch, command, git, snapshot, vault as built_vault, work_tree, write};
 use probe::{assert_settled, commits, git_out};
 
 fn collection(value: Value) -> Collection {
@@ -140,11 +139,22 @@ fn ok(items: Vec<DocumentOperation>) -> Vec<Result<DocumentOperation, Error>> {
     items.into_iter().map(Ok).collect()
 }
 
-fn sha256(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+/// The id git gives a blob of `bytes`: what `git hash-object` prints, and
+/// what a Document's revision is.
+fn blob_id(bytes: &[u8]) -> String {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new("git")
+        .args(["hash-object", "--stdin"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
 fn declare(vault: &Vault, value: Value) {
@@ -269,7 +279,7 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
     let first = made.revision.clone().unwrap();
     assert_eq!(
         first,
-        sha256(b"one"),
+        blob_id(b"one"),
         "the revision is the hash of the file"
     );
     assert_eq!(read_file(root, target.rel), b"one");
@@ -297,7 +307,7 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
         .unwrap();
     let second = changed.revision.clone().unwrap();
     assert_ne!(second, first);
-    assert_eq!(second, sha256(b"two"));
+    assert_eq!(second, blob_id(b"two"));
     assert_eq!(changed.raw.as_deref(), Some(&b"two"[..]));
     assert_eq!(read_file(root, target.rel), b"two");
     assert_eq!(repo_commits(), start + 2);
@@ -327,7 +337,7 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
     let upserted = vault.upsert_document(upsert(c, id, b"three")).unwrap();
     assert_eq!(
         upserted.revision.as_deref(),
-        Some(sha256(b"three").as_str())
+        Some(blob_id(b"three").as_str())
     );
     assert_eq!(read_file(root, target.rel), b"three");
     assert_eq!(repo_commits(), start + 3);
@@ -348,7 +358,7 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
 
     // Upsert creates an absent Document, and a plain delete removes it.
     let again = vault.upsert_document(upsert(c, id, b"four")).unwrap();
-    assert_eq!(again.revision.as_deref(), Some(sha256(b"four").as_str()));
+    assert_eq!(again.revision.as_deref(), Some(blob_id(b"four").as_str()));
     assert_eq!(repo_commits(), start + 5);
     vault.delete_document(deletion(c, id)).unwrap();
     assert!(!root.join(target.rel).exists());
@@ -530,7 +540,7 @@ fn any_bytes_round_trip_in_standard_and_singleton_collections() {
             assert_eq!(read_file(&path, rel), bytes, "stored as given");
             let got = vault.get_document(key(c, id)).unwrap();
             assert_eq!(got.raw.as_deref(), Some(bytes), "{c}");
-            assert_eq!(got.revision, Some(sha256(bytes)));
+            assert_eq!(got.revision, Some(blob_id(bytes)));
         }
     }
     settled(&path);
@@ -879,15 +889,152 @@ fn get_document_names_what_is_missing() {
 }
 
 #[test]
-fn a_person_s_edit_of_a_file_is_what_get_document_reads() {
+fn a_persons_uncommitted_edit_is_seen_by_no_get_document_and_a_commit_by_hand_is() {
     let (_scratch, path, vault) = fresh("get-edit");
     vault
         .create_document(creation("notes", "a.md", b"stored", "n"))
         .unwrap();
     std::fs::write(path.join("notes/a.md"), b"edited by hand").unwrap();
+    std::fs::remove_file(path.join(".scheda.yaml")).unwrap();
+    let got = vault.get_document(key("notes", "a.md")).unwrap();
+    assert_eq!(got.raw.as_deref(), Some(&b"stored"[..]));
+    assert_eq!(got.revision, Some(blob_id(b"stored")));
+    git(&path, &["checkout", "--", ".scheda.yaml"]);
+    // The same bytes, committed with plain git, are read at once.
+    git(&path, &["add", "notes/a.md"]);
+    git(&path, &["commit", "--quiet", "--message", "by hand"]);
     let got = vault.get_document(key("notes", "a.md")).unwrap();
     assert_eq!(got.raw.as_deref(), Some(&b"edited by hand"[..]));
-    assert_eq!(got.revision, Some(sha256(b"edited by hand")));
+    assert_eq!(got.revision, Some(blob_id(b"edited by hand")));
+    // A new file and a deleted one in the work tree are as unseen.
+    write(&path, "notes/new.md", "never committed");
+    std::fs::remove_file(path.join("notes/a.md")).unwrap();
+    assert!(vault.get_document(key("notes", "a.md")).is_ok());
+    assert!(
+        vault
+            .get_document(key("notes", "new.md"))
+            .unwrap_err()
+            .is(Code::NotFound)
+    );
+}
+
+#[test]
+fn a_persons_edit_is_committed_by_no_write_of_another_document_and_survives_one_of_its_own() {
+    let (_scratch, path, vault) = fresh("edit-survives");
+    vault
+        .create_document(creation("notes", "mine.md", b"stored", "n"))
+        .unwrap();
+    vault
+        .create_document(creation("notes", "other.md", b"other", "n"))
+        .unwrap();
+    std::fs::write(path.join("notes/mine.md"), b"edited by hand").unwrap();
+    write(&path, "notes/new.md", "never committed");
+    // A write of another Document commits neither the edit nor the new file.
+    let before = commits(&path);
+    vault
+        .upsert_document(upsert("notes", "other.md", b"other, again"))
+        .unwrap();
+    assert_eq!(commits(&path), before + 1);
+    assert_eq!(
+        git_out(&path, &["show", "--name-only", "--format=", "HEAD"]),
+        "notes/other.md"
+    );
+    assert_eq!(
+        git_out(&path, &["show", "HEAD:notes/mine.md"]),
+        "stored",
+        "the edit is not in HEAD"
+    );
+    assert_eq!(
+        git_out(&path, &["status", "--porcelain"]),
+        " M notes/mine.md\n?? notes/new.md"
+    );
+    // A write of the same Document lands in HEAD; the person's file stays and
+    // git shows it as changed against the new HEAD.
+    let reply = vault
+        .upsert_document(upsert("notes", "mine.md", b"written by the API"))
+        .unwrap();
+    assert_eq!(
+        git_out(&path, &["show", "HEAD:notes/mine.md"]),
+        "written by the API"
+    );
+    assert_eq!(read_file(&path, "notes/mine.md"), b"edited by hand");
+    assert_eq!(
+        git_out(&path, &["status", "--porcelain"]),
+        " M notes/mine.md\n?? notes/new.md"
+    );
+    assert_eq!(
+        reply.revision,
+        Some(git_out(&path, &["rev-parse", "HEAD:notes/mine.md"]))
+    );
+    assert_eq!(
+        vault
+            .get_document(key("notes", "mine.md"))
+            .unwrap()
+            .raw
+            .as_deref(),
+        Some(&b"written by the API"[..])
+    );
+    assert!(read_file(&path, ".scheda/commit.lock").is_empty());
+    // A delete of it removes it from HEAD and leaves the person's file.
+    vault.delete_document(deletion("notes", "mine.md")).unwrap();
+    assert_eq!(read_file(&path, "notes/mine.md"), b"edited by hand");
+    assert_eq!(
+        git_out(&path, &["status", "--porcelain"]),
+        "?? notes/mine.md\n?? notes/new.md"
+    );
+}
+
+#[test]
+fn a_documents_revision_is_the_blob_id_of_the_document_in_head() {
+    let (_scratch, path, vault) = fresh("revision-blob");
+    for (collection, id, raw) in [
+        ("notes", "a.md", &b"alpha"[..]),
+        ("notes", "dir/b.bin", PNG),
+        ("config", "settings", b"on"),
+    ] {
+        let made = vault
+            .create_document(creation(collection, id, raw, "n"))
+            .unwrap();
+        let rel = format!("{collection}/{id}");
+        let head = git_out(&path, &["rev-parse", &format!("HEAD:{rel}")]);
+        assert_eq!(made.revision.as_deref(), Some(head.as_str()), "{rel}");
+        let got = vault.get_document(key(collection, id)).unwrap();
+        assert_eq!(got.revision.as_deref(), Some(head.as_str()), "{rel}");
+    }
+    let replaced = vault
+        .update_document(update("notes", "a.md", b"beta", None))
+        .unwrap();
+    assert_eq!(
+        replaced.revision,
+        Some(git_out(&path, &["rev-parse", "HEAD:notes/a.md"]))
+    );
+    // The nested repository: the id is the blob of its own HEAD.
+    let nested = vault
+        .create_document(creation("diary", "d", b"secret", "n"))
+        .unwrap();
+    assert_eq!(
+        nested.revision,
+        Some(git_out(
+            &path.join(".isolated"),
+            &["rev-parse", "HEAD:diary/d"]
+        ))
+    );
+}
+
+#[test]
+fn a_repository_with_gpgsign_gets_unsigned_commits_and_the_write_succeeds() {
+    let (_scratch, path, vault) = fresh("gpgsign");
+    git(&path, &["config", "commit.gpgSign", "true"]);
+    git(&path, &["config", "gpg.program", "/nonexistent/gpg"]);
+    git(&path, &["config", "user.signingkey", "ABCDEF"]);
+    let made = vault
+        .create_document(creation("notes", "signed.md", b"x", "n"))
+        .unwrap();
+    assert!(made.revision.is_some());
+    assert_eq!(git_out(&path, &["show", "HEAD:notes/signed.md"]), "x");
+    let raw = git_out(&path, &["cat-file", "commit", "HEAD"]);
+    assert!(!raw.contains("gpgsig"), "{raw}");
+    settled(&path);
 }
 
 #[test]
@@ -940,14 +1087,16 @@ fn a_vault_built_by_hand_takes_document_writes_and_keeps_a_person_s_files() {
         read_file(&path, "draft.txt"),
         b"a person's file, not committed"
     );
-    assert_eq!(
+    assert!(
         vault
             .get_document(key("notes", "scratch.md"))
-            .unwrap()
-            .raw
-            .as_deref(),
-        Some(&b"a person's file in a collection"[..]),
-        "a file put there by a person is a Document"
+            .unwrap_err()
+            .is(Code::NotFound),
+        "a file a person did not commit is not a Document"
+    );
+    assert_eq!(
+        read_file(&path, "notes/scratch.md"),
+        b"a person's file in a collection"
     );
     assert_settled(&path, &[".scheda/", "draft.txt", "notes/scratch.md"]);
 }
@@ -1018,7 +1167,7 @@ fn a_batch_is_one_commit_with_one_result_per_operation() {
     assert_eq!(commits(&path), before + 1);
     assert_eq!(reply.results.len(), 4);
     assert_eq!(stored(&reply.results[0]).raw.as_deref(), Some(&b"A"[..]));
-    assert_eq!(stored(&reply.results[0]).revision, Some(sha256(b"A")));
+    assert_eq!(stored(&reply.results[0]).revision, Some(blob_id(b"A")));
     assert_eq!(stored(&reply.results[1]).raw.as_deref(), Some(&b"line"[..]));
     assert_eq!(stored(&reply.results[1]).revision, None);
     assert_eq!(stored(&reply.results[2]).id.as_deref(), Some("settings"));
@@ -1162,7 +1311,7 @@ fn two_operations_on_one_document_see_each_other() {
     );
     assert_eq!(
         stored(&reply.results[1]).revision,
-        Some(sha256(b"two")),
+        Some(blob_id(b"two")),
         "each result is the Document as that operation stored it"
     );
     settled(&path);
@@ -1249,7 +1398,7 @@ fn a_batch_that_changes_nothing_makes_no_commit() {
     )
     .unwrap();
     assert_eq!(reply.results.len(), 4);
-    assert_eq!(stored(&reply.results[0]).revision, Some(sha256(b"same")));
+    assert_eq!(stored(&reply.results[0]).revision, Some(blob_id(b"same")));
     assert_eq!(stored(&reply.results[3]).raw.as_deref(), Some(&b"line"[..]));
     assert_eq!(commits(&path), before);
     settled(&path);
@@ -1682,7 +1831,7 @@ mod encrypted {
             assert!(!armor.windows(10).any(|w| w == b"plain text"));
             assert_eq!(
                 made.revision,
-                Some(sha256(&armor)),
+                Some(blob_id(&armor)),
                 "the revision is the hash of the sealed bytes"
             );
             assert_eq!(vault.get_document(key(c, id)).unwrap(), made);

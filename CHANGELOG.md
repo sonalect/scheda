@@ -104,6 +104,10 @@ changes; they grow with each part of the move.
 - `OpenOptions.signing` names a key to sign commits with. It is not built
   yet: set, `open` fails with `UNIMPLEMENTED`. Scheda's commits are not
   signed, and git's `commit.gpgSign` is not read.
+- Scheda works on git through the `git2` library in process: a read or a
+  write without a mirror starts no `git` process. A repository with
+  SHA-256 objects or reftable refs, which the library cannot read, fails
+  `open` with `UNIMPLEMENTED`.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

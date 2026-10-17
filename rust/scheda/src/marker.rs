@@ -10,12 +10,11 @@
 //! may change everything but that one key and an earlier Scheda still says
 //! which generation it met.
 
-use std::path::Path;
-
 use scheda_api::v1::{VaultErrorCode, VaultMarker};
 use yaml_serde::Value;
 
-use crate::error::{Context, Error, Fault, io};
+use crate::error::{Context, Error, Fault};
+use crate::repo::Snap;
 use crate::stored::{self, Format, Stored, Unknowns};
 
 /// Vault-relative name of the marker file.
@@ -24,24 +23,24 @@ pub(crate) const FILE: &str = ".scheda.yaml";
 /// The format generation this build reads and writes.
 pub(crate) const GENERATION: i32 = 2;
 
-/// The marker of `vault`, or `None` when the file is not there.
+/// The marker held by the commit of `snap`, or `None` when the commit has
+/// no such file (an unborn branch included).
 ///
 /// A marker that is there is parsed, its `version` is compared with
 /// [`GENERATION`] (another generation is `GENERATION`), and only then is the
 /// rest decoded, with keys it does not know read past, and validated (not
-/// YAML, a missing or mistyped `version`: `INVALID_ARGUMENT`). Reads only.
-/// Every failure is about the path [`FILE`].
-pub(crate) fn read(vault: &Path) -> Result<Option<Stored<VaultMarker>>, Error> {
-    let bytes = match std::fs::read(vault.join(FILE)) {
-        Ok(bytes) => bytes,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(err) => {
-            return Err(io(err))
-                .map_err(|fault| fault.with_path(FILE))
-                .context("read the marker");
-        }
+/// YAML, a missing or mistyped `version`: `INVALID_ARGUMENT`). Reads only,
+/// and reads the commit, not the work tree. Every failure is about the path
+/// [`FILE`].
+pub(crate) fn read(snap: &Snap) -> Result<Option<Stored<VaultMarker>>, Error> {
+    let blob = snap
+        .read(FILE)
+        .map_err(|fault| fault.with_path(FILE))
+        .context("read the marker")?;
+    let Some(blob) = blob else {
+        return Ok(None);
     };
-    parse(&bytes)
+    parse(&blob.bytes)
         .map(Some)
         .map_err(|fault| fault.with_path(FILE))
         .context("read the marker")
@@ -77,6 +76,7 @@ mod tests {
 
     use super::{FILE, GENERATION, make, parse, read};
     use crate::error::Error;
+    use crate::repo::fixture;
 
     fn code(bytes: &[u8]) -> Error {
         Error::from(parse(bytes).unwrap_err())
@@ -138,19 +138,25 @@ mod tests {
     }
 
     #[test]
-    fn read_finds_the_file_or_none_and_names_the_path_of_a_failure() {
+    fn read_finds_the_file_in_the_commit_or_none_and_names_the_path_of_a_failure() {
         let base = std::env::var_os("TEST_TMPDIR")
             .map_or_else(std::env::temp_dir, std::path::PathBuf::from);
         let dir = base.join(format!("scheda-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert!(read(&dir).unwrap().is_none());
-        std::fs::write(dir.join(FILE), b"version: 2\n").unwrap();
-        assert!(read(&dir).unwrap().is_some());
+        fixture::commit_all(&dir);
+        assert!(read(&fixture::snap(&dir)).unwrap().is_none());
         std::fs::write(dir.join(FILE), b"version: 1\n").unwrap();
-        let error = read(&dir).map(|_| ()).unwrap_err();
+        // Not committed yet: the work tree is not read.
+        assert!(read(&fixture::snap(&dir)).unwrap().is_none());
+        fixture::commit_all(&dir);
+        let error = read(&fixture::snap(&dir)).map(|_| ()).unwrap_err();
         assert!(error.is(VaultErrorCode::Generation));
         let fault = error.downcast_ref::<crate::error::Fault>().unwrap();
         assert_eq!(fault.path(), Some(FILE));
+        std::fs::write(dir.join(FILE), b"version: 2\n").unwrap();
+        fixture::commit_all(&dir);
+        assert!(read(&fixture::snap(&dir)).unwrap().is_some());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

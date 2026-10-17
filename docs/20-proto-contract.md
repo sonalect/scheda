@@ -1251,7 +1251,7 @@ D6, D14.
       of an empty mirror is "nothing to pull", so `Sync` pushes;
       `SetMirror`, `RemoveMirror`; nothing contacts a remote for
       `.isolated/`.
-- [ ] D22: local git work through `git2`; every read on `HEAD` (a stream
+- [x] D22: local git work through `git2`; every read on `HEAD` (a stream
       on the commit it started on); the declarations and the marker read
       from `HEAD`; the work tree after a write and its recovery leave a
       person's change alone; `revision` is the blob id; `Check` lists
