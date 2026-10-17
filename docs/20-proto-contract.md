@@ -761,6 +761,20 @@ with the owner, 17 October 2026.*
   and password is `INVALID_ARGUMENT`: no secret is kept in the
   repository's settings; credentials come from git, as today. Both go
   take the write lock, so they never meet a running `Pull`.
+- **How a pull joins** (decided for P4, 17 October 2026; the owner may
+  revisit). `Pull` fetches with the command line (D22), then joins in
+  process: a mirror that only adds to the Vault's history moves `HEAD`
+  forward; histories that both moved are joined Document by Document,
+  never line by line, since a Document is bytes (D20): a file changed on
+  one side takes that side, a file changed on both sides the same way
+  stays, and a file changed on both sides differently is
+  `MIRROR_CONFLICT` with nothing changed. A join is one commit with both
+  parents, made under the write lock like any write, and the work tree
+  follows it as after a write (D22).
+- **`auto_sync`** (the same): the pull at `open` and the push after a
+  write are tried, and a failure neither fails `open` nor undoes the
+  write; the handle keeps the last failure. Where a caller reads it is
+  O4.
 - **The word is mirror.** `origin` is git's name and stays inside.
   `Info.remote` becomes `Info.mirror`; `OpenOptions.remote_repo` becomes
   `OpenOptions.mirror` (the URL `open` clones from when the path holds no
@@ -1506,6 +1520,10 @@ To settle with the owner before the stage that needs them.
   it starts the rebuild; `WatchIndexStatus` shows it.
 - **O2. A count of matches.** *Closed by D19 (17 October 2026):*
   `CountDocuments(DocumentQuery)`; no count for a search.
+- **O4. Where a failed `auto_sync` shows** (D14). The handle keeps the
+  last failure of a pull at `open` or a push after a write. Recommendation:
+  `VaultInfo` gains it as an `ErrorReport`, once `ErrorReport` can carry
+  the message of any fault (P2).
 - **O3. A queued batch across versions.** *Gone with the queue (D6,
   alternative 5; 17 October 2026):* each process applies its own writes
   with its own code, so no Scheda applies a write of another version.
