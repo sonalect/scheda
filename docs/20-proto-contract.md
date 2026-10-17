@@ -1024,11 +1024,14 @@ owner, 17 October 2026.*
 - **The journal `id` maps** are part of the Index, written by the indexer
   only. `GetDocument` does not depend on them: a line not in the map is
   looked for in the segments changed since the map's commit.
-- **A rebuild** (`Reindex`, another model, another format) builds a new
-  generation beside the current one, round by round under the same lock;
-  readers move to it through one pointer file written atomically, and the
-  old generation goes when no reader holds it (at the latest at the next
-  `open`).
+- **One Index, no generations.** A rebuild (`Reindex`, another model,
+  another format) is a round of the same indexer under the same lock,
+  from an empty Index: it first removes the Index's commit, then indexes
+  `HEAD` from nothing, and records the commit last. An Index without a
+  commit is not built yet, so meanwhile a query or a search is
+  `INDEX_REBUILDING` (retryable, D19), and writes go on as always (they
+  do not touch the Index). A rebuild is rare; nothing is built beside the
+  Index, and nothing switches under a reader.
 - **`IndexState`** has one version (the stored state the Index has
   reached), one count of Documents still to index, and one role, instead
   of a version, a count, and a role per side (P5 changes the proto).
@@ -1036,7 +1039,9 @@ owner, 17 October 2026.*
   indexer and a rebuild wrote them too, wrote some Index files in place,
   switched generations under readers, and let a lock leak into a `git`
   child; each was a race the fast disk of the gate exposed. Each follows
-  from breaking one of the rules above.
+  from breaking one of the rules above. *Settled with the owner:* the
+  simplest indexer that cannot race, even at the price of a rebuild that
+  makes queries wait.
 
 ---
 
@@ -1385,7 +1390,8 @@ D3, D4, D5, D10, D18.
 - [ ] The indexer of D23: one commit for the whole Index, the round under
       `index.lock`, the wake by a write and by a look at `HEAD`, both
       sides together, the journal `id` maps written by the indexer only,
-      a rebuild in a new generation behind one pointer file.
+      one Index with no generations: a rebuild is a round from an empty
+      Index, and meanwhile queries and searches are `INDEX_REBUILDING`.
 - [ ] `IndexState` with one opaque version, one count, and one role
       (D23), and the rebuild's progress and result; `Reindex` starts a
       rebuild; `GetIndexStatus` and `WatchIndexStatus` per D18.
