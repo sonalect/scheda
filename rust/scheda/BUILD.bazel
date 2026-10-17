@@ -27,6 +27,7 @@ _SCHEDA_DEPS = [
     "//rust/api:generated_v1",
     "@scheda_cargo//:buffa",
     "@scheda_cargo//:buffa-types",
+    "@scheda_cargo//:protocontract",
     "@scheda_cargo//:regex",
     "@scheda_cargo//:serde",
     "@scheda_cargo//:serde_json",

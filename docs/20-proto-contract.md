@@ -6,7 +6,7 @@ Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
-layer, without transitional code (§4). P1 is done; P2 is next.
+layer, without transitional code (§4). P1 is done; P2 is done but for `ErrorReport`; P3 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -594,7 +594,7 @@ snapshot. `WatchIndexStatus` (D18) is a stream that never ends by itself.
   | `CRYPTO` | no | `crypto` | supplies the secret |
   | `MIRROR_AHEAD` | no | `not_fast_forward` | pulls, then tries again |
   | `MIRROR_CONFLICT` | no | `git_merge_conflict`, `git_conflict` | resolves by hand |
-  | `CONFLICT_MARKERS` | no | `conflict_markers` | repairs the file |
+  | `UNRESOLVED_CONFLICT` | no | `conflict_markers` (D20: from git's unmerged entries) | finishes the merge |
   | `INDEX_REBUILDING` | yes | `index_version` with `repeat: allowed`, `index_missing` (D19) | tries again soon |
   | `INDEX_STALE` | no | `index_version` with `repeat: forbidden` | runs `Reindex` |
   | `INDEX_BROKEN` | no | `index_corrupt`, `index_lexical`, `index_vector` | runs `Reindex` |
@@ -1079,14 +1079,16 @@ D1, D13.
 
 D9.
 
-- [ ] `scheda::Error` is `protocontract::Error`; `scheda::Fault` carries
+- [x] `scheda::Error` is `protocontract::Error`; `scheda::Fault` carries
       the code, the message, the path, the retry flag, and the source.
       One module maps causes to `VaultErrorCode` per the D9 table: the
       `std::io::ErrorKind`s, git's failures (the classifier of git's
       stderr moves here), Tantivy, USearch, age.
 - [ ] `ErrorReport` from an `Error`, for the CLI and
-      `IndexState.last_error`.
-- [ ] `.claude/rules/error-handling.md` and
+      `IndexState.last_error`. Waits for a way to read the message of a
+      fault of any type from `protocontract::Error` (asked of the owner,
+      17 October 2026).
+- [x] `.claude/rules/error-handling.md` and
       `.claude/skills/error-handling/` rewritten for the new model, so
       the later layers follow it.
 - *Check:* one test per row of the D9 table: the cause gives the code and
@@ -1320,8 +1322,9 @@ D16.
 - *Check:* the CLI and the library give the same JSON for `Info`,
   `QueryDocuments`, one `SearchDocuments`, and the same error `code`.
 - *Check:* `tests/consumer.rs` green.
-- *Check:* `bazel test //...` green on the branch; then it merges into
-  `main`.
+- *Check:* no `expect(dead_code, …)` left from the layering (`git grep
+  -n 'expect(' rust/scheda/src`); `bazel test //...` green on the branch;
+  then it merges into `main`.
 
 ---
 

@@ -1,46 +1,39 @@
 ---
 paths:
-  - "api/v1/error.proto"
+  - "api/scheda/v1/error.proto"
   - "rust/scheda/src/**/*.rs"
-  - "rust/api/lib.rs"
 ---
 
 # Error contract
 
-Public failures are generated `api.v1.Error` (`scheda::Error`). Not anyhow.
-Bindings and agent JSON use the Protobuf JSON mapping (`08`). Callers
-branch on `code`, not `message` or `stack`.
+`scheda::Error` **is** `protocontract::Error`. Not anyhow. Callers branch
+on the code (`error.is(VaultErrorCode::…)`, `error.code_as::<…>()`), never
+on the message, the stack, or the fields of a `Fault`.
 
-Follow `.claude/skills/error-handling/SKILL.md` when adding `Error.Code`
-values, constructing errors, or converting `map_err` /
+Follow `.claude/skills/error-handling/SKILL.md` when adding a
+`VaultErrorCode`, constructing errors, or converting `map_err` /
 `format!(...: {err})` sites.
 
-## Fields
+## Rules
 
-- **`code`**: class of the **root** reason (deep cause), not the public
-  method name. Honest enums only — no catch-all `CODE_IO` / `CODE_GIT`.
-  Schema rule text stays in `message` under `CODE_INVALID`.
-- **`message`**: must not replace `code`.
-- **`path`**: vault-relative POSIX of the file this failure is about.
-  Unset when there is no such file (remote network, ANN dump under
-  `.scheda/`).
-- **`repeat`**: constructors set it from `default_repeat(code)`. Override
-  with `with_repeat` when the **method** knows better.
-- **`stack`**: causal frames, **outermost first**. Not a language
-  backtrace. Must not repeat `path` and must not replace `code`. No
-  crate/module prefix (`ann.AnnIndex` is wrong).
-
-## Rust bubbling
-
-- Already `Result<T, Error>`: `.context(frame)` (literal);
-  `.with_context(|| …)` (lazy).
-- `std::io::Error`: `.context(frame)` (`ContextIo`, maps via `io_code`).
-- git CLI (exit + stderr): `git_code`, then `.context(frame)`.
-- Other foreign `Display` (`usearch`, tantivy, serde):
-  `.context(Code::…, frame)`.
-- Interpolated frames: `.with_context(|| format!("… {n}"))` (only on
-  `Err`).
-- Leaf constructors: inherent on generated `Error` (`Error::invalid`,
-  `Error::io_not_found`, …).
-- `ensure!` / `bail!` for our `Error`. After proto edits:
-  `bazel run //api/v1:generate`.
+- **Code**: the class of the **root** reason, not of the public method.
+  gRPC canonical meaning first, Scheda's own codes after. No catch-all.
+  Schema rule text stays in the message under `INVALID_ARGUMENT`.
+- **Message**: detail for a person. It never replaces the code and never
+  carries a credential or a remote URL with userinfo
+  (`redact_remote_text`).
+- **One `Fault`** (`code`, `message`, `path`, `retryable`, `source`) is the
+  only type Scheda raises. No per-code constructors.
+- **Path**: Vault-relative POSIX of the file the failure is about. Unset
+  for the network, the lock, and the Index files. Never an absolute path
+  or a URL.
+- **Retryable**: set from the code. A method that knows better uses
+  `with_retryable`.
+- **Source**: the foreign error stays reachable through
+  `std::error::Error::source` (an `std::io::Error` keeps its `ErrorKind`).
+  Do not flatten it into the message.
+- **Stack**: `.context(frame)` frames, outermost first, one per failed
+  step. No crate or module prefix (`ann.AnnIndex` is wrong). Do not repeat
+  the path or the code in a frame.
+- A panic of a lock holder is `RuntimeCode::Panicked`.
+- Tests assert the code with `error.is(…)`, not the message.

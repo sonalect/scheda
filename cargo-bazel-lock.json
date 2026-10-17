@@ -1,5 +1,5 @@
 {
-  "checksum": "d64e7a8b18ff81eb4a8db346904f8bc96eef783b2b1ad45fca27bf589f8a2dc4",
+  "checksum": "5d6f05e647e488047ca489906bf216ad190c715adf6696ae007148928406a99c",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -13516,6 +13516,10 @@
           {
             "id": "cxx 1.0.205",
             "target": "cxx"
+          },
+          {
+            "id": "protocontract 0.3.1",
+            "target": "protocontract"
           },
           {
             "id": "regex 1.13.1",

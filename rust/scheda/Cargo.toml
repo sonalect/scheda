@@ -27,11 +27,12 @@ tokio = ["dep:tokio", "scheda-api/tokio"]
 
 [dependencies]
 age = { workspace = true, optional = true }
-cxx = { workspace = true, optional = true }
-regex = { workspace = true }
-scheda-api = { workspace = true }
 buffa = { workspace = true }
 buffa-types = { workspace = true }
+cxx = { workspace = true, optional = true }
+protocontract = { workspace = true }
+regex = { workspace = true }
+scheda-api = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true, optional = true }

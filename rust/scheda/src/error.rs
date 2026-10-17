@@ -1,156 +1,374 @@
-//! Result helpers for generated [`crate::Error`].
+//! Failures of Scheda: one [`Fault`] that carries a [`VaultErrorCode`], and
+//! the helpers that turn foreign errors into it.
 //!
-//! Constructors, [`crate::Error::context`], and [`crate::Error::with_context`]
-//! live on the generated type. This module adds `Result` bubbling (`Context`,
-//! `ContextAs`, IO and git-CLI maps) and `ensure!` / `bail!`.
+//! The error a caller receives is [`Error`] (`protocontract::Error`). It
+//! holds a [`Fault`] and the stack of operations the failure passed on its
+//! way out. Callers branch on the code (`Error::is`, `Error::code_as`),
+//! never on the message.
+//!
+//! The `bail!` and `ensure!` macros are in scope in every module declared
+//! after this one (`#[macro_use]`).
 
+// Helpers wait here for the layers that call them. Each layer that uses an
+// item makes the expectation of the first unused one fail, which is the
+// reminder to drop it.
+#![cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        unused_macros,
+        reason = "the layers that call these helpers are not built yet"
+    )
+)]
+
+use std::backtrace::Backtrace;
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 #[cfg(feature = "find")]
 use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
-pub use scheda_api::api::v1::error::{Code, Repeat};
+use protocontract::{Code, RuntimeCode};
+pub use protocontract::{Context, Error};
+use scheda_api::v1::VaultErrorCode;
 
-/// Fail closed if a previous holder paniced with this mutex.
+/// A failure of Scheda: a code, a message, the file it is about, whether
+/// the same call may succeed later, and the cause.
+///
+/// It is the one type that implements [`protocontract::Fault`] for Scheda.
+/// It converts into [`Error`] with `?`. A caller branches on
+/// [`Error::code`], not on the fields of a `Fault`; the fields are for
+/// diagnostics, reached with `error.downcast_ref::<Fault>()`.
+#[derive(Debug)]
+pub struct Fault {
+    code: VaultErrorCode,
+    message: String,
+    path: Option<String>,
+    retryable: bool,
+    source: Option<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    backtrace: Backtrace,
+}
+
+impl Fault {
+    /// A failure with `code` and `message`, without a path or a source.
+    /// It is retryable when the code is one a caller may try again
+    /// (`ABORTED`, `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `INDEX_REBUILDING`).
+    /// It captures a backtrace when `RUST_BACKTRACE` or
+    /// `RUST_LIB_BACKTRACE` is set.
+    #[must_use]
+    pub fn new(code: VaultErrorCode, message: impl Into<String>) -> Fault {
+        Fault {
+            code,
+            message: message.into(),
+            path: None,
+            retryable: default_retryable(code),
+            source: None,
+            backtrace: Backtrace::capture(),
+        }
+    }
+
+    /// This failure about the file at `path`, relative to the Vault root
+    /// and in POSIX form.
+    #[must_use]
+    pub fn with_path(mut self, path: impl Into<String>) -> Fault {
+        self.path = Some(path.into());
+        self
+    }
+
+    /// This failure with `source` as its cause, replacing any earlier one.
+    #[must_use]
+    pub fn with_source(
+        mut self,
+        source: impl Into<Box<dyn std::error::Error + Send + Sync + 'static>>,
+    ) -> Fault {
+        self.source = Some(source.into());
+        self
+    }
+
+    /// This failure, retryable or not: the override for a method that
+    /// knows better than the default of the code.
+    #[must_use]
+    pub fn with_retryable(mut self, retryable: bool) -> Fault {
+        self.retryable = retryable;
+        self
+    }
+
+    /// What happened, for a person. Never replaces the code.
+    #[must_use]
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+
+    /// The file the failure is about, relative to the Vault root (POSIX),
+    /// or `None` when it is about no one file.
+    #[must_use]
+    pub fn path(&self) -> Option<&str> {
+        self.path.as_deref()
+    }
+}
+
+impl fmt::Display for Fault {
+    /// `path: message` with a path, `message` without.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.path {
+            Some(path) => write!(f, "{path}: {}", self.message),
+            None => f.write_str(&self.message),
+        }
+    }
+}
+
+impl std::error::Error for Fault {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source
+            .as_deref()
+            .map(|source| source as &(dyn std::error::Error + 'static))
+    }
+}
+
+impl protocontract::Fault for Fault {
+    fn code(&self) -> Code {
+        Code::of(self.code)
+    }
+
+    fn retryable(&self) -> bool {
+        self.retryable
+    }
+
+    fn backtrace(&self) -> Option<&Backtrace> {
+        Some(&self.backtrace)
+    }
+}
+
+/// Whether a failure with `code` may succeed when the same call is made
+/// again, unless the method that makes it knows better.
+#[must_use]
+pub(crate) fn default_retryable(code: VaultErrorCode) -> bool {
+    matches!(
+        code,
+        VaultErrorCode::Aborted
+            | VaultErrorCode::Unavailable
+            | VaultErrorCode::ResourceExhausted
+            | VaultErrorCode::IndexRebuilding
+    )
+}
+
+/// A failure of the storage below the Vault, or of the network below the
+/// mirror, from its `std::io::Error`. The error stays the source, so its
+/// `ErrorKind` is still reachable.
+///
+/// Network kinds and timeouts are `UNAVAILABLE` (retryable). Every other
+/// kind is `STORAGE`, retryable only for the passing kinds `Interrupted`,
+/// `WouldBlock`, and `ResourceBusy`.
+#[must_use]
+pub(crate) fn io(err: std::io::Error) -> Fault {
+    use std::io::ErrorKind;
+    let (code, retryable) = match err.kind() {
+        ErrorKind::NetworkDown
+        | ErrorKind::NetworkUnreachable
+        | ErrorKind::ConnectionRefused
+        | ErrorKind::ConnectionReset
+        | ErrorKind::ConnectionAborted
+        | ErrorKind::HostUnreachable
+        | ErrorKind::TimedOut => (VaultErrorCode::Unavailable, true),
+        ErrorKind::Interrupted | ErrorKind::WouldBlock | ErrorKind::ResourceBusy => {
+            (VaultErrorCode::Storage, true)
+        }
+        _ => (VaultErrorCode::Storage, false),
+    };
+    Fault::new(code, err.to_string())
+        .with_retryable(retryable)
+        .with_source(err)
+}
+
+/// Turns the error of a foreign crate (`serde_json`, `yaml_serde`,
+/// Tantivy, USearch, UTF-8, ...) into a [`Fault`] with a code of the
+/// caller's choice. The foreign error stays the source.
+pub(crate) trait OrFault<T> {
+    /// The result, with the error replaced by a [`Fault`] of `code` and
+    /// `message`.
+    fn or_fault(self, code: VaultErrorCode, message: impl Into<String>) -> Result<T, Fault>;
+
+    /// [`OrFault::or_fault`] with a message built only on error.
+    fn or_fault_with<M: Into<String>>(
+        self,
+        code: VaultErrorCode,
+        message: impl FnOnce() -> M,
+    ) -> Result<T, Fault>;
+}
+
+impl<T, E: std::error::Error + Send + Sync + 'static> OrFault<T> for Result<T, E> {
+    fn or_fault(self, code: VaultErrorCode, message: impl Into<String>) -> Result<T, Fault> {
+        self.map_err(|err| Fault::new(code, message).with_source(err))
+    }
+
+    fn or_fault_with<M: Into<String>>(
+        self,
+        code: VaultErrorCode,
+        message: impl FnOnce() -> M,
+    ) -> Result<T, Fault> {
+        self.map_err(|err| Fault::new(code, message()).with_source(err))
+    }
+}
+
+/// Fail closed if a previous holder panicked with this mutex.
 pub(crate) fn mutex<'a, T>(
     mutex: &'a Mutex<T>,
     frame: &'static str,
-) -> Result<MutexGuard<'a, T>, crate::Error> {
+) -> Result<MutexGuard<'a, T>, Error> {
     mutex.lock().map_err(|_: PoisonError<MutexGuard<'a, T>>| {
-        crate::Error::io_other("mutex poisoned").context(frame)
+        Error::new(RuntimeCode::Panicked, "mutex poisoned").context(frame)
     })
 }
 
-/// Fail closed if a previous holder paniced with this `RwLock`.
+/// Fail closed if a previous holder panicked with this `RwLock`.
 #[cfg(feature = "find")]
 pub(crate) fn rw_read<'a, T>(
     lock: &'a RwLock<T>,
     frame: &'static str,
-) -> Result<RwLockReadGuard<'a, T>, crate::Error> {
+) -> Result<RwLockReadGuard<'a, T>, Error> {
     lock.read()
         .map_err(|_: PoisonError<RwLockReadGuard<'a, T>>| {
-            crate::Error::io_other("rwlock poisoned").context(frame)
+            Error::new(RuntimeCode::Panicked, "rwlock poisoned").context(frame)
         })
 }
 
-/// Fail closed if a previous holder paniced with this `RwLock`.
+/// Fail closed if a previous holder panicked with this `RwLock`.
 #[cfg(feature = "find")]
 pub(crate) fn rw_write<'a, T>(
     lock: &'a RwLock<T>,
     frame: &'static str,
-) -> Result<RwLockWriteGuard<'a, T>, crate::Error> {
+) -> Result<RwLockWriteGuard<'a, T>, Error> {
     lock.write()
         .map_err(|_: PoisonError<RwLockWriteGuard<'a, T>>| {
-            crate::Error::io_other("rwlock poisoned").context(frame)
+            Error::new(RuntimeCode::Panicked, "rwlock poisoned").context(frame)
         })
 }
 
-#[must_use]
-pub(crate) fn io_code(err: &std::io::Error) -> Code {
-    use std::io::ErrorKind;
-    match err.kind() {
-        ErrorKind::NotFound => Code::IoNotFound,
-        ErrorKind::PermissionDenied => Code::IoPermission,
-        ErrorKind::ConnectionRefused => Code::IoConnectionRefused,
-        ErrorKind::ConnectionReset => Code::IoConnectionReset,
-        ErrorKind::HostUnreachable => Code::IoHostUnreachable,
-        ErrorKind::NetworkUnreachable => Code::IoNetworkUnreachable,
-        ErrorKind::ConnectionAborted => Code::IoConnectionAborted,
-        ErrorKind::NotConnected => Code::IoNotConnected,
-        ErrorKind::AddrInUse => Code::IoAddrInUse,
-        ErrorKind::AddrNotAvailable => Code::IoAddrNotAvailable,
-        ErrorKind::NetworkDown => Code::IoNetworkDown,
-        ErrorKind::BrokenPipe => Code::IoBrokenPipe,
-        ErrorKind::AlreadyExists => Code::IoAlreadyExists,
-        ErrorKind::WouldBlock => Code::IoWouldBlock,
-        ErrorKind::NotADirectory => Code::IoNotADirectory,
-        ErrorKind::IsADirectory => Code::IoIsADirectory,
-        ErrorKind::DirectoryNotEmpty => Code::IoDirectoryNotEmpty,
-        ErrorKind::ReadOnlyFilesystem => Code::IoReadOnlyFilesystem,
-        ErrorKind::StaleNetworkFileHandle => Code::IoStaleNetworkFileHandle,
-        ErrorKind::InvalidInput => Code::IoInvalidInput,
-        ErrorKind::InvalidData => Code::IoInvalidData,
-        ErrorKind::TimedOut => Code::IoTimedOut,
-        ErrorKind::WriteZero => Code::IoWriteZero,
-        ErrorKind::StorageFull => Code::IoStorageFull,
-        ErrorKind::NotSeekable => Code::IoNotSeekable,
-        ErrorKind::QuotaExceeded => Code::IoQuotaExceeded,
-        ErrorKind::FileTooLarge => Code::IoFileTooLarge,
-        ErrorKind::ResourceBusy => Code::IoResourceBusy,
-        ErrorKind::ExecutableFileBusy => Code::IoExecutableFileBusy,
-        ErrorKind::Deadlock => Code::IoDeadlock,
-        ErrorKind::CrossesDevices => Code::IoCrossesDevices,
-        ErrorKind::TooManyLinks => Code::IoTooManyLinks,
-        ErrorKind::InvalidFilename => Code::IoInvalidFilename,
-        ErrorKind::ArgumentListTooLong => Code::IoArgumentListTooLong,
-        ErrorKind::Interrupted => Code::IoInterrupted,
-        ErrorKind::Unsupported => Code::IoUnsupported,
-        ErrorKind::UnexpectedEof => Code::IoUnexpectedEof,
-        ErrorKind::OutOfMemory => Code::IoOutOfMemory,
-        _ => Code::IoOther,
+/// The class of a failed git command, read from its `stderr`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GitFailure {
+    /// The mirror refused the credentials.
+    Auth,
+    /// The mirror's TLS certificate was not accepted.
+    Certificate,
+    /// The mirror did not answer in time.
+    Timeout,
+    /// The mirror's host, or the network to it, cannot be reached.
+    HostUnreachable,
+    /// The mirror holds writes this Vault has not pulled.
+    NotFastForward,
+    /// A merge stopped on conflicts.
+    MergeConflict,
+    /// Git reports a conflict outside a merge.
+    Conflict,
+    /// Another git process holds a lock file.
+    Locked,
+    /// Local changes would be overwritten.
+    Dirty,
+    /// The branch has no commit yet.
+    UnbornBranch,
+    /// The repository, remote, or path is not there.
+    NotFound,
+    /// Any other failure.
+    Other,
+}
+
+impl GitFailure {
+    /// Classifies the `stderr` of a git command. Patterns are matched on
+    /// lower-cased text (Scheda runs git with `LC_ALL=C`); a more specific
+    /// class wins over [`GitFailure::Other`].
+    #[must_use]
+    pub(crate) fn classify(stderr: &str) -> GitFailure {
+        let text = stderr.to_ascii_lowercase();
+        let hay = text.as_str();
+        if matches_auth(hay) {
+            return GitFailure::Auth;
+        }
+        if matches_cert(hay) {
+            return GitFailure::Certificate;
+        }
+        if matches_timeout(hay) {
+            return GitFailure::Timeout;
+        }
+        if matches_nff(hay) {
+            return GitFailure::NotFastForward;
+        }
+        if matches_dirty(hay) {
+            return GitFailure::Dirty;
+        }
+        if matches_unborn(hay) {
+            return GitFailure::UnbornBranch;
+        }
+        if matches_locked(hay) {
+            return GitFailure::Locked;
+        }
+        if hay.contains("merge conflict") || hay.contains("fix conflicts") {
+            return GitFailure::MergeConflict;
+        }
+        if hay.contains("conflict") {
+            return GitFailure::Conflict;
+        }
+        if matches_host_unreachable(hay) {
+            return GitFailure::HostUnreachable;
+        }
+        if matches_not_found(hay) {
+            return GitFailure::NotFound;
+        }
+        GitFailure::Other
+    }
+
+    /// The code a failure of this class has.
+    #[must_use]
+    pub(crate) fn code(self) -> VaultErrorCode {
+        match self {
+            GitFailure::Auth | GitFailure::Certificate => VaultErrorCode::Unauthenticated,
+            GitFailure::Timeout | GitFailure::HostUnreachable => VaultErrorCode::Unavailable,
+            GitFailure::NotFastForward => VaultErrorCode::MirrorAhead,
+            GitFailure::MergeConflict | GitFailure::Conflict => VaultErrorCode::MirrorConflict,
+            GitFailure::Locked => VaultErrorCode::Aborted,
+            GitFailure::Dirty
+            | GitFailure::UnbornBranch
+            | GitFailure::NotFound
+            | GitFailure::Other => VaultErrorCode::Replication,
+        }
     }
 }
 
-/// Map a git CLI failure (its `stderr`) onto [`Code`].
-///
-/// Patterns are matched on lower-cased `stderr` (Scheda runs git with
-/// `LC_ALL=C`). More specific classes win over [`Code::GitGeneric`].
+/// The cause of a [`Fault`] made by [`git_fault`]: the class and the
+/// redacted `stderr` of the git command.
+#[derive(Debug)]
+pub(crate) struct GitError {
+    failure: GitFailure,
+    stderr: String,
+}
+
+impl fmt::Display for GitError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.stderr)
+    }
+}
+
+impl std::error::Error for GitError {}
+
+/// A [`Fault`] for a git command that failed with `stderr`. The code comes
+/// from [`GitFailure::classify`]; the message and the source carry the
+/// `stderr` with remote URLs redacted, so no credential reaches a caller.
 #[must_use]
-pub(crate) fn git_code(stderr: &str) -> Code {
-    let text = stderr.to_ascii_lowercase();
-    let hay = text.as_str();
-    if matches_auth(hay) {
-        return Code::GitAuth;
-    }
-    if matches_cert(hay) {
-        return Code::GitCertificate;
-    }
-    if matches_timeout(hay) {
-        return Code::GitTimeout;
-    }
-    if matches_nff(hay) {
-        return Code::NotFastForward;
-    }
-    if matches_dirty(hay) {
-        return Code::GitUncommitted;
-    }
-    if matches_unborn(hay) {
-        return Code::GitUnbornBranch;
-    }
-    if matches_locked(hay) {
-        return Code::GitLocked;
-    }
-    if hay.contains("already exists") {
-        return Code::GitExists;
-    }
-    if hay.contains("bare repository") || hay.contains("bare repo") {
-        return Code::GitBareRepo;
-    }
-    if hay.contains("merge conflict") || hay.contains("fix conflicts") {
-        return Code::GitMergeConflict;
-    }
-    if hay.contains("conflict") {
-        return Code::GitConflict;
-    }
-    if hay.contains("not a symbolic ref") || hay.contains("detached") {
-        return Code::GitHead;
-    }
-    if matches_host_unreachable(hay) {
-        return Code::IoHostUnreachable;
-    }
-    if hay.contains("network is unreachable") || hay.contains("network unreachable") {
-        return Code::IoNetworkUnreachable;
-    }
-    if hay.contains("connection refused") {
-        return Code::IoConnectionRefused;
-    }
-    if hay.contains("connection reset") {
-        return Code::IoConnectionReset;
-    }
-    if matches_not_found(hay) {
-        return Code::GitNotFound;
-    }
-    Code::GitGeneric
+pub(crate) fn git_fault(stderr: &str) -> Fault {
+    let failure = GitFailure::classify(stderr);
+    let redacted = redact_remote_text(stderr.trim());
+    Fault::new(failure.code(), redacted.clone()).with_source(GitError {
+        failure,
+        stderr: redacted,
+    })
+}
+
+/// The class of the git failure behind `err`, when it came from
+/// [`git_fault`]. For branching inside Scheda; a caller branches on the
+/// code.
+#[must_use]
+pub(crate) fn git_failure(err: &Error) -> Option<GitFailure> {
+    let source = std::error::Error::source(err)?;
+    source.downcast_ref::<GitError>().map(|git| git.failure)
 }
 
 fn matches_auth(hay: &str) -> bool {
@@ -208,7 +426,11 @@ fn matches_locked(hay: &str) -> bool {
 }
 
 fn matches_host_unreachable(hay: &str) -> bool {
-    hay.contains("could not resolve hostname")
+    hay.contains("network is unreachable")
+        || hay.contains("network unreachable")
+        || hay.contains("connection refused")
+        || hay.contains("connection reset")
+        || hay.contains("could not resolve hostname")
         || hay.contains("could not resolve host")
         || hay.contains("name or service not known")
         || hay.contains("temporary failure in name resolution")
@@ -232,8 +454,7 @@ fn matches_not_found(hay: &str) -> bool {
 /// Drop userinfo, path, and query from remote URLs in a foreign error string.
 ///
 /// Git and HTTP libraries put the URL they tried into `Display`. Callers
-/// must not echo credentials or a full remote path in `Error.message`.
-#[doc(hidden)]
+/// must not echo credentials or a full remote path in an error message.
 #[must_use]
 pub fn redact_remote_text(message: &str) -> String {
     let mut out = String::with_capacity(message.len());
@@ -307,267 +528,415 @@ fn redact_span(span: &str, scp: bool) -> String {
     format!("{scheme}://{host}")
 }
 
-/// Prepend a `stack` frame while bubbling [`crate::Error`].
-pub(crate) trait Context<T> {
-    // A build without `find` has no call site of its own. An uncalled
-    // provided method is a denied warning, so this method is compiled
-    // only when a caller exists.
-    #[cfg(any(test, feature = "find"))]
-    fn context(self, frame: impl fmt::Display) -> Result<T, crate::Error>
-    where
-        Self: Sized,
-    {
-        self.with_context(|| frame)
-    }
-
-    fn with_context<F, C>(self, f: F) -> Result<T, crate::Error>
-    where
-        F: FnOnce() -> C,
-        C: fmt::Display;
-}
-
-impl<T> Context<T> for Result<T, crate::Error> {
-    fn with_context<F, C>(self, f: F) -> Result<T, crate::Error>
-    where
-        F: FnOnce() -> C,
-        C: fmt::Display,
-    {
-        self.map_err(|err| err.context(f()))
-    }
-}
-
-/// Convert a listed foreign `Display` error into [`crate::Error`] and prepend a
-/// frame. Not a blanket `E: Display` impl: Rust does not disambiguate `context`
-/// by arity, so that would collide with [`ContextIo`] / [`Context`].
-pub(crate) trait ContextAs<T> {
-    fn context(self, code: Code, frame: impl fmt::Display) -> Result<T, crate::Error>
-    where
-        Self: Sized,
-    {
-        self.with_context(code, || frame)
-    }
-
-    fn with_context<F, C>(self, code: Code, f: F) -> Result<T, crate::Error>
-    where
-        F: FnOnce() -> C,
-        C: fmt::Display;
-}
-
-pub(crate) trait ForeignError: fmt::Display {}
-
-impl ForeignError for serde_json::Error {}
-impl ForeignError for yaml_serde::Error {}
-#[cfg(feature = "find")]
-impl ForeignError for tantivy::TantivyError {}
-impl ForeignError for std::time::SystemTimeError {}
-#[cfg(feature = "search")]
-impl ForeignError for cxx::Exception {}
-impl ForeignError for std::str::Utf8Error {}
-impl ForeignError for std::string::FromUtf8Error {}
-impl ForeignError for String {}
-impl ForeignError for &str {}
-
-impl<T, E: ForeignError> ContextAs<T> for Result<T, E> {
-    fn with_context<F, C>(self, code: Code, f: F) -> Result<T, crate::Error>
-    where
-        F: FnOnce() -> C,
-        C: fmt::Display,
-    {
-        self.map_err(|err| crate::Error::new(code, err.to_string()).context(f()))
-    }
-}
-
-/// Map `std::io::Error` by [`io_code`] and prepend a frame.
-pub(crate) trait ContextIo<T> {
-    fn context(self, frame: impl fmt::Display) -> Result<T, crate::Error>;
-}
-
-impl<T> ContextIo<T> for Result<T, std::io::Error> {
-    fn context(self, frame: impl fmt::Display) -> Result<T, crate::Error> {
-        self.map_err(|err| crate::Error::new(io_code(&err), err.to_string()).context(frame))
-    }
-}
-
+/// Returns early with an error: anything that is `Into<Error>`.
 macro_rules! bail {
     ($err:expr $(,)?) => {
-        return ::core::result::Result::Err($err)
+        return ::core::result::Result::Err(::core::convert::Into::into($err))
     };
 }
 
-#[cfg(any(test, feature = "search"))]
+/// Returns early with an error unless the condition holds.
 macro_rules! ensure {
     ($cond:expr, $err:expr $(,)?) => {
         if !$cond {
-            return ::core::result::Result::Err($err);
+            return ::core::result::Result::Err(::core::convert::Into::into($err));
         }
     };
 }
 
-pub(crate) use bail;
-#[cfg(feature = "search")]
-pub(crate) use ensure;
-
 #[cfg(test)]
 mod tests {
-    use super::{Code, Context, ContextAs, Repeat};
-    use crate::Error;
+    use std::error::Error as _;
+    use std::io::ErrorKind;
+    use std::sync::{Arc, Mutex};
 
+    use protocontract::RuntimeCode;
+    use scheda_api::v1::VaultErrorCode as C;
+
+    use super::{
+        Context, Error, Fault, GitFailure, OrFault, default_retryable, git_failure, git_fault, io,
+        mutex, redact_remote_text,
+    };
+
+    /// The "Retryable" column of the code table, one row per code.
     #[test]
-    fn new_sets_code_message_and_default_repeat() {
-        let err = Error::invalid("id is empty");
-        assert_eq!(err.known_code(), Some(Code::Invalid));
-        assert_eq!(err.message.as_deref(), Some("id is empty"));
-        assert_eq!(err.known_repeat(), Some(Repeat::Forbidden));
-        assert!(err.path.is_none());
-        assert!(err.stack.is_empty());
+    fn every_code_has_the_retry_flag_of_the_table() {
+        let rows = [
+            (C::Unspecified, false),
+            (C::InvalidArgument, false),
+            (C::NotFound, false),
+            (C::AlreadyExists, false),
+            (C::FailedPrecondition, false),
+            (C::Unimplemented, false),
+            (C::Aborted, true),
+            (C::Unavailable, true),
+            (C::ResourceExhausted, true),
+            (C::Unauthenticated, false),
+            (C::NotAVault, false),
+            (C::Generation, false),
+            (C::Crypto, false),
+            (C::MirrorAhead, false),
+            (C::MirrorConflict, false),
+            (C::UnresolvedConflict, false),
+            (C::IndexRebuilding, true),
+            (C::IndexStale, false),
+            (C::IndexBroken, false),
+            (C::Storage, false),
+            (C::Replication, false),
+        ];
+        for (code, retryable) in rows {
+            assert_eq!(default_retryable(code), retryable, "{code:?}");
+            let error = Error::from(Fault::new(code, "x"));
+            assert!(error.is(code), "{code:?}");
+            assert_eq!(error.retryable(), retryable, "{code:?}");
+        }
     }
 
     #[test]
-    fn default_repeat_allows_transient_codes() {
-        assert_eq!(Error::default_repeat(Code::Locked), Repeat::Allowed);
-        assert_eq!(Error::default_repeat(Code::IoNotFound), Repeat::Allowed);
-        assert_eq!(
-            Error::default_repeat(Code::IoConnectionRefused),
-            Repeat::Allowed
-        );
-        assert_eq!(Error::default_repeat(Code::GitTimeout), Repeat::Allowed);
-        assert_eq!(Error::default_repeat(Code::IndexMissing), Repeat::Allowed);
+    fn io_network_kinds_and_timeouts_are_unavailable_and_retryable() {
+        for kind in [
+            ErrorKind::NetworkDown,
+            ErrorKind::NetworkUnreachable,
+            ErrorKind::ConnectionRefused,
+            ErrorKind::ConnectionReset,
+            ErrorKind::ConnectionAborted,
+            ErrorKind::HostUnreachable,
+            ErrorKind::TimedOut,
+        ] {
+            let error = Error::from(io(std::io::Error::from(kind)));
+            assert!(error.is(C::Unavailable), "{kind:?}");
+            assert!(error.retryable(), "{kind:?}");
+        }
     }
 
     #[test]
-    fn io_code_keeps_error_kinds_distinct() {
-        use super::io_code;
-        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
-        let zero = std::io::Error::from(std::io::ErrorKind::WriteZero);
-        assert_eq!(io_code(&full), Code::IoStorageFull);
-        assert_eq!(io_code(&zero), Code::IoWriteZero);
+    fn io_passing_kinds_are_storage_and_retryable() {
+        for kind in [
+            ErrorKind::Interrupted,
+            ErrorKind::WouldBlock,
+            ErrorKind::ResourceBusy,
+        ] {
+            let error = Error::from(io(std::io::Error::from(kind)));
+            assert!(error.is(C::Storage), "{kind:?}");
+            assert!(error.retryable(), "{kind:?}");
+        }
     }
 
     #[test]
-    fn default_repeat_forbids_input_and_identity() {
-        assert_eq!(Error::default_repeat(Code::NotFound), Repeat::Forbidden);
-        assert_eq!(Error::default_repeat(Code::NotAVault), Repeat::Forbidden);
-        assert_eq!(Error::default_repeat(Code::Invalid), Repeat::Forbidden);
-        assert_eq!(Error::default_repeat(Code::Unsupported), Repeat::Forbidden);
-        assert_eq!(
-            Error::default_repeat(Code::UnsupportedEncryption),
-            Repeat::Forbidden
-        );
-        assert_eq!(Error::default_repeat(Code::Crypto), Repeat::Forbidden);
-        assert_eq!(Error::default_repeat(Code::DuplicateId), Repeat::Forbidden);
-        assert_eq!(
-            Error::default_repeat(Code::NotFastForward),
-            Repeat::Forbidden
-        );
+    fn io_every_other_kind_is_storage_and_not_retryable() {
+        for kind in [
+            ErrorKind::NotFound,
+            ErrorKind::PermissionDenied,
+            ErrorKind::AlreadyExists,
+            ErrorKind::StorageFull,
+            ErrorKind::WriteZero,
+            ErrorKind::InvalidData,
+            ErrorKind::UnexpectedEof,
+            ErrorKind::Other,
+        ] {
+            let error = Error::from(io(std::io::Error::from(kind)));
+            assert!(error.is(C::Storage), "{kind:?}");
+            assert!(!error.retryable(), "{kind:?}");
+        }
     }
 
     #[test]
-    fn with_repeat_overrides_the_code_default() {
-        let err = Error::io_not_found("gone").with_repeat(Repeat::Forbidden);
-        assert_eq!(err.known_code(), Some(Code::IoNotFound));
-        assert_eq!(err.known_repeat(), Some(Repeat::Forbidden));
+    fn io_failure_keeps_its_error_kind_through_source() {
+        let error = Error::from(io(std::io::Error::from(ErrorKind::StorageFull)));
+        let kind = error
+            .source()
+            .and_then(|source| source.downcast_ref::<std::io::Error>())
+            .map(std::io::Error::kind);
+        assert_eq!(kind, Some(ErrorKind::StorageFull));
+        assert!(!error.is(C::Unavailable));
     }
 
     #[test]
-    fn with_path_does_not_change_code_or_repeat() {
-        let err = Error::io_not_found("No such file or directory").with_path("notes/a.md");
-        assert_eq!(err.path.as_deref(), Some("notes/a.md"));
-        assert_eq!(err.known_code(), Some(Code::IoNotFound));
-        assert_eq!(err.known_repeat(), Some(Repeat::Allowed));
-    }
-
-    #[test]
-    fn context_prepends_outermost_frame_first() {
-        let err = Error::io_not_found("No such file or directory")
-            .with_path("notes/a.md")
+    fn a_file_failure_keeps_its_path_and_shows_it() {
+        let result: Result<(), std::io::Error> = Err(std::io::Error::from(ErrorKind::NotFound));
+        let error = result
+            .map_err(|err| io(err).with_path("notes/a.md"))
             .context("read")
-            .context("find_one");
-        assert_eq!(err.stack, ["find_one", "read"]);
-        assert_eq!(err.path.as_deref(), Some("notes/a.md"));
-    }
-
-    #[test]
-    fn result_context_prepends_the_same_way() {
-        let inner: Result<(), Error> = Err(Error::io_not_found("No such file or directory"));
-        let err = inner.context("read").context("find_one").unwrap_err();
-        assert_eq!(err.stack, ["find_one", "read"]);
-    }
-
-    #[test]
-    fn context_as_codes_a_foreign_display_error() {
-        let inner: Result<(), &str> = Err("usearch boom");
-        let err = inner
-            .context(Code::IndexVector, "[new] create new index")
             .unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::IndexVector));
-        assert_eq!(err.message.as_deref(), Some("usearch boom"));
-        assert_eq!(err.stack, ["[new] create new index"]);
-        assert_eq!(err.known_repeat(), Some(Repeat::Allowed));
+        let fault = error.downcast_ref::<Fault>();
+        assert_eq!(fault.and_then(Fault::path), Some("notes/a.md"));
+        assert!(error.to_string().contains("notes/a.md: "));
+        assert!(error.is(C::Storage));
     }
 
     #[test]
-    fn empty_context_frame_is_skipped() {
-        let err = Error::invalid("x").context("");
-        assert!(err.stack.is_empty());
+    fn display_without_a_path_is_the_message() {
+        let fault = Fault::new(C::NotFound, "no such collection");
+        assert_eq!(fault.to_string(), "no such collection");
+        assert_eq!(fault.message(), "no such collection");
+        assert_eq!(fault.path(), None);
+        let with = fault.with_path("a/b.md");
+        assert_eq!(with.to_string(), "a/b.md: no such collection");
     }
 
     #[test]
-    fn with_context_formats_interpolated_frame() {
-        let n = 16;
-        let err = Error::index_vector("x").with_context(|| format!("[new] reserve capacity {n}"));
-        assert_eq!(err.stack, ["[new] reserve capacity 16"]);
+    fn with_retryable_overrides_the_default() {
+        let on = Error::from(Fault::new(C::NotFound, "x").with_retryable(true));
+        assert!(on.retryable());
+        assert!(on.is(C::NotFound));
+        let off = Error::from(Fault::new(C::Aborted, "x").with_retryable(false));
+        assert!(!off.retryable());
+        assert!(off.is(C::Aborted));
     }
 
     #[test]
-    fn result_with_context_skips_the_closure_on_ok() {
-        let mut ran = false;
-        let ok: Result<u8, Error> = Ok(1);
-        let value = ok
-            .with_context(|| {
-                ran = true;
-                "frame"
+    fn context_frames_come_out_outermost_first() {
+        let inner: Result<(), Fault> = Err(Fault::new(C::NotFound, "gone"));
+        let error = inner
+            .context("read")
+            .with_context(|| format!("find {}", 7))
+            .context("get")
+            .unwrap_err();
+        assert_eq!(error.stack(), ["get", "find 7", "read"]);
+        assert!(error.is(C::NotFound));
+    }
+
+    #[test]
+    fn or_fault_codes_a_foreign_error_and_keeps_it_as_source() {
+        let parsed: Result<u8, std::num::ParseIntError> = "x".parse::<u8>();
+        let error: Error = parsed
+            .or_fault(C::InvalidArgument, "not a number")
+            .unwrap_err()
+            .into();
+        assert!(error.is(C::InvalidArgument));
+        assert!(!error.retryable());
+        let cause = error
+            .source()
+            .and_then(|source| source.downcast_ref::<std::num::ParseIntError>());
+        assert!(cause.is_some());
+    }
+
+    #[test]
+    fn or_fault_with_builds_the_message_only_on_error() {
+        let mut built = 0;
+        let ok: Result<u8, std::num::ParseIntError> = "1".parse::<u8>();
+        let value = ok.or_fault_with(C::IndexBroken, || {
+            built += 1;
+            "unused"
+        });
+        assert_eq!(value.ok(), Some(1));
+        let bad: Result<u8, std::num::ParseIntError> = "x".parse::<u8>();
+        let error: Error = bad
+            .or_fault_with(C::IndexBroken, || {
+                built += 1;
+                format!("built {built}")
             })
-            .unwrap();
-        assert_eq!(value, 1);
-        assert!(!ran);
+            .unwrap_err()
+            .into();
+        assert_eq!(built, 1);
+        assert!(error.is(C::IndexBroken));
+        assert!(error.to_string().ends_with("built 1"));
     }
 
     #[test]
-    fn result_with_context_runs_the_closure_on_err() {
-        let inner: Result<(), Error> = Err(Error::invalid("x"));
-        let err = inner
-            .with_context(|| format!("[new] reserve capacity {}", 16))
-            .unwrap_err();
-        assert_eq!(err.stack, ["[new] reserve capacity 16"]);
+    fn a_poisoned_mutex_is_panicked() {
+        let lock = Arc::new(Mutex::new(0_u8));
+        let held = Arc::clone(&lock);
+        let joined = std::thread::spawn(move || {
+            let _guard = held.lock();
+            panic!("poison the mutex");
+        })
+        .join();
+        assert!(joined.is_err());
+        let error = mutex(&lock, "lock the queue").map(|_| ()).unwrap_err();
+        assert!(error.is(RuntimeCode::Panicked));
+        assert!(!error.is(C::Storage));
+        assert_eq!(error.stack(), ["lock the queue"]);
     }
 
-    fn require_id(id: &str) -> Result<(), Error> {
-        ensure!(!id.is_empty(), Error::invalid("id is empty"));
-        Ok(())
-    }
-
-    fn give_up() -> Result<(), Error> {
-        bail!(Error::unsupported("replace_one on journal"));
+    #[cfg(feature = "find")]
+    #[test]
+    fn a_poisoned_rwlock_is_panicked() {
+        use super::{rw_read, rw_write};
+        use std::sync::RwLock;
+        let lock = Arc::new(RwLock::new(0_u8));
+        let held = Arc::clone(&lock);
+        let joined = std::thread::spawn(move || {
+            let _guard = held.write();
+            panic!("poison the lock");
+        })
+        .join();
+        assert!(joined.is_err());
+        let read = rw_read(&lock, "read the index").map(|_| ()).unwrap_err();
+        assert!(read.is(RuntimeCode::Panicked));
+        let write = rw_write(&lock, "write the index").map(|_| ()).unwrap_err();
+        assert!(write.is(RuntimeCode::Panicked));
+        assert_eq!(write.stack(), ["write the index"]);
     }
 
     #[test]
-    fn ensure_returns_the_error_when_the_condition_fails() {
-        let err = require_id("").unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::Invalid));
-        assert_eq!(err.message.as_deref(), Some("id is empty"));
-        assert!(require_id("n1").is_ok());
+    fn git_stderr_gives_its_class_code_and_retry_flag() {
+        let cases: &[(&str, GitFailure)] = &[
+            (
+                "fatal: Authentication failed for 'https://github.com/org/repo.git'",
+                GitFailure::Auth,
+            ),
+            ("Permission denied (publickey).", GitFailure::Auth),
+            (
+                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
+                GitFailure::Auth,
+            ),
+            (
+                "remote: Invalid username or password.\nfatal: Authentication failed",
+                GitFailure::Auth,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': SSL certificate problem: unable to get local issuer certificate",
+                GitFailure::Certificate,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': server certificate verification failed. CAfile: none CRLfile: none",
+                GitFailure::Certificate,
+            ),
+            (
+                "ssh: connect to host github.com port 22: Connection timed out",
+                GitFailure::Timeout,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': Failed to connect to github.com port 443 after 21000 ms: Couldn't connect to server",
+                GitFailure::Timeout,
+            ),
+            (
+                "ssh: Could not resolve hostname github.com: Name or service not known",
+                GitFailure::HostUnreachable,
+            ),
+            (
+                "fatal: unable to access 'https://github.com/foo.git/': Could not resolve host: github.com",
+                GitFailure::HostUnreachable,
+            ),
+            (
+                "ssh: connect to host github.com port 22: Network is unreachable",
+                GitFailure::HostUnreachable,
+            ),
+            (
+                "ssh: connect to host github.com port 22: Connection refused",
+                GitFailure::HostUnreachable,
+            ),
+            (
+                "fatal: not a git repository (or any of the parent directories): .git",
+                GitFailure::NotFound,
+            ),
+            (
+                "fatal: repository 'https://github.com/foo/bar.git' not found",
+                GitFailure::NotFound,
+            ),
+            (
+                "fatal: pathspec 'notes/missing.md' did not match any files",
+                GitFailure::NotFound,
+            ),
+            ("error: No such remote 'origin'", GitFailure::NotFound),
+            (
+                "! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs to 'https://github.com/org/repo.git'",
+                GitFailure::NotFastForward,
+            ),
+            (
+                "fatal: Not possible to fast-forward, aborting.",
+                GitFailure::NotFastForward,
+            ),
+            (
+                "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.",
+                GitFailure::UnbornBranch,
+            ),
+            (
+                "fatal: your current branch 'main' does not have any commits yet",
+                GitFailure::UnbornBranch,
+            ),
+            ("fatal: Needed a single revision", GitFailure::UnbornBranch),
+            (
+                "error: Your local changes to the following files would be overwritten by merge:",
+                GitFailure::Dirty,
+            ),
+            (
+                "error: Entry 'notes/a.md' not uptodate. Cannot merge.",
+                GitFailure::Dirty,
+            ),
+            (
+                "fatal: Unable to create '/tmp/vault/.git/index.lock': File exists.",
+                GitFailure::Locked,
+            ),
+            ("fatal: remote origin already exists.", GitFailure::Other),
+            (
+                "fatal: this operation must be run in a work tree",
+                GitFailure::Other,
+            ),
+            (
+                "CONFLICT (content): Merge conflict in notes/a.md",
+                GitFailure::MergeConflict,
+            ),
+            (
+                "error: could not apply 1a2b3c4... Fix conflicts and run git rebase --continue",
+                GitFailure::MergeConflict,
+            ),
+            (
+                "CONFLICT (modify/delete): a.md deleted in HEAD",
+                GitFailure::Conflict,
+            ),
+        ];
+        for (stderr, want) in cases {
+            assert_eq!(GitFailure::classify(stderr), *want, "{stderr}");
+            let error = Error::from(git_fault(stderr));
+            assert!(error.is(want.code()), "{stderr}");
+            assert_eq!(git_failure(&error), Some(*want), "{stderr}");
+        }
+        assert_eq!(
+            GitFailure::classify("some unrecognized git failure"),
+            GitFailure::Other
+        );
     }
 
     #[test]
-    fn bail_returns_the_error() {
-        let err = give_up().unwrap_err();
-        assert_eq!(err.known_code(), Some(Code::Unsupported));
-        assert_eq!(err.known_repeat(), Some(Repeat::Forbidden));
+    fn git_classes_map_to_the_codes_of_the_table() {
+        let rows = [
+            (GitFailure::Auth, C::Unauthenticated, false),
+            (GitFailure::Certificate, C::Unauthenticated, false),
+            (GitFailure::Timeout, C::Unavailable, true),
+            (GitFailure::HostUnreachable, C::Unavailable, true),
+            (GitFailure::NotFastForward, C::MirrorAhead, false),
+            (GitFailure::MergeConflict, C::MirrorConflict, false),
+            (GitFailure::Conflict, C::MirrorConflict, false),
+            (GitFailure::Locked, C::Aborted, true),
+            (GitFailure::Dirty, C::Replication, false),
+            (GitFailure::UnbornBranch, C::Replication, false),
+            (GitFailure::NotFound, C::Replication, false),
+            (GitFailure::Other, C::Replication, false),
+        ];
+        for (failure, code, retryable) in rows {
+            assert_eq!(failure.code(), code, "{failure:?}");
+            let error = Error::from(Fault::new(failure.code(), "x"));
+            assert_eq!(error.retryable(), retryable, "{failure:?}");
+        }
+    }
+
+    #[test]
+    fn a_git_fault_carries_no_credentials() {
+        let error = Error::from(git_fault(
+            "fatal: Authentication failed for 'https://user:token@example.test/org/repo.git'",
+        ));
+        assert!(error.is(C::Unauthenticated));
+        let shown = error.to_string();
+        let source = error.source().map(ToString::to_string).unwrap_or_default();
+        for text in [shown, source] {
+            assert!(!text.contains("token"), "{text}");
+            assert!(!text.contains("user:"), "{text}");
+            assert!(text.contains("https://example.test"), "{text}");
+        }
+    }
+
+    #[test]
+    fn git_failure_is_none_for_other_causes() {
+        let error = Error::from(io(std::io::Error::from(ErrorKind::NotFound)));
+        assert_eq!(git_failure(&error), None);
+        let plain = Error::from(Fault::new(C::NotFound, "x"));
+        assert_eq!(git_failure(&plain), None);
     }
 
     #[test]
     fn redact_remote_text_drops_userinfo_path_and_query() {
-        use super::redact_remote_text;
         let out = redact_remote_text(
             "could not find repository from 'https://user:token@example.test/org/repo.git?token=leak'",
         );
@@ -580,106 +949,24 @@ mod tests {
         assert_eq!(redact_remote_text("no remotes here"), "no remotes here");
     }
 
+    fn require_id(id: &str) -> Result<(), Error> {
+        ensure!(
+            !id.is_empty(),
+            Fault::new(C::InvalidArgument, "id is empty")
+        );
+        Ok(())
+    }
+
+    fn give_up() -> Result<(), Error> {
+        bail!(Fault::new(C::Unimplemented, "no journal replace"));
+    }
+
     #[test]
-    fn git_code_maps_literal_stderr_samples() {
-        use super::git_code;
-        let cases: &[(&str, Code)] = &[
-            (
-                "fatal: Authentication failed for 'https://github.com/org/repo.git'",
-                Code::GitAuth,
-            ),
-            ("Permission denied (publickey).", Code::GitAuth),
-            (
-                "fatal: could not read Username for 'https://github.com': terminal prompts disabled",
-                Code::GitAuth,
-            ),
-            (
-                "remote: Invalid username or password.\nfatal: Authentication failed",
-                Code::GitAuth,
-            ),
-            (
-                "fatal: unable to access 'https://github.com/foo.git/': SSL certificate problem: unable to get local issuer certificate",
-                Code::GitCertificate,
-            ),
-            (
-                "fatal: unable to access 'https://github.com/foo.git/': server certificate verification failed. CAfile: none CRLfile: none",
-                Code::GitCertificate,
-            ),
-            (
-                "ssh: connect to host github.com port 22: Connection timed out",
-                Code::GitTimeout,
-            ),
-            (
-                "fatal: unable to access 'https://github.com/foo.git/': Failed to connect to github.com port 443 after 21000 ms: Couldn't connect to server",
-                Code::GitTimeout,
-            ),
-            (
-                "ssh: Could not resolve hostname github.com: Name or service not known",
-                Code::IoHostUnreachable,
-            ),
-            (
-                "fatal: unable to access 'https://github.com/foo.git/': Could not resolve host: github.com",
-                Code::IoHostUnreachable,
-            ),
-            (
-                "ssh: connect to host github.com port 22: Network is unreachable",
-                Code::IoNetworkUnreachable,
-            ),
-            (
-                "ssh: connect to host github.com port 22: Connection refused",
-                Code::IoConnectionRefused,
-            ),
-            (
-                "fatal: not a git repository (or any of the parent directories): .git",
-                Code::GitNotFound,
-            ),
-            (
-                "fatal: repository 'https://github.com/foo/bar.git' not found",
-                Code::GitNotFound,
-            ),
-            (
-                "fatal: pathspec 'notes/missing.md' did not match any files",
-                Code::GitNotFound,
-            ),
-            ("error: No such remote 'origin'", Code::GitNotFound),
-            (
-                "! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs to 'https://github.com/org/repo.git'",
-                Code::NotFastForward,
-            ),
-            (
-                "fatal: Not possible to fast-forward, aborting.",
-                Code::NotFastForward,
-            ),
-            (
-                "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.",
-                Code::GitUnbornBranch,
-            ),
-            (
-                "fatal: your current branch 'main' does not have any commits yet",
-                Code::GitUnbornBranch,
-            ),
-            ("fatal: Needed a single revision", Code::GitUnbornBranch),
-            (
-                "error: Your local changes to the following files would be overwritten by merge:",
-                Code::GitUncommitted,
-            ),
-            (
-                "error: Entry 'notes/a.md' not uptodate. Cannot merge.",
-                Code::GitUncommitted,
-            ),
-            (
-                "fatal: Unable to create '/tmp/vault/.git/index.lock': File exists.",
-                Code::GitLocked,
-            ),
-            ("fatal: remote origin already exists.", Code::GitExists),
-            (
-                "fatal: this operation must be run in a work tree",
-                Code::GitGeneric,
-            ),
-        ];
-        for (stderr, want) in cases {
-            assert_eq!(git_code(stderr), *want, "{stderr}");
-        }
-        assert_eq!(git_code("some unrecognized git failure"), Code::GitGeneric);
+    fn ensure_and_bail_take_anything_into_error() {
+        let error = require_id("").unwrap_err();
+        assert!(error.is(C::InvalidArgument));
+        assert!(require_id("n1").is_ok());
+        let error = give_up().unwrap_err();
+        assert!(error.is(C::Unimplemented));
     }
 }

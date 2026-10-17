@@ -2847,6 +2847,7 @@ dependencies = [
  "buffa",
  "buffa-types",
  "cxx",
+ "protocontract",
  "regex",
  "scheda-api",
  "serde",

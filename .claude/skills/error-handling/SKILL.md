@@ -1,167 +1,115 @@
 ---
 name: error-handling
 description: >-
-  Define and process Scheda api.v1.Error (code, message, path, repeat, stack).
-  Use when adding Error.Code values, editing error.proto, constructing
-  scheda::Error, converting map_err / anyhow-style sites, or bubbling failures
-  with context / ensure / bail.
+  Raise and process Scheda failures (scheda::Error = protocontract::Error,
+  Fault, VaultErrorCode, retryable, stack). Use when adding a
+  VaultErrorCode, editing error.proto, constructing a failure, converting
+  map_err / anyhow-style sites, or bubbling failures with context / ensure /
+  bail.
 ---
 
 # Error handling
 
-Public `Result<T, E>` uses generated `api.v1.Error` (`scheda::Error`). Do not
-add anyhow. Do not replace proto `Error` with a Rust-only type.
+Public `Result<T, E>` uses `scheda::Error`, which is `protocontract::Error`.
+Do not add anyhow. `scheda::v1::VaultErrorCode` (from
+`api/scheda/v1/error.proto`) is the code enum; a port's or the runtime's
+code (`RuntimeCode::Panicked`) can also appear.
 
-Reference: `api/v1/error.proto`, helpers in `rust/scheda/src/error.rs`,
-pattern in `rust/scheda/src/ann.rs`.
+Helpers live in `rust/scheda/src/error.rs`.
 
-## When to add a code
+## Pick a code
 
-Add a `Error.Code` variant only if a caller can **branch** on it. Groups use
-hundreds (identity `101`, input `201`, capability `301`, IO `401`, git `501`,
-index `601`). Leave room inside a group.
+A code is what a caller **acts on**. Use the gRPC canonical meaning when
+Scheda means it, a Scheda code otherwise. The cause rides in `source`, not
+in a new code.
 
-Do **not** enum every Schema/envelope rule — that stays `CODE_INVALID` +
-Catch-alls (`CODE_IO_OTHER`) only for `ErrorKind::Other` and future/unstable
-kinds. Git CLI failures are classified from exit status and stderr onto the
-same `git_*` / `not_fast_forward` codes; do not join several kinds into one
-proto value.
+| Code | Retryable | Use for |
+| - | - | - |
+| `INVALID_ARGUMENT` | no | the request breaks a rule (Schema text in the message) |
+| `NOT_FOUND` | no | collection, Document, mirror absent |
+| `ALREADY_EXISTS` | no | duplicate id or name |
+| `FAILED_PRECONDITION` | no | stored state is not what the request requires (revision) |
+| `UNIMPLEMENTED` | no | unsupported call, or a feature the build lacks |
+| `ABORTED` | yes | lock held, a rebuild already running (never from a write) |
+| `UNAVAILABLE` | yes | mirror, network, port, timeout |
+| `RESOURCE_EXHAUSTED` | yes | write queue full |
+| `UNAUTHENTICATED` | no | mirror refused the credentials |
+| `NOT_A_VAULT` | no | path holds no Vault |
+| `GENERATION` | no | Vault of another generation |
+| `CRYPTO` | no | secret missing or wrong, bytes do not decrypt |
+| `MIRROR_AHEAD` | no | mirror holds writes not pulled |
+| `MIRROR_CONFLICT` | no | mirror's writes cannot be joined |
+| `UNRESOLVED_CONFLICT` | no | file holds an unfinished merge |
+| `INDEX_REBUILDING` | yes | Index not built yet or moving to a new format |
+| `INDEX_STALE` | no | other Projector or embedding model: `Reindex` |
+| `INDEX_BROKEN` | no | Index damaged: `Reindex` |
+| `STORAGE` | per kind | every other I/O failure |
+| `REPLICATION` | no | every other git failure |
 
-After editing the proto: `bazel run //api/v1:generate` from the repo root
-(unrestricted permissions). Confirm the generated `Validate` impl contains
-the rule.
+Add a code only if a caller can **branch** on it. Edit the proto, then
+`bazel run //api:generate` from the repo root (unsandboxed) and extend
+`default_retryable` and the table above.
 
-## Fields
-
-| Field | Role |
-|---|---|
-| `code` | Root/deep class. Same `get` may be `NOT_FOUND` or `IO_NOT_FOUND`. |
-| `message` | Detail. Must not replace `code`. |
-| `path` | Vault-relative POSIX of the file this failure is about. Unset if there is no such file. |
-| `repeat` | Same call, same args, may succeed later? |
-| `stack` | Causal frames, outermost first. Not a backtrace. |
-
-JSON (agent / `08`):
-
-```json
-{
-  "code": "CODE_IO_NOT_FOUND",
-  "message": "No such file or directory",
-  "path": "notes/a.md",
-  "repeat": "REPEAT_ALLOWED",
-  "stack": ["[Collection::get] read record", "[store::read_file] read record"]
-}
-```
-
-### path
-
-Set with `.with_path("notes/a.md")` when the failure is about a Record file.
-Leave unset for `sync` / network, lock (`{vault}/.scheda/write.lock`), and
-Index dumps (`.scheda/index/…`). Do not put OS absolute paths, URLs, or `.git`
-here.
-Do not copy `path` into `stack`.
-
-### repeat
-
-`Error::new` / named constructors fill `repeat` from `default_repeat(code)`
-in `error.rs`. Transient classes (lock, most IO, git timeout/auth, index rebuild)
-are `REPEAT_ALLOWED`. Bad input, identity, `NOT_FAST_FORWARD`, `GIT_HEAD`
-are `REPEAT_FORBIDDEN`.
-
-A **method** may override: `.with_repeat(Repeat::Forbidden)`.
-
-### stack frames
-
-English, one frame per step that failed. Format:
-
-`[Type::method] what happened`
-
-- Type is the Rust type in this crate (`AnnIndex`, `Collection`). No module
-  or crate prefix (`ann.AnnIndex` is wrong).
-- Public LIB-2 can use that type (`[Collection::get] …`).
-- Distinguishing two steps in one method is the point:
-  `[AnnIndex::new] create new index` vs
-  `[AnnIndex::new] reserve capacity 16 vectors`.
-- Literal frame: `.context("…")`.
-- Format args: `.with_context(|| format!("[AnnIndex::add] reserve capacity {next}"))`.
-  The closure runs only on `Err`. Do not pass `format!(...)` to eager
-  `.context`.
-- A method cannot take `format!` args.
-
-If a lower frame already names the public method (e.g. reserve inside `add`),
-do not wrap again with a second `[Type::add]`.
-
-Input `ensure!` at the start of a method should still get a frame when other
-failures from that method have one:
+## Construct
 
 ```rust
-ensure!(
-    vector.len() == self.inner.dimensions(),
-    Error::invalid(format!(
-        "vector length {} does not match dimensions {}",
-        vector.len(),
-        self.inner.dimensions()
-    ))
-    .context("[AnnIndex::add] vector length")
-);
-```
+use crate::error::{Context, Error, Fault, OrFault, git_fault, io};
+use scheda_api::v1::VaultErrorCode;
 
-## Construct and bubble
-
-`Error` constructors live on the generated type (`rust/api/lib.rs`).
-Use them from `scheda`:
-
-```rust
-use crate::error::{ensure, bail, Code, Context, ContextAs, ContextIo};
-use crate::Error;
+// Leaf: a Fault, converted by `?` or `.into()`.
+return Err(Fault::new(VaultErrorCode::NotFound, "no such collection").into());
 ```
 
 | Situation | API |
-|---|---|
-| Our error, add a frame | `.context(frame)` |
-| Frame needs format / extra work | `.with_context` with a closure |
-| `std::io::Error` | `.context(frame)` (`ContextIo`) |
-| `git` CLI (exit + stderr) | `.context(frame)` after `git_code` |
-| Other foreign `Display` (`usearch`/`cxx`, tantivy, serde) | `.context(Code::…, frame)` |
-| Guard | `ensure!(cond, Error::invalid("…"))` |
-| Early return | `bail!(Error::unsupported("…"))` |
-| Record file | `.with_path("notes/a.md")` |
-| Method-specific retry | `.with_repeat(Repeat::Forbidden)` |
-
-Do not `.map_err(helper).context(...)` for foreign errors. IO uses
-one-arg `.context(frame)` (code comes from `io_code`). Git CLI failures
-are classified with `git_code` then `.context(frame)`. Other
-foreign errors use two-arg `.context(code, frame)`. Interpolated frames use
-`.with_context(|| format!("… {n}"))`, not `.context(format!(...))`.
+| - | - |
+| Our failure | `Fault::new(code, message)` |
+| About a file | `.with_path("notes/a.md")` |
+| Method knows the retry answer | `.with_retryable(bool)` |
+| Add a frame | `.context(frame)`; lazy: `.with_context(\|\| format!(…))` |
+| `std::io::Error` | `.map_err(error::io)` (then `.with_path`, `.context`) |
+| git CLI failure (stderr) | `error::git_fault(stderr)`; branch inside Scheda with `git_failure(&err)` |
+| Other foreign error (serde, Tantivy, USearch, UTF-8) | `.or_fault(code, message)` / `.or_fault_with(code, \|\| …)` |
+| Poisoned lock | `error::mutex(&m, frame)` (`RuntimeCode::Panicked`) |
+| Guard / early return | `ensure!(cond, fault)` / `bail!(fault)` (anything `Into<Error>`) |
 
 ```rust
-// GOOD — foreign, static frame
-Index::new(&options)
-    .context(Code::IndexVector, "[AnnIndex::new] create new index")?;
+// GOOD
+std::fs::read(&path)
+    .map_err(|err| io(err).with_path("notes/a.md"))
+    .context("read record")?;
+index.add(key, &vector).or_fault(VaultErrorCode::IndexBroken, "add vector")?;
 
-// GOOD — interpolated frame (closure runs only on Err)
-inner.reserve(next).with_context(
-    Code::IndexVector,
-    || format!("[AnnIndex::add] reserve capacity {next}"),
-)?;
-
-// GOOD — already Error
-path_str(path).context("[AnnIndex::restore] path must be UTF-8")?;
-
-// BAD
-Index::new(&options)
-    .map_err(|e| Error::index_vector(e.to_string()))
-    .context("[AnnIndex::new] create new index")?;
+// BAD: message replaces the code and drops the cause
+std::fs::read(&path).map_err(|e| Error::new(code, format!("read {path}: {e}")))?;
 ```
 
-`code` stays the leaf class while bubbling. Upper frames only grow `stack`.
+`io` maps network kinds and timeouts to `UNAVAILABLE` (retryable) and
+everything else to `STORAGE` (retryable for `Interrupted`, `WouldBlock`,
+`ResourceBusy`). `git_fault` classes: auth, certificate -> `UNAUTHENTICATED`;
+timeout, host unreachable -> `UNAVAILABLE`; not fast-forward ->
+`MIRROR_AHEAD`; conflicts -> `MIRROR_CONFLICT`; locked -> `ABORTED`; the
+rest -> `REPLICATION`. Do not define a second `context` method on
+`Result<_, io::Error>`: it collides with `protocontract::Context`.
+
+## Stack frames
+
+English, one per failed step, `Type::method` and what happened. No crate or
+module prefix. Interpolated frames use `with_context` (the closure runs
+only on `Err`); do not pass `format!(…)` to `context`. If a lower frame
+already names the method, do not wrap again.
+
+## Tests
+
+Assert the code, not the message: `assert!(error.is(VaultErrorCode::…))`
+(or `RuntimeCode::Panicked`), and `error.retryable()`. Reach the cause with
+`std::error::Error::source(&error)` and `downcast_ref`.
 
 ## Do not
 
-- anyhow, `bail!`/`ensure!` from anyhow, or `From<anyhow::Error>`
-- `format!("read {}: {err}", path)` stuffing path + foreign Display into
-  `message` when `path` / `code` / `stack` exist
-- Language backtraces (`file:line`, `rustc` frames)
-- Re-checking proto `buf.validate` rules in `src/` (see `.claude/rules/proto-validation.md`)
-- Patching `repeat` only at constructors with no `with_repeat` escape hatch
-- Putting Index/git-remote failures in `path`
+- anyhow, or `From<anyhow::Error>`
+- `format!("read {}: {err}", path)` in a message when path, code, and
+  source exist
+- A language backtrace in a frame, an absolute path or URL in `path`, a
+  credential in a message
+- Re-checking proto `buf.validate` rules in `src/`
+- Branching on the message or on the fields of a `Fault`
