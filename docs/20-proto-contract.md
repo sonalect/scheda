@@ -370,7 +370,7 @@ How it works inside (not visible in the API). *Settled with the owner,
   The lock is held for that alone: the caller built the write before it
   called. A write never fails on the lock while its timeout runs.
 - **Commit first, files after.** The commit is built from git objects
-  with a temporary index. `HEAD` moves by compare and swap on the old
+  on the tree of `HEAD` (D22). `HEAD` moves by compare and swap on the old
   `HEAD`; a `git` command run by hand meanwhile makes the swap fail, and
   the call is `ABORTED` with nothing written. Only then are the files
   written into the work tree, and git's own index brought up to the
@@ -385,8 +385,8 @@ How it works inside (not visible in the API). *Settled with the owner,
   writes the paths of its write into `commit.lock` before it moves
   `HEAD`, and empties the file once the files are written. `open` and
   every take of the lock read it: a list left there means a writer died
-  midway, and those paths are brought back to what `HEAD` holds (their
-  changes in the work tree discarded), then the file is emptied. If the
+  midway, and those paths are brought up to what `HEAD` holds, except a
+  file a person changed (D22), then the file is emptied. If the
   commit had landed, the files become its files; if not, they were never
   touched, and nothing changes. Only the paths of the list: other changes
   in the work tree may be a person's edit (a Vault is readable and
@@ -394,20 +394,17 @@ How it works inside (not visible in the API). *Settled with the owner,
   died before its commit wrote nothing, and its call did not return
   `Ok`.
 - **Details decided for P4** (17 October 2026; the owner may revisit):
-  1. *The commit costs a fixed number of git processes, whatever the
-     size of the write:* the new blobs hashed by one `git hash-object -w
-     --stdin-paths`, one temporary index (`GIT_INDEX_FILE`) read from
-     `HEAD` and changed by one `git update-index --index-info`, then
-     `write-tree`, `commit-tree`, and `update-ref HEAD <new> <old>`.
+  1. *The commit starts no process (D22):* the new blobs, a tree built on
+     the tree of `HEAD`, and the commit are written through the library,
+     and the branch moves by compare and swap on the old `HEAD`.
   2. *The message:* its first line is the first line of the first note
      (a collection write: Scheda's own text, `create collection notes
      (standard)`); each Document write adds one trailer `Scheda-Note:`
      whose value is the Protobuf JSON of its key and note on one line, so
      the history of a Document shows its own note even when a batch wrote
      several.
-  3. *`Document.revision`* is the SHA-256, in hex, of the bytes of the
-     stored file (the sealed bytes of an encrypted collection); a history
-     entry's revision is the same of that version's bytes.
+  3. *`Document.revision`* is the id of the Document's blob (D22); a
+     history entry's revision is that version's blob id.
   4. *Isolated collections:* their Documents live in the nested
      repository under `.isolated/`, a repository of its own, and two
      repositories cannot take one atomic step. So one batch writes the
@@ -593,11 +590,11 @@ is a `BoxIter`; the async form gets a stream instead of today's whole
 `Vec`, with protocontract's bounded channel in between (16 items).
 Concretely:
 
-- `GetDocuments` walks the collection's directories as it goes and opens
-  a Document's file only when that Document is next. Yielding in `id`
-  order sorts the entries of one directory at a time, so memory follows
-  the largest directory, not the collection. A journal is read segment by
-  segment, line by line.
+- `GetDocuments` walks the trees of the collection in the commit it
+  started on (D22) as it goes, and reads a Document's blob only when that
+  Document is next. Yielding in `id` order sorts the entries of one tree
+  at a time, so memory follows the largest directory, not the collection.
+  A journal is read segment by segment, line by line.
 - `GetDocumentHistory` reads the git log of the file as it goes and the
   bytes of a version only when that version is next.
 - No stream collects its items into a `Vec` inside Scheda, the async form
@@ -824,8 +821,8 @@ by what they promise.
   and an optional `limit` (unset: every match). The order is `id` for
   `standard` and `singleton`, append order for a journal; ordering by a
   column waits for a caller that needs it. A lazy stream (D8): Scheda
-  reads the Index in portions and opens Document files as it goes, from
-  one snapshot of the Index for the whole stream, so the background
+  reads the Index in portions and reads Document blobs of `HEAD` as it
+  goes (D22), from one snapshot of the Index for the whole stream, so the background
   indexer moves nothing under it: no duplicate and no gap.
   `FindResult.total` leaves the reply.
 - **Pages of a query.** *Settled with the owner, 17 October 2026.*
@@ -941,6 +938,49 @@ not.** *Settled with the owner, 17 October 2026.*
   option of a later caller would do something other than asked, and the
   caller would not know. The same hook serves both: a passed-over key is
   recorded for stored data and refused for a command.
+
+**D22. Everything works on `HEAD`, through a git library.** *Settled with
+the owner, 17 October 2026.*
+
+- **`HEAD` is the Vault.** Writes, reads, and indexing all work on `HEAD`.
+  A write checks against `HEAD` and builds its commit on it (D6); a read
+  (`GetDocument`, `GetDocuments`, `GetDocumentHistory`, the Documents a
+  query or a search returns) reads the git objects of `HEAD`, a stream
+  those of the commit that was `HEAD` when it started, so it reads one
+  snapshot; the indexer reads commits (`17`). The files in the work tree
+  are a person's view of the Vault: equal to `HEAD`, or a change a person
+  has not committed. No call reads them. So a person's uncommitted edit
+  is never seen by a read and never committed by a write, and a crash
+  between a commit and its files changes nothing the API answers.
+- **The work tree after a write.** Scheda writes the files of a write
+  itself (not libgit2's checkout: no filters, owner-only modes, the
+  symlink checks) and brings git's index up for them. A file a person
+  changed and did not commit is left as it is: the write lands in `HEAD`,
+  and git shows the person's file as changed against it. `Check` lists
+  such files. Recovery after a crash (D6) keeps to the same rule.
+- **A library for local work, the command line for the network.** Local
+  git work goes through `git2` (libgit2), in process: objects and trees
+  read and written, the branch moved by compare and swap
+  (`reference_matching`), git's index, conflicts, status. The `git`
+  command line stays only where no library does what system git does:
+  `clone`, `fetch`/`pull`, and `push`, with the person's SSH
+  configuration, agent, and credential helpers. `gix` was weighed: no
+  push, no SHA-256, no reftable, and it does not yet add or remove index
+  entries. `git2` is built without its network features (no OpenSSL, no
+  libssh2), with fsync of the git directory turned on (libgit2 leaves it
+  off). A normal read or write starts no process.
+- **`Document.revision`** is the id of the Document's blob in `HEAD`:
+  known from the tree without reading the file (it replaces D6 detail 3).
+- **Signing.** `OpenOptions.signing` names an SSH or an OpenPGP key to
+  sign every commit of the handle with; Scheda names the key, and the
+  secret stays in its file or agent. Not built yet: a set value makes
+  `open` `UNIMPLEMENTED` (§6). Without it commits are not signed. Git's
+  `commit.gpgSign` is not read: Scheda's commits are the handle's
+  (`OpenOptions.author`), not the person's whose git configuration it is.
+- **Formats.** A repository the bundled libgit2 cannot open (one with
+  SHA-256 objects or reftable refs, which libgit2 1.9 does not read) is
+  `UNIMPLEMENTED` at `open`. A Vault Scheda makes uses SHA-1 objects and
+  loose refs.
 
 ---
 
@@ -1211,6 +1251,22 @@ D6, D14.
       of an empty mirror is "nothing to pull", so `Sync` pushes;
       `SetMirror`, `RemoveMirror`; nothing contacts a remote for
       `.isolated/`.
+- [ ] D22: local git work through `git2`; every read on `HEAD` (a stream
+      on the commit it started on); the declarations and the marker read
+      from `HEAD`; the work tree after a write and its recovery leave a
+      person's change alone; `revision` is the blob id; `Check` lists
+      files a person changed; a repository libgit2 cannot open is
+      `UNIMPLEMENTED`; the command line kept for the network only.
+- *Check:* a read and a write (without a mirror) start no process.
+- *Check:* a person's uncommitted edit of a Document is seen by no read,
+  committed by no write of another Document, and survives a write of the
+  same Document, which lands in `HEAD` while git shows the person's file
+  as changed and `Check` lists it; a commit made by hand is read at once.
+- *Check:* a stream started before a write reads on the commit it
+  started on.
+- *Check:* `Document.revision` is the blob id of the Document in `HEAD`.
+- *Check:* `OpenOptions.signing` set is `UNIMPLEMENTED`; a repository
+  with `commit.gpgSign` set gets Scheda's commits unsigned.
 - *Check:* each mode that makes a Vault does, with a marker of
   generation 2, in one commit; two `open`s of the same new path at once
   make one Vault.
@@ -1424,6 +1480,9 @@ D16.
 - An interactive transaction (D6, alternative 2), and a read of one's
   own writes before the call returns (D6).
 - A priority among writers (D6, "Order").
+- Signing commits with the key `OpenOptions.signing` names (D22): the
+  commit buffer signed by `ssh-keygen -Y sign` or `gpg`, then stored with
+  its `gpgsig` header; the key checked at `open`.
 - `Listen` (a watch on changes, D7).
 - A `bytes_type` option in `protoc-gen-buffa` (D10).
 - The anchor consumer's move to `0.22.0`: in its own repository, after

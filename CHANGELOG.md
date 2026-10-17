@@ -96,6 +96,14 @@ changes; they grow with each part of the move.
   (`FAILED_PRECONDITION` otherwise). A reply is the Document as stored,
   with its new `revision`. One batch writes the isolated collections or
   the others, never both (`INVALID_ARGUMENT`).
+- The API works on the commit `HEAD` names, not on the files of the work
+  tree: a read never sees a change a person has not committed, and a write
+  never commits one. A write still updates the files for people, but
+  leaves a file a person changed as it is. `Document.revision` is an
+  opaque id that changes with the stored bytes.
+- `OpenOptions.signing` names a key to sign commits with. It is not built
+  yet: set, `open` fails with `UNIMPLEMENTED`. Scheda's commits are not
+  signed, and git's `commit.gpgSign` is not read.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

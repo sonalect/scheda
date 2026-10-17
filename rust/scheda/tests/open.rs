@@ -235,3 +235,21 @@ fn encryption_without_the_feature_is_unimplemented() {
     assert!(error.is(Code::Unimplemented));
     assert_eq!(snapshot(&path), before);
 }
+
+#[test]
+fn signing_is_not_built_yet_and_refuses_to_open() {
+    let scratch = Scratch::new("signing");
+    let path = scratch.join("vault");
+    vault(&path);
+    for key in [
+        r#"{"sshKey": "/keys/id_ed25519"}"#,
+        r#"{"openpgpKey": "ABCD1234"}"#,
+    ] {
+        let options: OpenOptions =
+            serde_json::from_str(&format!(r#"{{"signing": {key}}}"#)).unwrap();
+        let before = snapshot(&path);
+        let error = Vault::open(&path, options).unwrap_err();
+        assert!(error.is(Code::Unimplemented), "{key}: {error}");
+        assert_eq!(snapshot(&path), before);
+    }
+}

@@ -237,6 +237,13 @@ fn open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
         )
         .into());
     }
+    if options.signing.is_set() {
+        return Err(Fault::new(
+            VaultErrorCode::Unimplemented,
+            "signing commits is not built yet; leave `signing` unset",
+        )
+        .into());
+    }
     let mode = options
         .mode
         .and_then(|mode| mode.as_known())

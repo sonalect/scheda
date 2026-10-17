@@ -62,6 +62,29 @@ message OpenOptions {
   uint32 write_timeout_ms = 8 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];
+  // The key to sign every commit of this handle with. For a later version:
+  // signing is not built yet, and a set value makes `open`
+  // `UNIMPLEMENTED`. Unset: commits are not signed. Git's `commit.gpgSign`
+  // is not read: the author of Scheda's commits is the handle's (`author`),
+  // not the person whose git configuration it is.
+  Signing signing = 9;
+}
+
+// A key to sign commits with. Scheda names the key only; the secret stays
+// where it is (a key file, `ssh-agent`, `gpg-agent`).
+message Signing {
+  oneof key {
+    option (buf.validate.oneof).required = true;
+    // An SSH key: the path of its private key file, or of its public key
+    // when `ssh-agent` holds the secret.
+    string ssh_key = 1 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+    // An OpenPGP key: its id or fingerprint, as `gpg` names it.
+    string openpgp_key = 2 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
 }
 
 // What `open` may do with the path it is given. In every mode, a Vault

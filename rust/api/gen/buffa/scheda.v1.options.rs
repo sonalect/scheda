@@ -262,6 +262,18 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub write_timeout_ms: ::core::option::Option<u32>,
+    /// The key to sign every commit of this handle with. For a later version:
+    /// signing is not built yet, and a set value makes `open`
+    /// `UNIMPLEMENTED`. Unset: commits are not signed. Git's `commit.gpgSign`
+    /// is not read: the author of Scheda's commits is the handle's (`author`),
+    /// not the person whose git configuration it is.
+    ///
+    /// Field 9: `signing`
+    #[serde(
+        rename = "signing",
+        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+    )]
+    pub signing: ::buffa::MessageField<Signing, ::buffa::Inline<Signing>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -277,6 +289,7 @@ impl ::core::fmt::Debug for OpenOptions {
             .field("index_poll_ms", &self.index_poll_ms)
             .field("mode", &self.mode)
             .field("write_timeout_ms", &self.write_timeout_ms)
+            .field("signing", &self.signing)
             .finish()
     }
 }
@@ -391,6 +404,14 @@ impl ::buffa::Message for OpenOptions {
         if let Some(v) = self.write_timeout_ms {
             size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
         }
+        if self.signing.is_set() {
+            let __slot = __cache.reserve();
+            let inner_size = self.signing.compute_size(__cache);
+            __cache.set(__slot, inner_size);
+            size
+                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
+                    + inner_size as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -434,6 +455,14 @@ impl ::buffa::Message for OpenOptions {
         }
         if let Some(v) = self.write_timeout_ms {
             ::buffa::types::put_uint32_field(8u32, v, buf);
+        }
+        if self.signing.is_set() {
+            ::buffa::types::put_len_delimited_header(
+                9u32,
+                u64::from(__cache.consume_next()),
+                buf,
+            );
+            self.signing.write_to(__cache, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -526,6 +555,17 @@ impl ::buffa::Message for OpenOptions {
                     ::buffa::types::decode_uint32(buf)?,
                 );
             }
+            9u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::Message::merge_length_delimited(
+                    self.signing.get_or_insert_default(),
+                    buf,
+                    ctx,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -542,6 +582,7 @@ impl ::buffa::Message for OpenOptions {
         self.index_poll_ms = ::core::option::Option::None;
         self.mode = ::core::option::Option::None;
         self.write_timeout_ms = ::core::option::Option::None;
+        self.signing = ::buffa::MessageField::none();
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -574,6 +615,246 @@ pub const __OPEN_OPTIONS_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buff
     from_json: ::buffa::type_registry::any_from_json::<OpenOptions>,
     is_wkt: false,
 };
+/// A key to sign commits with. Scheda names the key only; the secret stays
+/// where it is (a key file, `ssh-agent`, `gpg-agent`).
+#[derive(Clone, PartialEq, Default)]
+#[derive(::serde::Serialize)]
+#[serde(default)]
+pub struct Signing {
+    #[serde(flatten)]
+    pub key: ::core::option::Option<__buffa::oneof::signing::Key>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub __buffa_unknown_fields: ::buffa::UnknownFields,
+}
+impl ::core::fmt::Debug for Signing {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("Signing").field("key", &self.key).finish()
+    }
+}
+impl Signing {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.Signing";
+}
+::buffa::impl_default_instance!(Signing);
+impl ::buffa::MessageName for Signing {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "Signing";
+    const FULL_NAME: &'static str = "scheda.v1.Signing";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.Signing";
+}
+impl ::buffa::Message for Signing {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let ::core::option::Option::Some(ref v) = self.key {
+            match v {
+                __buffa::oneof::signing::Key::SshKey(x) => {
+                    size += 1u64 + ::buffa::types::string_encoded_len(x) as u64;
+                }
+                __buffa::oneof::signing::Key::OpenpgpKey(x) => {
+                    size += 1u64 + ::buffa::types::string_encoded_len(x) as u64;
+                }
+            }
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let ::core::option::Option::Some(ref v) = self.key {
+            match v {
+                __buffa::oneof::signing::Key::SshKey(x) => {
+                    ::buffa::types::put_string_field(1u32, x, buf);
+                }
+                __buffa::oneof::signing::Key::OpenpgpKey(x) => {
+                    ::buffa::types::put_string_field(2u32, x, buf);
+                }
+            }
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                self.key = ::core::option::Option::Some(
+                    __buffa::oneof::signing::Key::SshKey(
+                        ::buffa::types::decode_string(buf)?,
+                    ),
+                );
+            }
+            2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                self.key = ::core::option::Option::Some(
+                    __buffa::oneof::signing::Key::OpenpgpKey(
+                        ::buffa::types::decode_string(buf)?,
+                    ),
+                );
+            }
+            _ => {
+                self.__buffa_unknown_fields
+                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.key = ::core::option::Option::None;
+        self.__buffa_unknown_fields.clear();
+    }
+}
+impl ::buffa::ExtensionSet for Signing {
+    const PROTO_FQN: &'static str = "scheda.v1.Signing";
+    fn unknown_fields(&self) -> &::buffa::UnknownFields {
+        &self.__buffa_unknown_fields
+    }
+    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+        &mut self.__buffa_unknown_fields
+    }
+}
+impl<'de> ::serde::Deserialize<'de> for Signing {
+    fn deserialize<D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        struct _V;
+        impl<'de> ::serde::de::Visitor<'de> for _V {
+            type Value = Signing;
+            fn expecting(
+                &self,
+                f: &mut ::core::fmt::Formatter<'_>,
+            ) -> ::core::fmt::Result {
+                f.write_str("struct Signing")
+            }
+            #[allow(clippy::field_reassign_with_default)]
+            fn visit_map<A: ::serde::de::MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> ::core::result::Result<Signing, A::Error> {
+                let mut __oneof_key: ::core::option::Option<
+                    __buffa::oneof::signing::Key,
+                > = None;
+                while let Some(key) = map.next_key::<::buffa::alloc::string::String>()? {
+                    match key.as_str() {
+                        "sshKey" | "ssh_key" => {
+                            let v: ::core::option::Option<
+                                ::buffa::alloc::string::String,
+                            > = map
+                                .next_value_seed(
+                                    ::buffa::json_helpers::NullableDeserializeSeed(
+                                        ::buffa::json_helpers::DefaultDeserializeSeed::<
+                                            ::buffa::alloc::string::String,
+                                        >::new(),
+                                    ),
+                                )?;
+                            if let Some(v) = v {
+                                if __oneof_key.is_some() {
+                                    return Err(
+                                        ::serde::de::Error::custom(
+                                            "multiple oneof fields set for 'key'",
+                                        ),
+                                    );
+                                }
+                                __oneof_key = Some(__buffa::oneof::signing::Key::SshKey(v));
+                            }
+                        }
+                        "openpgpKey" | "openpgp_key" => {
+                            let v: ::core::option::Option<
+                                ::buffa::alloc::string::String,
+                            > = map
+                                .next_value_seed(
+                                    ::buffa::json_helpers::NullableDeserializeSeed(
+                                        ::buffa::json_helpers::DefaultDeserializeSeed::<
+                                            ::buffa::alloc::string::String,
+                                        >::new(),
+                                    ),
+                                )?;
+                            if let Some(v) = v {
+                                if __oneof_key.is_some() {
+                                    return Err(
+                                        ::serde::de::Error::custom(
+                                            "multiple oneof fields set for 'key'",
+                                        ),
+                                    );
+                                }
+                                __oneof_key = Some(
+                                    __buffa::oneof::signing::Key::OpenpgpKey(v),
+                                );
+                            }
+                        }
+                        _ => {
+                            map.next_value::<::serde::de::IgnoredAny>()?;
+                        }
+                    }
+                }
+                let mut __r = <Signing as ::core::default::Default>::default();
+                __r.key = __oneof_key;
+                Ok(__r)
+            }
+        }
+        d.deserialize_map(_V)
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for Signing {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+#[doc(hidden)]
+pub const __SIGNING_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+    type_url: "type.googleapis.com/scheda.v1.Signing",
+    to_json: ::buffa::type_registry::any_to_json::<Signing>,
+    from_json: ::buffa::type_registry::any_from_json::<Signing>,
+    is_wkt: false,
+};
+pub mod signing {
+    #[allow(unused_imports)]
+    use super::*;
+    #[doc(inline)]
+    pub use super::__buffa::oneof::signing::Key;
+    #[doc(inline)]
+    pub use super::__buffa::view::oneof::signing::Key as KeyView;
+}
 /// The author of writes, as the history of a Document shows it.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]

@@ -69,6 +69,7 @@ pub mod __buffa {
         reg.register_json_any(super::__COLLECTION_BATCH_RESULT_JSON_ANY);
         reg.register_json_any(super::__COLLECTION_RESULT_JSON_ANY);
         reg.register_json_any(super::__OPEN_OPTIONS_JSON_ANY);
+        reg.register_json_any(super::__SIGNING_JSON_ANY);
         reg.register_json_any(super::__AUTHOR_JSON_ANY);
         reg.register_json_any(super::__ENCRYPTION_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_JSON_ANY);
@@ -181,6 +182,10 @@ pub use self::__buffa::view::CollectionResultOwnedView;
 pub use self::__buffa::view::OpenOptionsView;
 #[doc(inline)]
 pub use self::__buffa::view::OpenOptionsOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::SigningView;
+#[doc(inline)]
+pub use self::__buffa::view::SigningOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::AuthorView;
 #[doc(inline)]
