@@ -259,8 +259,11 @@ does not, and a crash leaves them there until a later `begin` clears them
 (`tx.log`). The anchor consumer therefore built its own write path around
 Scheda: a durable queue of batches in front of the Vault, one writer
 elected across processes by an OS lock, idempotent apply for replay after
-a crash, and checks at submission (its decisions D129, D132, D137). That
-path belongs in Scheda, and the API must not show how it works.
+a crash, and checks at submission (its decisions D129, D132, D137). The
+trouble was not that there is a lock, but that it was held for as long as
+the caller worked. Once the caller builds a write whole before it calls,
+the lock is held for one commit only, and a writer can simply wait for it.
+How Scheda writes must not show in the API.
 
 - **Two shapes, one mechanism.** A single write (`CreateDocument`,
   `UpdateDocument`, `UpsertDocument`, `DeleteDocument`, `CreateCollection`,
@@ -347,53 +350,62 @@ path belongs in Scheda, and the API must not show how it works.
   `DocumentBatchResult` the `Document`, `CollectionBatchResult` the
   `Collection`, or nothing for a delete.
 - **When a call returns.** A write call returns when its writes are
-  stored, bounded by a timeout from `OpenOptions`. On the timeout Scheda
-  withdraws the batch from the queue if its apply has not started, or
-  waits for the apply to end: an error always means nothing was written.
+  stored. It waits for the write lock at most `OpenOptions.write_timeout_ms`;
+  past it the call is `ABORTED` (retryable) and writes nothing. Once it
+  holds the lock it finishes. An error always means nothing was written.
 
-How it works inside (not visible in the API):
+How it works inside (not visible in the API). *Settled with the owner,
+17 October 2026:* one short lock, no queue (alternative 5).
 
-- **The queue.** A write call checks what does not depend on the state of
-  the Vault (the collection exists, its kind takes the operation, a
-  journal payload without a line break, slugs, encryption available; a
-  failure is `INVALID_ARGUMENT` at once),
-  then puts the batch in `{vault}/.scheda/queue/`: one file per batch
-  (temporary name, `fsync`, rename, `fsync` of the directory), named by
-  time, counter, and process id; first in, first out. It survives a crash
-  and is not Vault data: no reader sees it. A batch for an encrypted
-  collection is sealed before it is queued, so the queue never holds
-  plaintext (P4 settles how identical bytes are told for sealed ones). A
-  full queue is `RESOURCE_EXHAUSTED`, retryable: the committer has
-  stopped, which must be loud.
-- **The committer.** A background thread of every handle, in every build,
-  like the indexer: the role is taken by `flock` on
-  `{vault}/.scheda/commit.lock`; its holder applies the batches one by
-  one, one git commit each; when it dies, another handle takes the role.
-  The write lock exists only inside the committer, so a write never
-  returns a lock failure to a caller. `Pull`, `Push`, and `Sync` go
-  through the same queue, so only the committer moves `HEAD`. With
-  `auto_sync`, the committer pushes after a commit; a failed push does not
-  undo the write and shows in the status. `open` takes no write lock:
-  pruning orphans and the `auto_sync` pull move to the committer.
-- **Commit first, files after.** The committer builds the commit from git
-  objects with a temporary index, moves `HEAD` atomically (compare and
-  swap on the old `HEAD`), and only then writes the batch's files into the
-  work tree. Scheda never writes a change into the Vault that is not
-  committed.
-- **Exactly once.** The batch's ticket goes into a trailer of the commit
-  message (`Scheda-Ticket: …`). A queued batch whose ticket is already in
-  the history is dropped, not applied again, so even a strict
-  `CreateDocument` is safe to replay. On taking the role, the committer
-  brings the files of the last batch up to `HEAD`: the paths of that
-  batch only, never other files of the work tree.
-- **Failures.** A batch whose apply fails on the state of the Vault moves
-  to `{vault}/.scheda/queue/failed/` with its error, which its call
-  returns; the queue goes on. A transient `STORAGE` failure leaves it
-  queued for the next round.
-- **Order.** First in, first out. The anchor consumer's queue has a
-  priority (its ingest before its learning engine); Scheda offers none.
-  Recommendation: add one only if that consumer still needs it after its
-  move.
+- **One short lock.** A write call first checks what does not depend on
+  the state of the Vault (the collection exists, its kind takes the
+  operation, a journal payload without a line break, slugs, encryption
+  available); a failure is `INVALID_ARGUMENT` at once, and no lock is
+  taken. Then it takes `flock` on `{vault}/.scheda/commit.lock`, waiting
+  while another handle holds it, of this process or another. The writes
+  of one handle take their turn inside the handle first, so one thread
+  of a handle waits on the file. Holding the lock, the call reads the
+  state it needs, checks the rest (`ALREADY_EXISTS`, `NOT_FOUND`,
+  `revision`), makes one commit, writes the files, and lets the lock go.
+  The lock is held for that alone: the caller built the write before it
+  called. A write never fails on the lock while its timeout runs.
+- **Commit first, files after.** The commit is built from git objects
+  with a temporary index. `HEAD` moves by compare and swap on the old
+  `HEAD`; a `git` command run by hand meanwhile makes the swap fail, and
+  the call is `ABORTED` with nothing written. Only then are the files
+  written into the work tree, and git's own index brought up to the
+  commit for those paths. Scheda never writes a change into the Vault
+  that is not committed.
+- **A crash between the two.** *Settled with the owner, 17 October
+  2026.* Nothing is written into the work tree before the commit, so a
+  crash never leaves a part of a write there: before the swap on `HEAD`
+  it leaves only git objects that nothing names (git's own collection
+  removes them), after it the commit holds the whole write and only its
+  files lag. The lock file is the note: holding the lock, the writer
+  writes the paths of its write into `commit.lock` before it moves
+  `HEAD`, and empties the file once the files are written. `open` and
+  every take of the lock read it: a list left there means a writer died
+  midway, and those paths are brought back to what `HEAD` holds (their
+  changes in the work tree discarded), then the file is emptied. If the
+  commit had landed, the files become its files; if not, they were never
+  touched, and nothing changes. Only the paths of the list: other changes
+  in the work tree may be a person's edit (a Vault is readable and
+  editable without Scheda) and are never discarded. A writer whose process
+  died before its commit wrote nothing, and its call did not return
+  `Ok`.
+- **The mirror.** `Pull` and `Sync` move `HEAD` and the work tree, so
+  they take the same lock. `Push` sends what is committed and takes no
+  lock. With `auto_sync`, a write pushes after it lets the lock go; a
+  failed push does not undo the write and shows in the status. `SetMirror`
+  and `RemoveMirror` take the lock, so they never meet a running `Pull`.
+  `open` takes no lock of its own: its writes (the marker of a new Vault,
+  the `auto_sync` pull) take it as any write does.
+- **Order.** *Settled with the owner, 17 October 2026.* Writers go in the
+  order they take the lock; there is no priority. A commit is short (the
+  indexer embeds and indexes on its own thread, after it), so a write
+  waits only for the few before it. The anchor consumer keeps a buffer of
+  its own, to answer its MCP clients at once and write through Scheda
+  after: that is a need of a server, not of the store.
 
 Why not the alternatives:
 
@@ -413,13 +425,20 @@ Why not the alternatives:
 4. *Several commits at once.* One work tree has one index and one `HEAD`;
    git itself serializes commits (`.git/index.lock`). Parallel commits
    need separate clones or branches and a merge.
-5. *Waiting for the lock with a timeout instead of a queue:* the anchor
-   consumer tried and rejected it (D132): an expired timeout returns the
-   caller to the same retry loop, only less often.
+5. *A durable queue with a committer role* (the first draft of this
+   decision, after the anchor consumer's own path): each call puts its
+   batch in a queue directory, one committer elected by `flock` applies
+   the batches, and each call waits for an answer file. A write needs no
+   durability before `Ok` (a call that did not return `Ok` wrote
+   nothing), and the queue brought answer files, a hand-off of the role,
+   tickets for replay, and a batch of a later version meeting an earlier
+   committer, for no gain once the lock is short. The anchor consumer
+   rejected waiting for the lock (D132) when the lock was held for a whole
+   transaction; held for one commit, a wait is short.
 6. *`Submit` and `Await` as public calls* (an answer at once, the write
-   later): no call holds the lock for long any more, so a caller has no
-   reason to answer before its write is stored, and two calls would show
-   the queue in the API.
+   later): no call holds the lock for long, so a caller has no reason to
+   answer before its write is stored. A server that must answer its own
+   clients at once keeps its own buffer.
 
 Checked against the anchor consumer's real batches: every read inside its
 transactions only picks between add, replace, unchanged, and remove
@@ -432,8 +451,9 @@ and an upsert in one `BatchDocuments`. Its collection batch
 operations. Its config write
 (`lifecycle.rs:251`) reads first to pick add or replace, which is
 `UpsertDocument`. After its move it keeps its domain encoding (`Encode`:
-its records into writes) and its network client queue; its intake buffer,
-writer role, writer lock, and hand-off go.
+its records into writes) and its intake buffer, which answers its MCP
+clients at once and then writes through Scheda; its writer role, writer
+lock, and hand-off go.
 
 New for transports: the CLI and an agent can send a batch
 (`scheda batch-documents` and `scheda batch-collections` read the
@@ -585,9 +605,8 @@ snapshot. `WatchIndexStatus` (D18) is a stream that never ends by itself.
   | `ALREADY_EXISTS` | no | `duplicate_id` | treats it as present |
   | `FAILED_PRECONDITION` | no | new (D6 `revision`) | reads again |
   | `UNIMPLEMENTED` | no | `unsupported`, `unsupported_encryption`, a method of a feature the build lacks (D2) | calls something else or uses another build |
-  | `ABORTED` | yes | `locked`, `git_locked` (never from a write, D6) | tries again |
+  | `ABORTED` | yes | `locked`, `git_locked`; a write that did not get the write lock within its timeout, or whose `HEAD` moved under it (D6) | tries again |
   | `UNAVAILABLE` | yes | `io_network_*`, `io_connection_*`, `io_host_unreachable`, `io_timed_out`, `git_timeout`, a port's `UNAVAILABLE` | tries again later |
-  | `RESOURCE_EXHAUSTED` | yes | new (D6, full queue) | alerts: the committer stopped |
   | `UNAUTHENTICATED` | no | `git_auth`, `git_certificate` | supplies credentials for the mirror |
   | `NOT_A_VAULT` | no | `not_a_vault` | opens another path |
   | `GENERATION` | no | new (D1) | moves the Vault to this generation |
@@ -644,23 +663,24 @@ Recommendation: yes.
 17 October 2026.*
 
 - **The background work runs on dedicated OS threads, in every build.**
-  The indexer and the committer (D6) do blocking work only: files and
-  `fsync`, git, Tantivy and USearch writes, `flock`. That must not run on
+  The indexer does blocking work only: files and `fsync`, git, Tantivy
+  and USearch writes, `flock`. That must not run on
   a runtime's worker threads, and a loop that never ends is not what
   `spawn_blocking` is for (it would hold a pool thread for good). Tokio
   tasks instead would tie the life of a handle to a runtime (a runtime
   stopped first would cancel a write midway; a sync caller has none),
-  and would make two implementations of the background work. Two
-  threads, not one: an indexer round can embed for minutes, and a write
-  must not wait behind it.
+  and would make two implementations of the background work. A write
+  runs on the thread of its call (D6), never behind the indexer: an
+  indexer round can embed for minutes.
 - **`AsyncVault`** (feature `tokio`) implements `VaultAsync` by hand,
   not through the generated `impl … for Offload<Vault>`:
   - a call runs the sync call on the blocking pool (`Offload::call`);
   - a wait is native and holds no thread: the background threads notify
     through async channels. `WatchIndexStatus` reads a `watch` channel,
-    as `wait_indexed` does today; a write puts its batch in the queue
-    and then awaits a `oneshot` the committer fires when the batch is
-    stored;
+    as `wait_indexed` does today. A write awaits its turn among the
+    writes of the handle on an async lock, then takes the file lock and
+    commits on the blocking pool, so one pool thread of a handle at most
+    waits on another process;
   - `AsyncVault::open` runs `Vault::open` on the blocking pool.
 - **A port is called the way Scheda itself is called.** A sync call of
   the Vault calls ports synchronously (an async port through `Blocking`).
@@ -693,7 +713,7 @@ without arguments takes `google.protobuf.Empty`. Recommendation: yes.
 with the owner, 17 October 2026.*
 
 - `Push`, `Pull`, and `Sync` take no argument and work with the mirror of
-  the Vault only; they go through the write queue (D6). `push_isolated`,
+  the Vault only; `Pull` and `Sync` take the write lock (D6). `push_isolated`,
   `pull_isolated`, and `sync_isolated` go.
 - **Isolated collections never leave the machine.** Today the nested
   repository under `{vault}/.isolated/` may have a mirror of its own,
@@ -721,7 +741,7 @@ with the owner, 17 October 2026.*
   (ISO-1): only `Pull`, `Push`, and `Sync` do. A URL that carries a user
   and password is `INVALID_ARGUMENT`: no secret is kept in the
   repository's settings; credentials come from git, as today. Both go
-  through the write queue, so they never meet a running `Push` or `Pull`.
+  take the write lock, so they never meet a running `Pull`.
 - **The word is mirror.** `origin` is git's name and stays inside.
   `Info.remote` becomes `Info.mirror`; `OpenOptions.remote_repo` becomes
   `OpenOptions.mirror` (the URL `open` clones from when the path holds no
@@ -899,7 +919,6 @@ not.** *Settled with the owner, 17 October 2026.*
   option of a later caller would do something other than asked, and the
   caller would not know. The same hook serves both: a passed-over key is
   recorded for stored data and refused for a command.
-- A queued batch (D6) is a command kept in a file: see O3.
 
 ---
 
@@ -1148,11 +1167,15 @@ D1, D3 (`OpenMode`), D20, D21.
 
 D6, D14.
 
-- [ ] The queue, the committer role, commit first and files after, the
-      ticket trailer, the failed directory, the timeout and its
-      withdrawal, `RESOURCE_EXHAUSTED`, per D6; `open` takes no write
-      lock. The committer refuses a symlink on the path of a file before
-      it writes it (`documents::encode` does not see the Vault).
+- [ ] The write path of D6: the checks before the lock, the write lock
+      (`flock` on `.scheda/commit.lock`, the writes of a handle in turn
+      before it), the timeout (`ABORTED`), commit first and files after
+      with the swap on `HEAD`, the list of paths in `commit.lock` and
+      its recovery at `open` and at every take of the lock; a
+      symlink on the path of a file is refused before it is written
+      (`documents::encode` does not see the Vault). Proto:
+      `RESOURCE_EXHAUSTED` removed from `VaultErrorCode`, the comments of
+      `ABORTED` and `write_timeout_ms` say the lock, not a queue.
 - [ ] `CreateDocument`, `UpdateDocument`, `UpsertDocument`,
       `DeleteDocument`, `BatchDocuments`, `CreateCollection`,
       `UpdateCollection`, `DeleteCollection`, `BatchCollections`, and
@@ -1161,7 +1184,8 @@ D6, D14.
 - [ ] `open` makes a Vault where its mode allows (a missing path, an
       empty folder, a git work tree without the marker): the marker and
       `.gitignore` in one commit, or a clone of `OpenOptions.mirror`.
-- [ ] `Pull`, `Push`, `Sync` through the queue, without arguments; pull
+- [ ] `Pull`, `Push`, `Sync` without arguments, `Pull` and `Sync` under
+      the write lock; pull
       of an empty mirror is "nothing to pull", so `Sync` pushes;
       `SetMirror`, `RemoveMirror`; nothing contacts a remote for
       `.isolated/`.
@@ -1189,16 +1213,19 @@ D6, D14.
 - *Check:* a write whose call has not returned is seen by no
   `GetDocument` and leaves the work tree untouched.
 - *Check:* 64 concurrent write calls from one handle, and from three
-  processes, each end stored whole, in the order they were queued; none
-  fails on the lock.
-- *Check:* a timed-out call whose batch had not started leaves nothing
-  stored, then or later.
-- *Check:* the committer killed after the commit and before the files:
-  the next holder brings the work tree up to `HEAD` and does not apply the
-  batch twice; killed before the commit: the batch is applied once.
-- *Check:* the committer's process exits: another handle takes the role
-  and drains the queue.
-- *Check:* the queue file of an encrypted collection holds no plaintext.
+  processes, each end stored whole, one commit each; none fails on the
+  lock.
+- *Check:* a call that cannot take the lock within its timeout (another
+  process holds it) is `ABORTED` and stores nothing, then or later.
+- *Check:* a writer killed after the commit and before the files: the
+  next `open`, and the next take of the lock by a running handle, bring
+  exactly those paths to `HEAD` and empty `commit.lock`; killed before
+  the commit: nothing is stored and nothing in the work tree changes; a
+  person's edit of another file survives both; a `git commit` run by hand
+  between the read and the swap makes the write `ABORTED` with nothing
+  stored.
+- *Check:* `commit.lock` holds paths only, never the bytes of a
+  Document, and is empty after every write that returned.
 - *Check:* `Sync` against an empty mirror pushes.
 - *Check:* a nested repository under `.isolated/` with an `origin`
   configured: no call of Scheda contacts it.
@@ -1315,10 +1342,9 @@ D11.
 - *Check:* on a blocking pool of one thread, an async search whose async
   embedder takes a second to answer does not stop another call (the
   embedder is awaited, not blocked on); a write waiting for the
-  committer does not either.
-- *Check:* the indexer and the committer are OS threads that end with
-  `close`, also when the runtime that opened the `AsyncVault` has been
-  dropped first.
+  write lock does not either.
+- *Check:* the indexer is an OS thread that ends with `close`, also when
+  the runtime that opened the `AsyncVault` has been dropped first.
 
 ### P8. CLI and acceptance
 
@@ -1375,7 +1401,7 @@ D16.
   would then be a service the caller serves, or a bidirectional stream.
 - An interactive transaction (D6, alternative 2), and a read of one's
   own writes before the call returns (D6).
-- A priority in the write queue (D6, "Order").
+- A priority among writers (D6, "Order").
 - `Listen` (a watch on changes, D7).
 - A `bytes_type` option in `protoc-gen-buffa` (D10).
 - The anchor consumer's move to `0.22.0`: in its own repository, after
@@ -1399,11 +1425,6 @@ To settle with the owner before the stage that needs them.
   it starts the rebuild; `WatchIndexStatus` shows it.
 - **O2. A count of matches.** *Closed by D19 (17 October 2026):*
   `CountDocuments(DocumentQuery)`; no count for a search.
-- **O3. A queued batch across versions (P4).** A batch in
-  `{vault}/.scheda/queue/` is a command kept in a file (D21). Several
-  processes of different Scheda versions may share a Vault, and the
-  committer of one applies what another queued. A committer that meets
-  a field it does not know must not drop it (that writes something other
-  than the caller asked), and must not stop the queue for good. To
-  settle before P4: leave such a batch to a committer that knows it,
-  record the queue format in the batch file, or another way.
+- **O3. A queued batch across versions.** *Gone with the queue (D6,
+  alternative 5; 17 October 2026):* each process applies its own writes
+  with its own code, so no Scheda applies a write of another version.
