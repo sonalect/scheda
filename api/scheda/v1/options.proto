@@ -56,10 +56,9 @@ message OpenOptions {
   OpenMode mode = 7 [(buf.validate.field) = {
     enum: {defined_only: true}
   }];
-  // How long a write call waits for its write to be stored, in
-  // milliseconds. On the timeout the write is withdrawn if it has not
-  // started, or waited for if it has: an error always means nothing was
-  // written. Unset: 60000.
+  // How long a write call waits for the write lock, in milliseconds. Past
+  // it the call is `ABORTED` and writes nothing; once it holds the lock it
+  // finishes. Unset: 60000.
   uint32 write_timeout_ms = 8 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];

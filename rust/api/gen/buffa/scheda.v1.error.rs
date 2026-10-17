@@ -23,15 +23,13 @@ pub enum VaultErrorCode {
     /// The call does not apply (a journal line is not replaced) or this
     /// build lacks the feature it needs.
     VAULT_ERROR_CODE_UNIMPLEMENTED = 5i32,
-    /// A call of the same kind is already running (a rebuild); a write never
-    /// fails so. Retryable.
+    /// Another write held the write lock for the whole write timeout, or
+    /// `HEAD` moved under the write (a `git` command run by hand). Retryable;
+    /// nothing was written.
     VAULT_ERROR_CODE_ABORTED = 6i32,
-    /// Something the call needs cannot be reached now: the mirror, a port,
-    /// or the write queue within its timeout. Retryable.
+    /// Something the call needs cannot be reached now: the mirror or a port.
+    /// Retryable.
     VAULT_ERROR_CODE_UNAVAILABLE = 7i32,
-    /// The write queue is full: the handle that applies writes has stopped.
-    /// Retryable, and to be raised loudly.
-    VAULT_ERROR_CODE_RESOURCE_EXHAUSTED = 8i32,
     /// The mirror refused the credentials git gave it.
     VAULT_ERROR_CODE_UNAUTHENTICATED = 9i32,
     /// The path holds no Vault.
@@ -87,9 +85,6 @@ impl VaultErrorCode {
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_UNAVAILABLE`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
     pub const Unavailable: Self = Self::VAULT_ERROR_CODE_UNAVAILABLE;
-    ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_RESOURCE_EXHAUSTED`]; `Debug` prints the variant name.
-    #[allow(non_upper_case_globals)]
-    pub const ResourceExhausted: Self = Self::VAULT_ERROR_CODE_RESOURCE_EXHAUSTED;
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_UNAUTHENTICATED`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
     pub const Unauthenticated: Self = Self::VAULT_ERROR_CODE_UNAUTHENTICATED;
@@ -233,9 +228,6 @@ impl ::buffa::Enumeration for VaultErrorCode {
             5i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNIMPLEMENTED),
             6i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_ABORTED),
             7i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAVAILABLE),
-            8i32 => {
-                ::core::option::Option::Some(Self::VAULT_ERROR_CODE_RESOURCE_EXHAUSTED)
-            }
             9i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAUTHENTICATED),
             10i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_NOT_A_VAULT),
             11i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_GENERATION),
@@ -272,9 +264,6 @@ impl ::buffa::Enumeration for VaultErrorCode {
             Self::VAULT_ERROR_CODE_UNIMPLEMENTED => "VAULT_ERROR_CODE_UNIMPLEMENTED",
             Self::VAULT_ERROR_CODE_ABORTED => "VAULT_ERROR_CODE_ABORTED",
             Self::VAULT_ERROR_CODE_UNAVAILABLE => "VAULT_ERROR_CODE_UNAVAILABLE",
-            Self::VAULT_ERROR_CODE_RESOURCE_EXHAUSTED => {
-                "VAULT_ERROR_CODE_RESOURCE_EXHAUSTED"
-            }
             Self::VAULT_ERROR_CODE_UNAUTHENTICATED => "VAULT_ERROR_CODE_UNAUTHENTICATED",
             Self::VAULT_ERROR_CODE_NOT_A_VAULT => "VAULT_ERROR_CODE_NOT_A_VAULT",
             Self::VAULT_ERROR_CODE_GENERATION => "VAULT_ERROR_CODE_GENERATION",
@@ -318,9 +307,6 @@ impl ::buffa::Enumeration for VaultErrorCode {
             }
             "VAULT_ERROR_CODE_UNAVAILABLE" => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAVAILABLE)
-            }
-            "VAULT_ERROR_CODE_RESOURCE_EXHAUSTED" => {
-                ::core::option::Option::Some(Self::VAULT_ERROR_CODE_RESOURCE_EXHAUSTED)
             }
             "VAULT_ERROR_CODE_UNAUTHENTICATED" => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAUTHENTICATED)
@@ -371,7 +357,6 @@ impl ::buffa::Enumeration for VaultErrorCode {
             Self::VAULT_ERROR_CODE_UNIMPLEMENTED,
             Self::VAULT_ERROR_CODE_ABORTED,
             Self::VAULT_ERROR_CODE_UNAVAILABLE,
-            Self::VAULT_ERROR_CODE_RESOURCE_EXHAUSTED,
             Self::VAULT_ERROR_CODE_UNAUTHENTICATED,
             Self::VAULT_ERROR_CODE_NOT_A_VAULT,
             Self::VAULT_ERROR_CODE_GENERATION,

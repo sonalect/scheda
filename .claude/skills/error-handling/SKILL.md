@@ -30,9 +30,8 @@ in a new code.
 | `ALREADY_EXISTS` | no | duplicate id or name |
 | `FAILED_PRECONDITION` | no | stored state is not what the request requires (revision) |
 | `UNIMPLEMENTED` | no | unsupported call, or a feature the build lacks |
-| `ABORTED` | yes | lock held, a rebuild already running (never from a write) |
-| `UNAVAILABLE` | yes | mirror, network, port, timeout |
-| `RESOURCE_EXHAUSTED` | yes | write queue full |
+| `ABORTED` | yes | the write lock was held for the whole write timeout, or `HEAD` moved under a write |
+| `UNAVAILABLE` | yes | mirror, network, port |
 | `UNAUTHENTICATED` | no | mirror refused the credentials |
 | `NOT_A_VAULT` | no | path holds no Vault |
 | `GENERATION` | no | Vault of another generation |

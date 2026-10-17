@@ -250,10 +250,9 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub mode: ::core::option::Option<::buffa::EnumValue<OpenMode>>,
-    /// How long a write call waits for its write to be stored, in
-    /// milliseconds. On the timeout the write is withdrawn if it has not
-    /// started, or waited for if it has: an error always means nothing was
-    /// written. Unset: 60000.
+    /// How long a write call waits for the write lock, in milliseconds. Past
+    /// it the call is `ABORTED` and writes nothing; once it holds the lock it
+    /// finishes. Unset: 60000.
     ///
     /// Field 8: `write_timeout_ms`
     #[serde(

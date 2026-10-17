@@ -18,6 +18,13 @@
 //! work tree back to what `HEAD` holds. If the commit had landed, the files
 //! become its files; if not, they were never touched. No other path is ever
 //! touched: a person may have edited it.
+//!
+//! A write goes to one of two repositories: the Vault's own, or the nested
+//! one under `.isolated/` that holds the Documents of isolated collections.
+//! Both are written under the one lock and share the one note. Every path in
+//! the note is Vault-relative; a path under `.isolated/` belongs to the
+//! nested repository, any other to the Vault's, and recovery restores each
+//! from the `HEAD` of its own repository.
 
 // The Document writes and the mirror of the next layers use the rest.
 #![cfg_attr(
@@ -40,6 +47,7 @@ use scheda_api::v1::{OpenOptions, VaultErrorCode};
 use crate::error::{Context, Error, Fault, io};
 use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
 use crate::git::{self, git};
+use crate::isolated;
 
 /// How long a write waits for the lock when `write_timeout_ms` is unset.
 const DEFAULT_TIMEOUT: Duration = Duration::from_millis(60_000);
@@ -67,6 +75,39 @@ impl FileMode {
         match self {
             FileMode::Regular => "100644",
             FileMode::Executable => "100755",
+        }
+    }
+}
+
+/// The repository a commit goes to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Repo {
+    /// The repository of the Vault.
+    Main,
+    /// The nested repository under `.isolated/`.
+    Isolated,
+}
+
+impl Repo {
+    /// The work tree of the repository.
+    fn root(self, vault: &Path) -> PathBuf {
+        match self {
+            Repo::Main => vault.to_path_buf(),
+            Repo::Isolated => isolated::root(vault),
+        }
+    }
+
+    /// The path of `path` (Vault-relative) inside this repository, or
+    /// `INVALID_ARGUMENT` when it belongs to the other one.
+    fn inner(self, path: &str) -> Result<&str, Fault> {
+        let nested = isolated::nested_rel(path).filter(|rest| !rest.is_empty());
+        match (self, nested) {
+            (Repo::Main, None) if path != isolated::DIR => Ok(path),
+            (Repo::Isolated, Some(rest)) => Ok(rest),
+            _ => Err(Fault::new(
+                VaultErrorCode::InvalidArgument,
+                "the path is not in the repository the write goes to",
+            )),
         }
     }
 }
@@ -323,39 +364,58 @@ impl WriteLock<'_> {
         read_head(self.root())
     }
 
-    /// Stores `changes` as one commit with `message`, then writes the files.
-    ///
-    /// The paths are checked first (a path that steps out of the Vault, or a
-    /// symlink on a path, is `INVALID_ARGUMENT`). The new blobs are hashed
-    /// by one `git hash-object`, the tree is built with one temporary index,
-    /// and `HEAD` moves by `git update-ref HEAD <new> <old>`; a `HEAD` that
-    /// moved under the write (a `git` command run by hand) makes the call
-    /// `ABORTED` with nothing written to the work tree. A set of changes
-    /// that leaves the tree as `HEAD` holds it makes no commit; its files
-    /// are still written, so the work tree ends as the changes say.
-    ///
-    /// Returns the commit `HEAD` names afterwards.
-    ///
-    /// # Errors
-    ///
-    /// The codes above, and `STORAGE` or `REPLICATION` when a file or git
-    /// fails.
+    /// Stores `changes` as one commit with `message` in the repository of the
+    /// Vault, then writes the files. See [`WriteLock::commit_in`].
     pub(crate) fn commit(
         &self,
         message: &str,
         changes: &[Change],
     ) -> Result<Option<String>, Error> {
-        let root = self.root();
-        let old = read_head(root)?;
+        self.commit_in(Repo::Main, message, changes)
+    }
+
+    /// Stores `changes` as one commit with `message` in `repo`, then writes
+    /// the files.
+    ///
+    /// The paths are Vault-relative and all belong to `repo` (a path under
+    /// `.isolated/` is the nested repository's). They are checked first (a
+    /// path that steps out of the Vault, or a symlink on a path, is
+    /// `INVALID_ARGUMENT`). The new blobs are hashed by one `git
+    /// hash-object`, the tree is built with one temporary index, and `HEAD`
+    /// moves by `git update-ref HEAD <new> <old>`; a `HEAD` that moved under
+    /// the write (a `git` command run by hand) makes the call `ABORTED` with
+    /// nothing written to the work tree. A set of changes that leaves the
+    /// tree as `HEAD` holds it makes no commit; its files are still written,
+    /// so the work tree ends as the changes say. The nested repository must
+    /// exist already ([`isolated::ensure`]).
+    ///
+    /// Returns the commit `HEAD` of `repo` names afterwards.
+    ///
+    /// # Errors
+    ///
+    /// The codes above, and `STORAGE` or `REPLICATION` when a file or git
+    /// fails.
+    pub(crate) fn commit_in(
+        &self,
+        repo: Repo,
+        message: &str,
+        changes: &[Change],
+    ) -> Result<Option<String>, Error> {
+        let vault = self.root();
+        let root = repo.root(vault);
+        let old = read_head(&root)?;
         if changes.is_empty() {
             return Ok(old);
         }
         for change in changes {
             check_relative(change.path())?;
-            reject_symlinks(root, &root.join(change.path())).context("check the path")?;
+            repo.inner(change.path())?;
+            reject_symlinks(vault, &vault.join(change.path())).context("check the path")?;
         }
         let new = build_commit(
-            root,
+            vault,
+            &root,
+            repo,
             old.as_deref(),
             message,
             changes,
@@ -366,8 +426,8 @@ impl WriteLock<'_> {
         hooks::after_list()?;
         if let Some(new) = &new {
             #[cfg(test)]
-            hooks::before_swap(root);
-            if let Err(err) = update_head(root, new, old.as_deref()) {
+            hooks::before_swap(&root);
+            if let Err(err) = update_head(&root, new, old.as_deref()) {
                 // Nothing was written to the work tree: the note goes.
                 empty_list(self.flock.file())?;
                 return Err(err);
@@ -375,11 +435,11 @@ impl WriteLock<'_> {
             #[cfg(test)]
             hooks::after_swap()?;
         }
-        write_files(root, changes)?;
+        write_files(vault, changes)?;
         // The commit is stored and the files are written. A git index that
         // cannot be brought up now (a person's `git add` holds its lock)
         // keeps the note, and the next holder of the lock does it.
-        if update_index(root, changes).is_ok() {
+        if update_index(&root, repo, changes).is_ok() {
             empty_list(self.flock.file())?;
         }
         Ok(new.or(old))
@@ -420,13 +480,15 @@ impl Drop for TmpFiles {
 /// whatever the size of the write: `hash-object`, `read-tree`,
 /// `update-index`, `write-tree`, `rev-parse` of the old tree, `commit-tree`.
 fn build_commit(
+    vault: &Path,
     root: &Path,
+    repo: Repo,
     old: Option<&str>,
     message: &str,
     changes: &[Change],
     identity: &Identity,
 ) -> Result<Option<String>, Error> {
-    let tmp = root.join(".scheda").join("tmp");
+    let tmp = vault.join(".scheda").join("tmp");
     fs::create_dir_all(&tmp)
         .map_err(io)
         .context("create .scheda/tmp")?;
@@ -457,9 +519,11 @@ fn build_commit(
                         "git hashed fewer files than asked",
                     )
                 })?;
+                let path = repo.inner(path)?;
                 entries.extend_from_slice(format!("{} {hash}\t{path}\0", mode.git()).as_bytes());
             }
             Change::Remove { path } => {
+                let path = repo.inner(path)?;
                 entries.extend_from_slice(format!("0 {zero}\t{path}\0").as_bytes());
             }
         }
@@ -635,6 +699,9 @@ fn write_files(root: &Path, changes: &[Change]) -> Result<(), Error> {
         reject_symlinks(root, &target).context("write a file")?;
         atomic_write(&target, bytes).context("write a file")?;
         set_mode(&target, *mode)?;
+        // A file of the nested repository, and the folders above it, are
+        // for the owner alone.
+        isolated::restrict_record(root, &target)?;
     }
     Ok(())
 }
@@ -689,7 +756,11 @@ fn prune_empty_parents(root: &Path, path: &Path) {
 /// Brings git's own index up to the commit for the paths of `changes`:
 /// `git update-index --add --remove`, which takes each path from the work
 /// tree, so `git status` is clean for them.
-fn update_index(root: &Path, changes: &[Change]) -> Result<(), Error> {
+fn update_index(root: &Path, repo: Repo, changes: &[Change]) -> Result<(), Error> {
+    let mut paths = Vec::with_capacity(changes.len());
+    for change in changes {
+        paths.push(repo.inner(change.path())?);
+    }
     git()
         .current_dir(root)
         .arg("update-index")
@@ -697,7 +768,7 @@ fn update_index(root: &Path, changes: &[Change]) -> Result<(), Error> {
         .arg("--remove")
         .arg("-z")
         .arg("--stdin")
-        .input(paths_input(changes.iter().map(Change::path)))
+        .input(paths_input(paths.into_iter()))
         .run()
         .context("update the git index")?;
     Ok(())
@@ -718,7 +789,13 @@ fn paths_input<'a>(paths: impl Iterator<Item = &'a str>) -> Vec<u8> {
 fn recover(root: &Path, lock: &File) -> Result<(), Error> {
     let (len, paths) = read_list(lock)?;
     if !paths.is_empty() {
-        restore(root, &paths)?;
+        let (nested, main): (Vec<String>, Vec<String>) = paths
+            .into_iter()
+            .partition(|path| isolated::nested_rel(path).is_some());
+        if !main.is_empty() {
+            restore(root, root, &main)?;
+        }
+        restore_nested(root, &nested)?;
     }
     if len > 0 {
         empty_list(lock)?;
@@ -749,10 +826,39 @@ fn read_list(lock: &File) -> Result<(usize, Vec<String>), Error> {
     Ok((bytes.len(), paths))
 }
 
+/// Brings the Vault-relative `paths` under `.isolated/` to what the `HEAD` of
+/// the nested repository holds. A nested repository that is not there, or
+/// is not a work tree of its own, was never written to: its paths are passed
+/// over.
+fn restore_nested(vault: &Path, paths: &[String]) -> Result<(), Error> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let nested = isolated::root(vault);
+    if reject_symlinks(vault, &nested).is_err() || !git::is_work_tree(&nested) {
+        return Ok(());
+    }
+    let inner: Vec<String> = paths
+        .iter()
+        .filter_map(|path| isolated::nested_rel(path))
+        .map(str::to_owned)
+        .collect();
+    restore(vault, &nested, &inner)?;
+    for path in paths {
+        let target = vault.join(path);
+        if target.is_file() {
+            isolated::restrict_record(vault, &target)?;
+        }
+    }
+    Ok(())
+}
+
 /// Brings `paths` of the work tree and of git's index to what `HEAD` holds:
 /// a path in `HEAD` is restored from it, a path not in `HEAD` is removed
-/// from both. No other path is touched.
-fn restore(root: &Path, paths: &[String]) -> Result<(), Error> {
+/// from both. No other path is touched. `root` is the work tree of the
+/// repository, `paths` are relative to it, and `vault` is the Vault root the
+/// symlink checks start from.
+fn restore(vault: &Path, root: &Path, paths: &[String]) -> Result<(), Error> {
     let (present, absent) = split_by_head(root, paths)?;
     if !present.is_empty() {
         git()
@@ -769,7 +875,7 @@ fn restore(root: &Path, paths: &[String]) -> Result<(), Error> {
     if !absent.is_empty() {
         for rel in &absent {
             let target = root.join(rel);
-            if reject_symlinks(root, &target).is_err() {
+            if reject_symlinks(vault, &target).is_err() {
                 continue;
             }
             match fs::symlink_metadata(&target) {

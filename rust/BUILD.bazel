@@ -18,6 +18,8 @@ rust_clippy_test(
         "//rust/api:version_field_test",
         "//rust/scheda:collections_test",
         "//rust/scheda:collections_thin_test",
+        "//rust/scheda:documents_test",
+        "//rust/scheda:documents_thin_test",
         "//rust/scheda:open_test",
         "//rust/scheda:open_thin_test",
         "//rust/scheda:scheda",

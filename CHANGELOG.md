@@ -86,6 +86,16 @@ changes; they grow with each part of the move.
   and keeps the keys of the file this version does not know;
   `DeleteCollection` removes an empty collection; `BatchCollections`
   declares, changes, and deletes several in one step.
+- Documents are written by `CreateDocument` (in a journal: an append),
+  `UpdateDocument`, `UpsertDocument`, `DeleteDocument`, and
+  `BatchDocuments`, the batch one atomic step: an error writes nothing and
+  names the operation by its index. Each write needs a `note`, shown in
+  the Document's history. The calls are strict (`ALREADY_EXISTS`,
+  `NOT_FOUND`); `keep_existing` and `ignore_missing` make a repeat
+  harmless; `revision` writes only over the revision the caller read
+  (`FAILED_PRECONDITION` otherwise). A reply is the Document as stored,
+  with its new `revision`. One batch writes the isolated collections or
+  the others, never both (`INVALID_ARGUMENT`).
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.
@@ -112,6 +122,8 @@ changes; they grow with each part of the move.
   …): a failure is built as `scheda::Fault::new(code, message)`.
 - `Collection::version`, `Vault::versions`, and the `version` key of a
   collection file.
+- Transactions and the old write calls: `begin`, `commit`, `discard`,
+  `transaction`, `add`, `replace`, `remove`, and `create_collection`.
 
 ## [0.21.0] - 2026-10-12
 

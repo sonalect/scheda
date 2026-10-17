@@ -14,6 +14,7 @@ mod collections;
 mod commit;
 #[cfg(feature = "encrypt")]
 mod crypto;
+mod document_calls;
 mod documents;
 mod fs;
 mod git;

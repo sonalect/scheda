@@ -25,6 +25,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use scheda_api::v1::{Encryption, Problem, VaultErrorCode};
+use sha2::{Digest, Sha256};
 
 use crate::check::{problem, problem_of};
 use crate::collection::{Declaration, Declarations, Kind};
@@ -113,20 +114,176 @@ fn read_file(
     decl: &Declaration,
     encryption: Option<&Encryption>,
 ) -> Result<Option<Vec<u8>>, Fault> {
+    let Some(stored) = read_bytes(path, rel)? else {
+        return Ok(None);
+    };
+    unseal(decl, stored, encryption, rel).map(Some)
+}
+
+/// The bytes of the file at `path`, as they lie on disk; `None` when it is
+/// not there or is not a file.
+fn read_bytes(path: &Path, rel: &str) -> Result<Option<Vec<u8>>, Fault> {
     use std::io::ErrorKind;
-    let stored = match fs::read(path) {
-        Ok(bytes) => bytes,
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
         Err(err)
             if matches!(
                 err.kind(),
                 ErrorKind::NotFound | ErrorKind::IsADirectory | ErrorKind::NotADirectory
             ) =>
         {
-            return Ok(None);
+            Ok(None)
         }
-        Err(err) => return Err(io(err).with_path(rel)),
+        Err(err) => Err(io(err).with_path(rel)),
+    }
+}
+
+/// What the Document held in a file, as the caller knows it.
+#[derive(Debug)]
+pub(crate) enum Plain {
+    /// The file is the Document: the collection is not encrypted.
+    Same,
+    /// The Document, opened from the armor of the file.
+    Opened(Vec<u8>),
+    /// A sealed file whose Document the caller did not keep.
+    Unknown,
+}
+
+/// A Document file: the bytes on disk, and what they hold.
+#[derive(Debug)]
+pub(crate) struct Found {
+    /// The bytes of the file (the armor, in an encrypted collection).
+    pub(crate) file: Vec<u8>,
+    /// The Document in them.
+    pub(crate) plain: Plain,
+}
+
+impl Found {
+    /// The revision of the Document: the SHA-256 of the bytes of the file,
+    /// in lowercase hex.
+    pub(crate) fn revision(&self) -> String {
+        revision_of(&self.file)
+    }
+
+    /// The bytes of the Document, if they are known.
+    pub(crate) fn plain(&self) -> Option<&[u8]> {
+        match &self.plain {
+            Plain::Same => Some(&self.file),
+            Plain::Opened(bytes) => Some(bytes),
+            Plain::Unknown => None,
+        }
+    }
+
+    /// The bytes of the Document, moved out; empty if they are not known.
+    pub(crate) fn into_plain(self) -> Vec<u8> {
+        match self.plain {
+            Plain::Same => self.file,
+            Plain::Opened(bytes) => bytes,
+            Plain::Unknown => Vec::new(),
+        }
+    }
+}
+
+/// The SHA-256 of `file`, in lowercase hex: the revision of a Document
+/// whose file holds those bytes.
+pub(crate) fn revision_of(file: &[u8]) -> String {
+    use std::fmt::Write;
+    let digest = Sha256::digest(file);
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest.iter() {
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
+/// Reads the file of Document `id` and opens it: the bytes on disk and the
+/// Document in them. An absent Document is `None`, as for [`read`], and a
+/// symlink on the way is `INVALID_ARGUMENT`. An encrypted collection needs
+/// the secret of the handle (`CRYPTO`) and a build with the `encrypt`
+/// feature (`UNIMPLEMENTED`).
+pub(crate) fn read_found(
+    vault: &Path,
+    decl: &Declaration,
+    id: &str,
+    encryption: Option<&Encryption>,
+) -> Result<Option<Found>, Fault> {
+    require_files(decl)?;
+    if decl.kind() == Kind::Singleton && decl.singleton_id() != Some(id) {
+        return Ok(None);
+    }
+    let rel = path_of(decl, id)?;
+    let path = vault.join(&rel);
+    reject_symlinks(vault, &path)?;
+    let Some(file) = read_bytes(&path, &rel)? else {
+        return Ok(None);
     };
-    unseal(decl, stored, encryption, rel).map(Some)
+    if !decl.encrypted() {
+        return Ok(Some(Found {
+            file,
+            plain: Plain::Same,
+        }));
+    }
+    let plain = open_armor(decl, &file, encryption, &rel)?;
+    Ok(Some(Found {
+        file,
+        plain: Plain::Opened(plain),
+    }))
+}
+
+/// `Ok` when the collection `decl` can be written and read with this
+/// handle: not encrypted, or encrypted with a secret on the handle in a
+/// build with the `encrypt` feature. Otherwise `CRYPTO` (no secret) or
+/// `UNIMPLEMENTED` (no feature). A secret that is wrong shows when the bytes
+/// are sealed or opened.
+pub(crate) fn require_secret(
+    decl: &Declaration,
+    encryption: Option<&Encryption>,
+) -> Result<(), Fault> {
+    if !decl.encrypted() {
+        return Ok(());
+    }
+    #[cfg(feature = "encrypt")]
+    {
+        if encryption.is_some_and(|encryption| encryption.secret.is_some()) {
+            Ok(())
+        } else {
+            Err(Fault::new(
+                VaultErrorCode::Crypto,
+                format!(
+                    "the collection {} is encrypted; the handle has no secret",
+                    decl.name()
+                ),
+            ))
+        }
+    }
+    #[cfg(not(feature = "encrypt"))]
+    {
+        let _ = encryption;
+        Err(no_encrypt(decl))
+    }
+}
+
+/// The Document in the armor `file` of the encrypted collection `decl`.
+#[cfg(feature = "encrypt")]
+fn open_armor(
+    decl: &Declaration,
+    file: &[u8],
+    encryption: Option<&Encryption>,
+    rel: &str,
+) -> Result<Vec<u8>, Fault> {
+    let _ = decl;
+    crate::crypto::open(file, encryption).map_err(|fault| fault.with_path(rel))
+}
+
+#[cfg(not(feature = "encrypt"))]
+fn open_armor(
+    decl: &Declaration,
+    file: &[u8],
+    encryption: Option<&Encryption>,
+    rel: &str,
+) -> Result<Vec<u8>, Fault> {
+    let _ = (file, encryption);
+    Err(no_encrypt(decl).with_path(rel))
 }
 
 #[cfg(feature = "encrypt")]

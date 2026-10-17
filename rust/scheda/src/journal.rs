@@ -21,7 +21,7 @@
     )
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read};
 use std::iter::FusedIterator;
@@ -447,6 +447,19 @@ pub(crate) fn segment_is_full(
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(err) => return Err(io(err)),
     };
+    segment_is_full_by(path, size, || count_newlines(path), limits, line_len, today)
+}
+
+/// [`segment_is_full`] for a segment whose size is known and whose lines
+/// `count` counts only when the limit asks for it.
+fn segment_is_full_by(
+    path: &Path,
+    size: u64,
+    count: impl FnOnce() -> Result<u64, Fault>,
+    limits: &Limits,
+    line_len: u64,
+    today: &str,
+) -> Result<bool, Fault> {
     if size == 0 {
         return Ok(false);
     }
@@ -457,7 +470,7 @@ pub(crate) fn segment_is_full(
         return Ok(true);
     }
     if let Some(max_lines) = limits.max_lines
-        && count_newlines(path)? >= max_lines
+        && count()? >= max_lines
     {
         return Ok(true);
     }
@@ -552,18 +565,69 @@ pub(crate) fn segment_for_append(
     writer: &str,
     today: &str,
 ) -> Result<PathBuf, Fault> {
+    segment_for_append_in(vault, decl, line_len, writer, today, &BTreeMap::new())
+}
+
+/// [`segment_for_append`] for a call that appends several lines before any
+/// is stored: `pending` holds the whole new bytes of the segments the call
+/// has appended to so far, by path. A segment in it is measured by those
+/// bytes, and one that is not on disk yet counts as a segment of the writer.
+pub(crate) fn segment_for_append_in(
+    vault: &Path,
+    decl: &Declaration,
+    line_len: u64,
+    writer: &str,
+    today: &str,
+    pending: &BTreeMap<PathBuf, Vec<u8>>,
+) -> Result<PathBuf, Fault> {
     let limits = Limits::of(decl)?;
-    let mine: Vec<PathBuf> = list_segments(vault, decl)?
+    let dir = isolated::records_dir(vault, decl);
+    let mut mine: Vec<PathBuf> = list_segments(vault, decl)?
         .into_iter()
         .filter(|path| segment_belongs_to(path, writer))
         .collect();
-    if let Some(last) = mine.last()
-        && !segment_is_full(last, &limits, line_len, today)?
-    {
-        return Ok(last.clone());
+    for path in pending.keys() {
+        if path.parent() == Some(dir.as_path())
+            && segment_belongs_to(path, writer)
+            && !mine.contains(path)
+        {
+            mine.push(path.clone());
+        }
+    }
+    mine.sort_by_cached_key(|path| segment_order(path));
+    if let Some(last) = mine.last() {
+        let full = match pending.get(last) {
+            Some(bytes) => segment_is_full_by(
+                last,
+                bytes.len() as u64,
+                || Ok(bytes.iter().filter(|byte| **byte == b'\n').count() as u64),
+                &limits,
+                line_len,
+                today,
+            )?,
+            None => segment_is_full(last, &limits, line_len, today)?,
+        };
+        if !full {
+            return Ok(last.clone());
+        }
     }
     let name = next_segment_name(&mine, limits.daily, writer, today)?;
-    Ok(isolated::records_dir(vault, decl).join(name))
+    Ok(dir.join(name))
+}
+
+/// Every id the lines of a journal have, from its segments. A line that
+/// does not parse and a torn tail are passed over.
+pub(crate) fn stored_ids(vault: &Path, decl: &Declaration) -> Result<HashSet<String>, Fault> {
+    let mut ids = HashSet::new();
+    for path in list_segments(vault, decl)? {
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(err) => return Err(io(err).with_path(rel_of(vault, &path)?)),
+        };
+        ids.extend(parse_segment(&bytes).into_iter().map(|line| line.id));
+    }
+    Ok(ids)
 }
 
 /// Today's date in UTC, `YYYY-MM-DD`, as segment names carry it.

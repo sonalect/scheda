@@ -86,6 +86,18 @@ pub(crate) struct GitCmd {
     input: Option<Vec<u8>>,
 }
 
+#[cfg(test)]
+thread_local! {
+    static SPAWNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// How many git processes this thread has started, for the tests that
+/// assert a call starts none.
+#[cfg(test)]
+pub(crate) fn spawned() -> usize {
+    SPAWNED.with(std::cell::Cell::get)
+}
+
 /// A new git command. Tests run it with the user's git configuration
 /// replaced by an empty one.
 pub(crate) fn git() -> GitCmd {
@@ -167,6 +179,8 @@ impl GitCmd {
     /// Runs the command and returns its output whatever the exit status
     /// was. Only a command that could not start is an error.
     pub(crate) fn spawn(self) -> Result<GitOutput, Error> {
+        #[cfg(test)]
+        SPAWNED.with(|count| count.set(count.get() + 1));
         let mut cmd = self.command();
         let out = match &self.input {
             None => cmd.output(),

@@ -90,6 +90,33 @@ rust_test(
 )
 
 rust_test(
+    name = "documents_test",
+    size = "small",
+    srcs = ["tests/documents.rs"] + _TEST_PROBE,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/documents.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:sha2",
+    ],
+)
+
+rust_test(
+    name = "documents_thin_test",
+    size = "small",
+    srcs = ["tests/documents.rs"] + _TEST_PROBE,
+    crate_root = "tests/documents.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:sha2",
+    ],
+)
+
+rust_test(
     name = "open_test",
     size = "small",
     srcs = ["tests/open.rs"] + _TEST_COMMON,

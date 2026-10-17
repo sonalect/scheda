@@ -51,7 +51,7 @@ pub struct Fault {
 impl Fault {
     /// A failure with `code` and `message`, without a path or a source.
     /// It is retryable when the code is one a caller may try again
-    /// (`ABORTED`, `UNAVAILABLE`, `RESOURCE_EXHAUSTED`, `INDEX_REBUILDING`).
+    /// (`ABORTED`, `UNAVAILABLE`, `INDEX_REBUILDING`).
     /// It captures a backtrace when `RUST_BACKTRACE` or
     /// `RUST_LIB_BACKTRACE` is set.
     #[must_use]
@@ -151,10 +151,7 @@ impl protocontract::Fault for Fault {
 pub(crate) fn default_retryable(code: VaultErrorCode) -> bool {
     matches!(
         code,
-        VaultErrorCode::Aborted
-            | VaultErrorCode::Unavailable
-            | VaultErrorCode::ResourceExhausted
-            | VaultErrorCode::IndexRebuilding
+        VaultErrorCode::Aborted | VaultErrorCode::Unavailable | VaultErrorCode::IndexRebuilding
     )
 }
 
@@ -577,7 +574,6 @@ mod tests {
             (C::Unimplemented, false),
             (C::Aborted, true),
             (C::Unavailable, true),
-            (C::ResourceExhausted, true),
             (C::Unauthenticated, false),
             (C::NotAVault, false),
             (C::Generation, false),

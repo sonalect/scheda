@@ -2,8 +2,8 @@
 //! `{vault}/.isolated/`, a nested git work tree of their own that the Vault
 //! repository never tracks.
 //!
-//! This module holds the paths and the checks. Making the nested
-//! repository and committing in it belong to the writes.
+//! This module holds the paths, the checks, and the making of the nested
+//! repository. Committing in it is `commit::WriteLock::commit_in`.
 
 // The layers that write Documents call the rest.
 #![cfg_attr(
@@ -14,20 +14,26 @@
     )
 )]
 
+use std::fs;
 use std::path::{Path, PathBuf};
 
 use scheda_api::v1::{Problem, VaultErrorCode};
 
 use crate::check::problem;
 use crate::collection::Declaration;
-use crate::error::{Context, Error};
-use crate::fs::{restrict_dir, restrict_file};
+use crate::commit::Change;
+use crate::error::{Context, Error, io};
+use crate::fs::{reject_symlinks, restrict_dir, restrict_file};
 use crate::git;
 
 /// Vault-relative directory that holds the isolated Documents.
 pub(crate) const DIR: &str = ".isolated";
 
 const PREFIX: &str = ".isolated/";
+
+/// What the nested repository ignores: the folder Scheda keeps its own
+/// state in.
+const NESTED_GITIGNORE: &str = ".scheda/\n";
 
 /// Absolute path of `{vault}/.isolated/`.
 pub(crate) fn root(vault: &Path) -> PathBuf {
@@ -60,6 +66,49 @@ pub(crate) fn vault_rel(decl: &Declaration, file: &str) -> String {
 /// under `.isolated/`.
 pub(crate) fn nested_rel(rel: &str) -> Option<&str> {
     rel.strip_prefix(PREFIX)
+}
+
+/// Makes `{vault}/.isolated/` a git work tree of its own, owner-only, when
+/// it is not one yet, and returns the change that gives it its
+/// `.gitignore` (`.scheda/`) when it lacks the entry. The write that needs
+/// the nested repository puts that change in its commit. Nothing is made for
+/// a write that stores nothing: the caller asks only when it has changes.
+///
+/// A symlink where `.isolated/` should be is `INVALID_ARGUMENT`.
+pub(crate) fn ensure(vault: &Path) -> Result<Vec<Change>, Error> {
+    let nested = root(vault);
+    reject_symlinks(vault, &nested).context("check .isolated")?;
+    fs::create_dir_all(&nested)
+        .map_err(io)
+        .context("create .isolated")?;
+    restrict_dir(&nested)?;
+    if !git::is_work_tree(&nested) {
+        git::git()
+            .arg("init")
+            .arg("--")
+            .arg(&nested)
+            .run()
+            .context("make the isolated repository")?;
+        git::enable_long_paths(&nested)?;
+    }
+    let ignore_path = nested.join(".gitignore");
+    let current = match fs::read(&ignore_path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(err) => return Err(io(err).with_path(format!("{DIR}/.gitignore")).into()),
+    };
+    let has = current
+        .split(|byte| *byte == b'\n')
+        .any(|line| line.trim_ascii() == b".scheda/");
+    if has {
+        return Ok(Vec::new());
+    }
+    let mut text = current;
+    if !text.is_empty() && !text.ends_with(b"\n") {
+        text.push(b'\n');
+    }
+    text.extend_from_slice(NESTED_GITIGNORE.as_bytes());
+    Ok(vec![Change::put(format!("{DIR}/.gitignore"), text)])
 }
 
 /// Owner-only mode on the file or directory `path` and on every directory

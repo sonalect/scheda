@@ -10,6 +10,9 @@ package scheda.v1;
 // it is lost. The names follow the gRPC canonical codes where the meaning
 // is the same.
 enum VaultErrorCode {
+  reserved 8;
+  reserved VAULT_ERROR_CODE_RESOURCE_EXHAUSTED;
+
   VAULT_ERROR_CODE_UNSPECIFIED = 0;
   // The request breaks a rule of this contract. Fix the request.
   VAULT_ERROR_CODE_INVALID_ARGUMENT = 1;
@@ -23,15 +26,13 @@ enum VaultErrorCode {
   // The call does not apply (a journal line is not replaced) or this
   // build lacks the feature it needs.
   VAULT_ERROR_CODE_UNIMPLEMENTED = 5;
-  // A call of the same kind is already running (a rebuild); a write never
-  // fails so. Retryable.
+  // Another write held the write lock for the whole write timeout, or
+  // `HEAD` moved under the write (a `git` command run by hand). Retryable;
+  // nothing was written.
   VAULT_ERROR_CODE_ABORTED = 6;
-  // Something the call needs cannot be reached now: the mirror, a port,
-  // or the write queue within its timeout. Retryable.
+  // Something the call needs cannot be reached now: the mirror or a port.
+  // Retryable.
   VAULT_ERROR_CODE_UNAVAILABLE = 7;
-  // The write queue is full: the handle that applies writes has stopped.
-  // Retryable, and to be raised loudly.
-  VAULT_ERROR_CODE_RESOURCE_EXHAUSTED = 8;
   // The mirror refused the credentials git gave it.
   VAULT_ERROR_CODE_UNAUTHENTICATED = 9;
   // The path holds no Vault.

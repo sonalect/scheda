@@ -1,15 +1,6 @@
 //! Document `id` and collection-name slugs: the rules the library checks
 //! because the contract cannot express them.
 
-// The Document layer and the writes call the id rules.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that write Documents are not built yet"
-    )
-)]
-
 use std::sync::LazyLock;
 
 use regex::Regex;

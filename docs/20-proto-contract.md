@@ -1189,7 +1189,7 @@ D1, D3 (`OpenMode`), D20, D21.
 
 D6, D14.
 
-- [ ] The write path of D6: the checks before the lock, the write lock
+- [x] The write path of D6: the checks before the lock, the write lock
       (`flock` on `.scheda/commit.lock`, the writes of a handle in turn
       before it), the timeout (`ABORTED`), commit first and files after
       with the swap on `HEAD`, the list of paths in `commit.lock` and
@@ -1198,7 +1198,7 @@ D6, D14.
       (`documents::encode` does not see the Vault). Proto:
       `RESOURCE_EXHAUSTED` removed from `VaultErrorCode`, the comments of
       `ABORTED` and `write_timeout_ms` say the lock, not a queue.
-- [ ] `CreateDocument`, `UpdateDocument`, `UpsertDocument`,
+- [x] `CreateDocument`, `UpdateDocument`, `UpsertDocument`,
       `DeleteDocument`, `BatchDocuments`, `CreateCollection`,
       `UpdateCollection`, `DeleteCollection`, `BatchCollections`, and
       `GetDocument` as methods of `Vault`; `note` required on every

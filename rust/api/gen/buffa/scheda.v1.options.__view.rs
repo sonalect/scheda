@@ -47,10 +47,9 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 7: `mode`
     pub mode: ::core::option::Option<::buffa::EnumValue<super::super::OpenMode>>,
-    /// How long a write call waits for its write to be stored, in
-    /// milliseconds. On the timeout the write is withdrawn if it has not
-    /// started, or waited for if it has: an error always means nothing was
-    /// written. Unset: 60000.
+    /// How long a write call waits for the write lock, in milliseconds. Past
+    /// it the call is `ABORTED` and writes nothing; once it holds the lock it
+    /// finishes. Unset: 60000.
     ///
     /// Field 8: `write_timeout_ms`
     pub write_timeout_ms: ::core::option::Option<u32>,
@@ -524,10 +523,9 @@ impl OpenOptionsOwnedView {
     ) -> ::core::option::Option<::buffa::EnumValue<super::super::OpenMode>> {
         self.0.reborrow().mode
     }
-    /// How long a write call waits for its write to be stored, in
-    /// milliseconds. On the timeout the write is withdrawn if it has not
-    /// started, or waited for if it has: an error always means nothing was
-    /// written. Unset: 60000.
+    /// How long a write call waits for the write lock, in milliseconds. Past
+    /// it the call is `ABORTED` and writes nothing; once it holds the lock it
+    /// finishes. Unset: 60000.
     ///
     /// Field 8: `write_timeout_ms`
     #[must_use]

@@ -1,16 +1,6 @@
 //! The `Vault` handle: opening a Vault, making one where the mode allows,
 //! and closing it.
 
-// The layers that read and write Documents through the handle use the rest
-// of its fields.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that read and write Documents through the handle are not built yet"
-    )
-)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -141,6 +131,19 @@ impl Vault {
         Ok(declarations)
     }
 
+    /// The collections as this handle last read them, without asking git
+    /// whether `HEAD` has moved since: a read does not pay a process for
+    /// that. A handle that has read none yet reads them now.
+    pub(crate) fn declarations_cached(&self) -> Result<Arc<Declarations>, Error> {
+        let kept = error::mutex(&self.loaded, "read the declarations")?
+            .as_ref()
+            .map(|loaded| Arc::clone(&loaded.declarations));
+        match kept {
+            Some(declarations) => Ok(declarations),
+            None => self.declarations_now(),
+        }
+    }
+
     /// The collections, with the write lock held: read again when `HEAD`
     /// is not the one they were read at. Nothing writes meanwhile, and the
     /// lock has recovered any unfinished write.
@@ -179,6 +182,12 @@ impl Vault {
     /// The write path of this handle.
     pub(crate) fn committer(&self) -> &Committer {
         &self.committer
+    }
+
+    /// The writer identity of this handle: the name its journal segments
+    /// carry.
+    pub(crate) fn writer(&self) -> &str {
+        &self.writer
     }
 
     /// The age secret the handle was opened with, if any.
