@@ -996,6 +996,48 @@ the owner, 17 October 2026.*
   `UNIMPLEMENTED` at `open`. A Vault Scheda makes uses SHA-1 objects and
   loose refs.
 
+**D23. The indexer: one commit for the whole Index.** *Settled with the
+owner, 17 October 2026.*
+
+- **A round.** The Index records the one commit it reflects. A round
+  takes the index lock (`flock` on `{vault}/.scheda/index.lock`), reads
+  `HEAD`, takes the difference between the Index's commit and `HEAD`,
+  applies it to every part of the Index (the lexical side, the vector
+  side, the journal `id` maps), records `HEAD` as the Index's commit, and
+  lets the lock go. Writes, reads, and pulls go on meanwhile: a round
+  works between two commits. Then, if `HEAD` moved, another round;
+  otherwise the indexer sleeps until it is woken, at once by a write of
+  its own process, or by a look at `HEAD` every `index_poll_ms` (reading
+  a ref file, no process) for writes of other processes, commits made by
+  hand, and pulls.
+- **One writer of the Index.** Only the indexer writes the Index, and only
+  from commits. Every Index file is written whole (a temporary file, then
+  a rename). The lock is held for one round, so the indexer of any
+  process can take the next one, and one that dies leaves nothing behind.
+- **Both sides move together.** A side the handle cannot fill is told, not
+  waited for: without an embedder a round indexes the lexical side and
+  records that the Documents have no vectors (`SearchSummary` says so).
+  An embedder that fails fails the round, which is tried again later;
+  the vectors made before the failure are kept for it (D4). So a model
+  that does not answer holds the lexical side back too: the price of one
+  commit for the whole Index.
+- **The journal `id` maps** are part of the Index, written by the indexer
+  only. `GetDocument` does not depend on them: a line not in the map is
+  looked for in the segments changed since the map's commit.
+- **A rebuild** (`Reindex`, another model, another format) builds a new
+  generation beside the current one, round by round under the same lock;
+  readers move to it through one pointer file written atomically, and the
+  old generation goes when no reader holds it (at the latest at the next
+  `open`).
+- **`IndexState`** has one version (the stored state the Index has
+  reached), one count of Documents still to index, and one role, instead
+  of a version, a count, and a role per side (P5 changes the proto).
+- Why: Scheda `0.21` let writes update the journal `id` maps while the
+  indexer and a rebuild wrote them too, wrote some Index files in place,
+  switched generations under readers, and let a lock leak into a `git`
+  child; each was a race the fast disk of the gate exposed. Each follows
+  from breaking one of the rules above.
+
 ---
 
 ## 3. The contract (sketch)
@@ -1340,9 +1382,13 @@ D3, D4, D5, D10, D18.
       and vector legs, and the journal `id` maps on the new types; `raw`
       moved into `Project` on the indexing path; `Score` takes the
       Documents by value.
-- [ ] `IndexState` with opaque versions instead of commit ids, and the
-      rebuild's progress and result; `Reindex` starts a rebuild;
-      `GetIndexStatus` and `WatchIndexStatus` per D18.
+- [ ] The indexer of D23: one commit for the whole Index, the round under
+      `index.lock`, the wake by a write and by a look at `HEAD`, both
+      sides together, the journal `id` maps written by the indexer only,
+      a rebuild in a new generation behind one pointer file.
+- [ ] `IndexState` with one opaque version, one count, and one role
+      (D23), and the rebuild's progress and result; `Reindex` starts a
+      rebuild; `GetIndexStatus` and `WatchIndexStatus` per D18.
 - [ ] The test ports (21 embedders, 8 rerankers, 9 projectors) on the
       generated traits.
 - *Check:* an async embedder given as `Port::Async` feeds the indexer;
