@@ -19,7 +19,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use git2::{
-    ErrorClass, ErrorCode, FileMode, Oid, Repository, RepositoryInitOptions, StatusOptions,
+    DiffOptions, ErrorClass, ErrorCode, FileMode, Oid, Repository, RepositoryInitOptions,
+    StatusOptions,
 };
 use scheda_api::v1::VaultErrorCode;
 
@@ -537,6 +538,16 @@ pub(crate) struct Child {
     pub(crate) node: Node,
 }
 
+/// A file that differs between two commits of one repository.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct Delta {
+    /// The Vault-relative path, POSIX.
+    pub(crate) path: String,
+    /// Whether the later commit lacks the file. A file that is new or
+    /// changed is not deleted.
+    pub(crate) deleted: bool,
+}
+
 /// The bytes of a file of a tree with the id of its blob.
 #[derive(Debug)]
 pub(crate) struct Blob {
@@ -661,6 +672,63 @@ impl Snap {
         }
         let bytes = self.blob(node.id).map_err(|fault| fault.with_path(rel))?;
         Ok(Some(Blob { id: node.id, bytes }))
+    }
+
+    /// The files that differ between the commit `old` names (`None`: an empty
+    /// tree) and the commit of this snapshot, below the Vault-relative
+    /// directory `under` or anywhere when it is `None`. Pure tree
+    /// comparison: no process, no work tree. A renamed file is a deleted one
+    /// and a new one; a name that is not UTF-8 is left out.
+    ///
+    /// `None` when the object database lacks the commit `old` names (the
+    /// history was rewritten and cleaned up): the difference is not known.
+    pub(crate) fn changed_since(
+        &self,
+        old: Option<Oid>,
+        under: Option<&str>,
+    ) -> Result<Option<Vec<Delta>>, Fault> {
+        let Some(repo) = self.repository() else {
+            return Ok(old.is_none().then(Vec::new));
+        };
+        let old_tree = match old {
+            None => None,
+            Some(id) => match repo.find_commit(id) {
+                Ok(commit) => Some(commit.tree().map_err(lib_fault)?),
+                Err(err) if err.code() == ErrorCode::NotFound => return Ok(None),
+                Err(err) => return Err(lib_fault(err)),
+            },
+        };
+        let new_tree = match self.tree() {
+            Some(id) => Some(repo.find_tree(id).map_err(lib_fault)?),
+            None => None,
+        };
+        let mut options = DiffOptions::new();
+        if let Some(dir) = under {
+            let inner = self.inner(dir);
+            if !inner.is_empty() {
+                options.pathspec(inner);
+            }
+        }
+        let diff = repo
+            .diff_tree_to_tree(old_tree.as_ref(), new_tree.as_ref(), Some(&mut options))
+            .map_err(lib_fault)?;
+        let mut out = Vec::new();
+        for delta in diff.deltas() {
+            let deleted = delta.status() == git2::Delta::Deleted;
+            let file = if deleted {
+                delta.old_file()
+            } else {
+                delta.new_file()
+            };
+            let Some(path) = file.path().and_then(Path::to_str) else {
+                continue;
+            };
+            out.push(Delta {
+                path: self.outer(path),
+                deleted,
+            });
+        }
+        Ok(Some(out))
     }
 
     /// The bytes of the blob `id`.

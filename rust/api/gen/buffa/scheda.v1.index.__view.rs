@@ -4,55 +4,48 @@
 /// Where the Index stands.
 #[derive(Clone, Debug, Default)]
 pub struct IndexStateView<'a> {
-    /// The stored state of the Vault now. Unset before the first write.
+    /// The stored state of the Vault the Index has reached: the state `HEAD`
+    /// named, in the Vault and in its isolated repository, when the Index last
+    /// finished a round. The Index has one such state for all its parts, and
+    /// none while it is not built yet (before the first round ends, and while
+    /// a rebuild runs). Equal tokens are the same state; the token means
+    /// nothing else.
     ///
     /// Field 1: `version`
     pub version: ::core::option::Option<&'a str>,
-    /// The stored state the lexical leg has reached. Equal to `version`: the
-    /// lexical Index holds every stored write.
+    /// The Documents the Index has yet to apply to reach the stored state of
+    /// the Vault, while a round or a rebuild runs: the Documents of the files
+    /// that changed since `version`, and every Document of a collection whose
+    /// declaration changed. `0` when the Index is where this handle last found
+    /// the Vault; unset when they could not be counted (`last_error` then says
+    /// why).
     ///
-    /// Field 2: `lexical_version`
-    pub lexical_version: ::core::option::Option<&'a str>,
-    /// The stored state the vector leg has reached.
+    /// Field 2: `pending`
+    pub pending: ::core::option::Option<u64>,
+    /// This handle's indexer is the one indexing now. One indexer of all
+    /// those open on a Vault indexes at a time; the others look again later
+    /// and take over when it ends.
     ///
-    /// Field 3: `vector_version`
-    pub vector_version: ::core::option::Option<&'a str>,
-    /// Documents the lexical leg has yet to apply to reach `version`: added,
-    /// changed, and deleted ones, and every Document of a collection whose
-    /// declaration changed. `0` when it is there; unset when they could not
-    /// be counted (`last_error` then says why).
-    ///
-    /// Field 4: `lexical_pending`
-    pub lexical_pending: ::core::option::Option<u64>,
-    /// The same for the vector leg. It stays above `0` while no handle can
-    /// write vectors (no embedder, or only ones of another model).
-    ///
-    /// Field 5: `vector_pending`
-    pub vector_pending: ::core::option::Option<u64>,
+    /// Field 3: `role`
+    pub role: ::core::option::Option<bool>,
     /// This handle's embedder is of another model or length than the
     /// vectors of the Index: it writes no vector, and its searches run
     /// without the vector leg, rather than mix two models. `Reindex` moves
     /// the Index to it.
     ///
-    /// Field 6: `model_mismatch`
+    /// Field 4: `model_mismatch`
     pub model_mismatch: ::core::option::Option<bool>,
-    /// This handle indexes the lexical leg now.
+    /// The last rebuild this handle's indexer ran, while it runs and after it
+    /// ends: one `Reindex` asked for, or the building of an Index that did not
+    /// exist or was made in another format. Unset when this handle ran none.
     ///
-    /// Field 7: `lexical_role`
-    pub lexical_role: ::core::option::Option<bool>,
-    /// This handle indexes the vector leg now.
-    ///
-    /// Field 8: `vector_role`
-    pub vector_role: ::core::option::Option<bool>,
-    /// The last rebuild `Reindex` started, while it runs and after it ends.
-    /// Unset when none was started on this Vault since this handle opened.
-    ///
-    /// Field 9: `rebuild`
+    /// Field 5: `rebuild`
     pub rebuild: ::buffa::MessageFieldView<super::super::__buffa::view::RebuildView<'a>>,
     /// The failure of this handle's last indexing round; unset after a round
-    /// that succeeds. A failed round changes no version and fails no write.
+    /// that succeeds. A failed round changes no version and fails no write; the
+    /// indexer tries it again after a pause.
     ///
-    /// Field 10: `last_error`
+    /// Field 6: `last_error`
     pub last_error: ::buffa::MessageFieldView<
         super::super::__buffa::view::ErrorReportView<'a>,
     >,
@@ -98,53 +91,25 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
             2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
+                    ::buffa::encoding::WireType::Varint,
                 )?;
-                view.lexical_version = Some(::buffa::types::borrow_str(&mut cur)?);
+                view.pending = Some(::buffa::types::decode_uint64(&mut cur)?);
             }
             3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
+                    ::buffa::encoding::WireType::Varint,
                 )?;
-                view.vector_version = Some(::buffa::types::borrow_str(&mut cur)?);
+                view.role = Some(::buffa::types::decode_bool(&mut cur)?);
             }
             4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
-                view.lexical_pending = Some(::buffa::types::decode_uint64(&mut cur)?);
-            }
-            5u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                view.vector_pending = Some(::buffa::types::decode_uint64(&mut cur)?);
-            }
-            6u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
                 view.model_mismatch = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            7u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                view.lexical_role = Some(::buffa::types::decode_bool(&mut cur)?);
-            }
-            8u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                view.vector_role = Some(::buffa::types::decode_bool(&mut cur)?);
-            }
-            9u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -165,7 +130,7 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
                     }
                 }
             }
-            10u32 => {
+            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -209,13 +174,9 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::IndexState {
             version: self.version.map(|s| s.to_string()),
-            lexical_version: self.lexical_version.map(|s| s.to_string()),
-            vector_version: self.vector_version.map(|s| s.to_string()),
-            lexical_pending: self.lexical_pending,
-            vector_pending: self.vector_pending,
+            pending: self.pending,
+            role: self.role,
             model_mismatch: self.model_mismatch,
-            lexical_role: self.lexical_role,
-            vector_role: self.vector_role,
             rebuild: match self.rebuild.as_option() {
                 Some(v) => {
                     ::buffa::MessageField::<
@@ -248,25 +209,13 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         if let Some(ref v) = self.version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if let Some(ref v) = self.lexical_version {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        if let Some(ref v) = self.vector_version {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        if let Some(v) = self.lexical_pending {
+        if let Some(v) = self.pending {
             size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
         }
-        if let Some(v) = self.vector_pending {
-            size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
+        if self.role.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
         if self.model_mismatch.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
-        if self.lexical_role.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
-        if self.vector_role.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
         if self.rebuild.is_set() {
@@ -299,30 +248,18 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         if let Some(ref v) = self.version {
             ::buffa::types::put_string_field(1u32, v, buf);
         }
-        if let Some(ref v) = self.lexical_version {
-            ::buffa::types::put_string_field(2u32, v, buf);
+        if let Some(v) = self.pending {
+            ::buffa::types::put_uint64_field(2u32, v, buf);
         }
-        if let Some(ref v) = self.vector_version {
-            ::buffa::types::put_string_field(3u32, v, buf);
-        }
-        if let Some(v) = self.lexical_pending {
-            ::buffa::types::put_uint64_field(4u32, v, buf);
-        }
-        if let Some(v) = self.vector_pending {
-            ::buffa::types::put_uint64_field(5u32, v, buf);
+        if let Some(v) = self.role {
+            ::buffa::types::put_bool_field(3u32, v, buf);
         }
         if let Some(v) = self.model_mismatch {
-            ::buffa::types::put_bool_field(6u32, v, buf);
-        }
-        if let Some(v) = self.lexical_role {
-            ::buffa::types::put_bool_field(7u32, v, buf);
-        }
-        if let Some(v) = self.vector_role {
-            ::buffa::types::put_bool_field(8u32, v, buf);
+            ::buffa::types::put_bool_field(4u32, v, buf);
         }
         if self.rebuild.is_set() {
             ::buffa::types::put_len_delimited_header(
-                9u32,
+                5u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -330,7 +267,7 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         }
         if self.last_error.is_set() {
             ::buffa::types::put_len_delimited_header(
-                10u32,
+                6u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -360,34 +297,14 @@ impl<'__a> ::serde::Serialize for IndexStateView<'__a> {
         if let ::core::option::Option::Some(__v) = self.version {
             __map.serialize_entry("version", __v)?;
         }
-        if let ::core::option::Option::Some(__v) = self.lexical_version {
-            __map.serialize_entry("lexicalVersion", __v)?;
+        if let ::core::option::Option::Some(__v) = self.pending {
+            __map.serialize_entry("pending", &::buffa::json_helpers::ProtoJson(&__v))?;
         }
-        if let ::core::option::Option::Some(__v) = self.vector_version {
-            __map.serialize_entry("vectorVersion", __v)?;
-        }
-        if let ::core::option::Option::Some(__v) = self.lexical_pending {
-            __map
-                .serialize_entry(
-                    "lexicalPending",
-                    &::buffa::json_helpers::ProtoJson(&__v),
-                )?;
-        }
-        if let ::core::option::Option::Some(__v) = self.vector_pending {
-            __map
-                .serialize_entry(
-                    "vectorPending",
-                    &::buffa::json_helpers::ProtoJson(&__v),
-                )?;
+        if let ::core::option::Option::Some(__v) = self.role {
+            __map.serialize_entry("role", &__v)?;
         }
         if let ::core::option::Option::Some(__v) = self.model_mismatch {
             __map.serialize_entry("modelMismatch", &__v)?;
-        }
-        if let ::core::option::Option::Some(__v) = self.lexical_role {
-            __map.serialize_entry("lexicalRole", &__v)?;
-        }
-        if let ::core::option::Option::Some(__v) = self.vector_role {
-            __map.serialize_entry("vectorRole", &__v)?;
         }
         {
             if let ::core::option::Option::Some(__v) = self.rebuild.as_option() {
@@ -490,74 +407,54 @@ impl IndexStateOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// The stored state of the Vault now. Unset before the first write.
+    /// The stored state of the Vault the Index has reached: the state `HEAD`
+    /// named, in the Vault and in its isolated repository, when the Index last
+    /// finished a round. The Index has one such state for all its parts, and
+    /// none while it is not built yet (before the first round ends, and while
+    /// a rebuild runs). Equal tokens are the same state; the token means
+    /// nothing else.
     ///
     /// Field 1: `version`
     #[must_use]
     pub fn version(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().version
     }
-    /// The stored state the lexical leg has reached. Equal to `version`: the
-    /// lexical Index holds every stored write.
+    /// The Documents the Index has yet to apply to reach the stored state of
+    /// the Vault, while a round or a rebuild runs: the Documents of the files
+    /// that changed since `version`, and every Document of a collection whose
+    /// declaration changed. `0` when the Index is where this handle last found
+    /// the Vault; unset when they could not be counted (`last_error` then says
+    /// why).
     ///
-    /// Field 2: `lexical_version`
+    /// Field 2: `pending`
     #[must_use]
-    pub fn lexical_version(&self) -> ::core::option::Option<&'_ str> {
-        self.0.reborrow().lexical_version
+    pub fn pending(&self) -> ::core::option::Option<u64> {
+        self.0.reborrow().pending
     }
-    /// The stored state the vector leg has reached.
+    /// This handle's indexer is the one indexing now. One indexer of all
+    /// those open on a Vault indexes at a time; the others look again later
+    /// and take over when it ends.
     ///
-    /// Field 3: `vector_version`
+    /// Field 3: `role`
     #[must_use]
-    pub fn vector_version(&self) -> ::core::option::Option<&'_ str> {
-        self.0.reborrow().vector_version
-    }
-    /// Documents the lexical leg has yet to apply to reach `version`: added,
-    /// changed, and deleted ones, and every Document of a collection whose
-    /// declaration changed. `0` when it is there; unset when they could not
-    /// be counted (`last_error` then says why).
-    ///
-    /// Field 4: `lexical_pending`
-    #[must_use]
-    pub fn lexical_pending(&self) -> ::core::option::Option<u64> {
-        self.0.reborrow().lexical_pending
-    }
-    /// The same for the vector leg. It stays above `0` while no handle can
-    /// write vectors (no embedder, or only ones of another model).
-    ///
-    /// Field 5: `vector_pending`
-    #[must_use]
-    pub fn vector_pending(&self) -> ::core::option::Option<u64> {
-        self.0.reborrow().vector_pending
+    pub fn role(&self) -> ::core::option::Option<bool> {
+        self.0.reborrow().role
     }
     /// This handle's embedder is of another model or length than the
     /// vectors of the Index: it writes no vector, and its searches run
     /// without the vector leg, rather than mix two models. `Reindex` moves
     /// the Index to it.
     ///
-    /// Field 6: `model_mismatch`
+    /// Field 4: `model_mismatch`
     #[must_use]
     pub fn model_mismatch(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().model_mismatch
     }
-    /// This handle indexes the lexical leg now.
+    /// The last rebuild this handle's indexer ran, while it runs and after it
+    /// ends: one `Reindex` asked for, or the building of an Index that did not
+    /// exist or was made in another format. Unset when this handle ran none.
     ///
-    /// Field 7: `lexical_role`
-    #[must_use]
-    pub fn lexical_role(&self) -> ::core::option::Option<bool> {
-        self.0.reborrow().lexical_role
-    }
-    /// This handle indexes the vector leg now.
-    ///
-    /// Field 8: `vector_role`
-    #[must_use]
-    pub fn vector_role(&self) -> ::core::option::Option<bool> {
-        self.0.reborrow().vector_role
-    }
-    /// The last rebuild `Reindex` started, while it runs and after it ends.
-    /// Unset when none was started on this Vault since this handle opened.
-    ///
-    /// Field 9: `rebuild`
+    /// Field 5: `rebuild`
     #[must_use]
     pub fn rebuild(
         &self,
@@ -565,9 +462,10 @@ impl IndexStateOwnedView {
         &self.0.reborrow().rebuild
     }
     /// The failure of this handle's last indexing round; unset after a round
-    /// that succeeds. A failed round changes no version and fails no write.
+    /// that succeeds. A failed round changes no version and fails no write; the
+    /// indexer tries it again after a pause.
     ///
-    /// Field 10: `last_error`
+    /// Field 6: `last_error`
     #[must_use]
     pub fn last_error(
         &self,
@@ -605,7 +503,10 @@ impl ::serde::Serialize for IndexStateOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// A rebuild of the Index.
+/// A rebuild of the Index: the Index made again from nothing. `Reindex` asks
+/// for one; an Index not built yet, or built in a format this version does
+/// not read, is rebuilt the same way. While it runs the Index has no
+/// `version`, and a query is `INDEX_REBUILDING`.
 #[derive(Clone, Debug, Default)]
 pub struct RebuildView<'a> {
     /// Field 1: `stage`

@@ -1392,7 +1392,7 @@ D3, D4, D5, D10, D18.
       sides together, the journal `id` maps written by the indexer only,
       one Index with no generations: a rebuild is a round from an empty
       Index, and meanwhile queries and searches are `INDEX_REBUILDING`.
-- [ ] `IndexState` with one opaque version, one count, and one role
+- [x] `IndexState` with one opaque version, one count, and one role
       (D23), and the rebuild's progress and result; `Reindex` starts a
       rebuild; `GetIndexStatus` and `WatchIndexStatus` per D18.
 - [ ] The test ports (21 embedders, 8 rerankers, 9 projectors) on the

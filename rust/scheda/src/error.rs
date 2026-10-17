@@ -29,7 +29,7 @@ use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use protocontract::{Code, RuntimeCode};
 pub use protocontract::{Context, Error};
-use scheda_api::v1::VaultErrorCode;
+use scheda_api::v1::{ErrorReport, VaultErrorCode};
 
 /// A failure of Scheda: a code, a message, the file it is about, whether
 /// the same call may succeed later, and the cause.
@@ -245,6 +245,33 @@ pub(crate) fn rw_write<'a, T>(
         .map_err(|_: PoisonError<RwLockWriteGuard<'a, T>>| {
             Error::new(RuntimeCode::Panicked, "rwlock poisoned").context(frame)
         })
+}
+
+/// The failure `error` as a report: what a status carries when a round of the
+/// indexer failed. The code is the name of the code, the flag and the stack
+/// are the error's, and the path is the one of a [`Fault`]. The message is
+/// the one of a [`Fault`] or of protocontract's `Failure`; any other fault
+/// has none of its own in the contract, so the message is the `Display` of
+/// the error, which also carries its stack and code. A fault of a port of an
+/// unknown type has no separate message until protocontract offers one.
+pub(crate) fn report(error: &Error) -> ErrorReport {
+    let fault = error.downcast_ref::<Fault>();
+    let message = match fault {
+        Some(fault) => fault.message().to_owned(),
+        None => match error.downcast_ref::<protocontract::Failure>() {
+            Some(failure) => failure.message().to_owned(),
+            None => error.to_string(),
+        },
+    };
+    let mut report = ErrorReport::default()
+        .with_code(error.code().name())
+        .with_message(message)
+        .with_retryable(error.retryable());
+    report.stack = error.stack().to_vec();
+    match fault.and_then(Fault::path) {
+        Some(path) => report.with_path(path),
+        None => report,
+    }
 }
 
 /// The class of a failed git command, read from its `stderr`.
@@ -581,6 +608,60 @@ mod tests {
         Context, Error, Fault, GitFailure, OrFault, default_retryable, git_failure, git_fault, io,
         mutex, redact_remote_text,
     };
+
+    #[test]
+    fn a_report_carries_the_code_name_the_flag_the_stack_and_the_path() {
+        let error = Error::from(
+            Fault::new(C::Storage, "the disk is full")
+                .with_path("notes/a.md")
+                .with_retryable(true),
+        )
+        .context("write")
+        .context("round");
+        let report = super::report(&error);
+        assert_eq!(report.code.as_deref(), Some("VAULT_ERROR_CODE_STORAGE"));
+        assert_eq!(report.message.as_deref(), Some("the disk is full"));
+        assert_eq!(report.retryable, Some(true));
+        assert_eq!(report.stack, ["round", "write"]);
+        assert_eq!(report.path.as_deref(), Some("notes/a.md"));
+    }
+
+    #[test]
+    fn a_report_of_a_failure_or_a_foreign_fault_has_a_message_and_no_path() {
+        let failure = Error::new(RuntimeCode::Cancelled, "the feed broke");
+        let report = super::report(&failure);
+        assert_eq!(report.code.as_deref(), Some("CANCELLED"));
+        assert_eq!(report.message.as_deref(), Some("the feed broke"));
+        assert_eq!(report.path, None);
+
+        #[derive(Debug)]
+        struct Foreign;
+        impl std::fmt::Display for Foreign {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.write_str("a port fell over")
+            }
+        }
+        impl std::error::Error for Foreign {}
+        impl protocontract::Fault for Foreign {
+            fn code(&self) -> protocontract::Code {
+                protocontract::Code::of(C::Unavailable)
+            }
+            fn retryable(&self) -> bool {
+                true
+            }
+        }
+        let report = super::report(&Error::from(Foreign).context("embed"));
+        assert_eq!(report.code.as_deref(), Some("VAULT_ERROR_CODE_UNAVAILABLE"));
+        assert_eq!(report.retryable, Some(true));
+        assert!(
+            report
+                .message
+                .as_deref()
+                .unwrap()
+                .contains("a port fell over")
+        );
+        assert_eq!(report.stack, ["embed"]);
+    }
 
     /// The "Retryable" column of the code table, one row per code.
     #[test]

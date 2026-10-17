@@ -46,6 +46,7 @@ use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
 use crate::error::{Context, Error, Fault, io, lib_fault};
 use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
+use crate::indexer::Signal;
 use crate::isolated;
 pub(crate) use crate::repo::Repo;
 use crate::repo::{NodeKind, Repos, Snap};
@@ -197,6 +198,9 @@ pub(crate) struct Committer {
     /// The turn among the writes of this handle. It guards no data: the lock
     /// file guards the state of the Vault.
     turn: Mutex<()>,
+    /// Woken when a commit of this handle moves `HEAD`: the indexer looks
+    /// at once.
+    signal: Arc<Signal>,
 }
 
 impl Committer {
@@ -216,7 +220,13 @@ impl Committer {
             identity: Identity::resolve(options, &repos).context("resolve the author")?,
             repos,
             turn: Mutex::new(()),
+            signal: Arc::new(Signal::default()),
         })
+    }
+
+    /// What this handle's commits wake: the indexer's signal.
+    pub(crate) fn signal(&self) -> Arc<Signal> {
+        Arc::clone(&self.signal)
     }
 
     /// Takes the write lock: the turn among the writes of this handle, then
@@ -436,6 +446,7 @@ impl WriteLock<'_> {
         }
         #[cfg(test)]
         hooks::after_swap()?;
+        self.committer.signal.moved();
         let plan = plan_of(snap, changes, &blobs)?;
         // The commit is stored. A git index that cannot be brought up now (a
         // person's `git add` holds its lock) keeps the note, and the next
@@ -526,6 +537,7 @@ impl WriteLock<'_> {
             empty_list(self.flock.file())?;
             return Err(err);
         }
+        self.committer.signal.moved();
         let mut plan = Vec::with_capacity(moved.len());
         for (path, want) in &moved {
             let was = snap

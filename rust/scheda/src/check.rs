@@ -18,6 +18,7 @@ use crate::collection::Declarations;
 use crate::documents::check_documents;
 use crate::error::{Context, Error, Fault};
 use crate::fs::check_scheda_owner_only;
+use crate::idmap::check_journal_id_maps;
 use crate::isolated::{self, check_perimeter};
 use crate::journal::check_journals;
 use crate::repo::{self, Repo, Repos};
@@ -102,9 +103,9 @@ pub(crate) fn check_changed(
 /// Runs every check over `vault` and returns the problems, in the order of
 /// the layers: the owner-only modes of `.scheda/`, the unmerged entries, the
 /// perimeter of the isolated tree, the Document files, the journal
-/// segments (the last two over the commits `HEAD` names), and the files a
-/// person changed and did not commit. No problem means the Vault is sound as
-/// far as the checks go.
+/// segments, and the id maps of the journals (the last three over the
+/// commits `HEAD` names), and the files a person changed and did not commit.
+/// No problem means the Vault is sound as far as the checks go.
 ///
 /// It fails only when a check cannot run; see the checks for when.
 pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
@@ -119,6 +120,11 @@ pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
         .context("check: the collections")?;
     problems.extend(check_documents(&views, &declarations, vault.encryption())?);
     problems.extend(check_journals(&views, &declarations)?);
+    problems.extend(check_journal_id_maps(
+        &vault.index(),
+        &views,
+        &declarations,
+    )?);
     problems.extend(check_changed(repos, &declarations)?);
     Ok(problems)
 }

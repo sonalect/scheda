@@ -116,6 +116,33 @@ rust_test(
 )
 
 rust_test(
+    name = "index_test",
+    size = "small",
+    srcs = ["tests/index.rs"] + _TEST_PROBE,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/index.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "index_thin_test",
+    size = "small",
+    srcs = ["tests/index.rs"] + _TEST_PROBE,
+    crate_root = "tests/index.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "mirror_test",
     size = "small",
     srcs = ["tests/mirror.rs"] + _TEST_PROBE,

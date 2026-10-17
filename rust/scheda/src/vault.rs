@@ -17,6 +17,9 @@ use crate::collection::{self, Declarations};
 use crate::commit::{Change, Committer};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
+use crate::idmap::IdMaps;
+use crate::index::Index;
+use crate::indexer::Indexer;
 use crate::ports::{Installed, Port, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
 use crate::{git, marker, stored, writer};
@@ -26,6 +29,9 @@ const MARK_MESSAGE: &str = "mark the work tree as a Vault";
 
 /// How long `open` waits for another `open` that is making the same Vault.
 const OTHER_OPEN_WAIT: Duration = Duration::from_secs(5);
+
+/// How often the indexer looks at `HEAD` when `index_poll_ms` is unset.
+const DEFAULT_POLL_MS: u32 = 1000;
 
 /// Numbers the staging folders of the clones this process makes.
 static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
@@ -37,6 +43,12 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 /// ends the handle. A handle may be shared between threads: the writes of
 /// one handle take turns, and the writes of all handles of a Vault, in this
 /// process or another, take turns on the lock file `.scheda/commit.lock`.
+///
+/// An open handle runs one thread, named `scheda-indexer`, that keeps the
+/// Index in `.scheda/index/` at the state of `HEAD`: the maps from the id of
+/// a journal line to its segment, and with the `find` feature the rest of the
+/// Index. The thread ends with [`Vault::close`] or when the handle is
+/// dropped.
 #[derive(Debug)]
 pub struct Vault {
     path: PathBuf,
@@ -51,6 +63,10 @@ pub struct Vault {
     sync_failure: Mutex<Option<Error>>,
     /// The ports the handle was opened with, and the embedder it has now.
     ports: Installed,
+    /// The thread that keeps the Index at the state of `HEAD`.
+    indexer: Indexer,
+    /// The id maps of the journals, as readers use them.
+    id_maps: IdMaps,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -155,6 +171,13 @@ impl Vault {
         let ports = Installed::new(ports).context("Vault::open: install the ports")?;
         let mut vault = open(path.as_ref(), options)?;
         vault.ports = ports;
+        let poll = Duration::from_millis(u64::from(
+            vault.options.index_poll_ms.unwrap_or(DEFAULT_POLL_MS),
+        ));
+        vault
+            .indexer
+            .start(&vault.path, Arc::clone(&vault.repos), poll)
+            .context("Vault::open: start the indexer")?;
         Ok(vault)
     }
 
@@ -286,15 +309,33 @@ impl Vault {
         self.options.encryption.as_option()
     }
 
-    /// Ends the handle. The handle holds no lock and no background work yet,
-    /// so nothing can fail; a later version of the handle may flush before
-    /// it returns.
+    /// The indexer of the handle.
+    pub(crate) fn indexer(&self) -> &Indexer {
+        &self.indexer
+    }
+
+    /// The id maps of the journals.
+    pub(crate) fn id_maps(&self) -> &IdMaps {
+        &self.id_maps
+    }
+
+    /// The Index of the Vault on disk.
+    pub(crate) fn index(&self) -> Index {
+        Index::new(&self.path)
+    }
+
+    /// Ends the handle: the indexer thread stops and is waited for (a round
+    /// in progress ends at its next step; nothing it left half done is
+    /// believed, because the Index's `commit` is written last). The handle
+    /// holds no lock after that.
     ///
     /// # Errors
     ///
-    /// None at present.
+    /// `PANICKED` when the indexer thread died by a panic outside a round.
     pub fn close(self) -> Result<(), Error> {
-        Ok(())
+        self.indexer
+            .stop()
+            .context("Vault::close: stop the indexer")
     }
 }
 
@@ -646,6 +687,8 @@ fn finish(
     let declarations = Arc::new(collection::load(&snap)?);
     prepare_scheda(&canonical)?;
     let writer = writer::load_or_create(&canonical, options.writer.as_deref())?;
+    let indexer = Indexer::new(committer.signal());
+    let id_maps = IdMaps::new(Index::new(&canonical));
     Ok(Vault {
         path: canonical,
         options,
@@ -658,6 +701,8 @@ fn finish(
         writer,
         sync_failure: Mutex::new(None),
         ports: Installed::default(),
+        indexer,
+        id_maps,
     })
 }
 

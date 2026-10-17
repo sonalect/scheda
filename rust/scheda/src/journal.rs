@@ -188,7 +188,7 @@ pub(crate) fn rel_str(path: &Path) -> String {
 
 /// The bytes of the segment `path` in the commit of `snap`; `None` when the
 /// commit holds no such file.
-fn read_segment(snap: &Snap, path: &Path) -> Result<Option<Vec<u8>>, Fault> {
+pub(crate) fn read_segment(snap: &Snap, path: &Path) -> Result<Option<Vec<u8>>, Fault> {
     let rel = rel_str(path);
     Ok(snap.read(&rel)?.map(|blob| blob.bytes))
 }

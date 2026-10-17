@@ -147,6 +147,14 @@ impl Declaration {
     }
 }
 
+/// The collection whose declaration file `path` (Vault-relative, POSIX) is:
+/// `{name}/.collection.yaml`, `.yml`, or `.json` directly in a root
+/// directory whose name does not start with `.`.
+pub(crate) fn declaration_dir(path: &str) -> Option<&str> {
+    let (dir, file) = path.split_once('/')?;
+    (!dir.starts_with('.') && COLLECTION_FILENAMES.contains(&file)).then_some(dir)
+}
+
 /// The declarations of a Vault, by collection name.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Declarations {

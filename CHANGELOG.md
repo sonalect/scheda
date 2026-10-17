@@ -129,6 +129,15 @@ changes; they grow with each part of the move.
   and the embedder's `Describe` is read once per install. The reranker is
   the handle's, not an argument of a search. A port in a build without the
   feature that uses it is `UNIMPLEMENTED`.
+- The Index: one background indexer per handle, in every build, follows
+  `HEAD`; the indexers of several handles and processes take turns, one
+  round at a time, and only they write the Index. `Reindex` asks for a
+  rebuild and returns at once; a second one meanwhile is `ABORTED`.
+  `GetIndexStatus` gives an `IndexState` with one `version`, one
+  `pending` count, and one `role` (the per-side fields are gone), and
+  `WatchIndexStatus` streams it, the state now first, replacing
+  `wait_indexed`. A journal line is found at once after its write, before
+  the indexer has seen it.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

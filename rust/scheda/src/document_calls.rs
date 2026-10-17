@@ -354,6 +354,12 @@ impl crate::Vault {
     /// collection); a journal line has none. A person's uncommitted edit is
     /// not seen, and a commit made by hand is seen at once.
     ///
+    /// A journal line is looked up in the id map the indexer keeps; a line
+    /// the map does not list yet is looked for in the segments that changed
+    /// since the map was made, so a line written a moment ago is found
+    /// before the indexer has run. Only a journal with no map is scanned
+    /// whole.
+    ///
     /// # Errors
     ///
     /// `INVALID_ARGUMENT` for a key that breaks the rules of the contract;
@@ -384,7 +390,9 @@ impl crate::Vault {
             .context("get a Document")?;
         if decl.kind() == Kind::Journal {
             require_slug("id", &id).context("get a Document")?;
-            let line = journal::find_journal_scan(&snap, decl, &id)
+            let line = self
+                .id_maps()
+                .find(&snap, decl, &id)
                 .context("get a Document")?
                 .ok_or_else(absent)?;
             return Ok(Document {

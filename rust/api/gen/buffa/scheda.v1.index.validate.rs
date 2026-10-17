@@ -26,7 +26,7 @@ impl ::protovalidate_buffa::Validate for IndexState {
                                     .insert(
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
-                                            field_number: Some(9i32),
+                                            field_number: Some(5i32),
                                             field_name: Some(::std::borrow::Cow::Borrowed("rebuild")),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
@@ -52,7 +52,7 @@ impl ::protovalidate_buffa::Validate for IndexState {
                                     .insert(
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
-                                            field_number: Some(10i32),
+                                            field_number: Some(6i32),
                                             field_name: Some(
                                                 ::std::borrow::Cow::Borrowed("last_error"),
                                             ),
@@ -114,7 +114,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexStateView<'_> {
                                     .insert(
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
-                                            field_number: Some(9i32),
+                                            field_number: Some(5i32),
                                             field_name: Some(::std::borrow::Cow::Borrowed("rebuild")),
                                             field_type: Some(::protovalidate_buffa::FieldType::Message),
                                             key_type: None,
@@ -140,7 +140,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexStateView<'_> {
                                     .insert(
                                         0,
                                         ::protovalidate_buffa::FieldPathElement {
-                                            field_number: Some(10i32),
+                                            field_number: Some(6i32),
                                             field_name: Some(
                                                 ::std::borrow::Cow::Borrowed("last_error"),
                                             ),

@@ -15,47 +15,52 @@ import "scheda/v1/error.proto";
 
 // Where the Index stands.
 message IndexState {
-  // The stored state of the Vault now. Unset before the first write.
+  // The stored state of the Vault the Index has reached: the state `HEAD`
+  // named, in the Vault and in its isolated repository, when the Index last
+  // finished a round. The Index has one such state for all its parts, and
+  // none while it is not built yet (before the first round ends, and while
+  // a rebuild runs). Equal tokens are the same state; the token means
+  // nothing else.
   string version = 1;
-  // The stored state the lexical leg has reached. Equal to `version`: the
-  // lexical Index holds every stored write.
-  string lexical_version = 2;
-  // The stored state the vector leg has reached.
-  string vector_version = 3;
-  // Documents the lexical leg has yet to apply to reach `version`: added,
-  // changed, and deleted ones, and every Document of a collection whose
-  // declaration changed. `0` when it is there; unset when they could not
-  // be counted (`last_error` then says why).
-  uint64 lexical_pending = 4;
-  // The same for the vector leg. It stays above `0` while no handle can
-  // write vectors (no embedder, or only ones of another model).
-  uint64 vector_pending = 5;
+  // The Documents the Index has yet to apply to reach the stored state of
+  // the Vault, while a round or a rebuild runs: the Documents of the files
+  // that changed since `version`, and every Document of a collection whose
+  // declaration changed. `0` when the Index is where this handle last found
+  // the Vault; unset when they could not be counted (`last_error` then says
+  // why).
+  uint64 pending = 2;
+  // This handle's indexer is the one indexing now. One indexer of all
+  // those open on a Vault indexes at a time; the others look again later
+  // and take over when it ends.
+  bool role = 3;
   // This handle's embedder is of another model or length than the
   // vectors of the Index: it writes no vector, and its searches run
   // without the vector leg, rather than mix two models. `Reindex` moves
   // the Index to it.
-  bool model_mismatch = 6;
-  // This handle indexes the lexical leg now.
-  bool lexical_role = 7;
-  // This handle indexes the vector leg now.
-  bool vector_role = 8;
-  // The last rebuild `Reindex` started, while it runs and after it ends.
-  // Unset when none was started on this Vault since this handle opened.
-  Rebuild rebuild = 9;
+  bool model_mismatch = 4;
+  // The last rebuild this handle's indexer ran, while it runs and after it
+  // ends: one `Reindex` asked for, or the building of an Index that did not
+  // exist or was made in another format. Unset when this handle ran none.
+  Rebuild rebuild = 5;
   // The failure of this handle's last indexing round; unset after a round
-  // that succeeds. A failed round changes no version and fails no write.
-  ErrorReport last_error = 10;
+  // that succeeds. A failed round changes no version and fails no write; the
+  // indexer tries it again after a pause.
+  ErrorReport last_error = 6;
 }
 
-// A rebuild of the Index.
+// A rebuild of the Index: the Index made again from nothing. `Reindex` asks
+// for one; an Index not built yet, or built in a format this version does
+// not read, is rebuilt the same way. While it runs the Index has no
+// `version`, and a query is `INDEX_REBUILDING`.
 message Rebuild {
   enum Stage {
     STAGE_UNSPECIFIED = 0;
     // It runs.
     STAGE_RUNNING = 1;
-    // It ended and the rebuilt Index is the live one.
+    // It ended and the Index is built: `version` is set again.
     STAGE_DONE = 2;
-    // It ended without replacing the live Index; `error` says why.
+    // It ended without building the Index; `error` says why. The indexer
+    // starts it again after a pause.
     STAGE_FAILED = 3;
   }
 

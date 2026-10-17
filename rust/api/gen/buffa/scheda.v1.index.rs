@@ -6,97 +6,64 @@
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct IndexState {
-    /// The stored state of the Vault now. Unset before the first write.
+    /// The stored state of the Vault the Index has reached: the state `HEAD`
+    /// named, in the Vault and in its isolated repository, when the Index last
+    /// finished a round. The Index has one such state for all its parts, and
+    /// none while it is not built yet (before the first round ends, and while
+    /// a rebuild runs). Equal tokens are the same state; the token means
+    /// nothing else.
     ///
     /// Field 1: `version`
     #[serde(rename = "version", skip_serializing_if = "::core::option::Option::is_none")]
     pub version: ::core::option::Option<::buffa::alloc::string::String>,
-    /// The stored state the lexical leg has reached. Equal to `version`: the
-    /// lexical Index holds every stored write.
+    /// The Documents the Index has yet to apply to reach the stored state of
+    /// the Vault, while a round or a rebuild runs: the Documents of the files
+    /// that changed since `version`, and every Document of a collection whose
+    /// declaration changed. `0` when the Index is where this handle last found
+    /// the Vault; unset when they could not be counted (`last_error` then says
+    /// why).
     ///
-    /// Field 2: `lexical_version`
+    /// Field 2: `pending`
     #[serde(
-        rename = "lexicalVersion",
-        alias = "lexical_version",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub lexical_version: ::core::option::Option<::buffa::alloc::string::String>,
-    /// The stored state the vector leg has reached.
-    ///
-    /// Field 3: `vector_version`
-    #[serde(
-        rename = "vectorVersion",
-        alias = "vector_version",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub vector_version: ::core::option::Option<::buffa::alloc::string::String>,
-    /// Documents the lexical leg has yet to apply to reach `version`: added,
-    /// changed, and deleted ones, and every Document of a collection whose
-    /// declaration changed. `0` when it is there; unset when they could not
-    /// be counted (`last_error` then says why).
-    ///
-    /// Field 4: `lexical_pending`
-    #[serde(
-        rename = "lexicalPending",
-        alias = "lexical_pending",
+        rename = "pending",
         with = "::buffa::json_helpers::opt_uint64",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
-    pub lexical_pending: ::core::option::Option<u64>,
-    /// The same for the vector leg. It stays above `0` while no handle can
-    /// write vectors (no embedder, or only ones of another model).
+    pub pending: ::core::option::Option<u64>,
+    /// This handle's indexer is the one indexing now. One indexer of all
+    /// those open on a Vault indexes at a time; the others look again later
+    /// and take over when it ends.
     ///
-    /// Field 5: `vector_pending`
-    #[serde(
-        rename = "vectorPending",
-        alias = "vector_pending",
-        with = "::buffa::json_helpers::opt_uint64",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub vector_pending: ::core::option::Option<u64>,
+    /// Field 3: `role`
+    #[serde(rename = "role", skip_serializing_if = "::core::option::Option::is_none")]
+    pub role: ::core::option::Option<bool>,
     /// This handle's embedder is of another model or length than the
     /// vectors of the Index: it writes no vector, and its searches run
     /// without the vector leg, rather than mix two models. `Reindex` moves
     /// the Index to it.
     ///
-    /// Field 6: `model_mismatch`
+    /// Field 4: `model_mismatch`
     #[serde(
         rename = "modelMismatch",
         alias = "model_mismatch",
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub model_mismatch: ::core::option::Option<bool>,
-    /// This handle indexes the lexical leg now.
+    /// The last rebuild this handle's indexer ran, while it runs and after it
+    /// ends: one `Reindex` asked for, or the building of an Index that did not
+    /// exist or was made in another format. Unset when this handle ran none.
     ///
-    /// Field 7: `lexical_role`
-    #[serde(
-        rename = "lexicalRole",
-        alias = "lexical_role",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub lexical_role: ::core::option::Option<bool>,
-    /// This handle indexes the vector leg now.
-    ///
-    /// Field 8: `vector_role`
-    #[serde(
-        rename = "vectorRole",
-        alias = "vector_role",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub vector_role: ::core::option::Option<bool>,
-    /// The last rebuild `Reindex` started, while it runs and after it ends.
-    /// Unset when none was started on this Vault since this handle opened.
-    ///
-    /// Field 9: `rebuild`
+    /// Field 5: `rebuild`
     #[serde(
         rename = "rebuild",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
     pub rebuild: ::buffa::MessageField<Rebuild, ::buffa::Inline<Rebuild>>,
     /// The failure of this handle's last indexing round; unset after a round
-    /// that succeeds. A failed round changes no version and fails no write.
+    /// that succeeds. A failed round changes no version and fails no write; the
+    /// indexer tries it again after a pause.
     ///
-    /// Field 10: `last_error`
+    /// Field 6: `last_error`
     #[serde(
         rename = "lastError",
         alias = "last_error",
@@ -111,13 +78,9 @@ impl ::core::fmt::Debug for IndexState {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("IndexState")
             .field("version", &self.version)
-            .field("lexical_version", &self.lexical_version)
-            .field("vector_version", &self.vector_version)
-            .field("lexical_pending", &self.lexical_pending)
-            .field("vector_pending", &self.vector_pending)
+            .field("pending", &self.pending)
+            .field("role", &self.role)
             .field("model_mismatch", &self.model_mismatch)
-            .field("lexical_role", &self.lexical_role)
-            .field("vector_role", &self.vector_role)
             .field("rebuild", &self.rebuild)
             .field("last_error", &self.last_error)
             .finish()
@@ -143,36 +106,16 @@ impl IndexState {
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
-    ///Sets [`Self::lexical_version`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_lexical_version(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.lexical_version = Some(value.into());
+    ///Sets [`Self::pending`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_pending(mut self, value: u64) -> Self {
+        self.pending = Some(value);
         self
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
-    ///Sets [`Self::vector_version`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_vector_version(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.vector_version = Some(value.into());
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::lexical_pending`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_lexical_pending(mut self, value: u64) -> Self {
-        self.lexical_pending = Some(value);
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::vector_pending`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_vector_pending(mut self, value: u64) -> Self {
-        self.vector_pending = Some(value);
+    ///Sets [`Self::role`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_role(mut self, value: bool) -> Self {
+        self.role = Some(value);
         self
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
@@ -180,20 +123,6 @@ impl IndexState {
     ///Sets [`Self::model_mismatch`] to `Some(value)`, consuming and returning `self`.
     pub fn with_model_mismatch(mut self, value: bool) -> Self {
         self.model_mismatch = Some(value);
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::lexical_role`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_lexical_role(mut self, value: bool) -> Self {
-        self.lexical_role = Some(value);
-        self
-    }
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::vector_role`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_vector_role(mut self, value: bool) -> Self {
-        self.vector_role = Some(value);
         self
     }
 }
@@ -220,25 +149,13 @@ impl ::buffa::Message for IndexState {
         if let Some(ref v) = self.version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
-        if let Some(ref v) = self.lexical_version {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        if let Some(ref v) = self.vector_version {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
-        if let Some(v) = self.lexical_pending {
+        if let Some(v) = self.pending {
             size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
         }
-        if let Some(v) = self.vector_pending {
-            size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
+        if self.role.is_some() {
+            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
         if self.model_mismatch.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
-        if self.lexical_role.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
-        if self.vector_role.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
         if self.rebuild.is_set() {
@@ -270,30 +187,18 @@ impl ::buffa::Message for IndexState {
         if let Some(ref v) = self.version {
             ::buffa::types::put_string_field(1u32, v, buf);
         }
-        if let Some(ref v) = self.lexical_version {
-            ::buffa::types::put_string_field(2u32, v, buf);
+        if let Some(v) = self.pending {
+            ::buffa::types::put_uint64_field(2u32, v, buf);
         }
-        if let Some(ref v) = self.vector_version {
-            ::buffa::types::put_string_field(3u32, v, buf);
-        }
-        if let Some(v) = self.lexical_pending {
-            ::buffa::types::put_uint64_field(4u32, v, buf);
-        }
-        if let Some(v) = self.vector_pending {
-            ::buffa::types::put_uint64_field(5u32, v, buf);
+        if let Some(v) = self.role {
+            ::buffa::types::put_bool_field(3u32, v, buf);
         }
         if let Some(v) = self.model_mismatch {
-            ::buffa::types::put_bool_field(6u32, v, buf);
-        }
-        if let Some(v) = self.lexical_role {
-            ::buffa::types::put_bool_field(7u32, v, buf);
-        }
-        if let Some(v) = self.vector_role {
-            ::buffa::types::put_bool_field(8u32, v, buf);
+            ::buffa::types::put_bool_field(4u32, v, buf);
         }
         if self.rebuild.is_set() {
             ::buffa::types::put_len_delimited_header(
-                9u32,
+                5u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -301,7 +206,7 @@ impl ::buffa::Message for IndexState {
         }
         if self.last_error.is_set() {
             ::buffa::types::put_len_delimited_header(
-                10u32,
+                6u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -333,46 +238,22 @@ impl ::buffa::Message for IndexState {
             2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
+                    ::buffa::encoding::WireType::Varint,
                 )?;
-                ::buffa::types::merge_string(
-                    self
-                        .lexical_version
-                        .get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
+                self.pending = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint64(buf)?,
+                );
             }
             3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
+                    ::buffa::encoding::WireType::Varint,
                 )?;
-                ::buffa::types::merge_string(
-                    self
-                        .vector_version
-                        .get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
+                self.role = ::core::option::Option::Some(
+                    ::buffa::types::decode_bool(buf)?,
+                );
             }
             4u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                self.lexical_pending = ::core::option::Option::Some(
-                    ::buffa::types::decode_uint64(buf)?,
-                );
-            }
-            5u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                self.vector_pending = ::core::option::Option::Some(
-                    ::buffa::types::decode_uint64(buf)?,
-                );
-            }
-            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -381,25 +262,7 @@ impl ::buffa::Message for IndexState {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            7u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                self.lexical_role = ::core::option::Option::Some(
-                    ::buffa::types::decode_bool(buf)?,
-                );
-            }
-            8u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                self.vector_role = ::core::option::Option::Some(
-                    ::buffa::types::decode_bool(buf)?,
-                );
-            }
-            9u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -410,7 +273,7 @@ impl ::buffa::Message for IndexState {
                     ctx,
                 )?;
             }
-            10u32 => {
+            6u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -430,13 +293,9 @@ impl ::buffa::Message for IndexState {
     }
     fn clear(&mut self) {
         self.version = ::core::option::Option::None;
-        self.lexical_version = ::core::option::Option::None;
-        self.vector_version = ::core::option::Option::None;
-        self.lexical_pending = ::core::option::Option::None;
-        self.vector_pending = ::core::option::Option::None;
+        self.pending = ::core::option::Option::None;
+        self.role = ::core::option::Option::None;
         self.model_mismatch = ::core::option::Option::None;
-        self.lexical_role = ::core::option::Option::None;
-        self.vector_role = ::core::option::Option::None;
         self.rebuild = ::buffa::MessageField::none();
         self.last_error = ::buffa::MessageField::none();
         self.__buffa_unknown_fields.clear();
@@ -471,7 +330,10 @@ pub const __INDEX_STATE_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa
     from_json: ::buffa::type_registry::any_from_json::<IndexState>,
     is_wkt: false,
 };
-/// A rebuild of the Index.
+/// A rebuild of the Index: the Index made again from nothing. `Reindex` asks
+/// for one; an Index not built yet, or built in a format this version does
+/// not read, is rebuilt the same way. While it runs the Index has no
+/// `version`, and a query is `INDEX_REBUILDING`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -761,9 +623,10 @@ pub mod rebuild {
         STAGE_UNSPECIFIED = 0i32,
         /// It runs.
         STAGE_RUNNING = 1i32,
-        /// It ended and the rebuilt Index is the live one.
+        /// It ended and the Index is built: `version` is set again.
         STAGE_DONE = 2i32,
-        /// It ended without replacing the live Index; `error` says why.
+        /// It ended without building the Index; `error` says why. The indexer
+        /// starts it again after a pause.
         STAGE_FAILED = 3i32,
     }
     impl Stage {
