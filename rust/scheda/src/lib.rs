@@ -8,15 +8,23 @@
 #[macro_use]
 mod error;
 
+mod check;
 mod collection;
+#[cfg(feature = "encrypt")]
+mod crypto;
+mod documents;
 mod fs;
 mod git;
 mod id;
+mod isolated;
+mod journal;
 mod marker;
 mod stored;
 mod vault;
 mod writer;
 
+#[cfg(feature = "encrypt")]
+pub use crypto::parse_age_identity;
 pub use error::{Context, Error, Fault, redact_remote_text};
 pub use scheda_api::v1;
 pub use vault::Vault;

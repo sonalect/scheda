@@ -6,7 +6,7 @@ Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
-layer, without transitional code (§4). P1 is done; P2 is done but for `ErrorReport`; P3 is half done.
+layer, without transitional code (§4). P1 is done; P2 is done but for `ErrorReport`; P3 is done.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1116,10 +1116,12 @@ D1, D3 (`OpenMode`), D20, D21.
       brings the commit.
 - [x] Collection files on `Collection` and `Schema`: no `version`, the
       kind `standard` (`Kind::Document` → `Kind::Standard`).
-- [ ] A Document is bytes (D20): the UTF-8 rule and `not_utf8` deleted;
+- [x] A Document is bytes (D20): the UTF-8 rule and `not_utf8` deleted;
       a journal payload is refused only for `\n` or `\r`; `Check` finds
-      an unfinished merge from git's unmerged entries.
-- [ ] The Document files, the journal segments, encryption, isolation,
+      an unfinished merge from git's unmerged entries. The per-layer
+      checks collect their problems (D15) and `check::run` runs them all;
+      the `Check` call itself is P6.
+- [x] The Document files, the journal segments, encryption, isolation,
       and the slugs on the new types, with their unit tests.
 - [x] Fixtures under `rust/scheda/testdata` and `python/cli/testdata`
       moved to generation 2.
@@ -1149,7 +1151,8 @@ D6, D14.
 - [ ] The queue, the committer role, commit first and files after, the
       ticket trailer, the failed directory, the timeout and its
       withdrawal, `RESOURCE_EXHAUSTED`, per D6; `open` takes no write
-      lock.
+      lock. The committer refuses a symlink on the path of a file before
+      it writes it (`documents::encode` does not see the Vault).
 - [ ] `CreateDocument`, `UpdateDocument`, `UpsertDocument`,
       `DeleteDocument`, `BatchDocuments`, `CreateCollection`,
       `UpdateCollection`, `DeleteCollection`, `BatchCollections`, and

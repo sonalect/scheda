@@ -72,6 +72,13 @@ changes; they grow with each part of the move.
   (`OPEN_MODE_OPEN_OR_CREATE`, the default; `OPEN_MODE_OPEN_EXISTING`;
   and the new `OPEN_MODE_CREATE_NEW`, which refuses anything already at
   the path) replaces `existing_only`.
+- A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
+  and the `not_utf8` code are gone, and an encrypted collection seals any
+  bytes. A journal payload holds any bytes except `\n` and `\r`.
+- A check no longer reads `<<<<<<<` lines in files as a conflict: an
+  unfinished merge is found from git's own state and reported as
+  `UNRESOLVED_CONFLICT` with its path, so a binary file that happens to
+  hold such lines passes.
 - Dependencies updated to the newest versions at least 2 days old:
   `serde_json` 1.0.154, `sha2` 0.11.1, `tokio` 1.53.3 (with compatible
   transitive crate updates), `rules_python` 2.4.2, `bazel_utils` 0.4.0,

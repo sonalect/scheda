@@ -12,7 +12,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use scheda_api::v1::{OpenMode, OpenOptions, VaultErrorCode};
+use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode};
 
 use crate::collection::{self, Declarations};
 use crate::error::{Context, Error, Fault, io, redact_remote_text};
@@ -81,6 +81,21 @@ impl Vault {
     /// cannot be read.
     pub fn open(path: impl AsRef<Path>, options: OpenOptions) -> Result<Vault, Error> {
         open(path.as_ref(), options)
+    }
+
+    /// The canonical path of the work tree.
+    pub(crate) fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The collections the root directories declare.
+    pub(crate) fn declarations(&self) -> &Declarations {
+        &self.declarations
+    }
+
+    /// The age secret the handle was opened with, if any.
+    pub(crate) fn encryption(&self) -> Option<&Encryption> {
+        self.options.encryption.as_option()
     }
 
     /// Ends the handle. The handle holds no lock and no background work yet,

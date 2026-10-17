@@ -28,6 +28,11 @@ pub(crate) struct GitOutput {
 }
 
 impl GitOutput {
+    /// Whether the command exited 0.
+    pub(crate) fn success(&self) -> bool {
+        self.status.success()
+    }
+
     /// The failure of a command that did not exit 0, from its `stderr`.
     fn failure(&self) -> Fault {
         if self.stderr.trim().is_empty() {
@@ -358,6 +363,52 @@ pub(crate) fn origin_url(dir: &Path) -> Result<Option<String>, Error> {
     }
 }
 
+/// Whether git's index tracks `prefix` (repository-relative) or anything
+/// below it. The path of an entry is compared as bytes: a name that is not
+/// UTF-8 is still a name.
+pub(crate) fn index_has_prefix(dir: &Path, prefix: &str) -> Result<bool, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("ls-files")
+        .arg("-z")
+        .arg("--cached")
+        .run()
+        .context("index_has_prefix: list the index")?;
+    let prefix = prefix.trim_end_matches('/');
+    let nested = format!("{prefix}/");
+    Ok(out
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .any(|path| path == prefix.as_bytes() || path.starts_with(nested.as_bytes())))
+}
+
+/// The repository-relative paths git holds as *unmerged*: a merge, a
+/// pull, or a rebase that stopped on a conflict and was not finished. Each
+/// path is listed once, in git's order. Git's own state is the answer; the
+/// bytes of a file say nothing about it.
+pub(crate) fn unmerged_paths(dir: &Path) -> Result<Vec<String>, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("ls-files")
+        .arg("--unmerged")
+        .arg("-z")
+        .run()
+        .context("unmerged_paths: list the unmerged entries")?;
+    let mut paths: Vec<String> = Vec::new();
+    for entry in out.stdout.split(|byte| *byte == 0) {
+        // `<mode> <object> <stage>\t<path>`, one entry per stage.
+        let Some(tab) = entry.iter().position(|byte| *byte == b'\t') else {
+            continue;
+        };
+        let path = String::from_utf8_lossy(&entry[tab + 1..]).into_owned();
+        if paths.last() != Some(&path) {
+            paths.push(path);
+        }
+    }
+    Ok(paths)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
@@ -365,8 +416,8 @@ mod tests {
     use scheda_api::v1::VaultErrorCode;
 
     use super::{
-        config_get, enable_long_paths, git, is_tracked, is_work_tree, isolate_test_git_env,
-        origin_url, require_work_tree,
+        config_get, enable_long_paths, git, index_has_prefix, is_tracked, is_work_tree,
+        isolate_test_git_env, origin_url, require_work_tree, unmerged_paths,
     };
 
     /// A scratch directory that is removed when the test ends.
@@ -455,6 +506,74 @@ mod tests {
             .run()
             .unwrap();
         assert!(is_tracked(&scratch.0, "a").unwrap());
+    }
+
+    #[test]
+    fn the_index_prefix_is_a_directory_or_a_file_of_that_name() {
+        let scratch = Scratch::new("prefix");
+        scratch.init();
+        for rel in [".isolated/a/b", ".isolatedx/c", "other"] {
+            let path = scratch.0.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, b"x").unwrap();
+        }
+        git()
+            .current_dir(&scratch.0)
+            .arg("add")
+            .arg("other")
+            .arg(".isolatedx")
+            .run()
+            .unwrap();
+        assert!(!index_has_prefix(&scratch.0, ".isolated").unwrap());
+        assert!(index_has_prefix(&scratch.0, ".isolatedx/").unwrap());
+        git()
+            .current_dir(&scratch.0)
+            .arg("add")
+            .arg("--force")
+            .arg(".isolated")
+            .run()
+            .unwrap();
+        assert!(index_has_prefix(&scratch.0, ".isolated").unwrap());
+        assert!(index_has_prefix(&scratch.0, "other").unwrap());
+    }
+
+    #[test]
+    fn unmerged_paths_are_git_state_listed_once_each() {
+        let scratch = Scratch::new("unmerged");
+        scratch.init();
+        let run = |args: &[&str]| {
+            let mut cmd = git().current_dir(&scratch.0);
+            for arg in args {
+                cmd = cmd.arg(arg);
+            }
+            cmd.env("GIT_AUTHOR_NAME", "Test")
+                .env("GIT_AUTHOR_EMAIL", "test@example.test")
+                .env("GIT_COMMITTER_NAME", "Test")
+                .env("GIT_COMMITTER_EMAIL", "test@example.test")
+                .spawn()
+                .unwrap()
+                .success()
+        };
+        let write = |rel: &str, text: &str| std::fs::write(scratch.0.join(rel), text).unwrap();
+        assert!(unmerged_paths(&scratch.0).unwrap().is_empty());
+        write("a", "base\n");
+        write("b", "base\n");
+        assert!(run(&["add", "--all"]));
+        assert!(run(&["commit", "--quiet", "--message", "base"]));
+        assert!(run(&["checkout", "--quiet", "-b", "other"]));
+        write("a", "theirs\n");
+        write("b", "theirs\n");
+        assert!(run(&["commit", "--quiet", "--all", "--message", "theirs"]));
+        assert!(run(&["checkout", "--quiet", "-"]));
+        write("a", "ours\n");
+        write("b", "ours\n");
+        assert!(run(&["commit", "--quiet", "--all", "--message", "ours"]));
+        assert!(!run(&["merge", "--quiet", "--no-edit", "other"]));
+        assert_eq!(unmerged_paths(&scratch.0).unwrap(), ["a", "b"]);
+        // Resolving one path leaves the other.
+        write("a", "resolved\n");
+        assert!(run(&["add", "a"]));
+        assert_eq!(unmerged_paths(&scratch.0).unwrap(), ["b"]);
     }
 
     #[test]

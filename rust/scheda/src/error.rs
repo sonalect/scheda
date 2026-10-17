@@ -92,6 +92,13 @@ impl Fault {
         self
     }
 
+    /// The code of the failure, for the layers that report it as data (a
+    /// `Check` problem) instead of raising it.
+    #[must_use]
+    pub(crate) fn vault_code(&self) -> VaultErrorCode {
+        self.code
+    }
+
     /// What happened, for a person. Never replaces the code.
     #[must_use]
     pub fn message(&self) -> &str {
