@@ -72,6 +72,20 @@ changes; they grow with each part of the move.
   (`OPEN_MODE_OPEN_OR_CREATE`, the default; `OPEN_MODE_OPEN_EXISTING`;
   and the new `OPEN_MODE_CREATE_NEW`, which refuses anything already at
   the path) replaces `existing_only`.
+- Several handles and processes write to one Vault by taking turns on a
+  short write lock instead of failing with `locked`: a write is one
+  commit, made before any file of the Vault changes, so no reader sees a
+  change that is not committed. A write that cannot take the lock within
+  `OpenOptions.write_timeout_ms` (default 60 s) fails with `ABORTED` and
+  writes nothing; a write cut short by a crash is finished by the next
+  `open` or write, which touches only that write's files.
+- Collections: `CreateCollection` refuses a declared name
+  (`ALREADY_EXISTS`) instead of replacing it; `UpdateCollection` changes a
+  declared one (`NOT_FOUND` otherwise), its kind, `isolated`, and
+  `encrypted` only while it holds no Documents (`FAILED_PRECONDITION`),
+  and keeps the keys of the file this version does not know;
+  `DeleteCollection` removes an empty collection; `BatchCollections`
+  declares, changes, and deletes several in one step.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

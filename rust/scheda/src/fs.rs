@@ -27,12 +27,18 @@ static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
 /// closes: a close alone leaves the lock held while a child process another
 /// thread forked still has the descriptor, until that child runs `exec`,
 /// and a handle trying the lock in that moment would find it taken.
+#[derive(Debug)]
 pub(crate) struct Flock(fs::File);
 
 impl Flock {
     /// Take ownership of `file`, which holds the lock.
     pub(crate) fn held(file: fs::File) -> Self {
         Self(file)
+    }
+
+    /// The locked file, for the holder that keeps data in it.
+    pub(crate) fn file(&self) -> &fs::File {
+        &self.0
     }
 }
 

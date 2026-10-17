@@ -10,6 +10,8 @@ mod error;
 
 mod check;
 mod collection;
+mod collections;
+mod commit;
 #[cfg(feature = "encrypt")]
 mod crypto;
 mod documents;

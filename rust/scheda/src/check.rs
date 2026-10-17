@@ -73,12 +73,9 @@ pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
     let mut problems = check_scheda_owner_only(path).context("check: .scheda")?;
     problems.extend(check_unmerged(path)?);
     problems.extend(check_perimeter(path)?);
-    problems.extend(check_documents(
-        path,
-        vault.declarations(),
-        vault.encryption(),
-    )?);
-    problems.extend(check_journals(path, vault.declarations())?);
+    let declarations = vault.declarations_now().context("check: the collections")?;
+    problems.extend(check_documents(path, &declarations, vault.encryption())?);
+    problems.extend(check_journals(path, &declarations)?);
     Ok(problems)
 }
 

@@ -10,12 +10,6 @@
 //! may change everything but that one key and an earlier Scheda still says
 //! which generation it met.
 
-// `make` is the writer of a new Vault, which the next layer brings.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the layer that makes a Vault is not built yet")
-)]
-
 use std::path::Path;
 
 use scheda_api::v1::{VaultErrorCode, VaultMarker};

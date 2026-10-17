@@ -1,6 +1,7 @@
-//! The git command line, as far as reading a work tree goes: running a
-//! command, and the questions `open` asks of a directory. Nothing here
-//! commits, clones, pulls, pushes, or reads history.
+//! The git command line: running a command (with input on its standard
+//! input when it takes some), and the questions `open` asks of a directory.
+//! The commit plumbing is built on it in `commit`; nothing here clones,
+//! pulls, pushes, or reads history.
 
 // The commands of the next layers use what `open` does not.
 #![cfg_attr(
@@ -12,7 +13,7 @@
 )]
 
 use std::ffi::{OsStr, OsString};
-use std::io;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -34,7 +35,7 @@ impl GitOutput {
     }
 
     /// The failure of a command that did not exit 0, from its `stderr`.
-    fn failure(&self) -> Fault {
+    pub(crate) fn failure(&self) -> Fault {
         if self.stderr.trim().is_empty() {
             let message = match self.status.code() {
                 Some(code) => format!("git exited with status {code}"),
@@ -46,8 +47,13 @@ impl GitOutput {
         }
     }
 
+    /// The exit code, if the process exited with one.
+    pub(crate) fn code(&self) -> Option<i32> {
+        self.status.code()
+    }
+
     /// `stdout` as UTF-8 text.
-    fn stdout_str(&self) -> Result<&str, Error> {
+    pub(crate) fn stdout_str(&self) -> Result<&str, Error> {
         std::str::from_utf8(&self.stdout)
             .or_fault(
                 VaultErrorCode::Replication,
@@ -57,7 +63,7 @@ impl GitOutput {
     }
 
     /// `stdout` as UTF-8 text without the surrounding whitespace.
-    fn stdout_trim(&self) -> Result<&str, Error> {
+    pub(crate) fn stdout_trim(&self) -> Result<&str, Error> {
         Ok(self.stdout_str()?.trim())
     }
 }
@@ -77,6 +83,7 @@ pub(crate) struct GitCmd {
     dir: Option<PathBuf>,
     args: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
+    input: Option<Vec<u8>>,
 }
 
 /// A new git command. Tests run it with the user's git configuration
@@ -88,6 +95,7 @@ pub(crate) fn git() -> GitCmd {
         dir: None,
         args: Vec::new(),
         envs: Vec::new(),
+        input: None,
     }
 }
 
@@ -108,6 +116,12 @@ impl GitCmd {
     pub(crate) fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
         self.envs
             .push((key.as_ref().to_os_string(), value.as_ref().to_os_string()));
+        self
+    }
+
+    /// Feeds `bytes` to the standard input of the command.
+    pub(crate) fn input(mut self, bytes: Vec<u8>) -> Self {
+        self.input = Some(bytes);
         self
     }
 
@@ -153,7 +167,12 @@ impl GitCmd {
     /// Runs the command and returns its output whatever the exit status
     /// was. Only a command that could not start is an error.
     pub(crate) fn spawn(self) -> Result<GitOutput, Error> {
-        match self.command().output() {
+        let mut cmd = self.command();
+        let out = match &self.input {
+            None => cmd.output(),
+            Some(bytes) => output_with_input(&mut cmd, bytes),
+        };
+        match out {
             Ok(out) => Ok(GitOutput::from(out)),
             Err(err) => Err(spawn_fault(err).into()),
         }
@@ -168,6 +187,27 @@ impl GitCmd {
             Err(out.failure().into())
         }
     }
+}
+
+/// Runs `cmd` with `input` on its standard input. The input is written from
+/// another thread while the output is read, so a command that prints before
+/// it has read everything cannot block on a full pipe. A write the command
+/// cuts short (it exited early) is not an error here: its exit status says
+/// why.
+fn output_with_input(cmd: &mut Command, input: &[u8]) -> io::Result<std::process::Output> {
+    cmd.stdin(Stdio::piped());
+    let mut child = cmd.spawn()?;
+    let stdin = child.stdin.take();
+    std::thread::scope(|scope| {
+        let feeder = scope.spawn(move || {
+            if let Some(mut stdin) = stdin {
+                let _ = stdin.write_all(input);
+            }
+        });
+        let out = child.wait_with_output();
+        let _ = feeder.join();
+        out
+    })
 }
 
 fn spawn_fault(err: io::Error) -> Fault {

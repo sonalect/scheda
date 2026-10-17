@@ -21,6 +21,12 @@ _TEST_COMMON = [
     "tests/common/mod.rs",
 ]
 
+# What the write tests look at after a write (`mod probe`, which uses
+# `mod common`).
+_TEST_PROBE = _TEST_COMMON + [
+    "tests/probe/mod.rs",
+]
+
 # `src/old/` is the material of the layers not built yet; it is not compiled.
 _SCHEDA_SRCS = glob(
     ["src/**/*.rs"],
@@ -104,6 +110,60 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda_thin",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "collections_test",
+    size = "small",
+    srcs = ["tests/collections.rs"] + _TEST_PROBE,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/collections.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "collections_thin_test",
+    size = "small",
+    srcs = ["tests/collections.rs"] + _TEST_PROBE,
+    crate_root = "tests/collections.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "write_test",
+    size = "small",
+    srcs = ["tests/write.rs"] + _TEST_PROBE,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/write.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "write_thin_test",
+    size = "small",
+    srcs = ["tests/write.rs"] + _TEST_PROBE,
+    crate_root = "tests/write.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:serde_json",
     ],
 )

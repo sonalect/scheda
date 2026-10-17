@@ -1224,30 +1224,30 @@ D6, D14.
   revision; with `keep_existing` the reply is the stored Document.
 - *Check:* a stale `revision` is `FAILED_PRECONDITION`.
 - *Check:* `UpdateCollection` keeps the keys of the collection file this
-  Scheda does not know (D21), and writes no default the caller did not
-  set (the defaults `open` fills in stay in memory).
+      Scheda does not know (D21), and writes no default the caller did not
+      set (the defaults `open` fills in stay in memory).
 - *Check:* a `BatchCollections` whose third operation fails declares,
-  changes, and deletes nothing; one that succeeds is one write.
+      changes, and deletes nothing; one that succeeds is one write.
 - *Check:* `DeleteCollection` of a collection with Documents is
-  `FAILED_PRECONDITION` and changes nothing; of an empty one (plain,
-  journal, isolated) removes the declaration and the directory; the name
-  can be created again.
+      `FAILED_PRECONDITION` and changes nothing; of an empty one (plain,
+      journal, isolated) removes the declaration and the directory; the name
+      can be created again.
 - *Check:* a write whose call has not returned is seen by no
   `GetDocument` and leaves the work tree untouched.
 - *Check:* 64 concurrent write calls from one handle, and from three
-  processes, each end stored whole, one commit each; none fails on the
-  lock.
+      processes, each end stored whole, one commit each; none fails on the
+      lock.
 - *Check:* a call that cannot take the lock within its timeout (another
-  process holds it) is `ABORTED` and stores nothing, then or later.
+      process holds it) is `ABORTED` and stores nothing, then or later.
 - *Check:* a writer killed after the commit and before the files: the
-  next `open`, and the next take of the lock by a running handle, bring
-  exactly those paths to `HEAD` and empty `commit.lock`; killed before
-  the commit: nothing is stored and nothing in the work tree changes; a
-  person's edit of another file survives both; a `git commit` run by hand
-  between the read and the swap makes the write `ABORTED` with nothing
-  stored.
+      next `open`, and the next take of the lock by a running handle, bring
+      exactly those paths to `HEAD` and empty `commit.lock`; killed before
+      the commit: nothing is stored and nothing in the work tree changes; a
+      person's edit of another file survives both; a `git commit` run by hand
+      between the read and the swap makes the write `ABORTED` with nothing
+      stored.
 - *Check:* `commit.lock` holds paths only, never the bytes of a
-  Document, and is empty after every write that returned.
+      Document, and is empty after every write that returned.
 - *Check:* `Sync` against an empty mirror pushes.
 - *Check:* a nested repository under `.isolated/` with an `origin`
   configured: no call of Scheda contacts it.

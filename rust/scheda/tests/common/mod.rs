@@ -36,13 +36,12 @@ impl Drop for Scratch {
     }
 }
 
-/// Runs `git args` in `dir`, with the user's and the system's git
-/// configuration left out and an identity of its own. A failure fails the
-/// test.
-pub fn git(dir: &Path, args: &[&str]) {
+/// `git args` to run in `dir`, with the user's and the system's git
+/// configuration left out and an identity of its own.
+pub fn command(dir: &Path, args: &[&str]) -> Command {
     let absent = std::env::temp_dir().join("scheda-absent-gitconfig");
-    let status = Command::new("git")
-        .args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
+    let mut cmd = Command::new("git");
+    cmd.args(["-c", "gc.auto=0", "-c", "maintenance.auto=false"])
         .arg("-C")
         .arg(dir)
         .args(args)
@@ -52,9 +51,14 @@ pub fn git(dir: &Path, args: &[&str]) {
         .env("GIT_AUTHOR_NAME", "Test")
         .env("GIT_AUTHOR_EMAIL", "test@example.test")
         .env("GIT_COMMITTER_NAME", "Test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.test")
-        .status()
-        .unwrap();
+        .env("GIT_COMMITTER_EMAIL", "test@example.test");
+    cmd
+}
+
+/// Runs `git args` in `dir` as [`command`] sets it up. A failure fails the
+/// test.
+pub fn git(dir: &Path, args: &[&str]) {
+    let status = command(dir, args).status().unwrap();
     assert!(status.success(), "git {args:?} failed");
 }
 

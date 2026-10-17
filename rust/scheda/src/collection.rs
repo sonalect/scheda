@@ -158,6 +158,17 @@ impl Declarations {
     pub(crate) fn len(&self) -> usize {
         self.collections.len()
     }
+
+    /// Declares `declaration`, replacing a declaration of the same name.
+    pub(crate) fn insert(&mut self, declaration: Declaration) {
+        self.collections
+            .insert(declaration.name().to_owned(), declaration);
+    }
+
+    /// Forgets the declaration of collection `name`.
+    pub(crate) fn remove(&mut self, name: &str) {
+        self.collections.remove(name);
+    }
 }
 
 /// Reads the declarations of the work tree at `vault`.
@@ -217,6 +228,43 @@ pub(crate) fn encode(
     stored::encode(collection, unknown, format)
         .map_err(Error::from)
         .context("encode a collection file")
+}
+
+/// The declaration file a new collection `name` gets:
+/// `{name}/.collection.yaml`.
+pub(crate) fn new_file(name: &str) -> DeclFile {
+    DeclFile {
+        rel: format!("{name}/{}", COLLECTION_FILENAMES[0]),
+        format: Format::Yaml,
+    }
+}
+
+/// Checks a `Collection` a caller sends, before anything is locked or
+/// written: the rules of the contract, the slug of the name and of a
+/// singleton `id`. Reads nothing.
+pub(crate) fn check(collection: &Collection) -> Result<(), Fault> {
+    stored::validate(collection)?;
+    require_slug("collection name", collection.name.as_deref().unwrap_or(""))?;
+    let mut copy = collection.clone();
+    normalize(&mut copy)?;
+    Ok(())
+}
+
+/// The bytes of the declaration file `file` for `collection`, with the
+/// `unknown` fields of the file it replaces put back, and the declaration
+/// as a later load of those bytes finds it, defaults filled in. The bytes
+/// hold what the caller declared and no default.
+pub(crate) fn declare_new(
+    collection: &Collection,
+    unknown: &Unknowns,
+    file: DeclFile,
+) -> Result<(Vec<u8>, Declaration), Error> {
+    let bytes = encode(collection, unknown, file.format)?;
+    let name = collection.name.as_deref().unwrap_or("");
+    let declaration = declare(&bytes, &file.rel, name)
+        .map_err(|fault| fault.with_path(file.rel.clone()))
+        .context("declare a collection")?;
+    Ok((bytes, declaration))
 }
 
 /// Reads and normalizes one declaration file: `bytes` is the file at the
