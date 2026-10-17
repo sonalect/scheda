@@ -1,21 +1,29 @@
-# Workspace buf config. Generate/lint copy this file; BSR deps stay remote.
+# Buf config of the contract (Buf LSP, lint, and the generate). The
+# contract sits under `api/` at the path its package names. Bazel stages
+# the protos the contract imports (protovalidate, protobuf) at their import
+# paths from the root; the second module makes them visible, and lint
+# skips them.
 version: v2
 modules:
+  - path: api
   - path: .
     includes:
-      - api
       - buf
       - google
 lint:
   use:
     - STANDARD
+  except:
+    # A contract that stays in one process is named as its Rust code reads,
+    # not as an RPC API: the service as its trait, the methods over the
+    # domain's own messages.
+    - RPC_REQUEST_RESPONSE_UNIQUE
+    - RPC_REQUEST_STANDARD_NAME
+    - RPC_RESPONSE_STANDARD_NAME
+    - SERVICE_SUFFIX
   ignore:
     - buf
     - google
-  ignore_only:
-    PACKAGE_VERSION_SUFFIX:
-      # Package `api` matches `api/version.proto` (PACKAGE_DIRECTORY_MATCH).
-      - api/version.proto
 breaking:
   use:
     - FILE

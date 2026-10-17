@@ -1,15 +1,9 @@
 load("@bazel_lib//lib:write_source_files.bzl", "write_source_files")
 load("@bazel_utils_buf//:buf.bzl", "buf_format", "buf_generate", "buf_lint_test", "buf_module")
 
-exports_files([
-    "buf.gen.v1.rust.yaml",
-    "buf.gen.version.rust.yaml",
-    "buf.gen.collection.rust.yaml",
-])
-
 filegroup(
     name = "protos",
-    srcs = glob(["*.proto"]),
+    srcs = glob(["**/*.proto"]),
     visibility = ["//visibility:public"],
 )
 
@@ -37,13 +31,15 @@ buf_format(
 buf_generate(
     name = "rust",
     module = ":module",
-    template = "//api:buf.gen.version.rust.yaml",
+    template = "//:buf.gen.yaml",
 )
 
+# `bazel run //api:generate` refreshes `rust/api/gen`;
+# `bazel test //api:all` fails while it differs from the plugins' output.
 write_source_files(
     name = "generate",
     check_that_out_file_exists = False,
     files = {
-        "//rust/api:version": ":rust",
+        "//rust/api:gen": ":rust",
     },
 )

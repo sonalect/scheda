@@ -1,0 +1,81 @@
+// The failures of the Vault, and their form for a transport.
+
+edition = "2024";
+
+package scheda.v1;
+
+// The failures of `Vault` a caller may branch on. A code says what the
+// caller can do about it; the cause (an I/O error, a git message, an
+// error of the Index) travels as the source of the error, so nothing of
+// it is lost. The names follow the gRPC canonical codes where the meaning
+// is the same.
+enum VaultErrorCode {
+  VAULT_ERROR_CODE_UNSPECIFIED = 0;
+  // The request breaks a rule of this contract. Fix the request.
+  VAULT_ERROR_CODE_INVALID_ARGUMENT = 1;
+  // The collection, Document, or mirror is not there.
+  VAULT_ERROR_CODE_NOT_FOUND = 2;
+  // A collection or Document of that name is already there.
+  VAULT_ERROR_CODE_ALREADY_EXISTS = 3;
+  // The stored state is not the one the request requires: another
+  // revision, a collection that still holds Documents. Read again.
+  VAULT_ERROR_CODE_FAILED_PRECONDITION = 4;
+  // The call does not apply (a journal line is not replaced) or this
+  // build lacks the feature it needs.
+  VAULT_ERROR_CODE_UNIMPLEMENTED = 5;
+  // A call of the same kind is already running (a rebuild); a write never
+  // fails so. Retryable.
+  VAULT_ERROR_CODE_ABORTED = 6;
+  // Something the call needs cannot be reached now: the mirror, a port,
+  // or the write queue within its timeout. Retryable.
+  VAULT_ERROR_CODE_UNAVAILABLE = 7;
+  // The write queue is full: the handle that applies writes has stopped.
+  // Retryable, and to be raised loudly.
+  VAULT_ERROR_CODE_RESOURCE_EXHAUSTED = 8;
+  // The mirror refused the credentials git gave it.
+  VAULT_ERROR_CODE_UNAUTHENTICATED = 9;
+  // The path holds no Vault.
+  VAULT_ERROR_CODE_NOT_A_VAULT = 10;
+  // The Vault is of another generation than this build reads.
+  VAULT_ERROR_CODE_GENERATION = 11;
+  // The secret of an encrypted collection is missing or wrong, or its
+  // bytes do not decrypt.
+  VAULT_ERROR_CODE_CRYPTO = 12;
+  // The mirror holds writes this Vault has not pulled. Pull, then try
+  // again.
+  VAULT_ERROR_CODE_MIRROR_AHEAD = 13;
+  // The writes of the mirror cannot be joined with this Vault's.
+  VAULT_ERROR_CODE_MIRROR_CONFLICT = 14;
+  // A file holds an unfinished merge. Resolve it by hand.
+  VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 15;
+  // The Index has not been built yet, or is moving to a new format.
+  // Retryable soon; `WatchIndexStatus` says when.
+  VAULT_ERROR_CODE_INDEX_REBUILDING = 16;
+  // The Index was built by another Projector or another embedding model.
+  // `Reindex`.
+  VAULT_ERROR_CODE_INDEX_STALE = 17;
+  // The Index is damaged. `Reindex`.
+  VAULT_ERROR_CODE_INDEX_BROKEN = 18;
+  // The storage below the Vault failed. Retryable when the failure is a
+  // passing one (interrupted, would block, busy).
+  VAULT_ERROR_CODE_STORAGE = 19;
+  // Exchanging writes with the mirror failed otherwise.
+  VAULT_ERROR_CODE_REPLICATION = 20;
+}
+
+// A failure, as a transport (the CLI, a status) carries it. The library
+// returns its own error type; this is that error written out.
+message ErrorReport {
+  // The name of the code: `VAULT_ERROR_CODE_NOT_FOUND`, or the code of a
+  // port or of the runtime.
+  string code = 1;
+  // What happened, for a person. Never replaces the code.
+  string message = 2;
+  // Whether the same call may succeed later.
+  bool retryable = 3;
+  // The operations the failure passed on its way out, outermost first.
+  repeated string stack = 4;
+  // The file it is about, relative to the Vault root (POSIX). Unset when
+  // it is about no one file.
+  string path = 5;
+}

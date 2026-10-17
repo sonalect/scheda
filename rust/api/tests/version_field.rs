@@ -1,5 +1,8 @@
 //! Every proto field named `version` must be field number 1.
-//! An `int32 version` must carry protovalidate `const: 1`.
+//! An `int32 version` is the format generation of the Vault marker and
+//! must carry protovalidate `const` equal to the generation, 2
+//! (`api/scheda/v1/marker.proto`). A `string version` (`IndexState`) has
+//! no such rule.
 //! This test fails if someone writes `int32 version = 2`.
 //!
 //! Do not match `schema_version` or the word version in comments.
@@ -99,16 +102,17 @@ fn field_options(src: &str) -> String {
     src.to_string()
 }
 
-fn has_int32_const_one(options: &str) -> bool {
+/// The format generation the `int32 version` of `VaultMarker` must be.
+const GENERATION: u32 = 2;
+
+fn has_int32_const_generation(options: &str) -> bool {
     let compact: String = options.chars().filter(|c| !c.is_whitespace()).collect();
-    compact.contains("const:1")
+    compact.contains(&format!("const:{GENERATION}}}"))
 }
 
 fn collect_protos(api_root: &Path) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    push_protos_in_dir(api_root, &mut files);
-    push_protos_in_dir(&api_root.join("v1"), &mut files);
-    push_protos_in_dir(&api_root.join("collection/v1"), &mut files);
+    push_protos_in_dir(&api_root.join("scheda/v1"), &mut files);
     files
 }
 
@@ -124,16 +128,9 @@ fn push_protos_in_dir(dir: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn version_proto_in(dir: &Path) -> Option<PathBuf> {
-    let direct = dir.join("version.proto");
-    if direct.is_file() {
-        return Some(direct);
-    }
-    let nested = dir.join("api/version.proto");
-    if nested.is_file() {
-        return Some(nested);
-    }
-    None
+fn marker_proto_in(dir: &Path) -> Option<PathBuf> {
+    let path = dir.join("scheda/v1/marker.proto");
+    path.is_file().then_some(path)
 }
 
 fn api_roots() -> Vec<PathBuf> {
@@ -166,22 +163,18 @@ fn api_roots() -> Vec<PathBuf> {
         }
     }
     for value in std::env::vars().map(|(_, v)| v) {
-        if value.contains("version.proto") {
+        if value.ends_with("scheda/v1/marker.proto") {
             let path = PathBuf::from(value);
-            if path.is_file()
-                && let Some(parent) = path.parent()
-            {
-                candidates.push(parent.to_path_buf());
+            if let Some(root) = path.ancestors().nth(3) {
+                candidates.push(root.to_path_buf());
             }
         }
     }
 
     let mut roots = Vec::new();
     for candidate in candidates {
-        if let Some(found) = version_proto_in(&candidate)
-            && let Some(parent) = found.parent()
-        {
-            roots.push(parent.to_path_buf());
+        if marker_proto_in(&candidate).is_some() {
+            roots.push(candidate);
         }
     }
     roots.sort();
@@ -227,9 +220,9 @@ fn every_version_field_is_number_one_with_const() {
                     field.ty
                 ));
             }
-            if field.ty == "int32" && !has_int32_const_one(&field.options) {
+            if field.ty == "int32" && !has_int32_const_generation(&field.options) {
                 errors.push(format!(
-                    "{}: `int32 version` must carry protovalidate const: 1",
+                    "{}: `int32 version` must carry protovalidate const: {GENERATION}",
                     path.display()
                 ));
             }

@@ -1,0 +1,136 @@
+// What a binding's `open` takes, besides the Vault path and the ports.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+
+// How to open a Vault.
+message OpenOptions {
+  // Pull from the mirror when the Vault opens, and push after each write.
+  // Unset: off.
+  bool auto_sync = 1;
+  // The mirror to clone from when the path holds no Vault yet: an
+  // absolute URI (`https://…`, `ssh://…`, `file:///…`) or an scp-style
+  // address (`git@host:path`). Unset: a new local Vault. On an existing
+  // Vault, a set value must be its mirror's URL (`INVALID_ARGUMENT`
+  // otherwise); `SetMirror` changes the mirror.
+  string mirror = 2 [(buf.validate.field) = {
+    cel: [
+      {
+        id: "open_options.mirror.form"
+        message: "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)"
+        expression: "this.isUri() || (this.contains('@') && this.contains(':') && !this.contains('://'))"
+      }
+    ]
+  }];
+  // The secret of this handle for every encrypted collection. Unset:
+  // nothing is encrypted or decrypted, and an encrypted collection is
+  // `CRYPTO`.
+  Encryption encryption = 3;
+  // Who writes through this handle; the history of a Document shows it.
+  // Unset: the local git configuration, then `Scheda <scheda@invalid>`.
+  Author author = 4;
+  // The machine-local identity of this clone: lowercase letters, digits,
+  // and `-`, 1 to 32 bytes, not starting with eight hexadecimal digits.
+  // Unset: generated on the first `open` into `{vault}/.scheda/writer`.
+  // Never stored in the Vault's history.
+  string writer = 5 [(buf.validate.field) = {
+    string: {
+      min_len: 1
+      max_len: 32
+      pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+    }
+  }];
+  // How often, in milliseconds, the indexer looks for writes made
+  // outside this handle (another process, a `git` command). A write
+  // through this handle wakes it at once. Unset: 1000.
+  uint32 index_poll_ms = 6 [(buf.validate.field) = {
+    uint32: {
+      gte: 10
+      lte: 3600000
+    }
+  }];
+  // What `open` may do with the path. Unset: `OPEN_MODE_OPEN_OR_CREATE`.
+  OpenMode mode = 7 [(buf.validate.field) = {
+    enum: {defined_only: true}
+  }];
+  // How long a write call waits for its write to be stored, in
+  // milliseconds. On the timeout the write is withdrawn if it has not
+  // started, or waited for if it has: an error always means nothing was
+  // written. Unset: 60000.
+  uint32 write_timeout_ms = 8 [(buf.validate.field) = {
+    uint32: {gte: 1}
+  }];
+}
+
+// What `open` may do with the path it is given. In every mode, a Vault
+// whose marker is of another generation is `GENERATION`, and a mode that
+// refuses writes nothing.
+enum OpenMode {
+  // As `OPEN_MODE_OPEN_OR_CREATE`.
+  OPEN_MODE_UNSPECIFIED = 0;
+  // Open a Vault, or make one. A missing path or an empty folder becomes
+  // a new Vault, cloned from `OpenOptions.mirror` when it is set. A git
+  // work tree without the marker gets the marker in one write, then
+  // opens. A folder that is neither empty nor a git work tree is
+  // `INVALID_ARGUMENT`.
+  OPEN_MODE_OPEN_OR_CREATE = 1;
+  // Open a Vault that exists, and nothing else. A missing path is
+  // `NOT_FOUND`; a folder without the marker is `NOT_A_VAULT`. Never
+  // creates or clones, and writes nothing before the Vault is accepted.
+  OPEN_MODE_OPEN_EXISTING = 2;
+  // Make a new Vault, and nothing else: for an installer that must not
+  // take over what is already there. A missing path or an empty folder
+  // becomes a new Vault, cloned from `OpenOptions.mirror` when it is set;
+  // anything else at the path, a Vault included, is `ALREADY_EXISTS`.
+  OPEN_MODE_CREATE_NEW = 3;
+}
+
+// The author of writes, as the history of a Document shows it.
+message Author {
+  // A display name, without `<`, `>`, or a line break.
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {
+      min_len: 1
+      pattern: "^[^<>\\n]+$"
+    }
+  }];
+  // An email address.
+  string email = 2 [(buf.validate.field) = {
+    required: true
+    string: {email: true}
+    cel: [
+      {
+        id: "author.email.format"
+        message: "must be a valid email address"
+        expression: "this.isEmail()"
+      }
+    ]
+  }];
+}
+
+// The age secret of a handle: a passphrase or an X25519 identity. Never
+// written into the Vault. Redacted from debug output; Protobuf JSON still
+// carries it, so it never goes on a command line.
+message Encryption {
+  oneof secret {
+    option (buf.validate.oneof).required = true;
+    // A passphrase (age scrypt).
+    string passphrase = 1 [
+      debug_redact = true,
+      (buf.validate.field) = {
+        string: {min_len: 1}
+      }
+    ];
+    // An age X25519 identity (`AGE-SECRET-KEY-…`).
+    string identity = 2 [
+      debug_redact = true,
+      (buf.validate.field) = {
+        string: {min_len: 1}
+      }
+    ];
+  }
+}

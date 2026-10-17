@@ -23,7 +23,7 @@ openmp = ["search", "usearch/openmp"]
 encrypt = ["dep:age"]
 # Async API (`scheda::nonblocking`): every I/O method on a Tokio blocking
 # thread. Independent of `find` / `search`; wraps what the build has.
-tokio = ["dep:tokio"]
+tokio = ["dep:tokio", "scheda-api/tokio"]
 
 [dependencies]
 age = { workspace = true, optional = true }

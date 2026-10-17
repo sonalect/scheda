@@ -1,0 +1,71 @@
+// The state of the Index, as `GetIndexStatus` and `WatchIndexStatus` give
+// it.
+//
+// The Index lives under `{vault}/.scheda/`, is never committed, and
+// follows the stored state of the Vault in the background: one handle of
+// all those open on a Vault indexes at a time, the others follow it and
+// take over when it ends. Versions here are opaque tokens: equal tokens
+// are the same stored state.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "scheda/v1/error.proto";
+
+// Where the Index stands.
+message IndexState {
+  // The stored state of the Vault now. Unset before the first write.
+  string version = 1;
+  // The stored state the lexical leg has reached. Equal to `version`: the
+  // lexical Index holds every stored write.
+  string lexical_version = 2;
+  // The stored state the vector leg has reached.
+  string vector_version = 3;
+  // Documents the lexical leg has yet to apply to reach `version`: added,
+  // changed, and deleted ones, and every Document of a collection whose
+  // declaration changed. `0` when it is there; unset when they could not
+  // be counted (`last_error` then says why).
+  uint64 lexical_pending = 4;
+  // The same for the vector leg. It stays above `0` while no handle can
+  // write vectors (no embedder, or only ones of another model).
+  uint64 vector_pending = 5;
+  // This handle's embedder is of another model or length than the
+  // vectors of the Index: it writes no vector, and its searches run
+  // without the vector leg, rather than mix two models. `Reindex` moves
+  // the Index to it.
+  bool model_mismatch = 6;
+  // This handle indexes the lexical leg now.
+  bool lexical_role = 7;
+  // This handle indexes the vector leg now.
+  bool vector_role = 8;
+  // The last rebuild `Reindex` started, while it runs and after it ends.
+  // Unset when none was started on this Vault since this handle opened.
+  Rebuild rebuild = 9;
+  // The failure of this handle's last indexing round; unset after a round
+  // that succeeds. A failed round changes no version and fails no write.
+  ErrorReport last_error = 10;
+}
+
+// A rebuild of the Index.
+message Rebuild {
+  enum Stage {
+    STAGE_UNSPECIFIED = 0;
+    // It runs.
+    STAGE_RUNNING = 1;
+    // It ended and the rebuilt Index is the live one.
+    STAGE_DONE = 2;
+    // It ended without replacing the live Index; `error` says why.
+    STAGE_FAILED = 3;
+  }
+
+  Stage stage = 1;
+  // Documents read so far.
+  uint64 documents_read = 2;
+  // Documents left out because they could not be read or projected.
+  uint64 documents_skipped = 3;
+  // Journal segments read so far.
+  uint64 segments_read = 4;
+  // Why a failed rebuild failed.
+  ErrorReport error = 5;
+}

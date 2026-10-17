@@ -57,6 +57,16 @@ cargo.annotation_select(
         "x86_64-unknown-linux-gnu",
     ],
 )
+
+# protocontract's `tokio` feature (the `Offload` / `Blocking` bridges) is
+# optional in Cargo, so the lock resolves without it. `scheda-api` builds
+# its tokio-gated traits under Bazel, so turn it on here.
+cargo.annotation(
+    crate = "protocontract",
+    crate_features = ["tokio"],
+    repositories = ["scheda_cargo"],
+    deps = ["@scheda_cargo//:tokio"],
+)
 cargo.from_cargo(
     name = "scheda_cargo",
     cargo_lockfile = "//:Cargo.lock",

@@ -1,0 +1,27 @@
+// The marker file of a Vault, `{vault}/.scheda.yaml`, stored as the
+// Protobuf JSON (or YAML) of `VaultMarker`.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+
+// The marker at the Vault root: a folder that holds it is a Vault. It is
+// committed, so a clone has it too. `open` writes it into a Vault that
+// lacks it, unless `OpenOptions.mode` forbids writing.
+//
+// It is the one place that records the format generation of the Vault,
+// and `open` reads it before any other file. It holds only what applies
+// to the whole Vault, cannot be derived from other files, and changes how
+// they are read; nothing that changes with each write.
+message VaultMarker {
+  // The format generation of the Vault: the shape of its files and their
+  // layout. Field number 1 in every generation, so that a later Scheda
+  // reads it before it decides how to read the rest. This generation is 2;
+  // another is `GENERATION`.
+  int32 version = 1 [(buf.validate.field) = {
+    required: true
+    int32: {const: 2}
+  }];
+}

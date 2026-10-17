@@ -10,20 +10,15 @@ or a subdirectory.
 
 ## Generate
 
-After changing `api/version.proto` (or another `.proto` at the `api`
-package root), `api/v1/*.proto`, or `api/collection/v1/*.proto`,
-regenerate stubs **before** tests:
+After any edit to `api/**/*.proto`, regenerate stubs **before** tests:
 
 ```bash
 bazel run //api:generate
-bazel run //api/v1:generate
-bazel run //api/collection/v1:generate
 ```
 
-That writes `rust/api/version/`, `rust/api/api/v1/`, and
-`rust/api/api/collection/v1/`. Confirm the generated `Validate` impl
-contains the new rule. Optional check:
-`bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test`.
+That writes `rust/api/gen/buffa/` (messages and `Validate` impls) and
+`rust/api/gen/contract/` (service traits). Confirm the generated `Validate`
+impl contains the new rule. Optional check: `bazel test //api:generate_test`.
 
 ## Fast loop and gate
 

@@ -1,0 +1,34 @@
+# Generate of the contract (`bazel run //api:generate`): buffa writes the
+# messages, protovalidate-buffa their `Validate` impls, and
+# protoc-gen-protocontract-buffa the traits of the services, all into the
+# crate `scheda-api` (`rust/api`). The bridges `Offload` and `Blocking`
+# need tokio, so `gate_tokio_feature` puts them behind the crate's `tokio`
+# feature.
+#
+# `json=true` gives the messages their serde derives and field names; the
+# files on disk are written from them, so it is part of the format.
+version: v2
+inputs:
+  - directory: api
+plugins:
+  - local: protoc-gen-buffa
+    out: rust/api/gen/buffa
+    strategy: all
+    opt:
+      - json=true
+  - local: protoc-gen-buffa-packaging
+    out: rust/api/gen/buffa
+    strategy: all
+  - local: protoc-gen-protovalidate-buffa
+    out: rust/api/gen/buffa
+    strategy: all
+    opt:
+      - proto_module=crate::proto
+      - packaging=false
+  - local: protoc-gen-protocontract-buffa
+    out: rust/api/gen/contract
+    strategy: all
+    opt:
+      - buffa_module=crate::proto
+      - file_per_package
+      - gate_tokio_feature

@@ -1,5 +1,5 @@
 {
-  "checksum": "7be0c893053aa7dfc53c29dc4d94f3ae8da59c14c1f6635a668ddd52363c73fa",
+  "checksum": "d64e7a8b18ff81eb4a8db346904f8bc96eef783b2b1ad45fca27bf589f8a2dc4",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -6065,6 +6065,7 @@
       "common_attrs": {
         "crate_features": [
           "alloc",
+          "default",
           "std"
         ],
         "edition": "2018"
@@ -11583,6 +11584,50 @@
       ],
       "version": "1.0.107"
     },
+    "protocontract 0.3.1": {
+      "common_attrs": {
+        "crate_features": [
+          "tokio"
+        ],
+        "deps": [
+          {
+            "id": "buffa 0.9.2",
+            "target": "buffa"
+          },
+          {
+            "id": "futures-core 0.3.34",
+            "target": "futures_core"
+          }
+        ],
+        "edition": "2024",
+        "extra_deps": [
+          "@scheda_cargo//:tokio"
+        ]
+      },
+      "library_target_name": "protocontract",
+      "license": "Apache-2.0",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "Apache-2.0"
+      ],
+      "name": "protocontract",
+      "package_url": "https://github.com/sonalect/protocontract-buffa.rs",
+      "repository": {
+        "Http": {
+          "sha256": "46f783c6796cdcf47ac6c0aa9985f8e20500010d296b52bf3948d5b72cd22674",
+          "url": "https://static.crates.io/crates/protocontract/0.3.1/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "protocontract",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.3.1"
+    },
     "protovalidate-buffa 0.7.2": {
       "common_attrs": {
         "deps": [
@@ -13541,6 +13586,10 @@
           {
             "id": "buffa-types 0.9.2",
             "target": "buffa_types"
+          },
+          {
+            "id": "protocontract 0.3.1",
+            "target": "protocontract"
           },
           {
             "id": "protovalidate-buffa 0.7.2",
@@ -19569,6 +19618,7 @@
     "cxx 1.0.205",
     "mimalloc 3.5.3",
     "model2vec-rs 0.3.0",
+    "protocontract 0.3.1",
     "protovalidate-buffa 0.7.2",
     "regex 1.13.1",
     "serde 1.0.229",

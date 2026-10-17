@@ -1,0 +1,432 @@
+// Queries and searches over the Index.
+//
+// A query selects: the exact set of Documents a `Filter` matches, in a
+// stable order, without scores. A search ranks: the Documents that best
+// fit a text or a Document, by relevance, with scores. Both read the
+// Index the Projector fills; the Filter is the same for both, and only a
+// condition: it never changes a score.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/struct.proto";
+import "scheda/v1/document.proto";
+
+// A condition on indexed Documents: a Tantivy query tree, conditions
+// only. Exactly one `kind`; `boolean` nests them.
+//
+// A leaf names a column the Projector declared for the collection
+// (`IndexColumn`), or `id`, the identity of every Document. A leaf on a
+// Projector column may name its `collection`: required in the Vault scope
+// (`CollectionNames`), unset in the collection scope (one `collection`),
+// where it means that collection. `id` takes no collection.
+message Filter {
+  // Every indexed Document.
+  message All {}
+
+  // No Document.
+  message Empty {}
+
+  // Documents that hold this term.
+  message Term {
+    // A Projector column, or `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The term. Its type must match the column (checked by the library).
+    // JSON `null` is a stored null, not "missing".
+    google.protobuf.Value value = 2 [(buf.validate.field) = {required: true}];
+    // The collection of the column (see `Filter`). Ignored for `id`.
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // Documents that hold any of these terms in one field.
+  message TermSet {
+    // A Projector column, or `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // At least one term; each as in `Term.value`.
+    google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
+    // The collection of the column (see `Filter`).
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // Documents with these tokens in this order. The column must keep
+  // positions.
+  message Phrase {
+    // A Projector column; not `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The tokens, in order. At least two.
+    repeated string terms = 2 [(buf.validate.field) = {
+      repeated: {min_items: 2}
+    }];
+    // Extra positions allowed between the tokens. Unset: adjacent.
+    uint32 slop = 3;
+    // The collection of the column (see `Filter`).
+    string collection = 4 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // A phrase whose last token is a prefix (`"part t"` matches "part
+  // time"). The column must keep positions.
+  message PhrasePrefix {
+    // A Projector column; not `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The whole tokens before the prefix. With the prefix, at least two.
+    repeated string terms = 2 [(buf.validate.field) = {
+      repeated: {min_items: 1}
+    }];
+    // The prefix of the last token.
+    string prefix = 3 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // How many terms the prefix may expand to. Unset: 50.
+    uint32 max_expansions = 4;
+    // The collection of the column (see `Filter`).
+    string collection = 5 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // Documents with a term within a Levenshtein distance of this one.
+  message FuzzyTerm {
+    // A Projector column; not `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The term.
+    string term = 2 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // At most this many edits, 0 to 2. Unset: exact.
+    uint32 distance = 3 [(buf.validate.field) = {
+      uint32: {lte: 2}
+    }];
+    // Match terms that begin with a fuzzy match of `term`.
+    bool prefix = 4;
+    // A transposition costs one edit, not two.
+    bool transposition_cost_one = 5;
+    // The collection of the column (see `Filter`).
+    string collection = 6 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // Documents with a term that matches this pattern.
+  message Regex {
+    // A Projector column; not `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // A regular expression over the terms of the column.
+    string pattern = 2 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // The collection of the column (see `Filter`).
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // Documents with tokens that match these patterns, in this order. The
+  // column must keep positions.
+  message RegexPhrase {
+    // A Projector column; not `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // One pattern per token, in order. At least two.
+    repeated string patterns = 2 [(buf.validate.field) = {
+      repeated: {min_items: 2}
+    }];
+    // Extra positions allowed between the tokens. Unset: adjacent.
+    uint32 slop = 3;
+    // How many terms the patterns may expand to, together. Unset: 16384.
+    uint32 max_expansions = 4;
+    // The collection of the column (see `Filter`).
+    string collection = 5 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // One end of a `Range`.
+  message Bound {
+    oneof kind {
+      option (buf.validate.oneof).required = true;
+      // The end belongs to the range.
+      google.protobuf.Value included = 1;
+      // The end does not.
+      google.protobuf.Value excluded = 2;
+    }
+  }
+
+  // Documents with a value between two ends. An unset end is open. On an
+  // integer or number column the ends are numbers; on a text column and
+  // on `id` they compare as text.
+  message Range {
+    // A Projector column, or `id`.
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    Bound lower = 2;
+    Bound upper = 3;
+    // The collection of the column (see `Filter`).
+    string collection = 4 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // Documents with a value in this column that is not null. A stored
+  // null is `Term` with the value `null`.
+  message Exists {
+    // A Projector column, or `id` (which every indexed Document has).
+    string field = 1 [(buf.validate.field) = {
+      required: true
+      string: {min_len: 1}
+    }];
+    // For a JSON column, a non-null value at any path below also counts.
+    bool json_subpaths = 2;
+    // The collection of the column (see `Filter`).
+    string collection = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+
+  // How a clause of a `Boolean` counts.
+  enum Occur {
+    OCCUR_UNSPECIFIED = 0;
+    // Must match: and.
+    OCCUR_MUST = 1;
+    // May match: or (see `Boolean.minimum_should_match`).
+    OCCUR_SHOULD = 2;
+    // Must not match.
+    OCCUR_MUST_NOT = 3;
+  }
+
+  // One clause of a `Boolean`.
+  message Clause {
+    Occur occur = 1 [(buf.validate.field) = {
+      enum: {
+        defined_only: true
+        not_in: [0]
+      }
+    }];
+    Filter query = 2 [(buf.validate.field) = {required: true}];
+  }
+
+  // Conditions combined: and, or, not.
+  message Boolean {
+    // At least one clause.
+    repeated Clause clauses = 1 [(buf.validate.field) = {
+      repeated: {min_items: 1}
+    }];
+    // How many `OCCUR_SHOULD` clauses must match. Unset: 1 when every
+    // clause is `OCCUR_SHOULD`, else 0.
+    uint32 minimum_should_match = 2;
+  }
+
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    All all = 1;
+    Empty empty = 2;
+    Term term = 3;
+    TermSet term_set = 4;
+    Phrase phrase = 5;
+    PhrasePrefix phrase_prefix = 6;
+    FuzzyTerm fuzzy = 7;
+    Regex regex = 8;
+    RegexPhrase regex_phrase = 9;
+    Range range = 10;
+    Exists exists = 11;
+    Boolean boolean = 12;
+  }
+}
+
+// Several collections, for the Vault scope of a query or a search. Empty:
+// every collection that is neither isolated nor encrypted. An isolated
+// collection is searched only when named; an encrypted one, named, is
+// `UNIMPLEMENTED`: no Index holds it.
+message CollectionNames {
+  repeated string names = 1 [(buf.validate.field) = {
+    repeated: {
+      items: {
+        string: {min_len: 1}
+      }
+    }
+  }];
+}
+
+// The request of `QueryDocuments` and `CountDocuments`.
+message DocumentQuery {
+  // Where to look. Exactly one.
+  oneof scope {
+    option (buf.validate.oneof).required = true;
+    // The Vault scope: these collections; a leaf on a Projector column
+    // names its collection.
+    CollectionNames collections = 1;
+    // The collection scope: this one collection; a leaf on a Projector
+    // column means its column.
+    string collection = 2 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+  // The condition.
+  Filter filter = 3 [(buf.validate.field) = {required: true}];
+  // Fill `Document.raw`. Unset: keys and revisions only.
+  bool include_raw = 4;
+  // Skip this many matches first.
+  uint32 offset = 5;
+  // Stop after this many. Unset: every match.
+  uint32 limit = 6;
+  // Begin after this Document, in the order of the query (collection,
+  // then `id`; a journal in append order). A page that begins where the
+  // last one ended is not shifted by a Document added meanwhile, and a
+  // deep page costs no more than the first.
+  DocumentKey start_after = 7;
+}
+
+// The answer of `CountDocuments`.
+message Count {
+  uint64 count = 1;
+}
+
+// The request of `SearchDocuments`.
+message DocumentSearch {
+  // Where to look. Exactly one, as in `DocumentQuery`.
+  oneof scope {
+    option (buf.validate.oneof).required = true;
+    CollectionNames collections = 1;
+    string collection = 2 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+  }
+  // What to rank by. Exactly one.
+  oneof subject {
+    option (buf.validate.oneof).required = true;
+    // A text: the lexical leg matches its words, the vector leg embeds it
+    // (`Embedder.EmbedQuery`).
+    string text = 3 [(buf.validate.field) = {
+      string: {min_len: 1}
+    }];
+    // A Document: others like it. The lexical leg takes its indexed text;
+    // the vector leg takes its stored vector and calls no model.
+    DocumentKey like = 4;
+  }
+  // Search only among the Documents this matches. Unset: all in scope.
+  Filter filter = 5;
+  // How many hits. Unset or 0: 10. No upper limit beyond the Index.
+  uint32 k = 6;
+  // Weight of the lexical leg. Unset: 1. Zero turns the leg off.
+  double lexical_weight = 7 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    cel: [
+      {
+        id: "document_search.lexical_weight.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+  // Weight of the vector leg. Unset: 1. Zero turns the leg off.
+  double vector_weight = 8 [(buf.validate.field) = {
+    double: {
+      gte: 0
+      finite: true
+    }
+    cel: [
+      {
+        id: "document_search.vector_weight.finite"
+        message: "must be finite"
+        expression: "!this.isNan() && !this.isInf()"
+      }
+    ]
+  }];
+  // Rerank the first this many fused hits with the handle's reranker; set
+  // without one, `INVALID_ARGUMENT`. Below the effective `k`,
+  // `INVALID_ARGUMENT`. Unset: no rerank.
+  uint32 rerank_limit = 9 [(buf.validate.field) = {
+    uint32: {gte: 1}
+  }];
+  // Fill the `raw` of each hit's Document.
+  bool include_raw = 10;
+  // Skip this many hits first; their files are not opened. A second
+  // search ranks again, so its page need not follow the first one's:
+  // pages that must agree come from one search with a large enough `k`.
+  uint32 offset = 11;
+}
+
+// One item of `SearchDocuments`. The first is always the summary; the
+// rest are hits, best first.
+message SearchItem {
+  oneof item {
+    SearchSummary summary = 1;
+    SearchHit hit = 2;
+  }
+}
+
+// What a search did with its legs, known from the handle before it runs.
+message SearchSummary {
+  // Why the vector leg ran or did not: the first that applies, in this
+  // order.
+  enum VectorLeg {
+    VECTOR_LEG_UNSPECIFIED = 0;
+    // Not asked for: `vector_weight` is 0.
+    VECTOR_LEG_NOT_ASKED = 1;
+    // No collection in scope has a vector column: each is excluded or
+    // encrypted, the handle has no Projector, or the Projector marks no
+    // column `vector`.
+    VECTOR_LEG_NO_VECTOR_COLLECTION = 2;
+    // The handle has no embedder.
+    VECTOR_LEG_NO_EMBEDDER = 3;
+    // The Index holds no vector yet.
+    VECTOR_LEG_NO_VECTORS = 4;
+    // The embedder is of another model or length than the Index vectors;
+    // `Reindex` with it moves the Index to it.
+    VECTOR_LEG_MODEL_MISMATCH = 5;
+    // It ran.
+    VECTOR_LEG_RAN = 6;
+  }
+
+  VectorLeg vector_leg = 1;
+}
+
+// One hit of a search.
+message SearchHit {
+  // The Document; `raw` only with `include_raw`.
+  Document document = 1;
+  // The score of the lexical leg, when that leg found it.
+  double lexical_score = 2;
+  // The score of the vector leg, when that leg found it.
+  double vector_score = 3;
+  // The fused score (Reciprocal Rank Fusion of the legs that ran).
+  double score = 4;
+  // The reranker's score, when the search reranked; the order of the hits
+  // is then this one.
+  double rerank_score = 5;
+}

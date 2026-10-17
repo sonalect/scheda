@@ -6,14 +6,19 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "Buffa types and protovalidate impls from api/*.proto."
+description = "Contract of Scheda: the messages and service traits generated from api/scheda/v1/*.proto."
 
 [lib]
 path = "lib.rs"
 
+[features]
+# The `Offload` and `Blocking` bridges and the async forms of the traits.
+tokio = ["protocontract/tokio"]
+
 [dependencies]
 buffa = { workspace = true }
 buffa-types = { workspace = true }
+protocontract = { workspace = true }
 protovalidate-buffa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

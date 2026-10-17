@@ -3,6 +3,7 @@ exports_files([
     "Cargo.lock",
     "Cargo.toml",
     "cargo-bazel-lock.json",
+    "buf.gen.yaml",
     "buf.yaml",
     ".markdownlint-cli2.yaml",
     "pyproject.toml",

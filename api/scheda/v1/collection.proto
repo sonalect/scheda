@@ -1,0 +1,158 @@
+// Collections: their declaration, and the requests that write them.
+//
+// `Collection`, `Schema`, `Standard`, `Journal`, `Singleton`, and `Unit`
+// are also stored on disk, as the Protobuf JSON (or YAML) of the file
+// `{vault}/{name}/.collection.yaml` (also `.yml` / `.json`). A file keeps
+// field names, not message names. An earlier Scheda reads past a field it
+// does not know and keeps it when it rewrites the file; a change it could
+// not safely ignore (a field removed, renamed, or given another meaning)
+// changes the generation in `VaultMarker`. Optional fields are left out of
+// the file when unset.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+
+// A declared collection: the file `{vault}/{name}/.collection.yaml`, and
+// the object `GetCollection` returns. The declaration holds no field and
+// no format of the Documents: Scheda does not know what they hold.
+message Collection {
+  // The collection name and its directory. Unique in the Vault. A slug,
+  // checked by the library: a Unicode letter or digit, then letters,
+  // digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; at most
+  // 255 bytes.
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The kind and the perimeter of the collection.
+  Schema schema = 2 [(buf.validate.field) = {required: true}];
+}
+
+// The kind of a collection and how its Documents are kept.
+message Schema {
+  option (buf.validate.message).cel = {
+    id: "schema.encrypted_journal"
+    message: "a journal cannot be encrypted: a sealed file cannot be appended to"
+    expression: "!this.encrypted || !has(this.journal)"
+  };
+  // Exactly one kind; the arm that is set is the kind.
+  oneof kind {
+    option (buf.validate.oneof).required = true;
+    // A Document per file, `{name}/{id}`, which can be replaced and
+    // deleted.
+    Standard standard = 1;
+    // Documents appended as lines to segment files; never replaced,
+    // never deleted.
+    Journal journal = 2;
+    // One Document, `{name}/{id}`, with the `id` declared here.
+    Singleton singleton = 3;
+  }
+  // Documents live under `{vault}/.isolated/{name}/`, a git repository of
+  // their own that never leaves the machine: for what may be lost or
+  // rebuilt. What is private and must survive belongs in an `encrypted`
+  // collection. The declaration stays at `{vault}/{name}/`.
+  bool isolated = 4;
+  // Document files are age armor on disk; reading and writing them takes
+  // the handle's secret. Independent of `isolated`. A journal may not set
+  // it.
+  bool encrypted = 5;
+  // No Document of this collection enters the lexical Index; a query that
+  // names it is refused, not answered empty. The journal id map is still
+  // kept. Redundant, and allowed, on `encrypted`, which no Index holds.
+  bool exclude_lexical_index = 6;
+  // No Document of this collection is embedded or enters the vector
+  // Index; the embedder is never called for it. Redundant, and allowed,
+  // on `encrypted`.
+  bool exclude_vector_index = 7;
+}
+
+// The `standard` kind. No option of its own.
+message Standard {}
+
+// The `journal` kind: how its segment files are cut. Size first: a cap
+// that is hit closes a segment, even in the middle of a day. The library
+// names the segment files.
+message Journal {
+  // Bytes per segment. Unset: 8 MiB. Set: 1 byte to 32 MiB.
+  uint64 segment_max_bytes = 1 [(buf.validate.field) = {
+    uint64: {
+      gte: 1
+      lte: 33554432
+    }
+  }];
+  // Lines per segment, besides the byte cap. Unset: no line cap. Set: at
+  // least 1.
+  uint64 segment_max_lines = 2 [(buf.validate.field) = {
+    uint64: {gte: 1}
+  }];
+  // Set: a new segment every day (UTC), still size first. Unset: no
+  // calendar rotation.
+  Unit daily = 3;
+}
+
+// The `singleton` kind: the one `id` its Document has. A slug, checked by
+// the library; an extension, if any, is part of the `id`.
+message Singleton {
+  string id = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// An empty mark: `Journal.daily`.
+message Unit {}
+
+// The answer of `ListCollections`.
+message Collections {
+  repeated Collection collections = 1;
+}
+
+// The name of a collection, for a call about one.
+message CollectionKey {
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// The request of `DeleteCollection`.
+message CollectionDeletion {
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // An unknown collection is nothing to do, not `NOT_FOUND`.
+  bool ignore_missing = 2;
+}
+
+// One item of `BatchCollections`: the request of one collection call.
+message CollectionOperation {
+  oneof operation {
+    option (buf.validate.oneof).required = true;
+    // As `CreateCollection`.
+    Collection create = 1;
+    // As `UpdateCollection`.
+    Collection update = 2;
+    // As `DeleteCollection`.
+    CollectionDeletion delete = 3;
+  }
+}
+
+// The answer of `BatchCollections`: one result per operation, in order.
+message CollectionBatchResult {
+  repeated CollectionResult results = 1;
+}
+
+// What one collection call of a batch returned.
+message CollectionResult {
+  oneof result {
+    // A created or updated collection, as stored.
+    Collection collection = 1;
+    // A deleted one.
+    google.protobuf.Empty deleted = 2;
+  }
+}

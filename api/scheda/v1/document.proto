@@ -1,0 +1,207 @@
+// Documents: what is stored, how to name one, and the requests that read
+// and write them.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+import "scheda/v1/options.proto";
+
+// A Document: bytes in a collection, under an `id`. Scheda does not know
+// what the bytes hold: text, an image, protobuf wire, anything.
+//
+// In a write request: `collection`, `id`, and `raw`; `revision` must be
+// unset (`INVALID_ARGUMENT`), since Scheda gives it. In a reply: all four,
+// `raw` only when the read asked for it.
+message Document {
+  // The collection name.
+  string collection = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The id inside the collection. In a `standard` collection, a path of
+  // slugs separated by `/`, which is also where its file lies under the
+  // collection; in a `singleton`, the declared id; in a journal, one slug.
+  // The library checks it.
+  string id = 2 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The bytes, as given. Any bytes in a `standard` or `singleton`
+  // collection. In a journal, no `\n` and no `\r`: a journal line is
+  // `{id}: {raw}\n`.
+  bytes raw = 3;
+  // An opaque token that changes whenever the stored bytes change. Set by
+  // every read and write of a `standard` or `singleton` Document; unset on
+  // a journal line. A write that must find the Document unchanged since a
+  // read passes it back (`DocumentUpdate.revision`,
+  // `DocumentDeletion.revision`).
+  string revision = 4;
+}
+
+// The name of one Document.
+message DocumentKey {
+  string collection = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  string id = 2 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// The request of `GetDocuments`: which Documents of one collection.
+message DocumentSelection {
+  string collection = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // Fill `Document.raw`. Unset: keys and revisions only.
+  bool include_raw = 2;
+  // Exactly one of the two: the whole collection is asked for by name,
+  // never by leaving something out.
+  oneof selection {
+    option (buf.validate.oneof).required = true;
+    // Exactly these, in the order given. An id not stored is skipped. An
+    // empty list is nothing.
+    Ids ids = 3;
+    // The collection, page by page: `standard` and `singleton` in `id`
+    // order, a journal in append order.
+    Listing listing = 4;
+  }
+}
+
+// A list of Document ids in one collection.
+message Ids {
+  repeated string ids = 1 [(buf.validate.field) = {
+    repeated: {
+      items: {
+        string: {min_len: 1}
+      }
+    }
+  }];
+}
+
+// A page of a collection, in its order. Both unset: the whole collection.
+message Listing {
+  // Stop after this many Documents. Unset: to the end.
+  uint32 limit = 1;
+  // Begin after the Document with this id. Unset: from the start. A page
+  // that begins where the last one ended is not shifted by a Document
+  // added meanwhile.
+  string start_after = 2 [(buf.validate.field) = {
+    string: {min_len: 1}
+  }];
+}
+
+// One past version of a Document, as `GetDocumentHistory` streams it.
+message DocumentHistoryEntry {
+  // The revision this version had.
+  string revision = 1;
+  // When it was written (UTC).
+  google.protobuf.Timestamp time = 2;
+  // Who wrote it: `OpenOptions.author` of the handle that wrote it.
+  Author author = 3;
+  // The note of the write that made it.
+  string note = 4;
+  // The bytes of this version; empty for the version that deleted the
+  // Document. For an encrypted collection, the bytes as given, not the
+  // armor; reading them takes the handle's secret.
+  bytes raw = 5;
+}
+
+// The request of `CreateDocument`.
+message DocumentCreation {
+  // The Document to create, without `revision`.
+  Document document = 1 [(buf.validate.field) = {required: true}];
+  // When the Document is already stored, return that one and write
+  // nothing, instead of `ALREADY_EXISTS`. For a caller that may send the
+  // same write twice.
+  bool keep_existing = 2;
+  // Why the write is made, from the caller. History shows it.
+  string note = 3 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// The request of `UpdateDocument`.
+message DocumentUpdate {
+  // The new bytes of an existing Document, without `revision`.
+  Document document = 1 [(buf.validate.field) = {required: true}];
+  // Set: replace only if the stored revision is this one; otherwise
+  // `FAILED_PRECONDITION`. For a read, a change, and a write that must not
+  // overwrite a write in between.
+  string revision = 2 [(buf.validate.field) = {
+    string: {min_len: 1}
+  }];
+  // Why the write is made, from the caller. History shows it.
+  string note = 3 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// The request of `UpsertDocument`.
+message DocumentUpsert {
+  // The Document to create or replace, without `revision`.
+  Document document = 1 [(buf.validate.field) = {required: true}];
+  // Why the write is made, from the caller. History shows it.
+  string note = 2 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// The request of `DeleteDocument`.
+message DocumentDeletion {
+  // The Document to delete.
+  DocumentKey document = 1 [(buf.validate.field) = {required: true}];
+  // An absent Document is nothing to do, not `NOT_FOUND`. For a caller
+  // that may send the same write twice.
+  bool ignore_missing = 2;
+  // Set: delete only if the stored revision is this one; otherwise
+  // `FAILED_PRECONDITION`.
+  string revision = 3 [(buf.validate.field) = {
+    string: {min_len: 1}
+  }];
+  // Why the write is made, from the caller. History shows it.
+  string note = 4 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// One item of `BatchDocuments`: the request of one Document call.
+message DocumentOperation {
+  oneof operation {
+    option (buf.validate.oneof).required = true;
+    // As `CreateDocument`.
+    DocumentCreation create = 1;
+    // As `UpdateDocument`.
+    DocumentUpdate update = 2;
+    // As `UpsertDocument`.
+    DocumentUpsert upsert = 3;
+    // As `DeleteDocument`.
+    DocumentDeletion delete = 4;
+  }
+}
+
+// The answer of `BatchDocuments`: one result per operation, in order.
+message DocumentBatchResult {
+  repeated DocumentResult results = 1;
+}
+
+// What one Document call of a batch returned.
+message DocumentResult {
+  oneof result {
+    // A created, updated, or upserted Document, as stored.
+    Document document = 1;
+    // A deleted one.
+    google.protobuf.Empty deleted = 2;
+  }
+}

@@ -1,0 +1,236 @@
+// Ports: services the caller implements and Scheda calls.
+//
+// Scheda ships no model and does not know what a Document holds. What it
+// needs of either comes through a port, installed on a handle when it is
+// opened: an `Embedder` turns texts into vectors for the vector leg, a
+// `Reranker` scores Documents against a query, a `Projector` says what of
+// a Document the Index holds. Scheda calls a port from its own threads,
+// the background indexer's among them.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+import "scheda/v1/collection.proto";
+import "scheda/v1/document.proto";
+
+// Turns texts into vectors.
+//
+// Fails with the codes of `EmbedderErrorCode`. A retryable failure
+// (`UNAVAILABLE`) makes the indexer wait and try again.
+service Embedder {
+  // The model and the length of its vectors. Read once, when the embedder
+  // is installed. The model id is stored with the vectors, so an embedder
+  // of another model is seen, not mixed into the same Index.
+  rpc Describe(google.protobuf.Empty) returns (EmbedderDescriptor);
+
+  // One vector per text, in the order of the texts, each of the declared
+  // length; the same text gives the same vector whatever portion it came
+  // in. Scheda sends the texts one by one; the implementation gathers them
+  // into the portions its model wants (a size, a pause, several in
+  // flight) and sends its last partial portion when the texts end. An
+  // `Err` ends the stream: Scheda keeps the vectors that came before it
+  // and sends the other texts again later.
+  rpc Embed(stream Text) returns (stream Vector);
+
+  // The vector of a search text, as opposed to a stored one. A model that
+  // encodes the two roles differently (a query prefix, a task type) does
+  // so here; for one that does not, it is `Embed` of one text.
+  rpc EmbedQuery(Query) returns (Vector);
+}
+
+// What an embedder declares.
+message EmbedderDescriptor {
+  // The model; stored with the vectors.
+  string model_id = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // The length of each vector. At least 1.
+  uint32 dimensions = 2 [(buf.validate.field) = {
+    required: true
+    uint32: {gte: 1}
+  }];
+}
+
+// A text to embed.
+message Text {
+  string text = 1;
+}
+
+// A search text to embed.
+message Query {
+  string text = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+}
+
+// One vector.
+message Vector {
+  repeated float values = 1;
+}
+
+// The failures of `Embedder` Scheda acts on.
+enum EmbedderErrorCode {
+  EMBEDDER_ERROR_CODE_UNSPECIFIED = 0;
+  // The model cannot answer now; the same call may succeed later.
+  // Retryable.
+  EMBEDDER_ERROR_CODE_UNAVAILABLE = 1;
+  // The model will never embed this input.
+  EMBEDDER_ERROR_CODE_REFUSED = 2;
+}
+
+// Scores Documents against a query, for a search that reranks.
+//
+// Fails with the codes of `RerankerErrorCode`; a failure fails the search.
+service Reranker {
+  // The first item is the query text; the rest are the Documents. One
+  // score per Document, in their order; higher is better. The
+  // implementation gathers the Documents into the portions its model
+  // wants, as `Embedder.Embed` does.
+  rpc Score(stream ScoreItem) returns (stream DocumentScore);
+}
+
+// One item of `Reranker.Score`.
+message ScoreItem {
+  oneof item {
+    // The query: the first item, and only it.
+    string query = 1;
+    // A Document to score; its `raw` is set.
+    Document document = 2;
+  }
+}
+
+// The score of one Document.
+message DocumentScore {
+  double score = 1;
+}
+
+// The failures of `Reranker` Scheda acts on.
+enum RerankerErrorCode {
+  RERANKER_ERROR_CODE_UNSPECIFIED = 0;
+  // The model cannot answer now. Retryable.
+  RERANKER_ERROR_CODE_UNAVAILABLE = 1;
+  // The model will never score this input.
+  RERANKER_ERROR_CODE_REFUSED = 2;
+}
+
+// Says what of a Document the Index holds: its columns, and their values.
+// Scheda does not know what a Document holds; the Projector does. Without
+// one, the Index holds identity only: a query on `id` works, a search has
+// nothing to rank.
+//
+// Fails with the codes of `ProjectorErrorCode`. A failure, or an empty
+// `IndexDoc`, leaves that Document out of the Index; its file stays.
+service Projector {
+  // The columns of one collection. None: the collection is left out of
+  // the Index. Changing the columns of a collection makes its Index stale
+  // until `Reindex`.
+  rpc Columns(CollectionKey) returns (IndexSchema);
+
+  // The values of the columns for one Document.
+  rpc Project(RawDocument) returns (IndexDoc);
+}
+
+// The Document a Projector projects.
+message RawDocument {
+  string collection = 1;
+  string id = 2;
+  // The bytes as stored (for an encrypted collection, as given).
+  bytes raw = 3;
+}
+
+// The kind of the values of a column.
+enum ColumnKind {
+  COLUMN_KIND_UNSPECIFIED = 0;
+  COLUMN_KIND_TEXT = 1;
+  COLUMN_KIND_INTEGER = 2;
+  COLUMN_KIND_NUMBER = 3;
+  COLUMN_KIND_BOOLEAN = 4;
+  COLUMN_KIND_TEXT_LIST = 5;
+}
+
+// One column of the Index.
+message IndexColumn {
+  // Its name in a `Filter`. Not empty, and not `id` or `collection`.
+  string name = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+    cel: [
+      {
+        id: "index_column.name.not_identity"
+        message: "name must not be id or collection"
+        expression: "this != 'id' && this != 'collection'"
+      }
+    ]
+  }];
+  ColumnKind kind = 2 [(buf.validate.field) = {
+    required: true
+    enum: {
+      defined_only: true
+      not_in: [0]
+    }
+  }];
+  // A `Filter` can name it.
+  bool find = 3;
+  // The lexical leg of a search reads it.
+  bool fts = 4;
+  // The vector leg embeds it, one vector per value.
+  bool vector = 5;
+}
+
+// The columns of one collection.
+message IndexSchema {
+  // In the Projector's order. Names are unique.
+  repeated IndexColumn columns = 1 [(buf.validate.field) = {
+    cel: [
+      {
+        id: "index_schema.columns.unique_names"
+        message: "column names must be unique"
+        expression: "this.all(c, this.filter(other, other.name == c.name).size() == 1)"
+      }
+    ]
+  }];
+}
+
+// The values of the columns for one Document. A column left out has no
+// value; `IndexValue.null` is a stored null. Empty: the Document is left
+// out of the Index.
+message IndexDoc {
+  map<string, IndexValue> values = 1;
+}
+
+// One value of a column, of the column's kind.
+message IndexValue {
+  // A stored null.
+  message Null {}
+
+  // Several texts; each is a term of its own.
+  message TextList {
+    repeated string texts = 1;
+  }
+
+  oneof value {
+    option (buf.validate.oneof).required = true;
+    string text = 1;
+    int64 integer = 2;
+    // A value that is not finite is left out.
+    double number = 3;
+    bool boolean = 4;
+    TextList text_list = 5;
+    Null null = 6;
+  }
+}
+
+// The failures of `Projector` Scheda acts on.
+enum ProjectorErrorCode {
+  PROJECTOR_ERROR_CODE_UNSPECIFIED = 0;
+  // The Projector cannot answer now. Retryable: the Document is projected
+  // again later.
+  PROJECTOR_ERROR_CODE_UNAVAILABLE = 1;
+  // This Document cannot be projected; it stays out of the Index.
+  PROJECTOR_ERROR_CODE_REFUSED = 2;
+}

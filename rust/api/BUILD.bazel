@@ -2,32 +2,39 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 exports_files([
     "Cargo.toml",
-    # Destination for //api/v1:generate → rust/api/api/v1 (directory sync).
-    "api/v1",
-    # Destination for //api/collection/v1:generate → rust/api/api/collection/v1.
-    "api/collection/v1",
-    # Destination for //api:generate → rust/api/version.
-    "version",
+    # Destination of //api:generate.
+    "gen",
 ])
 
+_API_DEPS = [
+    "@scheda_cargo//:buffa",
+    "@scheda_cargo//:buffa-types",
+    "@scheda_cargo//:protocontract",
+    "@scheda_cargo//:protovalidate-buffa",
+    "@scheda_cargo//:serde",
+    "@scheda_cargo//:serde_json",
+]
+
+# The generated trees are rustfmt::skip from lib.rs. The rustfmt aspect lists
+# every globbed file, so without this tag it reformats them.
 rust_library(
     name = "generated_v1",
-    srcs = ["lib.rs"] + glob(
-        [
-            "api/**/*.rs",
-            "version/**/*.rs",
-        ],
-        allow_empty = True,
-    ),
+    srcs = ["lib.rs"] + glob(["gen/**/*.rs"]),
+    crate_features = ["tokio"],
     crate_name = "scheda_api",
+    tags = ["no_rustfmt"],
     visibility = ["//visibility:public"],
-    deps = [
-        "@scheda_cargo//:buffa",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protovalidate-buffa",
-        "@scheda_cargo//:serde",
-        "@scheda_cargo//:serde_json",
-    ],
+    deps = _API_DEPS,
+)
+
+# The build without the `tokio` feature: the sync forms only.
+rust_library(
+    name = "generated_v1_thin",
+    srcs = ["lib.rs"] + glob(["gen/**/*.rs"]),
+    crate_name = "scheda_api",
+    tags = ["no_rustfmt"],
+    visibility = ["//rust:__pkg__"],
+    deps = _API_DEPS,
 )
 
 rust_test(
@@ -37,16 +44,47 @@ rust_test(
     visibility = ["//rust:__pkg__"],
 )
 
+rust_test(
+    name = "generated_v1_thin_test",
+    size = "small",
+    crate = ":generated_v1_thin",
+    visibility = ["//rust:__pkg__"],
+)
+
+# The traits in every build, the bridges with `tokio`, the `Validate` rules.
+rust_test(
+    name = "contract_test",
+    size = "small",
+    srcs = ["tests/contract.rs"],
+    crate_features = ["tokio"],
+    crate_root = "tests/contract.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":generated_v1",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:protovalidate-buffa",
+    ],
+)
+
+rust_test(
+    name = "contract_thin_test",
+    size = "small",
+    srcs = ["tests/contract.rs"],
+    crate_root = "tests/contract.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":generated_v1_thin",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:protovalidate-buffa",
+    ],
+)
+
 # Every proto field named `version` must be field number 1 (`int32 version = 2` fails).
 rust_test(
     name = "version_field_test",
     size = "small",
     srcs = ["tests/version_field.rs"],
     crate_root = "tests/version_field.rs",
-    data = [
-        "//api:protos",
-        "//api/collection/v1:protos",
-        "//api/v1:protos",
-    ],
+    data = ["//api:protos"],
     visibility = ["//rust:__pkg__"],
 )
