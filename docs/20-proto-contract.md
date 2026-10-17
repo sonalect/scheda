@@ -891,7 +891,7 @@ by what they promise.
   answer would be a silent wrong one: for a query, empty means "nothing
   matches", and its promise is the exact set; and a stream of Documents
   has no place for a signal. So both calls fail with `INDEX_REBUILDING`
-  (retryable) until the Index has its first generation; the caller waits
+  (retryable) until the Index has a commit (D23); the caller waits
   with `WatchIndexStatus` or tries again. A caller that wants "nothing
   yet" (the anchor consumer turns today's `index_missing` into an empty
   list) decides so itself. An Index that is built but behind the last
