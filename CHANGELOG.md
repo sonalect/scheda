@@ -22,6 +22,15 @@ API or on-disk format changes bump the minor.
   the replaced one repeats its `id` map changes on the live one.
 - CLI: an HTTP embedder or reranker request interrupted by a signal (`EINTR`)
   is sent again, up to three times, instead of failing the command.
+- The first isolated collection in a Vault whose Index already held Records
+  made the background indexer rebuild the whole Index generation under
+  `reindex.lock`, so a `reindex` called meanwhile failed with `locked`. The
+  collection is now indexed in place.
+- Lock files (`reindex.lock`, the indexer's role locks, the journal
+  `ids.lock`) were released by closing the descriptor alone. While another
+  thread was starting `git`, the lock stayed held for a moment, so a handle
+  could miss the indexer role and, with a long `index_poll_ms`, not index
+  until its next poll. They are now unlocked before they close.
 
 ### Changed
 

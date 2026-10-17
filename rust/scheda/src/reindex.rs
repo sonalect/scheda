@@ -25,7 +25,7 @@ const LEGACY_DIR: &str = "reindex";
 /// A few short retries absorb a stale `WouldBlock` after the previous
 /// holder closed the fd (overlay / WSL). A second live `reindex` still
 /// holds the lock for the whole walk, so these retries still end `locked`.
-pub(crate) fn acquire_lock(vault: &Path) -> Result<File, Error> {
+pub(crate) fn acquire_lock(vault: &Path) -> Result<store::Flock, Error> {
     const ATTEMPTS: u32 = 8;
     const RETRY: Duration = Duration::from_millis(10);
     for attempt in 0..ATTEMPTS {
@@ -40,7 +40,7 @@ pub(crate) fn acquire_lock(vault: &Path) -> Result<File, Error> {
 }
 
 /// `try_lock` of `reindex.lock`. `None` if another `reindex` holds it.
-pub(crate) fn try_lock(vault: &Path) -> Result<Option<File>, Error> {
+pub(crate) fn try_lock(vault: &Path) -> Result<Option<store::Flock>, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Reindex] create .scheda")?;
     store::restrict_dir(&scheda)?;
@@ -54,7 +54,7 @@ pub(crate) fn try_lock(vault: &Path) -> Result<Option<File>, Error> {
         .context("[Reindex] open reindex lock")?;
     store::restrict_file(&lock_path)?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(Some(store::Flock::held(file))),
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(err)) => {
             Err(Error::new(io_code(&err), err.to_string()).context("[Reindex] lock reindex lock"))

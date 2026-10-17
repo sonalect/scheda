@@ -552,8 +552,8 @@ impl Heads {
 
 #[derive(Default)]
 struct Worker {
-    lexical: Option<File>,
-    vector: Option<File>,
+    lexical: Option<store::Flock>,
+    vector: Option<store::Flock>,
     /// Leg being applied, for the code of a caller panic.
     in_vector: bool,
     /// The vector leg is backing off from a failure: leave it this round.
@@ -1044,9 +1044,23 @@ impl Job<'_> {
             return Ok(Pass::Done);
         }
         if leg == Leg::Lexical && mark.is_none() && self.generation.join("lexical").is_dir() {
-            // Documents of an unknown commit: rebuild rather than guess
-            // which of them are stale.
-            return Ok(Pass::Rebuild);
+            if repo == Repo::Main {
+                // Documents of an unknown commit: rebuild rather than guess
+                // which of them are stale.
+                return Ok(Pass::Rebuild);
+            }
+            // The main repository filled the lexical leg and the nested one
+            // has no mark yet: its first collection came after the
+            // generation was built. Its collections are dropped first, as a
+            // declaration change drops one, so no Record of an unknown
+            // commit stays, and the generation is not rebuilt (which would
+            // also hold `reindex.lock` against a caller's `reindex`).
+            for decl in self.decls.collections().filter(|decl| decl.isolated) {
+                self.shared
+                    .ctx
+                    .search
+                    .forget_collection(&decl.name, legs_of(leg))?;
+            }
         }
         self.apply_leg_from(repo, leg, mark.as_deref())
     }
@@ -1471,7 +1485,7 @@ fn apply_changes(
 }
 
 /// Take `{vault}/.scheda/{name}` if no other handle holds it.
-fn try_role(vault: &Path, name: &str) -> Result<Option<File>, Error> {
+fn try_role(vault: &Path, name: &str) -> Result<Option<store::Flock>, Error> {
     let scheda = vault.join(".scheda");
     fs::create_dir_all(&scheda).context("[Indexer] create .scheda")?;
     store::restrict_dir(&scheda)?;
@@ -1485,7 +1499,7 @@ fn try_role(vault: &Path, name: &str) -> Result<Option<File>, Error> {
         .context("[Indexer] open role lock")?;
     store::restrict_file(&path)?;
     match file.try_lock() {
-        Ok(()) => Ok(Some(file)),
+        Ok(()) => Ok(Some(store::Flock::held(file))),
         Err(TryLockError::WouldBlock) => Ok(None),
         Err(TryLockError::Error(err)) => {
             Err(Error::new(io_code(&err), err.to_string()).context("[Indexer] lock role lock"))

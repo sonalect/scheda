@@ -472,7 +472,7 @@ pub(crate) fn refresh_ids(
 /// handle, the indexer in any process — takes it, never while waiting for
 /// another lock, so the read-change-write of one cannot drop the line
 /// another appended.
-fn lock_ids(index_dir: &Path, collection: &str) -> Result<fs::File, Error> {
+fn lock_ids(index_dir: &Path, collection: &str) -> Result<store::Flock, Error> {
     let path = ids_path(index_dir, collection).with_file_name(IDS_LOCK_FILE);
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context("[Index::lock_ids] create dir")?;
@@ -486,7 +486,7 @@ fn lock_ids(index_dir: &Path, collection: &str) -> Result<fs::File, Error> {
         .context("[Index::lock_ids] open ids lock")?;
     store::restrict_file_below(index_dir, &path)?;
     file.lock().context("[Index::lock_ids] lock ids")?;
-    Ok(file)
+    Ok(store::Flock::held(file))
 }
 
 /// Re-read the `ids` file of `collection` into `maps` when its stamp

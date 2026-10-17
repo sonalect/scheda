@@ -1009,3 +1009,45 @@ fn changing_isolated_needs_an_empty_collection() {
         .create_collection("empty_log", title_schema(true), Some("flip"))
         .unwrap();
 }
+
+/// The first isolated collection in a Vault whose Index already holds the
+/// main repository's Records is indexed in place: no new generation, so
+/// the background indexer never holds `reindex.lock` against a caller.
+#[cfg(feature = "find")]
+#[test]
+fn first_isolated_collection_does_not_rebuild_the_generation() {
+    let scratch = Scratch::new();
+    let vault = scratch.reopen();
+    let current = || fs::read_to_string(scratch.vault().join(".scheda/index/current")).unwrap();
+    vault
+        .create_collection("plain_notes", title_schema(false), None)
+        .unwrap();
+    vault
+        .collection("plain_notes")
+        .unwrap()
+        .add("alpha", rec(json!({"title": "public"})), None)
+        .unwrap();
+    common::indexed(&vault);
+    let before = current();
+    vault
+        .create_collection("sealed_notes", title_schema(true), None)
+        .unwrap();
+    vault
+        .collection("sealed_notes")
+        .unwrap()
+        .add("secret", rec(json!({"title": "sealed"})), None)
+        .unwrap();
+    common::indexed(&vault);
+    assert_eq!(current(), before);
+    let found = vault
+        .collection("sealed_notes")
+        .unwrap()
+        .find(&Filter::all().into(), 0, 10)
+        .unwrap();
+    let ids: Vec<_> = found
+        .records
+        .iter()
+        .filter_map(|record| record.id.as_deref())
+        .collect();
+    assert_eq!(ids, ["secret"]);
+}

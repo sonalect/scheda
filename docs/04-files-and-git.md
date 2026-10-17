@@ -23,7 +23,11 @@ An assertion without a check is not a requirement. This package does not use Git
 The lock is an OS file lock on `{vault}/.scheda/write.lock` (not a pid-file,
 not under `index/`). It is released when the process dies because the kernel
 closes the descriptor. Stale pid-files are not the mechanism: they would
-survive a crash. Locks do not travel with `git push` / `git pull`. Two clones
+survive a crash. Every lock file Scheda takes (`write.lock`, `reindex.lock`,
+the indexer's role locks, the journal `ids.lock`) is unlocked before its
+descriptor closes: a close alone leaves the lock held while a child process
+another thread just forked (a `git` call) still has the descriptor, and a
+handle trying the lock in that moment would find it taken. Locks do not travel with `git push` / `git pull`. Two clones
 are two working trees: each may have a writer. NFS/SMB lock semantics are not
 relied on; Vaults on those shares are outside **core**.
 

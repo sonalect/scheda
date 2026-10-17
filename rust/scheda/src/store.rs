@@ -622,6 +622,25 @@ pub(crate) fn decode_record_file(
     crate::crypto::decrypt(&raw, encryption).map_err(|err| err.with_path(rel))
 }
 
+/// An `flock` held on an open file. Dropping it unlocks before the file
+/// closes: a close alone leaves the lock held while a child process another
+/// thread forked still has the descriptor, until that child runs `exec`,
+/// and a handle trying the lock in that moment would find it taken.
+pub(crate) struct Flock(fs::File);
+
+impl Flock {
+    /// Take ownership of `file`, which holds the lock.
+    pub(crate) fn held(file: fs::File) -> Self {
+        Self(file)
+    }
+}
+
+impl Drop for Flock {
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir).context("[store::atomic_write] create dir")?;
@@ -931,8 +950,35 @@ fn check_owner_only_tree(vault: &Path, path: &Path) -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::record_file;
+    use super::{Flock, record_file};
     use crate::schema::{CollectionDecl, Kind};
+
+    /// A copy of the descriptor, as a child another thread forked holds
+    /// until it runs `exec`, does not keep a dropped [`Flock`] locked.
+    #[test]
+    fn a_dropped_flock_is_free_while_a_copy_of_its_descriptor_lives() {
+        let dir = std::env::var_os("TEST_TMPDIR")
+            .map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+            .join(format!("scheda-flock-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("held.lock");
+        let open = || {
+            std::fs::File::options()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&path)
+                .unwrap()
+        };
+        let file = open();
+        file.lock().unwrap();
+        let copy = file.try_clone().unwrap();
+        drop(Flock::held(file));
+        assert!(open().try_lock().is_ok());
+        drop(copy);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn decl(kind: Kind) -> CollectionDecl {
         CollectionDecl {

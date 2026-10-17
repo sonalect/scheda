@@ -3046,8 +3046,14 @@ fn take_write_slot(
     }
     let file =
         acquire_write_lock(vault).with_context(|| format!("[{kind}::{op}] take write lock"))?;
-    // Dropping `file` on error releases the lock.
-    let on_disk = load_written(vault).with_context(|| format!("[{kind}::{op}] read tx.log"))?;
+    let on_disk = match load_written(vault) {
+        Ok(on_disk) => on_disk,
+        Err(err) => {
+            // Unlock, not only close: see `store::Flock`.
+            let _ = file.unlock();
+            return Err(err).with_context(|| format!("[{kind}::{op}] read tx.log"));
+        }
+    };
     *crate::error::mutex(written, "[Vault] lock written")? = on_disk;
     slot.file = Some(file);
     slot.owner = Some(me);
@@ -5397,6 +5403,9 @@ mod tests {
             let by_name = open_indexed(&scratch.vault(), poll_never());
             let by_find = open_indexed(&scratch.vault(), poll_never());
             let writer = open_indexed(&scratch.vault(), poll_never());
+            // Every round reads the declarations, and the one `open` starts
+            // may run late: held off, only the lookup in `find` can.
+            let _paused = by_find.indexer.as_ref().unwrap().pause();
             let missing = by_name.collection("x").unwrap_err();
             assert_eq!(missing.known_code(), Some(Code::NotFound));
             writer
@@ -5518,6 +5527,9 @@ mod tests {
             vault
                 .create_collection("y", document_schema(), None)
                 .unwrap();
+            // A round `wait_indexed` asked for may still be due, and every
+            // round reads the declarations: held off until the check.
+            let paused = vault.indexer.as_ref().unwrap().pause();
             // Another writer's commit, made while this handle holds the
             // transaction: only the git CLI can, and it commits `x` alone.
             let rel = "x/.collection.yaml";
@@ -5551,6 +5563,7 @@ mod tests {
                 assert!(out.status.success(), "{out:?}");
             }
             assert!(!names_in_info(&vault).iter().any(|name| name == "x"));
+            drop(paused);
             vault.wait_indexed(WAIT).unwrap();
             let names = names_in_info(&vault);
             assert!(names.iter().any(|name| name == "x"), "{names:?}");
