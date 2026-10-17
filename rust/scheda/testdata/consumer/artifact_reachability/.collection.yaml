@@ -1,4 +1,3 @@
-version: 1
 name: artifact_reachability
 schema:
   journal: {}

@@ -1,4 +1,3 @@
-version: 1
 name: walk_dst
 schema:
   journal: {}

@@ -1,4 +1,3 @@
-version: 1
 name: token_notes
 schema:
   journal: {}

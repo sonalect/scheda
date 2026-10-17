@@ -21,15 +21,21 @@ _TEST_COMMON = [
     "tests/common/mod.rs",
 ]
 
-_SCHEDA_SRCS = glob(["src/**/*.rs"])
+# `src/old/` is the material of the layers not built yet; it is not compiled.
+_SCHEDA_SRCS = glob(
+    ["src/**/*.rs"],
+    exclude = ["src/old/**"],
+)
 
 _SCHEDA_DEPS = [
     "//rust/api:generated_v1",
     "@scheda_cargo//:buffa",
     "@scheda_cargo//:buffa-types",
     "@scheda_cargo//:protocontract",
+    "@scheda_cargo//:protovalidate-buffa",
     "@scheda_cargo//:regex",
     "@scheda_cargo//:serde",
+    "@scheda_cargo//:serde_ignored",
     "@scheda_cargo//:serde_json",
     "@scheda_cargo//:sha2",
     "@scheda_cargo//:yaml_serde",
@@ -61,325 +67,11 @@ rust_library(
 )
 
 rust_test(
-    name = "core_test",
-    size = "small",
-    srcs = ["tests/core.rs"] + _TEST_COMMON,
-    compile_data = glob([
-        "src/**/*.rs",
-        "testdata/**",
-    ]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/core.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "nonblocking_test",
-    size = "small",
-    srcs = ["tests/nonblocking.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/nonblocking.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:tokio",
-    ],
-)
-
-rust_test(
-    name = "document_test",
-    size = "small",
-    srcs = ["tests/document.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/document.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "query_test",
-    size = "small",
-    srcs = ["tests/query.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/query.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "git_test",
-    size = "small",
-    srcs = ["tests/git.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/git.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "ann_test",
-    size = "small",
-    srcs = ["tests/ann.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/ann.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "ops_test",
-    size = "medium",
-    srcs = ["tests/ops.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/ops.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "projector_test",
-    size = "small",
-    srcs = ["tests/projector.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/projector.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "opaque_test",
-    size = "small",
-    srcs = ["tests/opaque.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/opaque.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "remote_test",
-    size = "small",
-    srcs = ["tests/remote.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/remote.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
     name = "scheda_test",
     size = "small",
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
     crate_features = _SCHEDA_FEATURES,
-)
-
-rust_test(
-    name = "journal_test",
-    size = "small",
-    srcs = ["tests/journal.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/journal.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "search_test",
-    size = "small",
-    srcs = ["tests/search.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/search.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "reindex_test",
-    size = "small",
-    srcs = ["tests/reindex.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/reindex.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "schema_test",
-    size = "small",
-    srcs = ["tests/schema.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/schema.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "encrypt_test",
-    size = "small",
-    srcs = ["tests/encrypt.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/encrypt.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "isolated_test",
-    size = "small",
-    srcs = ["tests/isolated.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/isolated.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "catalog_test",
-    size = "small",
-    srcs = ["tests/catalog.rs"] + _TEST_COMMON,
-    compile_data = glob([
-        "src/**/*.rs",
-        "testdata/**",
-    ]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/catalog.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "consumer_test",
-    size = "medium",
-    srcs = ["tests/consumer.rs"] + _TEST_COMMON,
-    compile_data = glob([
-        "src/**/*.rs",
-        "testdata/**",
-    ]),
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/consumer.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:tokio",
-    ],
-)
-
-rust_test(
-    name = "consumer_thin_test",
-    size = "small",
-    srcs = ["tests/consumer.rs"] + _TEST_COMMON,
-    compile_data = glob([
-        "src/**/*.rs",
-        "testdata/**",
-    ]),
-    crate_root = "tests/consumer.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "marker_test",
-    size = "small",
-    srcs = ["tests/marker.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/marker.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:tokio",
-    ],
-)
-
-rust_test(
-    name = "marker_thin_test",
-    size = "small",
-    srcs = ["tests/marker.rs"] + _TEST_COMMON,
-    crate_root = "tests/marker.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "thin_test",
-    size = "small",
-    srcs = ["tests/thin.rs"] + _TEST_COMMON,
-    compile_data = glob(["testdata/**"]),
-    crate_root = "tests/thin.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:serde_json",
-    ],
 )
 
 rust_test(
@@ -389,6 +81,31 @@ rust_test(
     crate = ":scheda_thin",
     crate_features = _SCHEDA_THIN_FEATURES,
     visibility = ["//rust:__pkg__"],
+)
+
+rust_test(
+    name = "open_test",
+    size = "small",
+    srcs = ["tests/open.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/open.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "open_thin_test",
+    size = "small",
+    srcs = ["tests/open.rs"] + _TEST_COMMON,
+    crate_root = "tests/open.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:serde_json",
+    ],
 )
 
 rust_doc(

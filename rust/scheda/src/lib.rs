@@ -8,5 +8,15 @@
 #[macro_use]
 mod error;
 
+mod collection;
+mod fs;
+mod git;
+mod id;
+mod marker;
+mod stored;
+mod vault;
+mod writer;
+
 pub use error::{Context, Error, Fault, redact_remote_text};
 pub use scheda_api::v1;
+pub use vault::Vault;

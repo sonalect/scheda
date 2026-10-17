@@ -1,4 +1,3 @@
-version: 1
 name: south_log
 schema:
   journal:

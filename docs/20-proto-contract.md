@@ -6,7 +6,7 @@ Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
-layer, without transitional code (§4). P1 is done; P2 is done but for `ErrorReport`; P3 is next.
+layer, without transitional code (§4). P1 is done; P2 is done but for `ErrorReport`; P3 is half done.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1033,8 +1033,11 @@ service Projector {
 - **Layers, bottom up.** `rust/scheda/src/lib.rs` declares the modules of
   finished layers only; a module not moved yet stays in the tree, not
   compiled, as material for its layer. So each layer compiles and passes
-  its own tests. The integration tests, the CLI, and the Python driver
-  come back in the layers that bring their surface. A signature may
+  its own tests. The old sources wait, not compiled, in
+  `rust/scheda/src/old/` and `rust/scheda/tests/old/`; a layer takes what
+  it needs from there, and P8 deletes what is left. The integration
+  tests, the CLI, and the Python driver come back in the layers that bring
+  their surface. A signature may
   still change in a later layer (`open` gains the ports in P5): nothing
   outside the branch calls it yet.
 - **Branch and gates.** The work goes on the branch `proto-contract`. A
@@ -1102,26 +1105,28 @@ D9.
 
 D1, D3 (`OpenMode`), D20, D21.
 
-- [ ] The stored-message module of D21: unknown fields recorded on read,
+- [x] The stored-message module of D21: unknown fields recorded on read,
       protovalidate, the recorded fields put back on write; the strict
       parse for commands.
-- [ ] `Vault::open(path, options)` and `close`, with `OpenMode`; the
-      marker of generation 2 read before any other file, by `open` and
-      `Check`; another generation is `GENERATION`. Cloning from a mirror
-      waits for P4.
-- [ ] Collection files on `Collection` and `Schema`: no `version`, the
+- [x] `Vault::open(path, options)` and `close`, with `OpenMode`: `open`
+      opens a Vault that exists and refuses what its mode refuses; the
+      marker of generation 2 is read before any other file by `open`
+      (`Check` reads it the same way in P6); another generation is
+      `GENERATION`. Making a Vault and cloning one wait for P4, which
+      brings the commit.
+- [x] Collection files on `Collection` and `Schema`: no `version`, the
       kind `standard` (`Kind::Document` → `Kind::Standard`).
 - [ ] A Document is bytes (D20): the UTF-8 rule and `not_utf8` deleted;
       a journal payload is refused only for `\n` or `\r`; `Check` finds
       an unfinished merge from git's unmerged entries.
 - [ ] The Document files, the journal segments, encryption, isolation,
       and the slugs on the new types, with their unit tests.
-- [ ] Fixtures under `rust/scheda/testdata` and `python/cli/testdata`
+- [x] Fixtures under `rust/scheda/testdata` and `python/cli/testdata`
       moved to generation 2.
 - *Check:* a marker of generation 1 fails `open` with `GENERATION` before
-  any collection file is read; a new Vault gets a marker of generation 2;
-  each `OpenMode` on a missing path, an empty folder, a git work tree
-  without the marker, another folder, and a Vault.
+  any collection file is read; each refusal of each `OpenMode` (a missing
+  path, an empty folder, a git work tree without the marker, another
+  folder, a Vault) has its code and writes nothing.
 - *Check:* an unknown key in the marker and in a collection file is read
   past, a leftover `version` included; a collection file whose kind is
   the old key `document:` is `INVALID_ARGUMENT` (it names no kind this
@@ -1150,10 +1155,16 @@ D6, D14.
       `UpdateCollection`, `DeleteCollection`, `BatchCollections`, and
       `GetDocument` as methods of `Vault`; `note` required on every
       Document write; `Document.revision`.
+- [ ] `open` makes a Vault where its mode allows (a missing path, an
+      empty folder, a git work tree without the marker): the marker and
+      `.gitignore` in one commit, or a clone of `OpenOptions.mirror`.
 - [ ] `Pull`, `Push`, `Sync` through the queue, without arguments; pull
-      of an empty mirror is "nothing to pull", so `Sync` pushes; `open`
-      clones from `OpenOptions.mirror`; `SetMirror`, `RemoveMirror`;
-      nothing contacts a remote for `.isolated/`.
+      of an empty mirror is "nothing to pull", so `Sync` pushes;
+      `SetMirror`, `RemoveMirror`; nothing contacts a remote for
+      `.isolated/`.
+- *Check:* each mode that makes a Vault does, with a marker of
+  generation 2, in one commit; two `open`s of the same new path at once
+  make one Vault.
 - *Check:* every row and option of the D6 table × `standard`,
   `singleton`, `journal`, encrypted, isolated; a Document write without
   a `note` is `INVALID_ARGUMENT`; the bytes of P3 round-trip through the
@@ -1164,7 +1175,8 @@ D6, D14.
   revision; with `keep_existing` the reply is the stored Document.
 - *Check:* a stale `revision` is `FAILED_PRECONDITION`.
 - *Check:* `UpdateCollection` keeps the keys of the collection file this
-  Scheda does not know (D21).
+  Scheda does not know (D21), and writes no default the caller did not
+  set (the defaults `open` fills in stay in memory).
 - *Check:* a `BatchCollections` whose third operation fails declares,
   changes, and deletes nothing; one that succeeds is one write.
 - *Check:* `DeleteCollection` of a collection with Documents is
@@ -1322,8 +1334,9 @@ D16.
 - *Check:* the CLI and the library give the same JSON for `Info`,
   `QueryDocuments`, one `SearchDocuments`, and the same error `code`.
 - *Check:* `tests/consumer.rs` green.
-- *Check:* no `expect(dead_code, …)` left from the layering (`git grep
-  -n 'expect(' rust/scheda/src`); `bazel test //...` green on the branch;
+- *Check:* `rust/scheda/src/old/` and `rust/scheda/tests/old/` are
+  gone; no `expect(dead_code, …)` left from the layering (`git grep -n
+  'expect(' rust/scheda/src`); `bazel test //...` green on the branch;
   then it merges into `main`.
 
 ---

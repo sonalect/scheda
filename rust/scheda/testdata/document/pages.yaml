@@ -1,4 +1,3 @@
-version: 1
 name: north_pages
 schema:
-  document: {}
+  standard: {}

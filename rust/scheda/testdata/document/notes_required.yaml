@@ -1,4 +1,3 @@
-version: 1
 name: north_notes
 schema:
-  document: {}
+  standard: {}

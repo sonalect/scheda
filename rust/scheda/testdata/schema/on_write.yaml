@@ -1,5 +1,4 @@
-version: 1
 name: c
 schema:
-  document: {}
+  standard: {}
 on_write: echo hi

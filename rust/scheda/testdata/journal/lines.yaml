@@ -1,4 +1,3 @@
-version: 1
 name: south_lines
 schema:
   journal: {}

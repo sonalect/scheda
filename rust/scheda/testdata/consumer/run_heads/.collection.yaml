@@ -1,4 +1,3 @@
-version: 1
 name: run_heads
 schema:
   singleton:

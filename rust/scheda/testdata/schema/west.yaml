@@ -1,4 +1,3 @@
-version: 1
 name: west_docs
 schema:
-  document: {}
+  standard: {}

@@ -31,9 +31,11 @@ buffa = { workspace = true }
 buffa-types = { workspace = true }
 cxx = { workspace = true, optional = true }
 protocontract = { workspace = true }
+protovalidate-buffa = { workspace = true }
 regex = { workspace = true }
 scheda-api = { workspace = true }
 serde = { workspace = true }
+serde_ignored = { workspace = true }
 serde_json = { workspace = true }
 sha1 = { workspace = true, optional = true }
 sha2 = { workspace = true }
@@ -48,59 +50,3 @@ tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "ti
 
 [lints]
 workspace = true
-
-# Integration tests that call `find` / `search` need those methods compiled.
-[[test]]
-name = "ann"
-required-features = ["search"]
-
-[[test]]
-name = "catalog"
-required-features = ["search"]
-
-[[test]]
-name = "encrypt"
-required-features = ["encrypt"]
-
-[[test]]
-name = "consumer"
-
-[[test]]
-name = "core"
-required-features = ["find"]
-
-[[test]]
-name = "isolated"
-required-features = ["find"]
-
-[[test]]
-name = "journal"
-required-features = ["find"]
-
-[[test]]
-name = "ops"
-required-features = ["search"]
-
-[[test]]
-name = "projector"
-required-features = ["find"]
-
-[[test]]
-name = "query"
-required-features = ["find"]
-
-[[test]]
-name = "search"
-required-features = ["search"]
-
-[[test]]
-name = "reindex"
-required-features = ["search"]
-
-[[test]]
-name = "nonblocking"
-required-features = ["tokio"]
-
-[[test]]
-name = "opaque"
-required-features = ["search"]

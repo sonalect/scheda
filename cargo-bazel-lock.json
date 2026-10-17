@@ -1,5 +1,5 @@
 {
-  "checksum": "5d6f05e647e488047ca489906bf216ad190c715adf6696ae007148928406a99c",
+  "checksum": "1c930c197c79cdc244e090433f5de9773f9778644723fa3a1720f50a1bae1767",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -13522,12 +13522,20 @@
             "target": "protocontract"
           },
           {
+            "id": "protovalidate-buffa 0.7.2",
+            "target": "protovalidate_buffa"
+          },
+          {
             "id": "regex 1.13.1",
             "target": "regex"
           },
           {
             "id": "serde 1.0.229",
             "target": "serde"
+          },
+          {
+            "id": "serde_ignored 0.1.14",
+            "target": "serde_ignored"
           },
           {
             "id": "serde_json 1.0.154",
@@ -14100,6 +14108,51 @@
         }
       ],
       "version": "1.0.229"
+    },
+    "serde_ignored 0.1.14": {
+      "common_attrs": {
+        "deps": {
+          "common": [
+            {
+              "id": "serde_core 1.0.229",
+              "target": "serde_core"
+            }
+          ],
+          "selects": {
+            "cfg(any())": [
+              {
+                "id": "serde 1.0.229",
+                "target": "serde"
+              }
+            ]
+          }
+        },
+        "edition": "2018"
+      },
+      "library_target_name": "serde_ignored",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "serde_ignored",
+      "package_url": "https://github.com/dtolnay/serde-ignored",
+      "repository": {
+        "Http": {
+          "sha256": "115dffd5f3853e06e746965a20dcbae6ee747ae30b543d91b0e089668bb07798",
+          "url": "https://static.crates.io/crates/serde_ignored/0.1.14/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "serde_ignored",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.1.14"
     },
     "serde_json 1.0.154": {
       "build_script_attrs": {},
@@ -19626,6 +19679,7 @@
     "protovalidate-buffa 0.7.2",
     "regex 1.13.1",
     "serde 1.0.229",
+    "serde_ignored 0.1.14",
     "serde_json 1.0.154",
     "sha1 0.11.0",
     "sha2 0.11.1",

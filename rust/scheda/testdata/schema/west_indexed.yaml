@@ -1,4 +1,3 @@
-version: 1
 name: west_indexed
 schema:
-  document: {}
+  standard: {}

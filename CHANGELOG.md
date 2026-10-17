@@ -56,6 +56,22 @@ changes; they grow with each part of the move.
   (`error.downcast_ref::<scheda::Fault>()`). The 39 `io_*` and 14 `git_*`
   codes fold into `STORAGE`, `UNAVAILABLE`, `UNAUTHENTICATED`,
   `MIRROR_AHEAD`, `MIRROR_CONFLICT`, `ABORTED`, and `REPLICATION`.
+- The Vault format is generation 2. The marker `.scheda.yaml` holds
+  `version: 2`; `open` reads it before any other file, and a Vault of
+  another generation fails with `GENERATION`. A collection file has no
+  `version`, and the kind `document` is named `standard`
+  (`schema: {standard: {}}`). No code moves a Vault of generation 1: drop
+  `version` from every collection file, rename the key `document` to
+  `standard`, set the marker to `version: 2`, and commit.
+- A stored file (the marker, a collection file) with a key this version
+  does not know is read past instead of refused, and a rewrite keeps the
+  key, so a later version can add a field without a new generation.
+  Protobuf JSON a caller sends is still refused when it has a key the
+  version does not know.
+- `Vault::open(path, OpenOptions)`: `OpenOptions.mode`
+  (`OPEN_MODE_OPEN_OR_CREATE`, the default; `OPEN_MODE_OPEN_EXISTING`;
+  and the new `OPEN_MODE_CREATE_NEW`, which refuses anything already at
+  the path) replaces `existing_only`.
 - Dependencies updated to the newest versions at least 2 days old:
   `serde_json` 1.0.154, `sha2` 0.11.1, `tokio` 1.53.3 (with compatible
   transitive crate updates), `rules_python` 2.4.2, `bazel_utils` 0.4.0,
@@ -73,6 +89,8 @@ changes; they grow with each part of the move.
   Rust paths `scheda_api::api::…`, among them `api.v1.Error` with its codes,
   `repeat`, and helper functions (`Error::invalid`, `Error::io_not_found`,
   …): a failure is built as `scheda::Fault::new(code, message)`.
+- `Collection::version`, `Vault::versions`, and the `version` key of a
+  collection file.
 
 ## [0.21.0] - 2026-10-12
 

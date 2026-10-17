@@ -1,4 +1,3 @@
-version: 1
 name: pending_items
 schema:
-  document: {}
+  standard: {}
