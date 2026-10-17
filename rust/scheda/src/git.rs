@@ -4,12 +4,13 @@
 //! `pull`, and `push`, which need the person's SSH configuration, agent, and
 //! credential helpers, and mapping what it prints on `stderr` to a failure.
 
-// The commands of the next layers use what the library does not.
+// The standard output of a command, its input, and its environment are for
+// the tests that drive git by hand; the network commands read none of them.
 #![cfg_attr(
     not(test),
     expect(
         dead_code,
-        reason = "the layers that clone, pull, and push are not built yet"
+        reason = "the tests that drive git by hand use the output, the input, and the environment"
     )
 )]
 
@@ -46,6 +47,14 @@ impl GitOutput {
         } else {
             git_fault(&self.stderr)
         }
+    }
+
+    /// Whether `stderr` says the mirror has no such branch: an empty mirror,
+    /// or one without the branch asked for.
+    pub(crate) fn missing_ref(&self) -> bool {
+        self.stderr
+            .to_ascii_lowercase()
+            .contains("couldn't find remote ref")
     }
 
     /// `stdout` as UTF-8 text.
@@ -197,6 +206,50 @@ impl GitCmd {
             Err(out.failure().into())
         }
     }
+}
+
+/// `git clone -- url path`: copies the mirror at `url` into the new folder
+/// `path`. The person's SSH configuration, agent, and credential helpers
+/// apply; nothing is prompted for.
+pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
+    git().arg("clone").arg("--").arg(url).arg(path).run()?;
+    Ok(())
+}
+
+/// `git fetch -- origin what` in the work tree at `dir`: the commit of
+/// `what` (a branch name, or `HEAD`) lands in `FETCH_HEAD`. `false` when the
+/// mirror has no such branch (an empty mirror); every other failure is the
+/// classified one.
+pub(crate) fn fetch(dir: &Path, what: &str) -> Result<bool, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("fetch")
+        .arg("--")
+        .arg("origin")
+        .arg(what)
+        .spawn()?;
+    if out.success() {
+        Ok(true)
+    } else if out.missing_ref() {
+        Ok(false)
+    } else {
+        Err(out.failure().into())
+    }
+}
+
+/// `git push -- origin refs/heads/b:refs/heads/b` in the work tree at
+/// `dir`, for the branch `b`. A mirror that holds writes the Vault lacks
+/// refuses it: `MIRROR_AHEAD`.
+pub(crate) fn push(dir: &Path, branch: &str) -> Result<(), Error> {
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    git()
+        .current_dir(dir)
+        .arg("push")
+        .arg("--")
+        .arg("origin")
+        .arg(refspec)
+        .run()?;
+    Ok(())
 }
 
 /// Runs `cmd` with `input` on its standard input. The input is written from

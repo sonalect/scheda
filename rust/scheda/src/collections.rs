@@ -219,6 +219,18 @@ impl crate::Vault {
     /// The writes as one commit. `indexed` puts the position of a failing
     /// write into the error.
     fn write(&self, writes: &[Write], indexed: bool) -> Result<Vec<Outcome>, Error> {
+        let (outcomes, pushable) = self.write_locked(writes, indexed)?;
+        // The write lock is let go: a push waits for no writer.
+        if pushable {
+            self.push_after_write();
+        }
+        Ok(outcomes)
+    }
+
+    /// The writes as one commit under the write lock, which is let go when
+    /// this returns. Also says whether a commit was made: only then is there
+    /// anything to push.
+    fn write_locked(&self, writes: &[Write], indexed: bool) -> Result<(Vec<Outcome>, bool), Error> {
         for (index, write) in writes.iter().enumerate() {
             write
                 .check()
@@ -226,7 +238,7 @@ impl crate::Vault {
                 .with_context(|| frame(indexed, index))?;
         }
         if writes.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
         let lock = self.committer().lock().context("take the write lock")?;
         let snap = lock.snapshot(Repo::Main)?;
@@ -252,8 +264,9 @@ impl crate::Vault {
         let changes: Vec<Change> = changes.into_values().collect();
         let head = lock.commit_in(&snap, &message(&lines), &changes)?;
         places.finish(root)?;
+        let pushable = head != snap.commit();
         self.remember(head, Arc::new(declarations))?;
-        Ok(outcomes)
+        Ok((outcomes, pushable))
     }
 }
 

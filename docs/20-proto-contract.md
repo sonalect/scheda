@@ -6,7 +6,7 @@ Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
-layer, without transitional code (§4). P1 is done; P2 is done but for `ErrorReport`; P3 is done.
+layer, without transitional code (§4). P1, P3, and P4 are done; P2 is done but for `ErrorReport`; P5 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1257,10 +1257,10 @@ D6, D14.
       `UpdateCollection`, `DeleteCollection`, `BatchCollections`, and
       `GetDocument` as methods of `Vault`; `note` required on every
       Document write; `Document.revision`.
-- [ ] `open` makes a Vault where its mode allows (a missing path, an
+- [x] `open` makes a Vault where its mode allows (a missing path, an
       empty folder, a git work tree without the marker): the marker and
       `.gitignore` in one commit, or a clone of `OpenOptions.mirror`.
-- [ ] `Pull`, `Push`, `Sync` without arguments, `Pull` and `Sync` under
+- [x] `Pull`, `Push`, `Sync` without arguments, `Pull` and `Sync` under
       the write lock; pull
       of an empty mirror is "nothing to pull", so `Sync` pushes;
       `SetMirror`, `RemoveMirror`; nothing contacts a remote for

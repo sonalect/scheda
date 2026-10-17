@@ -526,8 +526,24 @@ impl crate::Vault {
     /// The writes as one commit. `indexed` puts the position of a failing
     /// write into the error.
     fn write_documents(&self, writes: Vec<Write>, indexed: bool) -> Result<Vec<Outcome>, Error> {
+        let (outcomes, pushable) = self.write_documents_locked(writes, indexed)?;
+        // The write lock is let go: a push waits for no writer.
+        if pushable {
+            self.push_after_write();
+        }
+        Ok(outcomes)
+    }
+
+    /// The writes as one commit under the write lock, which is let go when
+    /// this returns. Also says whether a commit of the main repository was
+    /// made: only then is there anything to push.
+    fn write_documents_locked(
+        &self,
+        writes: Vec<Write>,
+        indexed: bool,
+    ) -> Result<(Vec<Outcome>, bool), Error> {
         if writes.is_empty() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
         let encryption = self.encryption();
         for (index, write) in writes.iter().enumerate() {
@@ -568,7 +584,11 @@ impl crate::Vault {
         let trailers = std::mem::take(&mut ledger.trailers);
         let mut changes = ledger.into_changes()?;
         if changes.is_empty() {
-            return drafts.into_iter().map(|draft| draft.settle(None)).collect();
+            let outcomes = drafts
+                .into_iter()
+                .map(|draft| draft.settle(None))
+                .collect::<Result<_, _>>()?;
+            return Ok((outcomes, false));
         }
         if repo == Repo::Isolated {
             isolated::ensure(self.path())?;
@@ -580,15 +600,18 @@ impl crate::Vault {
             with_ignore.append(&mut changes);
             changes = with_ignore;
         }
+        let before = snap.commit();
         let head = lock.commit_in(&snap, &message(&first_note, &trailers), &changes)?;
+        let pushable = repo == Repo::Main && head != before;
         if repo == Repo::Main {
             self.remember(head, declarations)?;
         }
         let mut files = take_files(&drafts, changes);
-        drafts
+        let outcomes = drafts
             .into_iter()
             .map(|draft| draft.settle(Some(&mut files)))
-            .collect()
+            .collect::<Result<_, _>>()?;
+        Ok((outcomes, pushable))
     }
 }
 

@@ -190,12 +190,26 @@ pub(crate) fn require_work_tree(dir: &Path) -> Result<(), Fault> {
 pub(crate) fn origin_url(dir: &Path) -> Result<Option<String>, Fault> {
     require_work_tree(dir)?;
     let repo = Repository::open(dir).map_err(open_fault)?;
+    origin_of(&repo)
+}
+
+/// The fetch URL of `origin` in the configuration of `repo`. No `origin`, or
+/// an empty URL, is `None`.
+pub(crate) fn origin_of(repo: &Repository) -> Result<Option<String>, Fault> {
     let config = repo.config().map_err(lib_fault)?;
     match config.get_string("remote.origin.url") {
         Ok(url) => Ok((!url.trim().is_empty()).then(|| url.trim().to_owned())),
         Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
         Err(err) => Err(lib_fault(err)),
     }
+}
+
+/// Sets `core.longpaths` in the repository at `dir`, a clone made by the
+/// command line.
+pub(crate) fn enable_long_paths_at(dir: &Path) -> Result<(), Fault> {
+    init_library()?;
+    let repo = Repository::open(dir).map_err(open_fault)?;
+    enable_long_paths(&repo)
 }
 
 /// The branch a new repository starts on: `init.defaultBranch` of the

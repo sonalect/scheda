@@ -108,6 +108,17 @@ changes; they grow with each part of the move.
   write without a mirror starts no `git` process. A repository with
   SHA-256 objects or reftable refs, which the library cannot read, fails
   `open` with `UNIMPLEMENTED`.
+- The mirror: `open` of a missing path or an empty folder with
+  `OpenOptions.mirror` clones it; `Pull`, `Push`, and `Sync` take no
+  argument and work with the mirror only, and isolated collections never
+  leave the machine (`push_isolated`, `pull_isolated`, `sync_isolated`
+  are gone). `Pull` joins histories that both moved, Document by Document:
+  a Document changed on both sides differently is `MIRROR_CONFLICT` and
+  nothing changes. A mirror that holds nothing yet is nothing to pull, so
+  `Sync` against it pushes. `SetMirror` and `RemoveMirror` set and detach
+  the mirror without touching the network. With `auto_sync`, a failed
+  pull at `open` or push after a write fails neither: the write is stored
+  and the handle keeps the failure.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -15,13 +16,16 @@ use crate::commit::{Change, Committer};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
 use crate::repo::{self, Repo, Repos, Snap};
-use crate::{marker, stored, writer};
+use crate::{git, marker, stored, writer};
 
 /// The message of the commit that makes a work tree a Vault.
 const MARK_MESSAGE: &str = "mark the work tree as a Vault";
 
 /// How long `open` waits for another `open` that is making the same Vault.
 const OTHER_OPEN_WAIT: Duration = Duration::from_secs(5);
+
+/// Numbers the staging folders of the clones this process makes.
+static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 
 /// An open Vault: a git work tree that holds the marker `.scheda.yaml`, with
 /// the collections its root directories declare.
@@ -39,6 +43,9 @@ pub struct Vault {
     /// The declarations as of the commit they were read from.
     loaded: Mutex<Option<Loaded>>,
     writer: String,
+    /// The last failure of a pull at `open` or a push after a write, until a
+    /// later pull or push succeeds.
+    sync_failure: Mutex<Option<Error>>,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -98,14 +105,29 @@ impl Vault {
     /// Making the Vault, and the marker of a work tree, are written under the
     /// write lock, after a second look at the path.
     ///
-    /// When it opens a Vault, `options.mirror`, if set, must be the fetch
-    /// URL of the remote `origin` (`INVALID_ARGUMENT` otherwise, without
-    /// contacting the network). The collection files of `HEAD` are read (an
+    /// A missing path or an empty folder with `options.mirror` set, in the
+    /// modes that make a Vault, is a clone of the mirror (`git clone`; the
+    /// person's SSH configuration and credential helpers apply) instead of
+    /// a new repository. The clone is looked at as any path is: a marker of
+    /// another generation is `GENERATION`; a clone without a marker (an
+    /// empty mirror, or a plain repository) gets the marker and `.gitignore`
+    /// in one commit; a clone with the marker opens. The clone is made in a
+    /// folder beside the path and moved into place, so a clone that fails
+    /// leaves no Vault, and of two `open`s the one that finds the Vault
+    /// made opens that one. A mirror that cannot be cloned is
+    /// `UNAUTHENTICATED`, `UNAVAILABLE`, or `REPLICATION`.
+    ///
+    /// When it opens a Vault that exists, `options.mirror`, if set, must be
+    /// the fetch URL of the remote `origin` (`INVALID_ARGUMENT` otherwise,
+    /// without contacting the network). The collection files of `HEAD` are read (an
     /// invalid one fails `open`), `.scheda/` is created owner-only, and the
     /// writer identity is read or made. If a writer died between its commit
     /// and its files, `open` takes the write lock and brings those files to
     /// what `HEAD` holds, leaving a file a person changed meanwhile as it is;
-    /// otherwise it takes no write lock. `open` pulls nothing. A repository
+    /// otherwise it takes no write lock. With `options.auto_sync` and a
+    /// mirror, `open` of a Vault that exists then pulls (as
+    /// [`Vault::pull`]); a failure of that pull does not fail `open`, the
+    /// handle keeps it. Otherwise `open` pulls nothing. A repository
     /// that uses SHA-256 objects or reftable references, which the bundled
     /// git library cannot read, is `UNIMPLEMENTED` in every mode.
     ///
@@ -180,6 +202,39 @@ impl Vault {
         &self.writer
     }
 
+    /// Whether the handle pulls at `open` and pushes after each write
+    /// (`OpenOptions.auto_sync`).
+    pub(crate) fn auto_sync(&self) -> bool {
+        self.options.auto_sync.unwrap_or(false)
+    }
+
+    /// Keeps the outcome of an `auto_sync` pull or push: a failure replaces
+    /// the one kept, a success clears it.
+    pub(crate) fn record_sync(&self, outcome: Result<(), Error>) {
+        // A poisoned lock holds a plain value no panic could break.
+        let mut kept = self
+            .sync_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *kept = outcome.err();
+    }
+
+    /// Forgets the failure kept by [`Vault::record_sync`]: a pull or push
+    /// asked for by the caller succeeded.
+    pub(crate) fn clear_sync_failure(&self) {
+        self.record_sync(Ok(()));
+    }
+
+    /// The last failure of a pull at `open` or of a push after a write
+    /// (`auto_sync`), or `None` when the last one succeeded or none ran.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the Vault service shows it"))]
+    pub(crate) fn sync_failure(&self) -> Option<Error> {
+        self.sync_failure
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
     /// The age secret the handle was opened with, if any.
     pub(crate) fn encryption(&self) -> Option<&Encryption> {
         self.options.encryption.as_option()
@@ -234,7 +289,9 @@ fn open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
                     "the path holds a Vault",
                 ));
             }
-            open_existing(path, options).context("Vault::open: open the Vault")
+            let vault = open_existing(path, options).context("Vault::open: open the Vault")?;
+            vault.pull_at_open();
+            Ok(vault)
         }
         Spot::WorkTree => match mode {
             OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
@@ -340,8 +397,8 @@ fn wait_for_work_tree(path: &Path) -> Result<(), Error> {
 /// on the path: of two `open`s at once, one makes the repository and the
 /// other waits for it.
 fn make_new(path: &Path, options: OpenOptions, mode: OpenMode) -> Result<Vault, Error> {
-    if options.mirror.is_some() {
-        todo!("P4c clones the mirror into a new Vault");
+    if let Some(url) = options.mirror.clone() {
+        return clone_new(path, &url, options).context("clone the mirror");
     }
     fs::create_dir_all(path)
         .map_err(io)
@@ -360,6 +417,68 @@ fn make_new(path: &Path, options: OpenOptions, mode: OpenMode) -> Result<Vault, 
         Err(err) => return Err(io(err)).context("claim the folder"),
     }
     mark_and_open(path, options)
+}
+
+/// A folder beside the path of a new Vault that a clone is made in, removed
+/// when it is dropped (after the move into place it is not there to remove).
+struct Staging(PathBuf);
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+
+/// Makes a new Vault at `path`, a missing path or an empty folder, by
+/// cloning the mirror at `url`.
+///
+/// The clone is made in a staging folder in the same parent, classified like
+/// any path (a marker of another generation is `GENERATION`), given its
+/// marker in one commit when it has none, and only then moved to `path`. A
+/// failure at any step leaves nothing at `path`. When the move finds that
+/// another `open` made the Vault meanwhile, this one opens that Vault.
+fn clone_new(path: &Path, url: &str, options: OpenOptions) -> Result<Vault, Error> {
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    fs::create_dir_all(parent)
+        .map_err(io)
+        .context("create the folder")?;
+    let name = path.file_name().map_or_else(
+        || String::from("vault"),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let staging = Staging(parent.join(format!(
+        ".{name}.scheda-clone-{}-{}",
+        std::process::id(),
+        NEXT_STAGING.fetch_add(1, Ordering::Relaxed)
+    )));
+    let _ = fs::remove_dir_all(&staging.0);
+    git::clone(url, &staging.0).context("clone")?;
+    repo::enable_long_paths_at(&staging.0).context("set up the clone")?;
+    match classify(&staging.0).context("look at the clone")? {
+        Spot::Vault => {}
+        Spot::WorkTree => {
+            drop(mark_and_open(&staging.0, options.clone()).context("mark the clone")?)
+        }
+        _ => {
+            return Err(refusal(
+                VaultErrorCode::Replication,
+                "the mirror did not clone into a git work tree",
+            ));
+        }
+    }
+    match fs::rename(&staging.0, path) {
+        Ok(()) => open_existing(path, options),
+        Err(err) => {
+            drop(staging);
+            match classify(path) {
+                Ok(Spot::Vault | Spot::WorkTree | Spot::Other) => open(path, options),
+                _ => Err(io(err)).context("move the clone into place"),
+            }
+        }
+    }
 }
 
 /// Makes the git repository in `path`, whose `.git` this call has just made.
@@ -491,6 +610,7 @@ fn finish(
             declarations,
         })),
         writer,
+        sync_failure: Mutex::new(None),
     })
 }
 

@@ -20,6 +20,8 @@ rust_clippy_test(
         "//rust/scheda:collections_thin_test",
         "//rust/scheda:documents_test",
         "//rust/scheda:documents_thin_test",
+        "//rust/scheda:mirror_test",
+        "//rust/scheda:mirror_thin_test",
         "//rust/scheda:open_test",
         "//rust/scheda:open_thin_test",
         "//rust/scheda:scheda",

@@ -423,7 +423,8 @@ impl WriteLock<'_> {
         else {
             return Ok(old);
         };
-        write_list(self.flock.file(), changes)?;
+        let paths: Vec<&str> = changes.iter().map(Change::path).collect();
+        write_list(self.flock.file(), &paths)?;
         #[cfg(test)]
         hooks::after_list()?;
         #[cfg(test)]
@@ -444,6 +445,120 @@ impl WriteLock<'_> {
         }
         Ok(Some(new))
     }
+
+    /// The author and committer a commit of this handle is made with.
+    pub(crate) fn signature(&self) -> Result<Signature<'static>, Fault> {
+        self.committer.identity.signature()
+    }
+
+    /// Moves the branch `HEAD` names, in the repository of `snap`, from the
+    /// commit of `snap` to `new`, a commit the object database holds
+    /// already, then brings the work tree and git's index to it as
+    /// [`WriteLock::commit_in`] does.
+    ///
+    /// The paths the two trees differ in go into the lock file first; `HEAD`
+    /// moves by compare and swap on the commit of `snap` (a `git` command
+    /// run by hand meanwhile makes the call `ABORTED` with nothing written to
+    /// the work tree); then each path is settled: a file that is what `snap`
+    /// held becomes what `new` holds, a file a person changed is left as it
+    /// is, and the index gets the new state. Only regular files reach the
+    /// work tree, and never a path below `.git`, `.scheda/`, or
+    /// `.isolated/`: a tree that came from a mirror may hold any name.
+    ///
+    /// # Errors
+    ///
+    /// `FAILED_PRECONDITION` for a detached `HEAD`; `ABORTED` for a branch
+    /// that moved; `REPLICATION` for a path that is not UTF-8; `STORAGE` or
+    /// `REPLICATION` when a file or git fails.
+    pub(crate) fn advance_to(&self, snap: &Snap, new: Oid, message: &str) -> Result<(), Error> {
+        let vault = self.root();
+        let Some(git) = snap.repository() else {
+            return Err(Fault::new(
+                VaultErrorCode::Replication,
+                "the repository to write to is not there",
+            )
+            .into());
+        };
+        let branch = branch_of(git)?;
+        let target = git
+            .find_commit(new)
+            .and_then(|commit| commit.tree())
+            .map_err(lib_fault)?;
+        let before = match snap.tree() {
+            Some(id) => Some(git.find_tree(id).map_err(lib_fault)?),
+            None => None,
+        };
+        let diff = git
+            .diff_tree_to_tree(before.as_ref(), Some(&target), None)
+            .map_err(lib_fault)?;
+        let mut moved: Vec<(String, Option<(Oid, FileMode)>)> = Vec::new();
+        for delta in diff.deltas() {
+            let deleted = delta.status() == git2::Delta::Deleted;
+            let file = if deleted {
+                delta.old_file()
+            } else {
+                delta.new_file()
+            };
+            let Some(path) = file.path().and_then(Path::to_str) else {
+                return Err(Fault::new(
+                    VaultErrorCode::Replication,
+                    "the mirror holds a path that is not UTF-8",
+                )
+                .into());
+            };
+            if !reaches_work_tree(path) {
+                continue;
+            }
+            let want = match file.mode() {
+                git2::FileMode::Blob | git2::FileMode::BlobGroupWritable if !deleted => {
+                    Some((file.id(), FileMode::Regular))
+                }
+                git2::FileMode::BlobExecutable if !deleted => {
+                    Some((file.id(), FileMode::Executable))
+                }
+                _ => None,
+            };
+            moved.push((path.to_owned(), want));
+        }
+        let paths: Vec<&str> = moved.iter().map(|(path, _)| path.as_str()).collect();
+        write_list(self.flock.file(), &paths)?;
+        if let Err(err) = swap(git, &branch, snap.commit(), new, message) {
+            empty_list(self.flock.file())?;
+            return Err(err);
+        }
+        let mut plan = Vec::with_capacity(moved.len());
+        for (path, want) in &moved {
+            let was = snap
+                .lookup(path)
+                .ok()
+                .flatten()
+                .filter(|node| node.kind == NodeKind::File)
+                .map(|node| node.id);
+            plan.push(Item {
+                rel: path,
+                want: want.map(|(id, mode)| Want {
+                    id,
+                    mode,
+                    bytes: None,
+                }),
+                was,
+            });
+        }
+        if settle(vault, snap, &plan, Mode::Write)? {
+            empty_list(self.flock.file())?;
+        }
+        Ok(())
+    }
+}
+
+/// Whether a path of a tree that came from a mirror may be written into the
+/// work tree.
+fn reaches_work_tree(path: &str) -> bool {
+    check_relative(path).is_ok()
+        && path != isolated::DIR
+        && path != ".scheda"
+        && isolated::nested_rel(path).is_none()
+        && !path.starts_with(".scheda/")
 }
 
 /// A Vault-relative POSIX path a write may name: no empty part, no `.` or
@@ -466,7 +581,7 @@ fn check_relative(path: &str) -> Result<(), Fault> {
 
 /// The reference `HEAD` names: the branch a commit moves. A `HEAD` that
 /// names a commit directly is `FAILED_PRECONDITION`.
-fn branch_of(git: &Repository) -> Result<String, Error> {
+pub(crate) fn branch_of(git: &Repository) -> Result<String, Error> {
     let head = git.find_reference("HEAD").map_err(lib_fault)?;
     match head.symbolic_target().map_err(lib_fault)? {
         Some(branch) => Ok(branch.to_owned()),
@@ -626,12 +741,12 @@ fn swap(
     }
 }
 
-/// Writes the paths of `changes` into the lock file, each ended by a NUL
+/// Writes the paths into the lock file, each ended by a NUL
 /// byte, and flushes them to disk.
-fn write_list(file: &File, changes: &[Change]) -> Result<(), Error> {
+fn write_list(file: &File, paths: &[&str]) -> Result<(), Error> {
     let mut bytes = Vec::new();
-    for change in changes {
-        bytes.extend_from_slice(change.path().as_bytes());
+    for path in paths {
+        bytes.extend_from_slice(path.as_bytes());
         bytes.push(0);
     }
     let mut handle = file;
