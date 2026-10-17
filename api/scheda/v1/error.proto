@@ -10,9 +10,6 @@ package scheda.v1;
 // it is lost. The names follow the gRPC canonical codes where the meaning
 // is the same.
 enum VaultErrorCode {
-  reserved 8;
-  reserved VAULT_ERROR_CODE_RESOURCE_EXHAUSTED;
-
   VAULT_ERROR_CODE_UNSPECIFIED = 0;
   // The request breaks a rule of this contract. Fix the request.
   VAULT_ERROR_CODE_INVALID_ARGUMENT = 1;
@@ -34,34 +31,34 @@ enum VaultErrorCode {
   // Retryable.
   VAULT_ERROR_CODE_UNAVAILABLE = 7;
   // The mirror refused the credentials git gave it.
-  VAULT_ERROR_CODE_UNAUTHENTICATED = 9;
+  VAULT_ERROR_CODE_UNAUTHENTICATED = 8;
   // The path holds no Vault.
-  VAULT_ERROR_CODE_NOT_A_VAULT = 10;
+  VAULT_ERROR_CODE_NOT_A_VAULT = 9;
   // The Vault is of another generation than this build reads.
-  VAULT_ERROR_CODE_GENERATION = 11;
+  VAULT_ERROR_CODE_GENERATION = 10;
   // The secret of an encrypted collection is missing or wrong, or its
   // bytes do not decrypt.
-  VAULT_ERROR_CODE_CRYPTO = 12;
+  VAULT_ERROR_CODE_CRYPTO = 11;
   // The mirror holds writes this Vault has not pulled. Pull, then try
   // again.
-  VAULT_ERROR_CODE_MIRROR_AHEAD = 13;
+  VAULT_ERROR_CODE_MIRROR_AHEAD = 12;
   // The writes of the mirror cannot be joined with this Vault's.
-  VAULT_ERROR_CODE_MIRROR_CONFLICT = 14;
+  VAULT_ERROR_CODE_MIRROR_CONFLICT = 13;
   // A file holds an unfinished merge. Resolve it by hand.
-  VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 15;
+  VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 14;
   // The Index has not been built yet, or is moving to a new format.
   // Retryable soon; `WatchIndexStatus` says when.
-  VAULT_ERROR_CODE_INDEX_REBUILDING = 16;
+  VAULT_ERROR_CODE_INDEX_REBUILDING = 15;
   // The Index was built by another Projector or another embedding model.
   // `Reindex`.
-  VAULT_ERROR_CODE_INDEX_STALE = 17;
+  VAULT_ERROR_CODE_INDEX_STALE = 16;
   // The Index is damaged. `Reindex`.
-  VAULT_ERROR_CODE_INDEX_BROKEN = 18;
+  VAULT_ERROR_CODE_INDEX_BROKEN = 17;
   // The storage below the Vault failed. Retryable when the failure is a
   // passing one (interrupted, would block, busy).
-  VAULT_ERROR_CODE_STORAGE = 19;
+  VAULT_ERROR_CODE_STORAGE = 18;
   // Exchanging writes with the mirror failed otherwise.
-  VAULT_ERROR_CODE_REPLICATION = 20;
+  VAULT_ERROR_CODE_REPLICATION = 19;
 }
 
 // A failure, as a transport (the CLI, a status) carries it. The library

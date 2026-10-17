@@ -31,34 +31,34 @@ pub enum VaultErrorCode {
     /// Retryable.
     VAULT_ERROR_CODE_UNAVAILABLE = 7i32,
     /// The mirror refused the credentials git gave it.
-    VAULT_ERROR_CODE_UNAUTHENTICATED = 9i32,
+    VAULT_ERROR_CODE_UNAUTHENTICATED = 8i32,
     /// The path holds no Vault.
-    VAULT_ERROR_CODE_NOT_A_VAULT = 10i32,
+    VAULT_ERROR_CODE_NOT_A_VAULT = 9i32,
     /// The Vault is of another generation than this build reads.
-    VAULT_ERROR_CODE_GENERATION = 11i32,
+    VAULT_ERROR_CODE_GENERATION = 10i32,
     /// The secret of an encrypted collection is missing or wrong, or its
     /// bytes do not decrypt.
-    VAULT_ERROR_CODE_CRYPTO = 12i32,
+    VAULT_ERROR_CODE_CRYPTO = 11i32,
     /// The mirror holds writes this Vault has not pulled. Pull, then try
     /// again.
-    VAULT_ERROR_CODE_MIRROR_AHEAD = 13i32,
+    VAULT_ERROR_CODE_MIRROR_AHEAD = 12i32,
     /// The writes of the mirror cannot be joined with this Vault's.
-    VAULT_ERROR_CODE_MIRROR_CONFLICT = 14i32,
+    VAULT_ERROR_CODE_MIRROR_CONFLICT = 13i32,
     /// A file holds an unfinished merge. Resolve it by hand.
-    VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 15i32,
+    VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 14i32,
     /// The Index has not been built yet, or is moving to a new format.
     /// Retryable soon; `WatchIndexStatus` says when.
-    VAULT_ERROR_CODE_INDEX_REBUILDING = 16i32,
+    VAULT_ERROR_CODE_INDEX_REBUILDING = 15i32,
     /// The Index was built by another Projector or another embedding model.
     /// `Reindex`.
-    VAULT_ERROR_CODE_INDEX_STALE = 17i32,
+    VAULT_ERROR_CODE_INDEX_STALE = 16i32,
     /// The Index is damaged. `Reindex`.
-    VAULT_ERROR_CODE_INDEX_BROKEN = 18i32,
+    VAULT_ERROR_CODE_INDEX_BROKEN = 17i32,
     /// The storage below the Vault failed. Retryable when the failure is a
     /// passing one (interrupted, would block, busy).
-    VAULT_ERROR_CODE_STORAGE = 19i32,
+    VAULT_ERROR_CODE_STORAGE = 18i32,
     /// Exchanging writes with the mirror failed otherwise.
-    VAULT_ERROR_CODE_REPLICATION = 20i32,
+    VAULT_ERROR_CODE_REPLICATION = 19i32,
 }
 impl VaultErrorCode {
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_UNSPECIFIED`]; `Debug` prints the variant name.
@@ -228,22 +228,22 @@ impl ::buffa::Enumeration for VaultErrorCode {
             5i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNIMPLEMENTED),
             6i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_ABORTED),
             7i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAVAILABLE),
-            9i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAUTHENTICATED),
-            10i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_NOT_A_VAULT),
-            11i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_GENERATION),
-            12i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_CRYPTO),
-            13i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_MIRROR_AHEAD),
-            14i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_MIRROR_CONFLICT),
-            15i32 => {
+            8i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNAUTHENTICATED),
+            9i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_NOT_A_VAULT),
+            10i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_GENERATION),
+            11i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_CRYPTO),
+            12i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_MIRROR_AHEAD),
+            13i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_MIRROR_CONFLICT),
+            14i32 => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_UNRESOLVED_CONFLICT)
             }
-            16i32 => {
+            15i32 => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_INDEX_REBUILDING)
             }
-            17i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_INDEX_STALE),
-            18i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_INDEX_BROKEN),
-            19i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_STORAGE),
-            20i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_REPLICATION),
+            16i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_INDEX_STALE),
+            17i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_INDEX_BROKEN),
+            18i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_STORAGE),
+            19i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_REPLICATION),
             _ => ::core::option::Option::None,
         }
     }
