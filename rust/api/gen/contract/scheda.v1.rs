@@ -716,19 +716,20 @@ impl<T: RerankerAsync + 'static> RerankerSync for ::protocontract::Blocking<T> {
 /// Says what of a Document the Index holds: its columns, and their values.
 /// Scheda does not know what a Document holds; the Projector does. Without
 /// one, the Index holds identity only: a query on `id` works, a search has
-/// nothing to rank.
+/// nothing to rank. The same holds for a collection with no columns and for
+/// a Document with no values.
 ///
-/// Fails with the codes of `ProjectorErrorCode`. A failure, or an empty
-/// `IndexDoc`, leaves that Document out of the Index; its file stays.
+/// Fails with the codes of `ProjectorErrorCode`. A failure leaves that
+/// Document out of the Index; its file stays.
 ///
 /// Blocking form of `scheda.v1.Projector`: each method returns when the call is done. Streams are iterators. It fails with the codes of `ProjectorErrorCode` (`scheda.v1.ProjectorErrorCode`): branch on them with `Error::is` or `Error::code_as`.
 ///
 /// Implement it for work that computes; implement `ProjectorAsync` for work that waits on I/O. The trait is dyn-compatible: hold an implementation as `Arc<dyn ProjectorSync>` to choose it at run time. `Blocking` gives an `ProjectorAsync` implementation this form.
 #[allow(clippy::wrong_self_convention)]
 pub trait ProjectorSync: ::core::marker::Send + ::core::marker::Sync {
-    /// The columns of one collection. None: the collection is left out of
-    /// the Index. Changing the columns of a collection makes its Index stale
-    /// until `Reindex`.
+    /// The columns of one collection. None: its Documents are indexed by
+    /// identity only. Changing the columns of a collection makes the Index
+    /// stale until `Reindex`.
     fn columns(
         &self,
         collection_key: crate::proto::scheda::v1::CollectionKey,
@@ -748,19 +749,20 @@ pub trait ProjectorSync: ::core::marker::Send + ::core::marker::Sync {
 /// Says what of a Document the Index holds: its columns, and their values.
 /// Scheda does not know what a Document holds; the Projector does. Without
 /// one, the Index holds identity only: a query on `id` works, a search has
-/// nothing to rank.
+/// nothing to rank. The same holds for a collection with no columns and for
+/// a Document with no values.
 ///
-/// Fails with the codes of `ProjectorErrorCode`. A failure, or an empty
-/// `IndexDoc`, leaves that Document out of the Index; its file stays.
+/// Fails with the codes of `ProjectorErrorCode`. A failure leaves that
+/// Document out of the Index; its file stays.
 ///
 /// Async form of `scheda.v1.Projector`: each method returns a future of the result. Streams are `Stream`s. It fails with the codes of `ProjectorErrorCode` (`scheda.v1.ProjectorErrorCode`): branch on them with `Error::is` or `Error::code_as`.
 ///
 /// Implement it with plain `async fn` for work that waits on I/O; implement `ProjectorSync` for work that computes. A reply stream must not borrow `self`. Generic callers (`impl ProjectorAsync`) call it without boxing; `DynProjectorAsync` holds an implementation chosen at run time. `Inline` and `Offload` give a `ProjectorSync` implementation this form.
 #[allow(clippy::wrong_self_convention)]
 pub trait ProjectorAsync: ::core::marker::Send + ::core::marker::Sync {
-    /// The columns of one collection. None: the collection is left out of
-    /// the Index. Changing the columns of a collection makes its Index stale
-    /// until `Reindex`.
+    /// The columns of one collection. None: its Documents are indexed by
+    /// identity only. Changing the columns of a collection makes the Index
+    /// stale until `Reindex`.
     fn columns(
         &self,
         collection_key: crate::proto::scheda::v1::CollectionKey,

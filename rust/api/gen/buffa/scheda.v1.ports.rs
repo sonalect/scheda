@@ -2271,8 +2271,8 @@ pub const __INDEX_SCHEMA_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buff
     is_wkt: false,
 };
 /// The values of the columns for one Document. A column left out has no
-/// value; `IndexValue.null` is a stored null. Empty: the Document is left
-/// out of the Index.
+/// value; `IndexValue.null` is a stored null. Empty: the Document is
+/// indexed by identity only.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]

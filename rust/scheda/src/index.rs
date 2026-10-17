@@ -14,6 +14,9 @@
 //! .scheda/index/format      the number of the layout of these files
 //! .scheda/index/commit      the state the Index reflects, written last
 //! .scheda/index/journal/    the id maps of the journals
+//! .scheda/index/lexical/    the Tantivy index of the lexical side
+//! .scheda/index/columns     the columns each collection was indexed with
+//! .scheda/index/stale       the collections whose columns changed since
 //! ```
 //!
 //! Every file is written whole (a temporary file, then a rename) and is
@@ -34,11 +37,16 @@ use crate::repo::{Delta, Repo, Snap, Views};
 
 /// The number of the layout of the files of the Index. An Index with another
 /// number is made again, not migrated.
-pub(crate) const FORMAT: u32 = 1;
+pub(crate) const FORMAT: u32 = 2;
 
 const FORMAT_FILE: &str = "format";
 const COMMIT_FILE: &str = "commit";
 const JOURNAL_DIR: &str = "journal";
+const LEXICAL_DIR: &str = "lexical";
+#[cfg(feature = "find")]
+const COLUMNS_FILE: &str = "columns";
+#[cfg(feature = "find")]
+const STALE_FILE: &str = "stale";
 
 /// The state of the Vault the Index reflects: the commit `HEAD` names in the
 /// main repository, and in the nested repository (`None` where there is no
@@ -144,6 +152,25 @@ impl Index {
     /// The id map file of the journal `collection`.
     pub(crate) fn ids_file(&self, collection: &str) -> PathBuf {
         self.journal_dir().join(collection).join("ids")
+    }
+
+    /// The folder of the Tantivy index of the lexical side.
+    pub(crate) fn lexical_dir(&self) -> PathBuf {
+        self.root.join(LEXICAL_DIR)
+    }
+
+    /// The file that records the columns of each collection as the lexical
+    /// side indexed them.
+    #[cfg(feature = "find")]
+    pub(crate) fn columns_file(&self) -> PathBuf {
+        self.root.join(COLUMNS_FILE)
+    }
+
+    /// The file that lists the collections whose columns changed since the
+    /// Index was built. Its presence makes the Index stale until a rebuild.
+    #[cfg(feature = "find")]
+    pub(crate) fn stale_file(&self) -> PathBuf {
+        self.root.join(STALE_FILE)
     }
 
     /// Takes the lock of a round without waiting: `flock` on
@@ -277,6 +304,9 @@ enum Changes {
     Everything,
     /// What differs between the state the Index reflected and the new one.
     Since {
+        /// The state the Index reflected.
+        #[cfg(feature = "find")]
+        from: State,
         /// The files that differ, in both repositories.
         paths: Vec<Delta>,
         /// The collections whose declaration file differs: all their
@@ -306,7 +336,12 @@ impl Changes {
             .filter_map(|delta| collection::declaration_dir(&delta.path))
             .map(str::to_owned)
             .collect();
-        Ok(Some(Changes::Since { paths, whole }))
+        Ok(Some(Changes::Since {
+            #[cfg(feature = "find")]
+            from,
+            paths,
+            whole,
+        }))
     }
 }
 
@@ -396,6 +431,36 @@ impl<'a> Round<'a> {
         }
     }
 
+    /// The state the Index reflected before the round; `None` for a rebuild.
+    #[cfg(feature = "find")]
+    pub(crate) fn from(&self) -> Option<State> {
+        match &self.changes {
+            Changes::Everything => None,
+            Changes::Since { from, .. } => Some(*from),
+        }
+    }
+
+    /// The files that differ between the state the Index reflected and the
+    /// new one, in both repositories. Empty for a rebuild, where everything
+    /// is new.
+    #[cfg(feature = "find")]
+    pub(crate) fn deltas(&self) -> &[Delta] {
+        match &self.changes {
+            Changes::Everything => &[],
+            Changes::Since { paths, .. } => paths,
+        }
+    }
+
+    /// The collections whose declaration file differs. Empty for a rebuild.
+    #[cfg(feature = "find")]
+    pub(crate) fn declaration_changes(&self) -> impl Iterator<Item = &str> {
+        let names = match &self.changes {
+            Changes::Everything => None,
+            Changes::Since { whole, .. } => Some(whole),
+        };
+        names.into_iter().flatten().map(String::as_str)
+    }
+
     /// Adds to the counts and lets the observer see them. An error ends the
     /// round: the indexer is stopping.
     pub(crate) fn note(&mut self, read: u64, skipped: u64, segments: u64) -> Result<(), Error> {
@@ -410,7 +475,9 @@ impl<'a> Round<'a> {
         self.counts
     }
 
-    /// How many files the round has to read: the files that changed inside
+    /// How many files the round has to read, counting files and not
+    /// Documents, so that a journal segment is one however many lines it
+    /// holds: the files that changed inside
     /// a declared collection, and every file of a collection whose
     /// declaration changed. `None` when they could not be counted.
     pub(crate) fn pending(&self) -> Option<u64> {
@@ -421,7 +488,7 @@ impl<'a> Round<'a> {
                     total += self.count_in(decl.repo(), &isolated::vault_rel(decl, ""))?;
                 }
             }
-            Changes::Since { paths, whole } => {
+            Changes::Since { paths, whole, .. } => {
                 for delta in paths {
                     if collection::declaration_dir(&delta.path).is_some() {
                         continue;
@@ -452,10 +519,14 @@ impl<'a> Round<'a> {
     }
 }
 
-/// The files at and below the directory `dir` of the commit of `snap`.
+/// The files at and below the directory `dir` of the commit of `snap`,
+/// those with a hidden name (the declaration file, for one) left out.
 fn count_files(snap: &Snap, dir: &str) -> Result<u64, crate::error::Fault> {
     let mut total = 0;
     for child in snap.list(dir)?.unwrap_or_default() {
+        if child.name.starts_with('.') {
+            continue;
+        }
         match child.node.kind {
             crate::repo::NodeKind::File => total += 1,
             crate::repo::NodeKind::Dir => {

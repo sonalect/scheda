@@ -22,12 +22,14 @@ message IndexState {
   // a rebuild runs). Equal tokens are the same state; the token means
   // nothing else.
   string version = 1;
-  // The Documents the Index has yet to apply to reach the stored state of
-  // the Vault, while a round or a rebuild runs: the Documents of the files
-  // that changed since `version`, and every Document of a collection whose
-  // declaration changed. `0` when the Index is where this handle last found
-  // the Vault; unset when they could not be counted (`last_error` then says
-  // why).
+  // The files the Index has yet to read to reach the stored state of the
+  // Vault, while a round or a rebuild runs: the files of declared
+  // collections that changed since `version`, and every file of a
+  // collection whose declaration changed. It counts files, not Documents:
+  // a journal segment is one file however many lines it holds, so that
+  // the count needs no read of the segments. `0` when the Index is where
+  // this handle last found the Vault; unset when the files could not be
+  // counted (`last_error` then says why).
   uint64 pending = 2;
   // This handle's indexer is the one indexing now. One indexer of all
   // those open on a Vault indexes at a time; the others look again later

@@ -2554,8 +2554,8 @@ impl ::serde::Serialize for IndexSchemaOwnedView {
     }
 }
 /// The values of the columns for one Document. A column left out has no
-/// value; `IndexValue.null` is a stored null. Empty: the Document is left
-/// out of the Index.
+/// value; `IndexValue.null` is a stored null. Empty: the Document is
+/// indexed by identity only.
 #[derive(Clone, Debug, Default)]
 pub struct IndexDocView<'a> {
     /// Field 1: `values` (map)

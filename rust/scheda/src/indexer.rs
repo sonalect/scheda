@@ -35,6 +35,9 @@ use crate::collection;
 use crate::error::{Context, Error, Fault, io, report};
 use crate::idmap::JournalMaps;
 use crate::index::{Counts, Index, Round, Side, State};
+#[cfg(feature = "find")]
+use crate::lexical::Lexical;
+use crate::ports::ProjectorPort;
 use crate::repo::{Repo, Repos};
 
 /// The name of the thread, which a test counts.
@@ -184,7 +187,9 @@ impl Indexer {
     }
 
     /// Starts the thread for the Vault at `vault`, whose repositories
-    /// `repos` reads. It looks at `HEAD` every `poll`.
+    /// `repos` reads, with the Projector of the handle if it has one (a
+    /// build without `find` has none to use). It looks at `HEAD` every
+    /// `poll`.
     ///
     /// # Errors
     ///
@@ -193,15 +198,22 @@ impl Indexer {
         &self,
         vault: &Path,
         repos: Arc<Repos>,
+        projector: Option<Arc<ProjectorPort>>,
         poll: Duration,
     ) -> Result<(), Error> {
+        #[cfg(not(feature = "find"))]
+        let _ = projector;
         let worker = Worker {
             shared: Arc::clone(&self.shared),
             repos,
             #[cfg(test)]
             vault: vault.to_path_buf(),
             index: Index::new(vault),
-            sides: vec![Box::new(JournalMaps)],
+            sides: vec![
+                Box::new(JournalMaps),
+                #[cfg(feature = "find")]
+                Box::new(Lexical::new(projector)),
+            ],
             rebuilding: false,
         };
         let handle = Builder::new()

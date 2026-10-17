@@ -121,14 +121,15 @@ enum RerankerErrorCode {
 // Says what of a Document the Index holds: its columns, and their values.
 // Scheda does not know what a Document holds; the Projector does. Without
 // one, the Index holds identity only: a query on `id` works, a search has
-// nothing to rank.
+// nothing to rank. The same holds for a collection with no columns and for
+// a Document with no values.
 //
-// Fails with the codes of `ProjectorErrorCode`. A failure, or an empty
-// `IndexDoc`, leaves that Document out of the Index; its file stays.
+// Fails with the codes of `ProjectorErrorCode`. A failure leaves that
+// Document out of the Index; its file stays.
 service Projector {
-  // The columns of one collection. None: the collection is left out of
-  // the Index. Changing the columns of a collection makes its Index stale
-  // until `Reindex`.
+  // The columns of one collection. None: its Documents are indexed by
+  // identity only. Changing the columns of a collection makes the Index
+  // stale until `Reindex`.
   rpc Columns(CollectionKey) returns (IndexSchema);
 
   // The values of the columns for one Document.
@@ -197,8 +198,8 @@ message IndexSchema {
 }
 
 // The values of the columns for one Document. A column left out has no
-// value; `IndexValue.null` is a stored null. Empty: the Document is left
-// out of the Index.
+// value; `IndexValue.null` is a stored null. Empty: the Document is
+// indexed by identity only.
 message IndexDoc {
   map<string, IndexValue> values = 1;
 }

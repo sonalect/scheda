@@ -228,6 +228,12 @@ over what is already there.
   existence is the file (D6).
 - The Projector stays single calls: a projection is work on one Document
   with nothing to gather.
+- **Without values, identity only.** A handle without a Projector, a
+  collection with no columns, and a Document the Projector gives no
+  values for are all in the Index by identity (`collection`, `id`, and
+  the listing order), so a query on `id` works. Only a Projector failure
+  leaves a Document out (its file stays); a retryable one fails the round
+  instead, which is tried again.
 - `Describe` is read once when an embedder is installed and checked against
   its protovalidate rules. A descriptor that breaks them fails `open` or
   `set_embedder` with `INVALID_ARGUMENT`.
@@ -1392,6 +1398,9 @@ D3, D4, D5, D10, D18.
       sides together, the journal `id` maps written by the indexer only,
       one Index with no generations: a rebuild is a round from an empty
       Index, and meanwhile queries and searches are `INDEX_REBUILDING`.
+      (The round, the lock, the wake, the journal `id` maps, the rebuild,
+      and the lexical side with its reader are built; the vector side is
+      P5c.)
 - [x] `IndexState` with one opaque version, one count, and one role
       (D23), and the rebuild's progress and result; `Reindex` starts a
       rebuild; `GetIndexStatus` and `WatchIndexStatus` per D18.

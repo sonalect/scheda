@@ -13,12 +13,14 @@ pub struct IndexStateView<'a> {
     ///
     /// Field 1: `version`
     pub version: ::core::option::Option<&'a str>,
-    /// The Documents the Index has yet to apply to reach the stored state of
-    /// the Vault, while a round or a rebuild runs: the Documents of the files
-    /// that changed since `version`, and every Document of a collection whose
-    /// declaration changed. `0` when the Index is where this handle last found
-    /// the Vault; unset when they could not be counted (`last_error` then says
-    /// why).
+    /// The files the Index has yet to read to reach the stored state of the
+    /// Vault, while a round or a rebuild runs: the files of declared
+    /// collections that changed since `version`, and every file of a
+    /// collection whose declaration changed. It counts files, not Documents:
+    /// a journal segment is one file however many lines it holds, so that
+    /// the count needs no read of the segments. `0` when the Index is where
+    /// this handle last found the Vault; unset when the files could not be
+    /// counted (`last_error` then says why).
     ///
     /// Field 2: `pending`
     pub pending: ::core::option::Option<u64>,
@@ -419,12 +421,14 @@ impl IndexStateOwnedView {
     pub fn version(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().version
     }
-    /// The Documents the Index has yet to apply to reach the stored state of
-    /// the Vault, while a round or a rebuild runs: the Documents of the files
-    /// that changed since `version`, and every Document of a collection whose
-    /// declaration changed. `0` when the Index is where this handle last found
-    /// the Vault; unset when they could not be counted (`last_error` then says
-    /// why).
+    /// The files the Index has yet to read to reach the stored state of the
+    /// Vault, while a round or a rebuild runs: the files of declared
+    /// collections that changed since `version`, and every file of a
+    /// collection whose declaration changed. It counts files, not Documents:
+    /// a journal segment is one file however many lines it holds, so that
+    /// the count needs no read of the segments. `0` when the Index is where
+    /// this handle last found the Vault; unset when the files could not be
+    /// counted (`last_error` then says why).
     ///
     /// Field 2: `pending`
     #[must_use]

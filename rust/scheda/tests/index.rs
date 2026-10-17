@@ -170,7 +170,7 @@ fn a_write_is_indexed_and_the_map_lists_its_line() {
     assert_eq!(mapped(&path), ["one", "two"]);
     assert_eq!(
         std::fs::read_to_string(path.join(".scheda/index/format")).unwrap(),
-        "1\n"
+        "2\n"
     );
     assert_eq!(commits(&path), commits_before, "indexing commits nothing");
     probe::assert_settled(&path, &[]);
@@ -426,7 +426,7 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
         });
         assert_eq!(
             std::fs::read_to_string(index.join("format")).unwrap(),
-            "1\n"
+            "2\n"
         );
         assert_eq!(mapped(&path), ["one"], "{damage}");
         reopened.close().unwrap();

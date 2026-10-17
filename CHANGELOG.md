@@ -138,6 +138,14 @@ changes; they grow with each part of the move.
   `WatchIndexStatus` streams it, the state now first, replacing
   `wait_indexed`. A journal line is found at once after its write, before
   the indexer has seen it.
+- The lexical Index (`find`) is built by the indexer from the Projector's
+  columns, never from an encrypted collection. A Document the Projector
+  gives no values, or a collection without columns, is indexed by its
+  identity, so a query by `id` still finds it; only a Projector failure
+  leaves a Document out. Columns that change make the Index
+  `INDEX_STALE` until `Reindex`; an Index without a commit (none built
+  yet, or a rebuild running) is `INDEX_REBUILDING`; a damaged one is
+  `INDEX_BROKEN`. `IndexState.pending` counts files, not Documents.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

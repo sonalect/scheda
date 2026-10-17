@@ -20,6 +20,8 @@ use crate::fs::restrict_dir;
 use crate::idmap::IdMaps;
 use crate::index::Index;
 use crate::indexer::Indexer;
+#[cfg(feature = "find")]
+use crate::lexical;
 use crate::ports::{Installed, Port, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
 use crate::{git, marker, stored, writer};
@@ -67,6 +69,9 @@ pub struct Vault {
     indexer: Indexer,
     /// The id maps of the journals, as readers use them.
     id_maps: IdMaps,
+    /// The lexical index, as queries read it.
+    #[cfg(feature = "find")]
+    lexical: lexical::Reader,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -176,7 +181,12 @@ impl Vault {
         ));
         vault
             .indexer
-            .start(&vault.path, Arc::clone(&vault.repos), poll)
+            .start(
+                &vault.path,
+                Arc::clone(&vault.repos),
+                vault.ports.projector().cloned(),
+                poll,
+            )
             .context("Vault::open: start the indexer")?;
         Ok(vault)
     }
@@ -317,6 +327,13 @@ impl Vault {
     /// The id maps of the journals.
     pub(crate) fn id_maps(&self) -> &IdMaps {
         &self.id_maps
+    }
+
+    /// The reader of the lexical index.
+    #[cfg(feature = "find")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "the queries use it"))]
+    pub(crate) fn lexical(&self) -> &lexical::Reader {
+        &self.lexical
     }
 
     /// The Index of the Vault on disk.
@@ -689,6 +706,8 @@ fn finish(
     let writer = writer::load_or_create(&canonical, options.writer.as_deref())?;
     let indexer = Indexer::new(committer.signal());
     let id_maps = IdMaps::new(Index::new(&canonical));
+    #[cfg(feature = "find")]
+    let lexical = lexical::Reader::new(Index::new(&canonical));
     Ok(Vault {
         path: canonical,
         options,
@@ -703,6 +722,8 @@ fn finish(
         ports: Installed::default(),
         indexer,
         id_maps,
+        #[cfg(feature = "find")]
+        lexical,
     })
 }
 

@@ -571,7 +571,7 @@ pub(crate) struct ProjectorPort {
 
 impl ProjectorPort {
     /// The columns of `collection`, or `None` when the projector declares
-    /// none: the collection is left out of the Index.
+    /// none: its Documents are indexed by identity only.
     ///
     /// # Errors
     ///
@@ -590,7 +590,7 @@ impl ProjectorPort {
     }
 
     /// The values of the columns for one Document, or `None` when the
-    /// projector gives none: the Document is left out of the Index. `raw` is
+    /// projector gives none: the Document is indexed by identity only. `raw` is
     /// moved into the call.
     ///
     /// # Errors

@@ -25,6 +25,8 @@ mod index_calls;
 mod indexer;
 mod isolated;
 mod journal;
+#[cfg(feature = "find")]
+mod lexical;
 mod marker;
 mod mirror;
 mod ports;
