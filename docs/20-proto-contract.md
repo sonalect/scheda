@@ -1020,13 +1020,24 @@ owner, 17 October 2026.*
   from commits. Every Index file is written whole (a temporary file, then
   a rename). The lock is held for one round, so the indexer of any
   process can take the next one, and one that dies leaves nothing behind.
-- **Both sides move together.** A side the handle cannot fill is told, not
-  waited for: without an embedder a round indexes the lexical side and
-  records that the Documents have no vectors (`SearchSummary` says so).
-  An embedder that fails fails the round, which is tried again later;
-  the vectors made before the failure are kept for it (D4). So a model
-  that does not answer holds the lexical side back too: the price of one
-  commit for the whole Index.
+- **Both sides move together.** An embedder that fails fails the round,
+  which is tried again later; the vectors made before the failure are
+  kept for it (D4). So a model that does not answer holds the lexical
+  side back too: the price of one commit for the whole Index.
+- **Who indexes.** *Settled with the owner, 17 October 2026.* Handles of
+  one Vault may hold different ports (a service with a Projector and an
+  embedder, command-line tools with none). A handle takes a round only
+  when it has every port the Index needs: with `find`, a Projector; with
+  `search`, when a column of a collection is `vector`, an embedder whose
+  model is the Index's (any model while the Index has none). A handle
+  without them never takes a round: it reads, and its `role` is false;
+  its `Reindex` is `FAILED_PRECONDITION`, naming the port it lacks.
+  Columns other than the Index's make it `INDEX_STALE`, and an embedder
+  of another model sets `model_mismatch` (its search's vector leg says so,
+  D19), until a `Reindex` by a handle with the new ports rebuilds the
+  Index with them. A Vault opened only by handles without ports is not
+  indexed: its queries are `INDEX_REBUILDING`, `GetDocuments` lists
+  without the Index, and a journal line is found by a scan.
 - **The journal `id` maps** are part of the Index, written by the indexer
   only. `GetDocument` does not depend on them: a line not in the map is
   looked for in the segments changed since the map's commit.
@@ -1395,7 +1406,8 @@ D3, D4, D5, D10, D18.
       Documents by value.
 - [ ] The indexer of D23: one commit for the whole Index, the round under
       `index.lock`, the wake by a write and by a look at `HEAD`, both
-      sides together, the journal `id` maps written by the indexer only,
+      sides together, who indexes (the ports a handle needs for a
+      round), the journal `id` maps written by the indexer only,
       one Index with no generations: a rebuild is a round from an empty
       Index, and meanwhile queries and searches are `INDEX_REBUILDING`.
       (The round, the lock, the wake, the journal `id` maps, the rebuild,
