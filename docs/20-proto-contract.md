@@ -393,6 +393,28 @@ How it works inside (not visible in the API). *Settled with the owner,
   editable without Scheda) and are never discarded. A writer whose process
   died before its commit wrote nothing, and its call did not return
   `Ok`.
+- **Details decided for P4** (17 October 2026; the owner may revisit):
+  1. *The commit costs a fixed number of git processes, whatever the
+     size of the write:* the new blobs hashed by one `git hash-object -w
+     --stdin-paths`, one temporary index (`GIT_INDEX_FILE`) read from
+     `HEAD` and changed by one `git update-index --index-info`, then
+     `write-tree`, `commit-tree`, and `update-ref HEAD <new> <old>`.
+  2. *The message:* its first line is the first line of the first note
+     (a collection write: Scheda's own text, `create collection notes
+     (standard)`); each Document write adds one trailer `Scheda-Note:`
+     whose value is the Protobuf JSON of its key and note on one line, so
+     the history of a Document shows its own note even when a batch wrote
+     several.
+  3. *`Document.revision`* is the SHA-256, in hex, of the bytes of the
+     stored file (the sealed bytes of an encrypted collection); a history
+     entry's revision is the same of that version's bytes.
+  4. *Isolated collections:* their Documents live in the nested
+     repository under `.isolated/`, a repository of its own, and two
+     repositories cannot take one atomic step. So one batch writes the
+     main tree or the isolated collections, never both:
+     `INVALID_ARGUMENT`.
+  5. *Journal `id` maps* come with the Index (P5); until then a journal
+     line is found by a scan of its segments.
 - **The mirror.** `Pull` and `Sync` move `HEAD` and the work tree, so
   they take the same lock. `Push` sends what is committed and takes no
   lock. With `auto_sync`, a write pushes after it lets the lock go; a
