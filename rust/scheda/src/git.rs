@@ -276,6 +276,30 @@ pub(crate) fn config_get(dir: Option<&Path>, key: &str) -> Result<Option<String>
     }
 }
 
+/// The boolean `key` of the git configuration seen from the repository at
+/// `dir`, as git itself reads it (`true`, `yes`, `on`, `1`, …), or `None`
+/// when it is not set. A value git cannot read as a boolean is
+/// `REPLICATION`.
+pub(crate) fn config_bool(dir: &Path, key: &str) -> Result<Option<bool>, Error> {
+    let out = git()
+        .current_dir(dir)
+        .arg("config")
+        .arg("--type=bool")
+        .arg("--get")
+        .arg(key)
+        .spawn()
+        .context("config_bool: run git")?;
+    if out.status.success() {
+        Ok(Some(
+            out.stdout_trim().context("config_bool: read value")? == "true",
+        ))
+    } else if out.status.code() == Some(1) {
+        Ok(None)
+    } else {
+        Err(out.failure()).context("config_bool: read configuration")
+    }
+}
+
 /// Sets `core.longpaths` in the repository at `dir`, which lets Windows
 /// stage a 255-byte filename component when the absolute path is longer
 /// than MAX_PATH. Unix ignores the key.
