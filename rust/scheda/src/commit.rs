@@ -476,10 +476,9 @@ impl Drop for TmpFiles {
 }
 
 /// Builds the commit object of `changes` on top of `old`, and returns its
-/// id, or `None` when the tree does not change. Five to seven git
-/// processes, whatever the size of the write: `hash-object`, `read-tree`,
-/// `update-index`, `write-tree`, `rev-parse` of the old tree, `config` for
-/// `commit.gpgSign`, `commit-tree`.
+/// id, or `None` when the tree does not change. Four to six git processes,
+/// whatever the size of the write: `hash-object`, `read-tree`,
+/// `update-index`, `write-tree`, `rev-parse` of the old tree, `commit-tree`.
 fn build_commit(
     vault: &Path,
     root: &Path,
@@ -566,14 +565,6 @@ fn build_commit(
         .env("GIT_COMMITTER_EMAIL", &identity.email)
         .arg("commit-tree")
         .arg(&tree);
-    // `commit-tree` is plumbing: unlike `git commit` it does not read
-    // `commit.gpgSign`, so a repository that signs its commits is asked
-    // here, at every write. With `-S`, git itself picks the program, the
-    // format (OpenPGP, SSH, X.509), and the key from its configuration; a
-    // signature that fails fails the write before `HEAD` moves.
-    if git::config_bool(root, "commit.gpgsign").context("read commit.gpgSign")? == Some(true) {
-        commit = commit.arg("-S");
-    }
     if let Some(old) = old {
         commit = commit.arg("-p").arg(old);
     }
@@ -1078,47 +1069,6 @@ mod tests {
     fn standard(name: &str) -> Collection {
         serde_json::from_value(serde_json::json!({"name": name, "schema": {"standard": {}}}))
             .unwrap()
-    }
-
-    /// A signing program in the shape git expects of `gpg`: it reads the
-    /// payload, reports `SIG_CREATED` on the status descriptor (stderr), and
-    /// prints the signature.
-    #[cfg(unix)]
-    fn fake_signer(dir: &std::path::Path) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.with_extension("signer.sh");
-        std::fs::write(
-            &path,
-            "#!/bin/sh\ncat >/dev/null\nprintf '\\n[GNUPG:] SIG_CREATED D 1 8 00 0 0\\n' >&2\nprintf -- '-----BEGIN PGP SIGNATURE-----\\n\\nfake\\n-----END PGP SIGNATURE-----\\n'\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn a_repository_that_signs_its_commits_gets_signed_writes() {
-        let scratch = Scratch::new("sign");
-        let vault = scratch.open();
-        let signer = fake_signer(&scratch.0);
-        scratch.out(&["config", "commit.gpgsign", "true"]);
-        scratch.out(&["config", "gpg.program", signer.to_str().unwrap()]);
-        vault.create_collection(standard("notes")).unwrap();
-        let commit = scratch.out(&["cat-file", "commit", "HEAD"]);
-        assert!(
-            commit.contains("gpgsig -----BEGIN PGP SIGNATURE-----"),
-            "{commit}"
-        );
-        // A signature that fails fails the write, and nothing is stored.
-        scratch.out(&["config", "gpg.program", "false"]);
-        let before = scratch.out(&["rev-parse", "HEAD"]);
-        let error = vault.create_collection(standard("log")).unwrap_err();
-        assert!(error.is(VaultErrorCode::Replication), "{error}");
-        assert_eq!(scratch.out(&["rev-parse", "HEAD"]), before);
-        assert!(!scratch.0.join("log").exists());
-        assert!(scratch.list().is_empty());
-        let _ = std::fs::remove_file(signer);
     }
 
     #[test]
