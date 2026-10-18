@@ -24,6 +24,8 @@ use crate::indexer::Indexer;
 use crate::lexical;
 use crate::ports::{Installed, Port, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
+#[cfg(feature = "search")]
+use crate::vector;
 use crate::{git, marker, stored, writer};
 
 /// The message of the commit that makes a work tree a Vault.
@@ -64,7 +66,7 @@ pub struct Vault {
     /// later pull or push succeeds.
     sync_failure: Mutex<Option<Error>>,
     /// The ports the handle was opened with, and the embedder it has now.
-    ports: Installed,
+    ports: Arc<Installed>,
     /// The thread that keeps the Index at the state of `HEAD`.
     indexer: Indexer,
     /// The id maps of the journals, as readers use them.
@@ -72,6 +74,9 @@ pub struct Vault {
     /// The lexical index, as queries read it.
     #[cfg(feature = "find")]
     lexical: lexical::Reader,
+    /// The vector index, as searches read it.
+    #[cfg(feature = "search")]
+    vector: vector::Reader,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -175,7 +180,7 @@ impl Vault {
     ) -> Result<Vault, Error> {
         let ports = Installed::new(ports).context("Vault::open: install the ports")?;
         let mut vault = open(path.as_ref(), options)?;
-        vault.ports = ports;
+        vault.ports = Arc::new(ports);
         let poll = Duration::from_millis(u64::from(
             vault.options.index_poll_ms.unwrap_or(DEFAULT_POLL_MS),
         ));
@@ -184,14 +189,16 @@ impl Vault {
             .start(
                 &vault.path,
                 Arc::clone(&vault.repos),
-                vault.ports.projector().cloned(),
+                Arc::clone(&vault.ports),
                 poll,
             )
             .context("Vault::open: start the indexer")?;
         Ok(vault)
     }
 
-    /// Replaces the embedder of the handle; `None` removes it.
+    /// Replaces the embedder of the handle; `None` removes it. A handle that
+    /// had none may start to index, and one whose model is not the Index's
+    /// stops.
     ///
     /// The new embedder is installed as at [`Vault::open`]: its descriptor
     /// is read once and validated, and nothing asks it to describe itself
@@ -207,7 +214,11 @@ impl Vault {
         &self,
         embedder: Option<Port<dyn EmbedderSync, DynEmbedderAsync>>,
     ) -> Result<(), Error> {
-        self.ports.set_embedder(embedder)
+        self.ports.set_embedder(embedder)?;
+        // A handle that had no embedder may index now, and one with another
+        // model may not.
+        self.indexer.wake();
+        Ok(())
     }
 
     /// The canonical path of the work tree.
@@ -334,6 +345,13 @@ impl Vault {
     #[cfg_attr(not(test), expect(dead_code, reason = "the queries use it"))]
     pub(crate) fn lexical(&self) -> &lexical::Reader {
         &self.lexical
+    }
+
+    /// The reader of the vector index.
+    #[cfg(feature = "search")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
+    pub(crate) fn vectors(&self) -> &vector::Reader {
+        &self.vector
     }
 
     /// The Index of the Vault on disk.
@@ -708,6 +726,8 @@ fn finish(
     let id_maps = IdMaps::new(Index::new(&canonical));
     #[cfg(feature = "find")]
     let lexical = lexical::Reader::new(Index::new(&canonical));
+    #[cfg(feature = "search")]
+    let vector = vector::Reader::new(Index::new(&canonical));
     Ok(Vault {
         path: canonical,
         options,
@@ -719,11 +739,13 @@ fn finish(
         })),
         writer,
         sync_failure: Mutex::new(None),
-        ports: Installed::default(),
+        ports: Arc::new(Installed::default()),
         indexer,
         id_maps,
         #[cfg(feature = "find")]
         lexical,
+        #[cfg(feature = "search")]
+        vector,
     })
 }
 

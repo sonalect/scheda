@@ -33,6 +33,10 @@ mod ports;
 mod repo;
 mod stored;
 mod vault;
+#[cfg(feature = "search")]
+mod vector;
+#[cfg(feature = "find")]
+mod who;
 mod writer;
 
 #[cfg(feature = "encrypt")]

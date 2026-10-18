@@ -517,7 +517,7 @@ mod tests {
     use super::{IdMap, check_journal_id_maps, in_collection};
     use crate::Vault;
     use crate::index::{Index, State};
-    use crate::ports::Ports;
+    use crate::ports::indexing_ports;
     use crate::repo::{Repo, Repos, fixture};
 
     struct Scratch(PathBuf);
@@ -537,7 +537,7 @@ mod tests {
             let vault = Vault::open(
                 &self.0,
                 OpenOptions::default().with_index_poll_ms(10),
-                Ports::default(),
+                indexing_ports(),
             )
             .unwrap();
             let collection: Collection = serde_json::from_value(serde_json::json!({
@@ -686,7 +686,7 @@ mod tests {
         let vault = Vault::open(
             &scratch.0,
             OpenOptions::default().with_index_poll_ms(10),
-            Ports::default(),
+            indexing_ports(),
         )
         .unwrap();
         let path = scratch.0.canonicalize().unwrap();

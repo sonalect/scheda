@@ -21,6 +21,11 @@ use scheda::v1::{
     Collection, Document, DocumentCreation, DocumentKey, MirrorSetting, OpenOptions,
     VaultErrorCode as Code,
 };
+#[cfg(feature = "find")]
+use scheda::{
+    Error, Port,
+    v1::{CollectionKey, IndexDoc, IndexSchema, ProjectorSync, RawDocument},
+};
 use scheda::{Ports, Vault};
 
 use common::{Scratch, git, snapshot, vault as built_vault, write};
@@ -36,11 +41,42 @@ fn standard(name: &str) -> Collection {
     serde_json::from_value(serde_json::json!({"name": name, "schema": {"standard": {}}})).unwrap()
 }
 
+/// A Projector that declares no columns: every Document is indexed by its
+/// identity. A handle needs a Projector to index in a build with `find`.
+#[cfg(feature = "find")]
+struct Bare;
+
+#[cfg(feature = "find")]
+impl ProjectorSync for Bare {
+    fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
+        Ok(IndexSchema::default())
+    }
+
+    fn project(&self, _document: RawDocument) -> Result<IndexDoc, Error> {
+        Ok(IndexDoc::default())
+    }
+}
+
+/// The ports of a handle that indexes.
+fn indexing() -> Ports {
+    #[cfg(feature = "find")]
+    {
+        Ports {
+            projector: Some(Port::Sync(std::sync::Arc::new(Bare))),
+            ..Ports::default()
+        }
+    }
+    #[cfg(not(feature = "find"))]
+    {
+        Ports::default()
+    }
+}
+
 fn open(path: &Path) -> Vault {
     Vault::open(
         path,
         OpenOptions::default().with_index_poll_ms(10),
-        Ports::default(),
+        indexing(),
     )
     .unwrap()
 }
@@ -338,7 +374,7 @@ fn a_pull_is_indexed() {
         OpenOptions::default()
             .with_mirror(&url)
             .with_index_poll_ms(10),
-        Ports::default(),
+        indexing(),
     )
     .unwrap();
     wait_indexed(&path);
@@ -419,10 +455,12 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
         std::fs::write(index.join("lexical-of-the-past/segment"), "x").unwrap();
         std::fs::remove_file(map_file(&path)).unwrap();
         let reopened = open(&path);
+        // The commit is looked at last: the rebuild removes it before the
+        // rest, so one seen after the rest is gone is the rebuild's own.
         wait_until(damage, || {
-            is_indexed(&path)
-                && !index.join("lexical-of-the-past").exists()
+            !index.join("lexical-of-the-past").exists()
                 && map_file(&path).exists()
+                && is_indexed(&path)
         });
         assert_eq!(
             std::fs::read_to_string(index.join("format")).unwrap(),
@@ -557,10 +595,20 @@ fn handles_of_three_processes_take_turns_and_end_at_one_version() {
     wait_indexed(&path);
     #[cfg(feature = "find")]
     {
+        // A child may have taken the last round: the status of this handle
+        // follows at its next look at `HEAD`.
         let head = git_out(&path, &["rev-parse", "HEAD"]);
-        let state = vault.get_index_status(Empty::default()).unwrap();
-        assert_eq!(state.version.as_deref(), Some(head.as_str()));
-        assert!(!state.last_error.is_set());
+        wait_until("the status", || {
+            let state = vault.get_index_status(Empty::default()).unwrap();
+            state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
+        });
+        assert!(
+            !vault
+                .get_index_status(Empty::default())
+                .unwrap()
+                .last_error
+                .is_set()
+        );
     }
     let ids = mapped(&path);
     assert_eq!(ids.len(), 3 * PER_HANDLE, "{ids:?}");
@@ -593,15 +641,19 @@ fn close_and_drop_end_the_indexer_thread() {
         wait_until("open to start the thread", || indexer_threads() == 1);
         let two = open(&path.join("two"));
         wait_until("a thread for each handle", || indexer_threads() == 2);
+        // The kernel lists a thread that has been joined for a moment longer,
+        // so the count is waited for, not read once.
         one.close().unwrap();
-        assert_eq!(indexer_threads(), 1, "close ends it and waits for it");
+        wait_until("close to end its thread", || indexer_threads() == 1);
         drop(two);
-        assert_eq!(indexer_threads(), 0, "so does a drop");
+        wait_until("a drop to end its thread", || indexer_threads() == 0);
         // Closed while a round is at work.
         let three = open(&path.join("three"));
         three.create_collection(journal("log")).unwrap();
         three.close().unwrap();
-        assert_eq!(indexer_threads(), 0);
+        wait_until("close to end the thread of a round at work", || {
+            indexer_threads() == 0
+        });
         return;
     }
     let scratch = Scratch::new("threads");
@@ -626,4 +678,97 @@ fn a_standard_collection_needs_no_map() {
     wait_indexed(&path);
     assert!(!path.join(".scheda/index/journal/notes").exists());
     assert!(map_file(&path).exists());
+}
+
+#[cfg(feature = "find")]
+const BARE_CHILD: &str = "SCHEDA_TEST_INDEX_BARE";
+
+/// The role of a child process without ports: write lines into the Vault of
+/// the parent, and see the Index reach `HEAD` without taking a round.
+#[cfg(feature = "find")]
+fn bare_child(path: &Path) {
+    let vault = Vault::open(
+        path,
+        OpenOptions::default().with_index_poll_ms(10),
+        Ports::default(),
+    )
+    .unwrap();
+    for n in 0..PER_HANDLE {
+        line(&vault, &format!("c-{n}"));
+    }
+    wait_until("the status to follow the Index", || {
+        let head = git_out(path, &["rev-parse", "HEAD"]);
+        let state = vault.get_index_status(Empty::default()).unwrap();
+        state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
+    });
+    let state = vault.get_index_status(Empty::default()).unwrap();
+    assert_eq!(state.role, Some(false));
+    let error = vault.reindex(Empty::default()).unwrap_err();
+    assert!(error.is(Code::FailedPrecondition), "{error}");
+    vault.close().unwrap();
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn a_process_without_ports_leaves_the_indexing_to_the_one_with_them() {
+    if let Ok(path) = std::env::var(CHILD_VAULT)
+        && std::env::var(BARE_CHILD).is_ok()
+    {
+        bare_child(Path::new(&path));
+        return;
+    }
+    let scratch = Scratch::new("bare-process");
+    let (path, vault) = built(&scratch, "vault");
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "a_process_without_ports_leaves_the_indexing_to_the_one_with_them",
+            "--test-threads=1",
+        ])
+        .env(CHILD_VAULT, &path)
+        .env(BARE_CHILD, "1")
+        .spawn()
+        .unwrap();
+    for n in 0..PER_HANDLE {
+        line(&vault, &format!("p-{n}"));
+    }
+    let status = child.wait().unwrap();
+    assert!(status.success(), "{status:?}");
+    wait_indexed(&path);
+    let ids = mapped(&path);
+    assert_eq!(
+        ids.len(),
+        2 * PER_HANDLE,
+        "the handle with the ports indexed all: {ids:?}"
+    );
+    let head = git_out(&path, &["rev-parse", "HEAD"]);
+    wait_until("the status", || {
+        let state = vault.get_index_status(Empty::default()).unwrap();
+        state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
+    });
+}
+
+#[cfg(feature = "find")]
+#[test]
+fn a_vault_opened_only_without_ports_finds_its_lines_without_an_index() {
+    let scratch = Scratch::new("no-ports");
+    let path = scratch.join("vault");
+    let vault = Vault::open(
+        &path,
+        OpenOptions::default().with_index_poll_ms(10),
+        Ports::default(),
+    )
+    .unwrap();
+    vault.create_collection(journal("log")).unwrap();
+    line(&vault, "one");
+    assert!(found(&vault, "one"), "found by a scan of the segments");
+    // The role is known once the indexer has looked at `HEAD`.
+    wait_until("the first look", || {
+        vault.get_index_status(Empty::default()).unwrap().role == Some(false)
+    });
+    let state = vault.get_index_status(Empty::default()).unwrap();
+    assert!(state.version.is_none(), "nothing indexed it");
+    let error = vault.reindex(Empty::default()).unwrap_err();
+    assert!(error.is(Code::FailedPrecondition), "{error}");
+    vault.close().unwrap();
 }

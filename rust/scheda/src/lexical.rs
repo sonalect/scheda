@@ -18,6 +18,15 @@
 //! file stays, and the round goes on; a failure that is retryable fails the
 //! round instead, which is tried again.
 //!
+//! **The vector side.** The same walk projects the Documents of collections
+//! that have a `vector` column and, when the round collects them, offers the
+//! texts of those columns to the vector side, so a Document is projected
+//! once per round whichever sides are on. A collection `exclude_lexical_index`
+//! leaves out is still walked for them; its Documents enter no Tantivy
+//! index. When the vector side asks for offers, a round the lexical side
+//! already reached is done again over its own state (a replace is
+//! idempotent), because the projections are not kept.
+//!
 //! **One Tantivy document** has these fields:
 //!
 //! - `key` (`{collection}\0{id}`): replaces and deletes the document.
@@ -58,11 +67,13 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use scheda_api::v1::{
     ColumnKind, IndexDoc, IndexSchema, IndexValue, VaultErrorCode, index_value::Value,
 };
 use serde::{Deserialize, Serialize};
+use tantivy::directory::error::LockError;
 use tantivy::schema::{FAST, Field, STORED, STRING, Schema, TEXT};
 use tantivy::tokenizer::{PreTokenizedString, TextAnalyzer, Token};
 use tantivy::{IndexWriter, ReloadPolicy, Searcher, TantivyDocument, TantivyError, Term};
@@ -70,7 +81,9 @@ use tantivy::{IndexWriter, ReloadPolicy, Searcher, TantivyDocument, TantivyError
 use crate::collection::{Declaration, Kind};
 use crate::documents::{self, Walk};
 use crate::error::{self, Context, Error, Fault, OrFault, io};
-use crate::index::{Index, Round, Side, State};
+use crate::index::{Index, Round, Side, State, rebuilding};
+#[cfg(feature = "search")]
+use crate::index::{Offer, Piece};
 use crate::isolated;
 use crate::journal;
 use crate::ports::ProjectorPort;
@@ -397,6 +410,48 @@ fn add_tokens(
     true
 }
 
+/// The texts of the `vector` columns of a projected Document; `None` when it
+/// has none, which leaves it without a vector.
+#[cfg(feature = "search")]
+fn offer_of(
+    collection: &str,
+    id: &str,
+    file: &str,
+    columns: &[DumpColumn],
+    values: Option<&IndexDoc>,
+) -> Option<Offer> {
+    let values = values?;
+    let mut pieces = Vec::new();
+    for column in columns.iter().filter(|column| column.vector) {
+        let Some(value) = values.values.get(&column.name) else {
+            continue;
+        };
+        let mut at = 0u32;
+        each_text(value, |text| {
+            if !text.trim().is_empty() {
+                pieces.push(Piece {
+                    column: column.name.clone(),
+                    at,
+                    text: text.to_owned(),
+                });
+            }
+            at = at.saturating_add(1);
+        });
+    }
+    (!pieces.is_empty()).then(|| Offer {
+        collection: collection.to_owned(),
+        id: id.to_owned(),
+        file: file.to_owned(),
+        pieces,
+    })
+}
+
+/// Whether the lexical walk covers `decl`: its Documents enter the lexical
+/// index, or the vector side takes their vectors.
+fn walked(decl: &Declaration) -> bool {
+    decl.lexical_indexed() || (cfg!(feature = "search") && decl.vector_indexed())
+}
+
 /// What a Tantivy document is made of.
 struct Parts<'a> {
     collection: &'a str,
@@ -481,7 +536,7 @@ fn payload_of(index: &tantivy::Index) -> Result<Option<State>, Fault> {
 }
 
 /// The collections the stale file lists.
-fn read_stale(index: &Index) -> Result<BTreeSet<String>, Error> {
+pub(crate) fn read_stale(index: &Index) -> Result<BTreeSet<String>, Error> {
     match fs::read_to_string(index.stale_file()) {
         Ok(text) => Ok(text.lines().map(str::to_owned).collect()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(BTreeSet::new()),
@@ -490,7 +545,7 @@ fn read_stale(index: &Index) -> Result<BTreeSet<String>, Error> {
 }
 
 /// The columns file; `None` when there is none.
-fn read_dump(index: &Index) -> Result<Option<Dump>, Error> {
+pub(crate) fn read_dump(index: &Index) -> Result<Option<Dump>, Error> {
     match fs::read(index.columns_file()) {
         Ok(bytes) => Ok(Some(Dump::parse(&bytes)?)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -553,6 +608,14 @@ struct Work<'a> {
     projector: Option<&'a ProjectorPort>,
     read: u64,
     skipped: u64,
+    /// The collection being walked enters the lexical index.
+    lexical: bool,
+    /// The collection being walked is offered to the vector side.
+    #[cfg(feature = "search")]
+    vector: bool,
+    /// What was offered to the vector side so far.
+    #[cfg(feature = "search")]
+    offers: Vec<Offer>,
 }
 
 impl Work<'_> {
@@ -615,6 +678,15 @@ impl Work<'_> {
             }
             _ => None,
         };
+        #[cfg(feature = "search")]
+        if self.vector
+            && let Some(offer) = offer_of(collection, id, file, columns, values.as_ref())
+        {
+            self.offers.push(offer);
+        }
+        if !self.lexical {
+            return Ok(());
+        }
         let parts = Parts {
             collection,
             id,
@@ -753,10 +825,7 @@ impl Side for Lexical {
     fn apply(&mut self, round: &mut Round<'_>) -> Result<(), Error> {
         let index = round.index();
         let declarations = round.declarations();
-        let eligible: Vec<&Declaration> = declarations
-            .iter()
-            .filter(|decl| decl.lexical_indexed())
-            .collect();
+        let eligible: Vec<&Declaration> = declarations.iter().filter(|decl| walked(decl)).collect();
         let previous = read_dump(index).context("read the recorded columns")?;
         let (dump, stale) = self
             .columns_now(&eligible, previous.as_ref(), read_stale(index)?)
@@ -766,12 +835,20 @@ impl Side for Lexical {
         let fields = Fields::of(&tantivy.schema())?;
         let to = round.to();
         let reflected = payload_of(&tantivy)?;
-        let incremental = previous.is_some() && round.from().is_some() && reflected == round.from();
-        let reached = reflected == Some(to) && previous.is_some();
+        // A round the vector side wants offers from is done again over a
+        // lexical side that already reached it: the vector side failed or
+        // died after this one committed, and the projections it needs are
+        // not kept. The work is idempotent, so doing it twice is harmless.
+        #[cfg(feature = "search")]
+        let offering = round.collecting();
+        #[cfg(not(feature = "search"))]
+        let offering = false;
+        let incremental = previous.is_some()
+            && round.from().is_some()
+            && (reflected == round.from() || (offering && reflected == Some(to)));
+        let reached = reflected == Some(to) && previous.is_some() && !offering;
 
-        let writer = tantivy
-            .writer_with_num_threads(1, WRITER_HEAP)
-            .map_err(|err| write_fault(err, "open the writer of the lexical index"))?;
+        let writer = open_writer(&tantivy)?;
         let analyzer = tantivy
             .tokenizer_for_field(fields.tok)
             .map_err(|err| write_fault(err, "open the tokenizer of the lexical index"))?;
@@ -782,6 +859,11 @@ impl Side for Lexical {
             projector: self.projector.as_deref(),
             read: 0,
             skipped: 0,
+            lexical: true,
+            #[cfg(feature = "search")]
+            vector: false,
+            #[cfg(feature = "search")]
+            offers: Vec::new(),
         };
         if !reached {
             if !incremental {
@@ -809,6 +891,20 @@ impl Side for Lexical {
                     continue;
                 }
                 let columns = dump.columns(name).unwrap_or_default();
+                work.lexical = decl.lexical_indexed();
+                #[cfg(feature = "search")]
+                {
+                    work.vector = offering
+                        && decl.vector_indexed()
+                        && columns.iter().any(|column| column.vector);
+                }
+                #[cfg(feature = "search")]
+                let wanted = work.lexical || work.vector;
+                #[cfg(not(feature = "search"))]
+                let wanted = work.lexical;
+                if !wanted {
+                    continue;
+                }
                 let whole = !incremental || round.is_whole(name);
                 match decl.kind() {
                     Kind::Standard | Kind::Singleton => {
@@ -823,6 +919,8 @@ impl Side for Lexical {
             }
             work.flush(round)?;
         }
+        #[cfg(feature = "search")]
+        round.set_offers(std::mem::take(&mut work.offers));
         commit(work.writer, to)?;
         crate::fs::restrict_tree(&index.lexical_dir())?;
 
@@ -853,6 +951,38 @@ fn commit(mut writer: IndexWriter, to: State) -> Result<(), Error> {
         .wait_merging_threads()
         .map_err(|err| write_fault(err, "finish the merges of the lexical index"))?;
     Ok(())
+}
+
+/// How many times a round tries to take the lock of the Tantivy index.
+/// Only the indexer writes it, under `index.lock`, so the lock is busy only
+/// while a child process that a thread of this process forked (a `git`
+/// command) still holds the inherited descriptor and has not run `exec`.
+const WRITER_TRIES: u32 = 8;
+
+/// The writer of the Tantivy index, waiting out a lock a forked child still
+/// holds: 10 ms, doubled after each try, about 2.5 s in all.
+fn open_writer(tantivy: &tantivy::Index) -> Result<IndexWriter, Error> {
+    let mut delay = Duration::from_millis(10);
+    let mut tries = 1;
+    loop {
+        match tantivy.writer_with_num_threads(1, WRITER_HEAP) {
+            Ok(writer) => return Ok(writer),
+            Err(TantivyError::LockFailure(LockError::LockBusy, _)) if tries < WRITER_TRIES => {
+                std::thread::sleep(delay);
+                delay = delay.saturating_mul(2);
+                tries += 1;
+            }
+            Err(TantivyError::LockFailure(LockError::LockBusy, _)) => {
+                return Err(Fault::new(
+                    VaultErrorCode::Aborted,
+                    "the lock of the lexical index stays busy",
+                )
+                .with_retryable(true)
+                .into());
+            }
+            Err(err) => return Err(write_fault(err, "open the writer of the lexical index").into()),
+        }
+    }
 }
 
 /// Writes `bytes` whole to `path` of the Index unless it holds them.
@@ -937,10 +1067,6 @@ impl Reader {
         }
     }
 
-    fn rebuilding(what: &'static str) -> Error {
-        Fault::new(VaultErrorCode::IndexRebuilding, what).into()
-    }
-
     /// The lexical index at the state the Index reflects now. A snapshot
     /// obtained earlier keeps its own state.
     ///
@@ -953,21 +1079,7 @@ impl Reader {
     /// `INDEX_BROKEN` when the lexical index cannot be opened or read
     /// (`Reindex`).
     pub(crate) fn snapshot(&self) -> Result<Arc<Snapshot>, Error> {
-        if !self.index.has_format()? {
-            return Err(Self::rebuilding(
-                "the Index is not built in this format yet",
-            ));
-        }
-        let Some(committed) = self.index.read_commit()? else {
-            return Err(Self::rebuilding("the Index has no commit yet"));
-        };
-        if self.index.stale_file().is_file() {
-            return Err(Fault::new(
-                VaultErrorCode::IndexStale,
-                "the columns of the Projector changed since the Index was built; run Reindex",
-            )
-            .into());
-        }
+        let committed = self.index.readable()?;
         let mut cache = error::mutex(&self.cache, "read the lexical snapshot")?;
         if let Some(snapshot) = cache.as_ref()
             && snapshot.committed == committed
@@ -986,7 +1098,7 @@ impl Reader {
                 if self.index.read_commit()? == Some(committed) && self.index.has_format()? {
                     Err(fault.into())
                 } else {
-                    Err(Self::rebuilding("the Index is being rebuilt"))
+                    Err(rebuilding("the Index is being rebuilt"))
                 }
             }
         }
@@ -1266,17 +1378,13 @@ mod tests {
 
     impl Fixture {
         fn new(name: &str, collections: &[serde_json::Value]) -> Fixture {
-            Fixture::open(name, collections, true)
+            Fixture::open(name, collections)
         }
 
-        fn open(name: &str, collections: &[serde_json::Value], projector: bool) -> Fixture {
+        fn open(name: &str, collections: &[serde_json::Value]) -> Fixture {
             let scratch = Scratch::new(name);
             let control = Control::new();
-            let ports = if projector {
-                ports(&control)
-            } else {
-                Ports::default()
-            };
+            let ports = ports(&control);
             let vault = Vault::open(
                 scratch.0.join("vault"),
                 options(serde_json::json!({})),
@@ -1574,8 +1682,13 @@ mod tests {
 
     #[test]
     fn no_projector_or_an_empty_index_doc_stores_identity_only() {
-        // No projector.
-        let fx = Fixture::open("identity", &[standard("notes"), journal("log")], false);
+        // A journal and a standard collection with no columns: identity only.
+        let fx = Fixture::open("identity", &[]);
+        fx.control.columns.lock().unwrap().clear();
+        for value in [standard("notes"), journal("log")] {
+            fx.vault.create_collection(collection(value)).unwrap();
+        }
+        fx.built();
         fx.upsert("notes", "alpha", r#"{"title":"findable"}"#);
         fx.append("log", "line", r#"{"title":"findable"}"#);
         fx.built();
@@ -1595,7 +1708,7 @@ mod tests {
 
         // A collection with no columns is indexed by identity too, and the
         // projector is not asked for its Documents.
-        let fx = Fixture::open("no-columns", &[], true);
+        let fx = Fixture::open("no-columns", &[]);
         fx.control.columns.lock().unwrap().clear();
         fx.vault
             .create_collection(collection(standard("notes")))

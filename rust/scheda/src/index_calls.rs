@@ -34,9 +34,15 @@ impl crate::Vault {
     /// `reindex` is `ABORTED`. Until the rebuild ends the Index has no
     /// `version`, and a journal line is found by a scan.
     ///
+    /// A handle rebuilds the Index only when it has every port the Index
+    /// needs: a Projector, and an embedder when a collection has a `vector`
+    /// column. A rebuild from an embedder of another model than the vectors
+    /// of the Index makes the Index again with that model.
+    ///
     /// # Errors
     ///
-    /// `ABORTED` as above.
+    /// `FAILED_PRECONDITION` naming the port this handle lacks; `ABORTED` as
+    /// above.
     pub fn reindex(&self, _empty: Empty) -> Result<Empty, Error> {
         self.indexer().reindex().context("reindex")?;
         Ok(Empty::default())

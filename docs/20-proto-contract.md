@@ -1,12 +1,13 @@
 # 20. The proto contract
 
-Document 20 of the Scheda package. Version 0.6, 17 October 2026.
+Document 20 of the Scheda package. Version 0.7, 18 October 2026.
 
 Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
-layer, without transitional code (§4). P1, P3, and P4 are done; P2 is done but for `ErrorReport`; P5 is next.
+layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
+done but for `ErrorReport`; P6 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -242,7 +243,11 @@ over what is already there.
   input will never succeed. Scheda keys its handling on
   `Error::retryable()`, as it keys on `repeat` today: a retryable failure
   makes the indexer wait and repeat the round, any other keeps today's
-  non-retryable handling.
+  non-retryable handling. For the embedder: the vectors that came back
+  before any failure are kept for the next try (D23); a `REFUSED` text is
+  remembered, its round fails, and the next try leaves the Document of
+  that text out of the vector side (its file and its lexical entry stay),
+  as a refused projection leaves a Document out.
 
 Recommendation: yes.
 
@@ -1022,7 +1027,9 @@ owner, 17 October 2026.*
   process can take the next one, and one that dies leaves nothing behind.
 - **Both sides move together.** An embedder that fails fails the round,
   which is tried again later; the vectors made before the failure are
-  kept for it (D4). So a model that does not answer holds the lexical
+  kept for it (D4), and a text that did not change keeps its stored
+  vector, so a round that walks every Document again (the lexical side
+  ahead of the Index after a failure) sends only the texts that changed. So a model that does not answer holds the lexical
   side back too: the price of one commit for the whole Index.
 - **Who indexes.** *Settled with the owner, 17 October 2026.* Handles of
   one Vault may hold different ports (a service with a Projector and an
@@ -1393,50 +1400,104 @@ D6, D14.
 
 ### P5. The Index and the ports
 
-D3, D4, D5, D10, D18.
+D3, D4, D5, D10, D18, D23.
 
 - [x] `Ports` and `Port` (D3, D4); `Vault::open(path, options, ports)`,
       `set_embedder`; the embedder's `Describe` read and validated once
       per install; `Embed` and `Score` fed as streams, the portions left
       to the implementation; the fixed-portion adapter; the reranker on
       the handle.
-- [ ] `IndexDoc` and `IndexValue` from proto; the indexer, the lexical
+- [x] `IndexDoc` and `IndexValue` from proto; the indexer, the lexical
       and vector legs, and the journal `id` maps on the new types; `raw`
       moved into `Project` on the indexing path; `Score` takes the
       Documents by value.
-- [ ] The indexer of D23: one commit for the whole Index, the round under
+- [x] The indexer of D23: one commit for the whole Index, the round under
       `index.lock`, the wake by a write and by a look at `HEAD`, both
       sides together, who indexes (the ports a handle needs for a
       round), the journal `id` maps written by the indexer only,
       one Index with no generations: a rebuild is a round from an empty
       Index, and meanwhile queries and searches are `INDEX_REBUILDING`.
-      (The round, the lock, the wake, the journal `id` maps, the rebuild,
-      and the lexical side with its reader are built; the vector side is
-      P5c.)
+      The vector side on USearch is one file, `index/vector/vectors`
+      (the model, the dimensions, the key map with the digest of each
+      text, and the HNSW index), written whole; `index/vector/state`
+      names the write it stands on and the state it reached, so a round
+      that changes no vector does not rewrite the vectors. The lexical
+      side offers the texts of the `vector` columns it projected, so a
+      Document is projected once per round, and a text that did not
+      change keeps its vector.
 - [x] `IndexState` with one opaque version, one count, and one role
       (D23), and the rebuild's progress and result; `Reindex` starts a
       rebuild; `GetIndexStatus` and `WatchIndexStatus` per D18.
-- [ ] The test ports (21 embedders, 8 rerankers, 9 projectors) on the
-      generated traits.
+- The test ports of the old tests (21 embedders, 8 rerankers, 9
+  projectors) move to the generated traits with the tests that use them,
+  in P6, P7, and P8: every one of those tests needs a surface of a later
+  layer. *Settled with the owner, 18 October 2026.*
 - *Check:* an async embedder given as `Port::Async` feeds the indexer;
-  a build without `tokio` has no `Port::Async`.
+  a build without `tokio` has no `Port::Async`
+  (`vector::tests::an_async_embedder_feeds_the_indexer`;
+  `tests/ports.rs`: `a_build_without_tokio_has_no_async_port`, in the
+  build without features).
 - *Check:* a descriptor that breaks its rules fails `open` with
-  `INVALID_ARGUMENT`; a counting port sees one `Describe` per install.
+  `INVALID_ARGUMENT`; a counting port sees one `Describe` per install
+  (`tests/ports.rs`:
+  `a_descriptor_that_breaks_its_rules_fails_open_and_set_embedder`,
+  `open_reads_the_descriptor_once`;
+  `ports::tests::describe_is_called_once_per_install_whatever_is_embedded_after`).
 - *Check:* a retryable port failure makes the indexer repeat the round;
-  `REFUSED` keeps today's non-retryable handling.
+  `REFUSED` keeps today's non-retryable handling: the text the embedder
+  stops at is remembered, and its Document is left out of the vector
+  side, as a refused projection leaves one out of the lexical side
+  (`vector::tests::a_failing_embedder_fails_the_round_keeps_the_vectors_and_the_next_round_sends_the_rest`,
+  `vector::tests::a_text_the_embedder_refuses_leaves_its_document_out_and_the_round_goes_on`,
+  `lexical::tests::a_retryable_projector_failure_fails_the_round_and_it_is_tried_again`).
 - *Check:* an embedder that fails after the 7th vector of 20: the 7
   vectors are kept, and the next round sends only the other 13; vectors
   come back in the order of the texts whatever portions the
   implementation forms; the last partial portion is flushed when the
-  texts end.
+  texts end
+  (`vector::tests::a_failing_embedder_fails_the_round_keeps_the_vectors_and_the_next_round_sends_the_rest`,
+  `vector::tests::the_portions_an_embedder_forms_do_not_change_the_vectors`,
+  `ports::tests::a_failure_after_the_seventh_vector_returns_the_seven_and_the_error`,
+  `ports::tests::the_adapter_calls_its_function_with_portions_and_flushes_the_last_one`).
+- *Check:* after a failed round and a move of `HEAD`, a round that walks
+  every Document again sends the embedder only the texts that changed
+  (`vector::tests::a_text_that_did_not_change_is_not_embedded_again_when_a_round_walks_every_document`).
 - *Check:* the fixed-portion adapter with a size of 10 calls its
   function with portions of at most 10 and gives the same vectors as a
   hand-written stream; a reranker gets the query first and returns one
-  score per Document, in order.
+  score per Document, in order (`tests/ports.rs`:
+  `the_embedding_adapter_calls_its_function_with_portions_and_equals_a_stream_by_hand`,
+  `the_reranking_adapter_reads_the_query_first_and_scores_in_order`).
+- *Check:* who indexes: a handle without a Projector, or without the
+  embedder a `vector` column needs, never takes the lock of a round, its
+  `role` is false, and its `Reindex` is `FAILED_PRECONDITION` naming the
+  port; an embedder of another model sets `model_mismatch`, and a
+  `Reindex` from it makes the vectors again with its model; a Vault
+  opened only without ports is not indexed and still finds its journal
+  lines; such a handle asks its Projector for the columns once per state
+  of `HEAD`, not at every look
+  (`vector::tests::a_handle_without_a_projector_or_a_needed_embedder_never_takes_a_round`,
+  `vector::tests::an_embedder_of_another_model_indexes_nothing_and_a_reindex_from_it_remakes_the_vectors`,
+  `vector::tests::a_handle_that_cannot_index_asks_its_projector_for_the_columns_once_per_head`;
+  `tests/index.rs`:
+  `a_process_without_ports_leaves_the_indexing_to_the_one_with_them`,
+  `a_vault_opened_only_without_ports_finds_its_lines_without_an_index`).
+- *Check:* the vector side: the values of a Document are in it, replaced
+  on a change, removed on a delete; one `Project` per changed Document
+  per round for both sides; a journal line gets its vector; a damaged
+  `vectors` is `INDEX_BROKEN` and a `Reindex` repairs it
+  (`vector::tests::a_documents_vector_values_are_in_the_index_replaced_on_change_and_removed_on_delete`,
+  `vector::tests::the_projection_is_shared_one_project_per_changed_document_per_round`,
+  `vector::tests::a_journal_line_gets_its_vector`,
+  `vector::tests::a_damaged_vector_index_is_broken_and_a_reindex_repairs_it`).
 - *Check:* `WatchIndexStatus` gives the state at once, then one item per
   indexer round, and shows a rebuild that `Reindex` started from its
   start to its result; `Reindex` returns before the rebuild ends; a
-  second one meanwhile is `ABORTED`.
+  second one meanwhile is `ABORTED`
+  (`indexer::tests::the_watch_gives_the_state_at_once_and_then_one_item_per_round`,
+  `indexer::tests::a_rebuild_waits_for_the_lock_and_a_second_request_is_aborted`;
+  `tests/index.rs`:
+  `reindex_returns_before_the_rebuild_a_second_is_aborted_and_the_maps_match`).
 
 ### P6. The `Vault` service
 
@@ -1454,7 +1515,8 @@ D2, D3, D5, D7, D8, D15, D19.
       first and no 10 000 limit, an Index not built yet answering
       `INDEX_REBUILDING`; `rerank_limit` per D5.
 - [ ] The integration tests under `rust/scheda/tests/` back in the
-      build, on the new surface.
+      build, on the new surface, with their test ports (embedders,
+      rerankers, and projectors of `tests/old/`) on the generated traits.
 - *Check:* every integration test passes on the new surface.
 - *Check:* the streams are lazy: reading the first Document of a
   collection of 100 000 opens one Document file, and a stream dropped
@@ -1497,7 +1559,8 @@ D2, D3, D5, D7, D8, D15, D19.
 D11.
 
 - [ ] `AsyncVault` implements `VaultAsync`; the hand-written
-      `nonblocking.rs` surface deleted.
+      `nonblocking.rs` surface deleted; the test ports of
+      `tests/old/nonblocking.rs` on the generated traits.
 - *Check:* the async surface passes on a multi-thread and a
   current-thread runtime; the lazy-stream check of P6 holds in the async
   form.
@@ -1516,7 +1579,8 @@ D11.
 D16.
 
 - [ ] CLI per D16, with the `batch-documents` and `batch-collections`
-      subcommands; the Python driver follows.
+      subcommands, and the test ports of its tests on the generated
+      traits; the Python driver follows.
 - [ ] `tests/consumer.rs` rewritten from the anchor consumer's real use:
       open with a Projector and an embedder port; streams with
       `UpsertDocument`, `CreateDocument` with `keep_existing`, and

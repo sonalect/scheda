@@ -146,6 +146,25 @@ changes; they grow with each part of the move.
   `INDEX_STALE` until `Reindex`; an Index without a commit (none built
   yet, or a rebuild running) is `INDEX_REBUILDING`; a damaged one is
   `INDEX_BROKEN`. `IndexState.pending` counts files, not Documents.
+- Who indexes: a handle takes the indexer's rounds only when it has every
+  port the Index needs: a Projector in a build with `find`, and, when a
+  collection has a `vector` column, an embedder of the model the Index's
+  vectors were made with (any model while it has none). A handle without
+  them only reads: its `IndexState.role` is false, and its `Reindex` is
+  `FAILED_PRECONDITION`, naming the port it lacks. Pass the ports to
+  `Vault::open` in the processes that should keep the Index: a Vault
+  opened only by handles without them is not indexed (queries are
+  `INDEX_REBUILDING`; a journal line is still found by a scan). An
+  embedder of another model sets `IndexState.model_mismatch` until a
+  `Reindex` from it makes the vectors again with its model.
+- The vector Index (`search`) is built by the indexer on USearch from the
+  texts of the `vector` columns, with one `Project` per Document per round
+  for both sides, into `.scheda/index/vector/`: one file `vectors`, written
+  whole, and its `state`. A failed `Embed` fails the round and keeps the
+  vectors that came back, so the next try sends only the texts without
+  one, and a text that did not change keeps its vector. A text the
+  embedder refuses (`REFUSED`) leaves its Document out of the vector
+  side; its file stays.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

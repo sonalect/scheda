@@ -15,6 +15,7 @@
 //! .scheda/index/commit      the state the Index reflects, written last
 //! .scheda/index/journal/    the id maps of the journals
 //! .scheda/index/lexical/    the Tantivy index of the lexical side
+//! .scheda/index/vector/     the vectors of the vector side and the state they reached
 //! .scheda/index/columns     the columns each collection was indexed with
 //! .scheda/index/stale       the collections whose columns changed since
 //! ```
@@ -28,8 +29,12 @@ use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
 
 use git2::Oid;
+#[cfg(feature = "find")]
+use scheda_api::v1::VaultErrorCode;
 
 use crate::collection::{self, Declarations};
+#[cfg(feature = "find")]
+use crate::error::Fault;
 use crate::error::{Context, Error, io};
 use crate::fs::{Flock, atomic_write, restrict_dir, restrict_file_below};
 use crate::isolated;
@@ -43,6 +48,8 @@ const FORMAT_FILE: &str = "format";
 const COMMIT_FILE: &str = "commit";
 const JOURNAL_DIR: &str = "journal";
 const LEXICAL_DIR: &str = "lexical";
+#[cfg(feature = "search")]
+const VECTOR_DIR: &str = "vector";
 #[cfg(feature = "find")]
 const COLUMNS_FILE: &str = "columns";
 #[cfg(feature = "find")]
@@ -159,6 +166,13 @@ impl Index {
         self.root.join(LEXICAL_DIR)
     }
 
+    /// The folder of the vector side: `vectors` (the model, the key map, and
+    /// the HNSW index, in one file) and `state`.
+    #[cfg(feature = "search")]
+    pub(crate) fn vector_dir(&self) -> PathBuf {
+        self.root.join(VECTOR_DIR)
+    }
+
     /// The file that records the columns of each collection as the lexical
     /// side indexed them.
     #[cfg(feature = "find")]
@@ -171,6 +185,32 @@ impl Index {
     #[cfg(feature = "find")]
     pub(crate) fn stale_file(&self) -> PathBuf {
         self.root.join(STALE_FILE)
+    }
+
+    /// The state the Index reflects, for a reader.
+    ///
+    /// # Errors
+    ///
+    /// `INDEX_REBUILDING` (retryable) when the Index has no commit, because
+    /// no round has run yet or a rebuild runs, and when it is of another
+    /// format, which the indexer makes again; `INDEX_STALE` when the
+    /// columns of the Projector changed since the Index was built.
+    #[cfg(feature = "find")]
+    pub(crate) fn readable(&self) -> Result<State, Error> {
+        if !self.has_format()? {
+            return Err(rebuilding("the Index is not built in this format yet"));
+        }
+        let Some(committed) = self.read_commit()? else {
+            return Err(rebuilding("the Index has no commit yet"));
+        };
+        if self.stale_file().is_file() {
+            return Err(Fault::new(
+                VaultErrorCode::IndexStale,
+                "the columns of the Projector changed since the Index was built; run Reindex",
+            )
+            .into());
+        }
+        Ok(committed)
     }
 
     /// Takes the lock of a round without waiting: `flock` on
@@ -286,6 +326,12 @@ impl Index {
     }
 }
 
+/// The failure of a reader that finds the Index not built, or being built.
+#[cfg(feature = "find")]
+pub(crate) fn rebuilding(what: &'static str) -> Error {
+    Fault::new(VaultErrorCode::IndexRebuilding, what).into()
+}
+
 /// What a round has read so far, for the progress of a rebuild.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Counts {
@@ -365,6 +411,38 @@ pub(crate) struct Round<'a> {
     changes: Changes,
     counts: Counts,
     tick: &'a mut dyn FnMut(&Counts) -> Result<(), Error>,
+    /// The vector values the lexical side projected, for the vector side;
+    /// `None` when no side wants them.
+    #[cfg(feature = "search")]
+    offers: Option<Vec<Offer>>,
+}
+
+/// The texts one Document gives the vector side: one per value of each
+/// `vector` column, taken from the projection the lexical side made, so a
+/// Document is projected once per round whichever sides are on.
+#[cfg(feature = "search")]
+#[derive(Debug)]
+pub(crate) struct Offer {
+    /// The collection of the Document.
+    pub(crate) collection: String,
+    /// The id of the Document (of the line, for a journal).
+    pub(crate) id: String,
+    /// The Vault-relative file the Document came from.
+    pub(crate) file: String,
+    /// The texts, in the order of the columns.
+    pub(crate) pieces: Vec<Piece>,
+}
+
+/// One text to embed.
+#[cfg(feature = "search")]
+#[derive(Debug)]
+pub(crate) struct Piece {
+    /// The `vector` column it is a value of.
+    pub(crate) column: String,
+    /// Its place among the values of that column (a text list has several).
+    pub(crate) at: u32,
+    /// The text; the vector side moves it into the embedder.
+    pub(crate) text: String,
 }
 
 impl<'a> Round<'a> {
@@ -394,7 +472,36 @@ impl<'a> Round<'a> {
             changes,
             counts: Counts::default(),
             tick,
+            #[cfg(feature = "search")]
+            offers: None,
         }))
+    }
+
+    /// Asks the lexical side to offer the vector values of the Documents it
+    /// projects.
+    #[cfg(feature = "search")]
+    pub(crate) fn collect_offers(&mut self) {
+        self.offers.get_or_insert_with(Vec::new);
+    }
+
+    /// Whether the vector side wants the offers of this round.
+    #[cfg(feature = "search")]
+    pub(crate) fn collecting(&self) -> bool {
+        self.offers.is_some()
+    }
+
+    /// Hands over what the lexical side offered.
+    #[cfg(feature = "search")]
+    pub(crate) fn set_offers(&mut self, offers: Vec<Offer>) {
+        if self.offers.is_some() {
+            self.offers = Some(offers);
+        }
+    }
+
+    /// Takes what the lexical side offered; `None` when nobody asked.
+    #[cfg(feature = "search")]
+    pub(crate) fn take_offers(&mut self) -> Option<Vec<Offer>> {
+        self.offers.take()
     }
 
     /// The Index.

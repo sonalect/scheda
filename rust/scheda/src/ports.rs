@@ -104,12 +104,17 @@ impl<S: ?Sized, A> fmt::Debug for Port<S, A> {
 /// cannot use it is `UNIMPLEMENTED`.
 #[derive(Clone, Debug, Default)]
 pub struct Ports {
-    /// Turns texts into vectors for the vector leg of a search. Its
-    /// descriptor is read once, when it is installed.
+    /// Turns texts into vectors for the vector leg of a search, and for
+    /// the Index when a collection has a `vector` column: a handle indexes
+    /// those only with an embedder of the model the Index's vectors were
+    /// made with (any model while the Index has none). Its descriptor is
+    /// read once, when it is installed.
     pub embedder: Option<Port<dyn EmbedderSync, DynEmbedderAsync>>,
     /// Scores Documents against a query, for a search that reranks.
     pub reranker: Option<Port<dyn RerankerSync, DynRerankerAsync>>,
-    /// Says which columns the Index holds and their values.
+    /// Says which columns the Index holds and their values. A handle
+    /// without one never indexes (it reads the Index other handles keep),
+    /// in a build with the `find` feature.
     pub projector: Option<Port<dyn ProjectorSync, DynProjectorAsync>>,
 }
 
@@ -867,6 +872,36 @@ impl<X, Y> Iterator for Portions<X, Y> {
                 }
             }
         }
+    }
+}
+
+/// Ports for a test that wants a handle to index and cares for nothing else:
+/// a Projector that declares no columns, so every Document is indexed by
+/// identity. A build without `find` has no Projector to give.
+#[cfg(test)]
+pub(crate) fn indexing_ports() -> Ports {
+    #[cfg(feature = "find")]
+    {
+        struct Bare;
+
+        impl ProjectorSync for Bare {
+            fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
+                Ok(IndexSchema::default())
+            }
+
+            fn project(&self, _document: RawDocument) -> Result<IndexDoc, Error> {
+                Ok(IndexDoc::default())
+            }
+        }
+
+        Ports {
+            projector: Some(Port::Sync(Arc::new(Bare))),
+            ..Ports::default()
+        }
+    }
+    #[cfg(not(feature = "find"))]
+    {
+        Ports::default()
     }
 }
 

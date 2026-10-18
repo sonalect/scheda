@@ -7,6 +7,11 @@
 //! processes, commits made by hand, and pulls. A look reads two ref files
 //! and two small files of the Index and starts no process.
 //!
+//! A handle takes a round only when it has every port the Index needs (see
+//! `who`); otherwise it only reads: its `role` is false and its status
+//! follows the version other handles reach. In a build without `find` every
+//! handle indexes.
+//!
 //! A round takes `flock` on `index.lock` without waiting (another indexer
 //! holds it: the round is skipped and looked at again later), reads `HEAD`
 //! of both repositories and the Index's `commit`, and, when they differ,
@@ -24,6 +29,8 @@
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
+#[cfg(test)]
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::thread::{Builder, JoinHandle};
 use std::time::{Duration, Instant};
@@ -37,8 +44,12 @@ use crate::idmap::JournalMaps;
 use crate::index::{Counts, Index, Round, Side, State};
 #[cfg(feature = "find")]
 use crate::lexical::Lexical;
-use crate::ports::ProjectorPort;
+use crate::ports::Installed;
 use crate::repo::{Repo, Repos};
+#[cfg(feature = "search")]
+use crate::vector::Vector;
+#[cfg(feature = "find")]
+use crate::who::Who;
 
 /// The name of the thread, which a test counts.
 pub(crate) const THREAD_NAME: &str = "scheda-indexer";
@@ -123,6 +134,12 @@ struct Shared {
     signal: Arc<Signal>,
     inner: Mutex<Inner>,
     changed: Condvar,
+    /// How many times this indexer took the lock of a round.
+    #[cfg(test)]
+    locks: AtomicU64,
+    /// How many times this indexer looked at the Index.
+    #[cfg(test)]
+    looks: AtomicU64,
 }
 
 impl Shared {
@@ -162,6 +179,9 @@ impl Shared {
 #[derive(Debug)]
 pub(crate) struct Indexer {
     shared: Arc<Shared>,
+    /// What decides whether this handle may index.
+    #[cfg(feature = "find")]
+    who: Mutex<Option<Arc<Who>>>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
@@ -181,14 +201,19 @@ impl Indexer {
                     closed: false,
                 }),
                 changed: Condvar::new(),
+                #[cfg(test)]
+                locks: AtomicU64::new(0),
+                #[cfg(test)]
+                looks: AtomicU64::new(0),
             }),
+            #[cfg(feature = "find")]
+            who: Mutex::new(None),
             thread: Mutex::new(None),
         }
     }
 
     /// Starts the thread for the Vault at `vault`, whose repositories
-    /// `repos` reads, with the Projector of the handle if it has one (a
-    /// build without `find` has none to use). It looks at `HEAD` every
+    /// `repos` reads, with the ports of the handle. It looks at `HEAD` every
     /// `poll`.
     ///
     /// # Errors
@@ -198,11 +223,21 @@ impl Indexer {
         &self,
         vault: &Path,
         repos: Arc<Repos>,
-        projector: Option<Arc<ProjectorPort>>,
+        ports: Arc<Installed>,
         poll: Duration,
     ) -> Result<(), Error> {
         #[cfg(not(feature = "find"))]
-        let _ = projector;
+        let _ = &ports;
+        #[cfg(feature = "find")]
+        let who = Arc::new(Who::new(
+            Arc::clone(&ports),
+            Arc::clone(&repos),
+            Index::new(vault),
+        ));
+        #[cfg(feature = "find")]
+        {
+            *self.who.lock().unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&who));
+        }
         let worker = Worker {
             shared: Arc::clone(&self.shared),
             repos,
@@ -212,8 +247,14 @@ impl Indexer {
             sides: vec![
                 Box::new(JournalMaps),
                 #[cfg(feature = "find")]
-                Box::new(Lexical::new(projector)),
+                Box::new(Lexical::new(ports.projector().cloned())),
+                #[cfg(feature = "search")]
+                Box::new(Vector::new(Arc::clone(&ports))),
             ],
+            #[cfg(feature = "search")]
+            ports,
+            #[cfg(feature = "find")]
+            who,
             rebuilding: false,
         };
         let handle = Builder::new()
@@ -229,8 +270,23 @@ impl Indexer {
     ///
     /// # Errors
     ///
-    /// `ABORTED` when a rebuild was asked for and has not begun, or runs.
+    /// `FAILED_PRECONDITION` naming the port this handle lacks, when it
+    /// lacks one the Index needs; `ABORTED` when a rebuild was asked for and
+    /// has not begun, or runs.
     pub(crate) fn reindex(&self) -> Result<(), Error> {
+        #[cfg(feature = "find")]
+        {
+            let who = self
+                .who
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone();
+            if let Some(who) = who
+                && let Some(fault) = who.check(true).context("check the ports")?.precondition()
+            {
+                return Err(fault.into());
+            }
+        }
         {
             let mut inner = self.shared.lock();
             if inner.requested || inner.running {
@@ -244,6 +300,23 @@ impl Indexer {
         }
         self.shared.signal.moved();
         Ok(())
+    }
+
+    /// How many times this indexer took the lock of a round.
+    #[cfg(all(test, feature = "search"))]
+    pub(crate) fn locks(&self) -> u64 {
+        self.shared.locks.load(Ordering::SeqCst)
+    }
+
+    /// How many times this indexer looked at the Index.
+    #[cfg(all(test, feature = "search"))]
+    pub(crate) fn looks(&self) -> u64 {
+        self.shared.looks.load(Ordering::SeqCst)
+    }
+
+    /// Wakes the thread: a port changed, so the handle may index now.
+    pub(crate) fn wake(&self) {
+        self.shared.signal.moved();
     }
 
     /// The state of the Index now.
@@ -349,6 +422,17 @@ enum Next {
     Idle,
 }
 
+/// What a handle does about a round, given its ports.
+#[cfg(feature = "find")]
+enum Gate {
+    /// It takes the round.
+    Go,
+    /// It does not: it follows the Index.
+    Stay,
+    /// A rebuild it asked for cannot be done by it.
+    Refused(Error),
+}
+
 /// What the part of a round under the lock did.
 enum Applied {
     /// The Index was at this state already.
@@ -368,6 +452,13 @@ struct Worker {
     vault: std::path::PathBuf,
     index: Index,
     sides: Vec<Box<dyn Side>>,
+    /// The ports of the handle: a round asks the vector side's texts of
+    /// them.
+    #[cfg(feature = "search")]
+    ports: Arc<Installed>,
+    /// Whether the handle may take a round.
+    #[cfg(feature = "find")]
+    who: Arc<Who>,
     /// A rebuild has begun and has not ended.
     rebuilding: bool,
 }
@@ -412,26 +503,40 @@ impl Worker {
 
     /// One look at `HEAD` and, if the Index is behind, one round.
     fn round(&mut self) -> Result<Next, Error> {
+        #[cfg(test)]
+        self.shared.looks.fetch_add(1, Ordering::SeqCst);
         let asked = self.shared.lock().requested;
+        let committed = if self.index.has_format()? {
+            self.index.read_commit()?
+        } else {
+            None
+        };
         if !asked
-            && self.index.has_format()?
-            && let Some(committed) = self.index.read_commit()?
+            && let Some(committed) = committed
             && committed == State::of(&self.repos.views()?)
         {
-            self.follow(committed);
+            self.follow(Some(committed));
             return Ok(Next::Idle);
+        }
+        #[cfg(feature = "find")]
+        match self.gate(asked, committed)? {
+            Gate::Go => {}
+            Gate::Stay => return Ok(Next::Idle),
+            Gate::Refused(error) => return Err(error),
         }
         let Some(lock) = self.index.try_lock()? else {
             // Another indexer holds the lock; it will do the round.
             self.shared.adjust(|inner| inner.state.role = Some(false));
             return Ok(Next::Idle);
         };
+        #[cfg(test)]
+        self.shared.locks.fetch_add(1, Ordering::SeqCst);
         let applied = self.apply();
         // The commit is written: the lock goes before anyone is told.
         drop(lock);
         match applied? {
             Applied::Current(state) => {
-                self.follow(state);
+                self.follow(Some(state));
                 Ok(Next::Idle)
             }
             Applied::Built {
@@ -444,6 +549,7 @@ impl Worker {
                     inner.state.version = Some(head.token());
                     inner.state.pending = Some(0);
                     inner.state.role = Some(false);
+                    inner.state.model_mismatch = Some(false);
                     inner.state.last_error = buffa::MessageField::none();
                     if rebuilt {
                         inner.running = false;
@@ -497,6 +603,15 @@ impl Worker {
                 None => unreachable!("a round from nothing always knows its difference"),
             },
         };
+        #[cfg(feature = "search")]
+        if self
+            .ports
+            .embedder()
+            .context("read the embedder")?
+            .is_some()
+        {
+            round.collect_offers();
+        }
         let pending = round.pending();
         let rebuilt = round.is_rebuild();
         self.shared.adjust(|inner| {
@@ -531,25 +646,61 @@ impl Worker {
         })
     }
 
-    /// The Index is at `state` and nothing is to be done: another indexer
-    /// may have moved it, and an earlier failure is over.
-    fn follow(&self, state: State) {
-        let token = state.token();
+    /// Nothing is to be done by this handle: the Index is at `committed`
+    /// (or not built), and either it is at `HEAD` or another handle has to
+    /// bring it there. Another indexer may have moved it, and an earlier
+    /// failure is over.
+    fn follow(&self, committed: Option<State>) {
+        let token = committed.map(State::token);
+        let pending = committed.map(|_| 0);
+        let mismatch = self.mismatch();
         let differs = {
             let inner = self.shared.lock();
-            inner.state.version.as_deref() != Some(token.as_str())
+            inner.state.version != token
                 || inner.state.last_error.is_set()
-                || inner.state.role == Some(true)
-                || inner.state.pending != Some(0)
+                || inner.state.role != Some(false)
+                || inner.state.pending != pending
+                || inner.state.model_mismatch != Some(mismatch)
         };
         if differs {
             self.shared.publish(|inner| {
-                inner.state.version = Some(token);
-                inner.state.pending = Some(0);
+                inner.state.version = token;
+                inner.state.pending = pending;
                 inner.state.role = Some(false);
+                inner.state.model_mismatch = Some(mismatch);
                 inner.state.last_error = buffa::MessageField::none();
             });
         }
+    }
+
+    /// Whether the embedder of this handle is of another model than the
+    /// vectors of the Index.
+    fn mismatch(&self) -> bool {
+        #[cfg(feature = "find")]
+        {
+            self.who.mismatch()
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            false
+        }
+    }
+
+    /// Whether this handle has the ports the round needs. When it has not,
+    /// it follows the Index instead.
+    #[cfg(feature = "find")]
+    fn gate(&self, asked: bool, committed: Option<State>) -> Result<Gate, Error> {
+        let verdict = self.who.check(asked).context("check the ports")?;
+        let Some(fault) = verdict.precondition() else {
+            return Ok(Gate::Go);
+        };
+        if asked {
+            // The handle lost a port after it asked: the request is over.
+            self.shared.lock().requested = false;
+            return Ok(Gate::Refused(fault.into()));
+        }
+        self.follow(committed);
+        Ok(Gate::Stay)
     }
 
     /// A round failed: the status says so.
@@ -690,10 +841,10 @@ mod tests {
         Collection, Document, DocumentCreation, IndexState, OpenOptions, VaultErrorCode,
     };
 
-    use super::{HISTORY, Indexer, Signal, hooks};
+    use super::{HISTORY, Indexer, Signal, Watch, hooks};
     use crate::Vault;
     use crate::index::Index;
-    use crate::ports::Ports;
+    use crate::ports::indexing_ports;
 
     struct Scratch(PathBuf);
 
@@ -710,7 +861,7 @@ mod tests {
             Vault::open(
                 &self.0,
                 OpenOptions::default().with_index_poll_ms(10),
-                Ports::default(),
+                indexing_ports(),
             )
             .unwrap()
         }
@@ -838,6 +989,17 @@ mod tests {
         assert!(two.indexer().status().last_error.as_option().is_none());
     }
 
+    /// The first item of `watch` that reports a failed round. The status
+    /// itself may have moved on by then: the retry starts one poll later.
+    fn failure(watch: &mut Watch) -> IndexState {
+        loop {
+            let state = watch.next().unwrap().unwrap();
+            if state.last_error.is_set() {
+                return state;
+            }
+        }
+    }
+
     #[test]
     fn a_round_that_fails_or_panics_is_reported_and_tried_again() {
         let scratch = Scratch::new("fail");
@@ -848,11 +1010,9 @@ mod tests {
         let index = Index::new(&path);
         let before = index.read_commit().unwrap();
         hooks::fail_once(&path);
+        let mut watch = vault.indexer().watch();
         line(&vault, "log", "one");
-        wait_until("the failure", || {
-            vault.indexer().status().last_error.is_set()
-        });
-        let state = vault.indexer().status();
+        let state = failure(&mut watch);
         let error = state.last_error.as_option().unwrap();
         assert_eq!(error.code.as_deref(), Some("VAULT_ERROR_CODE_STORAGE"));
         assert_eq!(state.role, Some(false));
@@ -863,9 +1023,9 @@ mod tests {
         assert_ne!(index.read_commit().unwrap(), before);
 
         hooks::panic_once(&path);
+        let mut watch = vault.indexer().watch();
         line(&vault, "log", "two");
-        wait_until("the panic", || vault.indexer().status().last_error.is_set());
-        let state = vault.indexer().status();
+        let state = failure(&mut watch);
         let error = state.last_error.as_option().unwrap();
         assert_eq!(error.code.as_deref(), Some("PANICKED"));
         assert!(error.message.as_deref().unwrap_or("").contains("panicked"));
