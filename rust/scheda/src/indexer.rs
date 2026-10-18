@@ -272,6 +272,20 @@ impl Indexer {
         Ok(())
     }
 
+    /// Whether the Projector of this handle is of another projection than
+    /// the one the Index was built with: a query of this Vault would be
+    /// answered by columns it does not know (`INDEX_STALE`). False without
+    /// a Projector.
+    #[cfg(feature = "find")]
+    pub(crate) fn projection_stale(&self) -> bool {
+        let who = self
+            .who
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
+        who.is_some_and(|who| who.stale())
+    }
+
     /// Asks for a rebuild and returns at once.
     #[cfg(any(feature = "find", test))]
     ///

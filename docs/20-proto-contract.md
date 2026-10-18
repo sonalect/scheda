@@ -8,7 +8,7 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5; R1–R3 are done, R4 is next.
+2026) replaces P6 and P7 with R1–R5; R1–R3 are done, and R4 has its queries and counts.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other

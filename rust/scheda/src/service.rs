@@ -34,6 +34,8 @@ use scheda_api::v1::{
 
 use crate::error::{Context, Error, Fault};
 use crate::ports::Ports;
+#[cfg(feature = "find")]
+use crate::queries::{QueryStream, Request};
 use crate::stored;
 use crate::vault::Vault;
 
@@ -240,6 +242,27 @@ impl<T, I: Iterator<Item = Result<T, Error>>> Iterator for Guarded<I> {
     }
 }
 
+/// The failure of a call that needs a build with the `find` feature.
+#[cfg(not(feature = "find"))]
+fn needs_find(call: &str) -> Error {
+    Fault::new(
+        VaultErrorCode::Unimplemented,
+        format!("{call} needs a build with the `find` feature"),
+    )
+    .into()
+}
+
+/// The stream of a query, each Document made inside the gate.
+#[cfg(feature = "find")]
+fn documents(
+    shared: &Arc<Shared>,
+    mut stream: QueryStream,
+) -> BoxIter<'static, Result<Document, Error>> {
+    let owner = Arc::clone(shared);
+    let items = std::iter::from_fn(move || stream.next(&owner.vault));
+    Box::new(Guarded::holding(shared, items))
+}
+
 /// The object of one open Vault.
 struct VaultObject {
     shared: Arc<Shared>,
@@ -382,13 +405,35 @@ impl VaultSync for VaultObject {
 
     fn query_documents(
         &self,
-        _vault_query: VaultQuery,
+        vault_query: VaultQuery,
     ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
-        todo!("R4: Vault.QueryDocuments")
+        #[cfg(feature = "find")]
+        {
+            let stream = self.shared.call(|vault| {
+                vault.query(Request::of_vault("Vault.QueryDocuments", vault_query)?)
+            })?;
+            Ok(documents(&self.shared, stream))
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            let _ = vault_query;
+            Err(needs_find("Vault.QueryDocuments"))
+        }
     }
 
-    fn count_documents(&self, _vault_query: VaultQuery) -> Result<Count, Error> {
-        todo!("R4: Vault.CountDocuments")
+    fn count_documents(&self, vault_query: VaultQuery) -> Result<Count, Error> {
+        #[cfg(feature = "find")]
+        {
+            let count = self.shared.call(|vault| {
+                vault.count(Request::of_vault("Vault.CountDocuments", vault_query)?)
+            })?;
+            Ok(Count::default().with_count(count))
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            let _ = vault_query;
+            Err(needs_find("Vault.CountDocuments"))
+        }
     }
 
     fn search_documents(
@@ -473,13 +518,43 @@ impl CollectionSync for CollectionObject {
 
     fn query(
         &self,
-        _document_query: DocumentQuery,
+        document_query: DocumentQuery,
     ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
-        todo!("R4: Collection.Query")
+        #[cfg(feature = "find")]
+        {
+            let stream = self.shared.call(|vault| {
+                vault.query(Request::of_collection(
+                    "Collection.Query",
+                    &self.name,
+                    document_query,
+                )?)
+            })?;
+            Ok(documents(&self.shared, stream))
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            let _ = document_query;
+            Err(needs_find("Collection.Query"))
+        }
     }
 
-    fn count(&self, _document_query: DocumentQuery) -> Result<Count, Error> {
-        todo!("R4: Collection.Count")
+    fn count(&self, document_query: DocumentQuery) -> Result<Count, Error> {
+        #[cfg(feature = "find")]
+        {
+            let count = self.shared.call(|vault| {
+                vault.count(Request::of_collection(
+                    "Collection.Count",
+                    &self.name,
+                    document_query,
+                )?)
+            })?;
+            Ok(Count::default().with_count(count))
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            let _ = document_query;
+            Err(needs_find("Collection.Count"))
+        }
     }
 
     fn search(

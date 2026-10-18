@@ -363,7 +363,6 @@ impl Vault {
 
     /// The reader of the lexical index.
     #[cfg(feature = "find")]
-    #[cfg_attr(not(test), expect(dead_code, reason = "the queries use it"))]
     pub(crate) fn lexical(&self) -> &lexical::Reader {
         &self.lexical
     }

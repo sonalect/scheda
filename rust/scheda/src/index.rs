@@ -198,14 +198,9 @@ impl Index {
     /// no round has run yet or a rebuild runs, and when it is of another
     /// format, which the indexer makes again; `INDEX_STALE` when the
     /// columns of the Projector changed since the Index was built.
-    #[cfg(feature = "find")]
+    #[cfg(feature = "search")]
     pub(crate) fn readable(&self) -> Result<State, Error> {
-        if !self.has_format()? {
-            return Err(rebuilding("the Index is not built in this format yet"));
-        }
-        let Some(committed) = self.read_commit()? else {
-            return Err(rebuilding("the Index has no commit yet"));
-        };
+        let committed = self.committed()?;
         if self.stale_file().is_file() {
             return Err(Fault::new(
                 VaultErrorCode::IndexStale,
@@ -213,6 +208,26 @@ impl Index {
             )
             .into());
         }
+        Ok(committed)
+    }
+
+    /// The state the Index reflects, whether or not some collection is
+    /// stale: a reader that looks at the stale collections itself
+    /// ([`read_stale`](crate::lexical::read_stale)) starts here.
+    ///
+    /// # Errors
+    ///
+    /// `INDEX_REBUILDING` (retryable) when the Index has no commit, because
+    /// no round has run yet or a rebuild runs, and when it is of another
+    /// format, which the indexer makes again.
+    #[cfg(feature = "find")]
+    pub(crate) fn committed(&self) -> Result<State, Error> {
+        if !self.has_format()? {
+            return Err(rebuilding("the Index is not built in this format yet"));
+        }
+        let Some(committed) = self.read_commit()? else {
+            return Err(rebuilding("the Index has no commit yet"));
+        };
         Ok(committed)
     }
 

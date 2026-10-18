@@ -53,7 +53,16 @@ message Filter {
       string: {min_len: 1}
     }];
     // At least one term; each as in `Term.value`.
-    google.protobuf.ListValue values = 2 [(buf.validate.field) = {required: true}];
+    google.protobuf.ListValue values = 2 [(buf.validate.field) = {
+      required: true
+      cel: [
+        {
+          id: "filter.term_set.values.not_empty"
+          message: "must hold at least one term"
+          expression: "size(this) >= 1"
+        }
+      ]
+    }];
     // The collection of the column (see `Filter`).
     string collection = 3 [(buf.validate.field) = {
       string: {min_len: 1}

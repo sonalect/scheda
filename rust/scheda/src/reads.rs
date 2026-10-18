@@ -323,32 +323,83 @@ impl DocumentStream {
                         }
                         continue;
                     }
-                    return Ok(Some(self.line_document(line.id, line.payload)));
+                    return Ok(Some(self.opener().line_document(line.id, line.payload)));
                 }
             };
-            let found = if self.decl.kind() == Kind::Journal {
-                self.find_line(vault, id)?
-            } else {
-                self.file_document(vault, id)?
-            };
-            if let Some(document) = found {
+            if let Some(document) = self.opener().open(vault, id)? {
                 return Ok(Some(document));
             }
         }
     }
 
+    fn opener(&self) -> Opener<'_> {
+        Opener {
+            snap: &self.snap,
+            decl: &self.decl,
+            include_raw: self.include_raw,
+        }
+    }
+
+    /// The Document of a file the walk has reached: its blob id is known
+    /// from the tree, so no path is looked up again.
+    fn walked_document(&self, vault: &Vault, id: String, blob: Oid) -> Result<Document, Error> {
+        let document = self
+            .opener()
+            .keys(id.clone())
+            .with_revision(blob.to_string());
+        if !self.include_raw {
+            return Ok(document);
+        }
+        let rel = isolated::vault_rel(&self.decl, &id);
+        let stored = self
+            .snap
+            .blob(blob)
+            .map_err(|fault| fault.with_path(&rel))?;
+        let plain = documents::unseal(&self.decl, stored, vault.encryption(), &rel)?;
+        Ok(document.with_raw(plain))
+    }
+}
+
+/// Opens Documents of one collection from one snapshot, as a stream does:
+/// the keys and the revision from the tree, and the bytes only when
+/// `include_raw` asks.
+pub(crate) struct Opener<'a> {
+    snap: &'a Snap,
+    decl: &'a Declaration,
+    include_raw: bool,
+}
+
+impl<'a> Opener<'a> {
+    /// An opener of the Documents of `decl` in `snap`.
+    #[cfg(feature = "find")]
+    pub(crate) fn new(snap: &'a Snap, decl: &'a Declaration, include_raw: bool) -> Opener<'a> {
+        Opener {
+            snap,
+            decl,
+            include_raw,
+        }
+    }
+
+    /// The Document `id`, or `None` when the commit of the snapshot holds
+    /// none. A journal line is found through the id map.
+    pub(crate) fn open(&self, vault: &Vault, id: String) -> Result<Option<Document>, Error> {
+        if self.decl.kind() == Kind::Journal {
+            self.find_line(vault, id)
+        } else {
+            self.file_document(vault, id)
+        }
+    }
+
     /// The journal line `id`, or `None` when the journal has none.
     fn find_line(&self, vault: &Vault, id: String) -> Result<Option<Document>, Error> {
-        let line = vault.id_maps().find(&self.snap, &self.decl, &id)?;
+        let line = vault.id_maps().find(self.snap, self.decl, &id)?;
         Ok(line.map(|line| self.line_document(id, line.payload)))
     }
 
-    fn line_document(&self, id: String, payload: Vec<u8>) -> Document {
-        let document = Document {
-            collection: Some(self.decl.name().to_owned()),
-            id: Some(id),
-            ..Document::default()
-        };
+    /// The journal line `id` with the bytes `payload`; the bytes only with
+    /// `include_raw`.
+    pub(crate) fn line_document(&self, id: String, payload: Vec<u8>) -> Document {
+        let document = self.keys(id);
         if self.include_raw {
             document.with_raw(payload)
         } else {
@@ -362,7 +413,7 @@ impl DocumentStream {
             return Ok(None);
         }
         if self.include_raw {
-            let found = documents::read_found(&self.snap, &self.decl, &id, vault.encryption())?;
+            let found = documents::read_found(self.snap, self.decl, &id, vault.encryption())?;
             return Ok(found.map(|found| {
                 let revision = found.revision();
                 self.keys(id)
@@ -370,26 +421,10 @@ impl DocumentStream {
                     .with_revision(revision)
             }));
         }
-        let node = self.snap.lookup(&isolated::vault_rel(&self.decl, &id))?;
+        let node = self.snap.lookup(&isolated::vault_rel(self.decl, &id))?;
         Ok(node
             .filter(|node| node.kind == NodeKind::File)
             .map(|node| self.keys(id).with_revision(node.id.to_string())))
-    }
-
-    /// The Document of a file the walk has reached: its blob id is known
-    /// from the tree, so no path is looked up again.
-    fn walked_document(&self, vault: &Vault, id: String, blob: Oid) -> Result<Document, Error> {
-        let document = self.keys(id.clone()).with_revision(blob.to_string());
-        if !self.include_raw {
-            return Ok(document);
-        }
-        let rel = isolated::vault_rel(&self.decl, &id);
-        let stored = self
-            .snap
-            .blob(blob)
-            .map_err(|fault| fault.with_path(&rel))?;
-        let plain = documents::unseal(&self.decl, stored, vault.encryption(), &rel)?;
-        Ok(document.with_raw(plain))
     }
 
     /// A Document with its keys only.

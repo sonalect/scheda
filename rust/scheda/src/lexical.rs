@@ -56,12 +56,10 @@
 //! **Columns.** The Projector is asked for the columns of each collection
 //! once per round, and the answer is kept in `columns`. A collection
 //! whose answer differs from the file is listed in `stale` and its changes
-//! are no longer indexed: every reader is [`VaultErrorCode::IndexStale`]
-//! until a rebuild, which takes the new columns. The Projector is asked
-//! at a round, so a change is seen at the first round after it.
-
-// The queries of the `Vault` service read the Index through `Reader`.
-#![cfg_attr(not(test), expect(dead_code, reason = "the queries are not built yet"))]
+//! are no longer indexed: a reader of such a collection is
+//! [`VaultErrorCode::IndexStale`] until a rebuild, which takes the new
+//! columns. The Projector is asked at a round, so a change is seen at the
+//! first round after it.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -109,6 +107,12 @@ fn write_fault(err: TantivyError, what: &'static str) -> Fault {
         TantivyError::IoError(err) => io(std::io::Error::new(err.kind(), err.to_string())),
         err => broken(what).with_source(err),
     }
+}
+
+/// A failure of Tantivy while a query reads: a failed disk is `STORAGE`,
+/// anything else is the Index being damaged.
+pub(crate) fn read_fault(err: TantivyError, what: &'static str) -> Fault {
+    write_fault(err, what)
 }
 
 /// The fields of the Tantivy schema.
@@ -318,14 +322,14 @@ pub(crate) fn eq_term(column: &str, value: &str) -> Option<String> {
 }
 
 /// Fixed-width hex of an `i64`, in the order of the numbers.
-fn i64_key(value: i64) -> String {
+pub(crate) fn i64_key(value: i64) -> String {
     format!("{:016x}", (value as u64) ^ (1 << 63))
 }
 
 /// Fixed-width hex of an `f64`, in the order of the numbers: the sign bit is
 /// flipped for a positive value and every bit for a negative one. `-0.0`
 /// and `0.0` share a key.
-fn f64_key(value: f64) -> String {
+pub(crate) fn f64_key(value: f64) -> String {
     let bits = if value == 0.0 {
         0.0f64.to_bits()
     } else {
@@ -1025,6 +1029,11 @@ fn open_or_create(index: &Index) -> Result<tantivy::Index, Error> {
 #[derive(Debug)]
 pub(crate) struct Snapshot {
     committed: State,
+    /// The `meta.json` of the Tantivy index this was opened from. A rebuild
+    /// of the Index at the same state of the Vault makes the same
+    /// `committed` again, and only this tells the two apart.
+    meta: Vec<u8>,
+    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
     state: State,
     searcher: Searcher,
     index: tantivy::Index,
@@ -1034,6 +1043,7 @@ pub(crate) struct Snapshot {
 
 impl Snapshot {
     /// The state of the Vault this snapshot reflects.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
     pub(crate) fn state(&self) -> State {
         self.state
     }
@@ -1078,26 +1088,46 @@ impl Reader {
         }
     }
 
-    /// The lexical index at the state the Index reflects now. A snapshot
-    /// obtained earlier keeps its own state.
+    /// The lexical index at the state the Index reflects now, for a read of
+    /// the collections `scope` names. A snapshot obtained earlier keeps its
+    /// own state.
     ///
     /// # Errors
     ///
     /// `INDEX_REBUILDING` (retryable) when the Index has no commit, because
     /// no round has run yet or a rebuild runs, and when it is of another
     /// format, which the indexer makes again; `INDEX_STALE` when the
-    /// Projector's columns changed since the Index was built (`Reindex`);
-    /// `INDEX_BROKEN` when the lexical index cannot be opened or read
-    /// (`Reindex`).
-    pub(crate) fn snapshot(&self) -> Result<Arc<Snapshot>, Error> {
-        let committed = self.index.readable()?;
+    /// Projector's columns changed since the Index was built for a
+    /// collection of `scope` (`Reindex`); `INDEX_BROKEN` when the lexical
+    /// index cannot be opened or read (`Reindex`).
+    pub(crate) fn snapshot(&self, scope: &[&str]) -> Result<Arc<Snapshot>, Error> {
+        let committed = self.index.committed()?;
+        let stale = read_stale(&self.index).context("read the stale collections")?;
+        if let Some(name) = scope.iter().find(|name| stale.contains(**name)) {
+            return Err(Fault::new(
+                VaultErrorCode::IndexStale,
+                format!(
+                    "the columns of the Projector changed since the Index was built for the collection {name}; run Reindex"
+                ),
+            )
+            .into());
+        }
+        let meta = match fs::read(self.index.lexical_dir().join("meta.json")) {
+            Ok(bytes) => bytes,
+            // A rebuild may have emptied the folder under this look.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Err(rebuilding("the Index is being rebuilt"));
+            }
+            Err(err) => return Err(io(err)).context("read the state of the lexical index"),
+        };
         let mut cache = error::mutex(&self.cache, "read the lexical snapshot")?;
         if let Some(snapshot) = cache.as_ref()
             && snapshot.committed == committed
+            && snapshot.meta == meta
         {
             return Ok(Arc::clone(snapshot));
         }
-        match self.open(committed) {
+        match self.open(committed, meta) {
             Ok(snapshot) => {
                 let snapshot = Arc::new(snapshot);
                 *cache = Some(Arc::clone(&snapshot));
@@ -1115,7 +1145,7 @@ impl Reader {
         }
     }
 
-    fn open(&self, committed: State) -> Result<Snapshot, Fault> {
+    fn open(&self, committed: State, meta: Vec<u8>) -> Result<Snapshot, Fault> {
         let index = tantivy::Index::open_in_dir(self.index.lexical_dir())
             .or_fault(VaultErrorCode::IndexBroken, "open the lexical index")?;
         let fields = Fields::of(&index.schema())?;
@@ -1135,6 +1165,7 @@ impl Reader {
         };
         Ok(Snapshot {
             committed,
+            meta,
             state,
             searcher,
             index,
@@ -1469,7 +1500,7 @@ mod tests {
         }
 
         fn snapshot(&self) -> Arc<Snapshot> {
-            self.vault.lexical().snapshot().unwrap()
+            self.vault.lexical().snapshot(&["notes"]).unwrap()
         }
 
         fn index(&self) -> Index {
@@ -1866,7 +1897,7 @@ mod tests {
             )
             .unwrap();
         items.built(&vault, &path);
-        let snap = vault.lexical().snapshot().unwrap();
+        let snap = vault.lexical().snapshot(&["notes"]).unwrap();
         assert!(!by_key(&snap, "sealed", "secret"));
         assert!(by_key(&snap, "notes", "open"));
         assert!(by_text(&snap, MARKER).is_empty());
@@ -1910,7 +1941,7 @@ mod tests {
         let fx = Fixture::new("stale", &[standard("notes")]);
         fx.upsert("notes", "alpha", r#"{"title":"old","extra":"newcolumn"}"#);
         fx.built();
-        assert!(fx.vault.lexical().snapshot().is_ok());
+        assert!(fx.vault.lexical().snapshot(&["notes"]).is_ok());
         assert!(fx.snapshot().columns("notes").is_some_and(|c| c.len() == 6));
 
         fx.control.columns.lock().unwrap().push(column(
@@ -1921,12 +1952,17 @@ mod tests {
         ));
         fx.upsert("notes", "beta", r#"{"title":"second","extra":"newcolumn"}"#);
         fx.built();
-        let error = fx.vault.lexical().snapshot().unwrap_err();
+        let error = fx.vault.lexical().snapshot(&["notes"]).unwrap_err();
         assert!(error.is(VaultErrorCode::IndexStale), "{error}");
         assert!(!error.retryable());
         // Another handle's reader sees it too: the file is the record.
         let other = Reader::new(fx.index());
-        assert!(other.snapshot().unwrap_err().is(VaultErrorCode::IndexStale));
+        assert!(
+            other
+                .snapshot(&["notes"])
+                .unwrap_err()
+                .is(VaultErrorCode::IndexStale)
+        );
 
         fx.vault.indexer().reindex().unwrap();
         fx.items.until("the rebuild", |state| {
@@ -1943,7 +1979,7 @@ mod tests {
         let snap = fx.snapshot();
         assert!(snap.columns("notes").is_some_and(|c| c.len() == 7));
         assert_eq!(by_text(&snap, "newcolumn"), ["alpha", "beta"]);
-        assert!(other.snapshot().is_ok());
+        assert!(other.snapshot(&["notes"]).is_ok());
     }
 
     #[test]
@@ -1951,7 +1987,7 @@ mod tests {
         let fx = Fixture::new("rebuilding", &[standard("notes")]);
         fx.upsert("notes", "alpha", r#"{"title":"kept"}"#);
         fx.built();
-        assert!(fx.vault.lexical().snapshot().is_ok());
+        assert!(fx.vault.lexical().snapshot(&["notes"]).is_ok());
 
         // A rebuild held at its work: the commit is gone.
         hooks::stretch(&fx.path, Duration::from_millis(1500));
@@ -1965,7 +2001,7 @@ mod tests {
                     .and_then(|s| s.as_known())
                     == Some(rebuild::Stage::STAGE_RUNNING)
         });
-        let error = fx.vault.lexical().snapshot().unwrap_err();
+        let error = fx.vault.lexical().snapshot(&["notes"]).unwrap_err();
         assert!(error.is(VaultErrorCode::IndexRebuilding), "{error}");
         assert!(error.retryable());
         hooks::stretch(&fx.path, Duration::ZERO);
@@ -1980,14 +2016,14 @@ mod tests {
         let reader = Reader::new(index.clone());
         assert!(
             reader
-                .snapshot()
+                .snapshot(&["notes"])
                 .unwrap_err()
                 .is(VaultErrorCode::IndexRebuilding)
         );
         index.reset().unwrap();
         index.write_commit(State::default()).unwrap();
         std::fs::write(index.root().join("format"), "1\n").unwrap();
-        let error = reader.snapshot().unwrap_err();
+        let error = reader.snapshot(&["notes"]).unwrap_err();
         assert!(error.is(VaultErrorCode::IndexRebuilding), "{error}");
     }
 
@@ -2018,7 +2054,7 @@ mod tests {
         file.set_len(len / 2).unwrap();
         drop(file);
         let reader = Reader::new(fx.index());
-        let error = reader.snapshot().unwrap_err();
+        let error = reader.snapshot(&["notes"]).unwrap_err();
         assert!(error.is(VaultErrorCode::IndexBroken), "{error}");
         assert!(!error.retryable());
 
@@ -2032,7 +2068,7 @@ mod tests {
                 == Some(rebuild::Stage::STAGE_DONE)
                 && state.version.as_deref() == Some(head(&fx.path).as_str())
         });
-        let snap = reader.snapshot().unwrap();
+        let snap = reader.snapshot(&["notes"]).unwrap();
         assert_eq!(snap.searcher().num_docs(), 5);
     }
 

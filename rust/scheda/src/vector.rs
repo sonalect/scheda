@@ -1883,7 +1883,7 @@ mod tests {
         assert_eq!(vault.indexer().locks(), 0);
         let path = scratch.0.join("vault").canonicalize().unwrap();
         assert_eq!(Index::new(&path).read_commit().unwrap(), None);
-        let error = vault.lexical().snapshot().unwrap_err();
+        let error = vault.lexical().snapshot(&["notes"]).unwrap_err();
         assert!(error.is(VaultErrorCode::IndexRebuilding));
         let found = vault
             .get(

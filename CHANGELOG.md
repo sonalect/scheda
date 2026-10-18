@@ -64,6 +64,20 @@ changes; they grow with each part of the move.
   bytes; the deleting version has no revision and no bytes); a journal is
   `UNIMPLEMENTED`. `Vault.Check` returns a `CheckReport` of every
   problem, and fails only when it cannot run.
+- Queries select (`find` feature): `Collection.Query` and
+  `Vault.QueryDocuments` stream the exact set of Documents a `Filter`
+  matches, without scores, in `id` order (a journal in append order; a
+  Vault query by collection first), lazily from one snapshot of the
+  Index, with `offset`, `limit`, and `start_after` (a condition on the
+  order, so a deep page costs what the first does). `Collection.Count`
+  and `Vault.CountDocuments` count the same in the Index, opening no
+  file. The Filter keeps the yes/no kinds only (`boost`, `const_score`,
+  `disjunction_max`, and `more_like_this` are gone); a leaf on a column
+  checks its value against the column's kind. A Vault query names the
+  collection of every column leaf; naming an encrypted collection, or one
+  with `exclude_lexical_index`, is `UNIMPLEMENTED`. An Index not built yet
+  is `INDEX_REBUILDING`; `INDEX_STALE` is per collection whose columns
+  changed, or for a Vault of another projection. `limit: 0` gives nothing.
 - `Vault.Close` replaces `Vault::close(self)`: every call through the
   Vault, its collections, its mirror, and its Index then fails with
   `FAILED_PRECONDITION`; it returns once the calls that run have ended,

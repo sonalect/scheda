@@ -24,6 +24,8 @@ mod commit;
 mod crypto;
 mod document_calls;
 mod documents;
+#[cfg(feature = "find")]
+mod filter;
 mod fs;
 mod git;
 mod id;
@@ -37,6 +39,8 @@ mod lexical;
 mod marker;
 mod mirror;
 mod ports;
+#[cfg(feature = "find")]
+mod queries;
 mod reads;
 mod repo;
 mod service;
