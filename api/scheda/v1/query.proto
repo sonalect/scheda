@@ -19,9 +19,9 @@ import "scheda/v1/document.proto";
 //
 // A leaf names a column the Projector declared for the collection
 // (`IndexColumn`), or `id`, the identity of every Document. A leaf on a
-// Projector column may name its `collection`: required in the Vault scope
-// (`CollectionNames`), unset in the collection scope (one `collection`),
-// where it means that collection. `id` takes no collection.
+// Projector column may name its `collection`: required in a query or a
+// search of the Vault (`VaultQuery`, `VaultSearch`), unset in one of a
+// `Collection`, where it means that collection. `id` takes no collection.
 message Filter {
   // Every indexed Document.
   message All {}
@@ -265,8 +265,8 @@ message Filter {
   }
 }
 
-// Several collections, for the Vault scope of a query or a search. Empty:
-// every collection that is neither isolated nor encrypted. An isolated
+// Several collections, for a query or a search of the Vault. Empty: every
+// collection that is neither isolated nor encrypted. An isolated
 // collection is searched only when named; an encrypted one, named, is
 // `UNIMPLEMENTED`: no Index holds it.
 message CollectionNames {
@@ -279,68 +279,70 @@ message CollectionNames {
   }];
 }
 
-// The request of `QueryDocuments` and `CountDocuments`.
+// The request of `Collection.Query` and `Collection.Count`.
 message DocumentQuery {
-  // Where to look. Exactly one.
-  oneof scope {
-    option (buf.validate.oneof).required = true;
-    // The Vault scope: these collections; a leaf on a Projector column
-    // names its collection.
-    CollectionNames collections = 1;
-    // The collection scope: this one collection; a leaf on a Projector
-    // column means its column.
-    string collection = 2 [(buf.validate.field) = {
-      string: {min_len: 1}
-    }];
-  }
   // The condition.
-  Filter filter = 3 [(buf.validate.field) = {required: true}];
+  Filter filter = 1 [(buf.validate.field) = {required: true}];
   // Fill `Document.raw`. Unset: keys and revisions only.
-  bool include_raw = 4;
+  bool include_raw = 2;
   // Skip this many matches first.
-  uint32 offset = 5;
+  uint32 offset = 3;
   // Stop after this many. Unset: every match.
-  uint32 limit = 6;
-  // Begin after this Document, in the order of the query (collection,
-  // then `id`; a journal in append order). A page that begins where the
-  // last one ended is not shifted by a Document added meanwhile, and a
-  // deep page costs no more than the first.
-  DocumentKey start_after = 7;
+  uint32 limit = 4;
+  // Begin after the Document with this id, in the order of the query
+  // (`id`; a journal in append order). A page that begins where the last
+  // one ended is not shifted by a Document added meanwhile, and a deep page
+  // costs no more than the first.
+  string start_after = 5 [(buf.validate.field) = {
+    string: {min_len: 1}
+  }];
 }
 
-// The answer of `CountDocuments`.
+// The request of `Vault.QueryDocuments` and `Vault.CountDocuments`: a
+// query of several collections.
+message VaultQuery {
+  // Where to look.
+  CollectionNames collections = 1;
+  // The condition; a leaf on a Projector column names its collection.
+  Filter filter = 2 [(buf.validate.field) = {required: true}];
+  // Fill `Document.raw`. Unset: keys and revisions only.
+  bool include_raw = 3;
+  // Skip this many matches first.
+  uint32 offset = 4;
+  // Stop after this many. Unset: every match.
+  uint32 limit = 5;
+  // Begin after this Document, in the order of the query (collection,
+  // then `id`; a journal in append order), as `DocumentQuery.start_after`.
+  DocumentKey start_after = 6;
+}
+
+// The answer of `Count` and `CountDocuments`.
 message Count {
   uint64 count = 1;
 }
 
-// The request of `SearchDocuments`.
+// The request of `Collection.Search`; inside `VaultSearch`, of
+// `Vault.SearchDocuments`.
 message DocumentSearch {
-  // Where to look. Exactly one, as in `DocumentQuery`.
-  oneof scope {
-    option (buf.validate.oneof).required = true;
-    CollectionNames collections = 1;
-    string collection = 2 [(buf.validate.field) = {
-      string: {min_len: 1}
-    }];
-  }
   // What to rank by. Exactly one.
   oneof subject {
     option (buf.validate.oneof).required = true;
     // A text: the lexical leg matches its words, the vector leg embeds it
     // (`Embedder.EmbedQuery`).
-    string text = 3 [(buf.validate.field) = {
+    string text = 1 [(buf.validate.field) = {
       string: {min_len: 1}
     }];
-    // A Document: others like it. The lexical leg takes its indexed text;
-    // the vector leg takes its stored vector and calls no model.
-    DocumentKey like = 4;
+    // A Document, of any collection: others like it. The lexical leg takes
+    // its indexed text; the vector leg takes its stored vector and calls no
+    // model.
+    DocumentKey like = 2;
   }
   // Search only among the Documents this matches. Unset: all in scope.
-  Filter filter = 5;
+  Filter filter = 3;
   // How many hits. Unset or 0: 10. No upper limit beyond the Index.
-  uint32 k = 6;
+  uint32 k = 4;
   // Weight of the lexical leg. Unset: 1. Zero turns the leg off.
-  double lexical_weight = 7 [(buf.validate.field) = {
+  double lexical_weight = 5 [(buf.validate.field) = {
     double: {
       gte: 0
       finite: true
@@ -354,7 +356,7 @@ message DocumentSearch {
     ]
   }];
   // Weight of the vector leg. Unset: 1. Zero turns the leg off.
-  double vector_weight = 8 [(buf.validate.field) = {
+  double vector_weight = 6 [(buf.validate.field) = {
     double: {
       gte: 0
       finite: true
@@ -367,22 +369,32 @@ message DocumentSearch {
       }
     ]
   }];
-  // Rerank the first this many fused hits with the handle's reranker; set
+  // Rerank the first this many fused hits with the Vault's reranker; set
   // without one, `INVALID_ARGUMENT`. Below the effective `k`,
   // `INVALID_ARGUMENT`. Unset: no rerank.
-  uint32 rerank_limit = 9 [(buf.validate.field) = {
+  uint32 rerank_limit = 7 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];
   // Fill the `raw` of each hit's Document.
-  bool include_raw = 10;
+  bool include_raw = 8;
   // Skip this many hits first; their files are not opened. A second
   // search ranks again, so its page need not follow the first one's:
   // pages that must agree come from one search with a large enough `k`.
-  uint32 offset = 11;
+  uint32 offset = 9;
 }
 
-// One item of `SearchDocuments`. The first is always the summary; the
-// rest are hits, best first.
+// The request of `Vault.SearchDocuments`: a search of several
+// collections.
+message VaultSearch {
+  // Where to look.
+  CollectionNames collections = 1;
+  // The search; a leaf of its `filter` on a Projector column names its
+  // collection.
+  DocumentSearch search = 2 [(buf.validate.field) = {required: true}];
+}
+
+// One item of `Search` and `SearchDocuments`. The first is always the
+// summary; the rest are hits, best first.
 message SearchItem {
   oneof item {
     SearchSummary summary = 1;
@@ -390,7 +402,7 @@ message SearchItem {
   }
 }
 
-// What a search did with its legs, known from the handle before it runs.
+// What a search did with its legs, known from the Vault before it runs.
 message SearchSummary {
   // Why the vector leg ran or did not: the first that applies, in this
   // order.
@@ -399,10 +411,10 @@ message SearchSummary {
     // Not asked for: `vector_weight` is 0.
     VECTOR_LEG_NOT_ASKED = 1;
     // No collection in scope has a vector column: each is excluded or
-    // encrypted, the handle has no Projector, or the Projector marks no
+    // encrypted, the Vault has no Projector, or the Projector marks no
     // column `vector`.
     VECTOR_LEG_NO_VECTOR_COLLECTION = 2;
-    // The handle has no embedder.
+    // The Vault has no embedder.
     VECTOR_LEG_NO_EMBEDDER = 3;
     // The Index holds no vector yet.
     VECTOR_LEG_NO_VECTORS = 4;

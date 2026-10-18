@@ -1,17 +1,44 @@
-// The state of the Index, as `GetIndexStatus` and `WatchIndexStatus` give
-// it.
+// The Index of a Vault: its object, and the state it reports.
 //
 // The Index lives under `{vault}/.scheda/`, is never committed, and
-// follows the stored state of the Vault in the background: one handle of
-// all those open on a Vault indexes at a time, the others follow it and
-// take over when it ends. Versions here are opaque tokens: equal tokens
-// are the same stored state.
+// follows the stored state of the Vault in the background: one open Vault
+// of all those on one path, in any process, indexes at a time; the others
+// follow it and take over when it ends. Versions here are opaque tokens:
+// equal tokens are the same stored state.
 
 edition = "2024";
 
 package scheda.v1;
 
+import "google/protobuf/empty.proto";
+import "protocontract/v1/options.proto";
 import "scheda/v1/error.proto";
+
+// The Index of one Vault, from `Vault.Index`. A build without `find` has
+// none.
+service Index {
+  // Where the Index stands now.
+  rpc Status(google.protobuf.Empty) returns (IndexState);
+
+  // Where the Index stands, now and at every change: the first item at
+  // once, then one item for each indexer round, for the Index catching up
+  // with the last write, and for a rebuild starting, moving on, and
+  // ending. The stream does not end by itself; the caller drops it when it
+  // has what it waited for.
+  rpc Watch(google.protobuf.Empty) returns (stream IndexState);
+
+  // Starts a rebuild of the Index from the stored Documents, with the
+  // ports of this Vault, and returns at once; `Watch` shows its progress
+  // and its result. A rebuild already running, `ABORTED`. A Vault that
+  // lacks a port the Index needs (a Projector, or an embedder for a
+  // `vector` column), `FAILED_PRECONDITION` naming it.
+  rpc Reindex(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
+
+// A reference to the Index of a Vault.
+message IndexRef {
+  option (protocontract.v1.service) = "scheda.v1.Index";
+}
 
 // Where the Index stands.
 message IndexState {
@@ -28,23 +55,23 @@ message IndexState {
   // collection whose declaration changed. It counts files, not Documents:
   // a journal segment is one file however many lines it holds, so that
   // the count needs no read of the segments. `0` when the Index is where
-  // this handle last found the Vault; unset when the files could not be
+  // this Vault last found the stored state; unset when the files could not be
   // counted (`last_error` then says why).
   uint64 pending = 2;
-  // This handle's indexer is the one indexing now. One indexer of all
-  // those open on a Vault indexes at a time; the others look again later
+  // This Vault's indexer is the one indexing now. One indexer of all the
+  // Vaults open on one path indexes at a time; the others look again later
   // and take over when it ends.
   bool role = 3;
-  // This handle's embedder is of another model or length than the
-  // vectors of the Index: it writes no vector, and its searches run
-  // without the vector leg, rather than mix two models. `Reindex` moves
-  // the Index to it.
+  // This Vault's embedder is of another model or length than the vectors
+  // of the Index: it writes no vector, and its searches run without the
+  // vector leg, rather than mix two models. `Reindex` moves the Index to
+  // it.
   bool model_mismatch = 4;
-  // The last rebuild this handle's indexer ran, while it runs and after it
+  // The last rebuild this Vault's indexer ran, while it runs and after it
   // ends: one `Reindex` asked for, or the building of an Index that did not
-  // exist or was made in another format. Unset when this handle ran none.
+  // exist or was made in another format. Unset when this Vault ran none.
   Rebuild rebuild = 5;
-  // The failure of this handle's last indexing round; unset after a round
+  // The failure of this Vault's last indexing round; unset after a round
   // that succeeds. A failed round changes no version and fails no write; the
   // indexer tries it again after a pause.
   ErrorReport last_error = 6;

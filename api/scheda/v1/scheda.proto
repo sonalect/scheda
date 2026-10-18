@@ -1,0 +1,85 @@
+// The Scheda contract: a Vault of collections of Documents, kept as files
+// in a git work tree, with a search Index the Vault keeps on its stored
+// state in the background.
+//
+// The contract is a set of objects, each a service, reached from the one
+// before it:
+//
+//     Scheda ── Open ──▶ Vault ──┬─ GetCollection ─▶ Collection
+//                                ├─ Mirror ────────▶ Mirror
+//                                └─ Index ─────────▶ Index
+//
+// An object is passed as a reference message (`VaultRef`, `CollectionRef`,
+// …): it holds the implementation itself, within one process, and has no
+// Protobuf JSON form. The caller's ports (`Embedder`, `Reranker`,
+// `Projector`) travel the same way, from the caller to the Vault.
+//
+// Every method checks its request against the rules of this contract first
+// and fails with `VAULT_ERROR_CODE_INVALID_ARGUMENT` when one is broken.
+// Every method fails with the codes of `VaultErrorCode`; the cause of a
+// failure (an I/O error, a git message) travels as its source.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+import "scheda/v1/options.proto";
+import "scheda/v1/ports.proto";
+import "scheda/v1/vault.proto";
+
+// The library. An implementation is made with no arguments and holds no
+// Vault; a process makes one and opens every Vault through it.
+service Scheda {
+  // This build of Scheda: its version and its features.
+  rpc Info(google.protobuf.Empty) returns (SchedaInfo);
+
+  // Opens the Vault at `path`, or makes one, as `OpenOptions.mode` says,
+  // and returns it. The ports given are the Vault's from the start; the
+  // Vault changes them later (`Vault.SetEmbedder`, …). A port of a feature
+  // this build lacks, `UNIMPLEMENTED`; an async port outside a tokio
+  // runtime, `INVALID_ARGUMENT`. Open the same path twice and there are two
+  // Vaults on it, as there would be in two processes.
+  rpc Open(VaultOpening) returns (VaultRef);
+}
+
+// What `Scheda.Info` reports. Output only.
+message SchedaInfo {
+  // The version of the library, `MAJOR.MINOR.PATCH`.
+  string version = 1;
+  // The features this build has. A method of a feature it lacks answers
+  // `UNIMPLEMENTED`.
+  repeated Feature features = 2;
+}
+
+// A feature a build of Scheda may have.
+enum Feature {
+  FEATURE_UNSPECIFIED = 0;
+  // The Index, the queries and counts, and the `Index` object.
+  FEATURE_FIND = 1;
+  // The searches, the vector leg, and the embedder and reranker ports.
+  FEATURE_SEARCH = 2;
+  // Encrypted collections.
+  FEATURE_ENCRYPT = 3;
+}
+
+// The request of `Scheda.Open`. It has a Protobuf JSON form only without
+// ports: a reference has none.
+message VaultOpening {
+  // The Vault root: a folder, existing or not, as `OpenOptions.mode`
+  // allows.
+  string path = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
+  // How to open it.
+  OpenOptions options = 2;
+  // Says what of a Document the Index holds. Unset: the Index holds
+  // identity only.
+  ProjectorRef projector = 3;
+  // Turns texts into vectors for the vector leg. Unset: no vector leg.
+  EmbedderRef embedder = 4;
+  // Scores Documents for a search that reranks. Unset: no rerank.
+  RerankerRef reranker = 5;
+}

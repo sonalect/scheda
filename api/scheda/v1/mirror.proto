@@ -1,0 +1,89 @@
+// The mirror of a Vault: the git remote it pulls from and pushes to.
+
+edition = "2024";
+
+package scheda.v1;
+
+import "buf/validate/validate.proto";
+import "google/protobuf/empty.proto";
+import "protocontract/v1/options.proto";
+import "scheda/v1/error.proto";
+
+// The mirror of one Vault, from `Vault.Mirror`. A Vault without a mirror
+// has this object too: `Info` says so, and the calls that need one are
+// `NOT_FOUND`.
+service Mirror {
+  // The mirror as this Vault knows it, read locally: its URL, whether the
+  // Vault syncs by itself, and how its last sync by itself ended. Contacts
+  // no network.
+  rpc Info(google.protobuf.Empty) returns (MirrorInfo);
+
+  // Sets the URL of the mirror. Without a mirror, it is set; with the same
+  // URL, nothing happens, so a repeat is safe; with another URL,
+  // `ALREADY_EXISTS` naming the current one, unless `replace_existing`.
+  // Contacts no network. A URL that carries a password is
+  // `INVALID_ARGUMENT`: credentials come from git, never from the Vault.
+  rpc Set(MirrorSetting) returns (google.protobuf.Empty);
+
+  // Detaches the mirror: the Vault then works locally only. Without a
+  // mirror, `NOT_FOUND`. Contacts no network.
+  rpc Remove(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Sends the stored writes to the mirror. Isolated collections never
+  // leave the machine. Without a mirror, `NOT_FOUND`; the mirror holds
+  // writes this Vault has not pulled, `MIRROR_AHEAD`; credentials refused,
+  // `UNAUTHENTICATED`; the mirror cannot be reached, `UNAVAILABLE`.
+  rpc Push(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Brings the writes of the mirror into the Vault. A mirror that holds
+  // nothing yet is nothing to pull. Writes that cannot be joined,
+  // `MIRROR_CONFLICT`, and the Vault keeps the state it had. Otherwise the
+  // codes of `Push`.
+  rpc Pull(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // `Pull`, then `Push`. Against a mirror that holds nothing yet, it
+  // pushes.
+  rpc Sync(google.protobuf.Empty) returns (google.protobuf.Empty);
+}
+
+// A reference to the mirror of a Vault.
+message MirrorRef {
+  option (protocontract.v1.service) = "scheda.v1.Mirror";
+}
+
+// What `Mirror.Info` reports. Output only.
+message MirrorInfo {
+  // The URL of the mirror; empty without one.
+  string url = 1;
+  // `OpenOptions.auto_sync`: the Vault pulls when it opens and pushes
+  // after each write.
+  bool auto_sync = 2;
+  // How the last sync the Vault ran by itself (`auto_sync`) failed; unset
+  // when it succeeded or none ran. Such a failure fails neither the open
+  // nor the write that started it.
+  ErrorReport last_auto_sync_error = 3;
+}
+
+// The request of `Mirror.Set`.
+message MirrorSetting {
+  // An absolute URI (`https://…`, `ssh://…`, `file:///…`) or an scp-style
+  // address (`git@host:path`). No password inside.
+  string url = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+    cel: [
+      {
+        id: "mirror_setting.url.form"
+        message: "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)"
+        expression: "this.isUri() || (this.contains('@') && this.contains(':') && !this.contains('://'))"
+      },
+      {
+        id: "mirror_setting.url.no_password"
+        message: "must not carry a password: credentials come from git"
+        expression: "!this.matches('^[A-Za-z][A-Za-z0-9+.-]*://[^/@]*:[^/@]*@')"
+      }
+    ]
+  }];
+  // Replace a mirror of another URL instead of failing.
+  bool replace_existing = 2;
+}

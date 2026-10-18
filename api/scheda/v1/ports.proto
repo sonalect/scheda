@@ -1,11 +1,13 @@
 // Ports: services the caller implements and Scheda calls.
 //
 // Scheda ships no model and does not know what a Document holds. What it
-// needs of either comes through a port, installed on a handle when it is
-// opened: an `Embedder` turns texts into vectors for the vector leg, a
-// `Reranker` scores Documents against a query, a `Projector` says what of
-// a Document the Index holds. Scheda calls a port from its own threads,
-// the background indexer's among them.
+// needs of either comes through a port the caller gives a Vault, by
+// reference, when it opens it (`VaultOpening`) or later
+// (`Vault.SetEmbedder`, …): an `Embedder` turns texts into vectors for the
+// vector leg, a `Reranker` scores Documents against a query, a `Projector`
+// says what of a Document the Index holds. A port is given in the form its
+// implementation has, blocking or async, and Scheda calls it in that form
+// from its own threads, the background indexer's among them.
 
 edition = "2024";
 
@@ -13,6 +15,7 @@ package scheda.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/empty.proto";
+import "protocontract/v1/options.proto";
 import "scheda/v1/collection.proto";
 import "scheda/v1/document.proto";
 
@@ -39,6 +42,11 @@ service Embedder {
   // encodes the two roles differently (a query prefix, a task type) does
   // so here; for one that does not, it is `Embed` of one text.
   rpc EmbedQuery(Query) returns (Vector);
+}
+
+// A reference to an implementation of `Embedder`.
+message EmbedderRef {
+  option (protocontract.v1.service) = "scheda.v1.Embedder";
 }
 
 // What an embedder declares.
@@ -104,6 +112,11 @@ message ScoreItem {
   }
 }
 
+// A reference to an implementation of `Reranker`.
+message RerankerRef {
+  option (protocontract.v1.service) = "scheda.v1.Reranker";
+}
+
 // The score of one Document.
 message DocumentScore {
   double score = 1;
@@ -127,6 +140,13 @@ enum RerankerErrorCode {
 // Fails with the codes of `ProjectorErrorCode`. A failure leaves that
 // Document out of the Index; its file stays.
 service Projector {
+  // Which projection it makes. Read once, when the Projector is given to a
+  // Vault. The projection is stored with the Index, so a Projector of
+  // another projection is seen, not mixed into the same Index: the Index is
+  // `INDEX_STALE` for that Vault, which does not index, until a `Reindex`
+  // by a Vault with the new Projector.
+  rpc Describe(google.protobuf.Empty) returns (ProjectorDescriptor);
+
   // The columns of one collection. None: its Documents are indexed by
   // identity only. Changing the columns of a collection makes the Index
   // stale until `Reindex`.
@@ -134,6 +154,23 @@ service Projector {
 
   // The values of the columns for one Document.
   rpc Project(RawDocument) returns (IndexDoc);
+}
+
+// A reference to an implementation of `Projector`.
+message ProjectorRef {
+  option (protocontract.v1.service) = "scheda.v1.Projector";
+}
+
+// What a Projector declares.
+message ProjectorDescriptor {
+  // The projection and its version together (`notes@4`), compared for
+  // equality only; stored with the Index. Change it whenever the same
+  // Document may project to other values: a parse rule, a normalisation, a
+  // mapping from a field to a column.
+  string projection_id = 1 [(buf.validate.field) = {
+    required: true
+    string: {min_len: 1}
+  }];
 }
 
 // The Document a Projector projects.

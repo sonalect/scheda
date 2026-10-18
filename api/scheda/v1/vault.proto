@@ -1,11 +1,5 @@
-// The Scheda contract: a Vault of collections of Documents, kept as files
-// in a git work tree, with a search Index the Vault keeps on its stored
-// state in the background.
-//
-// Bindings and the CLI encode these messages as Protobuf JSON. A handle is
-// made by `open` and ended by `close`; those belong to each binding, not
-// to this service, and so does installing the caller's ports (`Embedder`,
-// `Reranker`, `Projector`).
+// The Vault: one open Vault, and what it holds besides its collections'
+// Documents.
 
 edition = "2024";
 
@@ -13,32 +7,36 @@ package scheda.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/empty.proto";
+import "protocontract/v1/options.proto";
 import "scheda/v1/collection.proto";
 import "scheda/v1/document.proto";
 import "scheda/v1/error.proto";
 import "scheda/v1/index.proto";
+import "scheda/v1/mirror.proto";
+import "scheda/v1/ports.proto";
 import "scheda/v1/query.proto";
 
-// One open Vault.
-//
-// Every method checks its request against the rules of this contract
-// first and fails with `VAULT_ERROR_CODE_INVALID_ARGUMENT` when one is
-// broken. Every method fails with the codes of `VaultErrorCode`; the cause
-// of a failure (an I/O error, a git message) travels as its source.
+// One open Vault: its collections, its ports, and the writes and reads
+// that cross collections. A `Collection` reads and writes the Documents of
+// one; the `Mirror` and the `Index` are parts of the Vault with objects of
+// their own.
 //
 // A write returns when it is stored, and only then: a call that returns
-// `Ok` happened, a call that fails wrote nothing. Writes from every handle
-// and every process on one Vault are applied one after another, in the
-// order they were made; no write fails because another one is running.
+// `Ok` happened, a call that fails wrote nothing. Writes from every Vault
+// object and every process on one Vault are applied one after another, in
+// the order they were made; no write fails because another one is running.
 // Reads see stored state only. The Index follows the stored state in the
-// background: `QueryDocuments`, `CountDocuments`, and `SearchDocuments`
-// answer from what it holds, and `WatchIndexStatus` tells how far it is.
+// background: queries and searches answer from what it holds, and
+// `Index.Watch` tells how far it is.
+//
+// After `Close`, every call of this Vault and of every object reached from
+// it fails with `FAILED_PRECONDITION`. A Vault whose references are all
+// dropped closes as `Close` would, without the report.
 service Vault {
   // The Vault.
 
-  // What this handle holds: the Vault path, the Index path, the mirror
-  // URL (empty without one), `auto_sync`, the writer identity of this
-  // clone, and the features of this build. Reads no Document.
+  // What this Vault holds: its path, the Index path, and the writer
+  // identity of this clone. Reads no Document.
   rpc Info(google.protobuf.Empty) returns (VaultInfo);
 
   // Checks the whole Vault, file by file, and lists every problem it
@@ -49,51 +47,66 @@ service Vault {
   // the report.
   rpc Check(google.protobuf.Empty) returns (CheckReport);
 
-  // Sets the URL of the mirror. Without a mirror, it is set; with the same
-  // URL, nothing happens, so a repeat is safe; with another URL,
-  // `ALREADY_EXISTS` naming the current one, unless `replace_existing`.
-  // Contacts no network. A URL that carries a password is
-  // `INVALID_ARGUMENT`: credentials come from git, never from the Vault.
-  rpc SetMirror(MirrorSetting) returns (google.protobuf.Empty);
+  // Ends the Vault: new calls fail at once; it returns when the calls that
+  // run have ended, the indexer has stopped, and the Vault holds no lock.
+  // A second `Close` is nothing to do.
+  rpc Close(google.protobuf.Empty) returns (google.protobuf.Empty);
 
-  // Detaches the mirror: the Vault then works locally only. Without a
-  // mirror, `NOT_FOUND`. Contacts no network.
-  rpc RemoveMirror(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Its parts.
 
-  // Sends the stored writes to the mirror. Isolated collections never
-  // leave the machine. Without a mirror, `NOT_FOUND`; the mirror holds
-  // writes this Vault has not pulled, `MIRROR_AHEAD`; credentials refused,
-  // `UNAUTHENTICATED`; the mirror cannot be reached, `UNAVAILABLE`.
-  rpc Push(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // The mirror of the Vault, set or not: `Mirror.Info` says which.
+  rpc Mirror(google.protobuf.Empty) returns (MirrorRef);
 
-  // Brings the writes of the mirror into the Vault. A mirror that holds
-  // nothing yet is nothing to pull. Writes that cannot be joined,
-  // `MIRROR_CONFLICT`, and the Vault keeps the state it had. Otherwise the
-  // codes of `Push`.
-  rpc Pull(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // The Index of the Vault. A build without `find`, `UNIMPLEMENTED`.
+  rpc Index(google.protobuf.Empty) returns (IndexRef);
 
-  // `Pull`, then `Push`. Against a mirror that holds nothing yet, it
-  // pushes.
-  rpc Sync(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Ports. A port is the Vault's until it is removed or replaced, and may
+  // change at any time: the indexer takes the new set into its next round
+  // (who indexes depends on the ports a Vault holds). A port of a feature
+  // this build lacks, `UNIMPLEMENTED`; an async port outside a tokio
+  // runtime, `INVALID_ARGUMENT`.
 
-  // Collections.
+  // Gives the Vault this Projector, in place of the one it had. Its
+  // `Describe` is read here, once.
+  rpc SetProjector(ProjectorRef) returns (google.protobuf.Empty);
+
+  // Takes the Projector away. Without one, nothing to do.
+  rpc RemoveProjector(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Gives the Vault this embedder, in place of the one it had. Its
+  // `Describe` is read here, once.
+  rpc SetEmbedder(EmbedderRef) returns (google.protobuf.Empty);
+
+  // Takes the embedder away. Without one, nothing to do.
+  rpc RemoveEmbedder(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Gives the Vault this reranker, in place of the one it had.
+  rpc SetReranker(RerankerRef) returns (google.protobuf.Empty);
+
+  // Takes the reranker away. Without one, nothing to do.
+  rpc RemoveReranker(google.protobuf.Empty) returns (google.protobuf.Empty);
+
+  // Collections: the set of them and their declarations.
 
   // Every declared collection, isolated ones included, in name order.
   rpc ListCollections(google.protobuf.Empty) returns (Collections);
 
-  // One collection. Unknown, `NOT_FOUND`.
-  rpc GetCollection(CollectionKey) returns (Collection);
+  // One collection, to read and write its Documents. Unknown, `NOT_FOUND`.
+  // The object names the collection; each of its calls finds it again, so
+  // after the collection is deleted they are `NOT_FOUND`, and after it is
+  // declared again they work again.
+  rpc GetCollection(CollectionKey) returns (CollectionRef);
 
-  // Declares a collection and returns it as stored, defaults filled in.
-  // An existing name, `ALREADY_EXISTS`. An isolated collection gets its
-  // place under `{vault}/.isolated/`.
-  rpc CreateCollection(Collection) returns (Collection);
+  // Declares a collection and returns the declaration as stored, defaults
+  // filled in. An existing name, `ALREADY_EXISTS`. An isolated collection
+  // gets its place under `{vault}/.isolated/`.
+  rpc CreateCollection(CollectionDeclaration) returns (CollectionDeclaration);
 
-  // Changes the schema of an existing collection and returns it as
-  // stored. Unknown, `NOT_FOUND`. The kind and `isolated` change only while
-  // the collection holds no Document, and `encrypted` only then too;
-  // otherwise `FAILED_PRECONDITION`.
-  rpc UpdateCollection(Collection) returns (Collection);
+  // Changes the schema of an existing collection and returns the
+  // declaration as stored. Unknown, `NOT_FOUND`. The kind and `isolated`
+  // change only while the collection holds no Document, and `encrypted`
+  // only then too; otherwise `FAILED_PRECONDITION`.
+  rpc UpdateCollection(CollectionDeclaration) returns (CollectionDeclaration);
 
   // Deletes an empty collection: its declaration and its directory.
   // Holding Documents, `FAILED_PRECONDITION`: they are deleted first.
@@ -106,149 +119,53 @@ service Vault {
   // names the operation by its index. One result per operation, in order.
   rpc BatchCollections(stream CollectionOperation) returns (CollectionBatchResult);
 
-  // Documents.
-
-  // One Document, read from its file, not from the Index. Unknown
-  // collection or Document, `NOT_FOUND`.
-  rpc GetDocument(DocumentKey) returns (Document);
-
-  // Many Documents of one collection: the given ids, or the collection
-  // page by page. A lazy stream: each Document is read when the stream
-  // reaches it. Needs no Index.
-  rpc GetDocuments(DocumentSelection) returns (stream Document);
-
-  // The past versions of one Document, newest first. A lazy stream: a
-  // version is read when the stream reaches it; the caller stops when it
-  // has enough. A journal line never changes, so a journal is
-  // `UNIMPLEMENTED`.
-  rpc GetDocumentHistory(DocumentKey) returns (stream DocumentHistoryEntry);
-
-  // Creates a Document and returns it as stored, with its revision. In a
-  // journal, appends a line. Present, `ALREADY_EXISTS`, or, with
-  // `keep_existing`, the Document already stored is returned and nothing
-  // is written.
-  rpc CreateDocument(DocumentCreation) returns (Document);
-
-  // Replaces an existing Document and returns it as stored. Absent,
-  // `NOT_FOUND`. With `revision`, the stored revision must be that one, or
-  // `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes store
-  // nothing and keep the revision.
-  rpc UpdateDocument(DocumentUpdate) returns (Document);
-
-  // Creates the Document, or replaces it when present, and returns it as
-  // stored. A journal, `UNIMPLEMENTED`. The same bytes store nothing and
-  // keep the revision.
-  rpc UpsertDocument(DocumentUpsert) returns (Document);
-
-  // Deletes a Document. Absent, `NOT_FOUND`, or nothing with
-  // `ignore_missing`. With `revision`, the stored revision must be that
-  // one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
-  // line never leaves.
-  rpc DeleteDocument(DocumentDeletion) returns (google.protobuf.Empty);
+  // Documents across collections.
 
   // Several Document writes as one, across collections: all happen, or
-  // none. An `Err` item, a broken stream, or one write that fails, and none
-  // happened; the error names the operation by its index. One result per
-  // operation, in order. Collections are not written here
-  // (`BatchCollections`).
-  rpc BatchDocuments(stream DocumentOperation) returns (DocumentBatchResult);
+  // none, as `Collection.Batch` within one. A batch does not mix isolated
+  // collections with the others (`INVALID_ARGUMENT`): they are two
+  // repositories. Collections are not written here (`BatchCollections`).
+  rpc BatchDocuments(stream VaultDocumentOperation) returns (DocumentBatchResult);
 
-  // Index.
+  // The Documents of several collections that match a condition, as
+  // `Collection.Query` within one; a leaf on a Projector column names its
+  // collection.
+  rpc QueryDocuments(VaultQuery) returns (stream Document);
 
-  // Starts a rebuild of the Index from the stored Documents and returns
-  // at once; `WatchIndexStatus` shows its progress and its result. A
-  // rebuild already running, `ABORTED`. In a build without `find`, it
-  // rebuilds the journal id maps only.
-  rpc Reindex(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // How many Documents `QueryDocuments` would give for the same query. The
+  // codes of `QueryDocuments`.
+  rpc CountDocuments(VaultQuery) returns (Count);
 
-  // Where the Index stands now. A build without `find`, `UNIMPLEMENTED`.
-  rpc GetIndexStatus(google.protobuf.Empty) returns (IndexState);
-
-  // Where the Index stands, now and at every change: the first item at
-  // once, then one item for each indexer round, for the Index catching up
-  // with the last write, and for a rebuild starting, moving on, and
-  // ending. The stream does not end by itself; the caller drops it when it
-  // has what it waited for. A build without `find`, `UNIMPLEMENTED`.
-  rpc WatchIndexStatus(google.protobuf.Empty) returns (stream IndexState);
-
-  // Queries.
-
-  // The Documents that match a condition: the exact set, in a stable
-  // order (`id`; a journal in append order), without scores. A lazy
-  // stream, read from one snapshot of the Index, so nothing written
-  // meanwhile moves it. An Index not built yet, `INDEX_REBUILDING`; one
-  // built by another Projector, `INDEX_STALE`. A build without `find`,
-  // `UNIMPLEMENTED`.
-  rpc QueryDocuments(DocumentQuery) returns (stream Document);
-
-  // How many Documents `QueryDocuments` would give for the same query,
-  // counted in the Index without opening a file. The codes of
-  // `QueryDocuments`.
-  rpc CountDocuments(DocumentQuery) returns (Count);
-
-  // The Documents that best fit a text, or a Document, by relevance: a
-  // lexical leg, a vector leg, both fused, and reranked by the handle's
-  // reranker when `rerank_limit` asks. The first item is a summary of the
-  // legs; then the hits, best first. A lazy stream: the ranking is
-  // computed whole, the Documents are read as the stream reaches them. A
-  // ranking is computed again by each call, so pages from two calls need
-  // not agree. An Index not built yet, `INDEX_REBUILDING`. A build without
-  // `search`, `UNIMPLEMENTED`.
-  rpc SearchDocuments(DocumentSearch) returns (stream SearchItem);
+  // The Documents of several collections that best fit a text, or a
+  // Document, as `Collection.Search` within one.
+  rpc SearchDocuments(VaultSearch) returns (stream SearchItem);
 }
 
-// What `Info` reports. Output only.
+// A reference to an open Vault.
+message VaultRef {
+  option (protocontract.v1.service) = "scheda.v1.Vault";
+}
+
+// What `Vault.Info` reports. Output only.
 message VaultInfo {
-  // The Vault root this handle opened. Not a Document path.
+  // The Vault root it was opened at. Not a Document path.
   string path = 1;
   // The Index directory, `{vault}/.scheda/index`. Not a caller option.
   string index_path = 2;
-  // The URL of the mirror; empty without one. Read locally, not fetched.
-  string mirror = 3;
-  // `OpenOptions.auto_sync` of this handle.
-  bool auto_sync = 4;
   // The machine-local identity of this clone, as `OpenOptions.writer` or
   // as generated into `{vault}/.scheda/writer`.
-  string writer = 5;
-  // The features this build has. A method of a feature it lacks answers
-  // `UNIMPLEMENTED`.
-  repeated Feature features = 6;
+  string writer = 3;
 }
 
-// A feature a build of Scheda may have.
-enum Feature {
-  FEATURE_UNSPECIFIED = 0;
-  // The Index, `QueryDocuments`, `CountDocuments`, and the status calls.
-  FEATURE_FIND = 1;
-  // `SearchDocuments`, the vector leg, and the embedder and reranker
-  // ports.
-  FEATURE_SEARCH = 2;
-  // Encrypted collections.
-  FEATURE_ENCRYPT = 3;
-}
-
-// The request of `SetMirror`.
-message MirrorSetting {
-  // An absolute URI (`https://…`, `ssh://…`, `file:///…`) or an scp-style
-  // address (`git@host:path`). No password inside.
-  string url = 1 [(buf.validate.field) = {
+// One item of `Vault.BatchDocuments`: a Document write in one collection.
+message VaultDocumentOperation {
+  // The collection the write is in.
+  string collection = 1 [(buf.validate.field) = {
     required: true
     string: {min_len: 1}
-    cel: [
-      {
-        id: "mirror_setting.url.form"
-        message: "must be an absolute URI (https://…, ssh://…, file:///…) or an scp-style address (git@host:path)"
-        expression: "this.isUri() || (this.contains('@') && this.contains(':') && !this.contains('://'))"
-      },
-      {
-        id: "mirror_setting.url.no_password"
-        message: "must not carry a password: credentials come from git"
-        expression: "!this.matches('^[A-Za-z][A-Za-z0-9+.-]*://[^/@]*:[^/@]*@')"
-      }
-    ]
   }];
-  // Replace a mirror of another URL instead of failing.
-  bool replace_existing = 2;
+  // The write, as `Collection.Batch` takes it.
+  DocumentOperation operation = 2 [(buf.validate.field) = {required: true}];
 }
 
 // What `Check` found. Output only. Empty when the Vault is sound.

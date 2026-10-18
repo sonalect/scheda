@@ -1,4 +1,4 @@
-// What a binding's `open` takes, besides the Vault path and the ports.
+// What `Scheda.Open` takes, besides the Vault path and the ports.
 
 edition = "2024";
 
@@ -15,7 +15,7 @@ message OpenOptions {
   // absolute URI (`https://…`, `ssh://…`, `file:///…`) or an scp-style
   // address (`git@host:path`). Unset: a new local Vault. On an existing
   // Vault, a set value must be its mirror's URL (`INVALID_ARGUMENT`
-  // otherwise); `SetMirror` changes the mirror.
+  // otherwise); `Mirror.Set` changes the mirror.
   string mirror = 2 [(buf.validate.field) = {
     cel: [
       {
@@ -25,11 +25,11 @@ message OpenOptions {
       }
     ]
   }];
-  // The secret of this handle for every encrypted collection. Unset:
+  // The secret of this Vault for every encrypted collection. Unset:
   // nothing is encrypted or decrypted, and an encrypted collection is
   // `CRYPTO`.
   Encryption encryption = 3;
-  // Who writes through this handle; the history of a Document shows it.
+  // Who writes through this Vault; the history of a Document shows it.
   // Unset: the local git configuration, then `Scheda <scheda@invalid>`.
   Author author = 4;
   // The machine-local identity of this clone: lowercase letters, digits,
@@ -44,8 +44,8 @@ message OpenOptions {
     }
   }];
   // How often, in milliseconds, the indexer looks for writes made
-  // outside this handle (another process, a `git` command). A write
-  // through this handle wakes it at once. Unset: 1000.
+  // outside this Vault (another Vault, another process, a `git` command).
+  // A write through this Vault wakes it at once. Unset: 1000.
   uint32 index_poll_ms = 6 [(buf.validate.field) = {
     uint32: {
       gte: 10
@@ -62,10 +62,10 @@ message OpenOptions {
   uint32 write_timeout_ms = 8 [(buf.validate.field) = {
     uint32: {gte: 1}
   }];
-  // The key to sign every commit of this handle with. For a later version:
+  // The key to sign every commit of this Vault with. For a later version:
   // signing is not built yet, and a set value makes `open`
   // `UNIMPLEMENTED`. Unset: commits are not signed. Git's `commit.gpgSign`
-  // is not read: the author of Scheda's commits is the handle's (`author`),
+  // is not read: the author of Scheda's commits is the Vault's (`author`),
   // not the person whose git configuration it is.
   Signing signing = 9;
 }
@@ -134,7 +134,7 @@ message Author {
   }];
 }
 
-// The age secret of a handle: a passphrase or an X25519 identity. Never
+// The age secret of a Vault: a passphrase or an X25519 identity. Never
 // written into the Vault. Redacted from debug output; Protobuf JSON still
 // carries it, so it never goes on a command line.
 message Encryption {

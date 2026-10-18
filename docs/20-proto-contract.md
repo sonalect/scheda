@@ -1,13 +1,14 @@
 # 20. The proto contract
 
-Document 20 of the Scheda package. Version 0.7, 18 October 2026.
+Document 20 of the Scheda package. Version 0.8, 18 October 2026.
 
 Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
-done but for `ErrorReport`; P6 is next.
+done but for `ErrorReport`. The object API (D24, approved 18 October
+2026) replaces P6 and P7 with R1–R5; R1 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -115,7 +116,8 @@ only.** *Settled with the owner, 17 October 2026.*
   anchor consumer's Vaults are moved by hand (§6).
 
 **D2. Four services; a missing feature answers `UNIMPLEMENTED`.**
-*Settled with the owner, 17 October 2026.*
+*Settled with the owner, 17 October 2026.* *D24 splits `Vault` into
+objects; the rule for a missing feature stands.*
 
 | Service | Who implements | Build |
 | - | - | - |
@@ -135,7 +137,9 @@ and `search` pulls USearch and, with it, an embedder and a reranker to
 supply. `Info` lists the features of the build (`FIND`, `SEARCH`,
 `ENCRYPT`, …), so a caller learns up front instead of by a failure.
 
-**D3. Construction and lifecycle stay Rust.**
+**D3. Construction and lifecycle stay Rust.** *Replaced by D24:*
+`Scheda.Open`, `Vault.Set…`, and `Vault.Close` are rpcs, and the ports
+are references. `OpenMode` and the fold of the getters into `Info` stand.
 
 ```rust
 pub struct Ports {
@@ -174,7 +178,8 @@ without the flag), `OPEN_EXISTING` (today with it), and the new
 anything else is `ALREADY_EXISTS`), for an installer that must not take
 over what is already there.
 
-**D4. Ports.**
+**D4. Ports.** *D24: a port is given as a reference (`EmbedderRef`, …),
+not as `Port`; the rest stands.*
 
 - **Either form.** *Settled with the owner, 17 October 2026.* The form of
   a port is its implementation's choice: `Ports` takes the sync form
@@ -1067,11 +1072,104 @@ owner, 17 October 2026.*
   simplest indexer that cannot race, even at the price of a rebuild that
   makes queries wait.
 
+**D24. The object API.** *Settled with the owner, 18 October 2026.* The
+contract is a set of objects, each a service, reached from the one before
+it: `Scheda` opens a `Vault`; a `Vault` gives a `Collection`, its
+`Mirror`, and its `Index`. An object travels as a *reference message*
+(`VaultRef`, `CollectionRef`, `MirrorRef`, `IndexRef`): an empty message
+marked `option (protocontract.v1.service) = "scheda.v1.Vault";`
+(protocontract-buffa 0.4.0), which holds the implementation itself within
+one process. The caller's ports travel the same way (`EmbedderRef`,
+`RerankerRef`, `ProjectorRef`). The receiver takes the form it needs
+(`to_sync`, `to_async_inline`, `to_async_offload`); a matching form comes
+back as the same implementation, with no bridge. A decoded reference holds
+nothing, and a reference has no Protobuf JSON form. It replaces the
+one-service `Vault` of D2 and §3, and the hand-written `Ports`, `Port`,
+`Vault::open`, `set_embedder`, and `close(self)` of D3 and D4. The protos
+under `api/scheda/v1/` are the contract; the names in D1–D23 are those of
+the one-service `Vault` (`GetDocument` is now `Collection.Get`,
+`GetIndexStatus` is `Index.Status`, and so on).
+
+1. A root service `Scheda`, made with no arguments: `Info`, and
+   `Open(VaultOpening) returns (VaultRef)`.
+2. `Scheda.Info` gives the version and the features of the build
+   (`SchedaInfo`); `VaultInfo` keeps `path`, `index_path`, and `writer`.
+3. `VaultOpening` is the path, the `OpenOptions`, and the three port
+   references.
+4. Ports change at any time: `Vault.SetProjector`, `SetEmbedder`,
+   `SetReranker`, and a `Remove…` for each; the indexer takes the new set
+   into its next round (who indexes, D23, follows the ports a Vault holds).
+5. `Vault` keeps the set of collections and their declarations
+   (`ListCollections`, `GetCollection` returning a `CollectionRef`,
+   `CreateCollection`, `UpdateCollection`, `DeleteCollection`,
+   `BatchCollections`), and what spans collections (`BatchDocuments`,
+   `QueryDocuments`, `CountDocuments`, `SearchDocuments`). Create and
+   Update return the declaration as stored.
+6. The data message `Collection` is `CollectionDeclaration`: a service and
+   a message of one package cannot share a name. The file on disk keeps
+   field names only, so it does not change.
+7. The narrow services take short method names: `Collection.Describe /
+   Get / GetMany / History / Create / Update / Upsert / Delete / Batch /
+   Query / Count / Search`, `Mirror.Info / Set / Remove / Push / Pull /
+   Sync`, `Index.Status / Watch / Reindex`.
+8. The requests of a collection carry the `id` only (`DocumentId`,
+   `DocumentCreation { id, raw, keep_existing, note }`, …); `Document` is
+   output only. The Vault wraps them: `VaultDocumentOperation {
+   collection, operation }`, `VaultSearch { collections, search }`;
+   `VaultQuery` repeats the fields of `DocumentQuery`, its `start_after` a
+   `DocumentKey`.
+9. `Vault.Close`: new calls through any object of the Vault fail with
+   `FAILED_PRECONDITION`; it returns when the running calls have ended,
+   the indexer has stopped, and no lock is held; a second `Close` is
+   nothing to do; a Vault whose references are all dropped (its
+   collections', mirror's, and Index's included) closes by itself.
+   *A stream is not a running call; the making of one item is.* `Close`
+   waits for an item being made, not for a caller that holds a stream,
+   and the next item after it is `FAILED_PRECONDITION`. Otherwise an
+   `Index.Watch`, which never ends by itself, would hold `Close` for good.
+10. A `CollectionRef` names its collection and finds it again on each
+    call: after `DeleteCollection` its calls are `NOT_FOUND`, and after
+    the name is declared again they work again.
+11. `Mirror.Info` gives `url`, `auto_sync`, and `last_auto_sync_error`:
+    the answer to O4.
+12. `Projector.Describe` gives `ProjectorDescriptor { projection_id }`,
+    read once when the Projector is given and stored with the Index. A
+    Projector of another projection makes the Index `INDEX_STALE` for that
+    Vault, which then does not index, until a `Reindex` from a Vault with
+    the new Projector.
+13. Request field numbers start again at 1: no request is stored on disk.
+
+Settled at the start of the refactor (18 October 2026):
+
+- **The objects are private.** `Scheda.Open` returns a `VaultRef`, and a
+  caller works through the traits the reference gives (`VaultSync`, …);
+  the structs that implement `Vault`, `Collection`, `Mirror`, and `Index`
+  are not public. The public crate surface is `scheda::Scheda` (the root,
+  `Default`), `scheda::v1`, `Error`, `Fault`, the fixed-portion adapters,
+  and `parse_age_identity`.
+- **A reference that cannot be used is the caller's mistake.** A
+  reference that holds no implementation (`UNBOUND`), and an async port
+  given outside a tokio runtime (`NO_RUNTIME`), fail `Open` and `Set…`
+  with `INVALID_ARGUMENT`, protocontract's error kept as the source. An
+  unset port field is no port.
+- **The generate.** buf maps each reference to the type the plugin emits
+  for it (`crate::traits::vault_ref::VaultRef`, …) with an `extern_path`
+  in both plugins; protoc-gen-protocontract-buffa takes `json=true` and
+  `validate=true`, so a reference has serde impls and `Validate`. The
+  plugin comes from the bazel_utils catalog (v0.4.1 lists v0.4.0), and
+  `protocontract/v1/options.proto` from the `protocontract` crate, which
+  ships it under `proto/`: a crate_universe annotation exposes it as
+  `@scheda_cargo//:protocontract_protos`, staged at its import path as
+  protovalidate is.
+- **Layers.** The stages R1–R5 of §4 replace P6 and P7. A method of a
+  later layer is `todo!` until its layer; P8 checks that none is left.
+
 ---
 
 ## 3. The contract (sketch)
 
-Names follow D7; the protos under `api/scheda/v1/` hold the messages.
+The sketch of 17 October 2026, before D24 split the `Vault` into objects;
+the protos under `api/scheda/v1/` are the contract. Names follow D7.
 `Empty` is `google.protobuf.Empty`.
 
 ```protobuf
@@ -1499,80 +1597,153 @@ D3, D4, D5, D10, D18, D23.
   `tests/index.rs`:
   `reindex_returns_before_the_rebuild_a_second_is_aborted_and_the_maps_match`).
 
-### P6. The `Vault` service
+### R1. The objects over what exists
 
-D2, D3, D5, D7, D8, D15, D19.
+D24. Replaces the hand-written wiring of P5 and the one-service `Vault`
+that P6 was to implement.
 
-- [ ] `impl VaultSync for Vault` in every build, the methods of a missing
-      feature answering `UNIMPLEMENTED` (D2); `Info` with the writer, the
-      mirror, and the features of the build; `ListCollections`,
-      `GetCollection`, `GetDocuments` (per D8: `ids`, an empty `ids`,
-      `listing`, and neither), `GetDocumentHistory`; `Check` returns
-      `CheckReport`.
-- [ ] `QueryDocuments`, `CountDocuments`, and `SearchDocuments` per D19:
-      the scope per D7, the Filter without score constructs, `like` in
-      place of `more_like_this`, a search as a stream with its summary
-      first and no 10 000 limit, an Index not built yet answering
-      `INDEX_REBUILDING`; `rerank_limit` per D5.
-- [ ] The integration tests under `rust/scheda/tests/` back in the
-      build, on the new surface, with their test ports (embedders,
-      rerankers, and projectors of `tests/old/`) on the generated traits.
-- *Check:* every integration test passes on the new surface.
+- [ ] The generate on protoc-gen-protocontract-buffa v0.4.0 (bazel_utils
+      0.4.1) and `protocontract` 0.4.0: `options.proto` from the crate,
+      the seven references mapped by `extern_path` in both plugins,
+      `json=true` and `validate=true`.
+- [ ] `scheda::Scheda` implements `SchedaSync` (`Info`, `Open`); private
+      objects implement `VaultSync`, `CollectionSync`, `MirrorSync`, and
+      `IndexSync`, and travel as references. What P3–P5 built moves onto
+      them: the writes and `Get` onto `Collection`, the declarations and
+      `BatchDocuments` onto `Vault`, the mirror onto `Mirror`, the state
+      and `Reindex` onto `Index`. `Ports`, `Port`, `Vault::open`,
+      `set_embedder`, and `close(self)` are deleted.
+- [ ] The ports by reference: `Open` and `Vault.Set…` install a port as
+      P5 did (the build checked, the descriptor read once and validated),
+      `Remove…` takes it away, and the indexer takes the new set into its
+      next round.
+- [ ] `Vault.Close` per D24 (9), and the close of a Vault whose
+      references are all dropped.
+- [ ] `Mirror.Info` with `last_auto_sync_error`.
+- *Check:* the tests of P3–P5 pass on the objects.
+- *Check:* `rust/api/tests/contract.rs`: a reference given a blocking
+  implementation gives back the same `Arc`; a default and a decoded one
+  are `UNBOUND`; one in a message has no JSON form and is valid.
+- *Check:* an unbound port reference and an async port outside a runtime
+  fail `Open` and `SetEmbedder` with `INVALID_ARGUMENT`.
+- *Check:* `SetProjector` on a Vault without one makes it index;
+  `RemoveEmbedder` makes its `role` false while a `vector` column needs
+  one; `SetReranker` then `RemoveReranker` makes a later `rerank_limit`
+  refused (with R4).
+- *Check:* after `Close`, a call through the Vault, a collection, the
+  mirror, and the Index is `FAILED_PRECONDITION`; a second `Close` is
+  `Ok`; `Close` waits for a write that runs and returns with no lock held
+  (another Vault takes the write lock and the index lock at once); a held
+  `Index.Watch` does not stop `Close`, and its next item is
+  `FAILED_PRECONDITION`.
+- *Check:* a Vault whose references are all dropped stops its indexer and
+  holds no lock; a held `CollectionRef` keeps it open.
+- *Check:* a `CollectionRef` of a deleted collection is `NOT_FOUND`, and
+  works again once the name is declared again.
+
+### R2. `Projector.Describe`
+
+D24 (12).
+
+- [ ] `Describe` read once when a Projector is given and validated; the
+      `projection_id` stored with the Index; a Projector of another
+      projection makes the Index `INDEX_STALE` for that Vault, whose
+      indexer takes no round, until a `Reindex` from it rebuilds the Index
+      with its projection.
+- *Check:* a descriptor that breaks its rules fails `Open` and
+  `SetProjector` with `INVALID_ARGUMENT`; a counting Projector sees one
+  `Describe` per install.
+- *Check:* a Vault opened with another projection never takes a round,
+  its `Index.Status` says it, and a query of it is `INDEX_STALE`; a
+  `Reindex` from it rebuilds the Index, after which the Vault of the old
+  projection is the one that is stale.
+
+### R3. Reads
+
+D8, D15, D24. The reads of P6.
+
+- [ ] `Collection.Describe`, `Collection.GetMany` (per D8: `ids`, an empty
+      `ids`, `listing`, and neither), `Collection.History`; `Vault.Check`
+      returns `CheckReport`.
 - *Check:* the streams are lazy: reading the first Document of a
   collection of 100 000 opens one Document file, and a stream dropped
   after it opens no more; the same for the first version of a long
   history.
-- *Check:* an `Arc<dyn VaultSync>` drives a Vault end to end.
-- *Check:* in a build without `find`, `QueryDocuments`,
-  `GetIndexStatus`, and `WatchIndexStatus` are `UNIMPLEMENTED` naming the
-  feature, `Reindex` rebuilds the journal `id` maps, and `Info` lists no
-  `FIND`; the same for `SearchDocuments` without `search`
-  (`tests/thin.rs`).
-- *Check:* a write whose call has not returned is seen by no
-  `GetDocuments`, `QueryDocuments`, or `SearchDocuments`.
-- *Check:* `QueryDocuments` streams lazily from one snapshot: Documents
-  written while the stream is read do not appear in it, none is repeated
-  or skipped; `limit` and `offset` hold; the order is `id` (a journal:
+- *Check:* an `Arc<dyn VaultSync>` from `Scheda.Open` drives a Vault end
+  to end, its collections through `Arc<dyn CollectionSync>`.
+- *Check:* a write whose call has not returned is seen by no `GetMany`.
+- *Check:* `GetMany` with `limit` and `start_after` reads a collection
+  page by page with no Document twice or missed, also when Documents are
+  added between pages; neither `ids` nor `listing` is `INVALID_ARGUMENT`.
+- *Check:* `Check` lists every problem of a Vault with several, and fails
+  only when it cannot run.
+
+### R4. Queries and searches
+
+D2, D5, D7, D19, D24. The queries of P6.
+
+- [ ] `Collection.Query`, `Count`, and `Search`, and
+      `Vault.QueryDocuments`, `CountDocuments`, and `SearchDocuments`
+      (`VaultQuery`, `VaultSearch`) per D19: the Filter without score
+      constructs, `like` in place of `more_like_this`, a search as a
+      stream with its summary first and no 10 000 limit, an Index not
+      built yet answering `INDEX_REBUILDING`; `rerank_limit` per D5. The
+      methods of a missing feature answer `UNIMPLEMENTED` (D2).
+- [ ] The integration tests of `rust/scheda/tests/old/` back in the
+      build on the objects, with their test ports (embedders, rerankers,
+      and projectors) on the generated traits.
+- *Check:* every integration test passes on the objects.
+- *Check:* in a build without `find`, `Vault.Index`, `Collection.Query`,
+  and `Vault.QueryDocuments` are `UNIMPLEMENTED` naming the feature, and
+  `Scheda.Info` lists no `FIND`; the same for the searches without
+  `search` (`tests/thin.rs`).
+- *Check:* a write whose call has not returned is seen by no `Query` or
+  `Search`.
+- *Check:* `Query` streams lazily from one snapshot: Documents written
+  while the stream is read do not appear in it, none is repeated or
+  skipped; `limit` and `offset` hold; the order is `id` (a journal:
   append order).
-- *Check:* `CountDocuments` equals the number of Documents
-  `QueryDocuments` streams for the same query and opens no Document
-  file.
-- *Check:* pages: `QueryDocuments` and `GetDocuments` with `limit` and
-  `start_after` read a collection page by page with no Document twice or
-  missed, also when Documents are added between pages; `GetDocuments`
-  with neither `ids` nor `listing` is `INVALID_ARGUMENT`;
-  `SearchDocuments` with `offset` skips that many hits and opens none of
-  their files; every one stays a lazy stream.
-- *Check:* `SearchDocuments` with `like` finds a Document's neighbours
-  without calling the embedder; on a Vault whose Index was never built,
-  a query and a search are both `INDEX_REBUILDING`.
+- *Check:* `Count` equals the number of Documents `Query` streams for the
+  same query and opens no Document file.
+- *Check:* `Query` with `limit` and `start_after` reads page by page with
+  no Document twice or missed; `Search` with `offset` skips that many hits
+  and opens none of their files; every one stays a lazy stream.
+- *Check:* `Search` with `like` finds a Document's neighbours without
+  calling the embedder; on a Vault whose Index was never built, a query
+  and a search are both `INDEX_REBUILDING`.
 - *Check:* a search with `k` above 10 000 is accepted; its first item is
   the summary; its Documents are opened as the stream reaches them, so a
   stream dropped after the first hit opens one file.
 - *Check:* `rerank_limit` without a reranker is `INVALID_ARGUMENT`; a
   sync embedder given to a sync search is called on the caller's thread.
+- *Check:* the `Vault` forms span collections: a `BatchDocuments` over two
+  collections is one write, one with an isolated and a plain collection is
+  `INVALID_ARGUMENT`; `QueryDocuments` and `SearchDocuments` read the
+  collections they name.
 - *Check:* no public name, field, or code of the contract carries a git
   term (commit, `HEAD`, a commit id, `git_`).
 
-### P7. Async
+### R5. Async
 
-D11.
+D11, D24. The async of P7.
 
-- [ ] `AsyncVault` implements `VaultAsync`; the hand-written
-      `nonblocking.rs` surface deleted; the test ports of
-      `tests/old/nonblocking.rs` on the generated traits.
-- *Check:* the async surface passes on a multi-thread and a
-  current-thread runtime; the lazy-stream check of P6 holds in the async
-  form.
-- *Check:* on a blocking pool of one thread, an open `WatchIndexStatus`
-  stream does not stop another call.
+- [ ] With `tokio`, `Scheda` implements `SchedaAsync` too: its `Open`
+      returns references that hold the async form of the objects, which
+      wait natively (the write turn, `Index.Watch`) and await async
+      ports, and run their blocking steps on the blocking pool (D11). The
+      hand-written `nonblocking.rs` surface is deleted; the test ports of
+      `tests/old/nonblocking.rs` move to the generated traits.
+- *Check:* the async objects pass on a multi-thread and a current-thread
+  runtime; the lazy-stream checks of R3 hold in the async form.
+- *Check:* on a blocking pool of one thread, an open `Index.Watch` stream
+  does not stop another call.
 - *Check:* a panicking port under the async form is `Panicked`.
 - *Check:* on a blocking pool of one thread, an async search whose async
   embedder takes a second to answer does not stop another call (the
-  embedder is awaited, not blocked on); a write waiting for the
-  write lock does not either.
-- *Check:* the indexer is an OS thread that ends with `close`, also when
-  the runtime that opened the `AsyncVault` has been dropped first.
+  embedder is awaited, not blocked on); a write waiting for the write
+  lock does not either.
+- *Check:* the indexer is an OS thread that ends with `Close`, also when
+  the runtime that opened the Vault has been dropped first.
 
 ### P8. CLI and acceptance
 
@@ -1582,19 +1753,19 @@ D16.
       subcommands, and the test ports of its tests on the generated
       traits; the Python driver follows.
 - [ ] `tests/consumer.rs` rewritten from the anchor consumer's real use:
-      open with a Projector and an embedder port; streams with
-      `UpsertDocument`, `CreateDocument` with `keep_existing`, and
-      `DeleteDocument` with `ignore_missing`, each sent twice; a
+      `Scheda.Open` with a Projector and an embedder port; streams with
+      `Collection.Upsert`, `Collection.Create` with `keep_existing`, and
+      `Collection.Delete` with `ignore_missing`, each sent twice; a
       `BatchCollections` of `create` and `update`; vector-only
-      `SearchDocuments`; `set_embedder`; `GetIndexStatus` and
-      `WatchIndexStatus` until the Index has a write; `Sync` to an empty
-      mirror.
-- *Check:* the CLI and the library give the same JSON for `Info`,
-  `QueryDocuments`, one `SearchDocuments`, and the same error `code`.
+      `Search`; `Vault.SetEmbedder`; `Index.Status` and `Index.Watch`
+      until the Index has a write; `Mirror.Sync` to an empty mirror.
+- *Check:* the CLI and the library give the same JSON for `Vault.Info`,
+  `Collection.Query`, one `Collection.Search`, and the same error `code`.
 - *Check:* `tests/consumer.rs` green.
 - *Check:* `rust/scheda/src/old/` and `rust/scheda/tests/old/` are
-  gone; no `expect(dead_code, …)` left from the layering (`git grep -n
-  'expect(' rust/scheda/src`); `bazel test //...` green on the branch;
+  gone; no `expect(dead_code, …)` and no `todo!` left from the layering
+  (`git grep -n -e 'expect(' -e 'todo!' rust/scheda/src`); `bazel test
+  //...` green on the branch;
   then it merges into `main`.
 
 ---
@@ -1657,10 +1828,8 @@ To settle with the owner before the stage that needs them.
   it starts the rebuild; `WatchIndexStatus` shows it.
 - **O2. A count of matches.** *Closed by D19 (17 October 2026):*
   `CountDocuments(DocumentQuery)`; no count for a search.
-- **O4. Where a failed `auto_sync` shows** (D14). The handle keeps the
-  last failure of a pull at `open` or a push after a write. Recommendation:
-  `VaultInfo` gains it as an `ErrorReport`, once `ErrorReport` can carry
-  the message of any fault (P2).
+- **O4. Where a failed `auto_sync` shows** (D14). *Closed by D24 (18
+  October 2026):* `Mirror.Info` gives `last_auto_sync_error`.
 - **O3. A queued batch across versions.** *Gone with the queue (D6,
   alternative 5; 17 October 2026):* each process applies its own writes
   with its own code, so no Scheda applies a write of another version.

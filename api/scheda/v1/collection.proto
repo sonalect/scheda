@@ -1,7 +1,8 @@
-// Collections: their declaration, and the requests that write them.
+// Collections: the object of one collection, its declaration, and the
+// requests that write declarations.
 //
-// `Collection`, `Schema`, `Standard`, `Journal`, `Singleton`, and `Unit`
-// are also stored on disk, as the Protobuf JSON (or YAML) of the file
+// `CollectionDeclaration`, `Schema`, `Standard`, `Journal`, `Singleton`,
+// and `Unit` are also stored on disk, as the Protobuf JSON (or YAML) of the file
 // `{vault}/{name}/.collection.yaml` (also `.yml` / `.json`). A file keeps
 // field names, not message names. An earlier Scheda reads past a field it
 // does not know and keeps it when it rewrites the file; a change it could
@@ -15,11 +16,102 @@ package scheda.v1;
 
 import "buf/validate/validate.proto";
 import "google/protobuf/empty.proto";
+import "protocontract/v1/options.proto";
+import "scheda/v1/document.proto";
+import "scheda/v1/query.proto";
 
-// A declared collection: the file `{vault}/{name}/.collection.yaml`, and
-// the object `GetCollection` returns. The declaration holds no field and
-// no format of the Documents: Scheda does not know what they hold.
-message Collection {
+// One collection of a Vault, from `Vault.GetCollection`: its Documents,
+// read and written. It names its collection: every call finds it again,
+// so after the collection is deleted the calls are `NOT_FOUND`. The
+// declaration itself changes through the Vault (`Vault.UpdateCollection`).
+//
+// The semantics of writes, reads, and the Index are the Vault's.
+service Collection {
+  // The declaration, as stored.
+  rpc Describe(google.protobuf.Empty) returns (CollectionDeclaration);
+
+  // Reads.
+
+  // One Document, read from its file, not from the Index. Unknown,
+  // `NOT_FOUND`.
+  rpc Get(DocumentId) returns (Document);
+
+  // Many Documents: the given ids, or the collection page by page. A lazy
+  // stream: each Document is read when the stream reaches it. Needs no
+  // Index.
+  rpc GetMany(DocumentSelection) returns (stream Document);
+
+  // The past versions of one Document, newest first. A lazy stream: a
+  // version is read when the stream reaches it; the caller stops when it
+  // has enough. A journal line never changes, so a journal is
+  // `UNIMPLEMENTED`.
+  rpc History(DocumentId) returns (stream DocumentHistoryEntry);
+
+  // Writes.
+
+  // Creates a Document and returns it as stored, with its revision. In a
+  // journal, appends a line. Present, `ALREADY_EXISTS`, or, with
+  // `keep_existing`, the Document already stored is returned and nothing
+  // is written.
+  rpc Create(DocumentCreation) returns (Document);
+
+  // Replaces an existing Document and returns it as stored. Absent,
+  // `NOT_FOUND`. With `revision`, the stored revision must be that one, or
+  // `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes store
+  // nothing and keep the revision.
+  rpc Update(DocumentUpdate) returns (Document);
+
+  // Creates the Document, or replaces it when present, and returns it as
+  // stored. A journal, `UNIMPLEMENTED`. The same bytes store nothing and
+  // keep the revision.
+  rpc Upsert(DocumentUpsert) returns (Document);
+
+  // Deletes a Document. Absent, `NOT_FOUND`, or nothing with
+  // `ignore_missing`. With `revision`, the stored revision must be that
+  // one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
+  // line never leaves.
+  rpc Delete(DocumentDeletion) returns (google.protobuf.Empty);
+
+  // Several Document writes as one: all happen, or none. An `Err` item, a
+  // broken stream, or one write that fails, and none happened; the error
+  // names the operation by its index. One result per operation, in order.
+  // Across collections, `Vault.BatchDocuments`.
+  rpc Batch(stream DocumentOperation) returns (DocumentBatchResult);
+
+  // The Index.
+
+  // The Documents that match a condition: the exact set, in a stable
+  // order (`id`; a journal in append order), without scores. A lazy
+  // stream, read from one snapshot of the Index, so nothing written
+  // meanwhile moves it. An Index not built yet, `INDEX_REBUILDING`; one
+  // built by another Projector, `INDEX_STALE`. A build without `find`,
+  // `UNIMPLEMENTED`.
+  rpc Query(DocumentQuery) returns (stream Document);
+
+  // How many Documents `Query` would give for the same query, counted in
+  // the Index without opening a file. The codes of `Query`.
+  rpc Count(DocumentQuery) returns (scheda.v1.Count);
+
+  // The Documents that best fit a text, or a Document, by relevance: a
+  // lexical leg, a vector leg, both fused, and reranked by the Vault's
+  // reranker when `rerank_limit` asks. The first item is a summary of the
+  // legs; then the hits, best first. A lazy stream: the ranking is
+  // computed whole, the Documents are read as the stream reaches them. A
+  // ranking is computed again by each call, so pages from two calls need
+  // not agree. An Index not built yet, `INDEX_REBUILDING`. A build without
+  // `search`, `UNIMPLEMENTED`.
+  rpc Search(DocumentSearch) returns (stream SearchItem);
+}
+
+// A reference to one collection of a Vault.
+message CollectionRef {
+  option (protocontract.v1.service) = "scheda.v1.Collection";
+}
+
+// A declared collection: the file `{vault}/{name}/.collection.yaml`. The
+// declaration holds no field and no format of the Documents: Scheda does
+// not know what they hold.
+message CollectionDeclaration {
   // The collection name and its directory. Unique in the Vault. A slug,
   // checked by the library: a Unicode letter or digit, then letters,
   // digits, marks, `.`, `_`, `-`, `+`, `(`, `)`, space, or `@`; at most
@@ -57,7 +149,7 @@ message Schema {
   // collection. The declaration stays at `{vault}/{name}/`.
   bool isolated = 4;
   // Document files are age armor on disk; reading and writing them takes
-  // the handle's secret. Independent of `isolated`. A journal may not set
+  // the Vault's secret. Independent of `isolated`. A journal may not set
   // it.
   bool encrypted = 5;
   // No Document of this collection enters the lexical Index; a query that
@@ -106,9 +198,9 @@ message Singleton {
 // An empty mark: `Journal.daily`.
 message Unit {}
 
-// The answer of `ListCollections`.
+// The answer of `Vault.ListCollections`.
 message Collections {
-  repeated Collection collections = 1;
+  repeated CollectionDeclaration collections = 1;
 }
 
 // The name of a collection, for a call about one.
@@ -119,7 +211,7 @@ message CollectionKey {
   }];
 }
 
-// The request of `DeleteCollection`.
+// The request of `Vault.DeleteCollection`.
 message CollectionDeletion {
   string name = 1 [(buf.validate.field) = {
     required: true
@@ -129,20 +221,22 @@ message CollectionDeletion {
   bool ignore_missing = 2;
 }
 
-// One item of `BatchCollections`: the request of one collection call.
+// One item of `Vault.BatchCollections`: the request of one collection
+// call.
 message CollectionOperation {
   oneof operation {
     option (buf.validate.oneof).required = true;
-    // As `CreateCollection`.
-    Collection create = 1;
-    // As `UpdateCollection`.
-    Collection update = 2;
-    // As `DeleteCollection`.
+    // As `Vault.CreateCollection`.
+    CollectionDeclaration create = 1;
+    // As `Vault.UpdateCollection`.
+    CollectionDeclaration update = 2;
+    // As `Vault.DeleteCollection`.
     CollectionDeletion delete = 3;
   }
 }
 
-// The answer of `BatchCollections`: one result per operation, in order.
+// The answer of `Vault.BatchCollections`: one result per operation, in
+// order.
 message CollectionBatchResult {
   repeated CollectionResult results = 1;
 }
@@ -150,8 +244,8 @@ message CollectionBatchResult {
 // What one collection call of a batch returned.
 message CollectionResult {
   oneof result {
-    // A created or updated collection, as stored.
-    Collection collection = 1;
+    // A created or updated declaration, as stored.
+    CollectionDeclaration collection = 1;
     // A deleted one.
     google.protobuf.Empty deleted = 2;
   }
