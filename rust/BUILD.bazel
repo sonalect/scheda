@@ -17,6 +17,7 @@ rust_clippy_test(
         "//rust/api:contract_thin_test",
         "//rust/api:git_terms_test",
         "//rust/api:version_field_test",
+        "//rust/scheda:async_test",
         "//rust/scheda:collections_test",
         "//rust/scheda:collections_thin_test",
         "//rust/scheda:documents_test",

@@ -14,6 +14,10 @@ changes; they grow with each part of the move.
 
 ### Fixed
 
+- `Check` could report a file under `.scheda/index/` as not owner-only
+  while the indexer was writing it: the files of the Index and the writer
+  identity are now created owner-only, not narrowed after.
+
 - `find` / `search` in one handle or process could fail with `index_missing`,
   or with `index_version` and `repeat: forbidden`, while another started an
   Index generation or indexed a new collection: the `format` file and the
@@ -89,6 +93,14 @@ changes; they grow with each part of the move.
   Vault's reranker and is `INVALID_ARGUMENT` without one or below `k`.
   Both weights 0 is `INVALID_ARGUMENT`. A collection with
   `exclude_lexical_index` is searched by the vector leg only.
+- Async (`tokio` feature): `Scheda` implements `SchedaAsync`, whose
+  `open` returns references in the async form (`VaultAsync`,
+  `CollectionAsync`, …). Calls run on the blocking pool of the runtime of
+  the call; an `Index.Watch` stream, a write waiting for the write lock,
+  and a search waiting for an async embedder or reranker hold no thread.
+  `AsyncVault`, `AsyncCollection`, and `scheda::nonblocking` are gone; a
+  Vault opened by the sync `Scheda.open` gives protocontract's generic
+  async form through `to_async_offload()`.
 - `Vault.Close` replaces `Vault::close(self)`: every call through the
   Vault, its collections, its mirror, and its Index then fails with
   `FAILED_PRECONDITION`; it returns once the calls that run have ended,

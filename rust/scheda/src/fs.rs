@@ -69,10 +69,56 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     written
 }
 
+/// [`atomic_write`] for a file under `{vault}/.scheda/`: the directories it
+/// makes and the file are owner-only from the moment they exist, so no
+/// reader (`Check` among them) ever sees them with a wider mode.
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+    if let Some(dir) = path.parent() {
+        create_dir_private(dir).context("atomic_write: create directory")?;
+    }
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".scheda.{n}.tmp"));
+    let written = write_tmp_then_rename_with(&tmp, path, bytes, true);
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// Makes `dir` and its missing parents, each owner-only from the moment it
+/// exists.
+pub(crate) fn create_dir_private(dir: &Path) -> Result<(), Error> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir).map_err(io).map_err(Error::from)
+}
+
 fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
+    write_tmp_then_rename_with(tmp, path, bytes, false)
+}
+
+fn write_tmp_then_rename_with(
+    tmp: &Path,
+    path: &Path,
+    bytes: &[u8],
+    private: bool,
+) -> Result<(), Error> {
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if private {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    #[cfg(not(unix))]
+    let _ = private;
+    let mut file = options
         .open(tmp)
         .map_err(io)
         .context("atomic_write: create temporary file")?;
@@ -450,6 +496,23 @@ mod tests {
 
     /// A copy of the descriptor, as a child another thread forked holds
     /// until it runs `exec`, does not keep a dropped [`Flock`] locked.
+    #[cfg(unix)]
+    #[test]
+    fn a_private_write_makes_its_folders_and_its_file_owner_only_from_the_start() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let root = base.join(format!("scheda-fs-private-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let file = root.join("a/b/file");
+        super::atomic_write_private(&file, b"x").unwrap();
+        let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&file), 0o600);
+        assert_eq!(mode(&root.join("a/b")), 0o700);
+        assert_eq!(mode(&root.join("a")), 0o700);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_dropped_flock_is_free_while_a_copy_of_its_descriptor_lives() {
         let scratch = Scratch::new("flock");

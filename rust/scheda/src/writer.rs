@@ -14,7 +14,7 @@ use protovalidate_buffa::Validate;
 use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
 use crate::error::{Context, Error, Fault, io};
-use crate::fs::{atomic_write, restrict_dir, restrict_file};
+use crate::fs::{atomic_write_private, restrict_dir, restrict_file};
 
 /// Vault-relative name of the token file.
 const FILE: &str = ".scheda/writer";
@@ -120,7 +120,8 @@ fn persist(vault: &Path, token: &str) -> Result<(), Error> {
         .context("create .scheda for the writer identity")?;
     restrict_dir(&scheda)?;
     let file = path(vault);
-    atomic_write(&file, format!("{token}\n").as_bytes()).context("write the writer identity")?;
+    atomic_write_private(&file, format!("{token}\n").as_bytes())
+        .context("write the writer identity")?;
     restrict_file(&file)
 }
 

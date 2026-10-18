@@ -31,11 +31,15 @@
 
 use std::collections::VecDeque;
 use std::fmt;
+#[cfg(all(feature = "tokio", feature = "search"))]
+use std::future::Future;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use buffa_types::google::protobuf::Empty;
 use protocontract::BoxIter;
+#[cfg(all(feature = "tokio", feature = "search"))]
+use protocontract::{IterStream, RuntimeCode, Stream};
 use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::projector_ref::ProjectorRef;
 use scheda_api::v1::reranker_ref::RerankerRef;
@@ -45,6 +49,8 @@ use scheda_api::v1::{
     IndexSchema, ProjectorDescriptor, ProjectorSync, Query, RawDocument, RerankerSync, ScoreItem,
     Text, VaultErrorCode, Vector,
 };
+#[cfg(all(feature = "tokio", feature = "search"))]
+use scheda_api::v1::{EmbedderAsync, RerankerAsync};
 
 use crate::error::{Context, Error, Fault};
 use crate::stored;
@@ -140,7 +146,11 @@ impl Installed {
         let installed = reranker
             .map(|reranker| {
                 require_build("a reranker", "search", cfg!(feature = "search"))?;
-                reranker_sync(&reranker).map(|sync| RerankerPort { sync })
+                reranker_sync(&reranker).map(|sync| RerankerPort {
+                    sync,
+                    #[cfg(all(feature = "tokio", feature = "search"))]
+                    reference: reranker.clone(),
+                })
             })
             .transpose()
             .context("install the reranker")?
@@ -249,6 +259,9 @@ fn invalid_reply(what: &str, fault: Fault) -> Fault {
 /// itself again.
 pub(crate) struct EmbedderPort {
     sync: Arc<dyn EmbedderSync>,
+    /// The reference the caller gave, for the async form of a call.
+    #[cfg(all(feature = "tokio", feature = "search"))]
+    reference: EmbedderRef,
     descriptor: EmbedderDescriptor,
     /// `descriptor.dimensions`, as a length.
     dimensions: usize,
@@ -267,6 +280,8 @@ fn install_embedder(port: &EmbedderRef) -> Result<EmbedderPort, Error> {
         usize::try_from(descriptor.dimensions.unwrap_or_default()).unwrap_or(usize::MAX);
     Ok(EmbedderPort {
         sync,
+        #[cfg(all(feature = "tokio", feature = "search"))]
+        reference: port.clone(),
         descriptor,
         dimensions,
     })
@@ -433,12 +448,45 @@ impl EmbedderPort {
     /// `INVALID_ARGUMENT` for an empty text and for a vector of the wrong
     /// length; the failure of the port otherwise.
     pub(crate) fn embed_query(&self, text: String) -> Result<Vec<f32>, Error> {
-        let query = Query::default().with_text(text);
-        stored::validate(&query).context("Embedder::embed_query: check the query")?;
+        let query = Self::query_of(text)?;
         let vector = self
             .sync
             .embed_query(query)
             .context("Embedder::embed_query: ask the embedder")?;
+        self.checked(vector)
+    }
+
+    /// [`EmbedderPort::embed_query`] in a task: an async embedder is
+    /// awaited, a blocking one runs on the blocking pool, and a panic of
+    /// either is `PANICKED`.
+    ///
+    /// # Errors
+    ///
+    /// As [`EmbedderPort::embed_query`]; `NO_RUNTIME` outside a Tokio
+    /// runtime.
+    #[cfg(all(feature = "tokio", feature = "search"))]
+    pub(crate) async fn embed_query_async(&self, text: String) -> Result<Vec<f32>, Error> {
+        let query = Self::query_of(text)?;
+        let port = self
+            .reference
+            .to_async_offload()
+            .context("Embedder::embed_query: reach the embedder")?;
+        let vector = awaited(async move { port.embed_query(query).await })
+            .await
+            .context("Embedder::embed_query: ask the embedder")?;
+        self.checked(vector)
+    }
+
+    /// The query for a search text, checked.
+    fn query_of(text: String) -> Result<Query, Error> {
+        let query = Query::default().with_text(text);
+        stored::validate(&query).context("Embedder::embed_query: check the query")?;
+        Ok(query)
+    }
+
+    /// The values of the vector of a query, when it has the declared
+    /// length.
+    fn checked(&self, vector: Vector) -> Result<Vec<f32>, Error> {
         if vector.values.len() != self.dimensions {
             return Err(Error::from(Fault::new(
                 VaultErrorCode::InvalidArgument,
@@ -457,6 +505,9 @@ impl EmbedderPort {
 /// An installed reranker, in the blocking form.
 pub(crate) struct RerankerPort {
     sync: Arc<dyn RerankerSync>,
+    /// The reference the caller gave, for the async form of a call.
+    #[cfg(all(feature = "tokio", feature = "search"))]
+    reference: RerankerRef,
 }
 
 impl RerankerPort {
@@ -476,7 +527,55 @@ impl RerankerPort {
         if expected == 0 {
             return Ok(Vec::new());
         }
-        let items: BoxIter<'static, Result<ScoreItem, Error>> = Box::new(
+        let reply = self
+            .sync
+            .score(Self::items(query, documents))
+            .context("Reranker::score: ask the reranker")?;
+        Self::gather(expected, reply)
+    }
+
+    /// [`RerankerPort::score`] in a task: an async reranker is awaited, a
+    /// blocking one runs on the blocking pool, and a panic of either is
+    /// `PANICKED`.
+    ///
+    /// # Errors
+    ///
+    /// As [`RerankerPort::score`]; `NO_RUNTIME` outside a Tokio runtime.
+    #[cfg(all(feature = "tokio", feature = "search"))]
+    pub(crate) async fn score_async(
+        &self,
+        query: String,
+        documents: Vec<Document>,
+    ) -> Result<Vec<f64>, Error> {
+        let expected = documents.len();
+        if expected == 0 {
+            return Ok(Vec::new());
+        }
+        let port = self
+            .reference
+            .to_async_offload()
+            .context("Reranker::score: reach the reranker")?;
+        let items = Self::items(query, documents);
+        let reply = awaited(async move {
+            let mut reply = Box::pin(port.score(IterStream::new(items)).await?);
+            let mut scores = Vec::new();
+            while let Some(item) = std::future::poll_fn(|cx| reply.as_mut().poll_next(cx)).await {
+                scores.push(item);
+            }
+            Ok(scores)
+        })
+        .await
+        .context("Reranker::score: ask the reranker")?;
+        Self::gather(expected, reply.into_iter())
+    }
+
+    /// The query, then the Documents, one by one, as the reranker takes
+    /// them.
+    fn items(
+        query: String,
+        documents: Vec<Document>,
+    ) -> BoxIter<'static, Result<ScoreItem, Error>> {
+        Box::new(
             std::iter::once(Item::Query(query))
                 .chain(documents.into_iter().map(Item::from))
                 .map(|item| {
@@ -485,11 +584,14 @@ impl RerankerPort {
                         ..ScoreItem::default()
                     })
                 }),
-        );
-        let reply = self
-            .sync
-            .score(items)
-            .context("Reranker::score: ask the reranker")?;
+        )
+    }
+
+    /// The scores of a reply, when there are as many as `expected`.
+    fn gather(
+        expected: usize,
+        reply: impl Iterator<Item = Result<DocumentScore, Error>>,
+    ) -> Result<Vec<f64>, Error> {
         let mut scores = Vec::with_capacity(expected);
         for item in reply {
             let score = item.context("Reranker::score: read the scores")?;
@@ -513,6 +615,56 @@ impl RerankerPort {
             .context("Reranker::score: count the scores"));
         }
         Ok(scores)
+    }
+}
+
+/// Runs `future` as a task of the current runtime and waits for it. A panic
+/// in it is `PANICKED`, and dropping the wait stops the task. For a port
+/// call that waits on a network: the caller holds no thread meanwhile.
+///
+/// # Errors
+///
+/// What `future` fails with; `PANICKED` when it panics, `CANCELLED` when its
+/// runtime ends first; `NO_RUNTIME` outside a Tokio runtime.
+#[cfg(all(feature = "tokio", feature = "search"))]
+async fn awaited<T: Send + 'static>(
+    future: impl Future<Output = Result<T, Error>> + Send + 'static,
+) -> Result<T, Error> {
+    /// Stops the task when the wait is dropped.
+    struct Task<T>(tokio::task::JoinHandle<T>);
+
+    impl<T> Drop for Task<T> {
+        fn drop(&mut self) {
+            self.0.abort();
+        }
+    }
+
+    let handle = tokio::runtime::Handle::try_current().map_err(|_| {
+        Error::new(
+            RuntimeCode::NoRuntime,
+            "a port call is awaited inside a Tokio runtime",
+        )
+    })?;
+    let mut task = Task(handle.spawn(future));
+    match (&mut task.0).await {
+        Ok(result) => result,
+        Err(failed) => match failed.try_into_panic() {
+            Ok(panic) => {
+                let message = panic
+                    .downcast_ref::<&str>()
+                    .copied()
+                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
+                    .unwrap_or("no message");
+                Err(Error::new(
+                    RuntimeCode::Panicked,
+                    format!("the port panicked: {message}"),
+                ))
+            }
+            Err(_) => Err(Error::new(
+                RuntimeCode::Cancelled,
+                "the port call was cancelled",
+            )),
+        },
     }
 }
 
@@ -1348,8 +1500,13 @@ mod tests {
     }
 
     fn reranker(judge: impl RerankerSync + 'static) -> Arc<RerankerPort> {
-        let sync = reranker_sync(&RerankerRef::from_sync(judge)).unwrap();
-        Arc::new(RerankerPort { sync })
+        let reference = RerankerRef::from_sync(judge);
+        let sync = reranker_sync(&reference).unwrap();
+        Arc::new(RerankerPort {
+            sync,
+            #[cfg(all(feature = "tokio", feature = "search"))]
+            reference,
+        })
     }
 
     #[test]

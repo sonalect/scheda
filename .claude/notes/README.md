@@ -17,10 +17,10 @@ Project state, deferred work, and measurements that outlive one session
   right, not fast. Work goes on the branch `proto-contract`, layer by
   layer, with no transitional code; branch commits need `cargo` green,
   `bazel test //...` only before the merge (owner's waiver, §4). P1–P5
-  done (P2 but for `ErrorReport`). Next: the refactor to the object API
-  approved on 18 October 2026 (D24, stages R1–R5 in place of P6 and P7;
-  `api-objects.md`), which replaces the port wiring of P5 and the
-  one-service `Vault` of P6.
+  done (P2 but for `ErrorReport`), and the object API of 18 October 2026
+  (D24, stages R1–R5 in place of P6 and P7; `api-objects.md`) is done.
+  Next: P8 (CLI per D16, the Python driver, `tests/consumer.rs`, the
+  rest of `src/old` and `tests/old` deleted, `bazel test //...`, merge).
 - Previous: `docs/19-follow-ups.md` (F1–F5 done, 5 October 2026; not
   yet released), `docs/18-review-fixes.md` (S1–S8) and
   `docs/17-background-index-and-tokio.md` (background Index, `tokio`

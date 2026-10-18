@@ -10,6 +10,13 @@
 //! `FAILED_PRECONDITION`. A Vault whose references are all dropped (its
 //! collections', mirror's, and Index's, and its streams, included) ends as
 //! `Close` would.
+//!
+//! With the `tokio` feature [`Scheda`] is also a `SchedaAsync`, and its
+//! `open` returns references that hold the async form of the same objects
+//! over the same state and gate (see `asynchronous`).
+
+#[cfg(feature = "tokio")]
+mod asynchronous;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 
@@ -49,6 +56,24 @@ use crate::vault::Vault;
 /// (`vault.to_sync()?` gives an `Arc<dyn VaultSync>`). The Vault gives its
 /// collections, its mirror, and its Index the same way. The objects behind
 /// the references are Scheda's own; a caller works through the traits.
+///
+/// With the `tokio` feature, `Scheda` also implements
+/// [`SchedaAsync`](scheda_api::v1::SchedaAsync). Its `open` runs the sync
+/// open on the blocking pool of the current runtime and returns a reference
+/// that holds the **async** form of the Vault, and the Vault gives
+/// collections, a mirror, and an Index in the async form too. Those objects
+/// run their calls on the blocking pool of the runtime of the call, and wait
+/// natively where a thread would only stand idle: `Index.Watch`, the turn
+/// and the lock file of a write, and the embedder and the reranker of a
+/// search (a blocking port runs on the blocking pool for that). A sync
+/// caller can still take `to_sync()` of such a reference, inside a runtime.
+/// A Vault that [`SchedaSync::open`] opened is native to the sync form
+/// instead: its `to_async_offload()` is protocontract's generic `Offload`,
+/// which runs every call on the blocking pool and waits for a lock or a
+/// model on a pool thread.
+///
+/// Both traits have the methods `info` and `open`; name the trait
+/// (`SchedaSync::open(&Scheda, …)`) when both are in scope.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Scheda;
 
@@ -71,24 +96,30 @@ impl SchedaSync for Scheda {
         })
     }
 
-    fn open(&self, mut vault_opening: VaultOpening) -> Result<VaultRef, Error> {
-        stored::validate(&vault_opening).context("Scheda.Open: check the request")?;
-        let path = vault_opening.path.take().unwrap_or_default();
-        let options = vault_opening.options.take().unwrap_or_default();
-        let ports = Ports {
-            projector: vault_opening.projector.take(),
-            embedder: vault_opening.embedder.take(),
-            reranker: vault_opening.reranker.take(),
-        };
-        let vault = Vault::open(path, options, ports)?;
+    fn open(&self, vault_opening: VaultOpening) -> Result<VaultRef, Error> {
         Ok(VaultRef::from_sync(VaultObject {
-            shared: Arc::new(Shared {
-                vault,
-                gate: Gate::default(),
-                closing: Mutex::new(()),
-            }),
+            shared: open_shared(vault_opening)?,
         }))
     }
+}
+
+/// Opens the Vault `vault_opening` asks for, with its state and its gate
+/// ready to share among objects.
+fn open_shared(mut vault_opening: VaultOpening) -> Result<Arc<Shared>, Error> {
+    stored::validate(&vault_opening).context("Scheda.Open: check the request")?;
+    let path = vault_opening.path.take().unwrap_or_default();
+    let options = vault_opening.options.take().unwrap_or_default();
+    let ports = Ports {
+        projector: vault_opening.projector.take(),
+        embedder: vault_opening.embedder.take(),
+        reranker: vault_opening.reranker.take(),
+    };
+    let vault = Vault::open(path, options, ports)?;
+    Ok(Arc::new(Shared {
+        vault,
+        gate: Gate::default(),
+        closing: Mutex::new(()),
+    }))
 }
 
 /// What the objects of one open Vault share.

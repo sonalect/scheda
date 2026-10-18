@@ -21,8 +21,10 @@ openmp = ["search", "usearch/openmp"]
 # Age ASCII-armor Record files. Off by default: a consumer that encrypts
 # nothing does not compile scrypt / ChaCha20-Poly1305 / X25519.
 encrypt = ["dep:age"]
-# Async API (`scheda::nonblocking`): every I/O method on a Tokio blocking
-# thread. Independent of `find` / `search`; wraps what the build has.
+# Async form of the objects: `Scheda` also implements `SchedaAsync`, and the
+# Vault it opens runs its calls on Tokio's blocking pool and waits natively
+# (the write lock, `Index.Watch`, an embedder and a reranker). Independent of
+# `find` / `search`; wraps what the build has.
 tokio = ["dep:tokio", "scheda-api/tokio"]
 
 [dependencies]

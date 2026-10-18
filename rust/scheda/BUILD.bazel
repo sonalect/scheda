@@ -195,6 +195,22 @@ rust_test(
 )
 
 rust_test(
+    name = "async_test",
+    size = "small",
+    srcs = ["tests/async.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/async.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
+    ],
+)
+
+rust_test(
     name = "collections_test",
     size = "small",
     srcs = ["tests/collections.rs"] + _TEST_PROBE,

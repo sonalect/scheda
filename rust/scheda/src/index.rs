@@ -38,7 +38,9 @@ use crate::collection::{self, Declarations};
 #[cfg(feature = "find")]
 use crate::error::Fault;
 use crate::error::{Context, Error, io};
-use crate::fs::{Flock, atomic_write, restrict_dir, restrict_file_below};
+use crate::fs::{
+    Flock, atomic_write_private, create_dir_private, restrict_dir, restrict_file_below,
+};
 use crate::isolated;
 #[cfg(feature = "find")]
 use crate::ports::ProjectorPort;
@@ -298,7 +300,7 @@ impl Index {
 
     /// Writes the file at `path` below the Index whole, owner-only.
     pub(crate) fn write(&self, path: &Path, bytes: &[u8]) -> Result<(), Error> {
-        atomic_write(path, bytes)?;
+        atomic_write_private(path, bytes)?;
         restrict_file_below(&self.scheda, path)
     }
 
@@ -312,9 +314,7 @@ impl Index {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(io(err)).context("remove the commit of the Index"),
         }
-        fs::create_dir_all(&self.root)
-            .map_err(io)
-            .context("create the Index folder")?;
+        create_dir_private(&self.root).context("create the Index folder")?;
         restrict_dir(&self.root)?;
         for entry in fs::read_dir(&self.root)
             .map_err(io)

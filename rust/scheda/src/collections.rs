@@ -22,7 +22,7 @@ use scheda_api::v1::{
 };
 
 use crate::collection::{self, Declaration, Declarations, Kind};
-use crate::commit::Change;
+use crate::commit::{Change, Held};
 use crate::documents::Walk;
 use crate::error::{Context, Error, Fault, io};
 use crate::fs::restrict_dir;
@@ -35,6 +35,84 @@ enum Write {
     Create(CollectionDeclaration),
     Update(CollectionDeclaration),
     Delete(CollectionDeletion),
+}
+
+/// The writes of one call: one write, or a batch read whole. A call that
+/// waits for the write lock elsewhere checks them first ([`Writes::check`])
+/// and hands them back to be written, so no request is copied.
+pub(crate) struct Writes {
+    writes: Vec<Write>,
+    /// Whether the position of a failing write is part of its error.
+    indexed: bool,
+}
+
+impl Writes {
+    /// The write that declares `collection`.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn create(collection: CollectionDeclaration) -> Writes {
+        Writes::one(Write::Create(collection))
+    }
+
+    /// The write that changes the declaration `collection`.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn update(collection: CollectionDeclaration) -> Writes {
+        Writes::one(Write::Update(collection))
+    }
+
+    /// The write that deletes a collection.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn delete(deletion: CollectionDeletion) -> Writes {
+        Writes::one(Write::Delete(deletion))
+    }
+
+    #[cfg(feature = "tokio")]
+    fn one(write: Write) -> Writes {
+        Writes {
+            writes: vec![write],
+            indexed: false,
+        }
+    }
+
+    /// The writes of a batch, read whole.
+    ///
+    /// # Errors
+    ///
+    /// The `Err` of an item, and an operation that names no write, with its
+    /// index.
+    pub(crate) fn of_operations(
+        operations: BoxIter<'static, Result<CollectionOperation, Error>>,
+    ) -> Result<Writes, Error> {
+        let mut writes = Vec::new();
+        for (index, item) in operations.enumerate() {
+            let write = item
+                .and_then(|item| Write::from_operation(item).map_err(Error::from))
+                .with_context(|| format!("operation {index}"))?;
+            writes.push(write);
+        }
+        Ok(Writes {
+            writes,
+            indexed: true,
+        })
+    }
+
+    /// The checks that need no lock and do not depend on the state of the
+    /// Vault: the same the write makes before it waits for the lock. The
+    /// writes come back as they went in.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_ARGUMENT` for a request that breaks a rule, with the index
+    /// of the operation in a batch.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn check(self) -> Result<Writes, Error> {
+        for (index, write) in self.writes.iter().enumerate() {
+            write
+                .check()
+                .map_err(Error::from)
+                .with_context(|| frame(self.indexed, index))?;
+        }
+        Ok(self)
+    }
 }
 
 /// What a write returns.
@@ -133,7 +211,7 @@ impl crate::vault::Vault {
         &self,
         collection: CollectionDeclaration,
     ) -> Result<CollectionDeclaration, Error> {
-        self.write_one(Write::Create(collection))
+        self.write_one(None, Write::Create(collection))
     }
 
     /// Changes the schema of an existing collection and returns it as
@@ -155,7 +233,7 @@ impl crate::vault::Vault {
         &self,
         collection: CollectionDeclaration,
     ) -> Result<CollectionDeclaration, Error> {
-        self.write_one(Write::Update(collection))
+        self.write_one(None, Write::Update(collection))
     }
 
     /// Deletes an empty collection: its declaration file and its directory
@@ -173,7 +251,7 @@ impl crate::vault::Vault {
         &self,
         collection_deletion: CollectionDeletion,
     ) -> Result<Empty, Error> {
-        self.write_one(Write::Delete(collection_deletion))
+        self.write_one(None, Write::Delete(collection_deletion))
             .map(|_| Empty::default())
     }
 
@@ -192,14 +270,16 @@ impl crate::vault::Vault {
         &self,
         collection_operations: BoxIter<'static, Result<CollectionOperation, Error>>,
     ) -> Result<CollectionBatchResult, Error> {
-        let mut writes = Vec::new();
-        for (index, item) in collection_operations.enumerate() {
-            let write = item
-                .and_then(|item| Write::from_operation(item).map_err(Error::from))
-                .with_context(|| format!("operation {index}"))?;
-            writes.push(write);
-        }
-        let outcomes = self.write(&writes, true)?;
+        self.write_collection_batch(None, Writes::of_operations(collection_operations)?)
+    }
+
+    /// A batch applied as one commit, with the results in order.
+    fn write_collection_batch(
+        &self,
+        held: Option<Held>,
+        writes: Writes,
+    ) -> Result<CollectionBatchResult, Error> {
+        let outcomes = self.write(held, &writes.writes, writes.indexed)?;
         Ok(CollectionBatchResult {
             results: outcomes
                 .into_iter()
@@ -215,9 +295,34 @@ impl crate::vault::Vault {
         })
     }
 
+    /// The one write of `writes`, under a write lock the caller already
+    /// waited for. A deletion answers with an empty declaration.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn write_collection_held(
+        &self,
+        held: Held,
+        writes: Writes,
+    ) -> Result<CollectionDeclaration, Error> {
+        match writes.writes.into_iter().next() {
+            Some(write) => self.write_one(Some(held), write),
+            None => Err(Fault::new(VaultErrorCode::Storage, "the write holds no request").into()),
+        }
+    }
+
+    /// The batch `writes`, under a write lock the caller already waited
+    /// for.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn write_collections_held(
+        &self,
+        held: Held,
+        writes: Writes,
+    ) -> Result<CollectionBatchResult, Error> {
+        self.write_collection_batch(Some(held), writes)
+    }
+
     /// One write, as the single calls make it.
-    fn write_one(&self, write: Write) -> Result<CollectionDeclaration, Error> {
-        let mut outcomes = self.write(&[write], false)?;
+    fn write_one(&self, held: Option<Held>, write: Write) -> Result<CollectionDeclaration, Error> {
+        let mut outcomes = self.write(held, &[write], false)?;
         match outcomes.pop() {
             Some(Outcome::Collection(collection)) => Ok(collection),
             Some(Outcome::Deleted) => Ok(CollectionDeclaration::default()),
@@ -227,8 +332,13 @@ impl crate::vault::Vault {
 
     /// The writes as one commit. `indexed` puts the position of a failing
     /// write into the error.
-    fn write(&self, writes: &[Write], indexed: bool) -> Result<Vec<Outcome>, Error> {
-        let (outcomes, pushable) = self.write_locked(writes, indexed)?;
+    fn write(
+        &self,
+        held: Option<Held>,
+        writes: &[Write],
+        indexed: bool,
+    ) -> Result<Vec<Outcome>, Error> {
+        let (outcomes, pushable) = self.write_locked(held, writes, indexed)?;
         // The write lock is let go: a push waits for no writer.
         if pushable {
             self.push_after_write();
@@ -239,7 +349,12 @@ impl crate::vault::Vault {
     /// The writes as one commit under the write lock, which is let go when
     /// this returns. Also says whether a commit was made: only then is there
     /// anything to push.
-    fn write_locked(&self, writes: &[Write], indexed: bool) -> Result<(Vec<Outcome>, bool), Error> {
+    fn write_locked(
+        &self,
+        held: Option<Held>,
+        writes: &[Write],
+        indexed: bool,
+    ) -> Result<(Vec<Outcome>, bool), Error> {
         for (index, write) in writes.iter().enumerate() {
             write
                 .check()
@@ -249,7 +364,7 @@ impl crate::vault::Vault {
         if writes.is_empty() {
             return Ok((Vec::new(), false));
         }
-        let lock = self.committer().lock().context("take the write lock")?;
+        let lock = self.take_lock(held)?;
         let snap = lock.snapshot(Repo::Main)?;
         let mut declarations = Declarations::clone(&*self.declarations_in(&snap)?);
         let root = self.path();

@@ -16,7 +16,7 @@ use scheda_api::v1::reranker_ref::RerankerRef;
 use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode, VaultInfo};
 
 use crate::collection::{self, Declarations};
-use crate::commit::{Change, Committer};
+use crate::commit::{Change, Committer, Held, WriteLock};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
 use crate::idmap::IdMaps;
@@ -299,6 +299,20 @@ impl Vault {
     /// The write path of this handle.
     pub(crate) fn committer(&self) -> &Committer {
         &self.committer
+    }
+
+    /// The write lock for a write: the one `held` stands for, when the caller
+    /// waited for it already, otherwise a wait here.
+    ///
+    /// # Errors
+    ///
+    /// As [`Committer::lock`](crate::commit::Committer::lock).
+    pub(crate) fn take_lock(&self, held: Option<Held>) -> Result<WriteLock<'_>, Error> {
+        match held {
+            Some(held) => self.committer.adopt(held),
+            None => self.committer.lock(),
+        }
+        .context("take the write lock")
     }
 
     /// The writer identity of this handle: the name its journal segments

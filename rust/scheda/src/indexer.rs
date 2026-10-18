@@ -27,6 +27,8 @@
 //! reported the same way. Only this thread writes under `index/`.
 
 use std::collections::VecDeque;
+#[cfg(all(feature = "find", feature = "tokio"))]
+use std::future::Future;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 #[cfg(test)]
@@ -140,6 +142,9 @@ struct Shared {
     signal: Arc<Signal>,
     inner: Mutex<Inner>,
     changed: Condvar,
+    /// Wakes the watchers that wait in a task, not on `changed`.
+    #[cfg(feature = "tokio")]
+    news: tokio::sync::Notify,
     /// How many times this indexer took the lock of a round.
     #[cfg(test)]
     locks: AtomicU64,
@@ -166,7 +171,14 @@ impl Shared {
         }
         inner.next += 1;
         drop(inner);
+        self.announce();
+    }
+
+    /// Wakes every watcher, on a thread or in a task.
+    fn announce(&self) {
         self.changed.notify_all();
+        #[cfg(feature = "tokio")]
+        self.news.notify_waiters();
     }
 
     /// Changes the state without making an item: what a call to
@@ -177,7 +189,7 @@ impl Shared {
 
     fn close(&self) {
         self.lock().closed = true;
-        self.changed.notify_all();
+        self.announce();
     }
 }
 
@@ -207,6 +219,8 @@ impl Indexer {
                     closed: false,
                 }),
                 changed: Condvar::new(),
+                #[cfg(feature = "tokio")]
+                news: tokio::sync::Notify::new(),
                 #[cfg(test)]
                 locks: AtomicU64::new(0),
                 #[cfg(test)]
@@ -356,6 +370,16 @@ impl Indexer {
         }
     }
 
+    /// The same stream for a task: it waits without holding a thread.
+    #[cfg(all(feature = "find", feature = "tokio"))]
+    pub(crate) fn watch_stream(&self) -> WatchStream {
+        WatchStream {
+            shared: Arc::clone(&self.shared),
+            next: None,
+            looking: None,
+        }
+    }
+
     /// Whether the thread runs.
     #[cfg(test)]
     pub(crate) fn is_running(&self) -> bool {
@@ -395,7 +419,40 @@ impl Drop for Indexer {
     }
 }
 
-/// The stream `WatchIndexStatus` gives.
+/// What a watcher finds when it looks at the shared state.
+#[cfg(any(feature = "find", test))]
+enum Read {
+    /// The next item, and the cursor after it.
+    Item(Box<IndexState>, u64),
+    /// The indexer ended: the watch ends.
+    End,
+    /// Nothing new yet.
+    Wait,
+}
+
+#[cfg(any(feature = "find", test))]
+impl Inner {
+    /// What the watcher whose cursor is `cursor` (`None` before the first
+    /// item) is to do next.
+    fn read(&self, cursor: Option<u64>) -> Read {
+        let Some(want) = cursor else {
+            return Read::Item(Box::new(self.state.clone()), self.next);
+        };
+        if want < self.next {
+            // The oldest item still kept is `self.next - len`; a watcher
+            // further behind than that skips to it.
+            let oldest = self.next - self.history.len() as u64;
+            let at = want.max(oldest);
+            return match self.history.get((at - oldest) as usize) {
+                Some(state) => Read::Item(Box::new(state.clone()), at + 1),
+                None => Read::End,
+            };
+        }
+        if self.closed { Read::End } else { Read::Wait }
+    }
+}
+
+/// The stream `Index.Watch` gives, read on a thread.
 #[cfg(any(feature = "find", test))]
 pub(crate) struct Watch {
     shared: Arc<Shared>,
@@ -409,28 +466,81 @@ impl Iterator for Watch {
 
     fn next(&mut self) -> Option<Self::Item> {
         let mut inner = self.shared.lock();
-        let Some(want) = self.next else {
-            self.next = Some(inner.next);
-            return Some(Ok(inner.state.clone()));
-        };
         loop {
-            if want < inner.next {
-                // The oldest item still kept is `inner.next - len`; a
-                // watcher further behind than that skips to it.
-                let oldest = inner.next - inner.history.len() as u64;
-                let at = want.max(oldest);
-                self.next = Some(at + 1);
-                let state = inner.history.get((at - oldest) as usize).cloned();
-                return state.map(Ok);
+            match inner.read(self.next) {
+                Read::Item(state, next) => {
+                    self.next = Some(next);
+                    return Some(Ok(*state));
+                }
+                Read::End => return None,
+                Read::Wait => {
+                    inner = self
+                        .shared
+                        .changed
+                        .wait(inner)
+                        .unwrap_or_else(PoisonError::into_inner);
+                }
             }
-            if inner.closed {
-                return None;
+        }
+    }
+}
+
+/// A look at the shared state in progress: the item it found (`None` at the
+/// end) and the cursor after it.
+#[cfg(all(feature = "find", feature = "tokio"))]
+type Looking = std::pin::Pin<Box<dyn Future<Output = (Option<IndexState>, u64)> + Send>>;
+
+/// The same stream read in a task: it waits without holding a thread, and
+/// the indexer wakes it.
+#[cfg(all(feature = "find", feature = "tokio"))]
+pub(crate) struct WatchStream {
+    shared: Arc<Shared>,
+    /// The number of the next item to give; `None` before the first.
+    next: Option<u64>,
+    /// The look in progress, until it finds an item or the end.
+    looking: Option<Looking>,
+}
+
+#[cfg(all(feature = "find", feature = "tokio"))]
+impl WatchStream {
+    /// Looks until there is an item (and the cursor after it) or the
+    /// indexer has ended (`None`).
+    async fn look(shared: Arc<Shared>, cursor: Option<u64>) -> (Option<IndexState>, u64) {
+        loop {
+            // Listen before looking, so a change between the two is not
+            // missed.
+            let news = shared.news.notified();
+            let mut news = std::pin::pin!(news);
+            news.as_mut().enable();
+            let read = shared.lock().read(cursor);
+            match read {
+                Read::Item(state, next) => return (Some(*state), next),
+                Read::End => return (None, cursor.unwrap_or_default()),
+                Read::Wait => news.await,
             }
-            inner = self
-                .shared
-                .changed
-                .wait(inner)
-                .unwrap_or_else(PoisonError::into_inner);
+        }
+    }
+}
+
+#[cfg(all(feature = "find", feature = "tokio"))]
+impl protocontract::Stream for WatchStream {
+    type Item = Result<IndexState, Error>;
+
+    fn poll_next(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let looking = this
+            .looking
+            .get_or_insert_with(|| Box::pin(Self::look(Arc::clone(&this.shared), this.next)));
+        match looking.as_mut().poll(cx) {
+            std::task::Poll::Pending => std::task::Poll::Pending,
+            std::task::Poll::Ready((item, next)) => {
+                this.looking = None;
+                this.next = Some(next);
+                std::task::Poll::Ready(item.map(Ok))
+            }
         }
     }
 }

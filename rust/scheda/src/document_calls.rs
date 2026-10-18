@@ -38,7 +38,7 @@ use scheda_api::v1::{
 use serde_json::json;
 
 use crate::collection::{Declaration, Declarations, Kind};
-use crate::commit::Change;
+use crate::commit::{Change, Held};
 use crate::documents::{self, Found, Plain};
 use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
@@ -47,17 +47,103 @@ use crate::{isolated, journal, stored};
 
 /// One write of a Document, as the single calls and the batches carry it:
 /// the collection it is in, and the request of the call.
-struct Write {
+pub(crate) struct Write {
     collection: String,
     request: Request,
 }
 
+/// The writes of one call, checked or not yet: one write, or a batch read
+/// whole. A call that waits for the write lock somewhere else checks them
+/// first ([`Vault::precheck_documents`](crate::vault::Vault::precheck_documents)) and hands them
+/// back to be written, so no request is copied.
+pub(crate) struct Writes {
+    writes: Vec<Write>,
+    /// Whether the position of a failing write is part of its error.
+    indexed: bool,
+}
+
+impl Writes {
+    /// The one write `request` asks for in `collection`.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn one(collection: &str, request: impl Into<Request>) -> Writes {
+        Writes {
+            writes: vec![Write::new(collection, request.into())],
+            indexed: false,
+        }
+    }
+
+    /// The writes of a batch in `collection`, read whole.
+    ///
+    /// # Errors
+    ///
+    /// The `Err` of an item, and an operation that names no write, with its
+    /// index.
+    pub(crate) fn of_collection(
+        collection: &str,
+        operations: BoxIter<'static, Result<DocumentOperation, Error>>,
+    ) -> Result<Writes, Error> {
+        Writes::collect(operations.map(|item| {
+            item.and_then(|item| {
+                Write::from_operation(collection.to_owned(), item).map_err(Error::from)
+            })
+        }))
+    }
+
+    /// The writes of a batch across collections, read whole.
+    ///
+    /// # Errors
+    ///
+    /// As [`Writes::of_collection`].
+    pub(crate) fn of_vault(
+        operations: BoxIter<'static, Result<VaultDocumentOperation, Error>>,
+    ) -> Result<Writes, Error> {
+        Writes::collect(operations.map(|item| {
+            item.and_then(|item| Write::from_vault_operation(item).map_err(Error::from))
+        }))
+    }
+
+    fn collect(writes: impl Iterator<Item = Result<Write, Error>>) -> Result<Writes, Error> {
+        let mut all = Vec::new();
+        for (index, write) in writes.enumerate() {
+            all.push(write.with_context(|| format!("operation {index}"))?);
+        }
+        Ok(Writes {
+            writes: all,
+            indexed: true,
+        })
+    }
+}
+
 /// The request of one Document write.
-enum Request {
+pub(crate) enum Request {
     Create(DocumentCreation),
     Update(DocumentUpdate),
     Upsert(DocumentUpsert),
     Delete(DocumentDeletion),
+}
+
+impl From<DocumentCreation> for Request {
+    fn from(request: DocumentCreation) -> Request {
+        Request::Create(request)
+    }
+}
+
+impl From<DocumentUpdate> for Request {
+    fn from(request: DocumentUpdate) -> Request {
+        Request::Update(request)
+    }
+}
+
+impl From<DocumentUpsert> for Request {
+    fn from(request: DocumentUpsert) -> Request {
+        Request::Upsert(request)
+    }
+}
+
+impl From<DocumentDeletion> for Request {
+    fn from(request: DocumentDeletion) -> Request {
+        Request::Delete(request)
+    }
 }
 
 /// What a write asks of a Document, apart from its bytes.
@@ -426,7 +512,10 @@ impl crate::vault::Vault {
         collection: &str,
         document_creation: DocumentCreation,
     ) -> Result<Document, Error> {
-        self.write_document(Write::new(collection, Request::Create(document_creation)))
+        self.write_document(
+            None,
+            Write::new(collection, Request::Create(document_creation)),
+        )
     }
 
     /// Replaces an existing Document and returns it as stored. Absent,
@@ -443,7 +532,10 @@ impl crate::vault::Vault {
         collection: &str,
         document_update: DocumentUpdate,
     ) -> Result<Document, Error> {
-        self.write_document(Write::new(collection, Request::Update(document_update)))
+        self.write_document(
+            None,
+            Write::new(collection, Request::Update(document_update)),
+        )
     }
 
     /// Creates the Document, or replaces it when present, and returns it as
@@ -459,7 +551,10 @@ impl crate::vault::Vault {
         collection: &str,
         document_upsert: DocumentUpsert,
     ) -> Result<Document, Error> {
-        self.write_document(Write::new(collection, Request::Upsert(document_upsert)))
+        self.write_document(
+            None,
+            Write::new(collection, Request::Upsert(document_upsert)),
+        )
     }
 
     /// Deletes a Document. Absent, `NOT_FOUND`, or nothing with
@@ -475,8 +570,11 @@ impl crate::vault::Vault {
         collection: &str,
         document_deletion: DocumentDeletion,
     ) -> Result<Empty, Error> {
-        self.write_document(Write::new(collection, Request::Delete(document_deletion)))
-            .map(|_| Empty::default())
+        self.write_document(
+            None,
+            Write::new(collection, Request::Delete(document_deletion)),
+        )
+        .map(|_| Empty::default())
     }
 
     /// Several Document writes in `collection` as one: all happen, or none.
@@ -490,11 +588,10 @@ impl crate::vault::Vault {
         collection: &str,
         document_operations: BoxIter<'static, Result<DocumentOperation, Error>>,
     ) -> Result<DocumentBatchResult, Error> {
-        self.batch_writes(document_operations.map(|item| {
-            item.and_then(|item| {
-                Write::from_operation(collection.to_owned(), item).map_err(Error::from)
-            })
-        }))
+        self.write_batch(
+            None,
+            Writes::of_collection(collection, document_operations)?,
+        )
     }
 
     /// Several Document writes as one, across collections: all happen, or
@@ -517,21 +614,16 @@ impl crate::vault::Vault {
         &self,
         operations: BoxIter<'static, Result<VaultDocumentOperation, Error>>,
     ) -> Result<DocumentBatchResult, Error> {
-        self.batch_writes(operations.map(|item| {
-            item.and_then(|item| Write::from_vault_operation(item).map_err(Error::from))
-        }))
+        self.write_batch(None, Writes::of_vault(operations)?)
     }
 
-    /// The writes of a batch, read whole, then applied as one commit.
-    fn batch_writes(
+    /// A batch applied as one commit, with the results in order.
+    fn write_batch(
         &self,
-        writes: impl Iterator<Item = Result<Write, Error>>,
+        held: Option<Held>,
+        writes: Writes,
     ) -> Result<DocumentBatchResult, Error> {
-        let mut all = Vec::new();
-        for (index, write) in writes.enumerate() {
-            all.push(write.with_context(|| format!("operation {index}"))?);
-        }
-        let outcomes = self.write_documents(all, true)?;
+        let outcomes = self.write_documents(held, writes.writes, writes.indexed)?;
         Ok(DocumentBatchResult {
             results: outcomes
                 .into_iter()
@@ -547,9 +639,73 @@ impl crate::vault::Vault {
         })
     }
 
+    /// The checks of `writes` that need no lock, as the write makes them
+    /// before it waits for the lock: each request validates, the
+    /// collections are declared and take the operation, the ids and the
+    /// payloads are well formed, encryption is available, and one batch
+    /// holds the Documents of one repository. The writes come back as they
+    /// went in, to be written under the lock with
+    /// [`write_document_held`](Self::write_document_held) or
+    /// [`write_documents_held`](Self::write_documents_held), which check again
+    /// against the declarations in force then.
+    ///
+    /// # Errors
+    ///
+    /// The errors of the write calls that need no lock: `INVALID_ARGUMENT`,
+    /// `NOT_FOUND`, `UNIMPLEMENTED`, `CRYPTO`.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn precheck_documents(&self, writes: Writes) -> Result<Writes, Error> {
+        if !writes.writes.is_empty() {
+            self.inspect_writes(&writes.writes, writes.indexed)?;
+        }
+        Ok(writes)
+    }
+
+    /// The one write of `writes`, as the single calls make it, under a write
+    /// lock the caller already waited for.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn write_document_held(
+        &self,
+        held: Held,
+        writes: Writes,
+    ) -> Result<Document, Error> {
+        match writes.writes.into_iter().next() {
+            Some(write) => self.write_document(Some(held), write),
+            None => Err(storage("the write holds no request").into()),
+        }
+    }
+
+    /// The batch `writes`, under a write lock the caller already waited
+    /// for.
+    #[cfg(feature = "tokio")]
+    pub(crate) fn write_documents_held(
+        &self,
+        held: Held,
+        writes: Writes,
+    ) -> Result<DocumentBatchResult, Error> {
+        self.write_batch(Some(held), writes)
+    }
+
+    /// Validates every write and inspects them against the declarations now.
+    fn inspect_writes(
+        &self,
+        writes: &[Write],
+        indexed: bool,
+    ) -> Result<(Vec<Inspected>, Repo, Arc<Declarations>), Error> {
+        for (index, write) in writes.iter().enumerate() {
+            write
+                .validate()
+                .map_err(Error::from)
+                .with_context(|| frame(indexed, index))?;
+        }
+        let before = self.declarations_now()?;
+        let (inspected, repo) = inspect_all(writes, &before, self.encryption(), indexed)?;
+        Ok((inspected, repo, before))
+    }
+
     /// One write, as the single calls make it.
-    fn write_document(&self, write: Write) -> Result<Document, Error> {
-        let mut outcomes = self.write_documents(vec![write], false)?;
+    fn write_document(&self, held: Option<Held>, write: Write) -> Result<Document, Error> {
+        let mut outcomes = self.write_documents(held, vec![write], false)?;
         match outcomes.pop() {
             Some(Outcome::Document(document)) => Ok(document),
             Some(Outcome::Deleted) => Ok(Document::default()),
@@ -559,8 +715,13 @@ impl crate::vault::Vault {
 
     /// The writes as one commit. `indexed` puts the position of a failing
     /// write into the error.
-    fn write_documents(&self, writes: Vec<Write>, indexed: bool) -> Result<Vec<Outcome>, Error> {
-        let (outcomes, pushable) = self.write_documents_locked(writes, indexed)?;
+    fn write_documents(
+        &self,
+        held: Option<Held>,
+        writes: Vec<Write>,
+        indexed: bool,
+    ) -> Result<Vec<Outcome>, Error> {
+        let (outcomes, pushable) = self.write_documents_locked(held, writes, indexed)?;
         // The write lock is let go: a push waits for no writer.
         if pushable {
             self.push_after_write();
@@ -573,6 +734,7 @@ impl crate::vault::Vault {
     /// made: only then is there anything to push.
     fn write_documents_locked(
         &self,
+        held: Option<Held>,
         writes: Vec<Write>,
         indexed: bool,
     ) -> Result<(Vec<Outcome>, bool), Error> {
@@ -580,16 +742,9 @@ impl crate::vault::Vault {
             return Ok((Vec::new(), false));
         }
         let encryption = self.encryption();
-        for (index, write) in writes.iter().enumerate() {
-            write
-                .validate()
-                .map_err(Error::from)
-                .with_context(|| frame(indexed, index))?;
-        }
-        let before = self.declarations_now()?;
-        let (mut inspected, mut repo) = inspect_all(&writes, &before, encryption, indexed)?;
+        let (mut inspected, mut repo, before) = self.inspect_writes(&writes, indexed)?;
         let first_note = first_line(writes.first().map_or("", Write::note));
-        let lock = self.committer().lock().context("take the write lock")?;
+        let lock = self.take_lock(held)?;
         let main = lock.snapshot(Repo::Main)?;
         let declarations = self.declarations_in(&main)?;
         if !Arc::ptr_eq(&before, &declarations) {

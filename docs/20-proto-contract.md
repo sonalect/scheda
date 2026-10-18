@@ -8,7 +8,7 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5; R1–R4 are done, R5 is next.
+2026) replaces P6 and P7 with R1–R5, all done; P8 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1859,23 +1859,59 @@ D2, D5, D7, D19, D24. The queries of P6.
 
 D11, D24. The async of P7.
 
-- [ ] With `tokio`, `Scheda` implements `SchedaAsync` too: its `Open`
+- [x] With `tokio`, `Scheda` implements `SchedaAsync` too: its `Open`
       returns references that hold the async form of the objects, which
       wait natively (the write turn, `Index.Watch`) and await async
       ports, and run their blocking steps on the blocking pool (D11). The
       hand-written `nonblocking.rs` surface is deleted; the test ports of
-      `tests/old/nonblocking.rs` move to the generated traits.
+      `tests/old/nonblocking.rs` move to the generated traits
+      (`src/service/asynchronous.rs`, `tests/async.rs`).
+- Settled in the build: an async object shares the state, the gate, and
+  `Close` of the sync one, and runs on the blocking pool of the runtime
+  of the call (not the one that opened the Vault), so a Vault outlives
+  the runtime that opened it. A call that only works is offloaded, a
+  stream through the 16-item channel; the mirror is offloaded whole. A
+  write runs the checks that need no lock on the pool first (an invalid
+  request fails at once, never `ABORTED`), then waits for the turn and
+  `commit.lock` with an `await` between tries (the turn is a `Send`
+  flag now, not a `MutexGuard`), then writes on the pool with the lock in
+  hand. `Index.Watch` waits on a `Notify` the indexer signals. A search
+  runs its phases on the pool, each inside the gate, and awaits the
+  embedder and the reranker between them, so `Close` does not wait for a
+  model; a sync port is awaited through `Offload`, a panic in an awaited
+  port is `Panicked`. A Vault the sync `Scheda.Open` opened is native to
+  the sync form; its `to_async_offload()` is protocontract's `Offload`.
 - *Check:* the async objects pass on a multi-thread and a current-thread
-  runtime; the lazy-stream checks of R3 hold in the async form.
+  runtime; the lazy-stream checks of R3 hold in the async form
+  (`tests/async.rs`: `the_async_objects_work_on_a_multi_thread_runtime`,
+  `the_async_objects_work_on_a_current_thread_runtime`,
+  `searching::a_search_runs_on_both_runtime_flavors`,
+  `a_sync_caller_takes_the_sync_form_of_an_async_reference_and_the_reverse`;
+  `service::asynchronous::tests::a_stream_dropped_after_its_first_item_reads_no_more_in_the_async_form`).
 - *Check:* on a blocking pool of one thread, an open `Index.Watch` stream
-  does not stop another call.
-- *Check:* a panicking port under the async form is `Panicked`.
+  does not stop another call (`tests/async.rs`:
+  `watching::an_open_watch_holds_no_pool_thread_and_wakes_on_a_change`).
+- *Check:* a panicking port under the async form is `Panicked`
+  (`tests/async.rs`:
+  `searching::a_panicking_port_is_panicked_whether_it_is_async_or_blocking`).
 - *Check:* on a blocking pool of one thread, an async search whose async
   embedder takes a second to answer does not stop another call (the
   embedder is awaited, not blocked on); a write waiting for the write
-  lock does not either.
+  lock does not either, and a request that can never succeed fails at
+  once while the lock is held (`tests/async.rs`:
+  `searching::an_async_embedder_that_takes_a_second_is_awaited_not_blocked_on`,
+  `a_write_waiting_for_the_write_lock_holds_no_pool_thread_and_aborts_at_the_deadline`,
+  `a_request_that_can_never_succeed_fails_at_once_while_the_write_lock_is_held`).
 - *Check:* the indexer is an OS thread that ends with `Close`, also when
-  the runtime that opened the Vault has been dropped first.
+  the runtime that opened the Vault has been dropped first
+  (`tests/async.rs`:
+  `watching::the_indexer_outlives_the_runtime_that_opened_the_vault_and_ends_with_close`,
+  `watching::the_indexer_ends_when_every_reference_is_dropped_after_the_runtime_went`).
+- *Check:* after `Close` of the async form every object is
+  `FAILED_PRECONDITION`, and a held `Index.Watch` gets it next
+  (`tests/async.rs`:
+  `after_close_every_async_object_is_failed_precondition_and_a_second_close_is_nothing`,
+  `watching::a_held_watch_gets_failed_precondition_after_close_and_then_ends`).
 
 ### P8. CLI and acceptance
 

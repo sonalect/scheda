@@ -36,7 +36,8 @@
 use std::fs::{self, File, OpenOptions as FileOptions, TryLockError as FileLockError};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 
@@ -195,9 +196,10 @@ pub(crate) struct Committer {
     timeout: Duration,
     identity: Identity,
     repos: Arc<Repos>,
-    /// The turn among the writes of this handle. It guards no data: the lock
-    /// file guards the state of the Vault.
-    turn: Mutex<()>,
+    /// Whether a write of this handle has its turn. It guards no data: the
+    /// lock file guards the state of the Vault. A flag, not a mutex, so the
+    /// turn can be taken on one thread and let go on another.
+    turn: Arc<AtomicBool>,
     /// Woken when a commit of this handle moves `HEAD`: the indexer looks
     /// at once.
     signal: Arc<Signal>,
@@ -219,7 +221,7 @@ impl Committer {
             timeout,
             identity: Identity::resolve(options, &repos).context("resolve the author")?,
             repos,
-            turn: Mutex::new(()),
+            turn: Arc::new(AtomicBool::new(false)),
             signal: Arc::new(Signal::default()),
         })
     }
@@ -240,16 +242,78 @@ impl Committer {
     /// nothing is written then. `STORAGE` or `REPLICATION` when the lock
     /// file or git fails.
     pub(crate) fn lock(&self) -> Result<WriteLock<'_>, Error> {
+        let held = self.acquire()?;
+        self.adopt(held)
+    }
+
+    /// Waits for the turn and for `flock`, on the thread of the caller,
+    /// without recovering anything: [`Committer::adopt`] does that.
+    fn acquire(&self) -> Result<Held, Error> {
         let deadline = Instant::now() + self.timeout;
-        let turn = self.take_turn(deadline)?;
+        let mut pause = FIRST_POLL;
+        let turn = loop {
+            if let Some(turn) = Turn::take(&self.turn) {
+                break turn;
+            }
+            wait(&mut pause, deadline)?;
+        };
         let file = open_lock_file(&self.root)?;
         take_flock(&file, deadline)?;
-        let flock = Flock::held(file);
-        recover(&self.root, &self.repos, flock.file()).context("recover an unfinished write")?;
+        Ok(Held {
+            _turn: turn,
+            flock: Flock::held(file),
+        })
+    }
+
+    /// Waits for the write lock as [`Committer::lock`] does, but in a task:
+    /// each pause is an `await`, so no thread is held while another writer
+    /// has the lock. The result is `'static` and `Send`, so it can move to
+    /// the thread that writes ([`Committer::adopt`]).
+    ///
+    /// # Errors
+    ///
+    /// As [`Committer::lock`], except for the recovery.
+    #[cfg(feature = "tokio")]
+    pub(crate) async fn acquire_async(&self) -> Result<Held, Error> {
+        let deadline = Instant::now() + self.timeout;
+        let mut pause = FIRST_POLL;
+        let turn = loop {
+            if let Some(turn) = Turn::take(&self.turn) {
+                break turn;
+            }
+            wait_async(&mut pause, deadline).await?;
+        };
+        let file = open_lock_file(&self.root)?;
+        let mut pause = FIRST_POLL;
+        loop {
+            match file.try_lock() {
+                Ok(()) => break,
+                Err(FileLockError::WouldBlock) => {}
+                Err(FileLockError::Error(err)) => {
+                    return Err(io(err)).context("take the write lock");
+                }
+            }
+            wait_async(&mut pause, deadline).await?;
+        }
+        Ok(Held {
+            _turn: turn,
+            flock: Flock::held(file),
+        })
+    }
+
+    /// The write lock for a turn and a file lock already taken: recovers
+    /// the unfinished write a dead writer left, if one did.
+    ///
+    /// # Errors
+    ///
+    /// `STORAGE` or `REPLICATION` when the recovery fails.
+    pub(crate) fn adopt(&self, held: Held) -> Result<WriteLock<'_>, Error> {
+        recover(&self.root, &self.repos, held.flock.file())
+            .context("recover an unfinished write")?;
         Ok(WriteLock {
             committer: self,
-            _turn: turn,
-            flock,
+            _turn: held._turn,
+            flock: held.flock,
         })
     }
 
@@ -266,33 +330,69 @@ impl Committer {
         }
         Ok(())
     }
+}
 
-    fn take_turn(&self, deadline: Instant) -> Result<MutexGuard<'_, ()>, Error> {
-        let mut pause = FIRST_POLL;
-        loop {
-            match self.turn.try_lock() {
-                Ok(guard) => return Ok(guard),
-                // The mutex guards no data, so a holder that panicked left
-                // nothing broken behind.
-                Err(TryLockError::Poisoned(poisoned)) => return Ok(poisoned.into_inner()),
-                Err(TryLockError::WouldBlock) => {}
-            }
-            wait(&mut pause, deadline)?;
-        }
+/// The turn among the writes of one handle, let go when dropped.
+#[derive(Debug)]
+struct Turn(Arc<AtomicBool>);
+
+impl Turn {
+    /// The turn, if no write has it.
+    fn take(flag: &Arc<AtomicBool>) -> Option<Turn> {
+        flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .ok()
+            .map(|_| Turn(Arc::clone(flag)))
     }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
+
+/// The turn and the file lock of a write, taken and not yet recovered: it
+/// owns everything it holds, so it can cross threads before it becomes a
+/// [`WriteLock`] with [`Committer::adopt`].
+#[derive(Debug)]
+pub(crate) struct Held {
+    _turn: Turn,
+    flock: Flock,
+}
+
+/// The `ABORTED` failure of a lock that stayed taken until the deadline.
+fn lock_busy() -> Error {
+    Fault::new(
+        VaultErrorCode::Aborted,
+        "another write holds the write lock; try again",
+    )
+    .into()
+}
+
+/// The pause to take now; the next one is twice as long, up to
+/// [`LAST_POLL`].
+fn grow(pause: &mut Duration) -> Duration {
+    let now = *pause;
+    *pause = (now * 2).min(LAST_POLL);
+    now
 }
 
 /// Sleeps one poll interval, or is `ABORTED` when `deadline` has passed.
 fn wait(pause: &mut Duration, deadline: Instant) -> Result<(), Error> {
     if Instant::now() >= deadline {
-        return Err(Fault::new(
-            VaultErrorCode::Aborted,
-            "another write holds the write lock; try again",
-        )
-        .into());
+        return Err(lock_busy());
     }
-    sleep(*pause);
-    *pause = (*pause * 2).min(LAST_POLL);
+    sleep(grow(pause));
+    Ok(())
+}
+
+/// [`wait`] without holding the thread.
+#[cfg(feature = "tokio")]
+async fn wait_async(pause: &mut Duration, deadline: Instant) -> Result<(), Error> {
+    if Instant::now() >= deadline {
+        return Err(lock_busy());
+    }
+    tokio::time::sleep(grow(pause)).await;
     Ok(())
 }
 
@@ -354,7 +454,7 @@ pub(crate) fn pending(root: &Path) -> Result<bool, Error> {
 #[derive(Debug)]
 pub(crate) struct WriteLock<'a> {
     committer: &'a Committer,
-    _turn: MutexGuard<'a, ()>,
+    _turn: Turn,
     flock: Flock,
 }
 
