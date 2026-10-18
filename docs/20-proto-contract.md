@@ -8,7 +8,7 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5; R1–R3 are done, and R4 has its queries and counts.
+2026) replaces P6 and P7 with R1–R5; R1–R4 are done, R5 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1758,49 +1758,102 @@ D8, D15, D24. The reads of P6.
 
 D2, D5, D7, D19, D24. The queries of P6.
 
-- [ ] `Collection.Query`, `Count`, and `Search`, and
+- [x] `Collection.Query`, `Count`, and `Search`, and
       `Vault.QueryDocuments`, `CountDocuments`, and `SearchDocuments`
       (`VaultQuery`, `VaultSearch`) per D19: the Filter without score
       constructs, `like` in place of `more_like_this`, a search as a
       stream with its summary first and no 10 000 limit, an Index not
       built yet answering `INDEX_REBUILDING`; `rerank_limit` per D5. The
       methods of a missing feature answer `UNIMPLEMENTED` (D2).
-- [ ] The integration tests of `rust/scheda/tests/old/` back in the
-      build on the objects, with their test ports (embedders, rerankers,
-      and projectors) on the generated traits.
-- *Check:* every integration test passes on the objects.
+      (`src/filter.rs`, `src/queries.rs`, `src/search.rs`.)
+- [x] The integration tests of `rust/scheda/tests/old/` that test
+      queries and searches (`query.rs`, `projector.rs`, `search.rs`,
+      `ann.rs`, the R4 part of `thin.rs`) back in the build on the objects
+      as `tests/query.rs` and `tests/search.rs`, with their test ports on
+      the generated traits; the tests of removed features (`more_like_this`,
+      scores in the Filter, `find`'s total, the 10 000 limit, generations,
+      the reranker's leg interleave) dropped. The rest of `tests/old/`
+      waits for R5 (`nonblocking.rs`) and P8.
+- Settled in the build: a query or count of the Vault names the
+  collection of every column leaf, and a leaf naming a declared
+  collection outside the scope is false; a named encrypted collection is
+  `UNIMPLEMENTED`; a collection with `exclude_lexical_index` named in a
+  query is `UNIMPLEMENTED`, while a search covers it by the vector leg (a
+  filtered search that names it is `INVALID_ARGUMENT`, and a filtered
+  search of the default scope leaves it out); one that leaves both legs
+  out, named in a search, is `UNIMPLEMENTED`. `Count` applies
+  `start_after`, `offset`, and `limit`, so it equals the stream. A key the
+  Index holds for a file `HEAD` no longer has is skipped. `INDEX_STALE`
+  is per collection in scope whose columns changed, or for a Vault of
+  another projection. A search: weighted Reciprocal Rank Fusion; both
+  weights 0 is `INVALID_ARGUMENT`; `like` of a Document the Index does not
+  hold is `NOT_FOUND`; its lexical leg is Tantivy's MoreLikeThis over the
+  Document's `fts` text, projected again by the Vault's Projector (the
+  Index does not store the text), and that text is the rerank query of a
+  `like`; the first `rerank_limit` fused hits are reranked, the rest
+  follow in fused order. A search is built in phases (`prepare_search`,
+  the query embedding, `rank`, the scoring, the stream) with the two port
+  calls at their own seams, for R5.
+- *Check:* every integration test passes on the objects (`tests/query.rs`,
+  `tests/search.rs`, and the rest).
 - *Check:* in a build without `find`, `Vault.Index`, `Collection.Query`,
   and `Vault.QueryDocuments` are `UNIMPLEMENTED` naming the feature, and
   `Scheda.Info` lists no `FIND`; the same for the searches without
-  `search` (`tests/thin.rs`).
+  `search` (`tests/query.rs`:
+  `thin::without_find_the_four_calls_are_unimplemented_naming_the_feature`,
+  `thin::without_find_scheda_info_lists_no_find`; `tests/search.rs`:
+  `thin::without_search_the_two_calls_are_unimplemented_naming_the_feature`).
 - *Check:* a write whose call has not returned is seen by no `Query` or
-  `Search`.
+  `Search` (`queries::tests::a_write_that_has_not_returned_is_seen_by_no_query`,
+  `search::tests::a_write_that_has_not_returned_is_seen_by_no_search`).
 - *Check:* `Query` streams lazily from one snapshot: Documents written
   while the stream is read do not appear in it, none is repeated or
   skipped; `limit` and `offset` hold; the order is `id` (a journal:
-  append order).
+  append order) (`tests/query.rs`:
+  `a_stream_is_read_from_one_snapshot_and_none_is_repeated_or_skipped`,
+  `limit_and_offset_hold_and_count_equals_the_stream`,
+  `a_journal_lists_in_append_order_and_pages_after_a_line`).
 - *Check:* `Count` equals the number of Documents `Query` streams for the
-  same query and opens no Document file.
+  same query and opens no Document file
+  (`queries::tests::a_count_opens_no_file_and_a_stream_opens_one_as_it_reaches_a_document`).
 - *Check:* `Query` with `limit` and `start_after` reads page by page with
   no Document twice or missed; `Search` with `offset` skips that many hits
-  and opens none of their files; every one stays a lazy stream.
+  and opens none of their files; every one stays a lazy stream
+  (`tests/query.rs`:
+  `pages_by_start_after_cover_a_collection_once_also_when_documents_are_added_between`,
+  `a_vault_query_gives_collections_in_name_order_and_pages_after_a_document_key`;
+  `search::tests::offset_skips_hits_and_opens_none_of_their_files`).
 - *Check:* a query and a search of a Vault whose Projector is of another
-  projection than the Index are `INDEX_STALE`.
+  projection than the Index are `INDEX_STALE` (`tests/query.rs`:
+  `a_vault_of_another_projection_is_index_stale_until_its_own_reindex`;
+  `tests/search.rs`: `a_vault_of_another_projection_is_index_stale_for_a_search`).
 - *Check:* `Search` with `like` finds a Document's neighbours without
   calling the embedder; on a Vault whose Index was never built, a query
-  and a search are both `INDEX_REBUILDING`.
+  and a search are both `INDEX_REBUILDING` (`tests/search.rs`:
+  `like_finds_the_neighbours_of_a_document_without_calling_the_embedder`,
+  `an_index_never_built_is_index_rebuilding_for_a_search`; `tests/query.rs`:
+  `an_index_never_built_is_index_rebuilding_and_retryable`).
 - *Check:* a search with `k` above 10 000 is accepted; its first item is
   the summary; its Documents are opened as the stream reaches them, so a
-  stream dropped after the first hit opens one file.
+  stream dropped after the first hit opens one file (`tests/search.rs`:
+  `k_has_no_upper_limit_and_the_first_item_is_the_summary`;
+  `search::tests::a_stream_opens_one_file_for_each_hit_it_reaches_and_none_before`).
 - *Check:* `rerank_limit` without a reranker is `INVALID_ARGUMENT`, also
   after `SetReranker` then `RemoveReranker`; a sync embedder given to a
-  sync search is called on the caller's thread.
+  sync search is called on the caller's thread (`tests/search.rs`:
+  `rerank_limit_needs_a_reranker_also_after_it_was_removed`,
+  `a_reranker_orders_the_first_hits_and_sees_the_query_first`,
+  `a_sync_embedder_and_reranker_are_called_on_the_thread_of_the_caller`).
 - *Check:* the `Vault` forms span collections: a `BatchDocuments` over two
   collections is one write, one with an isolated and a plain collection is
   `INVALID_ARGUMENT`; `QueryDocuments` and `SearchDocuments` read the
-  collections they name.
+  collections they name (`tests/documents.rs`:
+  `a_batch_is_one_commit_with_one_result_per_operation`; `tests/query.rs`:
+  `a_vault_query_gives_collections_in_name_order_and_pages_after_a_document_key`;
+  `tests/search.rs`: `the_vault_form_spans_the_collections_it_names`,
+  `a_collection_that_leaves_the_lexical_index_out_is_searched_by_the_vector_leg`).
 - *Check:* no public name, field, or code of the contract carries a git
-  term (commit, `HEAD`, a commit id, `git_`).
+  term (commit, `HEAD`, a commit id, `git_`) (`rust/api/tests/git_terms.rs`).
 
 ### R5. Async
 

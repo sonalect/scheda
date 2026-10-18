@@ -478,6 +478,26 @@ struct Parts<'a> {
     values: Option<&'a IndexDoc>,
 }
 
+/// The text BM25 ranks for the values of a Document: its `fts` columns,
+/// joined by newlines. Empty when it has none.
+pub(crate) fn fts_text(columns: &[DumpColumn], values: &IndexDoc) -> String {
+    let mut text = String::new();
+    for column in columns.iter().filter(|column| column.fts) {
+        let Some(value) = values.values.get(&column.name) else {
+            continue;
+        };
+        each_text(value, |piece| {
+            if !piece.is_empty() {
+                if !text.is_empty() {
+                    text.push('\n');
+                }
+                text.push_str(piece);
+            }
+        });
+    }
+    text
+}
+
 /// The Tantivy document of `parts`; `None` when a value cannot be indexed
 /// (a NUL in a column name or a text), in which case the Document is left
 /// out.
@@ -495,21 +515,11 @@ fn tantivy_document(
     let Some(values) = parts.values else {
         return Some(doc);
     };
-    let mut text = String::new();
+    let text = fts_text(parts.columns, values);
     for column in parts.columns {
         let Some(value) = values.values.get(&column.name) else {
             continue;
         };
-        if column.fts {
-            each_text(value, |piece| {
-                if !piece.is_empty() {
-                    if !text.is_empty() {
-                        text.push('\n');
-                    }
-                    text.push_str(piece);
-                }
-            });
-        }
         if !column.find {
             continue;
         }
@@ -1033,7 +1043,7 @@ pub(crate) struct Snapshot {
     /// of the Index at the same state of the Vault makes the same
     /// `committed` again, and only this tells the two apart.
     meta: Vec<u8>,
-    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "only the tests read it"))]
     state: State,
     searcher: Searcher,
     index: tantivy::Index,
@@ -1043,7 +1053,7 @@ pub(crate) struct Snapshot {
 
 impl Snapshot {
     /// The state of the Vault this snapshot reflects.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
+    #[cfg_attr(not(test), expect(dead_code, reason = "only the tests read it"))]
     pub(crate) fn state(&self) -> State {
         self.state
     }

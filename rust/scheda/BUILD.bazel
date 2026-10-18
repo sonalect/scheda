@@ -309,6 +309,35 @@ rust_test(
 )
 
 rust_test(
+    name = "search_test",
+    size = "small",
+    srcs = ["tests/search.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/search.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "search_thin_test",
+    size = "small",
+    srcs = ["tests/search.rs"] + _TEST_COMMON,
+    crate_root = "tests/search.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "reads_test",
     size = "small",
     srcs = ["tests/reads.rs"] + _TEST_COMMON,

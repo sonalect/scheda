@@ -94,3 +94,13 @@ rust_test(
     data = ["//api:protos"],
     visibility = ["//rust:__pkg__"],
 )
+
+# No name of the contract (message, field, enum, value, service, rpc) carries a git term.
+rust_test(
+    name = "git_terms_test",
+    size = "small",
+    srcs = ["tests/git_terms.rs"],
+    crate_root = "tests/git_terms.rs",
+    data = ["//api:protos"],
+    visibility = ["//rust:__pkg__"],
+)

@@ -78,6 +78,17 @@ changes; they grow with each part of the move.
   with `exclude_lexical_index`, is `UNIMPLEMENTED`. An Index not built yet
   is `INDEX_REBUILDING`; `INDEX_STALE` is per collection whose columns
   changed, or for a Vault of another projection. `limit: 0` gives nothing.
+- Searches rank (`search` feature): `Collection.Search` and
+  `Vault.SearchDocuments` stream a `SearchSummary` first (which legs ran,
+  or why the vector leg did not), then the hits best first, each with its
+  lexical, vector, fused, and rerank scores. The subject is a `text` or
+  `like` (a Document: others like it; its vector leg uses the stored
+  vectors and calls no model). `k` has no upper limit; `offset` skips hits
+  without opening their files; the Documents are read as the stream
+  reaches them. `rerank_limit` reranks the first fused hits with the
+  Vault's reranker and is `INVALID_ARGUMENT` without one or below `k`.
+  Both weights 0 is `INVALID_ARGUMENT`. A collection with
+  `exclude_lexical_index` is searched by the vector leg only.
 - `Vault.Close` replaces `Vault::close(self)`: every call through the
   Vault, its collections, its mirror, and its Index then fails with
   `FAILED_PRECONDITION`; it returns once the calls that run have ended,

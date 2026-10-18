@@ -58,9 +58,9 @@ use crate::{stored, who};
 /// How many keys the Index is asked for at a time.
 const PAGE: u64 = 256;
 
-/// Where a query looks.
+/// Where a query or a search looks.
 #[derive(Debug)]
-enum Where {
+pub(crate) enum Where {
     /// One collection.
     Collection(String),
     /// The collections of a Vault query; empty names every collection that
@@ -168,7 +168,7 @@ struct Plan {
     parts: Vec<Part>,
 }
 
-fn not_declared(collection: &str) -> Fault {
+pub(crate) fn not_declared(collection: &str) -> Fault {
     Fault::new(
         VaultErrorCode::NotFound,
         format!("the collection {collection} is not declared"),
@@ -198,20 +198,61 @@ fn require_indexed(decl: &Declaration) -> Result<(), Fault> {
     Ok(())
 }
 
-/// The collections a query scans, in name order.
+/// What a scope is read for: a query reads the lexical Index only; a search
+/// also reads the vectors, so a collection that leaves the lexical Index out
+/// but is embedded is in its scope.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Mode {
+    /// `Query` and `Count`.
+    Query,
+    /// `Search` and `SearchDocuments`.
+    Search,
+}
+
+impl Mode {
+    /// Whether a collection that is not encrypted holds anything this mode
+    /// reads.
+    fn reads(self, decl: &Declaration) -> bool {
+        decl.lexical_indexed() || (self == Mode::Search && decl.vector_indexed())
+    }
+
+    /// `UNIMPLEMENTED` when `decl` is named and holds nothing this mode
+    /// reads.
+    fn require(self, decl: &Declaration) -> Result<(), Fault> {
+        if self == Mode::Query {
+            return require_indexed(decl);
+        }
+        if decl.encrypted() {
+            return require_indexed(decl);
+        }
+        if !self.reads(decl) {
+            return Err(Fault::new(
+                VaultErrorCode::Unimplemented,
+                format!(
+                    "the collection {} leaves both Index legs out (exclude_lexical_index and exclude_vector_index); a search of it has nothing to read",
+                    decl.name()
+                ),
+            ));
+        }
+        Ok(())
+    }
+}
+
+/// The collections a query or a search scans, in name order.
 fn targets<'a>(
     declarations: &'a Declarations,
     scope: &Where,
+    mode: Mode,
 ) -> Result<Vec<&'a Declaration>, Fault> {
     match scope {
         Where::Collection(name) => {
             let decl = declarations.get(name).ok_or_else(|| not_declared(name))?;
-            require_indexed(decl)?;
+            mode.require(decl)?;
             Ok(vec![decl])
         }
         Where::Vault(names) if names.is_empty() => Ok(declarations
             .iter()
-            .filter(|decl| !decl.isolated() && decl.lexical_indexed())
+            .filter(|decl| !decl.isolated() && mode.reads(decl))
             .collect()),
         Where::Vault(names) => {
             let sorted: std::collections::BTreeSet<&str> =
@@ -219,11 +260,19 @@ fn targets<'a>(
             let mut found = Vec::with_capacity(sorted.len());
             for name in sorted {
                 let decl = declarations.get(name).ok_or_else(|| not_declared(name))?;
-                require_indexed(decl)?;
+                mode.require(decl)?;
                 found.push(decl);
             }
             Ok(found)
         }
+    }
+}
+
+/// The failure of an `id` that breaks the rules of the collection `decl`.
+pub(crate) fn check_id(decl: &Declaration, id: &str) -> Result<(), Fault> {
+    match decl.kind() {
+        Kind::Standard => require_document_id(id),
+        Kind::Singleton | Kind::Journal => require_slug("id", id),
     }
 }
 
@@ -252,11 +301,59 @@ fn line_order(snapshot: &Snapshot, collection: &str, id: &str) -> Result<Option<
 }
 
 impl Vault {
+    /// The declarations now and the collections `scope` names among them,
+    /// in name order.
+    ///
+    /// # Errors
+    ///
+    /// `NOT_FOUND` for a collection that is not declared; `UNIMPLEMENTED`
+    /// for a named collection that is encrypted, or that holds nothing
+    /// `mode` reads (a query reads the lexical Index; a search also the
+    /// vectors).
+    pub(crate) fn declared_targets(
+        &self,
+        scope: &Where,
+        mode: Mode,
+    ) -> Result<(Arc<Declarations>, Vec<Declaration>), Error> {
+        let declarations = self.declarations_now()?;
+        let decls = targets(&declarations, scope, mode)?
+            .into_iter()
+            .cloned()
+            .collect();
+        Ok((declarations, decls))
+    }
+
+    /// The lexical Index at the state it reflects now, for a read of
+    /// `decls` and of the collections `also` names, if the Vault's
+    /// Projector is of the projection the Index was built with.
+    ///
+    /// # Errors
+    ///
+    /// `INDEX_REBUILDING` (retryable) while the Index is not built;
+    /// `INDEX_STALE` for a collection whose columns changed and for a Vault
+    /// whose Projector is of another projection; `INDEX_BROKEN` for a
+    /// damaged Index.
+    pub(crate) fn lexical_snapshot(
+        &self,
+        decls: &[Declaration],
+        also: &[&str],
+    ) -> Result<Arc<Snapshot>, Error> {
+        let names: Vec<&str> = decls
+            .iter()
+            .map(Declaration::name)
+            .chain(also.iter().copied())
+            .collect();
+        let snapshot = self.lexical().snapshot(&names)?;
+        if self.indexer().projection_stale() {
+            return Err(who::stale_fault().into());
+        }
+        Ok(snapshot)
+    }
+
     /// Checks the request against the Vault and the Index and plans the
     /// scan: the collections, the query of each, and where each begins.
     fn plan(&self, request: &Request) -> Result<Plan, Error> {
-        let declarations = self.declarations_now()?;
-        let decls = targets(&declarations, &request.scope)?;
+        let (declarations, decls) = self.declared_targets(&request.scope, Mode::Query)?;
         if let Some((collection, id)) = &request.start_after {
             let name = match (&request.scope, collection) {
                 (Where::Collection(own), _) => own.as_str(),
@@ -264,17 +361,9 @@ impl Vault {
                 (Where::Vault(_), None) => "",
             };
             let decl = declarations.get(name).ok_or_else(|| not_declared(name))?;
-            match decl.kind() {
-                Kind::Standard => require_document_id(id),
-                Kind::Singleton | Kind::Journal => require_slug("id", id),
-            }
-            .context("check start_after")?;
+            check_id(decl, id).context("check start_after")?;
         }
-        let names: Vec<&str> = decls.iter().map(|decl| decl.name()).collect();
-        let snapshot = self.lexical().snapshot(&names)?;
-        if self.indexer().projection_stale() {
-            return Err(who::stale_fault().into());
-        }
+        let snapshot = self.lexical_snapshot(&decls, &[])?;
         let scope = match &request.scope {
             Where::Collection(own) => Scope::Collection(own),
             Where::Vault(_) => Scope::Vault,
@@ -285,7 +374,7 @@ impl Vault {
         }
         let fields = snapshot.fields();
         let mut parts = Vec::with_capacity(decls.len());
-        for decl in decls {
+        for decl in &decls {
             let name = decl.name();
             let cursor = match &request.start_after {
                 Some((collection, id)) => {

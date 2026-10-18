@@ -17,15 +17,15 @@
 //! of vectors and scores) before anything uses it; a failure of the port
 //! keeps its code and its retry flag and gains a stack frame.
 
-// The searches that call the reranker are not built yet, and a build
-// without `find` or `search` calls no embedder or projector. Each layer
-// that uses an item makes the expectation fail while one is unused, which
-// is the reminder to drop it.
+// A build without `search` calls no embedder query and no reranker, and a
+// build without `find` or `search` calls no projector or embedder. Each
+// layer that uses an item makes the expectation fail while one is unused,
+// which is the reminder to drop it.
 #![cfg_attr(
-    not(test),
+    not(any(test, feature = "search")),
     expect(
         dead_code,
-        reason = "the searches that call the reranker are not built yet"
+        reason = "a build without `search` calls no embedder or reranker"
     )
 )]
 
@@ -292,6 +292,10 @@ impl Embedded {
     /// # Errors
     ///
     /// The failure that ended the call.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "only the tests read all the vectors")
+    )]
     pub(crate) fn into_result(self) -> Result<Vec<Vec<f32>>, Error> {
         match self.failure {
             None => Ok(self.vectors),

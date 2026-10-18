@@ -36,6 +36,8 @@ use crate::error::{Context, Error, Fault};
 use crate::ports::Ports;
 #[cfg(feature = "find")]
 use crate::queries::{QueryStream, Request};
+#[cfg(feature = "search")]
+use crate::search::{self, SearchStream};
 use crate::stored;
 use crate::vault::Vault;
 
@@ -252,6 +254,27 @@ fn needs_find(call: &str) -> Error {
     .into()
 }
 
+/// The failure of a call that needs a build with the `search` feature.
+#[cfg(not(feature = "search"))]
+fn needs_search(call: &str) -> Error {
+    Fault::new(
+        VaultErrorCode::Unimplemented,
+        format!("{call} needs a build with the `search` feature"),
+    )
+    .into()
+}
+
+/// The stream of a search, each item made inside the gate.
+#[cfg(feature = "search")]
+fn hits(
+    shared: &Arc<Shared>,
+    mut stream: SearchStream,
+) -> BoxIter<'static, Result<SearchItem, Error>> {
+    let owner = Arc::clone(shared);
+    let items = std::iter::from_fn(move || stream.next(&owner.vault));
+    Box::new(Guarded::holding(shared, items))
+}
+
 /// The stream of a query, each Document made inside the gate.
 #[cfg(feature = "find")]
 fn documents(
@@ -438,9 +461,23 @@ impl VaultSync for VaultObject {
 
     fn search_documents(
         &self,
-        _vault_search: VaultSearch,
+        vault_search: VaultSearch,
     ) -> Result<BoxIter<'static, Result<SearchItem, Error>>, Error> {
-        todo!("R4: Vault.SearchDocuments")
+        #[cfg(feature = "search")]
+        {
+            let stream = self.shared.call(|vault| {
+                vault.search(search::Request::of_vault(
+                    "Vault.SearchDocuments",
+                    vault_search,
+                )?)
+            })?;
+            Ok(hits(&self.shared, stream))
+        }
+        #[cfg(not(feature = "search"))]
+        {
+            let _ = vault_search;
+            Err(needs_search("Vault.SearchDocuments"))
+        }
     }
 }
 
@@ -559,9 +596,24 @@ impl CollectionSync for CollectionObject {
 
     fn search(
         &self,
-        _document_search: DocumentSearch,
+        document_search: DocumentSearch,
     ) -> Result<BoxIter<'static, Result<SearchItem, Error>>, Error> {
-        todo!("R4: Collection.Search")
+        #[cfg(feature = "search")]
+        {
+            let stream = self.shared.call(|vault| {
+                vault.search(search::Request::of_collection(
+                    "Collection.Search",
+                    &self.name,
+                    document_search,
+                )?)
+            })?;
+            Ok(hits(&self.shared, stream))
+        }
+        #[cfg(not(feature = "search"))]
+        {
+            let _ = document_search;
+            Err(needs_search("Collection.Search"))
+        }
     }
 }
 

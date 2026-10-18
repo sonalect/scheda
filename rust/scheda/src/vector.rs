@@ -42,9 +42,6 @@
 //! the vector side, as the lexical side leaves out a Document its
 //! Projector refuses; its file stays.
 
-// The searches of the `Vault` service read the Index through `Reader`.
-#![cfg_attr(not(test), expect(dead_code, reason = "the search is not built yet"))]
-
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fs;
 use std::io::Read as _;

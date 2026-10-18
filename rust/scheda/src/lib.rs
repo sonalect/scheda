@@ -43,6 +43,8 @@ mod ports;
 mod queries;
 mod reads;
 mod repo;
+#[cfg(feature = "search")]
+mod search;
 mod service;
 mod stored;
 mod vault;

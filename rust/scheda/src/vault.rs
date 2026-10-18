@@ -340,7 +340,10 @@ impl Vault {
     }
 
     /// The ports the Vault holds.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
+    #[cfg_attr(
+        not(any(test, feature = "search")),
+        expect(dead_code, reason = "only the searches use it")
+    )]
     pub(crate) fn ports(&self) -> &Installed {
         &self.ports
     }
@@ -369,7 +372,6 @@ impl Vault {
 
     /// The reader of the vector index.
     #[cfg(feature = "search")]
-    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
     pub(crate) fn vectors(&self) -> &vector::Reader {
         &self.vector
     }
