@@ -682,6 +682,29 @@ fn trailer(collection: &str, id: &str, note: &str) -> String {
     )
 }
 
+/// The note of the Document `id` of `collection` in the message of a commit:
+/// that of the last `Scheda-Note:` trailer that names them. `None` for a
+/// commit without one, a commit made by hand, say.
+pub(crate) fn note_of(message: &str, collection: &str, id: &str) -> Option<String> {
+    message
+        .lines()
+        .filter_map(|line| line.strip_prefix("Scheda-Note: "))
+        .filter_map(|value| serde_json::from_str::<serde_json::Value>(value).ok())
+        .filter_map(|value| {
+            let names =
+                |key: &str, wanted: &str| value.get(key).and_then(|v| v.as_str()) == Some(wanted);
+            if names("collection", collection) && names("id", id) {
+                value
+                    .get("note")
+                    .and_then(|note| note.as_str())
+                    .map(str::to_owned)
+            } else {
+                None
+            }
+        })
+        .next_back()
+}
+
 /// The bytes of the `Put` changes the drafts take back, by path.
 fn take_files(drafts: &[Draft], changes: Vec<Change>) -> HashMap<String, Vec<u8>> {
     let wanted: HashSet<&str> = drafts
@@ -1104,7 +1127,7 @@ mod tests {
         DocumentUpsert, OpenOptions, VaultErrorCode,
     };
 
-    use super::{Error, Operation, first_line, message, trailer};
+    use super::{Error, Operation, first_line, message, note_of, trailer};
     use crate::commit::hooks;
     use crate::git::{git, spawned};
     use crate::ports::Ports;
@@ -1419,6 +1442,29 @@ mod tests {
             format!(
                 "subject\n\n{one}\nScheda-Note: {{\"collection\":\"log\",\"id\":\"e\",\"note\":\"n\"}}\n"
             )
+        );
+    }
+
+    #[test]
+    fn the_note_of_a_document_is_the_trailer_that_names_its_collection_and_id() {
+        let text = message(
+            "first",
+            &[
+                trailer("notes", "a.md", "for a\nsecond line"),
+                trailer("notes", "b.md", "for b"),
+                trailer("other", "a.md", "elsewhere"),
+            ],
+        );
+        assert_eq!(
+            note_of(&text, "notes", "a.md").as_deref(),
+            Some("for a\nsecond line")
+        );
+        assert_eq!(note_of(&text, "notes", "b.md").as_deref(), Some("for b"));
+        assert_eq!(note_of(&text, "notes", "c.md"), None);
+        assert_eq!(note_of("by hand\n", "notes", "a.md"), None);
+        assert_eq!(
+            note_of("x\n\nScheda-Note: not json\n", "notes", "a.md"),
+            None
         );
     }
 }

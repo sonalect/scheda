@@ -6,15 +6,6 @@
 //! repository. Reading it is a snapshot of `repo::Repo::Isolated`, and
 //! committing in it is `commit::WriteLock::commit_in`.
 
-// The layers that write Documents call the rest.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that write Documents are not built yet"
-    )
-)]
-
 use std::fs;
 use std::path::{Path, PathBuf};
 

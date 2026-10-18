@@ -264,7 +264,7 @@ fn open_armor(
 }
 
 #[cfg(feature = "encrypt")]
-fn unseal(
+pub(crate) fn unseal(
     decl: &Declaration,
     stored: Vec<u8>,
     encryption: Option<&Encryption>,
@@ -277,7 +277,7 @@ fn unseal(
 }
 
 #[cfg(not(feature = "encrypt"))]
-fn unseal(
+pub(crate) fn unseal(
     decl: &Declaration,
     stored: Vec<u8>,
     encryption: Option<&Encryption>,
@@ -353,6 +353,8 @@ fn seal<'a>(
 struct Entry {
     name: String,
     dir: bool,
+    /// The id of the blob or of the tree.
+    node: Oid,
 }
 
 /// A directory the walk is inside: the id prefix of its entries (empty, or
@@ -374,14 +376,14 @@ struct Level {
 /// a name that starts with `.`, and a symlink are not part of a collection
 /// and are passed over. A `singleton` yields its one id when its file
 /// exists. A collection with no directory in the commit yields nothing.
+///
+/// A walk borrows its snapshot and declaration. A stream that must own them
+/// keeps a [`WalkState`] next to them and passes them at each step.
 pub(crate) struct Walk<'a> {
     snap: &'a Snap,
     decl: &'a Declaration,
     encryption: Option<&'a Encryption>,
-    stack: Vec<Level>,
-    current: Option<String>,
-    started: bool,
-    done: bool,
+    state: WalkState,
 }
 
 impl<'a> Walk<'a> {
@@ -393,29 +395,91 @@ impl<'a> Walk<'a> {
         decl: &'a Declaration,
         encryption: Option<&'a Encryption>,
     ) -> Result<Walk<'a>, Fault> {
-        require_files(decl)?;
-        snap.lookup(&isolated::vault_rel(decl, ""))?;
         Ok(Walk {
             snap,
             decl,
             encryption,
-            stack: Vec::new(),
-            current: None,
-            started: false,
-            done: false,
+            state: WalkState::new(snap, decl)?,
         })
     }
 
     /// Moves to the next Document and returns its id, or `None` at the end.
     /// After a failure the walk is at its end.
     pub(crate) fn next_id(&mut self) -> Result<Option<&str>, Fault> {
+        self.state.next_id(self.snap, self.decl)
+    }
+
+    /// The id the walk is at, if it is at one.
+    pub(crate) fn id(&self) -> Option<&str> {
+        self.state.id()
+    }
+
+    /// Reads the Document the walk is at, as [`read`] does by id but
+    /// without checking the id again: `None` when the walk is at no
+    /// Document.
+    pub(crate) fn read(&self) -> Result<Option<Vec<u8>>, Fault> {
+        let Some(id) = self.state.id() else {
+            return Ok(None);
+        };
+        let rel = isolated::vault_rel(self.decl, id);
+        read_file(self.snap, &rel, self.decl, self.encryption)
+    }
+}
+
+/// Where a walk of the ids of a collection is, apart from the snapshot and
+/// the declaration it walks: the trees it is inside and the entries of each
+/// not yet visited. It owns all of it, so a stream can keep it; every step
+/// is given the same snapshot and declaration it was started with.
+pub(crate) struct WalkState {
+    stack: Vec<Level>,
+    current: Option<String>,
+    /// The id of the blob of the current Document.
+    current_blob: Option<Oid>,
+    /// Ids up to and including this one are passed over.
+    after: Option<String>,
+    started: bool,
+    done: bool,
+}
+
+impl WalkState {
+    /// Starts a walk of `decl` over `snap`, as [`Walk::new`] does.
+    pub(crate) fn new(snap: &Snap, decl: &Declaration) -> Result<WalkState, Fault> {
+        require_files(decl)?;
+        snap.lookup(&isolated::vault_rel(decl, ""))?;
+        Ok(WalkState {
+            stack: Vec::new(),
+            current: None,
+            current_blob: None,
+            after: None,
+            started: false,
+            done: false,
+        })
+    }
+
+    /// Begins the walk after the id `after`, which need not exist: the
+    /// first id is the first one that sorts after it. A tree whose ids all
+    /// sort before it is not listed.
+    pub(crate) fn starting_after(mut self, after: String) -> WalkState {
+        self.after = Some(after);
+        self
+    }
+
+    /// Moves to the next Document and returns its id, or `None` at the end.
+    /// After a failure the walk is at its end.
+    pub(crate) fn next_id(
+        &mut self,
+        snap: &Snap,
+        decl: &Declaration,
+    ) -> Result<Option<&str>, Fault> {
         self.current = None;
+        self.current_blob = None;
         if self.done {
             return Ok(None);
         }
-        match self.advance() {
-            Ok(Some(id)) => {
+        match self.advance(snap, decl) {
+            Ok(Some((id, blob))) => {
                 self.current = Some(id);
+                self.current_blob = Some(blob);
                 Ok(self.current.as_deref())
             }
             Ok(None) => {
@@ -434,24 +498,27 @@ impl<'a> Walk<'a> {
         self.current.as_deref()
     }
 
-    /// Reads the Document the walk is at, as [`read`] does by id but
-    /// without checking the id again: `None` when the walk is at no
-    /// Document.
-    pub(crate) fn read(&self) -> Result<Option<Vec<u8>>, Fault> {
-        let Some(id) = self.current.as_deref() else {
-            return Ok(None);
-        };
-        let rel = isolated::vault_rel(self.decl, id);
-        read_file(self.snap, &rel, self.decl, self.encryption)
+    /// The id of the blob that holds the Document the walk is at: its
+    /// revision, known from the tree without reading the blob.
+    pub(crate) fn blob(&self) -> Option<Oid> {
+        self.current_blob
     }
 
-    fn advance(&mut self) -> Result<Option<String>, Fault> {
-        if self.decl.kind() == Kind::Singleton {
-            return self.advance_singleton();
+    /// Whether the ids below the directory whose ids begin with `prefix`
+    /// (it ends in `/`) all sort at or before the id the walk starts after.
+    fn passed(&self, prefix: &str) -> bool {
+        self.after
+            .as_deref()
+            .is_some_and(|after| after > prefix && !after.starts_with(prefix))
+    }
+
+    fn advance(&mut self, snap: &Snap, decl: &Declaration) -> Result<Option<(String, Oid)>, Fault> {
+        if decl.kind() == Kind::Singleton {
+            return self.advance_singleton(snap, decl);
         }
         if !self.started {
             self.started = true;
-            if let Some(level) = self.list(String::new())? {
+            if let Some(level) = Self::list(snap, decl, String::new())? {
                 self.stack.push(level);
             }
         }
@@ -465,26 +532,41 @@ impl<'a> Walk<'a> {
             };
             let id = format!("{}{}", level.prefix, entry.name);
             if entry.dir {
-                if let Some(level) = self.list(format!("{id}/"))? {
+                let prefix = format!("{id}/");
+                if self.passed(&prefix) {
+                    continue;
+                }
+                if let Some(level) = Self::list(snap, decl, prefix)? {
                     self.stack.push(level);
                 }
-            } else {
-                return Ok(Some(id));
+            } else if self
+                .after
+                .as_deref()
+                .is_none_or(|after| id.as_str() > after)
+            {
+                return Ok(Some((id, entry.node)));
             }
         }
     }
 
-    fn advance_singleton(&mut self) -> Result<Option<String>, Fault> {
+    fn advance_singleton(
+        &mut self,
+        snap: &Snap,
+        decl: &Declaration,
+    ) -> Result<Option<(String, Oid)>, Fault> {
         if self.started {
             return Ok(None);
         }
         self.started = true;
-        let Some(id) = self.decl.singleton_id() else {
+        let Some(id) = decl.singleton_id() else {
             return Ok(None);
         };
-        let rel = isolated::vault_rel(self.decl, id);
-        match self.snap.lookup(&rel) {
-            Ok(Some(node)) if node.kind == NodeKind::File => Ok(Some(id.to_owned())),
+        if self.after.as_deref().is_some_and(|after| id <= after) {
+            return Ok(None);
+        }
+        let rel = isolated::vault_rel(decl, id);
+        match snap.lookup(&rel) {
+            Ok(Some(node)) if node.kind == NodeKind::File => Ok(Some((id.to_owned(), node.id))),
             Ok(_) => Ok(None),
             // The file itself is a symlink: not a Document.
             Err(fault) if fault.path() == Some(rel.as_str()) => Ok(None),
@@ -495,9 +577,9 @@ impl<'a> Walk<'a> {
     /// Lists the tree `prefix` below the collection directory (`""` is the
     /// collection directory itself), sorted for the walk. `None` when the
     /// commit holds no such tree or nothing the walk visits in it.
-    fn list(&self, prefix: String) -> Result<Option<Level>, Fault> {
-        let rel = isolated::vault_rel(self.decl, &prefix);
-        let Some(children) = self.snap.list(&rel)? else {
+    fn list(snap: &Snap, decl: &Declaration, prefix: String) -> Result<Option<Level>, Fault> {
+        let rel = isolated::vault_rel(decl, &prefix);
+        let Some(children) = snap.list(&rel)? else {
             return Ok(None);
         };
         let mut entries = Vec::new();
@@ -511,12 +593,14 @@ impl<'a> Walk<'a> {
                         entries.push(Entry {
                             name: child.name,
                             dir: true,
+                            node: child.node.id,
                         });
                     }
                 }
                 NodeKind::File => entries.push(Entry {
                     name: child.name,
                     dir: false,
+                    node: child.node.id,
                 }),
                 NodeKind::Link | NodeKind::Other => {}
             }

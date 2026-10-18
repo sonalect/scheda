@@ -30,6 +30,8 @@ rust_clippy_test(
         "//rust/scheda:open_thin_test",
         "//rust/scheda:ports_test",
         "//rust/scheda:ports_thin_test",
+        "//rust/scheda:reads_test",
+        "//rust/scheda:reads_thin_test",
         "//rust/scheda:scheda",
         "//rust/scheda:scheda_thin",
         "//rust/scheda:scheda_thin_test",

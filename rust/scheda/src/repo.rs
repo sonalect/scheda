@@ -548,6 +548,36 @@ pub(crate) struct Delta {
     pub(crate) deleted: bool,
 }
 
+/// One commit, as a history walk reads it.
+#[derive(Clone, Debug)]
+pub(crate) struct CommitInfo {
+    /// The id of its tree.
+    pub(crate) tree: Oid,
+    /// Its parents, in order.
+    pub(crate) parents: Vec<Oid>,
+    /// The commit time, in seconds since the epoch (UTC).
+    pub(crate) seconds: i64,
+    /// The name of its author.
+    pub(crate) author_name: String,
+    /// The email of its author.
+    pub(crate) author_email: String,
+    /// Its whole message.
+    pub(crate) message: String,
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many blobs this thread has read through a [`Snap`], for the tests
+    /// that show a stream reads no more than it hands out.
+    static BLOB_READS: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// The number of blobs this thread has read through a [`Snap`] so far.
+#[cfg(test)]
+pub(crate) fn blob_reads() -> u64 {
+    BLOB_READS.with(std::cell::Cell::get)
+}
+
 /// The bytes of a file of a tree with the id of its blob.
 #[derive(Debug)]
 pub(crate) struct Blob {
@@ -624,7 +654,17 @@ impl Snap {
     /// `INVALID_ARGUMENT` when the path, or a folder on the way to it, is a
     /// symbolic link; the library's failure when an object cannot be read.
     pub(crate) fn lookup(&self, rel: &str) -> Result<Option<Node>, Fault> {
-        let (Some(repo), Some(root)) = (self.repository(), self.tree()) else {
+        match self.tree() {
+            Some(root) => self.lookup_in(root, rel),
+            None => Ok(None),
+        }
+    }
+
+    /// The entry at `rel` in the tree `root` of this snapshot's repository
+    /// (the tree of an older commit, say), as [`lookup`](Self::lookup) finds
+    /// it in the tree of the snapshot.
+    pub(crate) fn lookup_in(&self, root: Oid, rel: &str) -> Result<Option<Node>, Fault> {
+        let Some(repo) = self.repository() else {
             return Ok(None);
         };
         let inner = self.inner(rel);
@@ -731,8 +771,31 @@ impl Snap {
         Ok(Some(out))
     }
 
+    /// What a commit of this snapshot's repository holds that a history
+    /// walk needs: its tree, parents, time, author, and message.
+    pub(crate) fn commit_info(&self, id: Oid) -> Result<CommitInfo, Fault> {
+        let Some(repo) = self.repository() else {
+            return Err(Fault::new(
+                VaultErrorCode::Replication,
+                "the repository is not there",
+            ));
+        };
+        let commit = repo.find_commit(id).map_err(lib_fault)?;
+        let author = commit.author();
+        Ok(CommitInfo {
+            tree: commit.tree_id(),
+            parents: commit.parent_ids().collect(),
+            seconds: commit.time().seconds(),
+            author_name: author.name().unwrap_or_default().to_owned(),
+            author_email: author.email().unwrap_or_default().to_owned(),
+            message: commit.message().unwrap_or_default().to_owned(),
+        })
+    }
+
     /// The bytes of the blob `id`.
     pub(crate) fn blob(&self, id: Oid) -> Result<Vec<u8>, Fault> {
+        #[cfg(test)]
+        BLOB_READS.with(|reads| reads.set(reads.get() + 1));
         let Some(repo) = self.repository() else {
             return Err(Fault::new(
                 VaultErrorCode::Replication,

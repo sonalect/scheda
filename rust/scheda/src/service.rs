@@ -185,6 +185,16 @@ struct Guarded<I> {
 }
 
 impl<I> Guarded<I> {
+    /// A stream that holds its pass while it makes an item.
+    fn holding(shared: &Arc<Shared>, inner: I) -> Guarded<I> {
+        Guarded {
+            shared: Arc::clone(shared),
+            inner: Some(inner),
+            holds: true,
+        }
+    }
+
+    /// A stream that holds no pass while it waits.
     #[cfg_attr(
         not(feature = "find"),
         expect(dead_code, reason = "only Index.Watch waits")
@@ -241,7 +251,8 @@ impl VaultSync for VaultObject {
     }
 
     fn check(&self, _empty: Empty) -> Result<CheckReport, Error> {
-        todo!("R3: Vault.Check")
+        let report = self.shared.call(Vault::check)?;
+        Ok(report)
     }
 
     fn close(&self, _empty: Empty) -> Result<Empty, Error> {
@@ -410,16 +421,26 @@ impl CollectionSync for CollectionObject {
 
     fn get_many(
         &self,
-        _document_selection: DocumentSelection,
+        document_selection: DocumentSelection,
     ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
-        todo!("R3: Collection.GetMany")
+        let mut stream = self
+            .shared
+            .call(|vault| vault.get_many(&self.name, document_selection))?;
+        let shared = Arc::clone(&self.shared);
+        let items = std::iter::from_fn(move || stream.next(&shared.vault));
+        Ok(Box::new(Guarded::holding(&self.shared, items)))
     }
 
     fn history(
         &self,
-        _document_id: DocumentId,
+        document_id: DocumentId,
     ) -> Result<BoxIter<'static, Result<DocumentHistoryEntry, Error>>, Error> {
-        todo!("R3: Collection.History")
+        let mut stream = self
+            .shared
+            .call(|vault| vault.history(&self.name, document_id))?;
+        let shared = Arc::clone(&self.shared);
+        let items = std::iter::from_fn(move || stream.next(&shared.vault));
+        Ok(Box::new(Guarded::holding(&self.shared, items)))
     }
 
     fn create(&self, document_creation: DocumentCreation) -> Result<Document, Error> {

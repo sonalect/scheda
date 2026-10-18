@@ -8,7 +8,7 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5; R1 and R2 are done, R3 is next.
+2026) replaces P6 and P7 with R1–R5; R1–R3 are done, R4 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1697,21 +1697,62 @@ D24 (12).
 
 D8, D15, D24. The reads of P6.
 
-- [ ] `Collection.Describe`, `Collection.GetMany` (per D8: `ids`, an empty
+- [x] `Collection.Describe`, `Collection.GetMany` (per D8: `ids`, an empty
       `ids`, `listing`, and neither), `Collection.History`; `Vault.Check`
-      returns `CheckReport`.
+      returns `CheckReport`. A stream owns its snapshot and a copy of the
+      declaration, and the walks keep their state owned
+      (`documents::WalkState`, `journal::LinesState`), so nothing borrows
+      the Vault. Settled in the build: an id that breaks the rules of the
+      collection fails the call (`INVALID_ARGUMENT`); `start_after` that is
+      no Document is a place in the `id` order, and in a journal (no such
+      place) gives nothing; a journal page begins in the segment the id
+      map gives for its `start_after`; `limit: 0` gives nothing; the
+      history of a Document never stored is empty; a commit is a version
+      when the Document's blob differs from the one in every parent, so a
+      join that takes one side is not listed; the deleting version has no
+      `revision` and empty bytes.
 - *Check:* the streams are lazy: reading the first Document of a
   collection of 100 000 opens one Document file, and a stream dropped
-  after it opens no more; the same for the first version of a long
-  history.
+  after it opens no more; a listing without `include_raw` opens none; the
+  same for the first version of a long history
+  (`reads::tests::the_first_document_of_a_big_collection_reads_one_blob_and_a_dropped_stream_no_more`,
+  `reads::tests::the_first_version_of_a_long_history_reads_one_blob_and_a_dropped_stream_no_more`,
+  `reads::tests::a_journal_page_begins_in_the_segment_of_the_line_it_follows`).
 - *Check:* an `Arc<dyn VaultSync>` from `Scheda.Open` drives a Vault end
-  to end, its collections through `Arc<dyn CollectionSync>`.
-- *Check:* a write whose call has not returned is seen by no `GetMany`.
+  to end, its collections through `Arc<dyn CollectionSync>`
+  (`tests/reads.rs`: `an_arc_dyn_vault_sync_from_open_drives_a_vault_end_to_end`).
+- *Check:* a write whose call has not returned is seen by no `GetMany`,
+  and a stream started before a write does not see it
+  (`reads::tests::a_write_that_has_not_returned_is_seen_by_no_get_many`;
+  `tests/reads.rs`: `a_stream_started_before_a_write_does_not_see_it`).
 - *Check:* `GetMany` with `limit` and `start_after` reads a collection
   page by page with no Document twice or missed, also when Documents are
-  added between pages; neither `ids` nor `listing` is `INVALID_ARGUMENT`.
+  added between pages; neither `ids` nor `listing` is `INVALID_ARGUMENT`;
+  `ids` keep their order and skip the absent; keys only without
+  `include_raw`; a journal in append order; an encrypted collection opens
+  with the secret (`tests/reads.rs`:
+  `pages_cover_a_collection_once_also_when_documents_are_added_between`,
+  `a_selection_with_neither_ids_nor_listing_is_invalid_argument`,
+  `ids_give_exactly_those_in_the_order_given_and_skip_the_absent`,
+  `without_include_raw_a_document_has_keys_and_a_revision_and_no_bytes`,
+  `a_journal_lists_in_append_order_with_pages_by_line`,
+  `encrypted::include_raw_decrypts_and_history_gives_plain_bytes`).
+- *Check:* `History` gives the versions newest first with revision,
+  author, note, and bytes, the deleting one with empty bytes; a
+  journal is `UNIMPLEMENTED`; an isolated collection's history is the
+  nested repository's; a commit made by hand is a version with no note
+  (`tests/reads.rs`:
+  `history_lists_versions_newest_first_with_revision_author_note_and_bytes`,
+  `history_of_a_journal_is_unimplemented`,
+  `history_of_an_isolated_collection_comes_from_the_nested_repository`,
+  `a_commit_made_by_hand_is_a_version_with_no_note`).
 - *Check:* `Check` lists every problem of a Vault with several, and fails
-  only when it cannot run.
+  only when it cannot run (`tests/reads.rs`:
+  `check_lists_every_problem_of_a_vault_with_several`,
+  `check_fails_only_when_it_cannot_run`).
+- *Check:* after `Close`, the next item of a held `GetMany` or `History`
+  stream is `FAILED_PRECONDITION` (`tests/reads.rs`:
+  `after_close_the_next_item_of_a_held_stream_is_failed_precondition`).
 
 ### R4. Queries and searches
 

@@ -211,12 +211,12 @@ fn require_journal(decl: &Declaration) -> Result<(), Fault> {
 ///
 /// A tail without `\n` and a line that does not parse are
 /// `INVALID_ARGUMENT` with the path of the segment, and end the walk.
+///
+/// A walk borrows its snapshot. A stream that must own the snapshot keeps a
+/// [`LinesState`] next to it and passes it at each step.
 pub(crate) struct JournalLines<'a> {
     snap: &'a Snap,
-    segments: Vec<PathBuf>,
-    next_segment: usize,
-    open: Option<(Vec<u8>, usize, String)>,
-    done: bool,
+    state: LinesState,
 }
 
 impl<'a> JournalLines<'a> {
@@ -224,6 +224,30 @@ impl<'a> JournalLines<'a> {
     pub(crate) fn new(snap: &'a Snap, decl: &Declaration) -> Result<JournalLines<'a>, Fault> {
         Ok(JournalLines {
             snap,
+            state: LinesState::new(snap, decl)?,
+        })
+    }
+
+    /// The next line, or `None` at the end.
+    pub(crate) fn next_line(&mut self) -> Result<Option<Line>, Fault> {
+        self.state.next_line(self.snap)
+    }
+}
+
+/// Where a walk of the lines of a journal is, apart from the snapshot it
+/// reads: the segments, and the one it is inside. It owns all of it; every
+/// step is given the snapshot the walk was started with.
+pub(crate) struct LinesState {
+    segments: Vec<PathBuf>,
+    next_segment: usize,
+    open: Option<(Vec<u8>, usize, String)>,
+    done: bool,
+}
+
+impl LinesState {
+    /// Starts a walk of `decl`, a journal, over `snap`.
+    pub(crate) fn new(snap: &Snap, decl: &Declaration) -> Result<LinesState, Fault> {
+        Ok(LinesState {
             segments: list_segments(snap, decl)?,
             next_segment: 0,
             open: None,
@@ -231,8 +255,29 @@ impl<'a> JournalLines<'a> {
         })
     }
 
-    /// The next line, or `None` at the end.
-    pub(crate) fn next_line(&mut self) -> Result<Option<Line>, Fault> {
+    /// Begins the walk at `segment`, passing over the segments before it in
+    /// append order. A segment the journal does not have leaves the walk
+    /// where it is.
+    pub(crate) fn start_at(&mut self, segment: &Path) {
+        if let Some(at) = self.segments.iter().position(|path| path == segment) {
+            self.next_segment = at;
+        }
+    }
+
+    /// The next line, or `None` at the end. After a failure the walk is at
+    /// its end.
+    pub(crate) fn next_line(&mut self, snap: &Snap) -> Result<Option<Line>, Fault> {
+        if self.done {
+            return Ok(None);
+        }
+        let step = self.advance(snap);
+        if !matches!(step, Ok(Some(_))) {
+            self.done = true;
+        }
+        step
+    }
+
+    fn advance(&mut self, snap: &Snap) -> Result<Option<Line>, Fault> {
         loop {
             let (bytes, at, rel) = match self.open.take() {
                 Some(open) => open,
@@ -242,7 +287,7 @@ impl<'a> JournalLines<'a> {
                     };
                     self.next_segment += 1;
                     let rel = rel_str(path);
-                    let Some(bytes) = read_segment(self.snap, path)? else {
+                    let Some(bytes) = read_segment(snap, path)? else {
                         continue;
                     };
                     (bytes, 0, rel)
@@ -271,20 +316,7 @@ impl Iterator for JournalLines<'_> {
     type Item = Result<Line, Fault>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.done {
-            return None;
-        }
-        match self.next_line() {
-            Ok(Some(line)) => Some(Ok(line)),
-            Ok(None) => {
-                self.done = true;
-                None
-            }
-            Err(fault) => {
-                self.done = true;
-                Some(Err(fault))
-            }
-        }
+        self.next_line().transpose()
     }
 }
 

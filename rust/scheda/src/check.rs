@@ -6,12 +6,6 @@
 //! run (an I/O failure, git). The `Check` call that puts them in a
 //! `CheckReport`, after it has read the marker, is built on [`run`].
 
-// `Check` is built on `run`.
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the Check call is not built yet")
-)]
-
 use scheda_api::v1::{Problem, VaultErrorCode};
 
 use crate::collection::Declarations;

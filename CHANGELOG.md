@@ -55,6 +55,15 @@ changes; they grow with each part of the move.
   public. A collection object names its collection and finds it again on
   each call: after `DeleteCollection` its calls are `NOT_FOUND`, and they
   work again once the name is declared again.
+- Reads of many: `Collection.GetMany` streams the Documents of given ids
+  (in their order, the absent skipped) or of the whole collection page by
+  page (`listing { limit, start_after }`: `id` order, a journal in append
+  order), lazily and on one commit: without `include_raw` it reads no
+  file and gives keys and revisions. `Collection.History` streams the
+  versions of a Document newest first (revision, time, author, note,
+  bytes; the deleting version has no revision and no bytes); a journal is
+  `UNIMPLEMENTED`. `Vault.Check` returns a `CheckReport` of every
+  problem, and fails only when it cannot run.
 - `Vault.Close` replaces `Vault::close(self)`: every call through the
   Vault, its collections, its mirror, and its Index then fails with
   `FAILED_PRECONDITION`; it returns once the calls that run have ended,

@@ -374,6 +374,12 @@ impl IdMaps {
     /// holds it: the segment the map names; else the segments that differ
     /// between the map's state and `snap`; and only a journal with no map
     /// (or one whose state is gone from its repository) is scanned whole.
+    /// The segment the map of `decl` places the line `id` in, if the map
+    /// has the line. A hint: a segment changed by hand may say otherwise.
+    pub(crate) fn segment_of(&self, decl: &Declaration, id: &str) -> Option<String> {
+        self.load(decl.name())?.segment_of(id).map(str::to_owned)
+    }
+
     pub(crate) fn find(
         &self,
         snap: &Snap,
