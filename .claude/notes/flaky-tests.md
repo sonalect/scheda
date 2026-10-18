@@ -16,6 +16,21 @@ uncached gates in a row green):
 - Tests whose "not refreshed yet" precondition raced a late indexer round
   (a round `open` starts, or one a `wait_indexed` nudge left due) now pause
   the indexer around the check.
+- Branch `proto-contract`, P5 (18 October 2026; 8 binaries x 16 runs,
+  8 at a time on `/dev/shm`, green after the fixes):
+  - The Tantivy writer lock (`.tantivy-writer.lock`, an `flock`) stayed
+    held by a `git` child another test thread had forked, until it ran
+    `exec`; the next round failed with `INDEX_BROKEN` "open the writer of
+    the lexical index". 0.21 had a `LockBusy` backoff that the rewrite
+    lost; `lexical::open_writer` waits it out again (about 2.5 s), then
+    `ABORTED` retryable.
+  - Tests that read `status()` after a failure saw the retry already at
+    work (`role` true, or `last_error` cleared): read the watch item of
+    the failed round instead. A test that read `role` before the first
+    look saw `None`: wait for the look.
+  - A wait on several Index files checked `commit` first, then the rest:
+    a rebuild that started meanwhile removed `commit` after it was read.
+    Check `commit` last (the rebuild removes it first).
 
 **Why:** a rare red gate wastes a run and hides real failures.
 

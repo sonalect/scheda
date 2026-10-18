@@ -15,7 +15,10 @@ Project state, deferred work, and measurements that outlive one session
   `api/scheda/v1/`). Breaks compatibility on purpose; the owner wants it
   right, not fast. Work goes on the branch `proto-contract`, layer by
   layer, with no transitional code; branch commits need `cargo` green,
-  `bazel test //...` only before the merge (owner's waiver, §4). P1 next.
+  `bazel test //...` only before the merge (owner's waiver, §4). P1–P5
+  done (P2 but for `ErrorReport`); P6 next. The port wiring (`Ports`,
+  `Vault::open`, `set_embedder`) is being redesigned as service
+  references in `protocontract-buffa.rs`: add no public wiring meanwhile.
 - Previous: `docs/19-follow-ups.md` (F1–F5 done, 5 October 2026; not
   yet released), `docs/18-review-fixes.md` (S1–S8) and
   `docs/17-background-index-and-tokio.md` (background Index, `tokio`
