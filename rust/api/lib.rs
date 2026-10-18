@@ -25,9 +25,11 @@ mod validators {
     include!("gen/buffa/scheda.v1.error.validate.rs");
     include!("gen/buffa/scheda.v1.index.validate.rs");
     include!("gen/buffa/scheda.v1.marker.validate.rs");
+    include!("gen/buffa/scheda.v1.mirror.validate.rs");
     include!("gen/buffa/scheda.v1.options.validate.rs");
     include!("gen/buffa/scheda.v1.ports.validate.rs");
     include!("gen/buffa/scheda.v1.query.validate.rs");
+    include!("gen/buffa/scheda.v1.scheda.validate.rs");
     include!("gen/buffa/scheda.v1.vault.validate.rs");
 }
 

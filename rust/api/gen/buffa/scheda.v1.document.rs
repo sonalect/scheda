@@ -2,11 +2,9 @@
 // source: scheda/v1/document.proto
 
 /// A Document: bytes in a collection, under an `id`. Scheda does not know
-/// what the bytes hold: text, an image, protobuf wire, anything.
-///
-/// In a write request: `collection`, `id`, and `raw`; `revision` must be
-/// unset (`INVALID_ARGUMENT`), since Scheda gives it. In a reply: all four,
-/// `raw` only when the read asked for it.
+/// what the bytes hold: text, an image, protobuf wire, anything. Output
+/// only: what a read, a write, or a search gives back; a write takes the
+/// `id` and the bytes in its own request.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -22,14 +20,11 @@ pub struct Document {
     /// The id inside the collection. In a `standard` collection, a path of
     /// slugs separated by `/`, which is also where its file lies under the
     /// collection; in a `singleton`, the declared id; in a journal, one slug.
-    /// The library checks it.
     ///
     /// Field 2: `id`
     #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
     pub id: ::core::option::Option<::buffa::alloc::string::String>,
-    /// The bytes, as given. Any bytes in a `standard` or `singleton`
-    /// collection. In a journal, no `\n` and no `\r`: a journal line is
-    /// `{id}: {raw}\n`.
+    /// The bytes, as given; set only when the read asked for them.
     ///
     /// Field 3: `raw`
     #[serde(
@@ -262,7 +257,7 @@ pub const __DOCUMENT_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::t
     from_json: ::buffa::type_registry::any_from_json::<Document>,
     is_wkt: false,
 };
-/// The name of one Document.
+/// The name of one Document in a Vault, for a call that spans collections.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -433,20 +428,149 @@ pub const __DOCUMENT_KEY_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buff
     from_json: ::buffa::type_registry::any_from_json::<DocumentKey>,
     is_wkt: false,
 };
-/// The request of `GetDocuments`: which Documents of one collection.
+/// The name of one Document in its collection, for a call of `Collection`.
+#[derive(Clone, PartialEq, Default)]
+#[derive(::serde::Serialize, ::serde::Deserialize)]
+#[serde(default)]
+pub struct DocumentId {
+    /// As `Document.id`. The library checks it.
+    ///
+    /// Field 1: `id`
+    #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
+    pub id: ::core::option::Option<::buffa::alloc::string::String>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub __buffa_unknown_fields: ::buffa::UnknownFields,
+}
+impl ::core::fmt::Debug for DocumentId {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("DocumentId").field("id", &self.id).finish()
+    }
+}
+impl DocumentId {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentId";
+}
+impl DocumentId {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_id(mut self, value: impl Into<::buffa::alloc::string::String>) -> Self {
+        self.id = Some(value.into());
+        self
+    }
+}
+::buffa::impl_default_instance!(DocumentId);
+impl ::buffa::MessageName for DocumentId {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "DocumentId";
+    const FULL_NAME: &'static str = "scheda.v1.DocumentId";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentId";
+}
+impl ::buffa::Message for DocumentId {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.id.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
+            _ => {
+                self.__buffa_unknown_fields
+                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.id = ::core::option::Option::None;
+        self.__buffa_unknown_fields.clear();
+    }
+}
+impl ::buffa::ExtensionSet for DocumentId {
+    const PROTO_FQN: &'static str = "scheda.v1.DocumentId";
+    fn unknown_fields(&self) -> &::buffa::UnknownFields {
+        &self.__buffa_unknown_fields
+    }
+    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+        &mut self.__buffa_unknown_fields
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for DocumentId {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+#[doc(hidden)]
+pub const __DOCUMENT_ID_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+    type_url: "type.googleapis.com/scheda.v1.DocumentId",
+    to_json: ::buffa::type_registry::any_to_json::<DocumentId>,
+    from_json: ::buffa::type_registry::any_from_json::<DocumentId>,
+    is_wkt: false,
+};
+/// The request of `Collection.GetMany`: which Documents.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize)]
 #[serde(default)]
 pub struct DocumentSelection {
-    /// Field 1: `collection`
-    #[serde(
-        rename = "collection",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub collection: ::core::option::Option<::buffa::alloc::string::String>,
     /// Fill `Document.raw`. Unset: keys and revisions only.
     ///
-    /// Field 2: `include_raw`
+    /// Field 1: `include_raw`
     #[serde(
         rename = "includeRaw",
         alias = "include_raw",
@@ -462,7 +586,6 @@ pub struct DocumentSelection {
 impl ::core::fmt::Debug for DocumentSelection {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("DocumentSelection")
-            .field("collection", &self.collection)
             .field("include_raw", &self.include_raw)
             .field("selection", &self.selection)
             .finish()
@@ -476,16 +599,6 @@ impl DocumentSelection {
     pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentSelection";
 }
 impl DocumentSelection {
-    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
-    #[inline]
-    ///Sets [`Self::collection`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_collection(
-        mut self,
-        value: impl Into<::buffa::alloc::string::String>,
-    ) -> Self {
-        self.collection = Some(value.into());
-        self
-    }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets [`Self::include_raw`] to `Some(value)`, consuming and returning `self`.
@@ -514,9 +627,6 @@ impl ::buffa::Message for DocumentSelection {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let Some(ref v) = self.collection {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
         if self.include_raw.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
@@ -550,17 +660,14 @@ impl ::buffa::Message for DocumentSelection {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let Some(ref v) = self.collection {
-            ::buffa::types::put_string_field(1u32, v, buf);
-        }
         if let Some(v) = self.include_raw {
-            ::buffa::types::put_bool_field(2u32, v, buf);
+            ::buffa::types::put_bool_field(1u32, v, buf);
         }
         if let ::core::option::Option::Some(ref v) = self.selection {
             match v {
                 __buffa::oneof::document_selection::Selection::Ids(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        3u32,
+                        2u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -568,7 +675,7 @@ impl ::buffa::Message for DocumentSelection {
                 }
                 __buffa::oneof::document_selection::Selection::Listing(x) => {
                     ::buffa::types::put_len_delimited_header(
-                        4u32,
+                        3u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -592,25 +699,13 @@ impl ::buffa::Message for DocumentSelection {
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                ::buffa::types::merge_string(
-                    self
-                        .collection
-                        .get_or_insert_with(::buffa::alloc::string::String::new),
-                    buf,
-                )?;
-            }
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 self.include_raw = ::core::option::Option::Some(
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            3u32 => {
+            2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -630,7 +725,7 @@ impl ::buffa::Message for DocumentSelection {
                     );
                 }
             }
-            4u32 => {
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -660,7 +755,6 @@ impl ::buffa::Message for DocumentSelection {
         ::core::result::Result::Ok(())
     }
     fn clear(&mut self) {
-        self.collection = ::core::option::Option::None;
         self.include_raw = ::core::option::Option::None;
         self.selection = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
@@ -693,9 +787,6 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSelection {
                 self,
                 mut map: A,
             ) -> ::core::result::Result<DocumentSelection, A::Error> {
-                let mut __f_collection: ::core::option::Option<
-                    ::core::option::Option<::buffa::alloc::string::String>,
-                > = None;
                 let mut __f_include_raw: ::core::option::Option<
                     ::core::option::Option<bool>,
                 > = None;
@@ -704,14 +795,6 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSelection {
                 > = None;
                 while let Some(key) = map.next_key::<::buffa::alloc::string::String>()? {
                     match key.as_str() {
-                        "collection" => {
-                            __f_collection = Some(
-                                map
-                                    .next_value::<
-                                        ::core::option::Option<::buffa::alloc::string::String>,
-                                    >()?,
-                            );
-                        }
                         "includeRaw" | "include_raw" => {
                             __f_include_raw = Some(
                                 map.next_value::<::core::option::Option<bool>>()?,
@@ -769,9 +852,6 @@ impl<'de> ::serde::Deserialize<'de> for DocumentSelection {
                     }
                 }
                 let mut __r = <DocumentSelection as ::core::default::Default>::default();
-                if let ::core::option::Option::Some(v) = __f_collection {
-                    __r.collection = v;
-                }
                 if let ::core::option::Option::Some(v) = __f_include_raw {
                     __r.include_raw = v;
                 }
@@ -1120,7 +1200,7 @@ pub const __LISTING_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::ty
     from_json: ::buffa::type_registry::any_from_json::<Listing>,
     is_wkt: false,
 };
-/// One past version of a Document, as `GetDocumentHistory` streams it.
+/// One past version of a Document, as `Collection.History` streams it.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -1144,7 +1224,7 @@ pub struct DocumentHistoryEntry {
         ::buffa_types::google::protobuf::Timestamp,
         ::buffa::Inline<::buffa_types::google::protobuf::Timestamp>,
     >,
-    /// Who wrote it: `OpenOptions.author` of the handle that wrote it.
+    /// Who wrote it: `OpenOptions.author` of the Vault that wrote it.
     ///
     /// Field 3: `author`
     #[serde(
@@ -1159,7 +1239,7 @@ pub struct DocumentHistoryEntry {
     pub note: ::core::option::Option<::buffa::alloc::string::String>,
     /// The bytes of this version; empty for the version that deleted the
     /// Document. For an encrypted collection, the bytes as given, not the
-    /// armor; reading them takes the handle's secret.
+    /// armor; reading them takes the Vault's secret.
     ///
     /// Field 5: `raw`
     #[serde(
@@ -1411,24 +1491,31 @@ pub const __DOCUMENT_HISTORY_ENTRY_JSON_ANY: ::buffa::type_registry::JsonAnyEntr
     from_json: ::buffa::type_registry::any_from_json::<DocumentHistoryEntry>,
     is_wkt: false,
 };
-/// The request of `CreateDocument`.
+/// The request of `Collection.Create`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct DocumentCreation {
-    /// The Document to create, without `revision`.
+    /// As `Document.id`. The library checks it.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
+    #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
+    pub id: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The bytes. Any bytes in a `standard` or `singleton` collection. In a
+    /// journal, no `\n` and no `\r`: a journal line is `{id}: {raw}\n`.
+    ///
+    /// Field 2: `raw`
     #[serde(
-        rename = "document",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+        rename = "raw",
+        with = "::buffa::json_helpers::opt_bytes",
+        skip_serializing_if = "::core::option::Option::is_none"
     )]
-    pub document: ::buffa::MessageField<Document, ::buffa::Inline<Document>>,
+    pub raw: ::core::option::Option<::buffa::alloc::vec::Vec<u8>>,
     /// When the Document is already stored, return that one and write
     /// nothing, instead of `ALREADY_EXISTS`. For a caller that may send the
     /// same write twice.
     ///
-    /// Field 2: `keep_existing`
+    /// Field 3: `keep_existing`
     #[serde(
         rename = "keepExisting",
         alias = "keep_existing",
@@ -1437,7 +1524,7 @@ pub struct DocumentCreation {
     pub keep_existing: ::core::option::Option<bool>,
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 3: `note`
+    /// Field 4: `note`
     #[serde(rename = "note", skip_serializing_if = "::core::option::Option::is_none")]
     pub note: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
@@ -1447,7 +1534,8 @@ pub struct DocumentCreation {
 impl ::core::fmt::Debug for DocumentCreation {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("DocumentCreation")
-            .field("document", &self.document)
+            .field("id", &self.id)
+            .field("raw", &self.raw)
             .field("keep_existing", &self.keep_existing)
             .field("note", &self.note)
             .finish()
@@ -1461,6 +1549,20 @@ impl DocumentCreation {
     pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentCreation";
 }
 impl DocumentCreation {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_id(mut self, value: impl Into<::buffa::alloc::string::String>) -> Self {
+        self.id = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::raw`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_raw(mut self, value: impl Into<::buffa::alloc::vec::Vec<u8>>) -> Self {
+        self.raw = Some(value.into());
+        self
+    }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets [`Self::keep_existing`] to `Some(value)`, consuming and returning `self`.
@@ -1495,17 +1597,15 @@ impl ::buffa::Message for DocumentCreation {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.raw {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if self.keep_existing.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
@@ -1518,24 +1618,22 @@ impl ::buffa::Message for DocumentCreation {
     }
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.raw {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         if let Some(v) = self.keep_existing {
-            ::buffa::types::put_bool_field(2u32, v, buf);
+            ::buffa::types::put_bool_field(3u32, v, buf);
         }
         if let Some(ref v) = self.note {
-            ::buffa::types::put_string_field(3u32, v, buf);
+            ::buffa::types::put_string_field(4u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -1555,13 +1653,22 @@ impl ::buffa::Message for DocumentCreation {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.document.get_or_insert_default(),
+                ::buffa::types::merge_string(
+                    self.id.get_or_insert_with(::buffa::alloc::string::String::new),
                     buf,
-                    ctx,
                 )?;
             }
             2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_bytes(
+                    self.raw.get_or_insert_with(::buffa::alloc::vec::Vec::new),
+                    buf,
+                )?;
+            }
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
@@ -1570,7 +1677,7 @@ impl ::buffa::Message for DocumentCreation {
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
-            3u32 => {
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -1588,7 +1695,8 @@ impl ::buffa::Message for DocumentCreation {
         ::core::result::Result::Ok(())
     }
     fn clear(&mut self) {
-        self.document = ::buffa::MessageField::none();
+        self.id = ::core::option::Option::None;
+        self.raw = ::core::option::Option::None;
         self.keep_existing = ::core::option::Option::None;
         self.note = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
@@ -1623,24 +1731,30 @@ pub const __DOCUMENT_CREATION_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = :
     from_json: ::buffa::type_registry::any_from_json::<DocumentCreation>,
     is_wkt: false,
 };
-/// The request of `UpdateDocument`.
+/// The request of `Collection.Update`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct DocumentUpdate {
-    /// The new bytes of an existing Document, without `revision`.
+    /// The Document to replace.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
+    #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
+    pub id: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The new bytes.
+    ///
+    /// Field 2: `raw`
     #[serde(
-        rename = "document",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+        rename = "raw",
+        with = "::buffa::json_helpers::opt_bytes",
+        skip_serializing_if = "::core::option::Option::is_none"
     )]
-    pub document: ::buffa::MessageField<Document, ::buffa::Inline<Document>>,
+    pub raw: ::core::option::Option<::buffa::alloc::vec::Vec<u8>>,
     /// Set: replace only if the stored revision is this one; otherwise
     /// `FAILED_PRECONDITION`. For a read, a change, and a write that must not
     /// overwrite a write in between.
     ///
-    /// Field 2: `revision`
+    /// Field 3: `revision`
     #[serde(
         rename = "revision",
         skip_serializing_if = "::core::option::Option::is_none"
@@ -1648,7 +1762,7 @@ pub struct DocumentUpdate {
     pub revision: ::core::option::Option<::buffa::alloc::string::String>,
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 3: `note`
+    /// Field 4: `note`
     #[serde(rename = "note", skip_serializing_if = "::core::option::Option::is_none")]
     pub note: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
@@ -1658,7 +1772,8 @@ pub struct DocumentUpdate {
 impl ::core::fmt::Debug for DocumentUpdate {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("DocumentUpdate")
-            .field("document", &self.document)
+            .field("id", &self.id)
+            .field("raw", &self.raw)
             .field("revision", &self.revision)
             .field("note", &self.note)
             .finish()
@@ -1672,6 +1787,20 @@ impl DocumentUpdate {
     pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentUpdate";
 }
 impl DocumentUpdate {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_id(mut self, value: impl Into<::buffa::alloc::string::String>) -> Self {
+        self.id = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::raw`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_raw(mut self, value: impl Into<::buffa::alloc::vec::Vec<u8>>) -> Self {
+        self.raw = Some(value.into());
+        self
+    }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets [`Self::revision`] to `Some(value)`, consuming and returning `self`.
@@ -1709,17 +1838,15 @@ impl ::buffa::Message for DocumentUpdate {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.raw {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if let Some(ref v) = self.revision {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
@@ -1732,24 +1859,22 @@ impl ::buffa::Message for DocumentUpdate {
     }
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.raw {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         if let Some(ref v) = self.revision {
-            ::buffa::types::put_string_field(2u32, v, buf);
+            ::buffa::types::put_string_field(3u32, v, buf);
         }
         if let Some(ref v) = self.note {
-            ::buffa::types::put_string_field(3u32, v, buf);
+            ::buffa::types::put_string_field(4u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -1769,13 +1894,22 @@ impl ::buffa::Message for DocumentUpdate {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.document.get_or_insert_default(),
+                ::buffa::types::merge_string(
+                    self.id.get_or_insert_with(::buffa::alloc::string::String::new),
                     buf,
-                    ctx,
                 )?;
             }
             2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_bytes(
+                    self.raw.get_or_insert_with(::buffa::alloc::vec::Vec::new),
+                    buf,
+                )?;
+            }
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -1787,7 +1921,7 @@ impl ::buffa::Message for DocumentUpdate {
                     buf,
                 )?;
             }
-            3u32 => {
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -1805,7 +1939,8 @@ impl ::buffa::Message for DocumentUpdate {
         ::core::result::Result::Ok(())
     }
     fn clear(&mut self) {
-        self.document = ::buffa::MessageField::none();
+        self.id = ::core::option::Option::None;
+        self.raw = ::core::option::Option::None;
         self.revision = ::core::option::Option::None;
         self.note = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
@@ -1840,22 +1975,28 @@ pub const __DOCUMENT_UPDATE_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::b
     from_json: ::buffa::type_registry::any_from_json::<DocumentUpdate>,
     is_wkt: false,
 };
-/// The request of `UpsertDocument`.
+/// The request of `Collection.Upsert`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct DocumentUpsert {
-    /// The Document to create or replace, without `revision`.
+    /// The Document to create or replace.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
+    #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
+    pub id: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The bytes.
+    ///
+    /// Field 2: `raw`
     #[serde(
-        rename = "document",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
+        rename = "raw",
+        with = "::buffa::json_helpers::opt_bytes",
+        skip_serializing_if = "::core::option::Option::is_none"
     )]
-    pub document: ::buffa::MessageField<Document, ::buffa::Inline<Document>>,
+    pub raw: ::core::option::Option<::buffa::alloc::vec::Vec<u8>>,
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 2: `note`
+    /// Field 3: `note`
     #[serde(rename = "note", skip_serializing_if = "::core::option::Option::is_none")]
     pub note: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
@@ -1865,7 +2006,8 @@ pub struct DocumentUpsert {
 impl ::core::fmt::Debug for DocumentUpsert {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("DocumentUpsert")
-            .field("document", &self.document)
+            .field("id", &self.id)
+            .field("raw", &self.raw)
             .field("note", &self.note)
             .finish()
     }
@@ -1878,6 +2020,20 @@ impl DocumentUpsert {
     pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentUpsert";
 }
 impl DocumentUpsert {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_id(mut self, value: impl Into<::buffa::alloc::string::String>) -> Self {
+        self.id = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::raw`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_raw(mut self, value: impl Into<::buffa::alloc::vec::Vec<u8>>) -> Self {
+        self.raw = Some(value.into());
+        self
+    }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets [`Self::note`] to `Some(value)`, consuming and returning `self`.
@@ -1905,17 +2061,15 @@ impl ::buffa::Message for DocumentUpsert {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.raw {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if let Some(ref v) = self.note {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
@@ -1925,21 +2079,19 @@ impl ::buffa::Message for DocumentUpsert {
     }
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.raw {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         if let Some(ref v) = self.note {
-            ::buffa::types::put_string_field(2u32, v, buf);
+            ::buffa::types::put_string_field(3u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -1959,13 +2111,22 @@ impl ::buffa::Message for DocumentUpsert {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.document.get_or_insert_default(),
+                ::buffa::types::merge_string(
+                    self.id.get_or_insert_with(::buffa::alloc::string::String::new),
                     buf,
-                    ctx,
                 )?;
             }
             2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_bytes(
+                    self.raw.get_or_insert_with(::buffa::alloc::vec::Vec::new),
+                    buf,
+                )?;
+            }
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -1983,7 +2144,8 @@ impl ::buffa::Message for DocumentUpsert {
         ::core::result::Result::Ok(())
     }
     fn clear(&mut self) {
-        self.document = ::buffa::MessageField::none();
+        self.id = ::core::option::Option::None;
+        self.raw = ::core::option::Option::None;
         self.note = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
@@ -2017,19 +2179,16 @@ pub const __DOCUMENT_UPSERT_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::b
     from_json: ::buffa::type_registry::any_from_json::<DocumentUpsert>,
     is_wkt: false,
 };
-/// The request of `DeleteDocument`.
+/// The request of `Collection.Delete`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct DocumentDeletion {
     /// The Document to delete.
     ///
-    /// Field 1: `document`
-    #[serde(
-        rename = "document",
-        skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
-    )]
-    pub document: ::buffa::MessageField<DocumentKey, ::buffa::Inline<DocumentKey>>,
+    /// Field 1: `id`
+    #[serde(rename = "id", skip_serializing_if = "::core::option::Option::is_none")]
+    pub id: ::core::option::Option<::buffa::alloc::string::String>,
     /// An absent Document is nothing to do, not `NOT_FOUND`. For a caller
     /// that may send the same write twice.
     ///
@@ -2061,7 +2220,7 @@ pub struct DocumentDeletion {
 impl ::core::fmt::Debug for DocumentDeletion {
     fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
         f.debug_struct("DocumentDeletion")
-            .field("document", &self.document)
+            .field("id", &self.id)
             .field("ignore_missing", &self.ignore_missing)
             .field("revision", &self.revision)
             .field("note", &self.note)
@@ -2076,6 +2235,13 @@ impl DocumentDeletion {
     pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentDeletion";
 }
 impl DocumentDeletion {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_id(mut self, value: impl Into<::buffa::alloc::string::String>) -> Self {
+        self.id = Some(value.into());
+        self
+    }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
     ///Sets [`Self::ignore_missing`] to `Some(value)`, consuming and returning `self`.
@@ -2120,17 +2286,12 @@ impl ::buffa::Message for DocumentDeletion {
     /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
     /// points reject, never a silently wrapped size.
     #[allow(clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
         if self.ignore_missing.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
@@ -2146,18 +2307,13 @@ impl ::buffa::Message for DocumentDeletion {
     }
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
         }
         if let Some(v) = self.ignore_missing {
             ::buffa::types::put_bool_field(2u32, v, buf);
@@ -2186,10 +2342,9 @@ impl ::buffa::Message for DocumentDeletion {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.document.get_or_insert_default(),
+                ::buffa::types::merge_string(
+                    self.id.get_or_insert_with(::buffa::alloc::string::String::new),
                     buf,
-                    ctx,
                 )?;
             }
             2u32 => {
@@ -2231,7 +2386,7 @@ impl ::buffa::Message for DocumentDeletion {
         ::core::result::Result::Ok(())
     }
     fn clear(&mut self) {
-        self.document = ::buffa::MessageField::none();
+        self.id = ::core::option::Option::None;
         self.ignore_missing = ::core::option::Option::None;
         self.revision = ::core::option::Option::None;
         self.note = ::core::option::Option::None;
@@ -2267,7 +2422,9 @@ pub const __DOCUMENT_DELETION_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = :
     from_json: ::buffa::type_registry::any_from_json::<DocumentDeletion>,
     is_wkt: false,
 };
-/// One item of `BatchDocuments`: the request of one Document call.
+/// One item of `Collection.Batch`: the request of one Document call. In
+/// `Vault.BatchDocuments`, inside a `VaultDocumentOperation` that names
+/// its collection.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize)]
 #[serde(default)]
@@ -2674,7 +2831,8 @@ pub mod document_operation {
     #[doc(inline)]
     pub use super::__buffa::view::oneof::document_operation::Operation as OperationView;
 }
-/// The answer of `BatchDocuments`: one result per operation, in order.
+/// The answer of `Collection.Batch` and `Vault.BatchDocuments`: one result
+/// per operation, in order.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]

@@ -30,12 +30,12 @@ pub mod collection_operation {
     pub enum Operation<'a> {
         Create(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::CollectionView<'a>,
+                super::super::super::super::__buffa::view::CollectionDeclarationView<'a>,
             >,
         ),
         Update(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::CollectionView<'a>,
+                super::super::super::super::__buffa::view::CollectionDeclarationView<'a>,
             >,
         ),
         Delete(
@@ -52,7 +52,7 @@ pub mod collection_result {
     pub enum Result<'a> {
         Collection(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::CollectionView<'a>,
+                super::super::super::super::__buffa::view::CollectionDeclarationView<'a>,
             >,
         ),
         Deleted(

@@ -360,7 +360,7 @@ fn put_back(tree: &mut Value, unknown: &Unknowns) {
 
 #[cfg(test)]
 mod tests {
-    use scheda_api::v1::{Collection, IndexSchema, VaultErrorCode, VaultMarker};
+    use scheda_api::v1::{CollectionDeclaration, IndexSchema, VaultErrorCode, VaultMarker};
 
     use super::{Format, Segment, Stored, Unknowns, encode, parse_command, path_string, read};
     use crate::error::Error;
@@ -402,8 +402,8 @@ schema:
             .collect()
     }
 
-    fn read_collection(text: &str, format: Format) -> Stored<Collection> {
-        read::<Collection>(text.as_bytes(), format).unwrap()
+    fn read_collection(text: &str, format: Format) -> Stored<CollectionDeclaration> {
+        read::<CollectionDeclaration>(text.as_bytes(), format).unwrap()
     }
 
     #[test]
@@ -435,7 +435,7 @@ schema:
             let stored = read_collection(text, format);
             let bytes = encode(&stored.message, &stored.unknown, format).unwrap();
             assert_eq!(bytes.last(), Some(&b'\n'));
-            let again = read::<Collection>(&bytes, format).unwrap();
+            let again = read::<CollectionDeclaration>(&bytes, format).unwrap();
             assert_eq!(again.message, stored.message);
             let paths: Vec<String> = again
                 .unknown
@@ -514,7 +514,7 @@ schema:
         schema.kind = scheda_api::v1::Standard::default().into();
         message.schema = schema.into();
         let bytes = encode(&message, &stored.unknown, Format::Yaml).unwrap();
-        let again = read::<Collection>(&bytes, Format::Yaml).unwrap();
+        let again = read::<CollectionDeclaration>(&bytes, Format::Yaml).unwrap();
         let paths: Vec<String> = again
             .unknown
             .iter()
@@ -577,24 +577,26 @@ schema:
         assert!(stored.unknown.is_empty());
         let bytes = encode(&stored.message, &Unknowns::none(), Format::Yaml).unwrap();
         assert_eq!(
-            read::<Collection>(&bytes, Format::Yaml).unwrap().message,
+            read::<CollectionDeclaration>(&bytes, Format::Yaml)
+                .unwrap()
+                .message,
             stored.message
         );
     }
 
     #[test]
     fn a_syntax_error_is_invalid_argument() {
-        let error = code(read::<Collection>(b"name: [c\n", Format::Yaml).unwrap_err());
+        let error = code(read::<CollectionDeclaration>(b"name: [c\n", Format::Yaml).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = code(read::<Collection>(b"{\"name\": ", Format::Json).unwrap_err());
+        let error = code(read::<CollectionDeclaration>(b"{\"name\": ", Format::Json).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = code(read::<Collection>(b"", Format::Yaml).unwrap_err());
+        let error = code(read::<CollectionDeclaration>(b"", Format::Yaml).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
     #[test]
     fn a_value_of_the_wrong_type_is_invalid_argument() {
-        let error = code(read::<Collection>(b"name: [a]\n", Format::Yaml).unwrap_err());
+        let error = code(read::<CollectionDeclaration>(b"name: [a]\n", Format::Yaml).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
@@ -603,21 +605,21 @@ schema:
         let fault = read::<VaultMarker>(b"version: 3\n", Format::Yaml).unwrap_err();
         assert!(fault.message().contains("version"), "{}", fault.message());
         assert!(code(fault).is(VaultErrorCode::InvalidArgument));
-        let error = code(read::<Collection>(b"name: ''\n", Format::Yaml).unwrap_err());
+        let error = code(read::<CollectionDeclaration>(b"name: ''\n", Format::Yaml).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
     #[test]
     fn a_command_with_an_unknown_field_is_invalid_argument_naming_its_path() {
         let json = br#"{"name": "c", "schema": {"journal": {"bogus": true}, "standard": null}}"#;
-        let fault = parse_command::<Collection>(json).unwrap_err();
+        let fault = parse_command::<CollectionDeclaration>(json).unwrap_err();
         assert!(
             fault.message().contains("schema.journal.bogus"),
             "{}",
             fault.message()
         );
         assert!(code(fault).is(VaultErrorCode::InvalidArgument));
-        let fault = parse_command::<Collection>(
+        let fault = parse_command::<CollectionDeclaration>(
             br#"{"name": "c", "extra": 1, "schema": {"standard": {}}}"#,
         )
         .unwrap_err();
@@ -627,14 +629,14 @@ schema:
 
     #[test]
     fn a_command_with_known_fields_only_parses_and_is_validated() {
-        let message = parse_command::<Collection>(
+        let message = parse_command::<CollectionDeclaration>(
             br#"{"name": "c", "schema": {"journal": {"segmentMaxLines": "5"}}}"#,
         )
         .unwrap();
         assert_eq!(message.name.as_deref(), Some("c"));
-        let error = code(parse_command::<Collection>(br#"{"name": "c"}"#).unwrap_err());
+        let error = code(parse_command::<CollectionDeclaration>(br#"{"name": "c"}"#).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = code(parse_command::<Collection>(b"{").unwrap_err());
+        let error = code(parse_command::<CollectionDeclaration>(b"{").unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 

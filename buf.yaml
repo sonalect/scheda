@@ -1,8 +1,8 @@
 # Buf config of the contract (Buf LSP, lint, and the generate). The
 # contract sits under `api/` at the path its package names. Bazel stages
-# the protos the contract imports (protovalidate, protobuf) at their import
-# paths from the root; the second module makes them visible, and lint
-# skips them.
+# the protos the contract imports (protovalidate, protobuf, and the
+# protocontract options) at their import paths from the root; the second
+# module makes them visible, and lint skips them.
 version: v2
 modules:
   - path: api
@@ -10,6 +10,7 @@ modules:
     includes:
       - buf
       - google
+      - protocontract
 lint:
   use:
     - STANDARD
@@ -24,6 +25,7 @@ lint:
   ignore:
     - buf
     - google
+    - protocontract
 breaking:
   use:
     - FILE

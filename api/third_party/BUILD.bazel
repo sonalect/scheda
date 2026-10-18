@@ -16,3 +16,10 @@ buf_deps(
     strip_import_prefix = "/proto/protovalidate",
     visibility = ["//visibility:public"],
 )
+
+buf_deps(
+    name = "protocontract",
+    srcs = ["@scheda_cargo//:protocontract_protos"],
+    strip_import_prefix = "/proto",
+    visibility = ["//visibility:public"],
+)

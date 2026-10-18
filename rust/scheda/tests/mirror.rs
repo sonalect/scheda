@@ -7,71 +7,81 @@ mod common;
 mod probe;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use buffa_types::google::protobuf::Empty;
 use scheda::v1::{
-    Collection, Document, DocumentKey, DocumentUpsert, MirrorSetting, OpenMode, OpenOptions,
-    VaultErrorCode as Code,
+    CollectionDeclaration, CollectionKey, CollectionSync, DocumentDeletion, DocumentId,
+    DocumentUpsert, MirrorSetting, MirrorSync, OpenMode, OpenOptions, VaultErrorCode as Code,
+    VaultSync,
 };
-use scheda::{Ports, Vault};
 
-use common::{Scratch, command, git, snapshot, vault as built_vault, work_tree, write};
+use common::{Scratch, command, git, open, snapshot, vault as built_vault, work_tree, write};
 use probe::{assert_settled, commits, git_out};
 
-fn standard(name: &str) -> Collection {
+fn standard(name: &str) -> CollectionDeclaration {
     serde_json::from_value(serde_json::json!({"name": name, "schema": {"standard": {}}})).unwrap()
 }
 
-fn isolated(name: &str) -> Collection {
+fn isolated(name: &str) -> CollectionDeclaration {
     serde_json::from_value(
         serde_json::json!({"name": name, "schema": {"standard": {}, "isolated": true}}),
     )
     .unwrap()
 }
 
-fn document(collection: &str, id: &str, raw: &str) -> Document {
-    Document {
-        collection: Some(collection.to_owned()),
+/// The collection `name` of `vault`, which must be declared.
+fn collection(vault: &Arc<dyn VaultSync>, name: &str) -> Arc<dyn CollectionSync> {
+    vault
+        .get_collection(CollectionKey::default().with_name(name))
+        .unwrap()
+        .to_sync()
+        .unwrap()
+}
+
+/// The mirror of `vault`.
+fn mirror_of(vault: &Arc<dyn VaultSync>) -> Arc<dyn MirrorSync> {
+    vault.mirror(Empty::default()).unwrap().to_sync().unwrap()
+}
+
+fn id(id: &str) -> DocumentId {
+    DocumentId {
         id: Some(id.to_owned()),
-        raw: Some(raw.as_bytes().to_vec()),
         ..Default::default()
     }
 }
 
-fn key(collection: &str, id: &str) -> DocumentKey {
-    DocumentKey {
-        collection: Some(collection.to_owned()),
+fn upsert(id: &str, raw: &str, note: &str) -> DocumentUpsert {
+    DocumentUpsert {
         id: Some(id.to_owned()),
+        raw: Some(raw.as_bytes().to_vec()),
+        note: Some(note.to_owned()),
         ..Default::default()
     }
 }
 
 /// Writes `raw` as the Document `id` of `notes`.
-fn put(vault: &Vault, id: &str, raw: &str) {
+fn put(vault: &Arc<dyn VaultSync>, id: &str, raw: &str) {
     put_noted(vault, id, raw, &format!("write {id}"));
 }
 
-fn put_noted(vault: &Vault, id: &str, raw: &str, note: &str) {
-    vault
-        .upsert_document(DocumentUpsert {
-            document: document("notes", id, raw).into(),
-            note: Some(note.to_owned()),
-            ..Default::default()
-        })
+fn put_noted(vault: &Arc<dyn VaultSync>, doc: &str, raw: &str, note: &str) {
+    collection(vault, "notes")
+        .upsert(upsert(doc, raw, note))
         .unwrap();
 }
 
 /// The text of the Document `id` of `notes`, as the handle reads it.
-fn read(vault: &Vault, id: &str) -> String {
-    let found = vault.get_document(key("notes", id)).unwrap();
+fn read(vault: &Arc<dyn VaultSync>, doc: &str) -> String {
+    let found = collection(vault, "notes").get(id(doc)).unwrap();
     String::from_utf8(found.raw.unwrap()).unwrap()
 }
 
-fn is_absent(vault: &Vault, id: &str) -> bool {
-    vault
-        .get_document(key("notes", id))
+fn is_absent(vault: &Arc<dyn VaultSync>, doc: &str) -> bool {
+    collection(vault, "notes")
+        .get(id(doc))
         .is_err_and(|error| error.is(Code::NotFound))
 }
 
@@ -94,30 +104,25 @@ fn url(path: &Path) -> String {
 /// Documents `docs` (id, text), made through the handle itself.
 fn seeded(scratch: &Scratch, name: &str, docs: &[(&str, &str)]) -> PathBuf {
     let mirror = bare(scratch, &format!("{name}.git"));
-    let seed = Vault::open(
-        scratch.join(&format!("{name}-seed")),
+    let seed = open(
+        &scratch.join(&format!("{name}-seed")),
         OpenOptions::default(),
-        Ports::default(),
     )
     .unwrap();
     seed.create_collection(standard("notes")).unwrap();
     for (id, text) in docs {
         put(&seed, id, text);
     }
-    seed.set_mirror(MirrorSetting::default().with_url(url(&mirror)))
+    mirror_of(&seed)
+        .set(MirrorSetting::default().with_url(url(&mirror)))
         .unwrap();
-    seed.push(Empty::default()).unwrap();
+    mirror_of(&seed).push(Empty::default()).unwrap();
     mirror
 }
 
-fn clone_of(scratch: &Scratch, name: &str, mirror: &Path) -> (PathBuf, Vault) {
+fn clone_of(scratch: &Scratch, name: &str, mirror: &Path) -> (PathBuf, Arc<dyn VaultSync>) {
     let path = scratch.join(name);
-    let vault = Vault::open(
-        &path,
-        OpenOptions::default().with_mirror(url(mirror)),
-        Ports::default(),
-    )
-    .unwrap();
+    let vault = open(&path, OpenOptions::default().with_mirror(url(mirror))).unwrap();
     (path, vault)
 }
 
@@ -134,8 +139,8 @@ fn assert_clean(dir: &Path) {
     assert_eq!(git_out(dir, &["status", "--porcelain"]), "");
 }
 
-fn pull(vault: &Vault) -> Result<Empty, scheda::Error> {
-    vault.pull(Empty::default())
+fn pull(vault: &Arc<dyn VaultSync>) -> Result<Empty, scheda::Error> {
+    mirror_of(vault).pull(Empty::default())
 }
 
 #[test]
@@ -153,12 +158,11 @@ fn a_missing_path_an_empty_folder_and_create_new_clone_the_mirror() {
         if folder {
             std::fs::create_dir_all(&path).unwrap();
         }
-        let vault = Vault::open(
+        let vault = open(
             &path,
             OpenOptions::default()
                 .with_mirror(url(&mirror))
                 .with_mode(mode),
-            Ports::default(),
         )
         .unwrap();
         assert_eq!(read(&vault, "a.md"), "one", "{name}");
@@ -175,12 +179,7 @@ fn a_missing_path_an_empty_folder_and_create_new_clone_the_mirror() {
         assert_clean(&path);
         drop(vault);
         // Open again: the Vault exists, and the URL is its mirror's.
-        Vault::open(
-            &path,
-            OpenOptions::default().with_mirror(url(&mirror)),
-            Ports::default(),
-        )
-        .unwrap();
+        open(&path, OpenOptions::default().with_mirror(url(&mirror))).unwrap();
         assert_eq!(commits(&path), before, "{name}: open adds nothing");
     }
 }
@@ -252,12 +251,9 @@ fn a_mirror_with_a_marker_of_another_generation_is_generation_and_leaves_nothing
     let other = scratch.join("other");
     work_tree(&other, &[(".scheda.yaml", "version: 3\n")]);
     let target = scratch.join("here/vault");
-    let error = Vault::open(
-        &target,
-        OpenOptions::default().with_mirror(url(&other)),
-        Ports::default(),
-    )
-    .unwrap_err();
+    let error = open(&target, OpenOptions::default().with_mirror(url(&other)))
+        .err()
+        .unwrap();
     assert!(error.is(Code::Generation));
     assert!(!target.exists());
     let left: Vec<_> = std::fs::read_dir(scratch.join("here"))
@@ -268,12 +264,9 @@ fn a_mirror_with_a_marker_of_another_generation_is_generation_and_leaves_nothing
     // An empty folder stays an empty folder.
     let folder = scratch.join("folder");
     std::fs::create_dir(&folder).unwrap();
-    let error = Vault::open(
-        &folder,
-        OpenOptions::default().with_mirror(url(&other)),
-        Ports::default(),
-    )
-    .unwrap_err();
+    let error = open(&folder, OpenOptions::default().with_mirror(url(&other)))
+        .err()
+        .unwrap();
     assert!(error.is(Code::Generation));
     assert_eq!(std::fs::read_dir(&folder).unwrap().count(), 0);
 }
@@ -284,12 +277,9 @@ fn a_clone_that_fails_leaves_no_vault_and_returns() {
     let bad = format!("file://{}", scratch.join("no-such-mirror.git").display());
     let start = Instant::now();
     let target = scratch.join("here/vault");
-    let error = Vault::open(
-        &target,
-        OpenOptions::default().with_mirror(&bad),
-        Ports::default(),
-    )
-    .unwrap_err();
+    let error = open(&target, OpenOptions::default().with_mirror(&bad))
+        .err()
+        .unwrap();
     assert!(error.is(Code::Replication));
     assert!(start.elapsed() < Duration::from_secs(30));
     assert!(!target.exists());
@@ -299,14 +289,14 @@ fn a_clone_that_fails_leaves_no_vault_and_returns() {
         .collect();
     assert!(left.is_empty(), "{left:?}");
     // Nor does OPEN_EXISTING clone: the path is missing.
-    let error = Vault::open(
+    let error = open(
         &target,
         OpenOptions::default()
             .with_mirror(&bad)
             .with_mode(OpenMode::OPEN_MODE_OPEN_EXISTING),
-        Ports::default(),
     )
-    .unwrap_err();
+    .err()
+    .unwrap();
     assert!(error.is(Code::NotFound));
 }
 
@@ -318,16 +308,12 @@ fn two_opens_of_one_new_path_with_a_mirror_make_one_vault() {
     for round in 0..3 {
         let path = scratch.join(&format!("race{round}/vault"));
         let barrier = std::sync::Barrier::new(3);
-        let vaults: Vec<Result<Vault, scheda::Error>> = std::thread::scope(|scope| {
+        let vaults: Vec<Result<Arc<dyn VaultSync>, scheda::Error>> = std::thread::scope(|scope| {
             let handles: Vec<_> = (0..3)
                 .map(|_| {
                     scope.spawn(|| {
                         barrier.wait();
-                        Vault::open(
-                            &path,
-                            OpenOptions::default().with_mirror(url(&mirror)),
-                            Ports::default(),
-                        )
+                        open(&path, OpenOptions::default().with_mirror(url(&mirror)))
                     })
                 })
                 .collect();
@@ -369,7 +355,7 @@ fn a_pull_fast_forwards_and_get_document_reads_the_new_documents_at_once() {
     let (_, b) = clone_of(&scratch, "b", &mirror);
     put(&b, "b.md", "from b");
     put(&b, "a.md", "two");
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     let before = commits(&path_a);
     assert!(is_absent(&a, "b.md"));
     pull(&a).unwrap();
@@ -391,13 +377,14 @@ fn both_sides_changing_different_documents_join_in_one_commit_with_both_parents(
     let (path_a, a) = clone_of(&scratch, "a", &mirror);
     let (_, b) = clone_of(&scratch, "b", &mirror);
     put(&b, "from-b.md", "b");
-    b.delete_document(scheda::v1::DocumentDeletion {
-        document: key("notes", "gone.md").into(),
-        note: Some("remove".to_owned()),
-        ..Default::default()
-    })
-    .unwrap();
-    b.push(Empty::default()).unwrap();
+    collection(&b, "notes")
+        .delete(DocumentDeletion {
+            id: Some("gone.md".to_owned()),
+            note: Some("remove".to_owned()),
+            ..Default::default()
+        })
+        .unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     put(&a, "from-a.md", "a");
     let ours = head(&path_a);
     let theirs = mirror_head(&mirror);
@@ -418,7 +405,7 @@ fn both_sides_changing_different_documents_join_in_one_commit_with_both_parents(
     assert!(!path_a.join("notes/gone.md").exists());
     assert_settled(&path_a, &[]);
     // The join can be pushed, and then the mirror holds it.
-    a.push(Empty::default()).unwrap();
+    mirror_of(&a).push(Empty::default()).unwrap();
     assert_eq!(mirror_head(&mirror), head(&path_a));
 }
 
@@ -431,7 +418,7 @@ fn both_sides_changing_one_document_differently_is_mirror_conflict_and_changes_n
     put(&b, "a.md", "from b");
     put(&b, "b.md", "from b");
     put(&b, "only-b.md", "b");
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     put(&a, "a.md", "from a");
     put(&a, "b.md", "from a");
     let before_head = head(&path_a);
@@ -451,7 +438,7 @@ fn both_sides_changing_one_document_differently_is_mirror_conflict_and_changes_n
     assert!(!path_a.join(".git/MERGE_HEAD").exists());
     assert_settled(&path_a, &[]);
     // `Sync` stops at the failed pull.
-    let error = a.sync(Empty::default()).unwrap_err();
+    let error = mirror_of(&a).sync(Empty::default()).unwrap_err();
     assert!(error.is(Code::MirrorConflict));
     assert_eq!(head(&path_a), before_head);
 }
@@ -463,7 +450,7 @@ fn both_sides_changing_a_document_the_same_way_join() {
     let (path_a, a) = clone_of(&scratch, "a", &mirror);
     let (_, b) = clone_of(&scratch, "b", &mirror);
     put(&b, "a.md", "same");
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     // The same bytes under another note: another commit, the same file.
     put_noted(&a, "a.md", "same", "a's own words");
     pull(&a).unwrap();
@@ -492,7 +479,7 @@ fn a_person_edit_of_a_file_the_pull_changes_survives_and_git_shows_it_changed() 
     let (_, b) = clone_of(&scratch, "b", &mirror);
     put(&b, "a.md", "from b");
     put(&b, "b.md", "from b");
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     write(&path_a, "notes/a.md", "mine, not committed");
     pull(&a).unwrap();
     assert_eq!(
@@ -515,12 +502,12 @@ fn a_person_edit_of_a_file_the_pull_changes_survives_and_git_shows_it_changed() 
 #[test]
 fn pull_push_and_sync_without_a_mirror_are_not_found() {
     let scratch = Scratch::new("no-mirror");
-    let vault = Vault::open(scratch.join("v"), OpenOptions::default(), Ports::default()).unwrap();
+    let vault = open(&scratch.join("v"), OpenOptions::default()).unwrap();
     for error in [
-        vault.pull(Empty::default()).unwrap_err(),
-        vault.push(Empty::default()).unwrap_err(),
-        vault.sync(Empty::default()).unwrap_err(),
-        vault.remove_mirror(Empty::default()).unwrap_err(),
+        mirror_of(&vault).pull(Empty::default()).unwrap_err(),
+        mirror_of(&vault).push(Empty::default()).unwrap_err(),
+        mirror_of(&vault).sync(Empty::default()).unwrap_err(),
+        mirror_of(&vault).remove(Empty::default()).unwrap_err(),
     ] {
         assert!(error.is(Code::NotFound));
     }
@@ -535,18 +522,18 @@ fn push_sends_the_commits_and_a_mirror_ahead_is_mirror_ahead() {
     put(&a, "a.md", "two");
     put(&a, "x.md", "x");
     assert_ne!(mirror_head(&mirror), head(&path_a));
-    a.push(Empty::default()).unwrap();
+    mirror_of(&a).push(Empty::default()).unwrap();
     assert_eq!(mirror_head(&mirror), head(&path_a));
     // Nothing to send is not an error.
-    a.push(Empty::default()).unwrap();
+    mirror_of(&a).push(Empty::default()).unwrap();
     // B has not pulled A's writes: its push is refused.
     put(&b, "y.md", "y");
-    let error = b.push(Empty::default()).unwrap_err();
+    let error = mirror_of(&b).push(Empty::default()).unwrap_err();
     assert!(error.is(Code::MirrorAhead));
     assert_eq!(mirror_head(&mirror), head(&path_a));
     // After the pull and the join, it goes through.
     pull(&b).unwrap();
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     assert_eq!(read(&b, "x.md"), "x");
 }
 
@@ -554,13 +541,13 @@ fn push_sends_the_commits_and_a_mirror_ahead_is_mirror_ahead() {
 fn sync_against_an_empty_mirror_pushes() {
     let scratch = Scratch::new("sync-empty");
     let mirror = bare(&scratch, "m.git");
-    let vault = Vault::open(scratch.join("v"), OpenOptions::default(), Ports::default()).unwrap();
+    let vault = open(&scratch.join("v"), OpenOptions::default()).unwrap();
     vault.create_collection(standard("notes")).unwrap();
     put(&vault, "a.md", "one");
-    vault
-        .set_mirror(MirrorSetting::default().with_url(url(&mirror)))
+    mirror_of(&vault)
+        .set(MirrorSetting::default().with_url(url(&mirror)))
         .unwrap();
-    vault.sync(Empty::default()).unwrap();
+    mirror_of(&vault).sync(Empty::default()).unwrap();
     assert_eq!(mirror_head(&mirror), head(&scratch.join("v")));
     assert_settled(&scratch.join("v"), &[]);
 }
@@ -573,9 +560,9 @@ fn sync_of_two_clones_that_wrote_different_documents_ends_with_everything_everyw
     let (path_b, b) = clone_of(&scratch, "b", &mirror);
     put(&a, "from-a.md", "a");
     put(&b, "from-b.md", "b");
-    a.sync(Empty::default()).unwrap();
-    b.sync(Empty::default()).unwrap();
-    a.sync(Empty::default()).unwrap();
+    mirror_of(&a).sync(Empty::default()).unwrap();
+    mirror_of(&b).sync(Empty::default()).unwrap();
+    mirror_of(&a).sync(Empty::default()).unwrap();
     assert_eq!(head(&path_a), mirror_head(&mirror));
     assert_eq!(head(&path_b), mirror_head(&mirror));
     for vault in [&a, &b] {
@@ -590,20 +577,20 @@ fn sync_of_two_clones_that_wrote_different_documents_ends_with_everything_everyw
 
 /// A Vault at `path` with the mirror `mirror` and an isolated collection
 /// `diary` whose nested repository has an `origin` that cannot be reached.
-fn vault_with_nested_origin(scratch: &Scratch, mirror: &Path, options: OpenOptions) -> Vault {
+fn vault_with_nested_origin(
+    scratch: &Scratch,
+    mirror_path: &Path,
+    options: OpenOptions,
+) -> Arc<dyn VaultSync> {
     let path = scratch.join("v");
-    let vault = Vault::open(&path, options, Ports::default()).unwrap();
+    let vault = open(&path, options).unwrap();
     vault.create_collection(standard("notes")).unwrap();
     vault.create_collection(isolated("diary")).unwrap();
-    vault
-        .set_mirror(MirrorSetting::default().with_url(url(mirror)))
+    mirror_of(&vault)
+        .set(MirrorSetting::default().with_url(url(mirror_path)))
         .unwrap();
-    vault
-        .upsert_document(DocumentUpsert {
-            document: document("diary", "d", "secret").into(),
-            note: Some("diary".to_owned()),
-            ..Default::default()
-        })
+    collection(&vault, "diary")
+        .upsert(upsert("d", "secret", "diary"))
         .unwrap();
     let nested = path.join(".isolated");
     assert!(nested.join(".git").exists());
@@ -647,9 +634,9 @@ fn no_call_contacts_a_nested_repository_under_isolated() {
     let mirror = bare(&scratch, "m.git");
     let vault = vault_with_nested_origin(&scratch, &mirror, OpenOptions::default());
     let path = scratch.join("v");
-    vault.push(Empty::default()).unwrap();
+    mirror_of(&vault).push(Empty::default()).unwrap();
     pull(&vault).unwrap();
-    vault.sync(Empty::default()).unwrap();
+    mirror_of(&vault).sync(Empty::default()).unwrap();
     assert_nested_untouched(&path);
     // Only the repository of the Vault reached the mirror.
     let tree = git_out(&mirror, &["ls-tree", "-r", "--name-only", "main"]);
@@ -657,19 +644,10 @@ fn no_call_contacts_a_nested_repository_under_isolated() {
     assert!(!tree.contains("secret"), "{tree}");
     drop(vault);
     // With `auto_sync`, the writes and the open call nobody either.
-    let vault = Vault::open(
-        &path,
-        OpenOptions::default().with_auto_sync(true),
-        Ports::default(),
-    )
-    .unwrap();
+    let vault = open(&path, OpenOptions::default().with_auto_sync(true)).unwrap();
     put(&vault, "a.md", "x");
-    vault
-        .upsert_document(DocumentUpsert {
-            document: document("diary", "e", "more").into(),
-            note: Some("diary".to_owned()),
-            ..Default::default()
-        })
+    collection(&vault, "diary")
+        .upsert(upsert("e", "more", "diary"))
         .unwrap();
     assert_nested_untouched(&path);
     assert_eq!(mirror_head(&mirror), head(&path));
@@ -679,7 +657,7 @@ fn no_call_contacts_a_nested_repository_under_isolated() {
 fn set_mirror_sets_repeats_refuses_another_url_and_replaces_on_request() {
     let scratch = Scratch::new("set");
     let path = scratch.join("v");
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
     let first = "ssh://git@first.invalid/org/repo.git";
     let second = "https://second.invalid/org/repo.git";
     let setting = |url: &str, replace: bool| {
@@ -691,29 +669,22 @@ fn set_mirror_sets_repeats_refuses_another_url_and_replaces_on_request() {
         }
     };
     let before = commits(&path);
-    vault.set_mirror(setting(first, false)).unwrap();
+    mirror_of(&vault).set(setting(first, false)).unwrap();
     assert_eq!(git_out(&path, &["config", "remote.origin.url"]), first);
     // Again with the same URL: nothing happens.
-    vault.set_mirror(setting(first, false)).unwrap();
-    vault.set_mirror(setting(first, true)).unwrap();
+    mirror_of(&vault).set(setting(first, false)).unwrap();
+    mirror_of(&vault).set(setting(first, true)).unwrap();
     assert_eq!(git_out(&path, &["config", "remote.origin.url"]), first);
     // Another URL names the current one.
-    let error = vault.set_mirror(setting(second, false)).unwrap_err();
+    let error = mirror_of(&vault).set(setting(second, false)).unwrap_err();
     assert!(error.is(Code::AlreadyExists));
     assert!(error.to_string().contains("first.invalid"), "{error}");
     assert!(!error.to_string().contains("org/repo"), "{error}");
     assert_eq!(git_out(&path, &["config", "remote.origin.url"]), first);
-    vault.set_mirror(setting(second, true)).unwrap();
+    mirror_of(&vault).set(setting(second, true)).unwrap();
     assert_eq!(git_out(&path, &["config", "remote.origin.url"]), second);
     // The Vault opens with the new URL as its mirror.
-    drop(
-        Vault::open(
-            &path,
-            OpenOptions::default().with_mirror(second),
-            Ports::default(),
-        )
-        .unwrap(),
-    );
+    drop(open(&path, OpenOptions::default().with_mirror(second)).unwrap());
     // A URL with a password, or that is not a URL, is refused.
     for bad in [
         "https://user:secret@third.invalid/repo.git",
@@ -721,7 +692,7 @@ fn set_mirror_sets_repeats_refuses_another_url_and_replaces_on_request() {
         "not a url",
         "",
     ] {
-        let error = vault.set_mirror(setting(bad, true)).unwrap_err();
+        let error = mirror_of(&vault).set(setting(bad, true)).unwrap_err();
         assert!(error.is(Code::InvalidArgument), "{bad}");
         assert!(!error.to_string().contains("secret"));
     }
@@ -736,21 +707,21 @@ fn set_mirror_sets_repeats_refuses_another_url_and_replaces_on_request() {
 fn remove_mirror_detaches_it_and_again_is_not_found() {
     let scratch = Scratch::new("remove");
     let path = scratch.join("v");
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
-    vault
-        .set_mirror(MirrorSetting::default().with_url("ssh://git@first.invalid/org/repo.git"))
+    let vault = open(&path, OpenOptions::default()).unwrap();
+    mirror_of(&vault)
+        .set(MirrorSetting::default().with_url("ssh://git@first.invalid/org/repo.git"))
         .unwrap();
     assert_eq!(git_out(&path, &["remote"]), "origin");
-    vault.remove_mirror(Empty::default()).unwrap();
+    mirror_of(&vault).remove(Empty::default()).unwrap();
     assert_eq!(git_out(&path, &["remote"]), "");
-    let error = vault.remove_mirror(Empty::default()).unwrap_err();
+    let error = mirror_of(&vault).remove(Empty::default()).unwrap_err();
     assert!(error.is(Code::NotFound));
     // Without a mirror the calls are `NOT_FOUND`, and the Vault can take a
     // new one.
-    let error = vault.push(Empty::default()).unwrap_err();
+    let error = mirror_of(&vault).push(Empty::default()).unwrap_err();
     assert!(error.is(Code::NotFound));
-    vault
-        .set_mirror(MirrorSetting::default().with_url("ssh://git@second.invalid/org/repo.git"))
+    mirror_of(&vault)
+        .set(MirrorSetting::default().with_url("ssh://git@second.invalid/org/repo.git"))
         .unwrap();
     assert!(!path.join(".git/FETCH_HEAD").exists());
     assert_settled(&path, &[]);
@@ -761,12 +732,11 @@ fn auto_sync_pushes_every_write_of_the_main_repository() {
     let scratch = Scratch::new("auto-push");
     let mirror = seeded(&scratch, "m", &[("a.md", "one")]);
     let path = scratch.join("a");
-    let vault = Vault::open(
+    let vault = open(
         &path,
         OpenOptions::default()
             .with_mirror(url(&mirror))
             .with_auto_sync(true),
-        Ports::default(),
     )
     .unwrap();
     put(&vault, "b.md", "two");
@@ -783,14 +753,13 @@ fn auto_sync_pulls_at_open() {
     let (path, first) = clone_of(&scratch, "a", &mirror);
     let (_, b) = clone_of(&scratch, "b", &mirror);
     put(&b, "b.md", "from b");
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     drop(first);
-    let again = Vault::open(
+    let again = open(
         &path,
         OpenOptions::default()
             .with_mirror(url(&mirror))
             .with_auto_sync(true),
-        Ports::default(),
     )
     .unwrap();
     assert_eq!(read(&again, "b.md"), "from b");
@@ -807,7 +776,7 @@ fn a_pull_holds_the_write_lock_and_a_write_of_another_handle_waits_for_it() {
     let (path, a) = clone_of(&scratch, "a", &mirror);
     let (_, b) = clone_of(&scratch, "b", &mirror);
     put(&b, "from-b.md", "b");
-    b.push(Empty::default()).unwrap();
+    mirror_of(&b).push(Empty::default()).unwrap();
     // The fetch takes a second: the mirror's upload-pack is slow.
     let slow = scratch.join("slow-upload-pack.sh");
     std::fs::write(&slow, "#!/bin/sh\nsleep 1\nexec git upload-pack \"$@\"\n").unwrap();
@@ -819,7 +788,7 @@ fn a_pull_holds_the_write_lock_and_a_write_of_another_handle_waits_for_it() {
     .status()
     .unwrap();
     assert!(configured.success());
-    let other = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let other = open(&path, OpenOptions::default()).unwrap();
     let ends: Mutex<Vec<(&str, Instant)>> = Mutex::new(Vec::new());
     let started = Instant::now();
     std::thread::scope(|scope| {

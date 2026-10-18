@@ -36,10 +36,14 @@ use std::thread::{Builder, JoinHandle};
 use std::time::{Duration, Instant};
 
 use protocontract::RuntimeCode;
-use scheda_api::v1::{IndexState, Rebuild, VaultErrorCode, rebuild};
+#[cfg(any(feature = "find", test))]
+use scheda_api::v1::VaultErrorCode;
+use scheda_api::v1::{IndexState, Rebuild, rebuild};
 
 use crate::collection;
-use crate::error::{Context, Error, Fault, io, report};
+#[cfg(any(feature = "find", test))]
+use crate::error::Fault;
+use crate::error::{Context, Error, io, report};
 use crate::idmap::JournalMaps;
 use crate::index::{Counts, Index, Round, Side, State};
 #[cfg(feature = "find")]
@@ -247,7 +251,7 @@ impl Indexer {
             sides: vec![
                 Box::new(JournalMaps),
                 #[cfg(feature = "find")]
-                Box::new(Lexical::new(ports.projector().cloned())),
+                Box::new(Lexical::new(Arc::clone(&ports))),
                 #[cfg(feature = "search")]
                 Box::new(Vector::new(Arc::clone(&ports))),
             ],
@@ -267,6 +271,7 @@ impl Indexer {
     }
 
     /// Asks for a rebuild and returns at once.
+    #[cfg(any(feature = "find", test))]
     ///
     /// # Errors
     ///
@@ -604,12 +609,7 @@ impl Worker {
             },
         };
         #[cfg(feature = "search")]
-        if self
-            .ports
-            .embedder()
-            .context("read the embedder")?
-            .is_some()
-        {
+        if self.ports.embedder().is_some() {
             round.collect_offers();
         }
         let pending = round.pending();
@@ -836,15 +836,14 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use buffa_types::google::protobuf::Empty;
     use scheda_api::v1::{
-        Collection, Document, DocumentCreation, IndexState, OpenOptions, VaultErrorCode,
+        CollectionDeclaration, DocumentCreation, IndexState, OpenOptions, VaultErrorCode,
     };
 
     use super::{HISTORY, Indexer, Signal, Watch, hooks};
-    use crate::Vault;
     use crate::index::Index;
     use crate::ports::indexing_ports;
+    use crate::vault::Vault;
 
     struct Scratch(PathBuf);
 
@@ -878,7 +877,7 @@ mod tests {
     }
 
     fn journal(vault: &Vault, name: &str) {
-        let collection: Collection = serde_json::from_value(serde_json::json!({
+        let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
             "name": name, "schema": {"journal": {}}
         }))
         .unwrap();
@@ -887,17 +886,15 @@ mod tests {
 
     fn line(vault: &Vault, collection: &str, id: &str) {
         vault
-            .create_document(DocumentCreation {
-                document: Document {
-                    collection: Some(collection.to_owned()),
+            .create(
+                collection,
+                DocumentCreation {
                     id: Some(id.to_owned()),
                     raw: Some(b"{}".to_vec()),
+                    note: Some("test".to_owned()),
                     ..Default::default()
-                }
-                .into(),
-                note: Some("test".to_owned()),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
     }
 
@@ -1044,8 +1041,8 @@ mod tests {
         let held = Index::new(&path).try_lock().unwrap().unwrap();
         let mut watch = vault.indexer().watch();
         watch.next().unwrap().unwrap();
-        vault.reindex(Empty::default()).unwrap();
-        let error = vault.reindex(Empty::default()).unwrap_err();
+        vault.indexer().reindex().unwrap();
+        let error = vault.indexer().reindex().unwrap_err();
         assert!(error.is(VaultErrorCode::Aborted));
         std::thread::sleep(Duration::from_millis(60));
         let state = vault.indexer().status();
@@ -1082,7 +1079,7 @@ mod tests {
         assert_eq!(rebuild.documents_read, Some(1));
         assert_eq!(rebuild.segments_read, Some(1));
         // A new request is accepted after the rebuild.
-        vault.reindex(Empty::default()).unwrap();
+        vault.indexer().reindex().unwrap();
     }
 
     #[test]

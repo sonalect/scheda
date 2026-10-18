@@ -1,5 +1,6 @@
-//! The `Vault` handle: opening a Vault, making one where the mode allows,
-//! and closing it.
+//! An open Vault: opening one, making one where the mode allows, and
+//! closing it. The services of the contract (`service.rs`) are made over
+//! this state.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -9,9 +10,10 @@ use std::thread::sleep;
 use std::time::{Duration, Instant};
 
 use git2::Oid;
-use scheda_api::v1::{
-    DynEmbedderAsync, EmbedderSync, Encryption, OpenMode, OpenOptions, VaultErrorCode,
-};
+use scheda_api::v1::embedder_ref::EmbedderRef;
+use scheda_api::v1::projector_ref::ProjectorRef;
+use scheda_api::v1::reranker_ref::RerankerRef;
+use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode, VaultInfo};
 
 use crate::collection::{self, Declarations};
 use crate::commit::{Change, Committer};
@@ -22,7 +24,7 @@ use crate::index::Index;
 use crate::indexer::Indexer;
 #[cfg(feature = "find")]
 use crate::lexical;
-use crate::ports::{Installed, Port, Ports};
+use crate::ports::{Installed, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
 #[cfg(feature = "search")]
 use crate::vector;
@@ -44,17 +46,16 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 /// the collections its root directories declare.
 ///
 /// [`Vault::open`] opens one that exists or makes one, and [`Vault::close`]
-/// ends the handle. A handle may be shared between threads: the writes of
-/// one handle take turns, and the writes of all handles of a Vault, in this
-/// process or another, take turns on the lock file `.scheda/commit.lock`.
+/// ends it. It may be shared between threads: the writes of one Vault take
+/// turns, and the writes of all Vaults open on one path, in this process or
+/// another, take turns on the lock file `.scheda/commit.lock`.
 ///
-/// An open handle runs one thread, named `scheda-indexer`, that keeps the
+/// An open Vault runs one thread, named `scheda-indexer`, that keeps the
 /// Index in `.scheda/index/` at the state of `HEAD`: the maps from the id of
 /// a journal line to its segment, and with the `find` feature the rest of the
-/// Index. The thread ends with [`Vault::close`] or when the handle is
-/// dropped.
+/// Index. The thread ends with [`Vault::close`] or when the Vault is dropped.
 #[derive(Debug)]
-pub struct Vault {
+pub(crate) struct Vault {
     path: PathBuf,
     options: OpenOptions,
     committer: Committer,
@@ -65,7 +66,7 @@ pub struct Vault {
     /// The last failure of a pull at `open` or a push after a write, until a
     /// later pull or push succeeds.
     sync_failure: Mutex<Option<Error>>,
-    /// The ports the handle was opened with, and the embedder it has now.
+    /// The ports the Vault holds now.
     ports: Arc<Installed>,
     /// The thread that keeps the Index at the state of `HEAD`.
     indexer: Indexer,
@@ -109,9 +110,10 @@ impl Vault {
     /// `ports` are installed before the path is looked at, so a refusal of
     /// a port writes nothing: an embedder or a reranker needs the `search`
     /// feature and a projector the `find` feature (`UNIMPLEMENTED`
-    /// otherwise); an async port needs a current Tokio runtime
-    /// (`INVALID_ARGUMENT` without one); and the descriptor of the embedder
-    /// is read once and must satisfy its rules (`INVALID_ARGUMENT`). Then
+    /// otherwise); a reference that holds no implementation, and an async
+    /// port without a current Tokio runtime, are `INVALID_ARGUMENT`; and the
+    /// descriptors of the embedder and the projector are read once and must
+    /// satisfy their rules (`INVALID_ARGUMENT`). Then
     /// `options.mode` decides what the path may be (unset is
     /// `OPEN_MODE_OPEN_OR_CREATE`):
     ///
@@ -164,7 +166,7 @@ impl Vault {
     /// otherwise it takes no write lock. With `options.auto_sync` and a
     /// mirror, `open` of a Vault that exists then pulls (as
     /// [`Vault::pull`]); a failure of that pull does not fail `open`, the
-    /// handle keeps it. Otherwise `open` pulls nothing. A repository
+    /// Vault keeps it. Otherwise `open` pulls nothing. A repository
     /// that uses SHA-256 objects or reftable references, which the bundled
     /// git library cannot read, is `UNIMPLEMENTED` in every mode.
     ///
@@ -173,7 +175,7 @@ impl Vault {
     /// The codes above; `ABORTED` when the write lock is not free within
     /// `write_timeout_ms`; `STORAGE` or `REPLICATION` when the path or git
     /// cannot be read or written.
-    pub fn open(
+    pub(crate) fn open(
         path: impl AsRef<Path>,
         options: OpenOptions,
         ports: Ports,
@@ -196,29 +198,51 @@ impl Vault {
         Ok(vault)
     }
 
-    /// Replaces the embedder of the handle; `None` removes it. A handle that
-    /// had none may start to index, and one whose model is not the Index's
-    /// stops.
+    /// What this Vault holds: its path, the Index path, and its writer
+    /// identity. Reads no Document.
+    pub(crate) fn info(&self) -> VaultInfo {
+        VaultInfo::default()
+            .with_path(self.path.to_string_lossy().into_owned())
+            .with_index_path(self.index().root().to_string_lossy().into_owned())
+            .with_writer(self.writer.clone())
+    }
+
+    /// Replaces the Projector; `None` removes it. A Vault that had none may
+    /// start to index. A failure leaves the Projector the Vault had.
     ///
-    /// The new embedder is installed as at [`Vault::open`]: its descriptor
-    /// is read once and validated, and nothing asks it to describe itself
-    /// again. A failure leaves the embedder the handle had.
+    /// # Errors
+    ///
+    /// `UNIMPLEMENTED` in a build without the `find` feature;
+    /// `INVALID_ARGUMENT` for a reference that cannot be used and for a
+    /// descriptor that breaks its rules; the failure of the Projector when
+    /// it cannot describe itself.
+    pub(crate) fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
+        self.ports.set_projector(projector)?;
+        self.indexer.wake();
+        Ok(())
+    }
+
+    /// Replaces the embedder; `None` removes it. A Vault that had none may
+    /// start to index, and one whose model is not the Index's stops. A
+    /// failure leaves the embedder the Vault had.
+    ///
+    /// # Errors
+    ///
+    /// As [`Vault::set_projector`], with the `search` feature.
+    pub(crate) fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
+        self.ports.set_embedder(embedder)?;
+        self.indexer.wake();
+        Ok(())
+    }
+
+    /// Replaces the reranker; `None` removes it.
     ///
     /// # Errors
     ///
     /// `UNIMPLEMENTED` in a build without the `search` feature;
-    /// `INVALID_ARGUMENT` for an async port outside a Tokio runtime and for
-    /// a descriptor that breaks its rules; the failure of the embedder when
-    /// it cannot describe itself.
-    pub fn set_embedder(
-        &self,
-        embedder: Option<Port<dyn EmbedderSync, DynEmbedderAsync>>,
-    ) -> Result<(), Error> {
-        self.ports.set_embedder(embedder)?;
-        // A handle that had no embedder may index now, and one with another
-        // model may not.
-        self.indexer.wake();
-        Ok(())
+    /// `INVALID_ARGUMENT` for a reference that cannot be used.
+    pub(crate) fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
+        self.ports.set_reranker(reranker)
     }
 
     /// The canonical path of the work tree.
@@ -308,7 +332,6 @@ impl Vault {
 
     /// The last failure of a pull at `open` or of a push after a write
     /// (`auto_sync`), or `None` when the last one succeeded or none ran.
-    #[cfg_attr(not(test), expect(dead_code, reason = "the Vault service shows it"))]
     pub(crate) fn sync_failure(&self) -> Option<Error> {
         self.sync_failure
             .lock()
@@ -316,11 +339,8 @@ impl Vault {
             .clone()
     }
 
-    /// The ports of the handle.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the indexer and the search use it")
-    )]
+    /// The ports the Vault holds.
+    #[cfg_attr(not(test), expect(dead_code, reason = "the searches use it"))]
     pub(crate) fn ports(&self) -> &Installed {
         &self.ports
     }
@@ -330,7 +350,8 @@ impl Vault {
         self.options.encryption.as_option()
     }
 
-    /// The indexer of the handle.
+    /// The indexer of the Vault.
+    #[cfg(any(feature = "find", test))]
     pub(crate) fn indexer(&self) -> &Indexer {
         &self.indexer
     }
@@ -359,15 +380,15 @@ impl Vault {
         Index::new(&self.path)
     }
 
-    /// Ends the handle: the indexer thread stops and is waited for (a round
+    /// Ends the Vault: the indexer thread stops and is waited for (a round
     /// in progress ends at its next step; nothing it left half done is
-    /// believed, because the Index's `commit` is written last). The handle
-    /// holds no lock after that.
+    /// believed, because the Index's `commit` is written last). The Vault
+    /// holds no lock after that. A second call is nothing to do.
     ///
     /// # Errors
     ///
     /// `PANICKED` when the indexer thread died by a panic outside a round.
-    pub fn close(self) -> Result<(), Error> {
+    pub(crate) fn close(&self) -> Result<(), Error> {
         self.indexer
             .stop()
             .context("Vault::close: stop the indexer")
@@ -779,11 +800,12 @@ fn check_mirror(vault: &Path, mirror: &str) -> Result<(), Error> {
 mod tests {
     use std::path::{Path, PathBuf};
 
+    use scheda_api::v1::embedder_ref::EmbedderRef;
     use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
     use super::Vault;
     use crate::git::{git, isolate_test_git_env};
-    use crate::ports::{Port, Ports};
+    use crate::ports::Ports;
 
     /// A Vault on disk, made with plain git, removed when the test ends.
     struct Scratch(PathBuf);
@@ -838,7 +860,7 @@ mod tests {
     fn a_handle_opened_without_ports_has_none() {
         let scratch = Scratch::vault("no-ports");
         let vault = Vault::open(&scratch.0, OpenOptions::default(), Ports::default()).unwrap();
-        assert!(vault.ports().embedder().unwrap().is_none());
+        assert!(vault.ports().embedder().is_none());
         assert!(vault.ports().reranker().is_none());
         assert!(vault.ports().projector().is_none());
         vault.set_embedder(None).unwrap();
@@ -849,7 +871,7 @@ mod tests {
         let scratch = Scratch::vault("bad-ports");
         let missing = scratch.0.join("nowhere");
         let ports = Ports {
-            embedder: Some(Port::Sync(std::sync::Arc::new(NoDescriptor))),
+            embedder: Some(EmbedderRef::from_sync(NoDescriptor)),
             ..Ports::default()
         };
         let error = Vault::open(&missing, OpenOptions::default(), ports).unwrap_err();

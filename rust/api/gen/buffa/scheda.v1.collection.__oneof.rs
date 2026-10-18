@@ -69,8 +69,8 @@ pub mod collection_operation {
     use super::*;
     #[derive(Clone, PartialEq, Debug)]
     pub enum Operation {
-        Create(::buffa::alloc::boxed::Box<super::super::super::Collection>),
-        Update(::buffa::alloc::boxed::Box<super::super::super::Collection>),
+        Create(::buffa::alloc::boxed::Box<super::super::super::CollectionDeclaration>),
+        Update(::buffa::alloc::boxed::Box<super::super::super::CollectionDeclaration>),
         Delete(::buffa::alloc::boxed::Box<super::super::super::CollectionDeletion>),
     }
     impl ::buffa::Oneof for Operation {}
@@ -112,17 +112,20 @@ pub mod collection_result {
     use super::*;
     #[derive(Clone, PartialEq, Debug)]
     pub enum Result {
-        Collection(::buffa::alloc::boxed::Box<super::super::super::Collection>),
+        Collection(
+            ::buffa::alloc::boxed::Box<super::super::super::CollectionDeclaration>,
+        ),
         Deleted(::buffa::alloc::boxed::Box<::buffa_types::google::protobuf::Empty>),
     }
     impl ::buffa::Oneof for Result {}
-    impl From<super::super::super::Collection> for Result {
-        fn from(v: super::super::super::Collection) -> Self {
+    impl From<super::super::super::CollectionDeclaration> for Result {
+        fn from(v: super::super::super::CollectionDeclaration) -> Self {
             Self::Collection(::buffa::alloc::boxed::Box::new(v))
         }
     }
-    impl From<super::super::super::Collection> for ::core::option::Option<Result> {
-        fn from(v: super::super::super::Collection) -> Self {
+    impl From<super::super::super::CollectionDeclaration>
+    for ::core::option::Option<Result> {
+        fn from(v: super::super::super::CollectionDeclaration) -> Self {
             Self::Some(Result::from(v))
         }
     }

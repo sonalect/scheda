@@ -1,4 +1,4 @@
-//! Collection calls of the `Vault` handle: list, get, create, update,
+//! Collection calls of an open Vault: list, get, create, update,
 //! delete, and several of them as one batch.
 //!
 //! A write is checked first with what does not depend on the state of the
@@ -17,8 +17,8 @@ use protocontract::BoxIter;
 use scheda_api::v1::collection_operation::Operation;
 use scheda_api::v1::collection_result::Result as ResultArm;
 use scheda_api::v1::{
-    Collection, CollectionBatchResult, CollectionDeletion, CollectionKey, CollectionOperation,
-    CollectionResult, Collections, VaultErrorCode,
+    CollectionBatchResult, CollectionDeclaration, CollectionDeletion, CollectionKey,
+    CollectionOperation, CollectionResult, Collections, VaultErrorCode,
 };
 
 use crate::collection::{self, Declaration, Declarations, Kind};
@@ -32,14 +32,14 @@ use crate::{isolated, journal};
 
 /// One write of a collection, as the single calls and the batch carry it.
 enum Write {
-    Create(Collection),
-    Update(Collection),
+    Create(CollectionDeclaration),
+    Update(CollectionDeclaration),
     Delete(CollectionDeletion),
 }
 
 /// What a write returns.
 enum Outcome {
-    Collection(Collection),
+    Collection(CollectionDeclaration),
     Deleted,
 }
 
@@ -73,7 +73,7 @@ impl Write {
     }
 }
 
-impl crate::Vault {
+impl crate::vault::Vault {
     /// Every declared collection, isolated ones included, in name order.
     ///
     /// Each one is as stored, with its defaults filled in. The declarations
@@ -84,7 +84,7 @@ impl crate::Vault {
     ///
     /// `INVALID_ARGUMENT` when a collection file is not valid; `STORAGE` or
     /// `REPLICATION` when git cannot be read.
-    pub fn list_collections(&self, empty: Empty) -> Result<Collections, Error> {
+    pub(crate) fn list_collections(&self, empty: Empty) -> Result<Collections, Error> {
         let _ = empty;
         let declarations = self.declarations_now().context("list the collections")?;
         Ok(Collections {
@@ -102,7 +102,10 @@ impl crate::Vault {
     ///
     /// `INVALID_ARGUMENT` for a key that breaks the rules of the contract;
     /// `NOT_FOUND` for a collection that is not declared.
-    pub fn get_collection(&self, collection_key: CollectionKey) -> Result<Collection, Error> {
+    pub(crate) fn get_collection(
+        &self,
+        collection_key: CollectionKey,
+    ) -> Result<CollectionDeclaration, Error> {
         stored::validate(&collection_key).context("get a collection")?;
         let name = collection_key.name.as_deref().unwrap_or("");
         let declarations = self.declarations_now().context("get a collection")?;
@@ -126,7 +129,10 @@ impl crate::Vault {
     /// `ABORTED` (retryable) when the write lock is not free within
     /// `write_timeout_ms`, or `HEAD` moved under the write; nothing is
     /// written then. `STORAGE` or `REPLICATION` when a file or git fails.
-    pub fn create_collection(&self, collection: Collection) -> Result<Collection, Error> {
+    pub(crate) fn create_collection(
+        &self,
+        collection: CollectionDeclaration,
+    ) -> Result<CollectionDeclaration, Error> {
         self.write_one(Write::Create(collection))
     }
 
@@ -144,8 +150,11 @@ impl crate::Vault {
     /// `INVALID_ARGUMENT`; `NOT_FOUND` for a name that is not declared;
     /// `FAILED_PRECONDITION` for a change of the kind, `isolated`, or
     /// `encrypted` of a collection that holds Documents; `ABORTED` as for
-    /// [`Vault::create_collection`](crate::Vault::create_collection).
-    pub fn update_collection(&self, collection: Collection) -> Result<Collection, Error> {
+    /// [`create_collection`](Self::create_collection).
+    pub(crate) fn update_collection(
+        &self,
+        collection: CollectionDeclaration,
+    ) -> Result<CollectionDeclaration, Error> {
         self.write_one(Write::Update(collection))
     }
 
@@ -159,8 +168,8 @@ impl crate::Vault {
     /// Documents; `NOT_FOUND` for a name that is not declared, unless
     /// `ignore_missing` is set, which makes it a success that stores
     /// nothing; `ABORTED` as for
-    /// [`Vault::create_collection`](crate::Vault::create_collection).
-    pub fn delete_collection(
+    /// [`create_collection`](Self::create_collection).
+    pub(crate) fn delete_collection(
         &self,
         collection_deletion: CollectionDeletion,
     ) -> Result<Empty, Error> {
@@ -179,7 +188,7 @@ impl crate::Vault {
     /// # Errors
     ///
     /// The errors of the single calls, and the `Err` of an item.
-    pub fn batch_collections(
+    pub(crate) fn batch_collections(
         &self,
         collection_operations: BoxIter<'static, Result<CollectionOperation, Error>>,
     ) -> Result<CollectionBatchResult, Error> {
@@ -207,11 +216,11 @@ impl crate::Vault {
     }
 
     /// One write, as the single calls make it.
-    fn write_one(&self, write: Write) -> Result<Collection, Error> {
+    fn write_one(&self, write: Write) -> Result<CollectionDeclaration, Error> {
         let mut outcomes = self.write(&[write], false)?;
         match outcomes.pop() {
             Some(Outcome::Collection(collection)) => Ok(collection),
-            Some(Outcome::Deleted) => Ok(Collection::default()),
+            Some(Outcome::Deleted) => Ok(CollectionDeclaration::default()),
             None => Err(Fault::new(VaultErrorCode::Storage, "the write returned nothing").into()),
         }
     }

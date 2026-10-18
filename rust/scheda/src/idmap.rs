@@ -512,13 +512,13 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::{Duration, Instant};
 
-    use scheda_api::v1::{Collection, Document, DocumentCreation, OpenOptions, VaultErrorCode};
+    use scheda_api::v1::{CollectionDeclaration, DocumentCreation, OpenOptions, VaultErrorCode};
 
     use super::{IdMap, check_journal_id_maps, in_collection};
-    use crate::Vault;
     use crate::index::{Index, State};
     use crate::ports::indexing_ports;
     use crate::repo::{Repo, Repos, fixture};
+    use crate::vault::Vault;
 
     struct Scratch(PathBuf);
 
@@ -540,23 +540,21 @@ mod tests {
                 indexing_ports(),
             )
             .unwrap();
-            let collection: Collection = serde_json::from_value(serde_json::json!({
+            let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
                 "name": "log", "schema": {"journal": {}}
             }))
             .unwrap();
             vault.create_collection(collection).unwrap();
             vault
-                .create_document(DocumentCreation {
-                    document: Document {
-                        collection: Some("log".to_owned()),
+                .create(
+                    "log",
+                    DocumentCreation {
                         id: Some("old".to_owned()),
                         raw: Some(b"{}".to_vec()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
             let path = self.0.canonicalize().unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
@@ -698,7 +696,7 @@ mod tests {
         }
         std::fs::create_dir_all(&ghost).unwrap();
         std::fs::write(ghost.join("ids"), "x").unwrap();
-        let collection: Collection = serde_json::from_value(serde_json::json!({
+        let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
             "name": "log", "schema": {"journal": {}}
         }))
         .unwrap();

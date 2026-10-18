@@ -2,11 +2,9 @@
 // source: scheda/v1/document.proto
 
 /// A Document: bytes in a collection, under an `id`. Scheda does not know
-/// what the bytes hold: text, an image, protobuf wire, anything.
-///
-/// In a write request: `collection`, `id`, and `raw`; `revision` must be
-/// unset (`INVALID_ARGUMENT`), since Scheda gives it. In a reply: all four,
-/// `raw` only when the read asked for it.
+/// what the bytes hold: text, an image, protobuf wire, anything. Output
+/// only: what a read, a write, or a search gives back; a write takes the
+/// `id` and the bytes in its own request.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentView<'a> {
     /// The collection name.
@@ -16,13 +14,10 @@ pub struct DocumentView<'a> {
     /// The id inside the collection. In a `standard` collection, a path of
     /// slugs separated by `/`, which is also where its file lies under the
     /// collection; in a `singleton`, the declared id; in a journal, one slug.
-    /// The library checks it.
     ///
     /// Field 2: `id`
     pub id: ::core::option::Option<&'a str>,
-    /// The bytes, as given. Any bytes in a `standard` or `singleton`
-    /// collection. In a journal, no `\n` and no `\r`: a journal line is
-    /// `{id}: {raw}\n`.
+    /// The bytes, as given; set only when the read asked for them.
     ///
     /// Field 3: `raw`
     pub raw: ::core::option::Option<&'a [u8]>,
@@ -298,16 +293,13 @@ impl DocumentOwnedView {
     /// The id inside the collection. In a `standard` collection, a path of
     /// slugs separated by `/`, which is also where its file lies under the
     /// collection; in a `singleton`, the declared id; in a journal, one slug.
-    /// The library checks it.
     ///
     /// Field 2: `id`
     #[must_use]
     pub fn id(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().id
     }
-    /// The bytes, as given. Any bytes in a `standard` or `singleton`
-    /// collection. In a journal, no `\n` and no `\r`: a journal line is
-    /// `{id}: {raw}\n`.
+    /// The bytes, as given; set only when the read asked for them.
     ///
     /// Field 3: `raw`
     #[must_use]
@@ -356,7 +348,7 @@ impl ::serde::Serialize for DocumentOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The name of one Document.
+/// The name of one Document in a Vault, for a call that spans collections.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentKeyView<'a> {
     /// Field 1: `collection`
@@ -626,14 +618,262 @@ impl ::serde::Serialize for DocumentKeyOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The request of `GetDocuments`: which Documents of one collection.
+/// The name of one Document in its collection, for a call of `Collection`.
+#[derive(Clone, Debug, Default)]
+pub struct DocumentIdView<'a> {
+    /// As `Document.id`. The library checks it.
+    ///
+    /// Field 1: `id`
+    pub id: ::core::option::Option<&'a str>,
+    pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
+}
+impl<'a> ::buffa::MessageView<'a> for DocumentIdView<'a> {
+    type Owned = super::super::DocumentId;
+    fn decode_view(buf: &'a [u8]) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        let __limit = ::core::cell::Cell::new(::buffa::DEFAULT_UNKNOWN_FIELD_LIMIT);
+        let __elem = ::core::cell::Cell::new(::buffa::DEFAULT_ELEMENT_MEMORY_LIMIT);
+        <Self as ::buffa::MessageView>::decode_view_ctx(
+            buf,
+            ::buffa::DecodeContext::new(::buffa::RECURSION_LIMIT, &__limit)
+                .with_element_memory(&__elem),
+        )
+    }
+    fn decode_view_with_ctx(
+        buf: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        <Self as ::buffa::MessageView>::decode_view_ctx(buf, ctx)
+    }
+    #[inline]
+    fn merge_view_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        cur: &'a [u8],
+        before_tag: &'a [u8],
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<&'a [u8], ::buffa::DecodeError> {
+        let _ = ctx;
+        #[allow(unused_variables)]
+        let view = self;
+        let mut cur = cur;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.id = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            _ => {
+                ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
+                let span_len = before_tag.len() - cur.len();
+                view.__buffa_unknown_fields.push_record(before_tag, span_len, ctx)?;
+            }
+        }
+        ::core::result::Result::Ok(cur)
+    }
+    fn to_owned_message(
+        &self,
+    ) -> ::core::result::Result<super::super::DocumentId, ::buffa::DecodeError> {
+        self.to_owned_from_source(None)
+    }
+    #[allow(clippy::useless_conversion, clippy::needless_update)]
+    fn to_owned_from_source(
+        &self,
+        __buffa_src: ::core::option::Option<&::buffa::bytes::Bytes>,
+    ) -> ::core::result::Result<super::super::DocumentId, ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::alloc::string::ToString as _;
+        let _ = __buffa_src;
+        ::core::result::Result::Ok(super::super::DocumentId {
+            id: self.id.map(|s| s.to_string()),
+            __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
+            ..::core::default::Default::default()
+        })
+    }
+}
+impl<'a> ::buffa::ViewEncode<'a> for DocumentIdView<'a> {
+    #[allow(clippy::needless_borrow, clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    #[allow(clippy::needless_borrow)]
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+}
+/// Serializes this view as protobuf JSON.
+///
+/// Implicit-presence fields with default values are omitted, `required`
+/// fields are always emitted, explicit-presence (`optional`) fields are
+/// emitted only when set, bytes fields are base64-encoded, and enum
+/// values are their proto name strings.
+///
+/// This impl uses `serialize_map(None)` because the number of emitted
+/// fields depends on default-omission rules; serializers that require
+/// known map lengths (e.g. `bincode`) will return a runtime error.
+/// Use the owned message type for those formats.
+impl<'__a> ::serde::Serialize for DocumentIdView<'__a> {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        use ::serde::ser::SerializeMap as _;
+        let mut __map = __s.serialize_map(::core::option::Option::None)?;
+        if let ::core::option::Option::Some(__v) = self.id {
+            __map.serialize_entry("id", __v)?;
+        }
+        __map.end()
+    }
+}
+impl<'a> ::buffa::MessageName for DocumentIdView<'a> {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "DocumentId";
+    const FULL_NAME: &'static str = "scheda.v1.DocumentId";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.DocumentId";
+}
+::buffa::impl_default_view_instance!(DocumentIdView);
+::buffa::impl_view_reborrow!(DocumentIdView);
+/** Self-contained, `'static` owned view of a `DocumentId` message.
+
+ Wraps [`::buffa::OwnedView`]`<`[`DocumentIdView`]`<'static>>`: the decoded view and the [`::buffa::bytes::Bytes`] buffer it borrows from travel together, so the handle is `'static` and `Send + Sync` — suitable for async handlers, spawned tasks, and anywhere a `'static` bound is required.
+
+ Field accessors return borrows tied to `&self`. Use [`Self::view`] to get the full [`DocumentIdView`] when you need struct patterns, iteration helpers, or to pass the view to lifetime-parameterised code.*/
+#[derive(Clone, Debug)]
+pub struct DocumentIdOwnedView(::buffa::OwnedView<DocumentIdView<'static>>);
+impl DocumentIdOwnedView {
+    /// Decode an owned view from a [`::buffa::bytes::Bytes`] buffer.
+    ///
+    /// The view borrows directly from the buffer's data; the buffer is
+    /// retained inside the returned handle.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer contains invalid
+    /// protobuf data.
+    pub fn decode(
+        bytes: ::buffa::bytes::Bytes,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            DocumentIdOwnedView(::buffa::OwnedView::decode(bytes)?),
+        )
+    }
+    /// Decode with custom [`::buffa::DecodeOptions`] (recursion limit,
+    /// max message size).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError`] if the buffer is invalid or
+    /// exceeds the configured limits.
+    pub fn decode_with_options(
+        bytes: ::buffa::bytes::Bytes,
+        opts: &::buffa::DecodeOptions,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            DocumentIdOwnedView(::buffa::OwnedView::decode_with_options(bytes, opts)?),
+        )
+    }
+    /// Build from an owned message via an encode → decode round-trip.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`::buffa::DecodeError::MessageTooLarge`] if the
+    /// message's encoded size exceeds the 2 GiB protobuf limit, or
+    /// another [`::buffa::DecodeError`] if the re-encoded bytes are
+    /// somehow invalid (should not happen for well-formed messages).
+    pub fn from_owned(
+        msg: &super::super::DocumentId,
+    ) -> ::core::result::Result<Self, ::buffa::DecodeError> {
+        ::core::result::Result::Ok(
+            DocumentIdOwnedView(::buffa::OwnedView::from_owned(msg)?),
+        )
+    }
+    /// Borrow the full [`DocumentIdView`] with its lifetime tied to `&self`.
+    #[must_use]
+    pub fn view(&self) -> &DocumentIdView<'_> {
+        self.0.reborrow()
+    }
+    /// Convert to the owned message type.
+    ///
+    /// Infallible: this type's constructors wire-decode their
+    /// buffer, and a view produced by wire decoding always
+    /// converts. Delegates to [`::buffa::OwnedView::to_owned_message`],
+    /// whose contract also governs handles converted from a raw
+    /// [`::buffa::OwnedView`].
+    #[must_use]
+    pub fn to_owned_message(&self) -> super::super::DocumentId {
+        self.0.to_owned_message()
+    }
+    /// The underlying bytes buffer.
+    #[must_use]
+    pub fn bytes(&self) -> &::buffa::bytes::Bytes {
+        self.0.bytes()
+    }
+    /// Consume the handle, returning the underlying bytes buffer.
+    #[must_use]
+    pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
+        self.0.into_bytes()
+    }
+    /// As `Document.id`. The library checks it.
+    ///
+    /// Field 1: `id`
+    #[must_use]
+    pub fn id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().id
+    }
+}
+impl ::core::convert::From<::buffa::OwnedView<DocumentIdView<'static>>>
+for DocumentIdOwnedView {
+    fn from(inner: ::buffa::OwnedView<DocumentIdView<'static>>) -> Self {
+        DocumentIdOwnedView(inner)
+    }
+}
+impl ::core::convert::From<DocumentIdOwnedView>
+for ::buffa::OwnedView<DocumentIdView<'static>> {
+    fn from(wrapper: DocumentIdOwnedView) -> Self {
+        wrapper.0
+    }
+}
+impl ::core::convert::AsRef<::buffa::OwnedView<DocumentIdView<'static>>>
+for DocumentIdOwnedView {
+    fn as_ref(&self) -> &::buffa::OwnedView<DocumentIdView<'static>> {
+        &self.0
+    }
+}
+impl ::buffa::HasMessageView for super::super::DocumentId {
+    type View<'a> = DocumentIdView<'a>;
+    type ViewHandle = DocumentIdOwnedView;
+}
+impl ::serde::Serialize for DocumentIdOwnedView {
+    fn serialize<__S: ::serde::Serializer>(
+        &self,
+        __s: __S,
+    ) -> ::core::result::Result<__S::Ok, __S::Error> {
+        ::serde::Serialize::serialize(&self.0, __s)
+    }
+}
+/// The request of `Collection.GetMany`: which Documents.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentSelectionView<'a> {
-    /// Field 1: `collection`
-    pub collection: ::core::option::Option<&'a str>,
     /// Fill `Document.raw`. Unset: keys and revisions only.
     ///
-    /// Field 2: `include_raw`
+    /// Field 1: `include_raw`
     pub include_raw: ::core::option::Option<bool>,
     pub selection: ::core::option::Option<
         super::super::__buffa::view::oneof::document_selection::Selection<'a>,
@@ -673,18 +913,11 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSelectionView<'a> {
             1u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                view.collection = Some(::buffa::types::borrow_str(&mut cur)?);
-            }
-            2u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.include_raw = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            3u32 => {
+            2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -715,7 +948,7 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSelectionView<'a> {
                     );
                 }
             }
-            4u32 => {
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -768,7 +1001,6 @@ impl<'a> ::buffa::MessageView<'a> for DocumentSelectionView<'a> {
         use ::buffa::alloc::string::ToString as _;
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::DocumentSelection {
-            collection: self.collection.map(|s| s.to_string()),
             include_raw: self.include_raw,
             selection: match self.selection.as_ref() {
                 ::core::option::Option::Some(v) => {
@@ -808,9 +1040,6 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSelectionView<'a> {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if let Some(ref v) = self.collection {
-            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
-        }
         if self.include_raw.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
@@ -849,11 +1078,8 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSelectionView<'a> {
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if let Some(ref v) = self.collection {
-            ::buffa::types::put_string_field(1u32, v, buf);
-        }
         if let Some(v) = self.include_raw {
-            ::buffa::types::put_bool_field(2u32, v, buf);
+            ::buffa::types::put_bool_field(1u32, v, buf);
         }
         if let ::core::option::Option::Some(ref v) = self.selection {
             match v {
@@ -861,7 +1087,7 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSelectionView<'a> {
                     x,
                 ) => {
                     ::buffa::types::put_len_delimited_header(
-                        3u32,
+                        2u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -871,7 +1097,7 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentSelectionView<'a> {
                     x,
                 ) => {
                     ::buffa::types::put_len_delimited_header(
-                        4u32,
+                        3u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -900,9 +1126,6 @@ impl<'__a> ::serde::Serialize for DocumentSelectionView<'__a> {
     ) -> ::core::result::Result<__S::Ok, __S::Error> {
         use ::serde::ser::SerializeMap as _;
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
-        if let ::core::option::Option::Some(__v) = self.collection {
-            __map.serialize_entry("collection", __v)?;
-        }
         if let ::core::option::Option::Some(__v) = self.include_raw {
             __map.serialize_entry("includeRaw", &__v)?;
         }
@@ -1015,14 +1238,9 @@ impl DocumentSelectionOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Field 1: `collection`
-    #[must_use]
-    pub fn collection(&self) -> ::core::option::Option<&'_ str> {
-        self.0.reborrow().collection
-    }
     /// Fill `Document.raw`. Unset: keys and revisions only.
     ///
-    /// Field 2: `include_raw`
+    /// Field 1: `include_raw`
     #[must_use]
     pub fn include_raw(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().include_raw
@@ -1590,7 +1808,7 @@ impl ::serde::Serialize for ListingOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// One past version of a Document, as `GetDocumentHistory` streams it.
+/// One past version of a Document, as `Collection.History` streams it.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentHistoryEntryView<'a> {
     /// The revision this version had.
@@ -1603,7 +1821,7 @@ pub struct DocumentHistoryEntryView<'a> {
     pub time: ::buffa::MessageFieldView<
         ::buffa_types::google::protobuf::__buffa::view::TimestampView<'a>,
     >,
-    /// Who wrote it: `OpenOptions.author` of the handle that wrote it.
+    /// Who wrote it: `OpenOptions.author` of the Vault that wrote it.
     ///
     /// Field 3: `author`
     pub author: ::buffa::MessageFieldView<super::super::__buffa::view::AuthorView<'a>>,
@@ -1613,7 +1831,7 @@ pub struct DocumentHistoryEntryView<'a> {
     pub note: ::core::option::Option<&'a str>,
     /// The bytes of this version; empty for the version that deleted the
     /// Document. For an encrypted collection, the bytes as given, not the
-    /// armor; reading them takes the handle's secret.
+    /// armor; reading them takes the Vault's secret.
     ///
     /// Field 5: `raw`
     pub raw: ::core::option::Option<&'a [u8]>,
@@ -1986,7 +2204,7 @@ impl DocumentHistoryEntryOwnedView {
     > {
         &self.0.reborrow().time
     }
-    /// Who wrote it: `OpenOptions.author` of the handle that wrote it.
+    /// Who wrote it: `OpenOptions.author` of the Vault that wrote it.
     ///
     /// Field 3: `author`
     #[must_use]
@@ -2004,7 +2222,7 @@ impl DocumentHistoryEntryOwnedView {
     }
     /// The bytes of this version; empty for the version that deleted the
     /// Document. For an encrypted collection, the bytes as given, not the
-    /// armor; reading them takes the handle's secret.
+    /// armor; reading them takes the Vault's secret.
     ///
     /// Field 5: `raw`
     #[must_use]
@@ -2042,24 +2260,27 @@ impl ::serde::Serialize for DocumentHistoryEntryOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The request of `CreateDocument`.
+/// The request of `Collection.Create`.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentCreationView<'a> {
-    /// The Document to create, without `revision`.
+    /// As `Document.id`. The library checks it.
     ///
-    /// Field 1: `document`
-    pub document: ::buffa::MessageFieldView<
-        super::super::__buffa::view::DocumentView<'a>,
-    >,
+    /// Field 1: `id`
+    pub id: ::core::option::Option<&'a str>,
+    /// The bytes. Any bytes in a `standard` or `singleton` collection. In a
+    /// journal, no `\n` and no `\r`: a journal line is `{id}: {raw}\n`.
+    ///
+    /// Field 2: `raw`
+    pub raw: ::core::option::Option<&'a [u8]>,
     /// When the Document is already stored, return that one and write
     /// nothing, instead of `ALREADY_EXISTS`. For a caller that may send the
     /// same write twice.
     ///
-    /// Field 2: `keep_existing`
+    /// Field 3: `keep_existing`
     pub keep_existing: ::core::option::Option<bool>,
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 3: `note`
+    /// Field 4: `note`
     pub note: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -2098,30 +2319,23 @@ impl<'a> ::buffa::MessageView<'a> for DocumentCreationView<'a> {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                let __sub_ctx = ctx.descend()?;
-                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.document.as_mut() {
-                    Some(existing) => {
-                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
-                    }
-                    None => {
-                        view.document = ::buffa::MessageFieldView::set(
-                            <super::super::__buffa::view::DocumentView as ::buffa::MessageView>::decode_view_ctx(
-                                sub,
-                                __sub_ctx,
-                            )?,
-                        );
-                    }
-                }
+                view.id = Some(::buffa::types::borrow_str(&mut cur)?);
             }
             2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.raw = Some(::buffa::types::borrow_bytes(&mut cur)?);
+            }
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
                 view.keep_existing = Some(::buffa::types::decode_bool(&mut cur)?);
             }
-            3u32 => {
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -2150,15 +2364,8 @@ impl<'a> ::buffa::MessageView<'a> for DocumentCreationView<'a> {
         use ::buffa::alloc::string::ToString as _;
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::DocumentCreation {
-            document: match self.document.as_option() {
-                Some(v) => {
-                    ::buffa::MessageField::<
-                        super::super::Document,
-                        ::buffa::Inline<super::super::Document>,
-                    >::some(v.to_owned_from_source(__buffa_src)?)
-                }
-                None => ::buffa::MessageField::none(),
-            },
+            id: self.id.map(|s| s.to_string()),
+            raw: self.raw.map(|b| (b).to_vec()),
             keep_existing: self.keep_existing,
             note: self.note.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
@@ -2168,17 +2375,15 @@ impl<'a> ::buffa::MessageView<'a> for DocumentCreationView<'a> {
 }
 impl<'a> ::buffa::ViewEncode<'a> for DocumentCreationView<'a> {
     #[allow(clippy::needless_borrow, clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.raw {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if self.keep_existing.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
@@ -2192,24 +2397,22 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentCreationView<'a> {
     #[allow(clippy::needless_borrow)]
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.raw {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         if let Some(v) = self.keep_existing {
-            ::buffa::types::put_bool_field(2u32, v, buf);
+            ::buffa::types::put_bool_field(3u32, v, buf);
         }
         if let Some(ref v) = self.note {
-            ::buffa::types::put_string_field(3u32, v, buf);
+            ::buffa::types::put_string_field(4u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -2232,10 +2435,11 @@ impl<'__a> ::serde::Serialize for DocumentCreationView<'__a> {
     ) -> ::core::result::Result<__S::Ok, __S::Error> {
         use ::serde::ser::SerializeMap as _;
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
-        {
-            if let ::core::option::Option::Some(__v) = self.document.as_option() {
-                __map.serialize_entry("document", __v)?;
-            }
+        if let ::core::option::Option::Some(__v) = self.id {
+            __map.serialize_entry("id", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.raw {
+            __map.serialize_entry("raw", &::buffa::json_helpers::BytesJson(__v))?;
         }
         if let ::core::option::Option::Some(__v) = self.keep_existing {
             __map.serialize_entry("keepExisting", &__v)?;
@@ -2336,27 +2540,33 @@ impl DocumentCreationOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// The Document to create, without `revision`.
+    /// As `Document.id`. The library checks it.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
     #[must_use]
-    pub fn document(
-        &self,
-    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::DocumentView<'_>> {
-        &self.0.reborrow().document
+    pub fn id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().id
+    }
+    /// The bytes. Any bytes in a `standard` or `singleton` collection. In a
+    /// journal, no `\n` and no `\r`: a journal line is `{id}: {raw}\n`.
+    ///
+    /// Field 2: `raw`
+    #[must_use]
+    pub fn raw(&self) -> ::core::option::Option<&'_ [u8]> {
+        self.0.reborrow().raw
     }
     /// When the Document is already stored, return that one and write
     /// nothing, instead of `ALREADY_EXISTS`. For a caller that may send the
     /// same write twice.
     ///
-    /// Field 2: `keep_existing`
+    /// Field 3: `keep_existing`
     #[must_use]
     pub fn keep_existing(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().keep_existing
     }
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 3: `note`
+    /// Field 4: `note`
     #[must_use]
     pub fn note(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().note
@@ -2392,24 +2602,26 @@ impl ::serde::Serialize for DocumentCreationOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The request of `UpdateDocument`.
+/// The request of `Collection.Update`.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentUpdateView<'a> {
-    /// The new bytes of an existing Document, without `revision`.
+    /// The Document to replace.
     ///
-    /// Field 1: `document`
-    pub document: ::buffa::MessageFieldView<
-        super::super::__buffa::view::DocumentView<'a>,
-    >,
+    /// Field 1: `id`
+    pub id: ::core::option::Option<&'a str>,
+    /// The new bytes.
+    ///
+    /// Field 2: `raw`
+    pub raw: ::core::option::Option<&'a [u8]>,
     /// Set: replace only if the stored revision is this one; otherwise
     /// `FAILED_PRECONDITION`. For a read, a change, and a write that must not
     /// overwrite a write in between.
     ///
-    /// Field 2: `revision`
+    /// Field 3: `revision`
     pub revision: ::core::option::Option<&'a str>,
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 3: `note`
+    /// Field 4: `note`
     pub note: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -2448,30 +2660,23 @@ impl<'a> ::buffa::MessageView<'a> for DocumentUpdateView<'a> {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                let __sub_ctx = ctx.descend()?;
-                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.document.as_mut() {
-                    Some(existing) => {
-                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
-                    }
-                    None => {
-                        view.document = ::buffa::MessageFieldView::set(
-                            <super::super::__buffa::view::DocumentView as ::buffa::MessageView>::decode_view_ctx(
-                                sub,
-                                __sub_ctx,
-                            )?,
-                        );
-                    }
-                }
+                view.id = Some(::buffa::types::borrow_str(&mut cur)?);
             }
             2u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                view.revision = Some(::buffa::types::borrow_str(&mut cur)?);
+                view.raw = Some(::buffa::types::borrow_bytes(&mut cur)?);
             }
             3u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.revision = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
+            4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -2500,15 +2705,8 @@ impl<'a> ::buffa::MessageView<'a> for DocumentUpdateView<'a> {
         use ::buffa::alloc::string::ToString as _;
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::DocumentUpdate {
-            document: match self.document.as_option() {
-                Some(v) => {
-                    ::buffa::MessageField::<
-                        super::super::Document,
-                        ::buffa::Inline<super::super::Document>,
-                    >::some(v.to_owned_from_source(__buffa_src)?)
-                }
-                None => ::buffa::MessageField::none(),
-            },
+            id: self.id.map(|s| s.to_string()),
+            raw: self.raw.map(|b| (b).to_vec()),
             revision: self.revision.map(|s| s.to_string()),
             note: self.note.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
@@ -2518,17 +2716,15 @@ impl<'a> ::buffa::MessageView<'a> for DocumentUpdateView<'a> {
 }
 impl<'a> ::buffa::ViewEncode<'a> for DocumentUpdateView<'a> {
     #[allow(clippy::needless_borrow, clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.raw {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if let Some(ref v) = self.revision {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
@@ -2542,24 +2738,22 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentUpdateView<'a> {
     #[allow(clippy::needless_borrow)]
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.raw {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         if let Some(ref v) = self.revision {
-            ::buffa::types::put_string_field(2u32, v, buf);
+            ::buffa::types::put_string_field(3u32, v, buf);
         }
         if let Some(ref v) = self.note {
-            ::buffa::types::put_string_field(3u32, v, buf);
+            ::buffa::types::put_string_field(4u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -2582,10 +2776,11 @@ impl<'__a> ::serde::Serialize for DocumentUpdateView<'__a> {
     ) -> ::core::result::Result<__S::Ok, __S::Error> {
         use ::serde::ser::SerializeMap as _;
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
-        {
-            if let ::core::option::Option::Some(__v) = self.document.as_option() {
-                __map.serialize_entry("document", __v)?;
-            }
+        if let ::core::option::Option::Some(__v) = self.id {
+            __map.serialize_entry("id", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.raw {
+            __map.serialize_entry("raw", &::buffa::json_helpers::BytesJson(__v))?;
         }
         if let ::core::option::Option::Some(__v) = self.revision {
             __map.serialize_entry("revision", __v)?;
@@ -2686,27 +2881,32 @@ impl DocumentUpdateOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// The new bytes of an existing Document, without `revision`.
+    /// The Document to replace.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
     #[must_use]
-    pub fn document(
-        &self,
-    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::DocumentView<'_>> {
-        &self.0.reborrow().document
+    pub fn id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().id
+    }
+    /// The new bytes.
+    ///
+    /// Field 2: `raw`
+    #[must_use]
+    pub fn raw(&self) -> ::core::option::Option<&'_ [u8]> {
+        self.0.reborrow().raw
     }
     /// Set: replace only if the stored revision is this one; otherwise
     /// `FAILED_PRECONDITION`. For a read, a change, and a write that must not
     /// overwrite a write in between.
     ///
-    /// Field 2: `revision`
+    /// Field 3: `revision`
     #[must_use]
     pub fn revision(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().revision
     }
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 3: `note`
+    /// Field 4: `note`
     #[must_use]
     pub fn note(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().note
@@ -2742,18 +2942,20 @@ impl ::serde::Serialize for DocumentUpdateOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The request of `UpsertDocument`.
+/// The request of `Collection.Upsert`.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentUpsertView<'a> {
-    /// The Document to create or replace, without `revision`.
+    /// The Document to create or replace.
     ///
-    /// Field 1: `document`
-    pub document: ::buffa::MessageFieldView<
-        super::super::__buffa::view::DocumentView<'a>,
-    >,
+    /// Field 1: `id`
+    pub id: ::core::option::Option<&'a str>,
+    /// The bytes.
+    ///
+    /// Field 2: `raw`
+    pub raw: ::core::option::Option<&'a [u8]>,
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 2: `note`
+    /// Field 3: `note`
     pub note: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
@@ -2792,23 +2994,16 @@ impl<'a> ::buffa::MessageView<'a> for DocumentUpsertView<'a> {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                let __sub_ctx = ctx.descend()?;
-                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.document.as_mut() {
-                    Some(existing) => {
-                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
-                    }
-                    None => {
-                        view.document = ::buffa::MessageFieldView::set(
-                            <super::super::__buffa::view::DocumentView as ::buffa::MessageView>::decode_view_ctx(
-                                sub,
-                                __sub_ctx,
-                            )?,
-                        );
-                    }
-                }
+                view.id = Some(::buffa::types::borrow_str(&mut cur)?);
             }
             2u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.raw = Some(::buffa::types::borrow_bytes(&mut cur)?);
+            }
+            3u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -2837,15 +3032,8 @@ impl<'a> ::buffa::MessageView<'a> for DocumentUpsertView<'a> {
         use ::buffa::alloc::string::ToString as _;
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::DocumentUpsert {
-            document: match self.document.as_option() {
-                Some(v) => {
-                    ::buffa::MessageField::<
-                        super::super::Document,
-                        ::buffa::Inline<super::super::Document>,
-                    >::some(v.to_owned_from_source(__buffa_src)?)
-                }
-                None => ::buffa::MessageField::none(),
-            },
+            id: self.id.map(|s| s.to_string()),
+            raw: self.raw.map(|b| (b).to_vec()),
             note: self.note.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
@@ -2854,17 +3042,15 @@ impl<'a> ::buffa::MessageView<'a> for DocumentUpsertView<'a> {
 }
 impl<'a> ::buffa::ViewEncode<'a> for DocumentUpsertView<'a> {
     #[allow(clippy::needless_borrow, clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.raw {
+            size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
         if let Some(ref v) = self.note {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
@@ -2875,21 +3061,19 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentUpsertView<'a> {
     #[allow(clippy::needless_borrow)]
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
+        }
+        if let Some(ref v) = self.raw {
+            ::buffa::types::put_shared_bytes_field(2u32, v, buf);
         }
         if let Some(ref v) = self.note {
-            ::buffa::types::put_string_field(2u32, v, buf);
+            ::buffa::types::put_string_field(3u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -2912,10 +3096,11 @@ impl<'__a> ::serde::Serialize for DocumentUpsertView<'__a> {
     ) -> ::core::result::Result<__S::Ok, __S::Error> {
         use ::serde::ser::SerializeMap as _;
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
-        {
-            if let ::core::option::Option::Some(__v) = self.document.as_option() {
-                __map.serialize_entry("document", __v)?;
-            }
+        if let ::core::option::Option::Some(__v) = self.id {
+            __map.serialize_entry("id", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.raw {
+            __map.serialize_entry("raw", &::buffa::json_helpers::BytesJson(__v))?;
         }
         if let ::core::option::Option::Some(__v) = self.note {
             __map.serialize_entry("note", __v)?;
@@ -3013,18 +3198,23 @@ impl DocumentUpsertOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// The Document to create or replace, without `revision`.
+    /// The Document to create or replace.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
     #[must_use]
-    pub fn document(
-        &self,
-    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::DocumentView<'_>> {
-        &self.0.reborrow().document
+    pub fn id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().id
+    }
+    /// The bytes.
+    ///
+    /// Field 2: `raw`
+    #[must_use]
+    pub fn raw(&self) -> ::core::option::Option<&'_ [u8]> {
+        self.0.reborrow().raw
     }
     /// Why the write is made, from the caller. History shows it.
     ///
-    /// Field 2: `note`
+    /// Field 3: `note`
     #[must_use]
     pub fn note(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().note
@@ -3060,15 +3250,13 @@ impl ::serde::Serialize for DocumentUpsertOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The request of `DeleteDocument`.
+/// The request of `Collection.Delete`.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentDeletionView<'a> {
     /// The Document to delete.
     ///
-    /// Field 1: `document`
-    pub document: ::buffa::MessageFieldView<
-        super::super::__buffa::view::DocumentKeyView<'a>,
-    >,
+    /// Field 1: `id`
+    pub id: ::core::option::Option<&'a str>,
     /// An absent Document is nothing to do, not `NOT_FOUND`. For a caller
     /// that may send the same write twice.
     ///
@@ -3120,21 +3308,7 @@ impl<'a> ::buffa::MessageView<'a> for DocumentDeletionView<'a> {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                let __sub_ctx = ctx.descend()?;
-                let sub = ::buffa::types::borrow_bytes(&mut cur)?;
-                match view.document.as_mut() {
-                    Some(existing) => {
-                        ::buffa::MessageView::merge_into_view(existing, sub, __sub_ctx)?
-                    }
-                    None => {
-                        view.document = ::buffa::MessageFieldView::set(
-                            <super::super::__buffa::view::DocumentKeyView as ::buffa::MessageView>::decode_view_ctx(
-                                sub,
-                                __sub_ctx,
-                            )?,
-                        );
-                    }
-                }
+                view.id = Some(::buffa::types::borrow_str(&mut cur)?);
             }
             2u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -3179,15 +3353,7 @@ impl<'a> ::buffa::MessageView<'a> for DocumentDeletionView<'a> {
         use ::buffa::alloc::string::ToString as _;
         let _ = __buffa_src;
         ::core::result::Result::Ok(super::super::DocumentDeletion {
-            document: match self.document.as_option() {
-                Some(v) => {
-                    ::buffa::MessageField::<
-                        super::super::DocumentKey,
-                        ::buffa::Inline<super::super::DocumentKey>,
-                    >::some(v.to_owned_from_source(__buffa_src)?)
-                }
-                None => ::buffa::MessageField::none(),
-            },
+            id: self.id.map(|s| s.to_string()),
             ignore_missing: self.ignore_missing,
             revision: self.revision.map(|s| s.to_string()),
             note: self.note.map(|s| s.to_string()),
@@ -3198,17 +3364,12 @@ impl<'a> ::buffa::MessageView<'a> for DocumentDeletionView<'a> {
 }
 impl<'a> ::buffa::ViewEncode<'a> for DocumentDeletionView<'a> {
     #[allow(clippy::needless_borrow, clippy::let_and_return)]
-    fn compute_size(&self, __cache: &mut ::buffa::SizeCache) -> u32 {
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
         let mut size = 0u64;
-        if self.document.is_set() {
-            let __slot = __cache.reserve();
-            let inner_size = self.document.compute_size(__cache);
-            __cache.set(__slot, inner_size);
-            size
-                += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
-                    + inner_size as u64;
+        if let Some(ref v) = self.id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
         if self.ignore_missing.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
@@ -3225,18 +3386,13 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentDeletionView<'a> {
     #[allow(clippy::needless_borrow)]
     fn write_to(
         &self,
-        __cache: &mut ::buffa::SizeCache,
+        _cache: &mut ::buffa::SizeCache,
         buf: &mut impl ::buffa::EncodeSink,
     ) {
         #[allow(unused_imports)]
         use ::buffa::Enumeration as _;
-        if self.document.is_set() {
-            ::buffa::types::put_len_delimited_header(
-                1u32,
-                u64::from(__cache.consume_next()),
-                buf,
-            );
-            self.document.write_to(__cache, buf);
+        if let Some(ref v) = self.id {
+            ::buffa::types::put_string_field(1u32, v, buf);
         }
         if let Some(v) = self.ignore_missing {
             ::buffa::types::put_bool_field(2u32, v, buf);
@@ -3268,10 +3424,8 @@ impl<'__a> ::serde::Serialize for DocumentDeletionView<'__a> {
     ) -> ::core::result::Result<__S::Ok, __S::Error> {
         use ::serde::ser::SerializeMap as _;
         let mut __map = __s.serialize_map(::core::option::Option::None)?;
-        {
-            if let ::core::option::Option::Some(__v) = self.document.as_option() {
-                __map.serialize_entry("document", __v)?;
-            }
+        if let ::core::option::Option::Some(__v) = self.id {
+            __map.serialize_entry("id", __v)?;
         }
         if let ::core::option::Option::Some(__v) = self.ignore_missing {
             __map.serialize_entry("ignoreMissing", &__v)?;
@@ -3377,12 +3531,10 @@ impl DocumentDeletionOwnedView {
     }
     /// The Document to delete.
     ///
-    /// Field 1: `document`
+    /// Field 1: `id`
     #[must_use]
-    pub fn document(
-        &self,
-    ) -> &::buffa::MessageFieldView<super::super::__buffa::view::DocumentKeyView<'_>> {
-        &self.0.reborrow().document
+    pub fn id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().id
     }
     /// An absent Document is nothing to do, not `NOT_FOUND`. For a caller
     /// that may send the same write twice.
@@ -3438,7 +3590,9 @@ impl ::serde::Serialize for DocumentDeletionOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// One item of `BatchDocuments`: the request of one Document call.
+/// One item of `Collection.Batch`: the request of one Document call. In
+/// `Vault.BatchDocuments`, inside a `VaultDocumentOperation` that names
+/// its collection.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentOperationView<'a> {
     pub operation: ::core::option::Option<
@@ -3957,7 +4111,8 @@ impl ::serde::Serialize for DocumentOperationOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// The answer of `BatchDocuments`: one result per operation, in order.
+/// The answer of `Collection.Batch` and `Vault.BatchDocuments`: one result
+/// per operation, in order.
 #[derive(Clone, Debug, Default)]
 pub struct DocumentBatchResultView<'a> {
     /// Field 1: `results`

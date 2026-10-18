@@ -86,7 +86,7 @@ use crate::index::{Index, Round, Side, State, rebuilding};
 use crate::index::{Offer, Piece};
 use crate::isolated;
 use crate::journal;
-use crate::ports::ProjectorPort;
+use crate::ports::{Installed, ProjectorPort};
 use crate::repo::Snap;
 
 /// The memory a round's writer may use before it flushes a segment.
@@ -555,19 +555,20 @@ pub(crate) fn read_dump(index: &Index) -> Result<Option<Dump>, Error> {
 
 /// The lexical side of the Index.
 pub(crate) struct Lexical {
-    projector: Option<Arc<ProjectorPort>>,
+    ports: Arc<Installed>,
 }
 
 impl Lexical {
-    /// The side of a handle, with the Projector it was opened with.
-    pub(crate) fn new(projector: Option<Arc<ProjectorPort>>) -> Lexical {
-        Lexical { projector }
+    /// The side of a Vault that holds `ports`: each round takes the
+    /// Projector the Vault holds when the round begins.
+    pub(crate) fn new(ports: Arc<Installed>) -> Lexical {
+        Lexical { ports }
     }
 
     /// The columns of every indexed collection now, and what changed from
     /// the file: the dump to record, and the collections that are stale.
     fn columns_now(
-        &self,
+        projector: Option<&ProjectorPort>,
         eligible: &[&Declaration],
         previous: Option<&Dump>,
         mut stale: BTreeSet<String>,
@@ -575,7 +576,7 @@ impl Lexical {
         let mut dump = Dump::new();
         for decl in eligible {
             let name = decl.name();
-            let now = match &self.projector {
+            let now = match projector {
                 Some(projector) => projector
                     .columns(name.to_owned())
                     .context("ask for the columns")?
@@ -827,9 +828,14 @@ impl Side for Lexical {
         let declarations = round.declarations();
         let eligible: Vec<&Declaration> = declarations.iter().filter(|decl| walked(decl)).collect();
         let previous = read_dump(index).context("read the recorded columns")?;
-        let (dump, stale) = self
-            .columns_now(&eligible, previous.as_ref(), read_stale(index)?)
-            .context("compare the columns")?;
+        let projector = self.ports.projector();
+        let (dump, stale) = Lexical::columns_now(
+            projector.as_deref(),
+            &eligible,
+            previous.as_ref(),
+            read_stale(index)?,
+        )
+        .context("compare the columns")?;
 
         let tantivy = open_or_create(index)?;
         let fields = Fields::of(&tantivy.schema())?;
@@ -856,7 +862,7 @@ impl Side for Lexical {
             writer,
             fields,
             analyzer,
-            projector: self.projector.as_deref(),
+            projector: projector.as_deref(),
             read: 0,
             skipped: 0,
             lexical: true,
@@ -1144,11 +1150,12 @@ mod tests {
 
     use buffa_types::google::protobuf::Empty;
     use protocontract::Failure;
+    use scheda_api::v1::projector_ref::ProjectorRef;
     use scheda_api::v1::{
-        Collection, CollectionKey, ColumnKind, Document, DocumentCreation, DocumentDeletion,
-        DocumentKey, DocumentUpsert, IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue,
-        OpenOptions, ProjectorErrorCode, ProjectorSync, RawDocument, VaultErrorCode, index_value,
-        rebuild,
+        CollectionDeclaration, CollectionKey, ColumnKind, DocumentCreation, DocumentDeletion,
+        DocumentUpsert, IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue, OpenOptions,
+        ProjectorDescriptor, ProjectorErrorCode, ProjectorSync, RawDocument, VaultErrorCode,
+        index_value, rebuild,
     };
     use tantivy::collector::DocSetCollector;
     use tantivy::query::{AllQuery, Query, QueryParser, TermQuery};
@@ -1156,12 +1163,12 @@ mod tests {
     use tantivy::{DocAddress, TantivyDocument, Term};
 
     use super::{Fields, Reader, Snapshot, key_of};
-    use crate::Vault;
     use crate::error::Error;
     use crate::index::{Index, State};
     use crate::indexer::hooks;
-    use crate::ports::{Port, Ports};
+    use crate::ports::Ports;
     use crate::repo::Repos;
+    use crate::vault::Vault;
 
     const DEADLINE: Duration = Duration::from_secs(30);
 
@@ -1225,6 +1232,10 @@ mod tests {
     struct Json(Arc<Control>);
 
     impl ProjectorSync for Json {
+        fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
+            Ok(ProjectorDescriptor::default().with_projection_id("json@1"))
+        }
+
         fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
             Ok(IndexSchema {
                 columns: self.0.columns.lock().unwrap().clone(),
@@ -1305,12 +1316,12 @@ mod tests {
 
     fn ports(control: &Arc<Control>) -> Ports {
         Ports {
-            projector: Some(Port::Sync(Arc::new(Json(Arc::clone(control))))),
+            projector: Some(ProjectorRef::from_sync(Json(Arc::clone(control)))),
             ..Ports::default()
         }
     }
 
-    fn collection(value: serde_json::Value) -> Collection {
+    fn collection(value: serde_json::Value) -> CollectionDeclaration {
         serde_json::from_value(value).unwrap()
     }
 
@@ -1324,7 +1335,7 @@ mod tests {
 
     impl Items {
         fn of(vault: &Vault) -> Items {
-            let mut watch = vault.watch_index_status(Empty::default()).unwrap();
+            let mut watch = vault.indexer().watch();
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
                 while let Some(Ok(state)) = watch.next() {
@@ -1360,7 +1371,7 @@ mod tests {
                     && state.pending == Some(0)
                     && state.role != Some(true)
             };
-            if reached(&vault.get_index_status(Empty::default()).unwrap()) {
+            if reached(&vault.indexer().status()) {
                 return;
             }
             self.until("the Index to reach HEAD", reached);
@@ -1413,48 +1424,42 @@ mod tests {
 
         fn upsert(&self, collection: &str, id: &str, raw: &str) {
             self.vault
-                .upsert_document(DocumentUpsert {
-                    document: Document {
-                        collection: Some(collection.to_owned()),
+                .upsert(
+                    collection,
+                    DocumentUpsert {
                         id: Some(id.to_owned()),
                         raw: Some(raw.as_bytes().to_vec()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
 
         fn append(&self, collection: &str, id: &str, raw: &str) {
             self.vault
-                .create_document(DocumentCreation {
-                    document: Document {
-                        collection: Some(collection.to_owned()),
+                .create(
+                    collection,
+                    DocumentCreation {
                         id: Some(id.to_owned()),
                         raw: Some(raw.as_bytes().to_vec()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
 
         fn remove(&self, collection: &str, id: &str) {
             self.vault
-                .delete_document(DocumentDeletion {
-                    document: DocumentKey {
-                        collection: Some(collection.to_owned()),
+                .delete(
+                    collection,
+                    DocumentDeletion {
                         id: Some(id.to_owned()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
 
@@ -1734,7 +1739,7 @@ mod tests {
             fx.path.join("notes/bad").is_file(),
             "the file of a Document left out stays"
         );
-        let state = fx.vault.get_index_status(Empty::default()).unwrap();
+        let state = fx.vault.indexer().status();
         assert!(!state.last_error.is_set());
         // A Document that was indexed and is then refused leaves the Index.
         fx.upsert("notes", "good", r#"{"title":"refuse now"}"#);
@@ -1749,19 +1754,13 @@ mod tests {
         fx.upsert("notes", "late", r#"{"title":"unavailable"}"#);
         fx.items
             .until("the failure", |state| state.last_error.is_set());
-        let state = fx.vault.get_index_status(Empty::default()).unwrap();
+        let state = fx.vault.indexer().status();
         assert!(state.last_error.is_set());
         assert_ne!(state.version.as_deref(), Some(head(&fx.path).as_str()));
         fx.control.unavailable.store(false, Ordering::SeqCst);
         fx.built();
         assert!(by_key(&fx.snapshot(), "notes", "late"));
-        assert!(
-            !fx.vault
-                .get_index_status(Empty::default())
-                .unwrap()
-                .last_error
-                .is_set()
-        );
+        assert!(!fx.vault.indexer().status().last_error.is_set());
     }
 
     #[test]
@@ -1831,30 +1830,26 @@ mod tests {
         let path = scratch.0.join("vault").canonicalize().unwrap();
         let raw = format!(r#"{{"title":"{MARKER}","body":"{MARKER}"}}"#);
         vault
-            .upsert_document(DocumentUpsert {
-                document: Document {
-                    collection: Some("sealed".to_owned()),
+            .upsert(
+                "sealed",
+                DocumentUpsert {
                     id: Some("secret".to_owned()),
                     raw: Some(raw.clone().into_bytes()),
+                    note: Some("test".to_owned()),
                     ..Default::default()
-                }
-                .into(),
-                note: Some("test".to_owned()),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
         vault
-            .upsert_document(DocumentUpsert {
-                document: Document {
-                    collection: Some("notes".to_owned()),
+            .upsert(
+                "notes",
+                DocumentUpsert {
                     id: Some("open".to_owned()),
                     raw: Some(br#"{"title":"visible"}"#.to_vec()),
+                    note: Some("test".to_owned()),
                     ..Default::default()
-                }
-                .into(),
-                note: Some("test".to_owned()),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
         items.built(&vault, &path);
         let snap = vault.lexical().snapshot().unwrap();
@@ -1919,7 +1914,7 @@ mod tests {
         let other = Reader::new(fx.index());
         assert!(other.snapshot().unwrap_err().is(VaultErrorCode::IndexStale));
 
-        fx.vault.reindex(Empty::default()).unwrap();
+        fx.vault.indexer().reindex().unwrap();
         fx.items.until("the rebuild", |state| {
             state
                 .rebuild
@@ -1946,7 +1941,7 @@ mod tests {
 
         // A rebuild held at its work: the commit is gone.
         hooks::stretch(&fx.path, Duration::from_millis(1500));
-        fx.vault.reindex(Empty::default()).unwrap();
+        fx.vault.indexer().reindex().unwrap();
         fx.items.until("the rebuild to begin", |state| {
             state.version.is_none()
                 && state
@@ -2013,7 +2008,7 @@ mod tests {
         assert!(error.is(VaultErrorCode::IndexBroken), "{error}");
         assert!(!error.retryable());
 
-        fx.vault.reindex(Empty::default()).unwrap();
+        fx.vault.indexer().reindex().unwrap();
         fx.items.until("the rebuild", |state| {
             state
                 .rebuild
@@ -2059,10 +2054,10 @@ mod tests {
         fx.upsert("notes", "b", r#"{"title":"x"}"#);
         fx.built();
         hooks::stretch(&fx.path, Duration::from_millis(1500));
-        fx.vault.reindex(Empty::default()).unwrap();
+        fx.vault.indexer().reindex().unwrap();
         fx.items
             .until("the rebuild to begin", |state| state.version.is_none());
-        let pending = fx.vault.get_index_status(Empty::default()).unwrap().pending;
+        let pending = fx.vault.indexer().status().pending;
         hooks::stretch(&fx.path, Duration::ZERO);
         // One segment with five lines, and two Document files; the
         // declaration files are not read as Documents.
@@ -2080,17 +2075,15 @@ mod tests {
         let items = Items::of(&vault);
         for n in 0..PER_HANDLE {
             vault
-                .upsert_document(DocumentUpsert {
-                    document: Document {
-                        collection: Some("notes".to_owned()),
+                .upsert(
+                    "notes",
+                    DocumentUpsert {
                         id: Some(format!("{name}-{n}")),
                         raw: Some(format!(r#"{{"title":"from {name}"}}"#).into_bytes()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
         std::fs::write(path.join(format!(".scheda/ready-{name}")), "").unwrap();
@@ -2151,13 +2144,7 @@ mod tests {
                 assert!(by_key(&snap, "notes", &format!("{name}-{n}")), "{name}-{n}");
             }
         }
-        assert!(
-            !fx.vault
-                .get_index_status(Empty::default())
-                .unwrap()
-                .last_error
-                .is_set()
-        );
+        assert!(!fx.vault.indexer().status().last_error.is_set());
     }
 
     #[test]

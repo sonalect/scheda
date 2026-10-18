@@ -7,6 +7,14 @@
 #
 # `json=true` gives the messages their serde derives and field names; the
 # files on disk are written from them, so it is part of the format.
+#
+# A reference message (`VaultRef`, `EmbedderRef`, …) stands for an
+# implementation of a service: protoc-gen-protocontract-buffa emits its
+# type in a module named after it (`crate::traits::vault_ref`), and both
+# plugins map the message there with the same `extern_path`, so every
+# message and trait that names it holds that type. `json=true` and
+# `validate=true` on protocontract give the reference serde impls and
+# `Validate`, which buffa and protovalidate-buffa expect of a message.
 version: v2
 inputs:
   - directory: api
@@ -15,6 +23,13 @@ plugins:
     out: rust/api/gen/buffa
     strategy: all
     opt:
+      - extern_path=.scheda.v1.VaultRef=crate::traits::vault_ref::VaultRef
+      - extern_path=.scheda.v1.CollectionRef=crate::traits::collection_ref::CollectionRef
+      - extern_path=.scheda.v1.MirrorRef=crate::traits::mirror_ref::MirrorRef
+      - extern_path=.scheda.v1.IndexRef=crate::traits::index_ref::IndexRef
+      - extern_path=.scheda.v1.EmbedderRef=crate::traits::embedder_ref::EmbedderRef
+      - extern_path=.scheda.v1.RerankerRef=crate::traits::reranker_ref::RerankerRef
+      - extern_path=.scheda.v1.ProjectorRef=crate::traits::projector_ref::ProjectorRef
       - json=true
   - local: protoc-gen-buffa-packaging
     out: rust/api/gen/buffa
@@ -30,5 +45,14 @@ plugins:
     strategy: all
     opt:
       - buffa_module=crate::proto
+      - extern_path=.scheda.v1.VaultRef=crate::traits::vault_ref::VaultRef
+      - extern_path=.scheda.v1.CollectionRef=crate::traits::collection_ref::CollectionRef
+      - extern_path=.scheda.v1.MirrorRef=crate::traits::mirror_ref::MirrorRef
+      - extern_path=.scheda.v1.IndexRef=crate::traits::index_ref::IndexRef
+      - extern_path=.scheda.v1.EmbedderRef=crate::traits::embedder_ref::EmbedderRef
+      - extern_path=.scheda.v1.RerankerRef=crate::traits::reranker_ref::RerankerRef
+      - extern_path=.scheda.v1.ProjectorRef=crate::traits::projector_ref::ProjectorRef
       - file_per_package
       - gate_tokio_feature
+      - json=true
+      - validate=true

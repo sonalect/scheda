@@ -222,6 +222,35 @@ rust_test(
 )
 
 rust_test(
+    name = "objects_test",
+    size = "small",
+    srcs = ["tests/objects.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/objects.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "objects_thin_test",
+    size = "small",
+    srcs = ["tests/objects.rs"] + _TEST_COMMON,
+    crate_root = "tests/objects.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
     name = "ports_test",
     size = "small",
     srcs = ["tests/ports.rs"] + _TEST_COMMON,

@@ -223,83 +223,9 @@ pub mod filter {
         }
     }
 }
-pub mod document_query {
-    #[allow(unused_imports)]
-    use super::*;
-    /// Where to look. Exactly one.
-    #[derive(Clone, PartialEq, Debug)]
-    pub enum Scope {
-        Collections(::buffa::alloc::boxed::Box<super::super::super::CollectionNames>),
-        Collection(::buffa::alloc::string::String),
-    }
-    impl ::buffa::Oneof for Scope {}
-    impl From<super::super::super::CollectionNames> for Scope {
-        fn from(v: super::super::super::CollectionNames) -> Self {
-            Self::Collections(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::CollectionNames> for ::core::option::Option<Scope> {
-        fn from(v: super::super::super::CollectionNames) -> Self {
-            Self::Some(Scope::from(v))
-        }
-    }
-    impl ::serde::Serialize for Scope {
-        fn serialize<S: ::serde::Serializer>(
-            &self,
-            s: S,
-        ) -> ::core::result::Result<S::Ok, S::Error> {
-            use ::serde::ser::SerializeMap;
-            let mut map = s.serialize_map(Some(1))?;
-            match self {
-                Self::Collections(v) => {
-                    map.serialize_entry("collections", &**v)?;
-                }
-                Self::Collection(v) => {
-                    map.serialize_entry("collection", v)?;
-                }
-            }
-            map.end()
-        }
-    }
-}
 pub mod document_search {
     #[allow(unused_imports)]
     use super::*;
-    /// Where to look. Exactly one, as in `DocumentQuery`.
-    #[derive(Clone, PartialEq, Debug)]
-    pub enum Scope {
-        Collections(::buffa::alloc::boxed::Box<super::super::super::CollectionNames>),
-        Collection(::buffa::alloc::string::String),
-    }
-    impl ::buffa::Oneof for Scope {}
-    impl From<super::super::super::CollectionNames> for Scope {
-        fn from(v: super::super::super::CollectionNames) -> Self {
-            Self::Collections(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::CollectionNames> for ::core::option::Option<Scope> {
-        fn from(v: super::super::super::CollectionNames) -> Self {
-            Self::Some(Scope::from(v))
-        }
-    }
-    impl ::serde::Serialize for Scope {
-        fn serialize<S: ::serde::Serializer>(
-            &self,
-            s: S,
-        ) -> ::core::result::Result<S::Ok, S::Error> {
-            use ::serde::ser::SerializeMap;
-            let mut map = s.serialize_map(Some(1))?;
-            match self {
-                Self::Collections(v) => {
-                    map.serialize_entry("collections", &**v)?;
-                }
-                Self::Collection(v) => {
-                    map.serialize_entry("collection", v)?;
-                }
-            }
-            map.end()
-        }
-    }
     /// What to rank by. Exactly one.
     #[derive(Clone, PartialEq, Debug)]
     pub enum Subject {

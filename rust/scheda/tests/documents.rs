@@ -1,5 +1,5 @@
-//! The Document calls of the handle: `GetDocument`, the four writes, and the
-//! batch, against a Vault on disk. Every kind of collection takes the rows
+//! The Document calls: `Collection.Get`, the four writes, and the batches
+//! of a collection and of a Vault, against a Vault on disk. Every kind of collection takes the rows
 //! of the table: `standard`, `singleton`, `journal`, isolated (the nested
 //! repository under `.isolated/`), and encrypted.
 
@@ -12,19 +12,21 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use buffa_types::google::protobuf::Empty;
 use scheda::v1::document_operation::Operation;
 use scheda::v1::document_result::Result as ResultArm;
 use scheda::v1::{
-    Collection, Document, DocumentCreation, DocumentDeletion, DocumentKey, DocumentOperation,
-    DocumentUpdate, DocumentUpsert, OpenOptions, VaultErrorCode as Code,
+    CollectionDeclaration, CollectionKey, CollectionSync, Document, DocumentCreation,
+    DocumentDeletion, DocumentId, DocumentKey, DocumentOperation, DocumentUpdate, DocumentUpsert,
+    OpenOptions, VaultDocumentOperation, VaultErrorCode as Code, VaultSync,
 };
-use scheda::{Error, Fault, Ports, Vault};
+use scheda::{Error, Fault};
 use serde_json::{Value, json};
 
-use common::{Scratch, command, git, snapshot, vault as built_vault, work_tree, write};
+use common::{Scratch, command, git, open, snapshot, vault as built_vault, work_tree, write};
 use probe::{assert_settled, commits, git_out};
 
-fn collection(value: Value) -> Collection {
+fn collection(value: Value) -> CollectionDeclaration {
     serde_json::from_value(value).unwrap()
 }
 
@@ -35,53 +37,76 @@ const PNG: &[u8] = &[
     0x28,
 ];
 
-fn document(collection: &str, id: &str, raw: &[u8]) -> Document {
-    Document {
-        collection: Some(collection.to_owned()),
-        id: Some(id.to_owned()),
-        raw: Some(raw.to_vec()),
-        ..Default::default()
+/// A request together with the collection it is for: the requests of a
+/// collection carry the Document id only.
+struct To<T>(String, T);
+
+impl<T> std::ops::Deref for To<T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.1
     }
 }
 
-fn creation(collection: &str, id: &str, raw: &[u8], note: &str) -> DocumentCreation {
-    DocumentCreation {
-        document: document(collection, id, raw).into(),
-        note: Some(note.to_owned()),
-        ..Default::default()
+impl<T> std::ops::DerefMut for To<T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.1
     }
 }
 
-fn keeping(collection: &str, id: &str, raw: &[u8]) -> DocumentCreation {
-    DocumentCreation {
-        keep_existing: Some(true),
-        ..creation(collection, id, raw, "keep")
-    }
+fn creation(collection: &str, id: &str, raw: &[u8], note: &str) -> To<DocumentCreation> {
+    To(
+        collection.to_owned(),
+        DocumentCreation {
+            id: Some(id.to_owned()),
+            raw: Some(raw.to_vec()),
+            note: Some(note.to_owned()),
+            ..Default::default()
+        },
+    )
 }
 
-fn update(collection: &str, id: &str, raw: &[u8], revision: Option<&str>) -> DocumentUpdate {
-    DocumentUpdate {
-        document: document(collection, id, raw).into(),
-        revision: revision.map(str::to_owned),
-        note: Some("update".to_owned()),
-        ..Default::default()
-    }
+fn keeping(collection: &str, id: &str, raw: &[u8]) -> To<DocumentCreation> {
+    let mut write = creation(collection, id, raw, "keep");
+    write.1.keep_existing = Some(true);
+    write
 }
 
-fn upsert(collection: &str, id: &str, raw: &[u8]) -> DocumentUpsert {
-    DocumentUpsert {
-        document: document(collection, id, raw).into(),
-        note: Some("upsert".to_owned()),
-        ..Default::default()
-    }
+fn update(collection: &str, id: &str, raw: &[u8], revision: Option<&str>) -> To<DocumentUpdate> {
+    To(
+        collection.to_owned(),
+        DocumentUpdate {
+            id: Some(id.to_owned()),
+            raw: Some(raw.to_vec()),
+            revision: revision.map(str::to_owned),
+            note: Some("update".to_owned()),
+            ..Default::default()
+        },
+    )
 }
 
-fn deletion(collection: &str, id: &str) -> DocumentDeletion {
-    DocumentDeletion {
-        document: key(collection, id).into(),
-        note: Some("delete".to_owned()),
-        ..Default::default()
-    }
+fn upsert(collection: &str, id: &str, raw: &[u8]) -> To<DocumentUpsert> {
+    To(
+        collection.to_owned(),
+        DocumentUpsert {
+            id: Some(id.to_owned()),
+            raw: Some(raw.to_vec()),
+            note: Some("upsert".to_owned()),
+            ..Default::default()
+        },
+    )
+}
+
+fn deletion(collection: &str, id: &str) -> To<DocumentDeletion> {
+    To(
+        collection.to_owned(),
+        DocumentDeletion {
+            id: Some(id.to_owned()),
+            note: Some("delete".to_owned()),
+            ..Default::default()
+        },
+    )
 }
 
 fn key(collection: &str, id: &str) -> DocumentKey {
@@ -92,50 +117,99 @@ fn key(collection: &str, id: &str) -> DocumentKey {
     }
 }
 
-fn create_op(collection: &str, id: &str, raw: &[u8], note: &str) -> DocumentOperation {
-    DocumentOperation {
-        operation: Some(Operation::Create(Box::new(creation(
-            collection, id, raw, note,
-        )))),
+/// The collection `name` of `vault`: `NOT_FOUND` when it is not declared.
+fn collection_of(vault: &Arc<dyn VaultSync>, name: &str) -> Result<Arc<dyn CollectionSync>, Error> {
+    vault
+        .get_collection(CollectionKey::default().with_name(name))?
+        .to_sync()
+}
+
+/// The single Document calls of `Collection`, made through a Vault: each
+/// request names its collection, and the call goes to that collection's
+/// object.
+trait Calls {
+    fn get(&self, key: DocumentKey) -> Result<Document, Error>;
+    fn create(&self, write: To<DocumentCreation>) -> Result<Document, Error>;
+    fn update(&self, write: To<DocumentUpdate>) -> Result<Document, Error>;
+    fn upsert(&self, write: To<DocumentUpsert>) -> Result<Document, Error>;
+    fn delete(&self, write: To<DocumentDeletion>) -> Result<Empty, Error>;
+}
+
+impl Calls for Arc<dyn VaultSync> {
+    fn get(&self, key: DocumentKey) -> Result<Document, Error> {
+        let name = key.collection.clone().unwrap_or_default();
+        let id = DocumentId {
+            id: key.id,
+            ..Default::default()
+        };
+        collection_of(self, &name)?.get(id)
+    }
+
+    fn create(&self, write: To<DocumentCreation>) -> Result<Document, Error> {
+        collection_of(self, &write.0)?.create(write.1)
+    }
+
+    fn update(&self, write: To<DocumentUpdate>) -> Result<Document, Error> {
+        collection_of(self, &write.0)?.update(write.1)
+    }
+
+    fn upsert(&self, write: To<DocumentUpsert>) -> Result<Document, Error> {
+        collection_of(self, &write.0)?.upsert(write.1)
+    }
+
+    fn delete(&self, write: To<DocumentDeletion>) -> Result<Empty, Error> {
+        collection_of(self, &write.0)?.delete(write.1)
+    }
+}
+
+fn in_vault(collection: &str, operation: Operation) -> VaultDocumentOperation {
+    VaultDocumentOperation {
+        collection: Some(collection.to_owned()),
+        operation: DocumentOperation {
+            operation: Some(operation),
+            ..Default::default()
+        }
+        .into(),
         ..Default::default()
     }
 }
 
-fn update_op(collection: &str, id: &str, raw: &[u8], note: &str) -> DocumentOperation {
+/// A write in the collection a request names, as the batch of a Vault takes it.
+fn op<T>(write: To<T>, wrap: fn(Box<T>) -> Operation) -> VaultDocumentOperation {
+    in_vault(&write.0, wrap(Box::new(write.1)))
+}
+
+fn create_op(collection: &str, id: &str, raw: &[u8], note: &str) -> VaultDocumentOperation {
+    let write = creation(collection, id, raw, note);
+    in_vault(collection, Operation::Create(Box::new(write.1)))
+}
+
+fn update_op(collection: &str, id: &str, raw: &[u8], note: &str) -> VaultDocumentOperation {
     let mut write = update(collection, id, raw, None);
-    write.note = Some(note.to_owned());
-    DocumentOperation {
-        operation: Some(Operation::Update(Box::new(write))),
-        ..Default::default()
-    }
+    write.1.note = Some(note.to_owned());
+    in_vault(collection, Operation::Update(Box::new(write.1)))
 }
 
-fn upsert_op(collection: &str, id: &str, raw: &[u8], note: &str) -> DocumentOperation {
+fn upsert_op(collection: &str, id: &str, raw: &[u8], note: &str) -> VaultDocumentOperation {
     let mut write = upsert(collection, id, raw);
-    write.note = Some(note.to_owned());
-    DocumentOperation {
-        operation: Some(Operation::Upsert(Box::new(write))),
-        ..Default::default()
-    }
+    write.1.note = Some(note.to_owned());
+    in_vault(collection, Operation::Upsert(Box::new(write.1)))
 }
 
-fn delete_op(collection: &str, id: &str, note: &str) -> DocumentOperation {
+fn delete_op(collection: &str, id: &str, note: &str) -> VaultDocumentOperation {
     let mut write = deletion(collection, id);
-    write.note = Some(note.to_owned());
-    DocumentOperation {
-        operation: Some(Operation::Delete(Box::new(write))),
-        ..Default::default()
-    }
+    write.1.note = Some(note.to_owned());
+    in_vault(collection, Operation::Delete(Box::new(write.1)))
 }
 
 fn batch(
-    vault: &Vault,
-    items: Vec<Result<DocumentOperation, Error>>,
+    vault: &Arc<dyn VaultSync>,
+    items: Vec<Result<VaultDocumentOperation, Error>>,
 ) -> Result<scheda::v1::DocumentBatchResult, Error> {
     vault.batch_documents(Box::new(items.into_iter()))
 }
 
-fn ok(items: Vec<DocumentOperation>) -> Vec<Result<DocumentOperation, Error>> {
+fn ok(items: Vec<VaultDocumentOperation>) -> Vec<Result<VaultDocumentOperation, Error>> {
     items.into_iter().map(Ok).collect()
 }
 
@@ -157,22 +231,17 @@ fn blob_id(bytes: &[u8]) -> String {
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
-fn declare(vault: &Vault, value: Value) {
+fn declare(vault: &Arc<dyn VaultSync>, value: Value) {
     vault.create_collection(collection(value)).unwrap();
 }
 
 /// A Vault with `notes` (standard), `log` (journal), `config` (a singleton
 /// with the id `settings`), `diary` (standard, isolated), and `trail`
 /// (journal, isolated).
-fn fresh(name: &str) -> (Scratch, PathBuf, Vault) {
+fn fresh(name: &str) -> (Scratch, PathBuf, Arc<dyn VaultSync>) {
     let scratch = Scratch::new(name);
     let path = scratch.join("vault");
-    let vault = Vault::open(
-        &path,
-        OpenOptions::default().with_write_timeout_ms(30_000),
-        Ports::default(),
-    )
-    .unwrap();
+    let vault = open(&path, OpenOptions::default().with_write_timeout_ms(30_000)).unwrap();
     declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
     declare(&vault, json!({"name": "log", "schema": {"journal": {}}}));
     declare(
@@ -254,30 +323,26 @@ const FILE_TARGETS: [Target; 3] = [
 
 /// Every row and option of the table for a collection that keeps a file per
 /// Document.
-fn file_table(vault: &Vault, root: &Path, target: &Target) {
+fn file_table(vault: &Arc<dyn VaultSync>, root: &Path, target: &Target) {
     let (c, id) = (target.collection, target.id);
     let repo_commits = || commits_of(root, target.isolated);
     let main_head = git_out(root, &["rev-parse", "HEAD"]);
     let start = repo_commits();
 
     // Absent: update and delete are NOT_FOUND, `ignore_missing` is nothing.
-    let error = vault
-        .update_document(update(c, id, b"x", None))
-        .unwrap_err();
+    let error = vault.update(update(c, id, b"x", None)).unwrap_err();
     assert!(error.is(Code::NotFound), "{c}");
-    let error = vault.delete_document(deletion(c, id)).unwrap_err();
+    let error = vault.delete(deletion(c, id)).unwrap_err();
     assert!(error.is(Code::NotFound), "{c}");
     let mut quiet = deletion(c, id);
     quiet.ignore_missing = Some(true);
-    vault.delete_document(quiet).unwrap();
-    let error = vault.get_document(key(c, id)).unwrap_err();
+    vault.delete(quiet).unwrap();
+    let error = vault.get(key(c, id)).unwrap_err();
     assert!(error.is(Code::NotFound), "{c}");
     assert_eq!(repo_commits(), start, "{c}: nothing was stored");
 
     // Create.
-    let made = vault
-        .create_document(creation(c, id, b"one", "first"))
-        .unwrap();
+    let made = vault.create(creation(c, id, b"one", "first")).unwrap();
     assert_eq!(made.collection.as_deref(), Some(c));
     assert_eq!(made.id.as_deref(), Some(id));
     assert_eq!(made.raw.as_deref(), Some(&b"one"[..]));
@@ -290,7 +355,7 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
     assert_eq!(read_file(root, target.rel), b"one");
     assert_eq!(repo_commits(), start + 1, "{c}");
     settled(root);
-    assert_eq!(vault.get_document(key(c, id)).unwrap(), made);
+    assert_eq!(vault.get(key(c, id)).unwrap(), made);
     if target.isolated {
         assert_eq!(git_out(root, &["rev-parse", "HEAD"]), main_head);
     }
@@ -298,18 +363,16 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
     // Create again: ALREADY_EXISTS, or the stored Document with
     // `keep_existing`.
     let error = vault
-        .create_document(creation(c, id, b"other", "again"))
+        .create(creation(c, id, b"other", "again"))
         .unwrap_err();
     assert!(error.is(Code::AlreadyExists), "{c}");
-    let kept = vault.create_document(keeping(c, id, b"other")).unwrap();
+    let kept = vault.create(keeping(c, id, b"other")).unwrap();
     assert_eq!(kept, made, "the Document that was already stored");
     assert_eq!(read_file(root, target.rel), b"one");
     assert_eq!(repo_commits(), start + 1);
 
     // Update: replaces, with a new revision.
-    let changed = vault
-        .update_document(update(c, id, b"two", Some(&first)))
-        .unwrap();
+    let changed = vault.update(update(c, id, b"two", Some(&first))).unwrap();
     let second = changed.revision.clone().unwrap();
     assert_ne!(second, first);
     assert_eq!(second, blob_id(b"two"));
@@ -320,26 +383,26 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
 
     // A stale revision fails and stores nothing.
     let error = vault
-        .update_document(update(c, id, b"three", Some(&first)))
+        .update(update(c, id, b"three", Some(&first)))
         .unwrap_err();
     assert!(error.is(Code::FailedPrecondition), "{c}");
     let mut stale = deletion(c, id);
     stale.revision = Some(first.clone());
-    let error = vault.delete_document(stale).unwrap_err();
+    let error = vault.delete(stale).unwrap_err();
     assert!(error.is(Code::FailedPrecondition), "{c}");
     assert_eq!(read_file(root, target.rel), b"two");
     assert_eq!(repo_commits(), start + 2);
 
     // Identical bytes store nothing and keep the revision.
-    let same = vault.update_document(update(c, id, b"two", None)).unwrap();
+    let same = vault.update(update(c, id, b"two", None)).unwrap();
     assert_eq!(same, changed);
-    let same = vault.upsert_document(upsert(c, id, b"two")).unwrap();
+    let same = vault.upsert(upsert(c, id, b"two")).unwrap();
     assert_eq!(same, changed);
     assert_eq!(repo_commits(), start + 2, "{c}: identical bytes, no commit");
     settled(root);
 
     // Upsert replaces a present Document.
-    let upserted = vault.upsert_document(upsert(c, id, b"three")).unwrap();
+    let upserted = vault.upsert(upsert(c, id, b"three")).unwrap();
     assert_eq!(
         upserted.revision.as_deref(),
         Some(blob_id(b"three").as_str())
@@ -350,22 +413,17 @@ fn file_table(vault: &Vault, root: &Path, target: &Target) {
     // Delete with the right revision.
     let mut exact = deletion(c, id);
     exact.revision = upserted.revision.clone();
-    vault.delete_document(exact).unwrap();
+    vault.delete(exact).unwrap();
     assert!(!root.join(target.rel).exists());
-    assert!(
-        vault
-            .get_document(key(c, id))
-            .unwrap_err()
-            .is(Code::NotFound)
-    );
+    assert!(vault.get(key(c, id)).unwrap_err().is(Code::NotFound));
     assert_eq!(repo_commits(), start + 4);
     settled(root);
 
     // Upsert creates an absent Document, and a plain delete removes it.
-    let again = vault.upsert_document(upsert(c, id, b"four")).unwrap();
+    let again = vault.upsert(upsert(c, id, b"four")).unwrap();
     assert_eq!(again.revision.as_deref(), Some(blob_id(b"four").as_str()));
     assert_eq!(repo_commits(), start + 5);
-    vault.delete_document(deletion(c, id)).unwrap();
+    vault.delete(deletion(c, id)).unwrap();
     assert!(!root.join(target.rel).exists());
     assert_eq!(repo_commits(), start + 6);
     settled(root);
@@ -405,17 +463,13 @@ fn segments(root: &Path, dir: &str) -> Vec<PathBuf> {
 
 /// The rows of the table for a journal: an append, a repeat, and the calls
 /// a line never takes.
-fn journal_table(vault: &Vault, root: &Path, c: &str, dir: &str, isolated: bool) {
+fn journal_table(vault: &Arc<dyn VaultSync>, root: &Path, c: &str, dir: &str, isolated: bool) {
     let repo_commits = || commits_of(root, isolated);
     let start = repo_commits();
-    let one = vault
-        .create_document(creation(c, "e1", b"first", "one"))
-        .unwrap();
+    let one = vault.create(creation(c, "e1", b"first", "one")).unwrap();
     assert_eq!(one.raw.as_deref(), Some(&b"first"[..]));
     assert_eq!(one.revision, None, "a journal line has no revision");
-    let two = vault
-        .create_document(creation(c, "e2", b"second", "two"))
-        .unwrap();
+    let two = vault.create(creation(c, "e2", b"second", "two")).unwrap();
     assert_eq!(two.revision, None);
     assert_eq!(repo_commits(), start + 2);
     let files = segments(root, dir);
@@ -426,20 +480,15 @@ fn journal_table(vault: &Vault, root: &Path, c: &str, dir: &str, isolated: bool)
     );
     settled(root);
 
-    let got = vault.get_document(key(c, "e2")).unwrap();
+    let got = vault.get(key(c, "e2")).unwrap();
     assert_eq!(got, two);
-    assert!(
-        vault
-            .get_document(key(c, "e3"))
-            .unwrap_err()
-            .is(Code::NotFound)
-    );
+    assert!(vault.get(key(c, "e3")).unwrap_err().is(Code::NotFound));
 
     let error = vault
-        .create_document(creation(c, "e1", b"other", "again"))
+        .create(creation(c, "e1", b"other", "again"))
         .unwrap_err();
     assert!(error.is(Code::AlreadyExists));
-    let kept = vault.create_document(keeping(c, "e1", b"other")).unwrap();
+    let kept = vault.create(keeping(c, "e1", b"other")).unwrap();
     assert_eq!(kept, one, "the line that was already stored");
     assert_eq!(repo_commits(), start + 2);
     assert_eq!(
@@ -448,37 +497,30 @@ fn journal_table(vault: &Vault, root: &Path, c: &str, dir: &str, isolated: bool)
     );
 
     for error in [
-        vault
-            .update_document(update(c, "e1", b"x", None))
-            .unwrap_err(),
-        vault.upsert_document(upsert(c, "e1", b"x")).unwrap_err(),
-        vault.delete_document(deletion(c, "e1")).unwrap_err(),
+        vault.update(update(c, "e1", b"x", None)).unwrap_err(),
+        vault.upsert(upsert(c, "e1", b"x")).unwrap_err(),
+        vault.delete(deletion(c, "e1")).unwrap_err(),
     ] {
         assert!(error.is(Code::Unimplemented));
     }
     let mut quiet = deletion(c, "e9");
     quiet.ignore_missing = Some(true);
-    assert!(
-        vault
-            .delete_document(quiet)
-            .unwrap_err()
-            .is(Code::Unimplemented)
-    );
+    assert!(vault.delete(quiet).unwrap_err().is(Code::Unimplemented));
     assert_eq!(repo_commits(), start + 2);
 
     // A payload holds no line break; any other bytes are stored.
     for payload in [&b"a\nb"[..], b"a\rb", b"\n"] {
         let error = vault
-            .create_document(creation(c, "bad", payload, "bad"))
+            .create(creation(c, "bad", payload, "bad"))
             .unwrap_err();
         assert!(error.is(Code::InvalidArgument), "{payload:?}");
     }
     let bytes = [0xFF, 0xFE, 0x00, 0xC3, 0x28, b' ', b':'];
     vault
-        .create_document(creation(c, "binary", &bytes, "bytes"))
+        .create(creation(c, "binary", &bytes, "bytes"))
         .unwrap();
     assert_eq!(
-        vault.get_document(key(c, "binary")).unwrap().raw.as_deref(),
+        vault.get(key(c, "binary")).unwrap().raw.as_deref(),
         Some(&bytes[..])
     );
     assert_eq!(repo_commits(), start + 3);
@@ -507,7 +549,7 @@ fn a_journal_rolls_over_to_a_new_segment_inside_one_batch() {
         json!({"name": "small", "schema": {"journal": {"segmentMaxLines": 2}}}),
     );
     let before = commits(&path);
-    let items: Vec<DocumentOperation> = (0..5)
+    let items: Vec<VaultDocumentOperation> = (0..5)
         .map(|n| create_op("small", &format!("l{n}"), b"x", "lines"))
         .collect();
     batch(&vault, ok(items)).unwrap();
@@ -540,10 +582,10 @@ fn any_bytes_round_trip_in_standard_and_singleton_collections() {
         ("diary", "pic.png", ".isolated/diary/pic.png"),
     ] {
         for bytes in [PNG, not_utf8, b"", b"text\r\nwith\r\nCRLF"] {
-            let made = vault.upsert_document(upsert(c, id, bytes)).unwrap();
+            let made = vault.upsert(upsert(c, id, bytes)).unwrap();
             assert_eq!(made.raw.as_deref(), Some(bytes), "{c}");
             assert_eq!(read_file(&path, rel), bytes, "stored as given");
-            let got = vault.get_document(key(c, id)).unwrap();
+            let got = vault.get(key(c, id)).unwrap();
             assert_eq!(got.raw.as_deref(), Some(bytes), "{c}");
             assert_eq!(got.revision, Some(blob_id(bytes)));
         }
@@ -558,12 +600,7 @@ fn any_bytes_round_trip_in_standard_and_singleton_collections() {
 fn a_request_that_breaks_a_rule_fails_before_the_lock_is_taken() {
     let scratch = Scratch::new("prelock");
     let path = scratch.join("vault");
-    let vault = Vault::open(
-        &path,
-        OpenOptions::default().with_write_timeout_ms(150),
-        Ports::default(),
-    )
-    .unwrap();
+    let vault = open(&path, OpenOptions::default().with_write_timeout_ms(150)).unwrap();
     declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
     declare(&vault, json!({"name": "log", "schema": {"journal": {}}}));
     declare(
@@ -591,114 +628,90 @@ fn a_request_that_breaks_a_rule_fails_before_the_lock_is_taken() {
     no_note.note = None;
     let mut empty_note = creation("notes", "a.md", b"x", "n");
     empty_note.note = Some(String::new());
-    let mut with_revision = creation("notes", "a.md", b"x", "n");
-    with_revision.document = Document {
-        revision: Some("abc".to_owned()),
-        ..document("notes", "a.md", b"x")
-    }
-    .into();
     let mut no_id = creation("notes", "a.md", b"x", "n");
-    no_id.document = Document {
-        id: None,
-        ..document("notes", "a.md", b"x")
-    }
-    .into();
+    no_id.id = None;
     let mut no_collection = creation("notes", "a.md", b"x", "n");
-    no_collection.document = Document {
-        collection: None,
-        ..document("notes", "a.md", b"x")
-    }
-    .into();
+    no_collection.0 = String::new();
     let mut no_document = creation("notes", "a.md", b"x", "n");
-    no_document.document = Default::default();
+    no_document.id = None;
+    no_document.raw = None;
     let cases: Vec<(&str, Error, Code)> = vec![
         (
             "no note",
-            vault.create_document(no_note).unwrap_err(),
+            vault.create(no_note).unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "empty note",
-            vault.create_document(empty_note).unwrap_err(),
-            Code::InvalidArgument,
-        ),
-        (
-            "a revision in the Document",
-            vault.create_document(with_revision).unwrap_err(),
+            vault.create(empty_note).unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "no id",
-            vault.create_document(no_id).unwrap_err(),
+            vault.create(no_id).unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "no collection",
-            vault.create_document(no_collection).unwrap_err(),
+            vault.create(no_collection).unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "no Document",
-            vault.create_document(no_document).unwrap_err(),
+            vault.create(no_document).unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "an unknown collection",
-            vault
-                .create_document(creation("nope", "a", b"x", "n"))
-                .unwrap_err(),
+            vault.create(creation("nope", "a", b"x", "n")).unwrap_err(),
             Code::NotFound,
         ),
         (
             "an update of a journal",
-            vault
-                .update_document(update("log", "a", b"x", None))
-                .unwrap_err(),
+            vault.update(update("log", "a", b"x", None)).unwrap_err(),
             Code::Unimplemented,
         ),
         (
             "an upsert of a journal",
-            vault.upsert_document(upsert("log", "a", b"x")).unwrap_err(),
+            vault.upsert(upsert("log", "a", b"x")).unwrap_err(),
             Code::Unimplemented,
         ),
         (
             "a delete of a journal",
-            vault.delete_document(deletion("log", "a")).unwrap_err(),
+            vault.delete(deletion("log", "a")).unwrap_err(),
             Code::Unimplemented,
         ),
         (
             "a path that steps out",
             vault
-                .create_document(creation("notes", "../x", b"x", "n"))
+                .create(creation("notes", "../x", b"x", "n"))
                 .unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "an id that is not a slug",
             vault
-                .create_document(creation("notes", "a//b", b"x", "n"))
+                .create(creation("notes", "a//b", b"x", "n"))
                 .unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "the wrong id of a singleton",
             vault
-                .create_document(creation("config", "other", b"x", "n"))
+                .create(creation("config", "other", b"x", "n"))
                 .unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "a line break in a journal payload",
             vault
-                .create_document(creation("log", "a", b"x\ny", "n"))
+                .create(creation("log", "a", b"x\ny", "n"))
                 .unwrap_err(),
             Code::InvalidArgument,
         ),
         (
             "a journal id that is not a slug",
-            vault
-                .create_document(creation("log", "a/b", b"x", "n"))
-                .unwrap_err(),
+            vault.create(creation("log", "a/b", b"x", "n")).unwrap_err(),
             Code::InvalidArgument,
         ),
         (
@@ -716,7 +729,7 @@ fn a_request_that_breaks_a_rule_fails_before_the_lock_is_taken() {
         (
             "an encrypted collection without a secret",
             vault
-                .create_document(creation("sealed", "a", b"x", "n"))
+                .create(creation("sealed", "a", b"x", "n"))
                 .unwrap_err(),
             if cfg!(feature = "encrypt") {
                 Code::Crypto
@@ -736,7 +749,7 @@ fn a_request_that_breaks_a_rule_fails_before_the_lock_is_taken() {
     // The same request, well formed, does wait for the lock and gives up.
     let start = Instant::now();
     let error = vault
-        .create_document(creation("notes", "a.md", b"x", "n"))
+        .create(creation("notes", "a.md", b"x", "n"))
         .unwrap_err();
     assert!(error.is(Code::Aborted));
     assert!(error.retryable());
@@ -745,9 +758,7 @@ fn a_request_that_breaks_a_rule_fails_before_the_lock_is_taken() {
     assert!(!path.join("notes/a.md").exists());
     held.unlock().unwrap();
     drop(held);
-    vault
-        .create_document(creation("notes", "a.md", b"x", "n"))
-        .unwrap();
+    vault.create(creation("notes", "a.md", b"x", "n")).unwrap();
     assert_eq!(
         commits(&path),
         before + 1,
@@ -769,63 +780,17 @@ fn a_write_without_a_note_is_invalid_in_every_kind_of_collection() {
     ] {
         let mut write = creation(c, id, b"x", "n");
         write.note = None;
-        assert!(
-            vault
-                .create_document(write)
-                .unwrap_err()
-                .is(Code::InvalidArgument)
-        );
+        assert!(vault.create(write).unwrap_err().is(Code::InvalidArgument));
         let mut write = upsert(c, id, b"x");
         write.note = Some(String::new());
-        assert!(
-            vault
-                .upsert_document(write)
-                .unwrap_err()
-                .is(Code::InvalidArgument)
-        );
+        assert!(vault.upsert(write).unwrap_err().is(Code::InvalidArgument));
         let mut write = deletion(c, id);
         write.note = None;
-        assert!(
-            vault
-                .delete_document(write)
-                .unwrap_err()
-                .is(Code::InvalidArgument)
-        );
+        assert!(vault.delete(write).unwrap_err().is(Code::InvalidArgument));
         let mut write = update(c, id, b"x", None);
         write.note = None;
-        assert!(
-            vault
-                .update_document(write)
-                .unwrap_err()
-                .is(Code::InvalidArgument)
-        );
+        assert!(vault.update(write).unwrap_err().is(Code::InvalidArgument));
     }
-    assert_eq!(commits(&path), before);
-}
-
-#[test]
-fn a_document_with_a_revision_in_a_request_is_invalid() {
-    let (_scratch, path, vault) = fresh("revision-in-request");
-    let made = vault
-        .create_document(creation("notes", "a.md", b"x", "n"))
-        .unwrap();
-    let before = commits(&path);
-    let mut write = update("notes", "a.md", b"y", None);
-    write.document = made.clone().into();
-    assert!(
-        vault
-            .update_document(write)
-            .unwrap_err()
-            .is(Code::InvalidArgument)
-    );
-    let mut write = upsert("notes", "a.md", b"y");
-    write.document = made.into();
-    assert!(
-        vault
-            .upsert_document(write)
-            .unwrap_err()
-            .is(Code::InvalidArgument)
-    );
     assert_eq!(commits(&path), before);
 }
 
@@ -840,7 +805,7 @@ fn a_symlink_on_the_path_of_a_document_is_refused_and_nothing_is_stored() {
         std::os::unix::fs::symlink(&outside, path.join("notes/linked")).unwrap();
         let before = commits(&path);
         let error = vault
-            .create_document(creation("notes", "linked/a.md", b"x", "n"))
+            .create(creation("notes", "linked/a.md", b"x", "n"))
             .unwrap_err();
         assert!(error.is(Code::InvalidArgument));
         assert_eq!(commits(&path), before);
@@ -858,41 +823,26 @@ fn a_symlink_on_the_path_of_a_document_is_refused_and_nothing_is_stored() {
 #[test]
 fn get_document_names_what_is_missing() {
     let (_scratch, _path, vault) = fresh("get-missing");
+    assert!(vault.get(key("nope", "a")).unwrap_err().is(Code::NotFound));
     assert!(
         vault
-            .get_document(key("nope", "a"))
+            .get(key("notes", "a.md"))
             .unwrap_err()
             .is(Code::NotFound)
     );
     assert!(
         vault
-            .get_document(key("notes", "a.md"))
+            .get(key("config", "other"))
             .unwrap_err()
             .is(Code::NotFound)
     );
-    assert!(
-        vault
-            .get_document(key("config", "other"))
-            .unwrap_err()
-            .is(Code::NotFound)
-    );
-    assert!(
-        vault
-            .get_document(key("log", "a"))
-            .unwrap_err()
-            .is(Code::NotFound)
-    );
+    assert!(vault.get(key("log", "a")).unwrap_err().is(Code::NotFound));
     let mut no_id = key("notes", "a.md");
     no_id.id = None;
+    assert!(vault.get(no_id).unwrap_err().is(Code::InvalidArgument));
     assert!(
         vault
-            .get_document(no_id)
-            .unwrap_err()
-            .is(Code::InvalidArgument)
-    );
-    assert!(
-        vault
-            .get_document(key("notes", "../x"))
+            .get(key("notes", "../x"))
             .unwrap_err()
             .is(Code::InvalidArgument)
     );
@@ -902,27 +852,27 @@ fn get_document_names_what_is_missing() {
 fn a_persons_uncommitted_edit_is_seen_by_no_get_document_and_a_commit_by_hand_is() {
     let (_scratch, path, vault) = fresh("get-edit");
     vault
-        .create_document(creation("notes", "a.md", b"stored", "n"))
+        .create(creation("notes", "a.md", b"stored", "n"))
         .unwrap();
     std::fs::write(path.join("notes/a.md"), b"edited by hand").unwrap();
     std::fs::remove_file(path.join(".scheda.yaml")).unwrap();
-    let got = vault.get_document(key("notes", "a.md")).unwrap();
+    let got = vault.get(key("notes", "a.md")).unwrap();
     assert_eq!(got.raw.as_deref(), Some(&b"stored"[..]));
     assert_eq!(got.revision, Some(blob_id(b"stored")));
     git(&path, &["checkout", "--", ".scheda.yaml"]);
     // The same bytes, committed with plain git, are read at once.
     git(&path, &["add", "notes/a.md"]);
     git(&path, &["commit", "--quiet", "--message", "by hand"]);
-    let got = vault.get_document(key("notes", "a.md")).unwrap();
+    let got = vault.get(key("notes", "a.md")).unwrap();
     assert_eq!(got.raw.as_deref(), Some(&b"edited by hand"[..]));
     assert_eq!(got.revision, Some(blob_id(b"edited by hand")));
     // A new file and a deleted one in the work tree are as unseen.
     write(&path, "notes/new.md", "never committed");
     std::fs::remove_file(path.join("notes/a.md")).unwrap();
-    assert!(vault.get_document(key("notes", "a.md")).is_ok());
+    assert!(vault.get(key("notes", "a.md")).is_ok());
     assert!(
         vault
-            .get_document(key("notes", "new.md"))
+            .get(key("notes", "new.md"))
             .unwrap_err()
             .is(Code::NotFound)
     );
@@ -932,17 +882,17 @@ fn a_persons_uncommitted_edit_is_seen_by_no_get_document_and_a_commit_by_hand_is
 fn a_persons_edit_is_committed_by_no_write_of_another_document_and_survives_one_of_its_own() {
     let (_scratch, path, vault) = fresh("edit-survives");
     vault
-        .create_document(creation("notes", "mine.md", b"stored", "n"))
+        .create(creation("notes", "mine.md", b"stored", "n"))
         .unwrap();
     vault
-        .create_document(creation("notes", "other.md", b"other", "n"))
+        .create(creation("notes", "other.md", b"other", "n"))
         .unwrap();
     std::fs::write(path.join("notes/mine.md"), b"edited by hand").unwrap();
     write(&path, "notes/new.md", "never committed");
     // A write of another Document commits neither the edit nor the new file.
     let before = commits(&path);
     vault
-        .upsert_document(upsert("notes", "other.md", b"other, again"))
+        .upsert(upsert("notes", "other.md", b"other, again"))
         .unwrap();
     assert_eq!(commits(&path), before + 1);
     assert_eq!(
@@ -961,7 +911,7 @@ fn a_persons_edit_is_committed_by_no_write_of_another_document_and_survives_one_
     // A write of the same Document lands in HEAD; the person's file stays and
     // git shows it as changed against the new HEAD.
     let reply = vault
-        .upsert_document(upsert("notes", "mine.md", b"written by the API"))
+        .upsert(upsert("notes", "mine.md", b"written by the API"))
         .unwrap();
     assert_eq!(
         git_out(&path, &["show", "HEAD:notes/mine.md"]),
@@ -977,16 +927,12 @@ fn a_persons_edit_is_committed_by_no_write_of_another_document_and_survives_one_
         Some(git_out(&path, &["rev-parse", "HEAD:notes/mine.md"]))
     );
     assert_eq!(
-        vault
-            .get_document(key("notes", "mine.md"))
-            .unwrap()
-            .raw
-            .as_deref(),
+        vault.get(key("notes", "mine.md")).unwrap().raw.as_deref(),
         Some(&b"written by the API"[..])
     );
     assert!(read_file(&path, ".scheda/commit.lock").is_empty());
     // A delete of it removes it from HEAD and leaves the person's file.
-    vault.delete_document(deletion("notes", "mine.md")).unwrap();
+    vault.delete(deletion("notes", "mine.md")).unwrap();
     assert_eq!(read_file(&path, "notes/mine.md"), b"edited by hand");
     assert_eq!(
         git_out(&path, &["status", "--porcelain"]),
@@ -1002,17 +948,15 @@ fn a_documents_revision_is_the_blob_id_of_the_document_in_head() {
         ("notes", "dir/b.bin", PNG),
         ("config", "settings", b"on"),
     ] {
-        let made = vault
-            .create_document(creation(collection, id, raw, "n"))
-            .unwrap();
+        let made = vault.create(creation(collection, id, raw, "n")).unwrap();
         let rel = format!("{collection}/{id}");
         let head = git_out(&path, &["rev-parse", &format!("HEAD:{rel}")]);
         assert_eq!(made.revision.as_deref(), Some(head.as_str()), "{rel}");
-        let got = vault.get_document(key(collection, id)).unwrap();
+        let got = vault.get(key(collection, id)).unwrap();
         assert_eq!(got.revision.as_deref(), Some(head.as_str()), "{rel}");
     }
     let replaced = vault
-        .update_document(update("notes", "a.md", b"beta", None))
+        .update(update("notes", "a.md", b"beta", None))
         .unwrap();
     assert_eq!(
         replaced.revision,
@@ -1020,7 +964,7 @@ fn a_documents_revision_is_the_blob_id_of_the_document_in_head() {
     );
     // The nested repository: the id is the blob of its own HEAD.
     let nested = vault
-        .create_document(creation("diary", "d", b"secret", "n"))
+        .create(creation("diary", "d", b"secret", "n"))
         .unwrap();
     assert_eq!(
         nested.revision,
@@ -1038,7 +982,7 @@ fn a_repository_with_gpgsign_gets_unsigned_commits_and_the_write_succeeds() {
     git(&path, &["config", "gpg.program", "/nonexistent/gpg"]);
     git(&path, &["config", "user.signingkey", "ABCDEF"]);
     let made = vault
-        .create_document(creation("notes", "signed.md", b"x", "n"))
+        .create(creation("notes", "signed.md", b"x", "n"))
         .unwrap();
     assert!(made.revision.is_some());
     assert_eq!(git_out(&path, &["show", "HEAD:notes/signed.md"]), "x");
@@ -1050,28 +994,24 @@ fn a_repository_with_gpgsign_gets_unsigned_commits_and_the_write_succeeds() {
 #[test]
 fn a_handle_reads_a_collection_another_handle_declared_and_writes_in_it() {
     let (_scratch, path, first) = fresh("two-handles");
-    let second = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let second = open(&path, OpenOptions::default()).unwrap();
     declare(&first, json!({"name": "late", "schema": {"standard": {}}}));
     // The second handle has never seen `late`: it reads the collections
     // again, once, for the name it does not know.
-    let error = second.get_document(key("late", "a")).unwrap_err();
+    let error = second.get(key("late", "a")).unwrap_err();
     assert!(error.is(Code::NotFound));
     second
-        .create_document(creation("late", "a", b"from the second", "n"))
+        .create(creation("late", "a", b"from the second", "n"))
         .unwrap();
     assert_eq!(
-        first.get_document(key("late", "a")).unwrap().raw.as_deref(),
+        first.get(key("late", "a")).unwrap().raw.as_deref(),
         Some(&b"from the second"[..])
     );
     first
-        .upsert_document(upsert("late", "a", b"from the first"))
+        .upsert(upsert("late", "a", b"from the first"))
         .unwrap();
     assert_eq!(
-        second
-            .get_document(key("late", "a"))
-            .unwrap()
-            .raw
-            .as_deref(),
+        second.get(key("late", "a")).unwrap().raw.as_deref(),
         Some(&b"from the first"[..])
     );
     settled(&path);
@@ -1084,14 +1024,10 @@ fn a_vault_built_by_hand_takes_document_writes_and_keeps_a_person_s_files() {
     built_vault(&path);
     write(&path, "draft.txt", "a person's file, not committed");
     write(&path, "notes/scratch.md", "a person's file in a collection");
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
     let before = commits(&path);
-    vault
-        .create_document(creation("notes", "a.md", b"A", "n"))
-        .unwrap();
-    vault
-        .create_document(creation("log", "e1", b"L", "n"))
-        .unwrap();
+    vault.create(creation("notes", "a.md", b"A", "n")).unwrap();
+    vault.create(creation("log", "e1", b"L", "n")).unwrap();
     assert_eq!(commits(&path), before + 2);
     assert_eq!(
         read_file(&path, "draft.txt"),
@@ -1099,7 +1035,7 @@ fn a_vault_built_by_hand_takes_document_writes_and_keeps_a_person_s_files() {
     );
     assert!(
         vault
-            .get_document(key("notes", "scratch.md"))
+            .get(key("notes", "scratch.md"))
             .unwrap_err()
             .is(Code::NotFound),
         "a file a person did not commit is not a Document"
@@ -1126,23 +1062,23 @@ fn a_document_committed_by_a_person_is_read_replaced_and_deleted() {
             ("notes/a.md", "by hand"),
         ],
     );
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
-    let got = vault.get_document(key("notes", "a.md")).unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
+    let got = vault.get(key("notes", "a.md")).unwrap();
     assert_eq!(got.raw.as_deref(), Some(&b"by hand"[..]));
     let before = commits(&path);
     let error = vault
-        .update_document(update("notes", "a.md", b"x", Some("stale")))
+        .update(update("notes", "a.md", b"x", Some("stale")))
         .unwrap_err();
     assert!(error.is(Code::FailedPrecondition));
     vault
-        .update_document(update(
+        .update(update(
             "notes",
             "a.md",
             b"replaced",
             got.revision.as_deref(),
         ))
         .unwrap();
-    vault.delete_document(deletion("notes", "a.md")).unwrap();
+    vault.delete(deletion("notes", "a.md")).unwrap();
     assert_eq!(commits(&path), before + 2);
     assert_settled(&path, &[".scheda/"]);
 }
@@ -1161,7 +1097,7 @@ fn stored(result: &scheda::v1::DocumentResult) -> &Document {
 fn a_batch_is_one_commit_with_one_result_per_operation() {
     let (_scratch, path, vault) = fresh("batch-ok");
     vault
-        .create_document(creation("notes", "old.md", b"old", "seed"))
+        .create(creation("notes", "old.md", b"old", "seed"))
         .unwrap();
     let before = commits(&path);
     let reply = batch(
@@ -1196,14 +1132,31 @@ fn a_batch_is_one_commit_with_one_result_per_operation() {
 }
 
 #[test]
+fn the_batch_of_one_collection_is_one_commit() {
+    let (_scratch, path, vault) = fresh("batch-one");
+    let before = commits(&path);
+    let notes = collection_of(&vault, "notes").unwrap();
+    let items: Vec<Result<DocumentOperation, Error>> = vec![
+        Ok(create_op("notes", "a.md", b"A", "a").operation.unwrap()),
+        Ok(create_op("notes", "b.md", b"B", "b").operation.unwrap()),
+    ];
+    let reply = notes.batch(Box::new(items.into_iter())).unwrap();
+    assert_eq!(reply.results.len(), 2);
+    assert_eq!(commits(&path), before + 1, "one batch is one commit");
+    assert_eq!(read_file(&path, "notes/a.md"), b"A");
+    assert_eq!(read_file(&path, "notes/b.md"), b"B");
+    settled(&path);
+}
+
+#[test]
 fn a_failing_write_in_the_middle_of_a_batch_stores_nothing_and_names_its_index() {
     let (_scratch, path, vault) = fresh("batch-fail");
     vault
-        .create_document(creation("notes", "taken.md", b"t", "seed"))
+        .create(creation("notes", "taken.md", b"t", "seed"))
         .unwrap();
     let before = commits(&path);
     let snap = snapshot(&path.join("notes"));
-    let cases: Vec<(DocumentOperation, Code)> = vec![
+    let cases: Vec<(VaultDocumentOperation, Code)> = vec![
         (
             create_op("notes", "taken.md", b"x", "n"),
             Code::AlreadyExists,
@@ -1221,10 +1174,7 @@ fn a_failing_write_in_the_middle_of_a_batch_stores_nothing_and_names_its_index()
             {
                 let mut write = update("notes", "taken.md", b"x", Some("stale"));
                 write.note = Some("n".to_owned());
-                DocumentOperation {
-                    operation: Some(Operation::Update(Box::new(write))),
-                    ..Default::default()
-                }
+                op(write, Operation::Update)
             },
             Code::FailedPrecondition,
         ),
@@ -1283,7 +1233,17 @@ fn an_err_item_an_empty_item_and_a_stream_that_breaks_store_nothing() {
     assert!(error.is(Code::Unavailable));
     assert!(error.stack().iter().any(|frame| frame == "operation 2"));
     // An item without a write.
-    let error = batch(&vault, vec![first(), Ok(DocumentOperation::default())]).unwrap_err();
+    let error = batch(
+        &vault,
+        vec![
+            first(),
+            Ok(VaultDocumentOperation {
+                collection: Some("notes".to_owned()),
+                ..Default::default()
+            }),
+        ],
+    )
+    .unwrap_err();
     assert!(error.is(Code::InvalidArgument));
     assert!(error.stack().iter().any(|frame| frame == "operation 1"));
     assert_eq!(commits(&path), before);
@@ -1295,7 +1255,7 @@ fn an_err_item_an_empty_item_and_a_stream_that_breaks_store_nothing() {
 fn two_operations_on_one_document_see_each_other() {
     let (_scratch, path, vault) = fresh("batch-sees");
     vault
-        .create_document(creation("notes", "seed.md", b"seed", "seed"))
+        .create(creation("notes", "seed.md", b"seed", "seed"))
         .unwrap();
     let before = commits(&path);
     // Create, then update, then delete-and-create again.
@@ -1365,10 +1325,7 @@ fn two_operations_on_one_document_see_each_other() {
         &vault,
         ok(vec![
             create_op("log", "e1", b"x", "n"),
-            DocumentOperation {
-                operation: Some(Operation::Create(Box::new(again))),
-                ..Default::default()
-            },
+            op(again, Operation::Create),
         ]),
     )
     .unwrap();
@@ -1381,10 +1338,10 @@ fn two_operations_on_one_document_see_each_other() {
 fn a_batch_that_changes_nothing_makes_no_commit() {
     let (_scratch, path, vault) = fresh("batch-nothing");
     vault
-        .create_document(creation("notes", "a.md", b"same", "seed"))
+        .create(creation("notes", "a.md", b"same", "seed"))
         .unwrap();
     vault
-        .create_document(creation("log", "e1", b"line", "seed"))
+        .create(creation("log", "e1", b"line", "seed"))
         .unwrap();
     let before = commits(&path);
     let mut quiet = deletion("notes", "gone.md");
@@ -1396,14 +1353,8 @@ fn a_batch_that_changes_nothing_makes_no_commit() {
         ok(vec![
             upsert_op("notes", "a.md", b"same", "identical"),
             update_op("notes", "a.md", b"same", "identical"),
-            DocumentOperation {
-                operation: Some(Operation::Delete(Box::new(quiet))),
-                ..Default::default()
-            },
-            DocumentOperation {
-                operation: Some(Operation::Create(Box::new(again))),
-                ..Default::default()
-            },
+            op(quiet, Operation::Delete),
+            op(again, Operation::Create),
         ]),
     )
     .unwrap();
@@ -1509,9 +1460,7 @@ fn the_trailers_of_a_batch_name_each_document_with_its_own_note() {
         "{trailers}"
     );
     // A single write is one trailer under its note.
-    vault
-        .update_document(update("notes", "a.md", b"A2", None))
-        .unwrap();
+    vault.update(update("notes", "a.md", b"A2", None)).unwrap();
     let message = git_out(&path, &["log", "-1", "--format=%B"]);
     assert_eq!(
         message,
@@ -1526,12 +1475,7 @@ fn the_trailers_of_a_batch_name_each_document_with_its_own_note() {
 fn a_call_that_cannot_take_the_lock_in_time_is_aborted_and_stores_nothing() {
     let scratch = Scratch::new("timeout");
     let path = scratch.join("vault");
-    let vault = Vault::open(
-        &path,
-        OpenOptions::default().with_write_timeout_ms(150),
-        Ports::default(),
-    )
-    .unwrap();
+    let vault = open(&path, OpenOptions::default().with_write_timeout_ms(150)).unwrap();
     declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
     let before = commits(&path);
     let held = File::options()
@@ -1542,7 +1486,7 @@ fn a_call_that_cannot_take_the_lock_in_time_is_aborted_and_stores_nothing() {
     held.lock().unwrap();
     for _ in 0..2 {
         let error = vault
-            .create_document(creation("notes", "a.md", b"x", "n"))
+            .create(creation("notes", "a.md", b"x", "n"))
             .unwrap_err();
         assert!(error.is(Code::Aborted));
         assert!(error.retryable());
@@ -1555,13 +1499,11 @@ fn a_call_that_cannot_take_the_lock_in_time_is_aborted_and_stores_nothing() {
     drop(held);
     assert!(
         vault
-            .get_document(key("notes", "a.md"))
+            .get(key("notes", "a.md"))
             .unwrap_err()
             .is(Code::NotFound)
     );
-    vault
-        .create_document(creation("notes", "a.md", b"x", "n"))
-        .unwrap();
+    vault.create(creation("notes", "a.md", b"x", "n")).unwrap();
     assert_eq!(commits(&path), before + 1);
     settled(&path);
 }
@@ -1569,7 +1511,6 @@ fn a_call_that_cannot_take_the_lock_in_time_is_aborted_and_stores_nothing() {
 #[test]
 fn sixty_four_document_writes_from_one_handle_are_each_stored_whole() {
     let (_scratch, path, vault) = fresh("threads");
-    let vault = Arc::new(vault);
     let before = commits(&path);
     std::thread::scope(|scope| {
         for n in 0..64 {
@@ -1578,7 +1519,7 @@ fn sixty_four_document_writes_from_one_handle_are_each_stored_whole() {
                 let id = format!("doc-{n}.md");
                 let raw = format!("document {n}");
                 vault
-                    .create_document(creation("notes", &id, raw.as_bytes(), "thread"))
+                    .create(creation("notes", &id, raw.as_bytes(), "thread"))
                     .unwrap();
             });
         }
@@ -1586,9 +1527,7 @@ fn sixty_four_document_writes_from_one_handle_are_each_stored_whole() {
     assert_eq!(commits(&path), before + 64);
     settled(&path);
     for n in 0..64 {
-        let got = vault
-            .get_document(key("notes", &format!("doc-{n}.md")))
-            .unwrap();
+        let got = vault.get(key("notes", &format!("doc-{n}.md"))).unwrap();
         assert_eq!(got.raw.unwrap(), format!("document {n}").into_bytes());
     }
     // One commit each: no commit holds two Document files.
@@ -1599,7 +1538,6 @@ fn sixty_four_document_writes_from_one_handle_are_each_stored_whole() {
 #[test]
 fn sixty_four_isolated_writes_from_one_handle_are_each_stored_whole() {
     let (_scratch, path, vault) = fresh("threads-isolated");
-    let vault = Arc::new(vault);
     let before = nested_commits(&path);
     let main = commits(&path);
     std::thread::scope(|scope| {
@@ -1608,7 +1546,7 @@ fn sixty_four_isolated_writes_from_one_handle_are_each_stored_whole() {
             scope.spawn(move || {
                 let id = format!("doc-{n}");
                 vault
-                    .create_document(creation("diary", &id, b"x", "thread"))
+                    .create(creation("diary", &id, b"x", "thread"))
                     .unwrap();
             });
         }
@@ -1628,10 +1566,9 @@ fn sixty_six_document_writes_from_three_processes_are_each_stored_whole() {
         // The role of a child process: write into the Vault of the parent.
         let index = std::env::var(CHILD_INDEX).unwrap();
         let vault = Arc::new(
-            Vault::open(
-                &path,
+            open(
+                Path::new(&path),
                 OpenOptions::default().with_write_timeout_ms(120_000),
-                Ports::default(),
             )
             .unwrap(),
         );
@@ -1643,7 +1580,7 @@ fn sixty_six_document_writes_from_three_processes_are_each_stored_whole() {
                     for n in (half * PER_CHILD / 2)..((half + 1) * PER_CHILD / 2) {
                         let id = format!("p{index}-{n}.md");
                         vault
-                            .create_document(creation("notes", &id, id.as_bytes(), "process"))
+                            .create(creation("notes", &id, id.as_bytes(), "process"))
                             .unwrap();
                     }
                 });
@@ -1682,7 +1619,7 @@ fn sixty_six_document_writes_from_three_processes_are_each_stored_whole() {
     for index in 0..3 {
         for n in 0..PER_CHILD {
             let id = format!("p{index}-{n}.md");
-            let got = vault.get_document(key("notes", &id)).unwrap();
+            let got = vault.get(key("notes", &id)).unwrap();
             assert_eq!(got.raw.unwrap(), id.into_bytes());
         }
     }
@@ -1706,7 +1643,7 @@ fn the_nested_repository_is_made_owner_only_by_the_first_write_that_needs_it() {
     );
     let main = commits(&path);
     vault
-        .create_document(creation("diary", "2026/day-1", b"secret", "first"))
+        .create(creation("diary", "2026/day-1", b"secret", "first"))
         .unwrap();
     assert!(path.join(".isolated/.git").exists());
     assert_eq!(commits(&path), main);
@@ -1740,7 +1677,7 @@ fn the_nested_repository_is_made_owner_only_by_the_first_write_that_needs_it() {
     settled(&path);
     // The second write adds no second `.gitignore`.
     vault
-        .create_document(creation("diary", "2026/day-2", b"more", "second"))
+        .create(creation("diary", "2026/day-2", b"more", "second"))
         .unwrap();
     assert_eq!(
         git_out(
@@ -1755,7 +1692,7 @@ fn the_nested_repository_is_made_owner_only_by_the_first_write_that_needs_it() {
 fn a_nested_repository_with_an_origin_is_never_contacted() {
     let (_scratch, path, vault) = fresh("origin");
     vault
-        .create_document(creation("diary", "a", b"1", "make the nested repository"))
+        .create(creation("diary", "a", b"1", "make the nested repository"))
         .unwrap();
     let nested = path.join(".isolated");
     common::git(
@@ -1763,13 +1700,9 @@ fn a_nested_repository_with_an_origin_is_never_contacted() {
         &["remote", "add", "origin", "/nonexistent/scheda-origin.git"],
     );
     let start = Instant::now();
-    vault
-        .create_document(creation("diary", "b", b"2", "n"))
-        .unwrap();
-    vault
-        .update_document(update("diary", "a", b"1b", None))
-        .unwrap();
-    vault.delete_document(deletion("diary", "b")).unwrap();
+    vault.create(creation("diary", "b", b"2", "n")).unwrap();
+    vault.update(update("diary", "a", b"1b", None)).unwrap();
+    vault.delete(deletion("diary", "b")).unwrap();
     batch(
         &vault,
         ok(vec![
@@ -1803,7 +1736,7 @@ mod encrypted {
     const IDENTITY: &str =
         "AGE-SECRET-KEY-1RN2D82PZQK97437LWJVQJK4Q6EQVHLQ9A8Z0QTAXZ424HV8XZZPS5Q9860";
 
-    fn sealed(name: &str) -> (Scratch, PathBuf, Vault) {
+    fn sealed(name: &str) -> (Scratch, PathBuf, Arc<dyn VaultSync>) {
         let scratch = Scratch::new(name);
         let path = scratch.join("vault");
         let options: OpenOptions = serde_json::from_value(json!({
@@ -1811,7 +1744,7 @@ mod encrypted {
             "writeTimeoutMs": 60000
         }))
         .unwrap();
-        let vault = Vault::open(&path, options, Ports::default()).unwrap();
+        let vault = open(&path, options).unwrap();
         declare(
             &vault,
             json!({"name": "secrets", "schema": {"standard": {}, "encrypted": true}}),
@@ -1839,9 +1772,7 @@ mod encrypted {
             ("hidden", "h", ".isolated/hidden/h", true),
         ] {
             let start = commits_of(&path, isolated);
-            let made = vault
-                .create_document(creation(c, id, b"plain text", "n"))
-                .unwrap();
+            let made = vault.create(creation(c, id, b"plain text", "n")).unwrap();
             assert_eq!(made.raw.as_deref(), Some(&b"plain text"[..]));
             let armor = armor_of(rel);
             assert!(
@@ -1854,22 +1785,20 @@ mod encrypted {
                 Some(blob_id(&armor)),
                 "the revision is the hash of the sealed bytes"
             );
-            assert_eq!(vault.get_document(key(c, id)).unwrap(), made);
+            assert_eq!(vault.get(key(c, id)).unwrap(), made);
             assert_eq!(commits_of(&path, isolated), start + 1);
 
             // The same plaintext stores nothing: the file is not sealed again.
-            let same = vault.upsert_document(upsert(c, id, b"plain text")).unwrap();
+            let same = vault.upsert(upsert(c, id, b"plain text")).unwrap();
             assert_eq!(same, made);
-            let same = vault
-                .update_document(update(c, id, b"plain text", None))
-                .unwrap();
+            let same = vault.update(update(c, id, b"plain text", None)).unwrap();
             assert_eq!(same, made);
             assert_eq!(armor_of(rel), armor, "{c}");
             assert_eq!(commits_of(&path, isolated), start + 1);
 
             // A different one does.
             let changed = vault
-                .update_document(update(
+                .update(update(
                     c,
                     id,
                     b"changed",
@@ -1880,13 +1809,13 @@ mod encrypted {
             assert_ne!(armor_of(rel), armor);
             assert_eq!(commits_of(&path, isolated), start + 2);
             let error = vault
-                .update_document(update(c, id, b"x", made.revision.as_deref()))
+                .update(update(c, id, b"x", made.revision.as_deref()))
                 .unwrap_err();
             assert!(error.is(Code::FailedPrecondition));
 
-            let kept = vault.create_document(keeping(c, id, b"other")).unwrap();
+            let kept = vault.create(keeping(c, id, b"other")).unwrap();
             assert_eq!(kept, changed);
-            vault.delete_document(deletion(c, id)).unwrap();
+            vault.delete(deletion(c, id)).unwrap();
             assert!(!path.join(rel).exists());
             assert_eq!(commits_of(&path, isolated), start + 3);
             settled(&path);
@@ -1898,11 +1827,9 @@ mod encrypted {
         let (_scratch, path, vault) = sealed("encrypted-bytes");
         let not_utf8: &[u8] = &[0xFF, 0xFE, 0x00, 0xC3, 0x28, 0x80, b'\r', b'\n'];
         for bytes in [PNG, not_utf8, b""] {
-            let made = vault
-                .upsert_document(upsert("secrets", "bin", bytes))
-                .unwrap();
+            let made = vault.upsert(upsert("secrets", "bin", bytes)).unwrap();
             assert_eq!(made.raw.as_deref(), Some(bytes));
-            let got = vault.get_document(key("secrets", "bin")).unwrap();
+            let got = vault.get(key("secrets", "bin")).unwrap();
             assert_eq!(got.raw.as_deref(), Some(bytes));
         }
         settled(&path);
@@ -1911,28 +1838,21 @@ mod encrypted {
     #[test]
     fn a_wrong_secret_is_crypto_and_stores_nothing() {
         let (_scratch, path, vault) = sealed("encrypted-wrong");
-        vault
-            .create_document(creation("secrets", "a", b"x", "n"))
-            .unwrap();
+        vault.create(creation("secrets", "a", b"x", "n")).unwrap();
         let before = commits(&path);
         let wrong: OpenOptions =
             serde_json::from_value(json!({"encryption": {"passphrase": "nope"}})).unwrap();
-        let other = Vault::open(&path, wrong, Ports::default()).unwrap();
+        let other = open(&path, wrong).unwrap();
+        assert!(other.get(key("secrets", "a")).unwrap_err().is(Code::Crypto));
         assert!(
             other
-                .get_document(key("secrets", "a"))
+                .upsert(upsert("secrets", "a", b"y"))
                 .unwrap_err()
                 .is(Code::Crypto)
         );
         assert!(
             other
-                .upsert_document(upsert("secrets", "a", b"y"))
-                .unwrap_err()
-                .is(Code::Crypto)
-        );
-        assert!(
-            other
-                .update_document(update("secrets", "a", b"y", None))
+                .update(update("secrets", "a", b"y", None))
                 .unwrap_err()
                 .is(Code::Crypto)
         );
@@ -1952,13 +1872,13 @@ fn an_encrypted_collection_in_a_build_without_the_feature_is_unimplemented() {
     let before = commits(&path);
     assert!(
         vault
-            .create_document(creation("sealed", "a", b"x", "n"))
+            .create(creation("sealed", "a", b"x", "n"))
             .unwrap_err()
             .is(Code::Unimplemented)
     );
     assert!(
         vault
-            .get_document(key("sealed", "a"))
+            .get(key("sealed", "a"))
             .unwrap_err()
             .is(Code::NotFound)
     );

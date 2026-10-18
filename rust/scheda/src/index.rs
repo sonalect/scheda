@@ -146,7 +146,6 @@ impl Index {
     }
 
     /// `{vault}/.scheda/index`.
-    #[cfg(test)]
     pub(crate) fn root(&self) -> &Path {
         &self.root
     }

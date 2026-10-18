@@ -1255,7 +1255,7 @@ mod tests {
     use std::path::PathBuf;
 
     use buffa_types::google::protobuf::Empty;
-    use scheda_api::v1::{Collection, OpenOptions, VaultErrorCode};
+    use scheda_api::v1::{CollectionDeclaration, OpenOptions, VaultErrorCode};
 
     use super::{Change, FileMode, Repo, check_relative, hooks, pending};
     use crate::git::git;
@@ -1315,7 +1315,7 @@ mod tests {
         }
     }
 
-    fn standard(name: &str) -> Collection {
+    fn standard(name: &str) -> CollectionDeclaration {
         serde_json::from_value(serde_json::json!({"name": name, "schema": {"standard": {}}}))
             .unwrap()
     }

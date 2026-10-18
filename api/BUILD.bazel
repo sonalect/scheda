@@ -13,6 +13,7 @@ buf_module(
     visibility = ["//visibility:public"],
     deps = [
         "//api/third_party:protobuf",
+        "//api/third_party:protocontract",
         "//api/third_party:protovalidate",
     ],
 )

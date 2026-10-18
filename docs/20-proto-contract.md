@@ -8,7 +8,7 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5; R1 is next.
+2026) replaces P6 and P7 with R1–R5; R1 is done, R2 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1145,8 +1145,9 @@ Settled at the start of the refactor (18 October 2026):
   caller works through the traits the reference gives (`VaultSync`, …);
   the structs that implement `Vault`, `Collection`, `Mirror`, and `Index`
   are not public. The public crate surface is `scheda::Scheda` (the root,
-  `Default`), `scheda::v1`, `Error`, `Fault`, the fixed-portion adapters,
-  and `parse_age_identity`.
+  `Default`), `scheda::v1`, `Error`, `Fault` and the error helpers
+  (`Context`, `redact_remote_text`), the fixed-portion adapters, and
+  `parse_age_identity`.
 - **A reference that cannot be used is the caller's mistake.** A
   reference that holds no implementation (`UNBOUND`), and an async port
   given outside a tokio runtime (`NO_RUNTIME`), fail `Open` and `Set…`
@@ -1602,44 +1603,70 @@ D3, D4, D5, D10, D18, D23.
 D24. Replaces the hand-written wiring of P5 and the one-service `Vault`
 that P6 was to implement.
 
-- [ ] The generate on protoc-gen-protocontract-buffa v0.4.0 (bazel_utils
+- [x] The generate on protoc-gen-protocontract-buffa v0.4.0 (bazel_utils
       0.4.1) and `protocontract` 0.4.0: `options.proto` from the crate,
       the seven references mapped by `extern_path` in both plugins,
       `json=true` and `validate=true`.
-- [ ] `scheda::Scheda` implements `SchedaSync` (`Info`, `Open`); private
+- [x] `scheda::Scheda` implements `SchedaSync` (`Info`, `Open`); private
       objects implement `VaultSync`, `CollectionSync`, `MirrorSync`, and
       `IndexSync`, and travel as references. What P3–P5 built moves onto
       them: the writes and `Get` onto `Collection`, the declarations and
       `BatchDocuments` onto `Vault`, the mirror onto `Mirror`, the state
       and `Reindex` onto `Index`. `Ports`, `Port`, `Vault::open`,
-      `set_embedder`, and `close(self)` are deleted.
-- [ ] The ports by reference: `Open` and `Vault.Set…` install a port as
-      P5 did (the build checked, the descriptor read once and validated),
-      `Remove…` takes it away, and the indexer takes the new set into its
-      next round.
-- [ ] `Vault.Close` per D24 (9), and the close of a Vault whose
+      `set_embedder`, and `close(self)` are deleted. `Vault.Info` gives
+      the path, the Index path, and the writer.
+- [x] The ports by reference: `Open` and `Vault.Set…` install a port as
+      P5 did (the build checked, the descriptors of the embedder and the
+      Projector read once and validated), `Remove…` takes it away, and
+      the indexer takes the new set into its next round.
+- [x] `Vault.Close` per D24 (9), and the close of a Vault whose
       references are all dropped.
-- [ ] `Mirror.Info` with `last_auto_sync_error`.
-- *Check:* the tests of P3–P5 pass on the objects.
+- [x] `Mirror.Info` with `last_auto_sync_error`.
+- Two tests of P4 and P5 went with the surface they tested: a Document
+  with a `revision` in a write request (a request carries no Document
+  now), and `Reindex` in a build without `find` (the Index object is
+  `UNIMPLEMENTED` there; the rebuild of the journal id maps stays covered
+  by `an_index_of_another_format_or_without_a_commit_is_rebuilt`).
+- *Check:* the tests of P3–P5 pass on the objects (`tests/collections.rs`,
+  `documents.rs`, `index.rs`, `mirror.rs`, `open.rs`, `ports.rs`,
+  `write.rs`, and the unit tests).
 - *Check:* `rust/api/tests/contract.rs`: a reference given a blocking
   implementation gives back the same `Arc`; a default and a decoded one
-  are `UNBOUND`; one in a message has no JSON form and is valid.
+  are `UNBOUND`; one in a message has no JSON form and is valid
+  (`a_reference_gives_back_the_blocking_implementation_it_holds`,
+  `a_default_and_a_decoded_reference_hold_nothing`,
+  `a_message_with_a_reference_has_no_json_form_and_is_valid`).
 - *Check:* an unbound port reference and an async port outside a runtime
-  fail `Open` and `SetEmbedder` with `INVALID_ARGUMENT`.
-- *Check:* `SetProjector` on a Vault without one makes it index;
-  `RemoveEmbedder` makes its `role` false while a `vector` column needs
-  one; `SetReranker` then `RemoveReranker` makes a later `rerank_limit`
-  refused (with R4).
+  fail `Open` and `SetEmbedder` with `INVALID_ARGUMENT`, and write
+  nothing (`tests/objects.rs`:
+  `a_port_reference_that_cannot_be_used_is_invalid_argument`;
+  `ports::tests::a_reference_without_an_implementation_is_invalid_argument`).
+- *Check:* `SetProjector` on a Vault without one makes it index, and
+  after `RemoveProjector` its `Reindex` is `FAILED_PRECONDITION` naming
+  the Projector; `RemoveEmbedder` while a `vector` column needs one stops
+  its rounds and makes its `Reindex` name the embedder, and
+  `SetEmbedder` starts them again (`tests/objects.rs`:
+  `a_vault_whose_references_are_all_dropped_stops_indexing_and_a_held_collection_keeps_it`,
+  `removing_the_embedder_a_vector_column_needs_stops_indexing_until_one_is_given`).
 - *Check:* after `Close`, a call through the Vault, a collection, the
   mirror, and the Index is `FAILED_PRECONDITION`; a second `Close` is
-  `Ok`; `Close` waits for a write that runs and returns with no lock held
-  (another Vault takes the write lock and the index lock at once); a held
-  `Index.Watch` does not stop `Close`, and its next item is
-  `FAILED_PRECONDITION`.
-- *Check:* a Vault whose references are all dropped stops its indexer and
-  holds no lock; a held `CollectionRef` keeps it open.
+  `Ok`; `Close` waits for a write that runs and returns with no lock held;
+  a held `Index.Watch` and one blocked in `next` do not stop `Close`, and
+  their next item is `FAILED_PRECONDITION` (`tests/objects.rs`:
+  `after_close_every_object_is_failed_precondition_and_a_second_close_is_nothing`,
+  `close_waits_for_a_running_write_and_holds_no_lock_after`,
+  `a_held_watch_does_not_stop_close_and_its_next_item_is_failed_precondition`).
+- *Check:* a Vault whose references are all dropped indexes no more and
+  holds no lock; a held `CollectionRef` keeps it open (`tests/objects.rs`:
+  `a_vault_whose_references_are_all_dropped_stops_indexing_and_a_held_collection_keeps_it`).
 - *Check:* a `CollectionRef` of a deleted collection is `NOT_FOUND`, and
-  works again once the name is declared again.
+  works again once the name is declared again (`tests/objects.rs`:
+  `a_collection_ref_finds_its_collection_again_on_each_call`).
+- *Check:* `Mirror.Info` gives the URL, `auto_sync`, and the failure of
+  the push after a write (`tests/objects.rs`:
+  `mirror_info_gives_the_url_auto_sync_and_the_last_failure_of_a_sync_by_itself`);
+  `Scheda.Info` lists the features of the build
+  (`scheda_info_gives_the_version_and_the_features_of_the_build`).
 
 ### R2. `Projector.Describe`
 
@@ -1714,8 +1741,9 @@ D2, D5, D7, D19, D24. The queries of P6.
 - *Check:* a search with `k` above 10 000 is accepted; its first item is
   the summary; its Documents are opened as the stream reaches them, so a
   stream dropped after the first hit opens one file.
-- *Check:* `rerank_limit` without a reranker is `INVALID_ARGUMENT`; a
-  sync embedder given to a sync search is called on the caller's thread.
+- *Check:* `rerank_limit` without a reranker is `INVALID_ARGUMENT`, also
+  after `SetReranker` then `RemoveReranker`; a sync embedder given to a
+  sync search is called on the caller's thread.
 - *Check:* the `Vault` forms span collections: a `BatchDocuments` over two
   collections is one write, one with an isolated and a plain collection is
   `INVALID_ARGUMENT`; `QueryDocuments` and `SearchDocuments` read the

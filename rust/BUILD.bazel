@@ -24,6 +24,8 @@ rust_clippy_test(
         "//rust/scheda:index_thin_test",
         "//rust/scheda:mirror_test",
         "//rust/scheda:mirror_thin_test",
+        "//rust/scheda:objects_test",
+        "//rust/scheda:objects_thin_test",
         "//rust/scheda:open_test",
         "//rust/scheda:open_thin_test",
         "//rust/scheda:ports_test",

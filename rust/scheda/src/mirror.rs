@@ -28,12 +28,13 @@ use std::path::Path;
 use buffa_types::google::protobuf::Empty;
 use git2::build::TreeUpdateBuilder;
 use git2::{Commit, ErrorCode, FileMode, ObjectType, Oid, Repository, Tree};
-use scheda_api::v1::{MirrorSetting, VaultErrorCode};
+use scheda_api::v1::{MirrorInfo, MirrorSetting, VaultErrorCode};
 
 use crate::commit::branch_of;
-use crate::error::{Context, Error, Fault, lib_fault, redact_remote_text};
+use crate::error::{self, Context, Error, Fault, lib_fault, redact_remote_text};
 use crate::repo::{self, Repo};
-use crate::{Vault, git, stored};
+use crate::vault::Vault;
+use crate::{git, stored};
 
 /// The message of the commit that joins the history of the mirror to the
 /// Vault's.
@@ -51,6 +52,25 @@ fn no_mirror() -> Fault {
 }
 
 impl Vault {
+    /// The mirror as this Vault knows it, read locally: its URL (empty
+    /// without one), `auto_sync`, and how the last sync the Vault ran by
+    /// itself failed. Contacts no network.
+    ///
+    /// # Errors
+    ///
+    /// `STORAGE` or `REPLICATION` when git cannot be read.
+    pub(crate) fn mirror_info(&self) -> Result<MirrorInfo, Error> {
+        let snap = self.repos().snapshot(Repo::Main)?;
+        let git = snap.repository().ok_or_else(repository_missing)?;
+        let mut info = MirrorInfo::default()
+            .with_url(repo::origin_of(git)?.unwrap_or_default())
+            .with_auto_sync(self.auto_sync());
+        if let Some(failure) = self.sync_failure() {
+            info.last_auto_sync_error = error::report(&failure).into();
+        }
+        Ok(info)
+    }
+
     /// Sets the URL of the mirror, the remote `origin` of the repository.
     /// Without a mirror, it is set; with the same URL, nothing happens, so a
     /// repeat is safe; with another URL, the call is `ALREADY_EXISTS` naming
@@ -68,7 +88,7 @@ impl Vault {
     /// The codes above; `ABORTED` (retryable) when the write lock is not
     /// free within `write_timeout_ms`; `STORAGE` or `REPLICATION` when git
     /// fails.
-    pub fn set_mirror(&self, mirror_setting: MirrorSetting) -> Result<Empty, Error> {
+    pub(crate) fn set_mirror(&self, mirror_setting: MirrorSetting) -> Result<Empty, Error> {
         stored::validate(&mirror_setting).context("set the mirror")?;
         let url = mirror_setting.url.as_deref().unwrap_or_default().trim();
         let replace = mirror_setting.replace_existing.unwrap_or(false);
@@ -107,7 +127,7 @@ impl Vault {
     /// `NOT_FOUND` as above; `ABORTED` (retryable) when the write lock is
     /// not free within `write_timeout_ms`; `STORAGE` or `REPLICATION` when
     /// git fails.
-    pub fn remove_mirror(&self, _empty: Empty) -> Result<Empty, Error> {
+    pub(crate) fn remove_mirror(&self, _empty: Empty) -> Result<Empty, Error> {
         let lock = self.committer().lock().context("take the write lock")?;
         let snap = lock.snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
@@ -128,7 +148,7 @@ impl Vault {
     /// writes this Vault has not pulled; `UNAUTHENTICATED` when the mirror
     /// refuses the credentials; `UNAVAILABLE` when it cannot be reached;
     /// `REPLICATION` for any other failure of git.
-    pub fn push(&self, _empty: Empty) -> Result<Empty, Error> {
+    pub(crate) fn push(&self, _empty: Empty) -> Result<Empty, Error> {
         self.push_now().context("push to the mirror")?;
         self.clear_sync_failure();
         Ok(Empty::default())
@@ -151,21 +171,21 @@ impl Vault {
     /// a path was changed on both sides differently, with the Vault, its
     /// work tree, and git's index as they were; `ABORTED` (retryable) when
     /// the write lock is not free within `write_timeout_ms` or `HEAD` moved
-    /// under the pull; the codes of [`Vault::push`] for the network.
-    pub fn pull(&self, _empty: Empty) -> Result<Empty, Error> {
+    /// under the pull; the codes of [`push`](Self::push) for the network.
+    pub(crate) fn pull(&self, _empty: Empty) -> Result<Empty, Error> {
         self.pull_now().context("pull from the mirror")?;
         self.clear_sync_failure();
         Ok(Empty::default())
     }
 
-    /// [`Vault::pull`], then [`Vault::push`]. Against a mirror that holds
+    /// [`pull`](Self::pull), then [`push`](Self::push). Against a mirror that holds
     /// nothing yet the pull is nothing to pull, so the push sends everything.
     ///
     /// # Errors
     ///
-    /// Those of [`Vault::pull`] and [`Vault::push`]; a failed pull stops the
+    /// Those of [`pull`](Self::pull) and [`push`](Self::push); a failed pull stops the
     /// call before the push.
-    pub fn sync(&self, _empty: Empty) -> Result<Empty, Error> {
+    pub(crate) fn sync(&self, _empty: Empty) -> Result<Empty, Error> {
         self.pull_now().context("pull from the mirror")?;
         self.push_now().context("push to the mirror")?;
         self.clear_sync_failure();
@@ -415,7 +435,7 @@ mod tests {
 
     use buffa_types::google::protobuf::Empty;
     use scheda_api::v1::{
-        Collection, Document, DocumentUpsert, MirrorSetting, OpenOptions, VaultErrorCode,
+        CollectionDeclaration, DocumentUpsert, MirrorSetting, OpenOptions, VaultErrorCode,
     };
 
     use crate::git::{git, isolate_test_git_env};
@@ -481,22 +501,20 @@ mod tests {
 
     fn put(vault: &Vault, id: &str, raw: &str) {
         vault
-            .upsert_document(DocumentUpsert {
-                document: Document {
-                    collection: Some("notes".to_owned()),
+            .upsert(
+                "notes",
+                DocumentUpsert {
                     id: Some(id.to_owned()),
                     raw: Some(raw.as_bytes().to_vec()),
+                    note: Some(format!("write {id}")),
                     ..Default::default()
-                }
-                .into(),
-                note: Some(format!("write {id}")),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
     }
 
     fn with_notes(vault: &Vault) {
-        let notes: Collection = serde_json::from_value(
+        let notes: CollectionDeclaration = serde_json::from_value(
             serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
         )
         .unwrap();
@@ -622,7 +640,7 @@ mod tests {
         let path = scratch.join("a");
         let vault = auto(&path);
         with_notes(&vault);
-        let isolated: Collection = serde_json::from_value(serde_json::json!(
+        let isolated: CollectionDeclaration = serde_json::from_value(serde_json::json!(
             {"name": "diary", "schema": {"standard": {}, "isolated": true}}
         ))
         .unwrap();
@@ -641,17 +659,15 @@ mod tests {
             .unwrap();
         put(&vault, "a.md", "x");
         vault
-            .upsert_document(DocumentUpsert {
-                document: Document {
-                    collection: Some("diary".to_owned()),
+            .upsert(
+                "diary",
+                DocumentUpsert {
                     id: Some("d".to_owned()),
                     raw: Some(b"secret".to_vec()),
+                    note: Some("diary".to_owned()),
                     ..Default::default()
-                }
-                .into(),
-                note: Some("diary".to_owned()),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
         assert!(vault.sync_failure().is_none());
         assert_eq!(out(&mirror, &["rev-parse", "refs/heads/main"]), pushed);

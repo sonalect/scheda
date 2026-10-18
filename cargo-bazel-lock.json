@@ -1,5 +1,5 @@
 {
-  "checksum": "caade3a43465f0a52ee8d6a6faeb5ca6ee78dde3506cb50365a004d018f8de5f",
+  "checksum": "bf1db519c90fbc988a4c30e26de041df6fc8fdbe724eb695becfcef2d7aa830a",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -11788,7 +11788,8 @@
       ],
       "version": "1.0.107"
     },
-    "protocontract 0.3.1": {
+    "protocontract 0.4.0": {
+      "additive_build_file_content": "filegroup(\n    name = \"protos\",\n    srcs = glob([\"proto/**/*.proto\"]),\n    visibility = [\"//visibility:public\"],\n)\n",
       "common_attrs": {
         "crate_features": [
           "tokio"
@@ -11808,6 +11809,9 @@
           "@scheda_cargo//:tokio"
         ]
       },
+      "extra_aliased_targets": {
+        "protocontract_protos": "protos"
+      },
       "library_target_name": "protocontract",
       "license": "Apache-2.0",
       "license_file": "LICENSE",
@@ -11818,8 +11822,8 @@
       "package_url": "https://github.com/sonalect/protocontract-buffa.rs",
       "repository": {
         "Http": {
-          "sha256": "46f783c6796cdcf47ac6c0aa9985f8e20500010d296b52bf3948d5b72cd22674",
-          "url": "https://static.crates.io/crates/protocontract/0.3.1/download"
+          "sha256": "ef108f65feb86707603716e01d730585c25fbb121309e95eb5dad8b74a2ce35a",
+          "url": "https://static.crates.io/crates/protocontract/0.4.0/download"
         }
       },
       "targets": [
@@ -11830,7 +11834,7 @@
           }
         }
       ],
-      "version": "0.3.1"
+      "version": "0.4.0"
     },
     "protovalidate-buffa 0.7.2": {
       "common_attrs": {
@@ -13730,7 +13734,7 @@
             "target": "libgit2_sys"
           },
           {
-            "id": "protocontract 0.3.1",
+            "id": "protocontract 0.4.0",
             "target": "protocontract"
           },
           {
@@ -13808,7 +13812,7 @@
             "target": "buffa_types"
           },
           {
-            "id": "protocontract 0.3.1",
+            "id": "protocontract 0.4.0",
             "target": "protocontract"
           },
           {
@@ -19914,7 +19918,7 @@
     "libgit2-sys 0.18.8+1.9.7",
     "mimalloc 3.5.3",
     "model2vec-rs 0.3.0",
-    "protocontract 0.3.1",
+    "protocontract 0.4.0",
     "protovalidate-buffa 0.7.2",
     "regex 1.13.1",
     "serde 1.0.229",

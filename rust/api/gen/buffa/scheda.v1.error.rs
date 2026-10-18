@@ -47,12 +47,12 @@ pub enum VaultErrorCode {
     /// A file holds an unfinished merge. Resolve it by hand.
     VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 14i32,
     /// The Index has not been built yet, or is moving to a new format.
-    /// Retryable soon; `WatchIndexStatus` says when.
+    /// Retryable soon; `Index.Watch` says when.
     VAULT_ERROR_CODE_INDEX_REBUILDING = 15i32,
-    /// The Index was built by another Projector or another embedding model.
-    /// `Reindex`.
+    /// The Index was built by a Projector of another projection, or with
+    /// other columns, than this Vault's. `Index.Reindex`.
     VAULT_ERROR_CODE_INDEX_STALE = 16i32,
-    /// The Index is damaged. `Reindex`.
+    /// The Index is damaged. `Index.Reindex`.
     VAULT_ERROR_CODE_INDEX_BROKEN = 17i32,
     /// The storage below the Vault failed. Retryable when the failure is a
     /// passing one (interrupted, would block, busy).

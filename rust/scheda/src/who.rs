@@ -108,8 +108,10 @@ impl Who {
             return Ok(Verdict::Lacks("Projector"));
         };
         #[cfg(feature = "search")]
+        let projector = &*projector;
+        #[cfg(feature = "search")]
         {
-            match self.ports.embedder().context("read the embedder")? {
+            match self.ports.embedder() {
                 Some(embedder) => {
                     if !asked
                         && crate::vector::recorded(&self.index)
@@ -137,7 +139,7 @@ impl Who {
     pub(crate) fn mismatch(&self) -> bool {
         #[cfg(feature = "search")]
         {
-            let Ok(Some(embedder)) = self.ports.embedder() else {
+            let Some(embedder) = self.ports.embedder() else {
                 return false;
             };
             matches!(

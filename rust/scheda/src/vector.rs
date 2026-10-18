@@ -809,7 +809,7 @@ impl Side for Vector {
             let _ = round.take_offers();
             return Ok(());
         }
-        let embedder = self.ports.embedder().context("read the embedder")?;
+        let embedder = self.ports.embedder();
         if !targets.names.is_empty() && embedder.is_none() {
             return Err(precondition(
                 "the Index needs an embedder for the vectors, and this handle has none",
@@ -1152,19 +1152,22 @@ mod tests {
 
     use buffa_types::google::protobuf::Empty;
     use protocontract::{BoxIter, Failure};
+    use scheda_api::v1::embedder_ref::EmbedderRef;
+    use scheda_api::v1::projector_ref::ProjectorRef;
     use scheda_api::v1::{
-        Collection, CollectionKey, ColumnKind, Document, DocumentCreation, DocumentDeletion,
-        DocumentKey, DocumentUpsert, EmbedderDescriptor, EmbedderErrorCode, EmbedderSync,
-        IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue, OpenOptions, ProjectorSync,
-        Query, RawDocument, Text, VaultErrorCode, Vector, index_value, rebuild,
+        CollectionDeclaration, CollectionKey, ColumnKind, DocumentCreation, DocumentDeletion,
+        DocumentId, DocumentUpsert, EmbedderDescriptor, EmbedderErrorCode, EmbedderSync,
+        IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue, OpenOptions,
+        ProjectorDescriptor, ProjectorSync, Query, RawDocument, Text, VaultErrorCode, Vector,
+        index_value, rebuild,
     };
 
     use super::{Leg, Slot, Snapshot, digest, read_reached, recorded};
-    use crate::Vault;
     use crate::error::Error;
     use crate::index::{Index, State};
-    use crate::ports::{FixedEmbedder, Port, Ports};
+    use crate::ports::{FixedEmbedder, Ports};
     use crate::repo::Repos;
+    use crate::vault::Vault;
 
     const DEADLINE: Duration = Duration::from_secs(30);
     const DIMS: usize = 8;
@@ -1292,6 +1295,10 @@ mod tests {
     }
 
     impl ProjectorSync for Json {
+        fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
+            Ok(ProjectorDescriptor::default().with_projection_id("json@1"))
+        }
+
         fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
             Ok(IndexSchema {
                 columns: vec![
@@ -1348,8 +1355,8 @@ mod tests {
 
     fn ports(projected: &Arc<Mutex<Vec<(String, String)>>>, embedder: &Arc<Embedded>) -> Ports {
         Ports {
-            projector: Some(Port::Sync(Arc::new(Json(Arc::clone(projected))))),
-            embedder: Some(Port::Sync(Arc::new(Counting(Arc::clone(embedder))))),
+            projector: Some(ProjectorRef::from_sync(Json(Arc::clone(projected)))),
+            embedder: Some(EmbedderRef::from_sync(Counting(Arc::clone(embedder)))),
             ..Ports::default()
         }
     }
@@ -1364,7 +1371,7 @@ mod tests {
 
     impl Items {
         fn of(vault: &Vault) -> Items {
-            let mut watch = vault.watch_index_status(Empty::default()).unwrap();
+            let mut watch = vault.indexer().watch();
             let (tx, rx) = mpsc::channel();
             std::thread::spawn(move || {
                 while let Some(Ok(state)) = watch.next() {
@@ -1400,7 +1407,7 @@ mod tests {
                     && state.pending == Some(0)
                     && state.role != Some(true)
             };
-            if reached(&vault.get_index_status(Empty::default()).unwrap()) {
+            if reached(&vault.indexer().status()) {
                 return;
             }
             self.until("the Index to reach HEAD", reached);
@@ -1417,7 +1424,7 @@ mod tests {
         embedded: Arc<Embedded>,
     }
 
-    fn collection(value: serde_json::Value) -> Collection {
+    fn collection(value: serde_json::Value) -> CollectionDeclaration {
         serde_json::from_value(value).unwrap()
     }
 
@@ -1466,17 +1473,15 @@ mod tests {
 
         fn upsert(&self, vault: &Vault, collection: &str, id: &str, raw: &str) {
             vault
-                .upsert_document(DocumentUpsert {
-                    document: Document {
-                        collection: Some(collection.to_owned()),
+                .upsert(
+                    collection,
+                    DocumentUpsert {
                         id: Some(id.to_owned()),
                         raw: Some(raw.as_bytes().to_vec()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
 
@@ -1486,16 +1491,14 @@ mod tests {
 
         fn remove(&self, collection: &str, id: &str) {
             self.vault
-                .delete_document(DocumentDeletion {
-                    document: DocumentKey {
-                        collection: Some(collection.to_owned()),
+                .delete(
+                    collection,
+                    DocumentDeletion {
                         id: Some(id.to_owned()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
 
@@ -1706,11 +1709,13 @@ mod tests {
         );
         assert!(
             fx.vault
-                .get_document(DocumentKey {
-                    collection: Some("notes".to_owned()),
-                    id: Some("b".to_owned()),
-                    ..Default::default()
-                })
+                .get(
+                    "notes",
+                    DocumentId {
+                        id: Some("b".to_owned()),
+                        ..Default::default()
+                    }
+                )
                 .is_ok()
         );
     }
@@ -1731,8 +1736,8 @@ mod tests {
             },
         );
         let ports = Ports {
-            projector: Some(Port::Sync(Arc::new(Json(projected)))),
-            embedder: Some(Port::Sync(Arc::new(fixed))),
+            projector: Some(ProjectorRef::from_sync(Json(projected))),
+            embedder: Some(EmbedderRef::from_sync(fixed)),
             ..Ports::default()
         };
         let vault = Vault::open(scratch.0.join("vault"), options(), ports).unwrap();
@@ -1743,17 +1748,15 @@ mod tests {
         let items = Items::of(&vault);
         for n in 0..10 {
             vault
-                .upsert_document(DocumentUpsert {
-                    document: Document {
-                        collection: Some("notes".to_owned()),
+                .upsert(
+                    "notes",
+                    DocumentUpsert {
                         id: Some(format!("n{n}")),
                         raw: Some(format!(r#"{{"body":"word {n}"}}"#).into_bytes()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
         items.built(&vault, &path);
@@ -1774,7 +1777,7 @@ mod tests {
         let (bare, bare_items) = fx.handle(Ports::default());
         let projected = Arc::new(Mutex::new(Vec::new()));
         let projector_only = Ports {
-            projector: Some(Port::Sync(Arc::new(Json(projected)))),
+            projector: Some(ProjectorRef::from_sync(Json(projected))),
             ..Ports::default()
         };
         let (no_embedder, no_embedder_items) = fx.handle(projector_only);
@@ -1789,10 +1792,10 @@ mod tests {
             assert_eq!(handle.indexer().locks(), 0, "it never took the lock");
         }
         assert!(fx.vault.indexer().locks() > 0);
-        let error = bare.reindex(Empty::default()).unwrap_err();
+        let error = bare.indexer().reindex().unwrap_err();
         assert!(error.is(VaultErrorCode::FailedPrecondition));
         assert!(error.to_string().contains("Projector"), "{error}");
-        let error = no_embedder.reindex(Empty::default()).unwrap_err();
+        let error = no_embedder.indexer().reindex().unwrap_err();
         assert!(error.is(VaultErrorCode::FailedPrecondition));
         assert!(error.to_string().contains("embedder"), "{error}");
         assert_eq!(fx.snapshot().len(), 1);
@@ -1803,6 +1806,10 @@ mod tests {
         struct Asked(Json, Arc<AtomicUsize>);
 
         impl ProjectorSync for Asked {
+            fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
+                Ok(ProjectorDescriptor::default().with_projection_id("json@1"))
+            }
+
             fn columns(&self, collection: CollectionKey) -> Result<IndexSchema, Error> {
                 self.1.fetch_add(1, Ordering::SeqCst);
                 self.0.columns(collection)
@@ -1817,7 +1824,7 @@ mod tests {
         let asked = Arc::new(AtomicUsize::new(0));
         let projector = Asked(Json(Arc::new(Mutex::new(Vec::new()))), Arc::clone(&asked));
         let ports = Ports {
-            projector: Some(Port::Sync(Arc::new(projector))),
+            projector: Some(ProjectorRef::from_sync(projector)),
             ..Ports::default()
         };
         let vault = Vault::open(scratch.0.join("vault"), options(), ports).unwrap();
@@ -1858,17 +1865,15 @@ mod tests {
             ))
             .unwrap();
         vault
-            .create_document(DocumentCreation {
-                document: Document {
-                    collection: Some("log".to_owned()),
+            .create(
+                "log",
+                DocumentCreation {
                     id: Some("one".to_owned()),
                     raw: Some(b"{}".to_vec()),
+                    note: Some("test".to_owned()),
                     ..Default::default()
-                }
-                .into(),
-                note: Some("test".to_owned()),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
         let deadline = Instant::now() + DEADLINE;
         while vault.indexer().looks() < 5 {
@@ -1881,11 +1886,13 @@ mod tests {
         let error = vault.lexical().snapshot().unwrap_err();
         assert!(error.is(VaultErrorCode::IndexRebuilding));
         let found = vault
-            .get_document(DocumentKey {
-                collection: Some("log".to_owned()),
-                id: Some("one".to_owned()),
-                ..Default::default()
-            })
+            .get(
+                "log",
+                DocumentId {
+                    id: Some("one".to_owned()),
+                    ..Default::default()
+                },
+            )
             .unwrap();
         assert_eq!(found.id.as_deref(), Some("one"));
     }
@@ -1911,7 +1918,7 @@ mod tests {
         assert_eq!(b.indexer().locks(), 0);
         assert_eq!(recorded(&fx.index()).unwrap().unwrap().model_id, "model-a");
 
-        b.reindex(Empty::default()).unwrap();
+        b.indexer().reindex().unwrap();
         b_items.until("the rebuild", |state| {
             state
                 .rebuild
@@ -1933,7 +1940,7 @@ mod tests {
             .until("the first handle to see the other model", |state| {
                 state.model_mismatch == Some(true)
             });
-        let embedder = fx.vault.ports().embedder().unwrap().unwrap();
+        let embedder = fx.vault.ports().embedder().unwrap();
         assert_eq!(
             fx.vault.vectors().leg(Some(&embedder)).unwrap(),
             Leg::ModelMismatch
@@ -1943,7 +1950,7 @@ mod tests {
     #[test]
     fn the_vector_leg_says_why_it_cannot_run() {
         let fx = Fixture::new("leg", &[standard("notes")]);
-        let embedder = fx.vault.ports().embedder().unwrap().unwrap();
+        let embedder = fx.vault.ports().embedder().unwrap();
         assert_eq!(fx.vault.vectors().leg(None).unwrap(), Leg::NoEmbedder);
         assert_eq!(
             fx.vault.vectors().leg(Some(&embedder)).unwrap(),
@@ -1966,7 +1973,7 @@ mod tests {
         let reader = super::Reader::new(index);
         let error = reader.snapshot().unwrap_err();
         assert!(error.is(VaultErrorCode::IndexBroken));
-        fx.vault.reindex(Empty::default()).unwrap();
+        fx.vault.indexer().reindex().unwrap();
         fx.items.until("the rebuild", |state| {
             state
                 .rebuild
@@ -1989,17 +1996,15 @@ mod tests {
         );
         for (id, body) in [("one", "first entry"), ("two", "second entry")] {
             fx.vault
-                .create_document(DocumentCreation {
-                    document: Document {
-                        collection: Some("log".to_owned()),
+                .create(
+                    "log",
+                    DocumentCreation {
                         id: Some(id.to_owned()),
                         raw: Some(format!(r#"{{"body":"{body}"}}"#).into_bytes()),
+                        note: Some("test".to_owned()),
                         ..Default::default()
-                    }
-                    .into(),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                })
+                    },
+                )
                 .unwrap();
         }
         fx.built();
@@ -2018,7 +2023,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn an_async_embedder_feeds_the_indexer() {
         use protocontract::{IterStream, Stream};
-        use scheda_api::v1::{DynEmbedderAsync, EmbedderAsync};
+        use scheda_api::v1::EmbedderAsync;
 
         struct Waiting;
 
@@ -2059,8 +2064,8 @@ mod tests {
         let scratch = Scratch::new("async");
         let projected = Arc::new(Mutex::new(Vec::new()));
         let ports = Ports {
-            projector: Some(Port::Sync(Arc::new(Json(projected)))),
-            embedder: Some(Port::Async(DynEmbedderAsync::new(Waiting))),
+            projector: Some(ProjectorRef::from_sync(Json(projected))),
+            embedder: Some(EmbedderRef::from_async(Waiting)),
             ..Ports::default()
         };
         let vault = Vault::open(scratch.0.join("vault"), options(), ports).unwrap();
@@ -2070,17 +2075,15 @@ mod tests {
         let path = scratch.0.join("vault").canonicalize().unwrap();
         let items = Items::of(&vault);
         vault
-            .upsert_document(DocumentUpsert {
-                document: Document {
-                    collection: Some("notes".to_owned()),
+            .upsert(
+                "notes",
+                DocumentUpsert {
                     id: Some("a".to_owned()),
                     raw: Some(br#"{"body":"alpha"}"#.to_vec()),
+                    note: Some("test".to_owned()),
                     ..Default::default()
-                }
-                .into(),
-                note: Some("test".to_owned()),
-                ..Default::default()
-            })
+                },
+            )
             .unwrap();
         let waiting = tokio::task::spawn_blocking(move || {
             items.built(&vault, &path);

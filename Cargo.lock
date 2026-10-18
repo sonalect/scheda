@@ -2483,9 +2483,9 @@ dependencies = [
 
 [[package]]
 name = "protocontract"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46f783c6796cdcf47ac6c0aa9985f8e20500010d296b52bf3948d5b72cd22674"
+checksum = "ef108f65feb86707603716e01d730585c25fbb121309e95eb5dad8b74a2ce35a"
 dependencies = [
  "buffa",
  "futures-core",

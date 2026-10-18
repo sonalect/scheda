@@ -5,33 +5,45 @@ mod common;
 mod probe;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use buffa_types::google::protobuf::Empty;
 use scheda::v1::collection_result::Result as ResultArm;
 use scheda::v1::{
-    Collection, CollectionDeletion, CollectionKey, CollectionOperation, OpenOptions,
-    VaultErrorCode as Code,
+    CollectionDeclaration, CollectionDeletion, CollectionKey, CollectionOperation, OpenOptions,
+    VaultErrorCode as Code, VaultSync,
 };
-use scheda::{Error, Fault, Ports, Vault};
+use scheda::{Error, Fault};
 use serde_json::{Value, json};
 
-use common::{Scratch, git, snapshot, vault, work_tree, write};
+use common::{Scratch, git, open, snapshot, vault, work_tree, write};
 use probe::{assert_settled, commits, git_out};
 
-fn collection(value: Value) -> Collection {
+fn collection(value: Value) -> CollectionDeclaration {
     serde_json::from_value(value).unwrap()
 }
 
-fn standard(name: &str) -> Collection {
+fn standard(name: &str) -> CollectionDeclaration {
     collection(json!({"name": name, "schema": {"standard": {}}}))
 }
 
-fn journal(name: &str) -> Collection {
+fn journal(name: &str) -> CollectionDeclaration {
     collection(json!({"name": name, "schema": {"journal": {}}}))
 }
 
-fn isolated(name: &str) -> Collection {
+fn isolated(name: &str) -> CollectionDeclaration {
     collection(json!({"name": name, "schema": {"standard": {}, "isolated": true}}))
+}
+
+/// The declaration the Vault holds for the collection `name`.
+fn declared(vault: &Arc<dyn VaultSync>, name: &str) -> CollectionDeclaration {
+    vault
+        .get_collection(key(name))
+        .unwrap()
+        .to_sync()
+        .unwrap()
+        .describe(Empty::default())
+        .unwrap()
 }
 
 fn key(name: &str) -> CollectionKey {
@@ -47,10 +59,10 @@ fn operation(value: Value) -> CollectionOperation {
 }
 
 /// A new Vault at `name` below a scratch directory.
-fn fresh(name: &str) -> (Scratch, PathBuf, Vault) {
+fn fresh(name: &str) -> (Scratch, PathBuf, Arc<dyn VaultSync>) {
     let scratch = Scratch::new(name);
     let path = scratch.join("vault");
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
     (scratch, path, vault)
 }
 
@@ -98,10 +110,10 @@ fn create_returns_the_collection_with_defaults_and_writes_none() {
     assert_eq!(commits(&path), before + 1);
     assert_eq!(subject(&path), "create collection log (journal)");
     assert_settled(&path, &[]);
-    assert_eq!(vault.get_collection(key("log")).unwrap(), made);
+    assert_eq!(declared(&vault, "log"), made);
     // Another handle opens the Vault and reads the same declaration.
-    let other = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
-    assert_eq!(other.get_collection(key("log")).unwrap(), made);
+    let other = open(&path, OpenOptions::default()).unwrap();
+    assert_eq!(declared(&other, "log"), made);
 }
 
 #[test]
@@ -154,7 +166,7 @@ fn create_refuses_a_declared_name_and_a_request_that_breaks_a_rule() {
         no_schema,
         singleton_slug,
         bad_journal,
-        Collection::default(),
+        CollectionDeclaration::default(),
     ];
     for name in [".hidden", "a/b", "", " x", "x.", "CON", "../x"] {
         cases.push(standard(name));
@@ -203,9 +215,9 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
             ),
         ],
     );
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
     // The declaration in memory has the default; the file has not.
-    let stored = vault.get_collection(key("cache")).unwrap();
+    let stored = declared(&vault, "cache");
     assert_eq!(
         serde_json::to_value(&stored).unwrap()["schema"]["journal"]["segmentMaxBytes"],
         "8388608"
@@ -533,7 +545,7 @@ fn a_batch_may_create_and_delete_a_name_or_delete_and_create_it_again() {
         .batch_collections(Box::new(items.into_iter()))
         .unwrap();
     assert_eq!(commits(&path), before + 1);
-    let notes = vault.get_collection(key("notes")).unwrap();
+    let notes = declared(&vault, "notes");
     assert!(notes.schema.as_option().unwrap().kind.is_some());
     assert!(read(&path, "notes/.collection.yaml").contains("journal"));
     assert_settled(&path, &[]);
@@ -549,8 +561,8 @@ fn a_collection_declared_by_another_handle_or_by_hand_is_seen() {
     let scratch = Scratch::new("fresh");
     let path = scratch.join("vault");
     vault(&path);
-    let first = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
-    let second = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
+    let first = open(&path, OpenOptions::default()).unwrap();
+    let second = open(&path, OpenOptions::default()).unwrap();
     assert_eq!(
         first
             .list_collections(Empty::default())

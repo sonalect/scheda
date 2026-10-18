@@ -85,31 +85,9 @@ pub mod filter {
         }
     }
 }
-pub mod document_query {
-    #[allow(unused_imports)]
-    use super::*;
-    #[derive(Clone, Debug)]
-    pub enum Scope<'a> {
-        Collections(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::CollectionNamesView<'a>,
-            >,
-        ),
-        Collection(&'a str),
-    }
-}
 pub mod document_search {
     #[allow(unused_imports)]
     use super::*;
-    #[derive(Clone, Debug)]
-    pub enum Scope<'a> {
-        Collections(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::CollectionNamesView<'a>,
-            >,
-        ),
-        Collection(&'a str),
-    }
     #[derive(Clone, Debug)]
     pub enum Subject<'a> {
         Text(&'a str),

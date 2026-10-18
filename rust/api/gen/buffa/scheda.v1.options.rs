@@ -197,12 +197,12 @@ pub struct OpenOptions {
     /// absolute URI (`https://…`, `ssh://…`, `file:///…`) or an scp-style
     /// address (`git@host:path`). Unset: a new local Vault. On an existing
     /// Vault, a set value must be its mirror's URL (`INVALID_ARGUMENT`
-    /// otherwise); `SetMirror` changes the mirror.
+    /// otherwise); `Mirror.Set` changes the mirror.
     ///
     /// Field 2: `mirror`
     #[serde(rename = "mirror", skip_serializing_if = "::core::option::Option::is_none")]
     pub mirror: ::core::option::Option<::buffa::alloc::string::String>,
-    /// The secret of this handle for every encrypted collection. Unset:
+    /// The secret of this Vault for every encrypted collection. Unset:
     /// nothing is encrypted or decrypted, and an encrypted collection is
     /// `CRYPTO`.
     ///
@@ -212,7 +212,7 @@ pub struct OpenOptions {
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
     pub encryption: ::buffa::MessageField<Encryption, ::buffa::Inline<Encryption>>,
-    /// Who writes through this handle; the history of a Document shows it.
+    /// Who writes through this Vault; the history of a Document shows it.
     /// Unset: the local git configuration, then `Scheda <scheda@invalid>`.
     ///
     /// Field 4: `author`
@@ -230,8 +230,8 @@ pub struct OpenOptions {
     #[serde(rename = "writer", skip_serializing_if = "::core::option::Option::is_none")]
     pub writer: ::core::option::Option<::buffa::alloc::string::String>,
     /// How often, in milliseconds, the indexer looks for writes made
-    /// outside this handle (another process, a `git` command). A write
-    /// through this handle wakes it at once. Unset: 1000.
+    /// outside this Vault (another Vault, another process, a `git` command).
+    /// A write through this Vault wakes it at once. Unset: 1000.
     ///
     /// Field 6: `index_poll_ms`
     #[serde(
@@ -262,10 +262,10 @@ pub struct OpenOptions {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub write_timeout_ms: ::core::option::Option<u32>,
-    /// The key to sign every commit of this handle with. For a later version:
+    /// The key to sign every commit of this Vault with. For a later version:
     /// signing is not built yet, and a set value makes `open`
     /// `UNIMPLEMENTED`. Unset: commits are not signed. Git's `commit.gpgSign`
-    /// is not read: the author of Scheda's commits is the handle's (`author`),
+    /// is not read: the author of Scheda's commits is the Vault's (`author`),
     /// not the person whose git configuration it is.
     ///
     /// Field 9: `signing`
@@ -1028,7 +1028,7 @@ pub const __AUTHOR_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::typ
     from_json: ::buffa::type_registry::any_from_json::<Author>,
     is_wkt: false,
 };
-/// The age secret of a handle: a passphrase or an X25519 identity. Never
+/// The age secret of a Vault: a passphrase or an X25519 identity. Never
 /// written into the Vault. Redacted from debug output; Protobuf JSON still
 /// carries it, so it never goes on a command line.
 #[derive(Clone, PartialEq, Default)]

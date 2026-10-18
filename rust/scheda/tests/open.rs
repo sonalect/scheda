@@ -1,12 +1,12 @@
-//! `Vault::open`: what each `OpenMode` does with each kind of path, the
+//! `Scheda.open`: what each `OpenMode` does with each kind of path, the
 //! generation check, and what a refusal leaves on disk.
 
 mod common;
 
+use buffa_types::google::protobuf::Empty;
 use scheda::v1::{OpenMode, OpenOptions, VaultErrorCode as Code};
-use scheda::{Ports, Vault};
 
-use common::{Scratch, command, git, snapshot, vault, work_tree, write};
+use common::{Scratch, command, git, open, snapshot, vault, work_tree, write};
 
 fn options(mode: OpenMode) -> OpenOptions {
     OpenOptions::default().with_mode(mode)
@@ -17,7 +17,7 @@ fn options(mode: OpenMode) -> OpenOptions {
 fn refused(path: &std::path::Path, mode: OpenMode, code: Code) {
     let before = snapshot(path);
     let existed = path.exists();
-    let error = Vault::open(path, options(mode), Ports::default()).unwrap_err();
+    let error = open(path, options(mode)).err().unwrap();
     assert!(error.is(code), "{mode:?}: {error}");
     assert_eq!(path.exists(), existed, "{mode:?}");
     assert_eq!(snapshot(path), before, "{mode:?}");
@@ -69,7 +69,7 @@ fn another_folder_is_refused_by_every_mode() {
         OpenMode::OPEN_MODE_OPEN_OR_CREATE,
         Code::InvalidArgument,
     );
-    let error = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap_err();
+    let error = open(&path, OpenOptions::default()).err().unwrap();
     assert!(error.is(Code::InvalidArgument), "unset is open or create");
     assert_eq!(snapshot(&path).len(), 1);
 }
@@ -108,11 +108,11 @@ fn create_new_refuses_a_vault_and_the_other_modes_open_it() {
         OpenMode::OPEN_MODE_OPEN_OR_CREATE,
         OpenMode::OPEN_MODE_UNSPECIFIED,
     ] {
-        let vault = Vault::open(&path, options(mode), Ports::default()).unwrap();
-        vault.close().unwrap();
+        let vault = open(&path, options(mode)).unwrap();
+        vault.close(Empty::default()).unwrap();
     }
-    let vault = Vault::open(&path, OpenOptions::default(), Ports::default()).unwrap();
-    vault.close().unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
+    vault.close(Empty::default()).unwrap();
     assert!(path.join(".scheda/writer").is_file());
 }
 
@@ -155,9 +155,9 @@ fn an_unknown_key_in_the_marker_and_a_leftover_version_in_a_collection_file_open
             ),
         ],
     );
-    Vault::open(&path, OpenOptions::default(), Ports::default())
+    open(&path, OpenOptions::default())
         .unwrap()
-        .close()
+        .close(Empty::default())
         .unwrap();
 }
 
@@ -204,17 +204,13 @@ fn a_mirror_that_is_not_the_origin_is_invalid_argument() {
     git(&path, &["remote", "add", "origin", url]);
     let before = snapshot(&path);
     let other = OpenOptions::default().with_mirror("https://example.test/org/other.git");
-    let error = Vault::open(&path, other, Ports::default()).unwrap_err();
+    let error = open(&path, other).err().unwrap();
     assert!(error.is(Code::InvalidArgument));
     assert_eq!(snapshot(&path), before);
-    Vault::open(
-        &path,
-        OpenOptions::default().with_mirror(url),
-        Ports::default(),
-    )
-    .unwrap()
-    .close()
-    .unwrap();
+    open(&path, OpenOptions::default().with_mirror(url))
+        .unwrap()
+        .close(Empty::default())
+        .unwrap();
 }
 
 #[test]
@@ -222,12 +218,9 @@ fn options_that_break_a_rule_are_invalid_argument() {
     let scratch = Scratch::new("options");
     let path = scratch.join("vault");
     vault(&path);
-    let error = Vault::open(
-        &path,
-        OpenOptions::default().with_writer("NOT valid"),
-        Ports::default(),
-    )
-    .unwrap_err();
+    let error = open(&path, OpenOptions::default().with_writer("NOT valid"))
+        .err()
+        .unwrap();
     assert!(error.is(Code::InvalidArgument));
 }
 
@@ -240,7 +233,7 @@ fn encryption_without_the_feature_is_unimplemented() {
     let options: OpenOptions =
         serde_json::from_str(r#"{"encryption": {"passphrase": "secret"}}"#).unwrap();
     let before = snapshot(&path);
-    let error = Vault::open(&path, options, Ports::default()).unwrap_err();
+    let error = open(&path, options).err().unwrap();
     assert!(error.is(Code::Unimplemented));
     assert_eq!(snapshot(&path), before);
 }
@@ -257,7 +250,7 @@ fn signing_is_not_built_yet_and_refuses_to_open() {
         let options: OpenOptions =
             serde_json::from_str(&format!(r#"{{"signing": {key}}}"#)).unwrap();
         let before = snapshot(&path);
-        let error = Vault::open(&path, options, Ports::default()).unwrap_err();
+        let error = open(&path, options).err().unwrap();
         assert!(error.is(Code::Unimplemented), "{key}: {error}");
         assert_eq!(snapshot(&path), before);
     }

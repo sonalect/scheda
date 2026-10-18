@@ -1,10 +1,15 @@
 //! Helpers shared by the integration tests: a scratch directory, plain
-//! `git` with the user's configuration kept out, and a Vault built on disk
-//! the way a user would build one, without the library.
+//! `git` with the user's configuration kept out, a Vault built on disk
+//! the way a user would build one, without the library, and the objects of
+//! the opening of a Vault by the library.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+use scheda::v1::{OpenOptions, SchedaSync, VaultOpening, VaultSync};
+use scheda::{Error, Scheda};
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -135,4 +140,19 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
         walk(dir, dir, &mut out);
     }
     out
+}
+
+/// Opens the Vault at `path` with `options` and no port.
+pub fn open(path: &Path, options: OpenOptions) -> Result<Arc<dyn VaultSync>, Error> {
+    Scheda.open(opening(path, options))?.to_sync()
+}
+
+/// The request that opens the Vault at `path` with `options` and no port;
+/// a test sets the ports it wants on it.
+pub fn opening(path: &Path, options: OpenOptions) -> VaultOpening {
+    VaultOpening {
+        path: Some(path.to_string_lossy().into_owned()),
+        options: options.into(),
+        ..VaultOpening::default()
+    }
 }

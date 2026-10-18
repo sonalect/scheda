@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use scheda_api::v1::schema::Kind as SchemaKind;
-use scheda_api::v1::{Collection, Journal, VaultErrorCode};
+use scheda_api::v1::{CollectionDeclaration, Journal, VaultErrorCode};
 
 use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
@@ -61,7 +61,7 @@ pub(crate) struct DeclFile {
 #[derive(Clone, Debug)]
 pub(crate) struct Declaration {
     /// The message, with every default filled in.
-    pub(crate) collection: Collection,
+    pub(crate) collection: CollectionDeclaration,
     /// What the file had that this version does not know.
     pub(crate) unknown: Unknowns,
     /// The file it came from.
@@ -235,7 +235,7 @@ pub(crate) fn load(snap: &Snap) -> Result<Declarations, Error> {
 /// Encodes `collection` as the bytes of a declaration file in `format`,
 /// with the `unknown` fields of the file it replaces put back.
 pub(crate) fn encode(
-    collection: &Collection,
+    collection: &CollectionDeclaration,
     unknown: &Unknowns,
     format: Format,
 ) -> Result<Vec<u8>, Error> {
@@ -256,7 +256,7 @@ pub(crate) fn new_file(name: &str) -> DeclFile {
 /// Checks a `Collection` a caller sends, before anything is locked or
 /// written: the rules of the contract, the slug of the name and of a
 /// singleton `id`. Reads nothing.
-pub(crate) fn check(collection: &Collection) -> Result<(), Fault> {
+pub(crate) fn check(collection: &CollectionDeclaration) -> Result<(), Fault> {
     stored::validate(collection)?;
     require_slug("collection name", collection.name.as_deref().unwrap_or(""))?;
     let mut copy = collection.clone();
@@ -269,7 +269,7 @@ pub(crate) fn check(collection: &Collection) -> Result<(), Fault> {
 /// as a later load of those bytes finds it, defaults filled in. The bytes
 /// hold what the caller declared and no default.
 pub(crate) fn declare_new(
-    collection: &Collection,
+    collection: &CollectionDeclaration,
     unknown: &Unknowns,
     file: DeclFile,
 ) -> Result<(Vec<u8>, Declaration), Error> {
@@ -288,7 +288,7 @@ fn declare(bytes: &[u8], rel: &str, dir_name: &str) -> Result<Declaration, Fault
     let stored::Stored {
         mut message,
         unknown,
-    } = stored::read::<Collection>(bytes, format)?;
+    } = stored::read::<CollectionDeclaration>(bytes, format)?;
     let name = message.name.as_deref().unwrap_or("");
     require_slug("collection name", name)?;
     if name != dir_name {
@@ -313,7 +313,7 @@ fn declare(bytes: &[u8], rel: &str, dir_name: &str) -> Result<Declaration, Fault
 /// byte limit is the only default with a value; every other unset field
 /// means "off" and stays unset. The checks that need the library (the slug
 /// of a singleton `id`) run here; the rules of the contract already ran.
-fn normalize(collection: &mut Collection) -> Result<Kind, Fault> {
+fn normalize(collection: &mut CollectionDeclaration) -> Result<Kind, Fault> {
     let no_kind = || Fault::new(VaultErrorCode::InvalidArgument, "the schema names no kind");
     let schema = collection.schema.as_option_mut().ok_or_else(no_kind)?;
     match schema.kind.as_mut().ok_or_else(no_kind)? {
@@ -376,7 +376,7 @@ fn find_declaration_file(files: &[Child], dir_name: &str) -> Result<Option<&'sta
 mod tests {
     use std::path::PathBuf;
 
-    use scheda_api::v1::{Collection, VaultErrorCode};
+    use scheda_api::v1::{CollectionDeclaration, VaultErrorCode};
 
     use super::{DEFAULT_SEGMENT_MAX_BYTES, Kind, declare, encode, load};
     use crate::error::{Error, Fault};
@@ -561,7 +561,7 @@ mod tests {
         let bytes = encode(&declaration.collection, &declaration.unknown, Format::Json).unwrap();
         assert!(bytes.starts_with(b"{\n"));
         assert_eq!(
-            crate::stored::read::<Collection>(&bytes, Format::Json)
+            crate::stored::read::<CollectionDeclaration>(&bytes, Format::Json)
                 .unwrap()
                 .message,
             declaration.collection

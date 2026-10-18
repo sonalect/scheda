@@ -353,19 +353,7 @@ mod tests {
 
     #[test]
     fn files_a_person_changed_and_did_not_commit_are_listed_and_a_write_does_not_clear_them() {
-        use scheda_api::v1::{Document, DocumentCreation, DocumentUpsert};
-
-        let write_of = |collection: &str, id: &str, raw: &[u8]| DocumentUpsert {
-            document: Document {
-                collection: Some(collection.to_owned()),
-                id: Some(id.to_owned()),
-                raw: Some(raw.to_vec()),
-                ..Default::default()
-            }
-            .into(),
-            note: Some("test".to_owned()),
-            ..Default::default()
-        };
+        use scheda_api::v1::{DocumentCreation, DocumentUpsert};
         let scratch = Scratch::vault("changed");
         for rel in ["notes/a.md", "notes/b.md", "notes/c.md"] {
             scratch.write(rel, b"one");
@@ -374,11 +362,13 @@ mod tests {
         scratch.commit("fixture");
         let vault = scratch.open();
         vault
-            .create_document(DocumentCreation {
-                document: write_of("diary", "d", b"secret").document,
-                note: Some("test".to_owned()),
-                ..Default::default()
-            })
+            .create(
+                "diary",
+                DocumentCreation::default()
+                    .with_id("d")
+                    .with_raw(b"secret".to_vec())
+                    .with_note("test"),
+            )
             .unwrap();
         assert!(run(&vault).unwrap().is_empty());
         scratch.write("notes/a.md", b"modified");
@@ -405,7 +395,13 @@ mod tests {
         // A write of the same Document lands in HEAD; the person's file still
         // differs from what the Vault stores.
         vault
-            .upsert_document(write_of("notes", "a.md", b"by the API"))
+            .upsert(
+                "notes",
+                DocumentUpsert::default()
+                    .with_id("a.md")
+                    .with_raw(b"by the API".to_vec())
+                    .with_note("test"),
+            )
             .unwrap();
         assert_eq!(found(&run(&vault).unwrap()), expected);
         // Once the person commits what they have, nothing differs.
