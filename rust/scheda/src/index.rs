@@ -27,6 +27,8 @@
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
+#[cfg(feature = "find")]
+use std::sync::Arc;
 
 use git2::Oid;
 #[cfg(feature = "find")]
@@ -38,6 +40,8 @@ use crate::error::Fault;
 use crate::error::{Context, Error, io};
 use crate::fs::{Flock, atomic_write, restrict_dir, restrict_file_below};
 use crate::isolated;
+#[cfg(feature = "find")]
+use crate::ports::ProjectorPort;
 use crate::repo::{Delta, Repo, Snap, Views};
 
 /// The number of the layout of the files of the Index. An Index with another
@@ -410,6 +414,9 @@ pub(crate) struct Round<'a> {
     changes: Changes,
     counts: Counts,
     tick: &'a mut dyn FnMut(&Counts) -> Result<(), Error>,
+    /// The Projector the round projects with.
+    #[cfg(feature = "find")]
+    projector: Option<Arc<ProjectorPort>>,
     /// The vector values the lexical side projected, for the vector side;
     /// `None` when no side wants them.
     #[cfg(feature = "search")]
@@ -471,9 +478,25 @@ impl<'a> Round<'a> {
             changes,
             counts: Counts::default(),
             tick,
+            #[cfg(feature = "find")]
+            projector: None,
             #[cfg(feature = "search")]
             offers: None,
         }))
+    }
+
+    /// Gives the round the Projector it projects with: the one the check of
+    /// the round passed, so a Projector replaced meanwhile waits for the
+    /// next round.
+    #[cfg(feature = "find")]
+    pub(crate) fn set_projector(&mut self, projector: Option<Arc<ProjectorPort>>) {
+        self.projector = projector;
+    }
+
+    /// The Projector of the round, if the Vault has one.
+    #[cfg(feature = "find")]
+    pub(crate) fn projector(&self) -> Option<Arc<ProjectorPort>> {
+        self.projector.clone()
     }
 
     /// Asks the lexical side to offer the vector values of the Documents it

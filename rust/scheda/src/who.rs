@@ -7,9 +7,11 @@
 //! collection has a `vector` column, an embedder whose model is the Index's
 //! (any model while the Index has none). A handle without them never takes
 //! `index.lock` for a round: it reads, its `role` is false, and its status
-//! follows the Index. A `Reindex` is the exception to the model: it
-//! rebuilds the Index with the model of the handle that asks, so it needs
-//! the ports only.
+//! follows the Index. A Projector must also be of the projection the Index
+//! was built with (any while the Index records none): a Vault with another
+//! one finds the Index `INDEX_STALE` and does not index. A `Reindex` is the
+//! exception to the model and to the projection: it rebuilds the Index with
+//! the ports of the handle that asks, so it needs the ports only.
 //!
 //! A build without `find` has no Projector to ask for: this module is not
 //! there, and every handle indexes the journal id maps.
@@ -22,13 +24,15 @@ use scheda_api::v1::VaultErrorCode;
 
 #[cfg(feature = "search")]
 use crate::collection;
+use crate::error::Context;
 #[cfg(feature = "search")]
-use crate::error::{self, Context};
+use crate::error::{self};
 use crate::error::{Error, Fault};
 use crate::index::Index;
 #[cfg(feature = "search")]
 use crate::index::State;
-use crate::ports::Installed;
+use crate::lexical;
+use crate::ports::{Installed, ProjectorPort};
 #[cfg(feature = "search")]
 use crate::repo::Repo;
 use crate::repo::Repos;
@@ -43,6 +47,19 @@ pub(crate) enum Verdict {
     /// Its embedder is of another model than the vectors of the Index.
     #[cfg(feature = "search")]
     Mismatch,
+    /// Its Projector is of another projection than the one the Index was
+    /// built with.
+    Stale,
+}
+
+/// `INDEX_STALE`: the Index was built by a Projector of another projection
+/// than this Vault's.
+pub(crate) fn stale_fault() -> Fault {
+    Fault::new(
+        VaultErrorCode::IndexStale,
+        "the Index was built by a Projector of another projection than this Vault's; \
+         Index.Reindex from this Vault rebuilds it with its own",
+    )
 }
 
 impl Verdict {
@@ -55,6 +72,7 @@ impl Verdict {
                 VaultErrorCode::FailedPrecondition,
                 format!("this handle has no {port}, which the Index needs to index"),
             )),
+            Verdict::Stale => Some(stale_fault()),
             #[cfg(feature = "search")]
             Verdict::Mismatch => Some(Fault::new(
                 VaultErrorCode::FailedPrecondition,
@@ -70,7 +88,6 @@ pub(crate) struct Who {
     ports: Arc<Installed>,
     #[cfg(feature = "search")]
     repos: Arc<Repos>,
-    #[cfg(feature = "search")]
     index: Index,
     /// Whether `HEAD` has a `vector` column, with the state of `HEAD` it was
     /// found for: a handle that cannot index looks at every poll, and the
@@ -84,12 +101,11 @@ impl Who {
     /// reads, whose Index is `index`.
     pub(crate) fn new(ports: Arc<Installed>, repos: Arc<Repos>, index: Index) -> Who {
         #[cfg(not(feature = "search"))]
-        let _ = (repos, index);
+        let _ = repos;
         Who {
             ports,
             #[cfg(feature = "search")]
             repos,
-            #[cfg(feature = "search")]
             index,
             #[cfg(feature = "search")]
             vector_column: Mutex::new(None),
@@ -104,11 +120,26 @@ impl Who {
     /// The failure of the Projector when it is asked for its columns and
     /// fails; `STORAGE` and the like when the Vault cannot be read.
     pub(crate) fn check(&self, asked: bool) -> Result<Verdict, Error> {
-        let Some(projector) = self.ports.projector() else {
+        self.check_with(self.ports.projector().as_deref(), asked)
+    }
+
+    /// [`Who::check`] for the Projector a round would project with.
+    ///
+    /// # Errors
+    ///
+    /// As [`Who::check`]; `INDEX_BROKEN` when the columns file of the Index
+    /// is damaged.
+    pub(crate) fn check_with(
+        &self,
+        projector: Option<&ProjectorPort>,
+        asked: bool,
+    ) -> Result<Verdict, Error> {
+        let Some(projector) = projector else {
             return Ok(Verdict::Lacks("Projector"));
         };
-        #[cfg(feature = "search")]
-        let projector = &*projector;
+        if !asked && self.other_projection(projector)? {
+            return Ok(Verdict::Stale);
+        }
         #[cfg(feature = "search")]
         {
             match self.ports.embedder() {
@@ -131,6 +162,25 @@ impl Who {
         #[cfg(not(feature = "search"))]
         let _ = (projector, asked);
         Ok(Verdict::Index)
+    }
+
+    /// Whether the Index was built by a Projector of another projection than
+    /// `projector`. False while the Index records none.
+    fn other_projection(&self, projector: &ProjectorPort) -> Result<bool, Error> {
+        let dump = lexical::read_dump(&self.index).context("read the projection of the Index")?;
+        Ok(dump
+            .as_ref()
+            .and_then(lexical::Dump::projection)
+            .is_some_and(|recorded| recorded != projector.projection_id()))
+    }
+
+    /// Whether the Projector of this Vault is of another projection than
+    /// the Index. False without a Projector, and when the Index cannot be
+    /// read (the round says so).
+    pub(crate) fn stale(&self) -> bool {
+        self.ports
+            .projector()
+            .is_some_and(|projector| matches!(self.other_projection(&projector), Ok(true)))
     }
 
     /// Whether the embedder of this handle is of another model than the

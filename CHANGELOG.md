@@ -156,7 +156,12 @@ changes; they grow with each part of the move.
   a stream and form their own portions, `FixedEmbedder` and
   `FixedReranker` turn a portion function into one, and the descriptors
   of the embedder and of the Projector (`Projector.Describe`, new: a
-  `projection_id`) are read once per install and validated. The reranker
+  `projection_id`) are read once per install and validated. The Index
+  records the projection it was built with: a Vault whose Projector names
+  another one finds the Index `INDEX_STALE` (in `IndexState.last_error`)
+  and does not index until its own `Index.Reindex` rebuilds the Index;
+  change `projection_id` whenever the same Document may project to other
+  values. The reranker
   is the Vault's, not an argument of a search. A port in a build without
   the feature that uses it is `UNIMPLEMENTED`.
 - The Index: one background indexer per handle, in every build, follows

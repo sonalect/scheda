@@ -86,7 +86,7 @@ use crate::index::{Index, Round, Side, State, rebuilding};
 use crate::index::{Offer, Piece};
 use crate::isolated;
 use crate::journal;
-use crate::ports::{Installed, ProjectorPort};
+use crate::ports::ProjectorPort;
 use crate::repo::Snap;
 
 /// The memory a round's writer may use before it flushes a segment.
@@ -230,19 +230,31 @@ pub(crate) struct DumpColumn {
 }
 
 /// The columns of each indexed collection, as the Projector gave them when
-/// the Index was built. A collection with no columns is listed with none.
+/// the Index was built, and the projection that Projector declared. A
+/// collection with no columns is listed with none.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Dump {
     format: u32,
+    /// The `projection_id` of the Projector that built the Index; `None`
+    /// in a file written before Scheda recorded it, which the next round
+    /// fills in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    projection: Option<String>,
     collections: BTreeMap<String, Vec<DumpColumn>>,
 }
 
 impl Dump {
-    fn new() -> Dump {
+    fn new(projection: Option<String>) -> Dump {
         Dump {
             format: COLUMNS_FORMAT,
+            projection,
             collections: BTreeMap::new(),
         }
+    }
+
+    /// The projection of the Projector that built the Index, if known.
+    pub(crate) fn projection(&self) -> Option<&str> {
+        self.projection.as_deref()
     }
 
     /// The columns of `collection`; `None` when the Index does not hold the
@@ -553,18 +565,11 @@ pub(crate) fn read_dump(index: &Index) -> Result<Option<Dump>, Error> {
     }
 }
 
-/// The lexical side of the Index.
-pub(crate) struct Lexical {
-    ports: Arc<Installed>,
-}
+/// The lexical side of the Index. Each round projects with the Projector
+/// the round was given.
+pub(crate) struct Lexical;
 
 impl Lexical {
-    /// The side of a Vault that holds `ports`: each round takes the
-    /// Projector the Vault holds when the round begins.
-    pub(crate) fn new(ports: Arc<Installed>) -> Lexical {
-        Lexical { ports }
-    }
-
     /// The columns of every indexed collection now, and what changed from
     /// the file: the dump to record, and the collections that are stale.
     fn columns_now(
@@ -573,7 +578,7 @@ impl Lexical {
         previous: Option<&Dump>,
         mut stale: BTreeSet<String>,
     ) -> Result<(Dump, BTreeSet<String>), Error> {
-        let mut dump = Dump::new();
+        let mut dump = Dump::new(projector.map(|projector| projector.projection_id().to_owned()));
         for decl in eligible {
             let name = decl.name();
             let now = match projector {
@@ -828,7 +833,7 @@ impl Side for Lexical {
         let declarations = round.declarations();
         let eligible: Vec<&Declaration> = declarations.iter().filter(|decl| walked(decl)).collect();
         let previous = read_dump(index).context("read the recorded columns")?;
-        let projector = self.ports.projector();
+        let projector = round.projector();
         let (dump, stale) = Lexical::columns_now(
             projector.as_deref(),
             &eligible,
@@ -1683,6 +1688,15 @@ mod tests {
         git(&["commit", "--quiet", "--message", "removed"]);
         fx.built();
         assert_eq!(fx.snapshot().searcher().num_docs(), 0);
+    }
+
+    #[test]
+    fn a_columns_file_records_the_projection_and_one_without_it_reads_as_unknown() {
+        let earlier = super::Dump::parse(br#"{"format":1,"collections":{}}"#).unwrap();
+        assert_eq!(earlier.projection(), None);
+        let dump = super::Dump::new(Some(String::from("notes@2")));
+        let again = super::Dump::parse(&dump.encode().unwrap()).unwrap();
+        assert_eq!(again.projection(), Some("notes@2"));
     }
 
     #[test]

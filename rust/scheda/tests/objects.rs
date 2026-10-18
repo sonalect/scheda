@@ -408,6 +408,122 @@ mod indexing {
         index(vault).status(Empty::default()).unwrap().version
     }
 
+    /// A Projector with no columns, of the projection it is given, that
+    /// counts how often it is asked to describe itself.
+    struct Projection {
+        id: &'static str,
+        describes: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Projection {
+        fn new(id: &'static str) -> Projection {
+            Projection {
+                id,
+                describes: Arc::default(),
+            }
+        }
+    }
+
+    impl ProjectorSync for Projection {
+        fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
+            self.describes
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(ProjectorDescriptor::default().with_projection_id(self.id))
+        }
+
+        fn columns(&self, _collection_key: CollectionKey) -> Result<IndexSchema, Error> {
+            Ok(IndexSchema::default())
+        }
+
+        fn project(&self, _raw_document: RawDocument) -> Result<IndexDoc, Error> {
+            Ok(IndexDoc::default())
+        }
+    }
+
+    fn open_projecting(path: &Path, projection: Projection) -> Arc<dyn VaultSync> {
+        let mut request = opening(path, fast());
+        request.projector = ProjectorRef::from_sync(projection).into();
+        open_with(request).unwrap()
+    }
+
+    fn is_stale(state: &IndexState) -> bool {
+        state
+            .last_error
+            .as_option()
+            .is_some_and(|error| error.code.as_deref() == Some("VAULT_ERROR_CODE_INDEX_STALE"))
+    }
+
+    #[test]
+    fn a_projector_describes_itself_once_per_install_and_must_name_its_projection() {
+        let scratch = Scratch::new("objects-describe");
+        let path = scratch.join("v");
+        let first = Projection::new("p@1");
+        let describes = Arc::clone(&first.describes);
+        let vault = open_projecting(&path, first);
+        declare(&vault, "notes");
+        collection(&vault, "notes")
+            .upsert(upsert("a.md", "a"))
+            .unwrap();
+        wait_for(&vault, "the write indexed", |state| {
+            state.version.is_some() && state.pending == Some(0)
+        });
+        assert_eq!(describes.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let second = Projection::new("p@1");
+        let second_describes = Arc::clone(&second.describes);
+        vault
+            .set_projector(ProjectorRef::from_sync(second))
+            .unwrap();
+        assert_eq!(
+            second_describes.load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+        assert_eq!(describes.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        let error = vault
+            .set_projector(ProjectorRef::from_sync(Projection::new("")))
+            .unwrap_err();
+        assert!(error.is(Code::InvalidArgument), "{error}");
+        let mut request = opening(&path, fast());
+        request.projector = ProjectorRef::from_sync(Projection::new("")).into();
+        assert!(open_with(request).err().unwrap().is(Code::InvalidArgument));
+    }
+
+    #[test]
+    fn a_vault_of_another_projection_finds_the_index_stale_until_its_own_reindex() {
+        let scratch = Scratch::new("objects-projection");
+        let path = scratch.join("v");
+        let old = open_projecting(&path, Projection::new("notes@1"));
+        declare(&old, "notes");
+        wait_for(&old, "the first round", |state| {
+            state.version.is_some() && state.pending == Some(0)
+        });
+        old.close(Empty::default()).unwrap();
+
+        // Another projection: the Vault says the Index is stale and takes
+        // no round, so its write is not indexed.
+        let new = open_projecting(&path, Projection::new("notes@2"));
+        wait_for(&new, "the Index stale", is_stale);
+        let before = version(&new);
+        collection(&new, "notes")
+            .upsert(upsert("a.md", "a"))
+            .unwrap();
+        thread::sleep(Duration::from_millis(500));
+        let state = index(&new).status(Empty::default()).unwrap();
+        assert_eq!(state.version, before, "a stale Vault does not index");
+        assert!(is_stale(&state));
+
+        // Its own Reindex rebuilds the Index with its projection.
+        index(&new).reindex(Empty::default()).unwrap();
+        wait_for(&new, "the rebuild with the new projection", |state| {
+            state.version.is_some() && state.version != before && !is_stale(state)
+        });
+
+        // Now the Vault of the old projection is the stale one.
+        let again = open_projecting(&path, Projection::new("notes@1"));
+        wait_for(&again, "the old projection stale", is_stale);
+    }
+
     #[test]
     fn a_held_watch_does_not_stop_close_and_its_next_item_is_failed_precondition() {
         let scratch = Scratch::new("objects-watch-close");

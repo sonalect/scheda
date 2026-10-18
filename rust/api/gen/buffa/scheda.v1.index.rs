@@ -167,7 +167,9 @@ pub struct IndexState {
     pub rebuild: ::buffa::MessageField<Rebuild, ::buffa::Inline<Rebuild>>,
     /// The failure of this Vault's last indexing round; unset after a round
     /// that succeeds. A failed round changes no version and fails no write; the
-    /// indexer tries it again after a pause.
+    /// indexer tries it again after a pause. `INDEX_STALE` while the Index was
+    /// built by a Projector of another projection than this Vault's: the Vault
+    /// then does not index until its own `Reindex`.
     ///
     /// Field 6: `last_error`
     #[serde(

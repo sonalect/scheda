@@ -38,7 +38,7 @@ use std::time::{Duration, Instant};
 use protocontract::RuntimeCode;
 #[cfg(any(feature = "find", test))]
 use scheda_api::v1::VaultErrorCode;
-use scheda_api::v1::{IndexState, Rebuild, rebuild};
+use scheda_api::v1::{ErrorReport, IndexState, Rebuild, rebuild};
 
 use crate::collection;
 #[cfg(any(feature = "find", test))]
@@ -49,6 +49,8 @@ use crate::index::{Counts, Index, Round, Side, State};
 #[cfg(feature = "find")]
 use crate::lexical::Lexical;
 use crate::ports::Installed;
+#[cfg(feature = "find")]
+use crate::ports::ProjectorPort;
 use crate::repo::{Repo, Repos};
 #[cfg(feature = "search")]
 use crate::vector::Vector;
@@ -251,11 +253,11 @@ impl Indexer {
             sides: vec![
                 Box::new(JournalMaps),
                 #[cfg(feature = "find")]
-                Box::new(Lexical::new(Arc::clone(&ports))),
+                Box::new(Lexical),
                 #[cfg(feature = "search")]
                 Box::new(Vector::new(Arc::clone(&ports))),
             ],
-            #[cfg(feature = "search")]
+            #[cfg(feature = "find")]
             ports,
             #[cfg(feature = "find")]
             who,
@@ -457,9 +459,9 @@ struct Worker {
     vault: std::path::PathBuf,
     index: Index,
     sides: Vec<Box<dyn Side>>,
-    /// The ports of the handle: a round asks the vector side's texts of
-    /// them.
-    #[cfg(feature = "search")]
+    /// The ports of the Vault: a round takes its Projector from them, and
+    /// asks the vector side's texts of them.
+    #[cfg(feature = "find")]
     ports: Arc<Installed>,
     /// Whether the handle may take a round.
     #[cfg(feature = "find")]
@@ -523,8 +525,12 @@ impl Worker {
             self.follow(Some(committed));
             return Ok(Next::Idle);
         }
+        // One Projector for the check and the round: one given meanwhile
+        // waits for the next round.
         #[cfg(feature = "find")]
-        match self.gate(asked, committed)? {
+        let projector = self.ports.projector();
+        #[cfg(feature = "find")]
+        match self.gate(asked, committed, projector.as_deref())? {
             Gate::Go => {}
             Gate::Stay => return Ok(Next::Idle),
             Gate::Refused(error) => return Err(error),
@@ -536,7 +542,10 @@ impl Worker {
         };
         #[cfg(test)]
         self.shared.locks.fetch_add(1, Ordering::SeqCst);
-        let applied = self.apply();
+        let applied = self.apply(
+            #[cfg(feature = "find")]
+            projector,
+        );
         // The commit is written: the lock goes before anyone is told.
         drop(lock);
         match applied? {
@@ -567,7 +576,10 @@ impl Worker {
     }
 
     /// The round itself, with the lock held.
-    fn apply(&mut self) -> Result<Applied, Error> {
+    fn apply(
+        &mut self,
+        #[cfg(feature = "find")] projector: Option<Arc<ProjectorPort>>,
+    ) -> Result<Applied, Error> {
         let committed = if self.index.has_format()? {
             self.index.read_commit()?
         } else {
@@ -608,6 +620,8 @@ impl Worker {
                 None => unreachable!("a round from nothing always knows its difference"),
             },
         };
+        #[cfg(feature = "find")]
+        round.set_projector(projector);
         #[cfg(feature = "search")]
         if self.ports.embedder().is_some() {
             round.collect_offers();
@@ -654,10 +668,11 @@ impl Worker {
         let token = committed.map(State::token);
         let pending = committed.map(|_| 0);
         let mismatch = self.mismatch();
+        let stale = self.stale();
         let differs = {
             let inner = self.shared.lock();
             inner.state.version != token
-                || inner.state.last_error.is_set()
+                || inner.state.last_error.as_option() != stale.as_ref()
                 || inner.state.role != Some(false)
                 || inner.state.pending != pending
                 || inner.state.model_mismatch != Some(mismatch)
@@ -668,8 +683,23 @@ impl Worker {
                 inner.state.pending = pending;
                 inner.state.role = Some(false);
                 inner.state.model_mismatch = Some(mismatch);
-                inner.state.last_error = buffa::MessageField::none();
+                inner.state.last_error = stale.into();
             });
+        }
+    }
+
+    /// Why this Vault does not index although it has its ports: the Index
+    /// was built by a Projector of another projection (`INDEX_STALE`).
+    fn stale(&self) -> Option<ErrorReport> {
+        #[cfg(feature = "find")]
+        {
+            self.who
+                .stale()
+                .then(|| report(&crate::who::stale_fault().into()))
+        }
+        #[cfg(not(feature = "find"))]
+        {
+            None
         }
     }
 
@@ -689,8 +719,16 @@ impl Worker {
     /// Whether this handle has the ports the round needs. When it has not,
     /// it follows the Index instead.
     #[cfg(feature = "find")]
-    fn gate(&self, asked: bool, committed: Option<State>) -> Result<Gate, Error> {
-        let verdict = self.who.check(asked).context("check the ports")?;
+    fn gate(
+        &self,
+        asked: bool,
+        committed: Option<State>,
+        projector: Option<&ProjectorPort>,
+    ) -> Result<Gate, Error> {
+        let verdict = self
+            .who
+            .check_with(projector, asked)
+            .context("check the ports")?;
         let Some(fault) = verdict.precondition() else {
             return Ok(Gate::Go);
         };

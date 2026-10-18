@@ -8,7 +8,7 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5; R1 is done, R2 is next.
+2026) replaces P6 and P7 with R1–R5; R1 and R2 are done, R3 is next.
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1672,18 +1672,26 @@ that P6 was to implement.
 
 D24 (12).
 
-- [ ] `Describe` read once when a Projector is given and validated; the
-      `projection_id` stored with the Index; a Projector of another
-      projection makes the Index `INDEX_STALE` for that Vault, whose
-      indexer takes no round, until a `Reindex` from it rebuilds the Index
-      with its projection.
+- [x] `Describe` read once when a Projector is given and validated (R1);
+      the `projection_id` stored with the Index, in its `columns` file; a
+      Projector of another projection makes the Index `INDEX_STALE` for
+      that Vault (`IndexState.last_error`), whose indexer takes no round,
+      until a `Reindex` from it rebuilds the Index with its projection. A
+      `columns` file without a projection (written before) takes the
+      projection of the next round. A round projects with the Projector
+      its check passed, so one given meanwhile waits for the next round.
 - *Check:* a descriptor that breaks its rules fails `Open` and
   `SetProjector` with `INVALID_ARGUMENT`; a counting Projector sees one
-  `Describe` per install.
+  `Describe` per install (`tests/objects.rs`:
+  `a_projector_describes_itself_once_per_install_and_must_name_its_projection`;
+  `ports::tests::a_projector_describes_itself_once_and_a_descriptor_that_breaks_its_rules_is_refused`).
 - *Check:* a Vault opened with another projection never takes a round,
-  its `Index.Status` says it, and a query of it is `INDEX_STALE`; a
-  `Reindex` from it rebuilds the Index, after which the Vault of the old
-  projection is the one that is stale.
+  and its `Index.Status` says `INDEX_STALE`; a `Reindex` from it rebuilds
+  the Index, after which the Vault of the old projection is the one that
+  is stale (`tests/objects.rs`:
+  `a_vault_of_another_projection_finds_the_index_stale_until_its_own_reindex`;
+  `lexical::tests::a_columns_file_records_the_projection_and_one_without_it_reads_as_unknown`).
+  A query of a stale Vault is `INDEX_STALE`: R4.
 
 ### R3. Reads
 
@@ -1735,6 +1743,8 @@ D2, D5, D7, D19, D24. The queries of P6.
 - *Check:* `Query` with `limit` and `start_after` reads page by page with
   no Document twice or missed; `Search` with `offset` skips that many hits
   and opens none of their files; every one stays a lazy stream.
+- *Check:* a query and a search of a Vault whose Projector is of another
+  projection than the Index are `INDEX_STALE`.
 - *Check:* `Search` with `like` finds a Document's neighbours without
   calling the embedder; on a Vault whose Index was never built, a query
   and a search are both `INDEX_REBUILDING`.
