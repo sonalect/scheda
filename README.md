@@ -93,7 +93,8 @@ The design is a numbered package in `docs/`, in English.
 | [18-review-fixes.md](docs/18-review-fixes.md) | Rust work order: fixes from the 5 October 2026 full review (S1–S8) |
 | [19-follow-ups.md](docs/19-follow-ups.md) | Rust work order (history): declarations follow the work tree, search vector-leg signal, `index_version` repeat, sync and async `transaction` (F1–F5 done) |
 | [20-proto-contract.md](docs/20-proto-contract.md) | The 0.22 contract: decisions D1–D24, the layers P1–P8 and R1–R5, what is out of scope |
-| [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, SQL predicates, a state token for freshness (D1–D18, L0–L10) |
+| [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, a typed filter, a state token for freshness (D1–D18, L0–L10, the contract C1–C35) |
+| [22-scheda-on-tokio.md](docs/22-scheda-on-tokio.md) | Rust work order: Scheda async only on the caller's tokio runtime, the blocking core behind a gate (D1–D12, A1–A5) |
 
 ## Layout
 

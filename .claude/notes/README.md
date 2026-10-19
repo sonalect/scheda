@@ -20,7 +20,11 @@ Project state, deferred work, and measurements that outlive one session
   §3, a commit after each stage under the usual gates. L0: the contract
   in §8 was reviewed with the owner item by item (C1–C35, 19 October
   2026), and he looked at the proto files; they wait in
-  `l0-protos.patch` for L5. Next: L1, the dependencies and the build. The spike stays on the branch
+  `l0-protos.patch` for L5. L1 (Lance in the build) is done. Then the
+  owner made Scheda async on tokio: `docs/22-scheda-on-tokio.md`
+  (approved 19 October 2026, D1–D12). Order of the branch: 21 L0, L1
+  (done), L8 (the old Index removed: next), 22 A1–A5, then 21 L2–L7, L9,
+  L10. The spike stays on the branch
   `lance-spike` (worktree `../scheda-lance`, `spikes/lance/`) and never
   reaches `lance-index` or `main`; its `kill` and `verify` commands are
   the models for L2's checks.

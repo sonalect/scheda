@@ -19,7 +19,9 @@ the query surface: a typed filter the library turns into Lance's own
 expressions, with no SQL from the caller.
 
 Order: the contract first (L0: every proto change, reviewed by the owner
-before any code). Inside each later stage: code and tests first, then
+before any code), then L1, then L8 (the old Index removed, moved forward
+by the owner), then the stages of `22` (Scheda on tokio, A1–A5), then
+L2–L7, L9, L10. Inside each later stage: code and tests first, then
 `cargo test` and `cargo clippy` (with and without `--all-features`)
 green, then the box is ticked when its *Check:* passes. `bazel test
 //...` before the work merges into `main`. One docs pass at the end
@@ -190,14 +192,12 @@ spike found none on Lance 13 with whole rows, before and after
 `optimize`, and L2 keeps that as a regression test.
 *Recommendation:* accept.
 
-**D13. Async inside, sync outside.** *Proposed.* Lance is async (tokio).
-Scheda keeps its blocking surface: one private multi-thread tokio
-runtime per process, built on first use, and `block_on` from Scheda's own
-threads (the indexer thread, the caller's thread of a sync call). The
-async surface (`SchedaAsync`) already runs the sync calls on
-`spawn_blocking`, where `block_on` works. A sync call made from inside an
-async task (not on the blocking pool) panics in `block_on`; the docs say
-so, as they say it for any blocking library. *Recommendation:* accept.
+**D13. Async on the caller's runtime.** *Replaced after L0 by `22`
+(Scheda on tokio).* Scheda's objects are async only, on the tokio runtime
+of the caller; the Index awaits Lance's futures in its own async code,
+and the work of a call on Lance runs as a task of its own, so a panic in
+it is `Panicked` (`22` D9). Scheda has no runtime of its own and no bridge
+from blocking code into async code. *Recommendation:* accept.
 
 **D14. One feature, `index`.** *Proposed.* `find` and `search` split
 Tantivy from USearch; with one engine they merge into one feature,
@@ -327,7 +327,8 @@ D1, D14, D18.
 D6, D7, D8, D9, D10, D11, D12, D13. A new module (`store.rs`), used by
 nothing else yet.
 
-- [ ] The private runtime and the blocking facade (D13).
+- [ ] Async on the caller's runtime (D13, `22`): Lance's futures awaited
+      in Scheda's async code, the blocking steps behind `22`'s gate.
 - [ ] A dataset per collection: created from the Projector's columns
       (D8, D9), opened, its schema checked against the columns; the
       generation folder and `current` (D6).
@@ -356,8 +357,9 @@ nothing else yet.
 
 ### L3. The indexer on Lance
 
-`20` D23 keeps its shape: the round, `index.lock`, the wake and the look
-at `HEAD`, who indexes, the journal id maps.
+`20` D23 keeps its shape, as the task `22` A3 makes of it: the round,
+`index.lock`, the wake and the look at `HEAD`, who indexes, the journal
+id maps. Lance is a new side of its round.
 
 - [ ] The parts of a round: the journal id maps (unchanged), then each
       dataset brought from its own state to `HEAD` (D7), then
@@ -405,6 +407,8 @@ D4, D17.
       Vault with other ports than the Index was built with is
       `INDEX_STALE` (D17).
 - [ ] `IndexState.rebuild` reports its stage, its cause, and its counts.
+- [ ] `open` removes an Index of the `0.22` layout (D2), and the first
+      build starts (`CAUSE_NEW`); moved here from L8.
 - *Check:* queries and searches answer from the live generation for the
   whole length of a rebuild, and from the new one after the switch.
 - *Check:* a write during a rebuild is found after the switch.
@@ -467,14 +471,20 @@ D5.
 
 ### L8. The old Index removed
 
-D17.
+D17. *Runs right after L1* (the owner, after L0): nothing about to go is
+made async by `22`.
 
-- [ ] Tantivy, USearch, `lexical.rs`, `vector.rs`, `filter.rs`,
-      `index/stale`, `index/columns`, the features `find` / `search` /
-      `simd`, their tests; Cargo and Bazel repinned.
-- [ ] `open` removes an Index of the `0.22` layout (D2).
-- *Check:* `git grep -n -i -e tantivy -e usearch rust/ api/` is empty;
-  `cargo test` and `bazel test //...` green.
+- [ ] Tantivy, USearch, `lexical.rs`, `vector.rs`, `filter.rs`, the
+      query and search engines, `index/stale`, `index/columns`, the
+      features `find` / `search` / `simd` / `openmp`, their tests; Cargo
+      and Bazel repinned. What stays is today's build without `find`: the
+      indexer with the journal id maps, and the state of the Index.
+- [ ] `Query`, `Count`, and `Search` answer `UNIMPLEMENTED` until L5 and
+      L6; the CLI's `query`, `count`, and `search`, and the search part
+      of `tests/consumer.rs`, go until L9.
+- *Check:* `git grep -n -i -e tantivy -e usearch rust/` is empty (`api/`
+  follows in L5, with the patch); `cargo test` and `bazel test //...`
+  green.
 
 ### L9. CLI, Python driver, consumer test
 
@@ -491,7 +501,7 @@ D17.
 
 - [ ] `06` (the Index on Lance), `13` (queries by filter, searches), `07`,
       `14`, `02`, README, `.claude/notes/index-risks.md` (closed items
-      removed), `CHANGELOG.md`.
+      removed), `CHANGELOG.md`; with `22` A5.
 - [ ] Release `0.23.0` (breaking: minor while major is 0,
       `.claude/skills/versioning/SKILL.md`).
 - *Check:* `bazel test //...` green; markdownlint green.
@@ -1042,6 +1052,12 @@ stale until a `Reindex`, accepted. C35 accepted, with the table of files
 in place of a blob id on each row. C32 accepted. Every item is decided;
 the protos were written into `api/scheda/v1` for him to look at, and he
 did; they wait in `.claude/notes/l0-protos.patch` for L5.
+
+After L1, the owner moved Scheda to tokio as a whole (`22`, approved the
+same day), which replaces D13. Discussed before that and not taken: a
+private runtime of Scheda's for Lance, a bridge into it from the blocking
+objects, and the indexer kept a thread. He also moved L8 (the old Index
+removed) to right after L1.
 
 ### 8.5 The diff
 
