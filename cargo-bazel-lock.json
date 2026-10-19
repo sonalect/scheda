@@ -1,5 +1,5 @@
 {
-  "checksum": "dce329e24a1d2175d49ee8628f1ece68d223d0c78d45a33773ea1cd363e530cc",
+  "checksum": "a74c0086ecd2ba6b79b0158ff15a8fed7bc177a22ddb8961142dd18f8ed1ec76",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -692,38 +692,6 @@
       ],
       "version": "1.1.5"
     },
-    "allocator-api2 0.2.21": {
-      "common_attrs": {
-        "crate_features": [
-          "alloc"
-        ],
-        "edition": "2018"
-      },
-      "library_target_name": "allocator_api2",
-      "license": "MIT OR Apache-2.0",
-      "license_file": "LICENSE-APACHE",
-      "license_ids": [
-        "Apache-2.0",
-        "MIT"
-      ],
-      "name": "allocator-api2",
-      "package_url": "https://github.com/zakarumych/allocator-api2",
-      "repository": {
-        "Http": {
-          "sha256": "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923",
-          "url": "https://static.crates.io/crates/allocator-api2/0.2.21/download"
-        }
-      },
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "allocator_api2",
-            "crate_root": "src/lib.rs"
-          }
-        }
-      ],
-      "version": "0.2.21"
-    },
     "android_system_properties 0.1.6": {
       "common_attrs": {
         "deps": [
@@ -1240,6 +1208,8 @@
       "common_attrs": {
         "crate_features": [
           "alloc",
+          "default",
+          "simd-unsafe",
           "std"
         ],
         "edition": "2021"
@@ -4321,12 +4291,17 @@
       ],
       "version": "0.3.9"
     },
-    "datasketches 0.2.0": {
+    "datasketches 0.5.0": {
       "common_attrs": {
+        "crate_features": [
+          "default",
+          "hll"
+        ],
         "edition": "2024"
       },
       "library_target_name": "datasketches",
       "license": "Apache-2.0",
+      "license_file": "LICENSE",
       "license_ids": [
         "Apache-2.0"
       ],
@@ -4334,8 +4309,8 @@
       "package_url": "https://github.com/apache/datasketches-rust",
       "repository": {
         "Http": {
-          "sha256": "c286de4e81ea2590afc24d754e0f83810c566f50a1388fa75ebd57928c0d9745",
-          "url": "https://static.crates.io/crates/datasketches/0.2.0/download"
+          "sha256": "11c0bd7d22989969a619bae09147b992a6aa7f31dd4f9d9af6345f533744781f",
+          "url": "https://static.crates.io/crates/datasketches/0.5.0/download"
         }
       },
       "targets": [
@@ -4346,7 +4321,7 @@
           }
         }
       ],
-      "version": "0.2.0"
+      "version": "0.5.0"
     },
     "defmt 1.1.1": {
       "build_script_attrs": {
@@ -5919,6 +5894,54 @@
       ],
       "version": "1.2.2"
     },
+    "frostem 1.20260821.8": {
+      "common_attrs": {
+        "crate_features": [
+          "arabic",
+          "danish",
+          "dutch",
+          "english",
+          "finnish",
+          "french",
+          "german",
+          "greek",
+          "hungarian",
+          "italian",
+          "norwegian",
+          "portuguese",
+          "romanian",
+          "russian",
+          "spanish",
+          "swedish",
+          "tamil",
+          "turkish"
+        ],
+        "edition": "2021"
+      },
+      "library_target_name": "frostem",
+      "license": "BSD-3-Clause",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "BSD-3-Clause"
+      ],
+      "name": "frostem",
+      "package_url": "https://github.com/Xuanwo/frostem",
+      "repository": {
+        "Http": {
+          "sha256": "9e2488a10218a17366ce6bd38b6d081b4387a9548d350029db9feddc9bb44d6d",
+          "url": "https://static.crates.io/crates/frostem/1.20260821.8/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "frostem",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.20260821.8"
+    },
     "fs4 0.13.1": {
       "common_attrs": {
         "crate_features": [
@@ -6952,59 +6975,18 @@
       ],
       "version": "0.15.5"
     },
-    "hashbrown 0.16.1": {
+    "hashbrown 0.17.1": {
       "common_attrs": {
         "crate_features": [
-          "allocator-api2",
-          "default",
           "default-hasher",
-          "equivalent",
-          "inline-more",
-          "raw-entry"
+          "inline-more"
         ],
         "deps": [
-          {
-            "id": "allocator-api2 0.2.21",
-            "target": "allocator_api2"
-          },
-          {
-            "id": "equivalent 1.0.3",
-            "target": "equivalent"
-          },
           {
             "id": "foldhash 0.2.0",
             "target": "foldhash"
           }
         ],
-        "edition": "2021"
-      },
-      "library_target_name": "hashbrown",
-      "license": "MIT OR Apache-2.0",
-      "license_file": "LICENSE-APACHE",
-      "license_ids": [
-        "Apache-2.0",
-        "MIT"
-      ],
-      "name": "hashbrown",
-      "package_url": "https://github.com/rust-lang/hashbrown",
-      "repository": {
-        "Http": {
-          "sha256": "841d1cc9bed7f9236f321df977030373f4a4163ae1a7dbfe1a51a2c1a51d9100",
-          "url": "https://static.crates.io/crates/hashbrown/0.16.1/download"
-        }
-      },
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "hashbrown",
-            "crate_root": "src/lib.rs"
-          }
-        }
-      ],
-      "version": "0.16.1"
-    },
-    "hashbrown 0.17.1": {
-      "common_attrs": {
         "edition": "2024"
       },
       "library_target_name": "hashbrown",
@@ -9517,7 +9499,7 @@
       ],
       "version": "0.4.34"
     },
-    "lru 0.16.4": {
+    "lru 0.18.5": {
       "common_attrs": {
         "crate_features": [
           "default",
@@ -9525,7 +9507,7 @@
         ],
         "deps": [
           {
-            "id": "hashbrown 0.16.1",
+            "id": "hashbrown 0.17.1",
             "target": "hashbrown"
           }
         ],
@@ -9541,8 +9523,8 @@
       "package_url": "https://github.com/jeromefroe/lru-rs.git",
       "repository": {
         "Http": {
-          "sha256": "7f66e8d5d03f609abc3a39e6f08e4164ebf1447a732906d39eb9b99b7919ef39",
-          "url": "https://static.crates.io/crates/lru/0.16.4/download"
+          "sha256": "ef9ac18847474e638e3702b76c65d4eb93428471a74778ef0f1be711717f89b5",
+          "url": "https://static.crates.io/crates/lru/0.18.5/download"
         }
       },
       "targets": [
@@ -9553,9 +9535,9 @@
           }
         }
       ],
-      "version": "0.16.4"
+      "version": "0.18.5"
     },
-    "lz4_flex 0.13.1": {
+    "lz4_flex 0.14.0": {
       "common_attrs": {
         "edition": "2021"
       },
@@ -9569,8 +9551,8 @@
       "package_url": "https://github.com/pseitz/lz4_flex",
       "repository": {
         "Http": {
-          "sha256": "7ef0d4ed8669f8f8826eb00dc878084aa8f253506c4fd5e8f58f5bce72ddb97e",
-          "url": "https://static.crates.io/crates/lz4_flex/0.13.1/download"
+          "sha256": "ecbdfe44b1bd960b68170b417450a628c43f7cf56bb3c5317e61cb230ee7f226",
+          "url": "https://static.crates.io/crates/lz4_flex/0.14.0/download"
         }
       },
       "targets": [
@@ -9581,7 +9563,7 @@
           }
         }
       ],
-      "version": "0.13.1"
+      "version": "0.14.0"
     },
     "macro_rules_attribute 0.2.3": {
       "common_attrs": {
@@ -10241,7 +10223,7 @@
       ],
       "version": "0.1.18"
     },
-    "murmurhash32 0.3.1": {
+    "murmurhash32 0.4.0": {
       "common_attrs": {
         "edition": "2018"
       },
@@ -10255,8 +10237,8 @@
       "package_url": "https://github.com/quickwit-inc/murmurhash32",
       "repository": {
         "Http": {
-          "sha256": "2195bf6aa996a481483b29d62a7663eed3fe39600c460e323f8ff41e90bdd89b",
-          "url": "https://static.crates.io/crates/murmurhash32/0.3.1/download"
+          "sha256": "a8afc6df942f4c022d70c5725e18df1a705773870e5b7f96fde94ca0334ce77a",
+          "url": "https://static.crates.io/crates/murmurhash32/0.4.0/download"
         }
       },
       "targets": [
@@ -10267,7 +10249,7 @@
           }
         }
       ],
-      "version": "0.3.1"
+      "version": "0.4.0"
     },
     "ndarray 0.15.6": {
       "common_attrs": {
@@ -13111,47 +13093,6 @@
       ],
       "version": "8.13.0"
     },
-    "rust-stemmers 1.2.0": {
-      "common_attrs": {
-        "deps": [
-          {
-            "id": "serde 1.0.229",
-            "target": "serde"
-          }
-        ],
-        "edition": "2015",
-        "proc_macro_deps": [
-          {
-            "id": "serde_derive 1.0.229",
-            "target": "serde_derive"
-          }
-        ]
-      },
-      "library_target_name": "rust_stemmers",
-      "license": "MIT/BSD-3-Clause",
-      "license_file": "LICENSE",
-      "license_ids": [
-        "BSD-3-Clause",
-        "MIT"
-      ],
-      "name": "rust-stemmers",
-      "package_url": "https://github.com/CurrySoftware/rust-stemmers",
-      "repository": {
-        "Http": {
-          "sha256": "e46a2036019fdb888131db7a4c847a1063a7493f971ed94ea82c67eada63ca54",
-          "url": "https://static.crates.io/crates/rust-stemmers/1.2.0/download"
-        }
-      },
-      "targets": [
-        {
-          "Library": {
-            "crate_name": "rust_stemmers",
-            "crate_root": "src/lib.rs"
-          }
-        }
-      ],
-      "version": "1.2.0"
-    },
     "rustc-hash 2.1.3": {
       "common_attrs": {
         "crate_features": [
@@ -13762,7 +13703,7 @@
             "target": "sha1"
           },
           {
-            "id": "tantivy 0.26.2",
+            "id": "tantivy 0.27.0",
             "target": "tantivy"
           },
           {
@@ -14227,6 +14168,44 @@
         }
       ],
       "version": "1.0.229"
+    },
+    "serde-tuple-vec-map 1.0.1": {
+      "common_attrs": {
+        "crate_features": [
+          "default",
+          "std"
+        ],
+        "deps": [
+          {
+            "id": "serde 1.0.229",
+            "target": "serde"
+          }
+        ],
+        "edition": "2015"
+      },
+      "library_target_name": "tuple_vec_map",
+      "license": "MIT",
+      "license_file": "LICENSE",
+      "license_ids": [
+        "MIT"
+      ],
+      "name": "serde-tuple-vec-map",
+      "package_url": "https://github.com/daboross/serde-tuple-vec-map/",
+      "repository": {
+        "Http": {
+          "sha256": "a04d0ebe0de77d7d445bb729a895dcb0a288854b267ca85f030ce51cdc578c82",
+          "url": "https://static.crates.io/crates/serde-tuple-vec-map/1.0.1/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "tuple_vec_map",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.0.1"
     },
     "serde_core 1.0.229": {
       "build_script_attrs": {},
@@ -15205,17 +15184,17 @@
       ],
       "version": "0.14.0"
     },
-    "tantivy 0.26.2": {
+    "tantivy 0.27.0": {
       "common_attrs": {
         "crate_features": [
           "columnar-zstd-compression",
           "default",
+          "frostem",
           "fs4",
           "lz4-compression",
           "lz4_flex",
           "memmap2",
           "mmap",
-          "rust-stemmers",
           "stemmer",
           "stopwords",
           "tempfile"
@@ -15231,7 +15210,7 @@
               "target": "arc_swap"
             },
             {
-              "id": "base64 0.22.1",
+              "id": "base64 0.23.1",
               "target": "base64"
             },
             {
@@ -15259,7 +15238,7 @@
               "target": "crossbeam_channel"
             },
             {
-              "id": "datasketches 0.2.0",
+              "id": "datasketches 0.5.0",
               "target": "datasketches"
             },
             {
@@ -15273,6 +15252,10 @@
             {
               "id": "fnv 1.0.7",
               "target": "fnv"
+            },
+            {
+              "id": "frostem 1.20260821.8",
+              "target": "frostem"
             },
             {
               "id": "fs4 0.13.1",
@@ -15295,11 +15278,11 @@
               "target": "log"
             },
             {
-              "id": "lru 0.16.4",
+              "id": "lru 0.18.5",
               "target": "lru"
             },
             {
-              "id": "lz4_flex 0.13.1",
+              "id": "lz4_flex 0.14.0",
               "target": "lz4_flex"
             },
             {
@@ -15327,16 +15310,16 @@
               "target": "regex"
             },
             {
-              "id": "rust-stemmers 1.2.0",
-              "target": "rust_stemmers"
-            },
-            {
               "id": "rustc-hash 2.1.3",
               "target": "rustc_hash"
             },
             {
               "id": "serde 1.0.229",
               "target": "serde"
+            },
+            {
+              "id": "serde-tuple-vec-map 1.0.1",
+              "target": "tuple_vec_map"
             },
             {
               "id": "serde_json 1.0.154",
@@ -15351,17 +15334,17 @@
               "target": "smallvec"
             },
             {
-              "id": "tantivy-bitpacker 0.10.0",
+              "id": "tantivy-bitpacker 0.27.0",
               "target": "tantivy_bitpacker"
             },
             {
               "alias": "columnar",
-              "id": "tantivy-columnar 0.7.0",
+              "id": "tantivy-columnar 0.27.0",
               "target": "tantivy_columnar"
             },
             {
               "alias": "common",
-              "id": "tantivy-common 0.11.0",
+              "id": "tantivy-common 0.27.0",
               "target": "tantivy_common"
             },
             {
@@ -15370,12 +15353,12 @@
             },
             {
               "alias": "query_grammar",
-              "id": "tantivy-query-grammar 0.26.0",
+              "id": "tantivy-query-grammar 0.27.0",
               "target": "tantivy_query_grammar"
             },
             {
               "alias": "stacker",
-              "id": "tantivy-stacker 0.7.0",
+              "id": "tantivy-stacker 0.27.0",
               "target": "tantivy_stacker"
             },
             {
@@ -15398,6 +15381,10 @@
             {
               "id": "typetag 0.2.23",
               "target": "typetag"
+            },
+            {
+              "id": "unwrap-infallible 1.0.0",
+              "target": "unwrap_infallible"
             },
             {
               "id": "uuid 1.28.0",
@@ -15425,8 +15412,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "861facfabd71044968f364837f9a083b56464ba5a59079f88706ee5c451ca069",
-          "url": "https://static.crates.io/crates/tantivy/0.26.2/download"
+          "sha256": "ad1ebacf6bc124b741ffbfb088f9835cb55e1e2ff57e182e9219e3efa1377b97",
+          "url": "https://static.crates.io/crates/tantivy/0.27.0/download"
         }
       },
       "targets": [
@@ -15437,9 +15424,9 @@
           }
         }
       ],
-      "version": "0.26.2"
+      "version": "0.27.0"
     },
-    "tantivy-bitpacker 0.10.0": {
+    "tantivy-bitpacker 0.27.0": {
       "common_attrs": {
         "deps": [
           {
@@ -15458,8 +15445,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "4fed3d674429bcd2de5d0a6d1aa5495fed8afd9c5ecce993019caf7615f53fa4",
-          "url": "https://static.crates.io/crates/tantivy-bitpacker/0.10.0/download"
+          "sha256": "2c803ac72b3356f48fe4a399a03e058addd5c94e793e0bb7c6bcc224b238fcd7",
+          "url": "https://static.crates.io/crates/tantivy-bitpacker/0.27.0/download"
         }
       },
       "targets": [
@@ -15470,9 +15457,9 @@
           }
         }
       ],
-      "version": "0.10.0"
+      "version": "0.27.0"
     },
-    "tantivy-columnar 0.7.0": {
+    "tantivy-columnar 0.27.0": {
       "common_attrs": {
         "crate_features": [
           "zstd-compression"
@@ -15491,26 +15478,30 @@
             "target": "itertools"
           },
           {
+            "id": "rand 0.9.5",
+            "target": "rand"
+          },
+          {
             "id": "serde 1.0.229",
             "target": "serde"
           },
           {
-            "id": "tantivy-bitpacker 0.10.0",
+            "id": "tantivy-bitpacker 0.27.0",
             "target": "tantivy_bitpacker"
           },
           {
             "alias": "common",
-            "id": "tantivy-common 0.11.0",
+            "id": "tantivy-common 0.27.0",
             "target": "tantivy_common"
           },
           {
             "alias": "sstable",
-            "id": "tantivy-sstable 0.7.0",
+            "id": "tantivy-sstable 0.27.0",
             "target": "tantivy_sstable"
           },
           {
             "alias": "stacker",
-            "id": "tantivy-stacker 0.7.0",
+            "id": "tantivy-stacker 0.27.0",
             "target": "tantivy_stacker"
           }
         ],
@@ -15525,8 +15516,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "c57166f5bcfd478f370ab8445afb4678dce44801fa5ce5c451aaf8595583c5dc",
-          "url": "https://static.crates.io/crates/tantivy-columnar/0.7.0/download"
+          "sha256": "95101fe3dd4a76156bdeff8d14ad41c547f2c1bce7ee0d23fdb6f95599f312ec",
+          "url": "https://static.crates.io/crates/tantivy-columnar/0.27.0/download"
         }
       },
       "targets": [
@@ -15537,9 +15528,9 @@
           }
         }
       ],
-      "version": "0.7.0"
+      "version": "0.27.0"
     },
-    "tantivy-common 0.11.0": {
+    "tantivy-common 0.27.0": {
       "common_attrs": {
         "deps": [
           {
@@ -15576,8 +15567,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "bbf10915aa75da3c3b0d58b58853d2e889efbaf32d4982a4c3715dde6bba23e5",
-          "url": "https://static.crates.io/crates/tantivy-common/0.11.0/download"
+          "sha256": "66d062ce97f2a26f2a7b2ed5d926a62241f762e4395ac110eb5c18f3b4a13b71",
+          "url": "https://static.crates.io/crates/tantivy-common/0.27.0/download"
         }
       },
       "targets": [
@@ -15588,7 +15579,7 @@
           }
         }
       ],
-      "version": "0.11.0"
+      "version": "0.27.0"
     },
     "tantivy-fst 0.5.0": {
       "common_attrs": {
@@ -15638,7 +15629,7 @@
       ],
       "version": "0.5.0"
     },
-    "tantivy-query-grammar 0.26.0": {
+    "tantivy-query-grammar 0.27.0": {
       "common_attrs": {
         "deps": [
           {
@@ -15673,8 +15664,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "dfadb8526b6da90704feb293b0701a6aae62ea14983143344be2dc5ce30f1d82",
-          "url": "https://static.crates.io/crates/tantivy-query-grammar/0.26.0/download"
+          "sha256": "2ef6729a14fc5c5a662ee549a176640743577ef35c70ae7e86f0ca07fa83d161",
+          "url": "https://static.crates.io/crates/tantivy-query-grammar/0.27.0/download"
         }
       },
       "targets": [
@@ -15685,9 +15676,9 @@
           }
         }
       ],
-      "version": "0.26.0"
+      "version": "0.27.0"
     },
-    "tantivy-sstable 0.7.0": {
+    "tantivy-sstable 0.27.0": {
       "common_attrs": {
         "crate_features": [
           "zstd",
@@ -15703,12 +15694,12 @@
             "target": "itertools"
           },
           {
-            "id": "tantivy-bitpacker 0.10.0",
+            "id": "tantivy-bitpacker 0.27.0",
             "target": "tantivy_bitpacker"
           },
           {
             "alias": "common",
-            "id": "tantivy-common 0.11.0",
+            "id": "tantivy-common 0.27.0",
             "target": "tantivy_common"
           },
           {
@@ -15716,7 +15707,7 @@
             "target": "tantivy_fst"
           },
           {
-            "id": "zstd 0.13.3",
+            "id": "zstd 0.14.3",
             "target": "zstd"
           }
         ],
@@ -15731,8 +15722,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "8a2cfc3ac5164cbadc28965ffb145a8f47582a60ae5897859ad8d4316596c606",
-          "url": "https://static.crates.io/crates/tantivy-sstable/0.7.0/download"
+          "sha256": "9d6b3567417750e8aeb6e7c9c5ae8701376c07c06d51991050825832c2f8c431",
+          "url": "https://static.crates.io/crates/tantivy-sstable/0.27.0/download"
         }
       },
       "targets": [
@@ -15743,18 +15734,18 @@
           }
         }
       ],
-      "version": "0.7.0"
+      "version": "0.27.0"
     },
-    "tantivy-stacker 0.7.0": {
+    "tantivy-stacker 0.27.0": {
       "common_attrs": {
         "deps": [
           {
-            "id": "murmurhash32 0.3.1",
+            "id": "murmurhash32 0.4.0",
             "target": "murmurhash32"
           },
           {
             "alias": "common",
-            "id": "tantivy-common 0.11.0",
+            "id": "tantivy-common 0.27.0",
             "target": "tantivy_common"
           }
         ],
@@ -15769,8 +15760,8 @@
       "package_url": "https://github.com/quickwit-oss/tantivy",
       "repository": {
         "Http": {
-          "sha256": "6cbb051742da9d53ca9e8fff43a9b10e319338b24e2c0e15d0372df19ffeb951",
-          "url": "https://static.crates.io/crates/tantivy-stacker/0.7.0/download"
+          "sha256": "c4213e34acf53de44ab4778aafec3c6800a781be6a7c1906579acdc23c114d94",
+          "url": "https://static.crates.io/crates/tantivy-stacker/0.27.0/download"
         }
       },
       "targets": [
@@ -15781,7 +15772,7 @@
           }
         }
       ],
-      "version": "0.7.0"
+      "version": "0.27.0"
     },
     "tantivy-tokenizer-api 0.7.0": {
       "common_attrs": {
@@ -17224,6 +17215,38 @@
         }
       ],
       "version": "0.9.0"
+    },
+    "unwrap-infallible 1.0.0": {
+      "common_attrs": {
+        "crate_features": [
+          "default"
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "unwrap_infallible",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "unwrap-infallible",
+      "package_url": "https://github.com/mzabaluev/unwrap-infallible",
+      "repository": {
+        "Http": {
+          "sha256": "e497bb1f828cc9fb236722c2eaa100dcf201563f38f4da6252357a59037adf31",
+          "url": "https://static.crates.io/crates/unwrap-infallible/1.0.0/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "unwrap_infallible",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.0.0"
     },
     "ureq 3.4.2": {
       "common_attrs": {
@@ -19760,7 +19783,7 @@
       ],
       "version": "1.0.23"
     },
-    "zstd 0.13.3": {
+    "zstd 0.14.3": {
       "common_attrs": {
         "crate_features": [
           "arrays",
@@ -19771,24 +19794,24 @@
         ],
         "deps": [
           {
-            "id": "zstd-safe 7.3.0",
+            "id": "zstd-safe 8.2.0",
             "target": "zstd_safe"
           }
         ],
         "edition": "2018"
       },
       "library_target_name": "zstd",
-      "license": "MIT",
+      "license": "BSD-3-Clause",
       "license_file": "LICENSE",
       "license_ids": [
-        "MIT"
+        "BSD-3-Clause"
       ],
       "name": "zstd",
       "package_url": "https://github.com/gyscos/zstd-rs",
       "repository": {
         "Http": {
-          "sha256": "e91ee311a569c327171651566e07972200e76fcfe2242a4fa446149a3881c08a",
-          "url": "https://static.crates.io/crates/zstd/0.13.3/download"
+          "sha256": "db3ae9bf90af6e40197bef767eeefc46ad6397420fe873830bd85e5fbbfb3c70",
+          "url": "https://static.crates.io/crates/zstd/0.14.3/download"
         }
       },
       "targets": [
@@ -19799,13 +19822,13 @@
           }
         }
       ],
-      "version": "0.13.3"
+      "version": "0.14.3"
     },
-    "zstd-safe 7.3.0": {
+    "zstd-safe 8.2.0": {
       "build_script_attrs": {
         "link_deps": [
           {
-            "id": "zstd-sys 2.1.1+zstd.1.5.7",
+            "id": "zstd-sys 2.1.2+zstd.1.5.7",
             "target": "zstd_sys"
           }
         ]
@@ -19820,7 +19843,7 @@
         ],
         "deps": [
           {
-            "id": "zstd-sys 2.1.1+zstd.1.5.7",
+            "id": "zstd-sys 2.1.2+zstd.1.5.7",
             "target": "zstd_sys"
           }
         ],
@@ -19839,8 +19862,8 @@
       "package_url": "https://github.com/gyscos/zstd-rs",
       "repository": {
         "Http": {
-          "sha256": "64d80649ab6db9d9f6f9c80a40becd948eda4714a0a5ac8c4d157a32231c7882",
-          "url": "https://static.crates.io/crates/zstd-safe/7.3.0/download"
+          "sha256": "ded520f16b29e1a9b771c722221b2b0a0398c2316d9bb3c42b458a5414d7434b",
+          "url": "https://static.crates.io/crates/zstd-safe/8.2.0/download"
         }
       },
       "targets": [
@@ -19857,9 +19880,9 @@
           }
         }
       ],
-      "version": "7.3.0"
+      "version": "8.2.0"
     },
-    "zstd-sys 2.1.1+zstd.1.5.7": {
+    "zstd-sys 2.1.2+zstd.1.5.7": {
       "build_script_attrs": {
         "deps": [
           {
@@ -19895,8 +19918,8 @@
       "package_url": "https://github.com/gyscos/zstd-rs",
       "repository": {
         "Http": {
-          "sha256": "aeec9eaf2dffbbd09201e23bd0ffcbaa33bb8e9266a10734fd7ed90a85eca078",
-          "url": "https://static.crates.io/crates/zstd-sys/2.1.1+zstd.1.5.7/download"
+          "sha256": "481ada9c543b2323cbb7bbdbb5249177fbf0188ed959ed2c15e4b22421c84ed3",
+          "url": "https://static.crates.io/crates/zstd-sys/2.1.2+zstd.1.5.7/download"
         }
       },
       "targets": [
@@ -19913,7 +19936,7 @@
           }
         }
       ],
-      "version": "2.1.1+zstd.1.5.7"
+      "version": "2.1.2+zstd.1.5.7"
     }
   },
   "direct_deps": [
@@ -19934,7 +19957,7 @@
     "serde_json 1.0.154",
     "sha1 0.11.0",
     "sha2 0.11.1",
-    "tantivy 0.26.2",
+    "tantivy 0.27.0",
     "ureq 3.4.2",
     "usearch 2.26.4",
     "yaml_serde 0.10.7"
