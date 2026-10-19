@@ -17,7 +17,6 @@ buffa-types = { version = "=0.9.2", default-features = false, features = [
     "std",
 ] }
 clap = { version = "=4.6.7", features = ["derive"] }
-cxx = "=1.0.205"
 git2 = { version = "=0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
@@ -40,12 +39,9 @@ scheda-api = { path = "rust/api" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_ignored = "=0.1.14"
 serde_json = "=1.0.154"
-sha1 = "=0.11.0"
 sha2 = "=0.11.1"
-ureq = { version = "=3.4.2", features = ["json"] }
-tantivy = "=0.27.0"
 tokio = { version = "=1.53.3", default-features = false }
-usearch = { version = "=2.26.4", default-features = false }
+ureq = { version = "=3.4.2", features = ["json"] }
 yaml_serde = "=0.10.7"
 
 [workspace.lints.rust]
@@ -53,12 +49,6 @@ warnings = "deny"
 
 [workspace.lints.clippy]
 all = "deny"
-
-[patch.crates-io]
-cxx = { git = "https://github.com/sonalect/cxx", tag = "1.0.205-bazel-sandbox-fix" }
-cxx-build = { git = "https://github.com/sonalect/cxx", tag = "1.0.205-bazel-sandbox-fix" }
-numkong = { git = "https://github.com/sonalect/NumKong", tag = "v7.8.5-bazel-sandbox-fix" }
-usearch = { git = "https://github.com/sonalect/USearch", tag = "v2.26.4-bazel-sandbox-fix" }
 
 # Cargo `--release` only. Bazel rustc flags are unchanged.
 [profile.release]

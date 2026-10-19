@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.3, 19 October 2026.
+Document 21 of the Scheda package. Version 0.4, 19 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -336,8 +336,10 @@ nothing else yet.
       the version of each dataset and table of files, read by readers;
       restore of a dataset ahead of `commit` (D7).
 - [ ] Owner-only modes on every file Lance writes (Lance writes with the
-      process umask): applied after each commit, as `restrict_tree` does
-      for Tantivy today.
+      process umask): applied after each commit, as `restrict_tree` did
+      for Tantivy in `0.22`; `Vault.Check` skips the datasets while a
+      round holds `index.lock`, as it skipped `lexical/` (L8 removed both
+      with Tantivy).
 - [ ] Maintenance (D11): compaction, index optimisation, delta merge,
       prune an hour after a version was replaced.
 - *Check:* a reader opens the versions `commit` names; a dataset written
@@ -364,6 +366,9 @@ id maps. Lance is a new side of its round.
 - [ ] The parts of a round: the journal id maps (unchanged), then each
       dataset brought from its own state to `HEAD` (D7), then
       `index/{generation}/commit` last.
+- [ ] The Index object (`Status`, `Watch`, `Reindex`) and the ports (a
+      Projector, an embedder, a reranker) accepted again, with who
+      indexes (D17); L8 left them `UNIMPLEMENTED`.
 - [ ] Projection once per changed Document, embedding only the texts
       whose digest changed; the in-memory cache of vectors across failed
       tries kept.
@@ -474,23 +479,34 @@ D5.
 D17. *Runs right after L1* (the owner, after L0): nothing about to go is
 made async by `22`.
 
-- [ ] Tantivy, USearch, `lexical.rs`, `vector.rs`, `filter.rs`, the
+- [x] Tantivy, USearch, `lexical.rs`, `vector.rs`, `filter.rs`, the
       query and search engines, `index/stale`, `index/columns`, the
       features `find` / `search` / `simd` / `openmp`, their tests; Cargo
-      and Bazel repinned. What stays is today's build without `find`: the
+      and Bazel repinned (`cxx`, `numkong`, `sha1`, and their forks went
+      with USearch). What stays is today's build without `find`: the
       indexer with the journal id maps, and the state of the Index.
-- [ ] `Query`, `Count`, and `Search` answer `UNIMPLEMENTED` until L5 and
-      L6; the CLI's `query`, `count`, and `search`, and the search part
-      of `tests/consumer.rs`, go until L9.
-- *Check:* `git grep -n -i -e tantivy -e usearch rust/` is empty (`api/`
-  follows in L5, with the patch); `cargo test` and `bazel test //...`
-  green.
+- [x] `Query`, `Count`, and `Search` answer `UNIMPLEMENTED` until L5 and
+      L6; the CLI's `query`, `count`, and `search` go until L9.
+- [x] As without `find` today (the owner, §8.4): `Vault.Index` and every
+      port (a Projector, an embedder, a reranker) are `UNIMPLEMENTED`
+      until L3, so `tests/consumer.rs`, which opens with ports, goes whole
+      until L9; the CLI loses its Projector and its `index` subcommand
+      until L9, and keeps the embedder and reranker flags, which reach the
+      library.
+- *Check:* `git grep -n -i -e tantivy -e usearch rust/scheda rust/cli` is
+  empty (`rust/api/gen` follows `api/` in L5, with the patch); `cargo
+  build` and `cargo clippy --all-targets` (all features, default ones,
+  none), `bazel build //...`, and `bazel test //bazel:lint
+  //bazel:markdown //api:all //rust:lint` green on 19 October 2026. The
+  Rust test suites were not run: the owner keeps them off while the Index
+  is replaced, as in L1.
 
 ### L9. CLI, Python driver, consumer test
 
 - [ ] The CLI per §8.3: the new fields in its JSON, the summary of a
       query, the replies of writes, `--index-wait-timeout-ms`,
-      `--filter-max-depth`; the Python driver follows.
+      `--filter-max-depth`; its Projector and the `index` subcommand back
+      (L8 removed them); the Python driver follows.
 - [ ] `tests/consumer.rs` rewritten to the anchor consumer's use after
       this change: vector-only search on one collection, a write's token
       passed to the search, `Index.Reindex` while searches go on.
@@ -1058,6 +1074,14 @@ same day), which replaces D13. Discussed before that and not taken: a
 private runtime of Scheda's for Lance, a bridge into it from the blocking
 objects, and the indexer kept a thread. He also moved L8 (the old Index
 removed) to right after L1.
+
+Before L8, the same day, the owner chose the literal build without
+`find`: `Vault.Index` and every port are `UNIMPLEMENTED` until L3, so
+`tests/consumer.rs` goes whole until L9, and the CLI loses its Projector
+and its `index` subcommand until L9 but keeps the embedder and reranker
+flags. The Check's grep covers `rust/scheda` and `rust/cli` only
+(`rust/api/gen` follows `api/`), and L8 has the gate of L1, without the
+Rust test suites.
 
 ### 8.5 The diff
 

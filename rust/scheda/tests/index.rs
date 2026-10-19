@@ -4,9 +4,9 @@
 //! shows itself, a layout that is not this one is made again, a round that
 //! fails changes nothing, and the thread ends with the handle.
 //!
-//! What a build without `find` can see of the Index is its files, so the
-//! tests wait on `.scheda/index/commit`; with `find` they also watch the
-//! status.
+//! This version of Scheda has no Index object (`Vault.Index` is
+//! `UNIMPLEMENTED`), so what the tests can see of the indexer is its files,
+//! and they wait on `.scheda/index/commit`.
 
 mod common;
 mod probe;
@@ -18,22 +18,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use buffa_types::google::protobuf::Empty;
-#[cfg(feature = "find")]
-use scheda::Error;
-use scheda::Scheda;
-#[cfg(feature = "find")]
-use scheda::v1::projector_ref::ProjectorRef;
 use scheda::v1::{
     CollectionDeclaration, CollectionKey, CollectionSync, DocumentCreation, DocumentId,
-    MirrorSetting, MirrorSync, OpenOptions, SchedaSync, VaultErrorCode as Code, VaultOpening,
-    VaultSync,
-};
-#[cfg(feature = "find")]
-use scheda::v1::{
-    IndexDoc, IndexSchema, IndexSync, ProjectorDescriptor, ProjectorSync, RawDocument,
+    MirrorSetting, MirrorSync, OpenOptions, VaultErrorCode as Code, VaultSync,
 };
 
-use common::{Scratch, git, open, opening, snapshot, vault as built_vault, write};
+use common::{Scratch, git, open, snapshot, vault as built_vault, write};
 use probe::{commits, git_out};
 
 const DEADLINE: Duration = Duration::from_secs(30);
@@ -44,47 +34,6 @@ fn journal(name: &str) -> CollectionDeclaration {
 
 fn standard(name: &str) -> CollectionDeclaration {
     serde_json::from_value(serde_json::json!({"name": name, "schema": {"standard": {}}})).unwrap()
-}
-
-/// A Projector that declares no columns: every Document is indexed by its
-/// identity. A handle needs a Projector to index in a build with `find`.
-#[cfg(feature = "find")]
-struct Bare;
-
-#[cfg(feature = "find")]
-impl ProjectorSync for Bare {
-    fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
-        Ok(ProjectorDescriptor::default().with_projection_id("test@1"))
-    }
-
-    fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
-        Ok(IndexSchema::default())
-    }
-
-    fn project(&self, _document: RawDocument) -> Result<IndexDoc, Error> {
-        Ok(IndexDoc::default())
-    }
-}
-
-/// The request that opens the Vault at `path`, with the Projector a handle
-/// that indexes needs in a build with `find`.
-fn opening_indexing(path: &Path, options: OpenOptions) -> VaultOpening {
-    #[cfg(feature = "find")]
-    {
-        VaultOpening {
-            projector: ProjectorRef::from_sync(Bare).into(),
-            ..opening(path, options)
-        }
-    }
-    #[cfg(not(feature = "find"))]
-    {
-        opening(path, options)
-    }
-}
-
-/// Opens a Vault as `opening` asks.
-fn open_with(opening: VaultOpening) -> Result<Arc<dyn VaultSync>, scheda::Error> {
-    Scheda.open(opening)?.to_sync()
 }
 
 /// The collection `name` of `vault`, which must be declared.
@@ -101,22 +50,8 @@ fn mirror_of(vault: &Arc<dyn VaultSync>) -> Arc<dyn MirrorSync> {
     vault.mirror(Empty::default()).unwrap().to_sync().unwrap()
 }
 
-/// The Index of `vault`.
-#[cfg(feature = "find")]
-fn index_of(vault: &Arc<dyn VaultSync>) -> Arc<dyn IndexSync> {
-    vault.index(Empty::default()).unwrap().to_sync().unwrap()
-}
-
 fn opened(path: &Path) -> Arc<dyn VaultSync> {
-    let options = OpenOptions::default().with_index_poll_ms(10);
-    #[cfg(feature = "find")]
-    {
-        open_with(opening_indexing(path, options)).unwrap()
-    }
-    #[cfg(not(feature = "find"))]
-    {
-        open(path, options).unwrap()
-    }
+    open(path, OpenOptions::default().with_index_poll_ms(10)).unwrap()
 }
 
 /// A Vault with the journal `log`, opened, with the Index built.
@@ -241,46 +176,12 @@ fn a_write_is_indexed_and_the_map_lists_its_line() {
     probe::assert_settled(&path, &[]);
 }
 
-#[cfg(feature = "find")]
 #[test]
-fn the_status_gives_the_state_at_once_and_then_the_version_of_each_write() {
-    let scratch = Scratch::new("status");
-    let (path, vault) = built(&scratch, "vault");
-    let mut watch = index_of(&vault).watch(Empty::default()).unwrap();
-    let first = watch.next().unwrap().unwrap();
-    let head = git_out(&path, &["rev-parse", "HEAD"]);
-    assert_eq!(first.version.as_deref(), Some(head.as_str()));
-    assert_eq!(first.pending, Some(0));
-    assert!(!first.last_error.is_set());
-    line(&vault, "one");
-    let head = git_out(&path, &["rev-parse", "HEAD"]);
-    let mut items = 0;
-    loop {
-        let state = watch.next().unwrap().unwrap();
-        items += 1;
-        if state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0) {
-            break;
-        }
-    }
-    assert!(items >= 1);
-    let now = index_of(&vault).status(Empty::default()).unwrap();
-    assert_eq!(now.version.as_deref(), Some(head.as_str()));
-    assert_eq!(now.role, Some(false));
-    vault.close(Empty::default()).unwrap();
-    // A closed handle ends its stream, after it says why.
-    let error = watch.next().unwrap().unwrap_err();
-    assert!(error.is(Code::FailedPrecondition), "{error}");
-    assert!(watch.next().is_none(), "a closed handle ends its stream");
-}
-
-#[cfg(not(feature = "find"))]
-#[test]
-fn without_find_the_index_object_is_unimplemented_and_the_maps_are_still_kept() {
-    let scratch = Scratch::new("no-find");
+fn the_index_object_is_unimplemented_and_the_maps_are_still_kept() {
+    let scratch = Scratch::new("no-index-object");
     let (path, vault) = built(&scratch, "vault");
     let error = vault.index(Empty::default()).err().unwrap();
     assert!(error.is(Code::Unimplemented));
-    assert!(error.to_string().contains("find"), "{error}");
     line(&vault, "one");
     wait_indexed(&path);
     assert_eq!(mapped(&path), ["one"]);
@@ -394,12 +295,12 @@ fn a_pull_is_indexed() {
         .unwrap();
     mirror_of(&seed).push(Empty::default()).unwrap();
     let path = scratch.join("clone");
-    let clone = open_with(opening_indexing(
+    let clone = open(
         &path,
         OpenOptions::default()
             .with_mirror(&url)
             .with_index_poll_ms(10),
-    ))
+    )
     .unwrap();
     wait_indexed(&path);
     line(&seed, "remote");
@@ -408,55 +309,6 @@ fn a_pull_is_indexed() {
     wait_indexed(&path);
     assert_eq!(mapped(&path), ["remote"]);
     assert!(found(&clone, "remote"));
-}
-
-#[cfg(feature = "find")]
-#[test]
-fn reindex_returns_before_the_rebuild_a_second_is_aborted_and_the_maps_match() {
-    let scratch = Scratch::new("reindex");
-    let (path, vault) = built(&scratch, "vault");
-    line(&vault, "one");
-    line(&vault, "two");
-    wait_indexed(&path);
-    let mut watch = index_of(&vault).watch(Empty::default()).unwrap();
-    watch.next().unwrap().unwrap();
-    // The rebuild takes the same lock as any round: while it is held the
-    // rebuild is asked for and cannot begin.
-    let held = hold_lock(&path);
-    std::fs::write(path.join(".scheda/index/junk"), "x").unwrap();
-    std::fs::write(map_file(&path), "damaged").unwrap();
-    index_of(&vault).reindex(Empty::default()).unwrap();
-    let error = index_of(&vault).reindex(Empty::default()).unwrap_err();
-    assert!(error.is(Code::Aborted));
-    assert!(path.join(".scheda/index/junk").exists(), "not begun");
-    drop(held);
-    wait_until("the rebuild", || !path.join(".scheda/index/junk").exists());
-    wait_indexed(&path);
-    assert_eq!(mapped(&path), ["one", "two"]);
-    {
-        use scheda::v1::rebuild::Stage;
-        let mut saw_running = false;
-        let last = loop {
-            let state = watch.next().unwrap().unwrap();
-            let stage = state
-                .rebuild
-                .as_option()
-                .and_then(|rebuild| rebuild.stage)
-                .and_then(|stage| stage.as_known());
-            saw_running |= stage == Some(Stage::STAGE_RUNNING) && state.version.is_none();
-            if stage == Some(Stage::STAGE_DONE) {
-                break state;
-            }
-        };
-        assert!(saw_running, "the rebuild shows from its start");
-        assert!(last.version.is_some());
-        let rebuild = last.rebuild.as_option().unwrap();
-        assert_eq!(rebuild.documents_read, Some(2));
-        assert_eq!(rebuild.documents_skipped, Some(0));
-        assert_eq!(rebuild.segments_read, Some(1));
-    }
-    // After it ends another can be asked for.
-    index_of(&vault).reindex(Empty::default()).unwrap();
 }
 
 #[test]
@@ -504,39 +356,14 @@ fn a_round_that_fails_changes_no_commit_fails_no_write_and_the_next_one_succeeds
     std::fs::write(&folder, "in the way").unwrap();
     line(&vault, "one");
     assert!(found(&vault, "one"), "the write is stored and read");
-    #[cfg(feature = "find")]
-    wait_until("the failure", || {
-        index_of(&vault)
-            .status(Empty::default())
-            .unwrap()
-            .last_error
-            .is_set()
-    });
-    #[cfg(not(feature = "find"))]
     std::thread::sleep(Duration::from_millis(150));
     assert_eq!(commit_file(&path).unwrap(), before, "no commit moved");
-    #[cfg(feature = "find")]
-    {
-        let state = index_of(&vault).status(Empty::default()).unwrap();
-        let error = state.last_error.as_option().unwrap();
-        assert_eq!(error.code.as_deref(), Some("VAULT_ERROR_CODE_STORAGE"));
-        assert_ne!(error.message.as_deref(), Some(""));
-        assert_eq!(state.role, Some(false));
-    }
     line(&vault, "two");
     assert!(found(&vault, "two"), "writes go on");
     assert!(found(&vault, "one"), "a journal with no map is scanned");
     std::fs::remove_file(&folder).unwrap();
     wait_indexed(&path);
     assert_eq!(mapped(&path), ["one", "two"]);
-    #[cfg(feature = "find")]
-    wait_until("the error to clear", || {
-        !index_of(&vault)
-            .status(Empty::default())
-            .unwrap()
-            .last_error
-            .is_set()
-    });
 }
 
 const CHILD_VAULT: &str = "SCHEDA_TEST_INDEX_VAULT";
@@ -554,21 +381,6 @@ fn child(path: &Path, name: &str) {
     std::fs::write(signals.join(format!("ready-{name}")), "").unwrap();
     wait_until("the go", || signals.join("go").exists());
     wait_indexed(path);
-    #[cfg(feature = "find")]
-    {
-        let head = git_out(path, &["rev-parse", "HEAD"]);
-        wait_until("the status", || {
-            let state = index_of(&vault).status(Empty::default()).unwrap();
-            state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
-        });
-        assert!(
-            !index_of(&vault)
-                .status(Empty::default())
-                .unwrap()
-                .last_error
-                .is_set()
-        );
-    }
     vault.close(Empty::default()).unwrap();
 }
 
@@ -615,23 +427,6 @@ fn handles_of_three_processes_take_turns_and_end_at_one_version() {
         "{statuses:?}"
     );
     wait_indexed(&path);
-    #[cfg(feature = "find")]
-    {
-        // A child may have taken the last round: the status of this handle
-        // follows at its next look at `HEAD`.
-        let head = git_out(&path, &["rev-parse", "HEAD"]);
-        wait_until("the status", || {
-            let state = index_of(&vault).status(Empty::default()).unwrap();
-            state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
-        });
-        assert!(
-            !index_of(&vault)
-                .status(Empty::default())
-                .unwrap()
-                .last_error
-                .is_set()
-        );
-    }
     let ids = mapped(&path);
     assert_eq!(ids.len(), 3 * PER_HANDLE, "{ids:?}");
     git(&path, &["fsck", "--no-progress", "--strict"]);
@@ -700,87 +495,4 @@ fn a_standard_collection_needs_no_map() {
     wait_indexed(&path);
     assert!(!path.join(".scheda/index/journal/notes").exists());
     assert!(map_file(&path).exists());
-}
-
-#[cfg(feature = "find")]
-const BARE_CHILD: &str = "SCHEDA_TEST_INDEX_BARE";
-
-/// The role of a child process without ports: write lines into the Vault of
-/// the parent, and see the Index reach `HEAD` without taking a round.
-#[cfg(feature = "find")]
-fn bare_child(path: &Path) {
-    let vault = open(path, OpenOptions::default().with_index_poll_ms(10)).unwrap();
-    for n in 0..PER_HANDLE {
-        line(&vault, &format!("c-{n}"));
-    }
-    wait_until("the status to follow the Index", || {
-        let head = git_out(path, &["rev-parse", "HEAD"]);
-        let state = index_of(&vault).status(Empty::default()).unwrap();
-        state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
-    });
-    let state = index_of(&vault).status(Empty::default()).unwrap();
-    assert_eq!(state.role, Some(false));
-    let error = index_of(&vault).reindex(Empty::default()).unwrap_err();
-    assert!(error.is(Code::FailedPrecondition), "{error}");
-    vault.close(Empty::default()).unwrap();
-}
-
-#[cfg(feature = "find")]
-#[test]
-fn a_process_without_ports_leaves_the_indexing_to_the_one_with_them() {
-    if let Ok(path) = std::env::var(CHILD_VAULT)
-        && std::env::var(BARE_CHILD).is_ok()
-    {
-        bare_child(Path::new(&path));
-        return;
-    }
-    let scratch = Scratch::new("bare-process");
-    let (path, vault) = built(&scratch, "vault");
-    let mut child = Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "a_process_without_ports_leaves_the_indexing_to_the_one_with_them",
-            "--test-threads=1",
-        ])
-        .env(CHILD_VAULT, &path)
-        .env(BARE_CHILD, "1")
-        .spawn()
-        .unwrap();
-    for n in 0..PER_HANDLE {
-        line(&vault, &format!("p-{n}"));
-    }
-    let status = child.wait().unwrap();
-    assert!(status.success(), "{status:?}");
-    wait_indexed(&path);
-    let ids = mapped(&path);
-    assert_eq!(
-        ids.len(),
-        2 * PER_HANDLE,
-        "the handle with the ports indexed all: {ids:?}"
-    );
-    let head = git_out(&path, &["rev-parse", "HEAD"]);
-    wait_until("the status", || {
-        let state = index_of(&vault).status(Empty::default()).unwrap();
-        state.version.as_deref() == Some(head.as_str()) && state.pending == Some(0)
-    });
-}
-
-#[cfg(feature = "find")]
-#[test]
-fn a_vault_opened_only_without_ports_finds_its_lines_without_an_index() {
-    let scratch = Scratch::new("no-ports");
-    let path = scratch.join("vault");
-    let vault = open(&path, OpenOptions::default().with_index_poll_ms(10)).unwrap();
-    vault.create_collection(journal("log")).unwrap();
-    line(&vault, "one");
-    assert!(found(&vault, "one"), "found by a scan of the segments");
-    // The role is known once the indexer has looked at `HEAD`.
-    wait_until("the first look", || {
-        index_of(&vault).status(Empty::default()).unwrap().role == Some(false)
-    });
-    let state = index_of(&vault).status(Empty::default()).unwrap();
-    assert!(state.version.is_none(), "nothing indexed it");
-    let error = index_of(&vault).reindex(Empty::default()).unwrap_err();
-    assert!(error.is(Code::FailedPrecondition), "{error}");
-    vault.close(Empty::default()).unwrap();
 }

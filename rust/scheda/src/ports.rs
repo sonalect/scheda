@@ -8,38 +8,37 @@
 //! implementation in the form it has, blocking or async; Scheda takes the
 //! blocking form from it, so the caller wraps nothing.
 //!
+//! This version of Scheda has no Index to use a port, so it accepts none:
+//! a Vault opened with one, and a `Set*` call that gives one, are
+//! `UNIMPLEMENTED`; removing a port that is not there is nothing to do.
+//!
 //! The rest of this module is what Scheda does with a port once it holds
-//! one. It installs the ports (checks the build can use them, reads and
-//! validates the descriptor of an embedder and of a projector once) and
-//! calls them through one place each: the texts of an embedder and the
-//! Documents of a reranker travel as streams, one item at a time, moved and
-//! never cloned; each reply is checked (the length of a vector, the number
-//! of vectors and scores) before anything uses it; a failure of the port
-//! keeps its code and its retry flag and gains a stack frame.
+//! one. It installs a port (reads and validates the descriptor of an
+//! embedder and of a projector once) and calls it through one place each:
+//! the texts of an embedder and the Documents of a reranker travel as
+//! streams, one item at a time, moved and never cloned; each reply is
+//! checked (the length of a vector, the number of vectors and scores)
+//! before anything uses it; a failure of the port keeps its code and its
+//! retry flag and gains a stack frame.
 
-// A build without `search` calls no embedder query and no reranker, and a
-// build without `find` or `search` calls no projector or embedder. Each
-// layer that uses an item makes the expectation fail while one is unused,
-// which is the reminder to drop it.
+// No port is accepted, so nothing but the unit tests installs or calls one.
+// The expectation fails once the Index uses a port, which is the reminder to
+// drop it.
 #![cfg_attr(
-    not(any(test, feature = "search")),
+    not(test),
     expect(
         dead_code,
-        reason = "a build without `search` calls no embedder or reranker"
+        reason = "no port is accepted, so none is installed or called"
     )
 )]
 
 use std::collections::VecDeque;
 use std::fmt;
-#[cfg(all(feature = "tokio", feature = "search"))]
-use std::future::Future;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use buffa_types::google::protobuf::Empty;
 use protocontract::BoxIter;
-#[cfg(all(feature = "tokio", feature = "search"))]
-use protocontract::{IterStream, RuntimeCode, Stream};
 use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::projector_ref::ProjectorRef;
 use scheda_api::v1::reranker_ref::RerankerRef;
@@ -49,8 +48,6 @@ use scheda_api::v1::{
     IndexSchema, ProjectorDescriptor, ProjectorSync, Query, RawDocument, RerankerSync, ScoreItem,
     Text, VaultErrorCode, Vector,
 };
-#[cfg(all(feature = "tokio", feature = "search"))]
-use scheda_api::v1::{EmbedderAsync, RerankerAsync};
 
 use crate::error::{Context, Error, Fault};
 use crate::stored;
@@ -93,16 +90,12 @@ impl fmt::Debug for Installed {
 }
 
 impl Installed {
-    /// Installs `ports`: checks that the build can use them, takes the
-    /// blocking form of each, and reads and validates the descriptors of the
-    /// embedder and the projector.
+    /// Installs `ports`: none is accepted, so this is the empty set for
+    /// `Ports::default()` and a refusal otherwise.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` for a port the build cannot use; `INVALID_ARGUMENT`
-    /// for a reference that holds no implementation, for an async port
-    /// outside a Tokio runtime, and for a descriptor that breaks its rules;
-    /// the port's own failure when `Describe` fails.
+    /// `UNIMPLEMENTED` for a port.
     pub(crate) fn new(ports: Ports) -> Result<Installed, Error> {
         let installed = Installed::default();
         if let Some(projector) = ports.projector {
@@ -117,64 +110,42 @@ impl Installed {
         Ok(installed)
     }
 
-    /// Replaces the embedder; `None` removes it. The new embedder is
-    /// installed (and its descriptor read) before the old one is let go, so
-    /// a failure leaves the old one in place.
+    /// Removes the embedder when `embedder` is `None`.
     ///
     /// # Errors
     ///
-    /// As [`Installed::new`] for the embedder.
+    /// `UNIMPLEMENTED` for an embedder.
     pub(crate) fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
-        let installed = embedder
-            .map(|embedder| {
-                require_build("an embedder", "search", cfg!(feature = "search"))?;
-                install_embedder(&embedder)
-            })
-            .transpose()
-            .context("install the embedder")?
-            .map(Arc::new);
-        *slot(&self.embedder) = installed;
+        if embedder.is_some() {
+            return Err(refused("an embedder"));
+        }
+        *slot(&self.embedder) = None;
         Ok(())
     }
 
-    /// Replaces the reranker; `None` removes it.
+    /// Removes the reranker when `reranker` is `None`.
     ///
     /// # Errors
     ///
-    /// As [`Installed::new`] for the reranker.
+    /// `UNIMPLEMENTED` for a reranker.
     pub(crate) fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
-        let installed = reranker
-            .map(|reranker| {
-                require_build("a reranker", "search", cfg!(feature = "search"))?;
-                reranker_sync(&reranker).map(|sync| RerankerPort {
-                    sync,
-                    #[cfg(all(feature = "tokio", feature = "search"))]
-                    reference: reranker.clone(),
-                })
-            })
-            .transpose()
-            .context("install the reranker")?
-            .map(Arc::new);
-        *slot(&self.reranker) = installed;
+        if reranker.is_some() {
+            return Err(refused("a reranker"));
+        }
+        *slot(&self.reranker) = None;
         Ok(())
     }
 
-    /// Replaces the projector; `None` removes it. The new projector is
-    /// installed (and its descriptor read) before the old one is let go.
+    /// Removes the projector when `projector` is `None`.
     ///
     /// # Errors
     ///
-    /// As [`Installed::new`] for the projector.
+    /// `UNIMPLEMENTED` for a projector.
     pub(crate) fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
-        let installed = projector
-            .map(|projector| {
-                require_build("a projector", "find", cfg!(feature = "find"))?;
-                install_projector(&projector)
-            })
-            .transpose()
-            .context("install the projector")?
-            .map(Arc::new);
-        *slot(&self.projector) = installed;
+        if projector.is_some() {
+            return Err(refused("a Projector"));
+        }
+        *slot(&self.projector) = None;
         Ok(())
     }
 
@@ -198,17 +169,14 @@ fn slot<T>(slot: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     slot.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `UNIMPLEMENTED` naming the feature when a port is given to a build that
-/// cannot use it.
-fn require_build(what: &str, feature: &str, built: bool) -> Result<(), Error> {
-    if built {
-        return Ok(());
-    }
-    Err(Fault::new(
+/// `UNIMPLEMENTED` for a port: this version of Scheda has no Index to use
+/// one.
+fn refused(what: &str) -> Error {
+    Fault::new(
         VaultErrorCode::Unimplemented,
-        format!("{what} needs a build with the `{feature}` feature"),
+        format!("{what} is not accepted by this version of Scheda: it has no Index"),
     )
-    .into())
+    .into()
 }
 
 /// `INVALID_ARGUMENT` for a port reference whose blocking form cannot be
@@ -259,9 +227,6 @@ fn invalid_reply(what: &str, fault: Fault) -> Fault {
 /// itself again.
 pub(crate) struct EmbedderPort {
     sync: Arc<dyn EmbedderSync>,
-    /// The reference the caller gave, for the async form of a call.
-    #[cfg(all(feature = "tokio", feature = "search"))]
-    reference: EmbedderRef,
     descriptor: EmbedderDescriptor,
     /// `descriptor.dimensions`, as a length.
     dimensions: usize,
@@ -280,8 +245,6 @@ fn install_embedder(port: &EmbedderRef) -> Result<EmbedderPort, Error> {
         usize::try_from(descriptor.dimensions.unwrap_or_default()).unwrap_or(usize::MAX);
     Ok(EmbedderPort {
         sync,
-        #[cfg(all(feature = "tokio", feature = "search"))]
-        reference: port.clone(),
         descriptor,
         dimensions,
     })
@@ -453,27 +416,6 @@ impl EmbedderPort {
         self.checked(vector)
     }
 
-    /// [`EmbedderPort::embed_query`] in a task: an async embedder is
-    /// awaited, a blocking one runs on the blocking pool, and a panic of
-    /// either is `PANICKED`.
-    ///
-    /// # Errors
-    ///
-    /// As [`EmbedderPort::embed_query`]; `NO_RUNTIME` outside a Tokio
-    /// runtime.
-    #[cfg(all(feature = "tokio", feature = "search"))]
-    pub(crate) async fn embed_query_async(&self, text: String) -> Result<Vec<f32>, Error> {
-        let query = Self::query_of(text)?;
-        let port = self
-            .reference
-            .to_async_offload()
-            .context("Embedder::embed_query: reach the embedder")?;
-        let vector = awaited(async move { port.embed_query(query).await })
-            .await
-            .context("Embedder::embed_query: ask the embedder")?;
-        self.checked(vector)
-    }
-
     /// The query for a search text, checked.
     fn query_of(text: String) -> Result<Query, Error> {
         let query = Query::default().with_text(text);
@@ -502,9 +444,6 @@ impl EmbedderPort {
 /// An installed reranker, in the blocking form.
 pub(crate) struct RerankerPort {
     sync: Arc<dyn RerankerSync>,
-    /// The reference the caller gave, for the async form of a call.
-    #[cfg(all(feature = "tokio", feature = "search"))]
-    reference: RerankerRef,
 }
 
 impl RerankerPort {
@@ -529,41 +468,6 @@ impl RerankerPort {
             .score(Self::items(query, documents))
             .context("Reranker::score: ask the reranker")?;
         Self::gather(expected, reply)
-    }
-
-    /// [`RerankerPort::score`] in a task: an async reranker is awaited, a
-    /// blocking one runs on the blocking pool, and a panic of either is
-    /// `PANICKED`.
-    ///
-    /// # Errors
-    ///
-    /// As [`RerankerPort::score`]; `NO_RUNTIME` outside a Tokio runtime.
-    #[cfg(all(feature = "tokio", feature = "search"))]
-    pub(crate) async fn score_async(
-        &self,
-        query: String,
-        documents: Vec<Document>,
-    ) -> Result<Vec<f64>, Error> {
-        let expected = documents.len();
-        if expected == 0 {
-            return Ok(Vec::new());
-        }
-        let port = self
-            .reference
-            .to_async_offload()
-            .context("Reranker::score: reach the reranker")?;
-        let items = Self::items(query, documents);
-        let reply = awaited(async move {
-            let mut reply = Box::pin(port.score(IterStream::new(items)).await?);
-            let mut scores = Vec::new();
-            while let Some(item) = std::future::poll_fn(|cx| reply.as_mut().poll_next(cx)).await {
-                scores.push(item);
-            }
-            Ok(scores)
-        })
-        .await
-        .context("Reranker::score: ask the reranker")?;
-        Self::gather(expected, reply.into_iter())
     }
 
     /// The query, then the Documents, one by one, as the reranker takes
@@ -612,56 +516,6 @@ impl RerankerPort {
             .context("Reranker::score: count the scores"));
         }
         Ok(scores)
-    }
-}
-
-/// Runs `future` as a task of the current runtime and waits for it. A panic
-/// in it is `PANICKED`, and dropping the wait stops the task. For a port
-/// call that waits on a network: the caller holds no thread meanwhile.
-///
-/// # Errors
-///
-/// What `future` fails with; `PANICKED` when it panics, `CANCELLED` when its
-/// runtime ends first; `NO_RUNTIME` outside a Tokio runtime.
-#[cfg(all(feature = "tokio", feature = "search"))]
-async fn awaited<T: Send + 'static>(
-    future: impl Future<Output = Result<T, Error>> + Send + 'static,
-) -> Result<T, Error> {
-    /// Stops the task when the wait is dropped.
-    struct Task<T>(tokio::task::JoinHandle<T>);
-
-    impl<T> Drop for Task<T> {
-        fn drop(&mut self) {
-            self.0.abort();
-        }
-    }
-
-    let handle = tokio::runtime::Handle::try_current().map_err(|_| {
-        Error::new(
-            RuntimeCode::NoRuntime,
-            "a port call is awaited inside a Tokio runtime",
-        )
-    })?;
-    let mut task = Task(handle.spawn(future));
-    match (&mut task.0).await {
-        Ok(result) => result,
-        Err(failed) => match failed.try_into_panic() {
-            Ok(panic) => {
-                let message = panic
-                    .downcast_ref::<&str>()
-                    .copied()
-                    .or_else(|| panic.downcast_ref::<String>().map(String::as_str))
-                    .unwrap_or("no message");
-                Err(Error::new(
-                    RuntimeCode::Panicked,
-                    format!("the port panicked: {message}"),
-                ))
-            }
-            Err(_) => Err(Error::new(
-                RuntimeCode::Cancelled,
-                "the port call was cancelled",
-            )),
-        },
     }
 }
 
@@ -991,40 +845,6 @@ impl<X, Y> Iterator for Portions<X, Y> {
     }
 }
 
-/// Ports for a test that wants a handle to index and cares for nothing else:
-/// a Projector that declares no columns, so every Document is indexed by
-/// identity. A build without `find` has no Projector to give.
-#[cfg(test)]
-pub(crate) fn indexing_ports() -> Ports {
-    #[cfg(feature = "find")]
-    {
-        struct Bare;
-
-        impl ProjectorSync for Bare {
-            fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
-                Ok(ProjectorDescriptor::default().with_projection_id("bare@1"))
-            }
-
-            fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
-                Ok(IndexSchema::default())
-            }
-
-            fn project(&self, _document: RawDocument) -> Result<IndexDoc, Error> {
-                Ok(IndexDoc::default())
-            }
-        }
-
-        Ports {
-            projector: Some(ProjectorRef::from_sync(Bare)),
-            ..Ports::default()
-        }
-    }
-    #[cfg(not(feature = "find"))]
-    {
-        Ports::default()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::Mutex;
@@ -1292,49 +1112,39 @@ mod tests {
         assert!(error.is(EmbedderErrorCode::Refused));
     }
 
-    #[cfg(not(feature = "search"))]
     #[test]
-    fn an_embedder_or_a_reranker_without_search_is_unimplemented() {
-        let ports = Ports {
-            embedder: Some(EmbedderRef::from_sync(Script::new())),
-            ..Ports::default()
-        };
-        let error = Installed::new(ports).err().unwrap();
-        assert!(error.is(VaultErrorCode::Unimplemented));
-        let error = Installed::default()
-            .set_embedder(Some(EmbedderRef::from_sync(Script::new())))
-            .unwrap_err();
-        assert!(error.is(VaultErrorCode::Unimplemented));
-        Installed::default().set_embedder(None).unwrap();
-    }
-
-    #[cfg(feature = "search")]
-    #[test]
-    fn set_embedder_replaces_the_embedder_and_a_failure_keeps_the_old_one() {
-        let installed = Installed::new(Ports::default()).unwrap();
-        assert!(installed.embedder().is_none());
-        installed
-            .set_embedder(Some(EmbedderRef::from_sync(Script::new())))
-            .unwrap();
-        let other = Script {
-            model_id: String::from("model-b"),
-            ..Script::new()
-        };
-        installed
-            .set_embedder(Some(EmbedderRef::from_sync(other)))
-            .unwrap();
-        assert_eq!(installed.embedder().unwrap().model_id(), "model-b");
-        let broken = Script {
-            dimensions: 0,
-            ..Script::new()
-        };
+    fn an_embedder_a_reranker_or_a_projector_is_unimplemented() {
+        for ports in [
+            Ports {
+                embedder: Some(EmbedderRef::from_sync(Script::new())),
+                ..Ports::default()
+            },
+            Ports {
+                reranker: Some(RerankerRef::from_sync(Judge::default())),
+                ..Ports::default()
+            },
+            Ports {
+                projector: Some(ProjectorRef::from_sync(proj(
+                    Vec::new(),
+                    IndexDoc::default(),
+                ))),
+                ..Ports::default()
+            },
+        ] {
+            let error = Installed::new(ports).err().unwrap();
+            assert!(error.is(VaultErrorCode::Unimplemented));
+        }
+        let installed = Installed::default();
         let error = installed
-            .set_embedder(Some(EmbedderRef::from_sync(broken)))
+            .set_embedder(Some(EmbedderRef::from_sync(Script::new())))
             .unwrap_err();
-        assert!(error.is(VaultErrorCode::InvalidArgument));
-        assert_eq!(installed.embedder().unwrap().model_id(), "model-b");
+        assert!(error.is(VaultErrorCode::Unimplemented));
         installed.set_embedder(None).unwrap();
+        installed.set_reranker(None).unwrap();
+        installed.set_projector(None).unwrap();
         assert!(installed.embedder().is_none());
+        assert!(installed.reranker().is_none());
+        assert!(installed.projector().is_none());
     }
 
     /// An embedder with the portions of the same function as `FixedEmbedder`
@@ -1497,13 +1307,8 @@ mod tests {
     }
 
     fn reranker(judge: impl RerankerSync + 'static) -> Arc<RerankerPort> {
-        let reference = RerankerRef::from_sync(judge);
-        let sync = reranker_sync(&reference).unwrap();
-        Arc::new(RerankerPort {
-            sync,
-            #[cfg(all(feature = "tokio", feature = "search"))]
-            reference,
-        })
+        let sync = reranker_sync(&RerankerRef::from_sync(judge)).unwrap();
+        Arc::new(RerankerPort { sync })
     }
 
     #[test]
@@ -1770,16 +1575,8 @@ mod tests {
     fn a_reference_without_an_implementation_is_invalid_argument() {
         let error = install_embedder(&EmbedderRef::default()).err().unwrap();
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = Installed::default()
-            .set_projector(Some(ProjectorRef::default()))
-            .unwrap_err();
-        // A build without `find` refuses a projector before it looks at it.
-        let code = if cfg!(feature = "find") {
-            VaultErrorCode::InvalidArgument
-        } else {
-            VaultErrorCode::Unimplemented
-        };
-        assert!(error.is(code));
+        let error = install_projector(&ProjectorRef::default()).err().unwrap();
+        assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
     #[cfg(feature = "tokio")]

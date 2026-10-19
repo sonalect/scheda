@@ -6,36 +6,21 @@
 mod common;
 
 use std::fs;
-use std::io::{self, BufRead, BufReader, Read, Write};
-use std::net::{Shutdown, SocketAddr, TcpListener, TcpStream};
-use std::num::NonZeroUsize;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
 
 use buffa_types::google::protobuf::Empty;
-use protocontract::{BoxIter, Failure};
-use scheda::v1::embedder_ref::EmbedderRef;
-use scheda::v1::rebuild::Stage;
-use scheda::v1::reranker_ref::RerankerRef;
-use scheda::v1::{
-    DocumentId, DocumentQuery, DocumentSearch, EmbedderErrorCode, IndexState, OpenMode, SchedaSync,
-    VaultErrorCode, VaultSync,
-};
-use scheda::{Error, FixedEmbedder, FixedReranker, Scheda, error_report, parse_command};
-use serde::Serialize;
+use scheda::v1::{DocumentId, OpenMode, SchedaSync, VaultErrorCode};
+use scheda::{Scheda, error_report};
 use serde_json::{Value, json};
 
 use common::{
-    Run, Scratch, Setup, collection, command, library, names, on, opening, run, run_on,
-    run_on_with, source,
+    Scratch, Setup, collection, command, library, names, on, opening, run, run_on, run_on_with,
+    source,
 };
 
-/// A collection the Index keeps lexically only, so a process without an
-/// embedder indexes it.
+/// The collection most tests write to.
 const NOTES: &str = "tc_notes";
 const PLAIN: &str = r#"{"standard":{},"excludeVectorIndex":true}"#;
 
@@ -146,38 +131,6 @@ fn common_git(path: &Path, args: &[&str]) -> String {
     String::from_utf8(out.stdout).unwrap()
 }
 
-/// Whether a state of the Index shows it done: a version, nothing pending,
-/// no rebuild running.
-fn settled(state: &IndexState) -> bool {
-    let running = state
-        .rebuild
-        .as_option()
-        .and_then(|rebuild| rebuild.stage.as_ref())
-        .and_then(|stage| stage.as_known())
-        == Some(Stage::STAGE_RUNNING);
-    state.version.is_some() && state.pending == Some(0) && !running
-}
-
-/// Waits until the Index of `vault` is settled.
-fn settle(vault: &Arc<dyn VaultSync>) {
-    let index = vault.index(Empty::default()).unwrap().to_sync().unwrap();
-    let deadline = Instant::now() + Duration::from_secs(60);
-    for state in index.watch(Empty::default()).unwrap() {
-        if settled(&state.unwrap()) {
-            return;
-        }
-        assert!(Instant::now() < deadline, "the Index did not settle");
-    }
-    panic!("the watch ended before the Index settled");
-}
-
-/// A stream of the library as the lines the command line prints.
-fn json_lines<T: Serialize>(stream: BoxIter<'static, Result<T, Error>>) -> Vec<Value> {
-    stream
-        .map(|item| serde_json::to_value(item.unwrap()).unwrap())
-        .collect()
-}
-
 #[test]
 fn help_lists_the_subcommands_and_not_the_ones_that_are_gone() {
     let help = run(&["--help"]);
@@ -192,12 +145,8 @@ fn help_lists_the_subcommands_and_not_the_ones_that_are_gone() {
         "delete-collection",
         "batch-collections",
         "batch-documents",
-        "query-documents",
-        "count-documents",
-        "search-documents",
         "collection",
         "mirror",
-        "index",
     ] {
         assert!(
             help.stdout
@@ -207,19 +156,45 @@ fn help_lists_the_subcommands_and_not_the_ones_that_are_gone() {
             help.stdout
         );
     }
-    for gone in ["wait-indexed", "index-status", "push-isolated", "find "] {
+    for gone in [
+        "wait-indexed",
+        "index-status",
+        "push-isolated",
+        "find ",
+        "query-documents",
+        "count-documents",
+        "search-documents",
+        "--no-wait",
+    ] {
         assert!(
             !help.stdout.contains(gone),
             "{gone} is gone: {}",
             help.stdout
         );
     }
+    assert!(
+        !help
+            .stdout
+            .lines()
+            .any(|line| line.trim_start().starts_with("index")),
+        "the index subcommand is gone: {}",
+        help.stdout
+    );
     let sub = run(&["collection", "x", "--help"]);
     assert_eq!(sub.status, 0, "stderr={}", sub.stderr);
     for name in [
-        "describe", "get-many", "history", "create", "upsert", "batch", "query", "count", "search",
+        "describe", "get-many", "history", "create", "upsert", "batch",
     ] {
         assert!(sub.stdout.contains(name), "{name}: {}", sub.stdout);
+    }
+    for gone in ["query", "count", "search"] {
+        assert!(
+            !sub.stdout
+                .lines()
+                .any(|line| line.trim_start().starts_with(gone)),
+            "{gone} is gone: {}",
+            sub.stdout
+        );
     }
     let version = run(&["--version"]);
     assert_eq!(version.status, 0);
@@ -276,7 +251,6 @@ fn the_cli_and_the_library_give_the_same_json_and_code() {
         put(&path, NOTES, id, text);
     }
     let vault = library(&path);
-    settle(&vault);
 
     let info = run_on(&path, &["--writer", "library", "info"]).json();
     assert_eq!(
@@ -284,28 +258,13 @@ fn the_cli_and_the_library_give_the_same_json_and_code() {
         serde_json::to_value(vault.info(Empty::default()).unwrap()).unwrap()
     );
 
-    let query = r#"{"filter":{"all":{}},"includeRaw":true}"#;
-    let cli = run_on(&path, &["collection", NOTES, "query", "--query", query]).lines();
-    let lib = json_lines(
+    let cli = run_on(&path, &["collection", NOTES, "get", "--id", "a"]).json();
+    let lib = serde_json::to_value(
         collection(&vault, NOTES)
-            .query(parse_command::<DocumentQuery>(query.as_bytes()).unwrap())
+            .get(DocumentId::default().with_id("a"))
             .unwrap(),
-    );
-    assert_eq!(cli.len(), 3);
-    assert_eq!(cli, lib);
-
-    let search = r#"{"text":"alpha","includeRaw":true}"#;
-    let cli = run_on(&path, &["collection", NOTES, "search", "--search", search]).lines();
-    let lib = json_lines(
-        collection(&vault, NOTES)
-            .search(parse_command::<DocumentSearch>(search.as_bytes()).unwrap())
-            .unwrap(),
-    );
-    assert!(
-        cli[0].get("summary").is_some(),
-        "the summary comes first: {cli:?}"
-    );
-    assert_eq!(cli.len(), 3, "the summary and two hits: {cli:?}");
+    )
+    .unwrap();
     assert_eq!(cli, lib);
 
     let failed = run_on(&path, &["collection", NOTES, "get", "--id", "missing"]);
@@ -566,8 +525,6 @@ fn schema_from_stdin_and_missing_json_are_handled() {
                 .contains("--schema")
         );
     }
-    let query = run_on(&path, &["query-documents"]);
-    assert_eq!(query.code(), "VAULT_ERROR_CODE_INVALID_ARGUMENT");
     assert_eq!(tree(&path), before);
 }
 
@@ -700,29 +657,6 @@ fn create_collection_rejects_an_unknown_schema_key_and_writes_nothing() {
             .as_str()
             .unwrap()
             .contains("journal.extra")
-    );
-}
-
-#[test]
-fn a_query_document_with_an_unknown_key_is_invalid_argument() {
-    let scratch = Scratch::new("strict-query");
-    let path = new_vault(&scratch);
-    let failed = run_on(
-        &path,
-        &[
-            "collection",
-            NOTES,
-            "query",
-            "--query",
-            r#"{"filter":{"all":{}},"bogus":1}"#,
-        ],
-    );
-    assert_eq!(failed.code(), "VAULT_ERROR_CODE_INVALID_ARGUMENT");
-    assert!(
-        failed.failure()["message"]
-            .as_str()
-            .unwrap()
-            .contains("bogus")
     );
 }
 
@@ -900,127 +834,6 @@ fn batch_documents_and_collection_batch_are_all_or_nothing() {
     );
     assert_eq!(failed.code(), "VAULT_ERROR_CODE_NOT_FOUND");
     assert_eq!((tree(&path), commits(&path)), before);
-}
-
-#[test]
-fn queries_and_searches_run_across_collections() {
-    let scratch = Scratch::new("vault-queries");
-    let path = new_vault(&scratch);
-    run_on(&path, &["create-collection", "tc_pages", "--schema", PLAIN]).json();
-    put(&path, NOTES, "a", "alpha note");
-    put(&path, "tc_pages", "p", "alpha page");
-    put(&path, "tc_pages", "q", "other page");
-
-    let all = r#"{"filter":{"all":{}}}"#;
-    let count = run_on(&path, &["count-documents", "--query", all]).json();
-    assert_eq!(count, json!({"count": "3"}));
-    let one = r#"{"collections":{"names":["tc_pages"]},"filter":{"all":{}}}"#;
-    assert_eq!(
-        run_on(&path, &["count-documents", "--query", one]).json(),
-        json!({"count": "2"})
-    );
-    let docs = run_on(&path, &["query-documents", "--query", all]).lines();
-    assert_eq!(docs.len(), 3);
-    assert!(docs.iter().all(|doc| doc.get("raw").is_none()));
-
-    let hits = run_on(
-        &path,
-        &[
-            "search-documents",
-            "--search",
-            r#"{"search":{"text":"alpha"}}"#,
-        ],
-    )
-    .lines();
-    assert!(hits[0].get("summary").is_some(), "{hits:?}");
-    let ids: Vec<&str> = hits[1..]
-        .iter()
-        .filter_map(|hit| hit["hit"]["document"]["id"].as_str())
-        .collect();
-    assert_eq!(ids.len(), 2, "{hits:?}");
-    assert!(ids.contains(&"a") && ids.contains(&"p"));
-
-    let counted = run_on(&path, &["collection", NOTES, "count", "--query", all]).json();
-    assert_eq!(counted, json!({"count": "1"}));
-}
-
-#[test]
-fn no_wait_queries_the_index_as_it_is_and_waiting_sees_the_write() {
-    let scratch = Scratch::new("waits");
-    let path = new_vault(&scratch);
-    put(&path, NOTES, "alpha", "first");
-    let all = r#"{"filter":{"all":{}}}"#;
-    let ids = |run: Run| -> Vec<String> {
-        run.lines()
-            .iter()
-            .map(|doc| doc["id"].as_str().unwrap().to_owned())
-            .collect()
-    };
-    // A query after a write by an earlier process sees that write.
-    assert_eq!(
-        ids(run_on(
-            &path,
-            &["collection", NOTES, "query", "--query", all]
-        )),
-        ["alpha"]
-    );
-    put(&path, NOTES, "beta", "second");
-    assert_eq!(
-        ids(run_on(
-            &path,
-            &["collection", NOTES, "query", "--query", all]
-        )),
-        ["alpha", "beta"]
-    );
-
-    // Nobody may index the next commit while this lock is held.
-    let lock = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(path.join(".scheda/index.lock"))
-        .unwrap();
-    lock.lock().unwrap();
-    put(&path, NOTES, "gamma", "third");
-    let started = Instant::now();
-    let as_it_is = run_on(
-        &path,
-        &["--no-wait", "collection", NOTES, "query", "--query", all],
-    );
-    assert!(
-        started.elapsed() < Duration::from_secs(30),
-        "--no-wait does not wait"
-    );
-    assert_eq!(
-        ids(as_it_is),
-        ["alpha", "beta"],
-        "the unindexed commit is not there yet"
-    );
-    lock.unlock().unwrap();
-}
-
-#[test]
-fn index_watch_until_settled_and_reindex_end() {
-    let scratch = Scratch::new("index");
-    let path = new_vault(&scratch);
-    put(&path, NOTES, "a", "alpha");
-
-    let watched = run_on(&path, &["index", "watch", "--until-settled"]).lines();
-    let last = watched.last().unwrap();
-    assert!(last["version"].is_string(), "{watched:?}");
-    assert_eq!(last["pending"], "0", "{watched:?}");
-    let status = run_on(&path, &["index", "status"]).json();
-    assert!(status.is_object(), "{status}");
-
-    let reindexed = run_on(&path, &["index", "reindex"]);
-    assert_eq!(reindexed.json(), json!({}));
-    let after = run_on(&path, &["index", "watch", "--until-settled"]).lines();
-    assert!(after.last().unwrap()["version"].is_string());
-    assert_eq!(
-        run_on(&path, &["--no-wait", "index", "reindex"]).json(),
-        json!({})
-    );
 }
 
 #[test]
@@ -1483,21 +1296,33 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
 }
 
 #[test]
-fn a_search_that_reranks_without_a_reranker_is_invalid_argument() {
-    let scratch = Scratch::new("no-reranker");
+fn valid_port_flags_reach_the_library_which_answers_unimplemented() {
+    let scratch = Scratch::new("port-unimplemented");
     let path = new_vault(&scratch);
-    put(&path, NOTES, "a", "alpha");
-    let search = r#"{"text":"alpha","rerankLimit":3}"#;
-    let failed = run_on(&path, &["collection", NOTES, "search", "--search", search]);
-    assert_eq!(failed.code(), "VAULT_ERROR_CODE_INVALID_ARGUMENT");
-    let vault = library(&path);
-    settle(&vault);
-    let error = collection(&vault, NOTES)
-        .search(parse_command::<DocumentSearch>(search.as_bytes()).unwrap())
-        .map(|stream| stream.collect::<Result<Vec<_>, _>>())
-        .and_then(|items| items)
-        .unwrap_err();
-    assert!(error.is(VaultErrorCode::InvalidArgument));
+    let url = "http://127.0.0.1:1/v1";
+    for args in [
+        vec![
+            "--embedder-openai-url",
+            url,
+            "--embedder-model",
+            "m",
+            "--embedder-dimensions",
+            "4",
+        ],
+        vec!["--reranker-cohere-url", url, "--reranker-model", "m"],
+    ] {
+        let mut all = args.clone();
+        all.push("info");
+        let before = tree(&path);
+        let failed = run_on(&path, &all);
+        assert_eq!(
+            failed.code(),
+            "VAULT_ERROR_CODE_UNIMPLEMENTED",
+            "{args:?}: {}",
+            failed.stderr
+        );
+        assert_eq!(tree(&path), before);
+    }
 }
 
 #[test]
@@ -1514,342 +1339,4 @@ fn src_does_not_name_fixture_collections() {
     ] {
         assert!(!names(&src, name), "the CLI source names {name}");
     }
-}
-
-// The in-test HTTP twin: an OpenAI-style `/embeddings` and a Cohere-style
-// `/rerank` on 127.0.0.1, and the same two ports written on the library.
-
-const HTTP_MODEL: &str = "tc-stub-embedder";
-const RERANK_MODEL: &str = "tc-stub-reranker";
-
-fn embed_vector(text: &str) -> [f32; 4] {
-    if text.contains("car") || text.contains("automobile") {
-        [1.0, 0.0, 0.0, 0.0]
-    } else {
-        [0.0, 1.0, 0.0, 0.0]
-    }
-}
-
-struct HttpStub {
-    base: String,
-    /// What the service was asked: `embed TEXT` and `rerank N`.
-    seen: Arc<Mutex<Vec<String>>>,
-    shutdown: Arc<AtomicBool>,
-    handle: Option<JoinHandle<()>>,
-}
-
-impl HttpStub {
-    fn start() -> HttpStub {
-        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-        let addr = listener.local_addr().unwrap();
-        listener.set_nonblocking(true).unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let (seen_thread, shutdown_thread) = (Arc::clone(&seen), Arc::clone(&shutdown));
-        let handle = thread::spawn(move || {
-            while !shutdown_thread.load(Ordering::Relaxed) {
-                match listener.accept() {
-                    Ok((stream, _)) => handle_conn(stream, &seen_thread),
-                    Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                        thread::sleep(Duration::from_millis(5));
-                    }
-                    Err(_) => break,
-                }
-            }
-        });
-        HttpStub {
-            base: format!("http://{addr}/v1/"),
-            seen,
-            shutdown,
-            handle: Some(handle),
-        }
-    }
-}
-
-impl Drop for HttpStub {
-    fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Relaxed);
-        if let Some(handle) = self.handle.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
-fn handle_conn(stream: TcpStream, seen: &Mutex<Vec<String>>) {
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    let mut reader = BufReader::new(stream);
-    let Ok(Some((path, body))) = read_request(&mut reader) else {
-        return;
-    };
-    let stream = reader.get_mut();
-    if path.contains("embeddings") {
-        let inputs: Vec<String> = match body.get("input") {
-            Some(Value::Array(items)) => items
-                .iter()
-                .map(|i| i.as_str().unwrap_or("").to_owned())
-                .collect(),
-            Some(Value::String(text)) => vec![text.clone()],
-            _ => vec![String::new()],
-        };
-        let mut seen = seen.lock().unwrap();
-        let data: Vec<Value> = inputs
-            .iter()
-            .enumerate()
-            .map(|(index, input)| {
-                seen.push(format!("embed {input}"));
-                json!({"index": index, "embedding": embed_vector(input)})
-            })
-            .collect();
-        drop(seen);
-        write_json(stream, &json!({"data": data}));
-    } else if path.contains("rerank") {
-        let documents = body
-            .get("documents")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        seen.lock()
-            .unwrap()
-            .push(format!("rerank {}", documents.len()));
-        let results: Vec<Value> = documents
-            .iter()
-            .enumerate()
-            .map(|(index, doc)| {
-                let text = doc.as_str().unwrap_or("");
-                let score = if text.contains("car") || text.contains("automobile") {
-                    0.9
-                } else {
-                    0.1
-                };
-                json!({"index": index, "relevance_score": score})
-            })
-            .collect();
-        write_json(stream, &json!({"results": results}));
-    }
-    let _ = stream.shutdown(Shutdown::Write);
-}
-
-fn read_request(reader: &mut BufReader<TcpStream>) -> io::Result<Option<(String, Value)>> {
-    let mut first = String::new();
-    if reader.read_line(&mut first)? == 0 {
-        return Ok(None);
-    }
-    let path = first.split_whitespace().nth(1).unwrap_or("/").to_owned();
-    let mut content_length = 0usize;
-    loop {
-        let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 || line == "\r\n" || line == "\n" {
-            break;
-        }
-        if let Some(rest) = line.to_ascii_lowercase().strip_prefix("content-length:") {
-            content_length = rest.trim().parse().unwrap_or(0);
-        }
-    }
-    let mut buf = vec![0; content_length];
-    reader.read_exact(&mut buf)?;
-    Ok(Some((
-        path,
-        serde_json::from_slice(&buf).unwrap_or(Value::Null),
-    )))
-}
-
-fn write_json(stream: &mut TcpStream, value: &Value) {
-    let payload = value.to_string();
-    let _ = write!(
-        stream,
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-        payload.len()
-    );
-    let _ = stream.flush();
-}
-
-/// POSTs `body` to the stub at `url` and parses the JSON answer.
-fn post_json(url: &str, body: &Value) -> Result<Value, Error> {
-    let unavailable = |message: String| -> Error {
-        Failure::new(EmbedderErrorCode::EMBEDDER_ERROR_CODE_UNAVAILABLE, message).into()
-    };
-    let rest = url.strip_prefix("http://").unwrap_or(url);
-    let (hostport, path) = rest.split_once('/').unwrap_or((rest, ""));
-    let addr: SocketAddr = hostport
-        .parse()
-        .map_err(|err| unavailable(format!("{err}")))?;
-    let payload = body.to_string();
-    let mut stream = TcpStream::connect_timeout(&addr, Duration::from_secs(2))
-        .map_err(|e| unavailable(e.to_string()))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .map_err(|e| unavailable(e.to_string()))?;
-    let request = format!(
-        "POST /{path} HTTP/1.1\r\nHost: {hostport}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
-        payload.len()
-    );
-    stream
-        .write_all(request.as_bytes())
-        .map_err(|e| unavailable(e.to_string()))?;
-    let mut buf = Vec::new();
-    stream
-        .read_to_end(&mut buf)
-        .map_err(|e| unavailable(e.to_string()))?;
-    let text = String::from_utf8(buf).map_err(|e| unavailable(e.to_string()))?;
-    let (_, body) = text
-        .split_once("\r\n\r\n")
-        .ok_or_else(|| unavailable("no body".to_owned()))?;
-    serde_json::from_str(body.trim()).map_err(|e| unavailable(e.to_string()))
-}
-
-/// The embedder of the stub written on the library's adapter.
-fn twin_embedder(base: &str) -> EmbedderRef {
-    let url = format!("{}/embeddings", base.trim_end_matches('/'));
-    EmbedderRef::from_sync(FixedEmbedder::new(
-        HTTP_MODEL,
-        4,
-        NonZeroUsize::new(32).unwrap(),
-        move |texts: Vec<String>| {
-            let value = post_json(&url, &json!({"model": HTTP_MODEL, "input": texts}))?;
-            let data = value["data"].as_array().cloned().unwrap_or_default();
-            Ok(data
-                .iter()
-                .map(|row| {
-                    row["embedding"]
-                        .as_array()
-                        .map(|v| v.iter().map(|n| n.as_f64().unwrap_or(0.0) as f32).collect())
-                        .unwrap_or_default()
-                })
-                .collect())
-        },
-    ))
-}
-
-/// The reranker of the stub written on the library's adapter.
-fn twin_reranker(base: &str) -> RerankerRef {
-    let url = format!("{}/rerank", base.trim_end_matches('/'));
-    RerankerRef::from_sync(FixedReranker::new(
-        NonZeroUsize::new(32).unwrap(),
-        move |query: &str, documents: Vec<scheda::v1::Document>| {
-            let texts: Vec<String> = documents
-                .iter()
-                .map(|d| String::from_utf8_lossy(d.raw.as_deref().unwrap_or_default()).into_owned())
-                .collect();
-            let value = post_json(
-                &url,
-                &json!({"model": RERANK_MODEL, "query": query, "documents": texts}),
-            )?;
-            let mut scores = vec![0.0; texts.len()];
-            for hit in value["results"].as_array().cloned().unwrap_or_default() {
-                let index = hit["index"].as_u64().unwrap_or(0) as usize;
-                scores[index] = hit["relevance_score"].as_f64().unwrap_or(0.0);
-            }
-            Ok(scores)
-        },
-    ))
-}
-
-#[test]
-fn the_http_ports_write_vectors_and_search_like_the_library_with_the_same_ports() {
-    let stub = HttpStub::start();
-    let scratch = Scratch::new("http-twin");
-    let path = scratch.vault();
-    let embed = [
-        "--embedder-openai-url",
-        &stub.base,
-        "--embedder-model",
-        HTTP_MODEL,
-        "--embedder-dimensions",
-        "4",
-    ];
-    let rerank = [
-        "--reranker-cohere-url",
-        &stub.base,
-        "--reranker-model",
-        RERANK_MODEL,
-    ];
-    let with = |rest: &[&str]| -> Run {
-        let all: Vec<&str> = embed
-            .iter()
-            .chain(rerank.iter())
-            .chain(rest)
-            .copied()
-            .collect();
-        run_on(&path, &all)
-    };
-
-    let made = with(&[
-        "--mode",
-        "create-new",
-        "create-collection",
-        "tc_vec",
-        "--schema",
-        r#"{"standard":{}}"#,
-    ]);
-    assert_eq!(made.json()["name"], "tc_vec");
-    for (id, text) in [
-        ("decoy", "banana"),
-        ("vehicle", "car"),
-        ("split", "a car too"),
-        ("auto", "automobile"),
-    ] {
-        let created = run_on_with(
-            &path,
-            &[
-                embed.as_slice(),
-                &["collection", "tc_vec", "create", "--id", id, "--note", "n"],
-            ]
-            .concat(),
-            &Setup {
-                stdin: Some(text.as_bytes()),
-                ..Setup::default()
-            },
-        );
-        assert_eq!(created.json()["id"], id);
-    }
-
-    let vector_only = r#"{"text":"automobile","k":5,"lexicalWeight":0}"#;
-    let cli = with(&["collection", "tc_vec", "search", "--search", vector_only]).lines();
-    {
-        let seen = stub.seen.lock().unwrap();
-        assert!(
-            seen.iter().any(|s| s.starts_with("embed ")),
-            "the embedder was called: {seen:?}"
-        );
-    }
-    let ids: Vec<&str> = cli
-        .iter()
-        .filter_map(|item| item["hit"]["document"]["id"].as_str())
-        .collect();
-    assert!(ids.contains(&"auto") && ids.contains(&"vehicle"), "{cli:?}");
-    assert_ne!(ids.first(), Some(&"decoy"));
-
-    let mut request = opening(&path, "library");
-    request.embedder = twin_embedder(&stub.base).into();
-    request.reranker = twin_reranker(&stub.base).into();
-    let vault = Scheda.open(request).unwrap().to_sync().unwrap();
-    settle(&vault);
-    let lib = json_lines(
-        collection(&vault, "tc_vec")
-            .search(parse_command::<DocumentSearch>(vector_only.as_bytes()).unwrap())
-            .unwrap(),
-    );
-    assert_eq!(cli, lib, "the same hits and scores");
-
-    let reranked = r#"{"text":"automobile","k":5,"lexicalWeight":0,"rerankLimit":5}"#;
-    let cli = with(&["collection", "tc_vec", "search", "--search", reranked]).lines();
-    assert!(
-        stub.seen
-            .lock()
-            .unwrap()
-            .iter()
-            .any(|s| s.starts_with("rerank "))
-    );
-    let lib = json_lines(
-        collection(&vault, "tc_vec")
-            .search(parse_command::<DocumentSearch>(reranked.as_bytes()).unwrap())
-            .unwrap(),
-    );
-    assert!(
-        cli.iter()
-            .any(|item| item["hit"]["rerankScore"].is_number()),
-        "{cli:?}"
-    );
-    assert_eq!(cli, lib, "the same reranked hits and scores");
 }

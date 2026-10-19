@@ -10,9 +10,8 @@ readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
 [features]
-# `index` (Lance): the Index of a Vault. Needs `protoc` to build (see
-# `.claude/rules/run-commands.md`). The old `find` / `search` / `simd`
-# features stay until the Tantivy and USearch code is removed.
+# `index` declares the Lance dependencies of the Index of a Vault; it gates
+# no code yet. Needs `protoc` to build (see `.claude/rules/run-commands.md`).
 default = ["index"]
 index = [
     "dep:lance",
@@ -20,28 +19,18 @@ index = [
     "dep:lance-linalg",
     "tokio/rt-multi-thread",
 ]
-# Tantivy `find` (lexical Index). `search` pulls this in.
-find = ["dep:tantivy"]
-# Hybrid `search` (BM25 + USearch). Turns `find` on; the reverse does not.
-search = ["find", "dep:usearch", "dep:cxx", "dep:sha1"]
-# USearch SIMD kernels (`usearch/numkong`). Pulls `search` in.
-simd = ["search", "usearch/numkong"]
-# USearch OpenMP executor. Needs libomp (Linux `libomp-dev`; not used by Bazel CI).
-openmp = ["search", "usearch/openmp"]
 # Age ASCII-armor Record files. Off by default: a consumer that encrypts
 # nothing does not compile scrypt / ChaCha20-Poly1305 / X25519.
 encrypt = ["dep:age"]
 # Async form of the objects: `Scheda` also implements `SchedaAsync`, and the
 # Vault it opens runs its calls on Tokio's blocking pool and waits natively
-# (the write lock, `Index.Watch`, an embedder and a reranker). Independent of
-# `find` / `search`; wraps what the build has.
+# (the write lock). Wraps what the build has.
 tokio = ["dep:tokio", "scheda-api/tokio"]
 
 [dependencies]
 age = { workspace = true, optional = true }
 buffa = { workspace = true }
 buffa-types = { workspace = true }
-cxx = { workspace = true, optional = true }
 git2 = { workspace = true }
 lance = { workspace = true, optional = true }
 lance-index = { workspace = true, optional = true }
@@ -54,10 +43,7 @@ scheda-api = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }
-sha1 = { workspace = true, optional = true }
-tantivy = { workspace = true, optional = true }
 tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
-usearch = { workspace = true, optional = true }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]

@@ -166,38 +166,6 @@ pub(crate) fn io(err: std::io::Error) -> Fault {
         .with_source(err)
 }
 
-/// Turns the error of a foreign crate (`serde_json`, `yaml_serde`,
-/// Tantivy, USearch, UTF-8, ...) into a [`Fault`] with a code of the
-/// caller's choice. The foreign error stays the source.
-#[cfg(any(test, feature = "find"))]
-pub(crate) trait OrFault<T> {
-    /// The result, with the error replaced by a [`Fault`] of `code` and
-    /// `message`.
-    fn or_fault(self, code: VaultErrorCode, message: impl Into<String>) -> Result<T, Fault>;
-
-    /// [`OrFault::or_fault`] with a message built only on error.
-    fn or_fault_with<M: Into<String>>(
-        self,
-        code: VaultErrorCode,
-        message: impl FnOnce() -> M,
-    ) -> Result<T, Fault>;
-}
-
-#[cfg(any(test, feature = "find"))]
-impl<T, E: std::error::Error + Send + Sync + 'static> OrFault<T> for Result<T, E> {
-    fn or_fault(self, code: VaultErrorCode, message: impl Into<String>) -> Result<T, Fault> {
-        self.map_err(|err| Fault::new(code, message).with_source(err))
-    }
-
-    fn or_fault_with<M: Into<String>>(
-        self,
-        code: VaultErrorCode,
-        message: impl FnOnce() -> M,
-    ) -> Result<T, Fault> {
-        self.map_err(|err| Fault::new(code, message()).with_source(err))
-    }
-}
-
 /// Fail closed if a previous holder panicked with this mutex.
 pub(crate) fn mutex<'a, T>(
     mutex: &'a Mutex<T>,
@@ -557,7 +525,7 @@ mod tests {
     use scheda_api::v1::VaultErrorCode as C;
 
     use super::{
-        Context, Error, Fault, GitFailure, OrFault, default_retryable, git_fault, io, mutex,
+        Context, Error, Fault, GitFailure, default_retryable, git_fault, io, mutex,
         redact_remote_text,
     };
 
@@ -744,43 +712,6 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.stack(), ["get", "find 7", "read"]);
         assert!(error.is(C::NotFound));
-    }
-
-    #[test]
-    fn or_fault_codes_a_foreign_error_and_keeps_it_as_source() {
-        let parsed: Result<u8, std::num::ParseIntError> = "x".parse::<u8>();
-        let error: Error = parsed
-            .or_fault(C::InvalidArgument, "not a number")
-            .unwrap_err()
-            .into();
-        assert!(error.is(C::InvalidArgument));
-        assert!(!error.retryable());
-        let cause = error
-            .source()
-            .and_then(|source| source.downcast_ref::<std::num::ParseIntError>());
-        assert!(cause.is_some());
-    }
-
-    #[test]
-    fn or_fault_with_builds_the_message_only_on_error() {
-        let mut built = 0;
-        let ok: Result<u8, std::num::ParseIntError> = "1".parse::<u8>();
-        let value = ok.or_fault_with(C::IndexBroken, || {
-            built += 1;
-            "unused"
-        });
-        assert_eq!(value.ok(), Some(1));
-        let bad: Result<u8, std::num::ParseIntError> = "x".parse::<u8>();
-        let error: Error = bad
-            .or_fault_with(C::IndexBroken, || {
-                built += 1;
-                format!("built {built}")
-            })
-            .unwrap_err()
-            .into();
-        assert_eq!(built, 1);
-        assert!(error.is(C::IndexBroken));
-        assert!(error.to_string().ends_with("built 1"));
     }
 
     #[test]

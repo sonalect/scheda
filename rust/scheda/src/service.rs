@@ -1,6 +1,8 @@
 //! The services of the contract: [`Scheda`], the root a caller makes, and
 //! the objects an open Vault gives, each behind a reference: the Vault
-//! itself, one collection, the mirror, and the Index.
+//! itself, one collection, and the mirror. This version of Scheda has no
+//! Index: `Vault.Index`, the queries, the counts, and the searches answer
+//! `UNIMPLEMENTED`.
 //!
 //! The objects of one Vault share its state and one gate. Every call enters
 //! the gate first; `Vault.Close` shuts it, waits for the calls inside to
@@ -8,8 +10,7 @@
 //! enters the gate on its own, so `Close` waits for an item being made, not
 //! for a caller who holds a stream, and the next item after it is
 //! `FAILED_PRECONDITION`. A Vault whose references are all dropped (its
-//! collections', mirror's, and Index's, and its streams, included) ends as
-//! `Close` would.
+//! collections', mirror's, and its streams, included) ends as `Close` would.
 //!
 //! With the `tokio` feature [`Scheda`] is also a `SchedaAsync`, and its
 //! `open` returns references that hold the async form of the same objects
@@ -41,10 +42,6 @@ use scheda_api::v1::{
 
 use crate::error::{Context, Error, Fault};
 use crate::ports::Ports;
-#[cfg(feature = "find")]
-use crate::queries::{QueryStream, Request};
-#[cfg(feature = "search")]
-use crate::search::{self, SearchStream};
 use crate::stored;
 use crate::vault::Vault;
 
@@ -54,23 +51,21 @@ use crate::vault::Vault;
 /// [`SchedaSync::open`] returns a [`VaultRef`]: a reference to the open
 /// Vault, from which the caller takes the form it needs
 /// (`vault.to_sync()?` gives an `Arc<dyn VaultSync>`). The Vault gives its
-/// collections, its mirror, and its Index the same way. The objects behind
-/// the references are Scheda's own; a caller works through the traits.
+/// collections and its mirror the same way. The objects behind the
+/// references are Scheda's own; a caller works through the traits.
 ///
 /// With the `tokio` feature, `Scheda` also implements
 /// [`SchedaAsync`](scheda_api::v1::SchedaAsync). Its `open` runs the sync
 /// open on the blocking pool of the current runtime and returns a reference
 /// that holds the **async** form of the Vault, and the Vault gives
-/// collections, a mirror, and an Index in the async form too. Those objects
-/// run their calls on the blocking pool of the runtime of the call, and wait
-/// natively where a thread would only stand idle: `Index.Watch`, the turn
-/// and the lock file of a write, and the embedder and the reranker of a
-/// search (a blocking port runs on the blocking pool for that). A sync
-/// caller can still take `to_sync()` of such a reference, inside a runtime.
-/// A Vault that [`SchedaSync::open`] opened is native to the sync form
-/// instead: its `to_async_offload()` is protocontract's generic `Offload`,
-/// which runs every call on the blocking pool and waits for a lock or a
-/// model on a pool thread.
+/// collections and a mirror in the async form too. Those objects run their
+/// calls on the blocking pool of the runtime of the call, and wait natively
+/// where a thread would only stand idle: the turn and the lock file of a
+/// write. A sync caller can still take `to_sync()` of such a reference,
+/// inside a runtime. A Vault that [`SchedaSync::open`] opened is native to
+/// the sync form instead: its `to_async_offload()` is protocontract's
+/// generic `Offload`, which runs every call on the blocking pool and waits
+/// for a lock on a pool thread.
 ///
 /// Both traits have the methods `info` and `open`; name the trait
 /// (`SchedaSync::open(&Scheda, …)`) when both are in scope.
@@ -80,12 +75,6 @@ pub struct Scheda;
 impl SchedaSync for Scheda {
     fn info(&self, _empty: Empty) -> Result<SchedaInfo, Error> {
         let mut features = Vec::new();
-        if cfg!(feature = "find") {
-            features.push(Feature::FEATURE_FIND.into());
-        }
-        if cfg!(feature = "search") {
-            features.push(Feature::FEATURE_SEARCH.into());
-        }
         if cfg!(feature = "encrypt") {
             features.push(Feature::FEATURE_ENCRYPT.into());
         }
@@ -172,10 +161,6 @@ impl Gate {
         Ok(Pass(self))
     }
 
-    fn is_shut(&self) -> bool {
-        self.state().shut
-    }
-
     /// Refuses new calls, then waits until no call is inside.
     fn shut(&self) {
         let mut state = self.state();
@@ -207,38 +192,19 @@ fn closed() -> Error {
     .into()
 }
 
-/// A stream of a Vault call, each item made inside the gate.
-///
-/// A stream that `holds` keeps its pass while it makes an item, so `Close`
-/// waits for that item. One that waits for news (`Index.Watch`) holds none
-/// while it waits; it ends when the indexer stops, and says that the Vault
-/// is closed if that is why.
+/// A stream of a Vault call, each item made inside the gate. The stream
+/// keeps its pass while it makes an item, so `Close` waits for that item.
 struct Guarded<I> {
     shared: Arc<Shared>,
     inner: Option<I>,
-    holds: bool,
 }
 
 impl<I> Guarded<I> {
-    /// A stream that holds its pass while it makes an item.
+    /// A stream whose items are made inside the gate.
     fn holding(shared: &Arc<Shared>, inner: I) -> Guarded<I> {
         Guarded {
             shared: Arc::clone(shared),
             inner: Some(inner),
-            holds: true,
-        }
-    }
-
-    /// A stream that holds no pass while it waits.
-    #[cfg_attr(
-        not(feature = "find"),
-        expect(dead_code, reason = "only Index.Watch waits")
-    )]
-    fn waiting(shared: &Arc<Shared>, inner: I) -> Guarded<I> {
-        Guarded {
-            shared: Arc::clone(shared),
-            inner: Some(inner),
-            holds: false,
         }
     }
 }
@@ -255,17 +221,6 @@ impl<T, I: Iterator<Item = Result<T, Error>>> Iterator for Guarded<I> {
                 return Some(Err(error));
             }
         };
-        if !self.holds {
-            drop(pass);
-            let item = inner.next();
-            if item.is_none() {
-                self.inner = None;
-                if self.shared.gate.is_shut() {
-                    return Some(Err(closed()));
-                }
-            }
-            return item;
-        }
         let item = inner.next();
         drop(pass);
         if item.is_none() {
@@ -275,46 +230,13 @@ impl<T, I: Iterator<Item = Result<T, Error>>> Iterator for Guarded<I> {
     }
 }
 
-/// The failure of a call that needs a build with the `find` feature.
-#[cfg(not(feature = "find"))]
-fn needs_find(call: &str) -> Error {
+/// The failure of a call this version of Scheda does not have.
+fn unavailable(call: &str) -> Error {
     Fault::new(
         VaultErrorCode::Unimplemented,
-        format!("{call} needs a build with the `find` feature"),
+        format!("{call} is not available in this version of Scheda"),
     )
     .into()
-}
-
-/// The failure of a call that needs a build with the `search` feature.
-#[cfg(not(feature = "search"))]
-fn needs_search(call: &str) -> Error {
-    Fault::new(
-        VaultErrorCode::Unimplemented,
-        format!("{call} needs a build with the `search` feature"),
-    )
-    .into()
-}
-
-/// The stream of a search, each item made inside the gate.
-#[cfg(feature = "search")]
-fn hits(
-    shared: &Arc<Shared>,
-    mut stream: SearchStream,
-) -> BoxIter<'static, Result<SearchItem, Error>> {
-    let owner = Arc::clone(shared);
-    let items = std::iter::from_fn(move || stream.next(&owner.vault));
-    Box::new(Guarded::holding(shared, items))
-}
-
-/// The stream of a query, each Document made inside the gate.
-#[cfg(feature = "find")]
-fn documents(
-    shared: &Arc<Shared>,
-    mut stream: QueryStream,
-) -> BoxIter<'static, Result<Document, Error>> {
-    let owner = Arc::clone(shared);
-    let items = std::iter::from_fn(move || stream.next(&owner.vault));
-    Box::new(Guarded::holding(shared, items))
 }
 
 /// The object of one open Vault.
@@ -352,22 +274,7 @@ impl VaultSync for VaultObject {
     }
 
     fn index(&self, _empty: Empty) -> Result<IndexRef, Error> {
-        self.shared.call(|_| {
-            #[cfg(feature = "find")]
-            {
-                Ok(IndexRef::from_sync(IndexObject {
-                    shared: Arc::clone(&self.shared),
-                }))
-            }
-            #[cfg(not(feature = "find"))]
-            {
-                Err(Fault::new(
-                    VaultErrorCode::Unimplemented,
-                    "the Index needs a build with the `find` feature",
-                )
-                .into())
-            }
-        })
+        self.shared.call(|_| Err(unavailable("Vault.Index")))
     }
 
     fn set_projector(&self, projector_ref: ProjectorRef) -> Result<Empty, Error> {
@@ -459,56 +366,20 @@ impl VaultSync for VaultObject {
 
     fn query_documents(
         &self,
-        vault_query: VaultQuery,
+        _vault_query: VaultQuery,
     ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
-        #[cfg(feature = "find")]
-        {
-            let stream = self.shared.call(|vault| {
-                vault.query(Request::of_vault("Vault.QueryDocuments", vault_query)?)
-            })?;
-            Ok(documents(&self.shared, stream))
-        }
-        #[cfg(not(feature = "find"))]
-        {
-            let _ = vault_query;
-            Err(needs_find("Vault.QueryDocuments"))
-        }
+        Err(unavailable("Vault.QueryDocuments"))
     }
 
-    fn count_documents(&self, vault_query: VaultQuery) -> Result<Count, Error> {
-        #[cfg(feature = "find")]
-        {
-            let count = self.shared.call(|vault| {
-                vault.count(Request::of_vault("Vault.CountDocuments", vault_query)?)
-            })?;
-            Ok(Count::default().with_count(count))
-        }
-        #[cfg(not(feature = "find"))]
-        {
-            let _ = vault_query;
-            Err(needs_find("Vault.CountDocuments"))
-        }
+    fn count_documents(&self, _vault_query: VaultQuery) -> Result<Count, Error> {
+        Err(unavailable("Vault.CountDocuments"))
     }
 
     fn search_documents(
         &self,
-        vault_search: VaultSearch,
+        _vault_search: VaultSearch,
     ) -> Result<BoxIter<'static, Result<SearchItem, Error>>, Error> {
-        #[cfg(feature = "search")]
-        {
-            let stream = self.shared.call(|vault| {
-                vault.search(search::Request::of_vault(
-                    "Vault.SearchDocuments",
-                    vault_search,
-                )?)
-            })?;
-            Ok(hits(&self.shared, stream))
-        }
-        #[cfg(not(feature = "search"))]
-        {
-            let _ = vault_search;
-            Err(needs_search("Vault.SearchDocuments"))
-        }
+        Err(unavailable("Vault.SearchDocuments"))
     }
 }
 
@@ -586,65 +457,20 @@ impl CollectionSync for CollectionObject {
 
     fn query(
         &self,
-        document_query: DocumentQuery,
+        _document_query: DocumentQuery,
     ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
-        #[cfg(feature = "find")]
-        {
-            let stream = self.shared.call(|vault| {
-                vault.query(Request::of_collection(
-                    "Collection.Query",
-                    &self.name,
-                    document_query,
-                )?)
-            })?;
-            Ok(documents(&self.shared, stream))
-        }
-        #[cfg(not(feature = "find"))]
-        {
-            let _ = document_query;
-            Err(needs_find("Collection.Query"))
-        }
+        Err(unavailable("Collection.Query"))
     }
 
-    fn count(&self, document_query: DocumentQuery) -> Result<Count, Error> {
-        #[cfg(feature = "find")]
-        {
-            let count = self.shared.call(|vault| {
-                vault.count(Request::of_collection(
-                    "Collection.Count",
-                    &self.name,
-                    document_query,
-                )?)
-            })?;
-            Ok(Count::default().with_count(count))
-        }
-        #[cfg(not(feature = "find"))]
-        {
-            let _ = document_query;
-            Err(needs_find("Collection.Count"))
-        }
+    fn count(&self, _document_query: DocumentQuery) -> Result<Count, Error> {
+        Err(unavailable("Collection.Count"))
     }
 
     fn search(
         &self,
-        document_search: DocumentSearch,
+        _document_search: DocumentSearch,
     ) -> Result<BoxIter<'static, Result<SearchItem, Error>>, Error> {
-        #[cfg(feature = "search")]
-        {
-            let stream = self.shared.call(|vault| {
-                vault.search(search::Request::of_collection(
-                    "Collection.Search",
-                    &self.name,
-                    document_search,
-                )?)
-            })?;
-            Ok(hits(&self.shared, stream))
-        }
-        #[cfg(not(feature = "search"))]
-        {
-            let _ = document_search;
-            Err(needs_search("Collection.Search"))
-        }
+        Err(unavailable("Collection.Search"))
     }
 }
 
@@ -677,34 +503,5 @@ impl MirrorSync for MirrorObject {
 
     fn sync(&self, empty: Empty) -> Result<Empty, Error> {
         self.shared.call(|vault| vault.sync(empty))
-    }
-}
-
-/// The object of the Index of an open Vault. A build without `find` has
-/// none.
-#[cfg(feature = "find")]
-struct IndexObject {
-    shared: Arc<Shared>,
-}
-
-#[cfg(feature = "find")]
-impl scheda_api::v1::IndexSync for IndexObject {
-    fn status(&self, _empty: Empty) -> Result<scheda_api::v1::IndexState, Error> {
-        self.shared.call(|vault| Ok(vault.indexer().status()))
-    }
-
-    fn watch(
-        &self,
-        _empty: Empty,
-    ) -> Result<BoxIter<'static, Result<scheda_api::v1::IndexState, Error>>, Error> {
-        let watch = self.shared.call(|vault| Ok(vault.indexer().watch()))?;
-        Ok(Box::new(Guarded::waiting(&self.shared, watch)))
-    }
-
-    fn reindex(&self, _empty: Empty) -> Result<Empty, Error> {
-        self.shared
-            .call(|vault| vault.indexer().reindex())
-            .context("Index.Reindex")?;
-        Ok(Empty::default())
     }
 }

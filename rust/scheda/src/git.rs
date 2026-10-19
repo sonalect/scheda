@@ -11,8 +11,6 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use scheda_api::v1::VaultErrorCode;
 
-#[cfg(test)]
-use crate::error::OrFault;
 use crate::error::{Error, Fault, git_fault, io as io_fault};
 
 /// What a finished git command left behind.
@@ -53,12 +51,15 @@ impl GitOutput {
     /// `stdout` as UTF-8 text.
     #[cfg(test)]
     pub(crate) fn stdout_str(&self) -> Result<&str, Error> {
-        std::str::from_utf8(&self.stdout)
-            .or_fault(
-                VaultErrorCode::Replication,
-                "git printed text that is not UTF-8",
+        std::str::from_utf8(&self.stdout).map_err(|err| {
+            Error::from(
+                Fault::new(
+                    VaultErrorCode::Replication,
+                    "git printed text that is not UTF-8",
+                )
+                .with_source(err),
             )
-            .map_err(Error::from)
+        })
     }
 
     /// `stdout` as UTF-8 text without the surrounding whitespace.

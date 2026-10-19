@@ -1,6 +1,7 @@
-//! The ports through the public handle: installing them at `open` and
-//! `set_embedder`, what a build without their feature says, and the
-//! fixed-portion adapters called as the blocking traits they implement.
+//! The ports through the public handle: this version of Scheda has no Index
+//! to use one, so `open` and the `Set*` calls refuse each (`UNIMPLEMENTED`),
+//! and the fixed-portion adapters, called as the blocking traits they
+//! implement.
 
 mod common;
 
@@ -19,9 +20,7 @@ use scheda::v1::{
 };
 use scheda::{Error, FixedEmbedder, FixedReranker, Scheda};
 
-#[cfg(feature = "search")]
-use common::open;
-use common::{Scratch, opening, snapshot, vault};
+use common::{Scratch, open, opening, snapshot, vault};
 
 const DIMS: u32 = 3;
 
@@ -102,119 +101,9 @@ fn scratch_vault(name: &str) -> (Scratch, std::path::PathBuf) {
     (scratch, path)
 }
 
-#[cfg(feature = "search")]
-mod installed {
-    use super::*;
-
-    #[test]
-    fn open_reads_the_descriptor_once() {
-        let (_scratch, path) = scratch_vault("describe-once");
-        let describes = Arc::new(AtomicUsize::new(0));
-        let vault = Scheda
-            .open(opening_with(&path, Counting::new(&describes)))
-            .unwrap()
-            .to_sync()
-            .unwrap();
-        assert_eq!(describes.load(Ordering::SeqCst), 1);
-        let second = Arc::new(AtomicUsize::new(0));
-        vault
-            .set_embedder(embedder_ref(Counting::new(&second)))
-            .unwrap();
-        assert_eq!(second.load(Ordering::SeqCst), 1);
-        assert_eq!(
-            describes.load(Ordering::SeqCst),
-            1,
-            "the first is not asked again"
-        );
-        vault.remove_embedder(Empty::default()).unwrap();
-    }
-
-    #[test]
-    fn a_descriptor_that_breaks_its_rules_fails_open_and_set_embedder() {
-        let (_scratch, path) = scratch_vault("bad-descriptor");
-        for (model_id, dimensions) in [("model-a", 0), ("", DIMS)] {
-            let describes = Arc::new(AtomicUsize::new(0));
-            let broken = || Counting {
-                model_id,
-                dimensions,
-                describes: Arc::clone(&describes),
-            };
-            let before = snapshot(&path);
-            let error = refused(opening_with(&path, broken()));
-            assert_eq!(snapshot(&path), before, "a refused port writes nothing");
-            assert!(
-                error.is(Code::InvalidArgument),
-                "open: {model_id:?} {dimensions}"
-            );
-            assert_eq!(describes.load(Ordering::SeqCst), 1);
-
-            let vault = open(&path, OpenOptions::default()).unwrap();
-            let error = vault.set_embedder(embedder_ref(broken())).unwrap_err();
-            assert!(
-                error.is(Code::InvalidArgument),
-                "set: {model_id:?} {dimensions}"
-            );
-            assert_eq!(describes.load(Ordering::SeqCst), 2);
-        }
-    }
-
-    #[test]
-    fn a_reranker_is_installed_at_open() {
-        let (_scratch, path) = scratch_vault("reranker");
-        let reranker = FixedReranker::new(NonZeroUsize::MIN, |_: &str, portion: Vec<Document>| {
-            Ok(vec![0.0; portion.len()])
-        });
-        let mut request = opening(&path, OpenOptions::default());
-        request.reranker = RerankerRef::from_sync(reranker).into();
-        Scheda.open(request).unwrap();
-    }
-
-    #[cfg(feature = "tokio")]
-    #[test]
-    fn an_async_port_outside_a_runtime_is_invalid_argument() {
-        use scheda::v1::{EmbedderAsync, Vector};
-
-        struct Waiting;
-        impl EmbedderAsync for Waiting {
-            async fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
-                Ok(EmbedderDescriptor::default()
-                    .with_model_id("m")
-                    .with_dimensions(DIMS))
-            }
-            async fn embed<R>(
-                &self,
-                _texts: R,
-            ) -> Result<
-                impl protocontract::Stream<Item = Result<Vector, Error>> + Send + use<R>,
-                Error,
-            >
-            where
-                R: protocontract::Stream<Item = Result<Text, Error>> + Send + 'static,
-            {
-                Ok(protocontract::IterStream::new(Vec::new().into_iter()))
-            }
-            async fn embed_query(&self, _query: Query) -> Result<Vector, Error> {
-                Ok(Vector::default())
-            }
-        }
-
-        let (_scratch, path) = scratch_vault("async-outside");
-        let mut request = opening(&path, OpenOptions::default());
-        request.embedder = EmbedderRef::from_async(Waiting).into();
-        let error = refused(request);
-        assert!(error.is(Code::InvalidArgument));
-        let vault = open(&path, OpenOptions::default()).unwrap();
-        let error = vault
-            .set_embedder(EmbedderRef::from_async(Waiting))
-            .unwrap_err();
-        assert!(error.is(Code::InvalidArgument));
-    }
-}
-
-#[cfg(not(feature = "search"))]
 #[test]
-fn an_embedder_or_a_reranker_without_search_is_unimplemented() {
-    let (_scratch, path) = scratch_vault("no-search");
+fn an_embedder_or_a_reranker_is_unimplemented() {
+    let (_scratch, path) = scratch_vault("no-embedder");
     let describes = Arc::new(AtomicUsize::new(0));
     let before = snapshot(&path);
     let error = refused(opening_with(&path, Counting::new(&describes)));
@@ -234,7 +123,7 @@ fn an_embedder_or_a_reranker_without_search_is_unimplemented() {
     let error = refused(request);
     assert!(error.is(Code::Unimplemented));
 
-    let vault = common::open(&path, OpenOptions::default()).unwrap();
+    let vault = open(&path, OpenOptions::default()).unwrap();
     let error = vault
         .set_embedder(embedder_ref(Counting::new(&describes)))
         .unwrap_err();
@@ -242,9 +131,8 @@ fn an_embedder_or_a_reranker_without_search_is_unimplemented() {
     vault.remove_embedder(Empty::default()).unwrap();
 }
 
-#[cfg(not(feature = "find"))]
 #[test]
-fn a_projector_without_find_is_unimplemented() {
+fn a_projector_is_unimplemented() {
     use scheda::v1::projector_ref::ProjectorRef;
     use scheda::v1::{
         CollectionKey, IndexDoc, IndexSchema, ProjectorDescriptor, ProjectorSync, RawDocument,
@@ -263,38 +151,19 @@ fn a_projector_without_find_is_unimplemented() {
         }
     }
 
-    let (_scratch, path) = scratch_vault("no-find");
+    let (_scratch, path) = scratch_vault("no-projector");
+    let before = snapshot(&path);
     let mut request = opening(&path, OpenOptions::default());
     request.projector = ProjectorRef::from_sync(Empty0).into();
     let error = refused(request);
     assert!(error.is(Code::Unimplemented));
-}
-
-#[cfg(feature = "find")]
-#[test]
-fn a_projector_is_installed_at_open() {
-    use scheda::v1::projector_ref::ProjectorRef;
-    use scheda::v1::{
-        CollectionKey, IndexDoc, IndexSchema, ProjectorDescriptor, ProjectorSync, RawDocument,
-    };
-
-    struct Empty0;
-    impl ProjectorSync for Empty0 {
-        fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
-            Ok(ProjectorDescriptor::default().with_projection_id("test@1"))
-        }
-        fn columns(&self, _collection_key: CollectionKey) -> Result<IndexSchema, Error> {
-            Ok(IndexSchema::default())
-        }
-        fn project(&self, _raw_document: RawDocument) -> Result<IndexDoc, Error> {
-            Ok(IndexDoc::default())
-        }
-    }
-
-    let (_scratch, path) = scratch_vault("find");
-    let mut request = opening(&path, OpenOptions::default());
-    request.projector = ProjectorRef::from_sync(Empty0).into();
-    Scheda.open(request).unwrap();
+    assert_eq!(snapshot(&path), before, "a refused port writes nothing");
+    let vault = open(&path, OpenOptions::default()).unwrap();
+    let error = vault
+        .set_projector(ProjectorRef::from_sync(Empty0))
+        .unwrap_err();
+    assert!(error.is(Code::Unimplemented));
+    vault.remove_projector(Empty::default()).unwrap();
 }
 
 #[test]

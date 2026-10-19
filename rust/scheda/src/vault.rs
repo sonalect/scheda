@@ -22,12 +22,8 @@ use crate::fs::restrict_dir;
 use crate::idmap::IdMaps;
 use crate::index::Index;
 use crate::indexer::Indexer;
-#[cfg(feature = "find")]
-use crate::lexical;
 use crate::ports::{Installed, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
-#[cfg(feature = "search")]
-use crate::vector;
 use crate::{git, marker, stored, writer};
 
 /// The message of the commit that makes a work tree a Vault.
@@ -52,8 +48,8 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 ///
 /// An open Vault runs one thread, named `scheda-indexer`, that keeps the
 /// Index in `.scheda/index/` at the state of `HEAD`: the maps from the id of
-/// a journal line to its segment, and with the `find` feature the rest of the
-/// Index. The thread ends with [`Vault::close`] or when the Vault is dropped.
+/// a journal line to its segment. The thread ends with [`Vault::close`] or
+/// when the Vault is dropped.
 #[derive(Debug)]
 pub(crate) struct Vault {
     path: PathBuf,
@@ -72,12 +68,6 @@ pub(crate) struct Vault {
     indexer: Indexer,
     /// The id maps of the journals, as readers use them.
     id_maps: IdMaps,
-    /// The lexical index, as queries read it.
-    #[cfg(feature = "find")]
-    lexical: lexical::Reader,
-    /// The vector index, as searches read it.
-    #[cfg(feature = "search")]
-    vector: vector::Reader,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -107,15 +97,11 @@ impl Vault {
     ///
     /// `options` is checked first (`INVALID_ARGUMENT`); `options.encryption`
     /// in a build without the `encrypt` feature is `UNIMPLEMENTED`. The
-    /// `ports` are installed before the path is looked at, so a refusal of
-    /// a port writes nothing: an embedder or a reranker needs the `search`
-    /// feature and a projector the `find` feature (`UNIMPLEMENTED`
-    /// otherwise); a reference that holds no implementation, and an async
-    /// port without a current Tokio runtime, are `INVALID_ARGUMENT`; and the
-    /// descriptors of the embedder and the projector are read once and must
-    /// satisfy their rules (`INVALID_ARGUMENT`). Then
-    /// `options.mode` decides what the path may be (unset is
-    /// `OPEN_MODE_OPEN_OR_CREATE`):
+    /// `ports` are looked at before the path is, so a refusal of a port
+    /// writes nothing: this version of Scheda has no Index to use an
+    /// embedder, a reranker, or a Projector, and any of them is
+    /// `UNIMPLEMENTED`. Then `options.mode` decides what the path may be
+    /// (unset is `OPEN_MODE_OPEN_OR_CREATE`):
     ///
     /// - A Vault, a git work tree whose commit `HEAD` names holds the marker
     ///   `.scheda.yaml`: the marker is read before any other file, from that
@@ -188,12 +174,7 @@ impl Vault {
         ));
         vault
             .indexer
-            .start(
-                &vault.path,
-                Arc::clone(&vault.repos),
-                Arc::clone(&vault.ports),
-                poll,
-            )
+            .start(&vault.path, Arc::clone(&vault.repos), poll)
             .context("Vault::open: start the indexer")?;
         Ok(vault)
     }
@@ -207,40 +188,33 @@ impl Vault {
             .with_writer(self.writer.clone())
     }
 
-    /// Replaces the Projector; `None` removes it. A Vault that had none may
-    /// start to index. A failure leaves the Projector the Vault had.
+    /// Removes the Projector when `projector` is `None`, which a Vault that
+    /// has none takes as nothing to do.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` in a build without the `find` feature;
-    /// `INVALID_ARGUMENT` for a reference that cannot be used and for a
-    /// descriptor that breaks its rules; the failure of the Projector when
-    /// it cannot describe itself.
+    /// `UNIMPLEMENTED` for a Projector: this version of Scheda has no Index
+    /// to use one.
     pub(crate) fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
-        self.ports.set_projector(projector)?;
-        self.indexer.wake();
-        Ok(())
+        self.ports.set_projector(projector)
     }
 
-    /// Replaces the embedder; `None` removes it. A Vault that had none may
-    /// start to index, and one whose model is not the Index's stops. A
-    /// failure leaves the embedder the Vault had.
+    /// Removes the embedder when `embedder` is `None`, which a Vault that
+    /// has none takes as nothing to do.
     ///
     /// # Errors
     ///
-    /// As [`Vault::set_projector`], with the `search` feature.
+    /// As [`Vault::set_projector`], for an embedder.
     pub(crate) fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
-        self.ports.set_embedder(embedder)?;
-        self.indexer.wake();
-        Ok(())
+        self.ports.set_embedder(embedder)
     }
 
-    /// Replaces the reranker; `None` removes it.
+    /// Removes the reranker when `reranker` is `None`, which a Vault that
+    /// has none takes as nothing to do.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` in a build without the `search` feature;
-    /// `INVALID_ARGUMENT` for a reference that cannot be used.
+    /// As [`Vault::set_projector`], for a reranker.
     pub(crate) fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
         self.ports.set_reranker(reranker)
     }
@@ -353,22 +327,13 @@ impl Vault {
             .clone()
     }
 
-    /// The ports the Vault holds.
-    #[cfg_attr(
-        not(any(test, feature = "search")),
-        expect(dead_code, reason = "only the searches use it")
-    )]
-    pub(crate) fn ports(&self) -> &Installed {
-        &self.ports
-    }
-
     /// The age secret the handle was opened with, if any.
     pub(crate) fn encryption(&self) -> Option<&Encryption> {
         self.options.encryption.as_option()
     }
 
     /// The indexer of the Vault.
-    #[cfg(any(feature = "find", test))]
+    #[cfg(test)]
     pub(crate) fn indexer(&self) -> &Indexer {
         &self.indexer
     }
@@ -376,18 +341,6 @@ impl Vault {
     /// The id maps of the journals.
     pub(crate) fn id_maps(&self) -> &IdMaps {
         &self.id_maps
-    }
-
-    /// The reader of the lexical index.
-    #[cfg(feature = "find")]
-    pub(crate) fn lexical(&self) -> &lexical::Reader {
-        &self.lexical
-    }
-
-    /// The reader of the vector index.
-    #[cfg(feature = "search")]
-    pub(crate) fn vectors(&self) -> &vector::Reader {
-        &self.vector
     }
 
     /// The Index of the Vault on disk.
@@ -760,10 +713,6 @@ fn finish(
     let writer = writer::load_or_create(&canonical, options.writer.as_deref())?;
     let indexer = Indexer::new(committer.signal());
     let id_maps = IdMaps::new(Index::new(&canonical));
-    #[cfg(feature = "find")]
-    let lexical = lexical::Reader::new(Index::new(&canonical));
-    #[cfg(feature = "search")]
-    let vector = vector::Reader::new(Index::new(&canonical));
     Ok(Vault {
         path: canonical,
         options,
@@ -778,10 +727,6 @@ fn finish(
         ports: Arc::new(Installed::default()),
         indexer,
         id_maps,
-        #[cfg(feature = "find")]
-        lexical,
-        #[cfg(feature = "search")]
-        vector,
     })
 }
 
@@ -872,34 +817,35 @@ mod tests {
     }
 
     #[test]
-    fn a_handle_opened_without_ports_has_none() {
+    fn a_port_is_refused_and_removing_one_that_is_not_there_is_nothing_to_do() {
         let scratch = Scratch::vault("no-ports");
         let vault = Vault::open(&scratch.0, OpenOptions::default(), Ports::default()).unwrap();
-        assert!(vault.ports().embedder().is_none());
-        assert!(vault.ports().reranker().is_none());
-        assert!(vault.ports().projector().is_none());
         vault.set_embedder(None).unwrap();
+        vault.set_reranker(None).unwrap();
+        vault.set_projector(None).unwrap();
+        let error = vault
+            .set_embedder(Some(EmbedderRef::from_sync(AnyEmbedder)))
+            .unwrap_err();
+        assert!(error.is(VaultErrorCode::Unimplemented));
     }
 
     #[test]
-    fn a_port_that_cannot_be_installed_fails_open_before_the_path_is_touched() {
+    fn a_port_is_refused_by_open_before_the_path_is_touched() {
         let scratch = Scratch::vault("bad-ports");
         let missing = scratch.0.join("nowhere");
         let ports = Ports {
-            embedder: Some(EmbedderRef::from_sync(NoDescriptor)),
+            embedder: Some(EmbedderRef::from_sync(AnyEmbedder)),
             ..Ports::default()
         };
         let error = Vault::open(&missing, OpenOptions::default(), ports).unwrap_err();
-        assert!(
-            error.is(VaultErrorCode::InvalidArgument) || error.is(VaultErrorCode::Unimplemented)
-        );
+        assert!(error.is(VaultErrorCode::Unimplemented));
         assert!(!missing.exists());
     }
 
-    /// An embedder whose descriptor breaks its rules.
-    struct NoDescriptor;
+    /// An embedder, which this version of Scheda has no Index to use.
+    struct AnyEmbedder;
 
-    impl scheda_api::v1::EmbedderSync for NoDescriptor {
+    impl scheda_api::v1::EmbedderSync for AnyEmbedder {
         fn describe(
             &self,
             _empty: buffa_types::google::protobuf::Empty,

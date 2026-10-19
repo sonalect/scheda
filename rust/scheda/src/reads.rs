@@ -369,17 +369,7 @@ pub(crate) struct Opener<'a> {
     include_raw: bool,
 }
 
-impl<'a> Opener<'a> {
-    /// An opener of the Documents of `decl` in `snap`.
-    #[cfg(feature = "find")]
-    pub(crate) fn new(snap: &'a Snap, decl: &'a Declaration, include_raw: bool) -> Opener<'a> {
-        Opener {
-            snap,
-            decl,
-            include_raw,
-        }
-    }
-
+impl Opener<'_> {
     /// The Document `id`, or `None` when the commit of the snapshot holds
     /// none. A journal line is found through the id map.
     pub(crate) fn open(&self, vault: &Vault, id: String) -> Result<Option<Document>, Error> {
@@ -658,7 +648,7 @@ mod tests {
         let vault = Vault::open(
             &scratch.0,
             OpenOptions::default().with_index_poll_ms(10),
-            crate::ports::indexing_ports(),
+            crate::ports::Ports::default(),
         )
         .unwrap();
         let log: CollectionDeclaration = serde_json::from_value(serde_json::json!({

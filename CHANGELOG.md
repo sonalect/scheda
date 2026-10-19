@@ -67,8 +67,8 @@ changes; they grow with each part of the move.
   `Arc<dyn VaultSync>` (an async form comes with the `tokio` feature).
   The Vault gives `GetCollection` → `CollectionRef` (the Documents of one
   collection), `Mirror` → `MirrorRef`, and `Index` → `IndexRef`
-  (`UNIMPLEMENTED` without `find`). `scheda::Vault`, `scheda::Ports`, and
-  `scheda::Port` are gone; the structs behind the references are not
+  (`UNIMPLEMENTED` until the Index on Lance). `scheda::Vault`,
+  `scheda::Ports`, and `scheda::Port` are gone; the structs behind the references are not
   public. A collection object names its collection and finds it again on
   each call: after `DeleteCollection` its calls are `NOT_FOUND`, and they
   work again once the name is declared again.
@@ -330,6 +330,30 @@ changes; they grow with each part of the move.
 
 ### Removed
 
+- The features `find`, `search`, `simd`, and `openmp`, and with them
+  Tantivy, USearch, `cxx`, `numkong`, and `sha1` (and the forks pinned for
+  them). A build that turns one of them on no longer resolves: drop it.
+  The Index comes back on Lance, under the feature `index` (on by
+  default), later in this release; the notes above on `find` and `search`
+  describe the Index it replaces.
+- Until then this version has no Index: `Vault.Index`, `Collection.Query`,
+  `Collection.Count`, `Collection.Search`, `Vault.QueryDocuments`,
+  `Vault.CountDocuments`, and `Vault.SearchDocuments` are `UNIMPLEMENTED`
+  in every build, and so is a Projector, an embedder, or a reranker given
+  to `Scheda.Open` or to `Vault.SetProjector`, `SetEmbedder`, or
+  `SetReranker`: open without ports. `Scheda.Info` lists neither
+  `FEATURE_FIND` nor `FEATURE_SEARCH`. The journal id maps are still
+  kept, so a journal line is found by its `id`.
+- The `0.22` files under `.scheda/index/` (`lexical/`, `vector/`,
+  `columns`, `stale`) are no longer read or written; they stay on disk
+  until the Index on Lance removes them. `Vault.Check` no longer takes
+  `.scheda/index.lock` and checks the modes of every file under
+  `.scheda/`, those folders included.
+- CLI: the subcommands `query`, `count`, `search`, `query-documents`,
+  `count-documents`, `search-documents`, and `index`, and the flag
+  `--no-wait`. The CLI no longer gives the Vault its Projector
+  (`scheda-cli/whole-file@1`). The embedder and reranker flags stay and
+  reach the library, which answers `UNIMPLEMENTED`.
 - The proto packages `api`, `api.v1`, and `api.collection.v1`, and their
   Rust paths `scheda_api::api::…`, among them `api.v1.Error` with its codes,
   `repeat`, and helper functions (`Error::invalid`, `Error::io_not_found`,

@@ -7,8 +7,7 @@ RUST_VERSION = "1.99.1"
 
 rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 
-# Host CRT on every OS. +crt-static on Linux still blocks USearch/cxx TLS;
-# macOS/Windows never used it.
+# Host CRT on every OS.
 rust.toolchain(
     edition = RUST_EDITION,
     versions = [RUST_VERSION],
@@ -20,42 +19,6 @@ register_toolchains("@rust_toolchains//:all")
 cargo = use_extension(
     "@rules_rust//crate_universe:extensions.bzl",
     "crate",
-)
-
-# USearch compiles C++ via cxx-build. Bazel injects CXX=gcc on Linux unless we
-# pin /usr/bin/c++. Do not set CXX on macOS: cargo_build_script already passes
-# Apple CXXFLAGS with __BAZEL_XCODE_SDKROOT__, which only Bazel's clang wrapper
-# expands; a raw /usr/bin/c++ then fails to find <algorithm>. Windows uses MSVC
-# (no CXX override). cxx/cxx-build come from 1.0.205-bazel-sandbox-fix
-# (sandbox HEADER + no-op subcrate build.rs). numkong comes from
-# v7.8.5-bazel-sandbox-fix (headers copied into OUT_DIR). usearch comes
-# from v2.26.4-bazel-sandbox-fix (drop dangling OUT_DIR symlinks).
-cargo.annotation(
-    crate = "cxx",
-    gen_build_script = "on",
-    repositories = ["scheda_cargo"],
-)
-cargo.annotation_select(
-    build_script_env = {
-        "CXX": "/usr/bin/c++",
-    },
-    crate = "cxx",
-    repositories = ["scheda_cargo"],
-    triples = [
-        "aarch64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    ],
-)
-cargo.annotation_select(
-    build_script_env = {
-        "CXX": "/usr/bin/c++",
-    },
-    crate = "usearch",
-    repositories = ["scheda_cargo"],
-    triples = [
-        "aarch64-unknown-linux-gnu",
-        "x86_64-unknown-linux-gnu",
-    ],
 )
 
 # The Lance crates compile .proto files in their build scripts with

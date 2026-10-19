@@ -7,11 +7,9 @@
 //! - A call that only works runs the sync call on the blocking pool of the
 //!   runtime the caller is in, and a stream is pulled there and handed over
 //!   through a channel that holds 16 items.
-//! - A wait is native and holds no thread: `Index.Watch` is woken by the
-//!   indexer, a write waits for its turn and for the lock file with an
-//!   `await` between two tries and writes on the blocking pool once it has
-//!   the lock, and a search awaits the embedder and the reranker. A port
-//!   that is blocking runs on the blocking pool for that.
+//! - A wait is native and holds no thread: a write waits for its turn and
+//!   for the lock file with an `await` between two tries and writes on the
+//!   blocking pool once it has the lock.
 //! - A call made through a reference whose Vault the sync `Scheda.open`
 //!   opened is not here at all: that Vault is native to the sync form, and
 //!   protocontract's generic `Offload` is its async form.
@@ -22,8 +20,6 @@
 use std::sync::Arc;
 
 use buffa_types::google::protobuf::Empty;
-#[cfg(feature = "search")]
-use protocontract::ChannelStream;
 use protocontract::{Inline, Offload, RuntimeCode, Stream};
 use scheda_api::v1::collection_ref::CollectionRef;
 use scheda_api::v1::embedder_ref::EmbedderRef;
@@ -220,22 +216,7 @@ impl VaultAsync for AsyncVault {
     }
 
     async fn index(&self, _empty: Empty) -> Result<scheda_api::v1::index_ref::IndexRef, Error> {
-        #[cfg(feature = "find")]
-        {
-            self.shared().call(|_| {
-                Ok(scheda_api::v1::index_ref::IndexRef::from_async(
-                    AsyncIndex {
-                        sync: Arc::new(super::IndexObject {
-                            shared: Arc::clone(self.shared()),
-                        }),
-                    },
-                ))
-            })
-        }
-        #[cfg(not(feature = "find"))]
-        {
-            VaultAsync::index(&offload(&self.sync)?, Empty::default()).await
-        }
+        VaultAsync::index(&offload(&self.sync)?, Empty::default()).await
     }
 
     async fn get_collection(&self, collection_key: CollectionKey) -> Result<CollectionRef, Error> {
@@ -313,22 +294,6 @@ impl VaultAsync for AsyncVault {
     offloaded_streams! {
         VaultAsync, sync;
         query_documents(vault_query: VaultQuery) -> Document;
-    }
-
-    #[cfg(feature = "search")]
-    async fn search_documents(
-        &self,
-        vault_search: VaultSearch,
-    ) -> Result<impl Stream<Item = Result<SearchItem, Error>> + Send + use<>, Error> {
-        search_hits(self.shared(), "Vault.SearchDocuments", move || {
-            crate::search::Request::of_vault("Vault.SearchDocuments", vault_search)
-        })
-        .await
-    }
-
-    #[cfg(not(feature = "search"))]
-    offloaded_streams! {
-        VaultAsync, sync;
         search_documents(vault_search: VaultSearch) -> SearchItem;
     }
 }
@@ -357,6 +322,7 @@ impl CollectionAsync for AsyncCollection {
         get_many(document_selection: DocumentSelection) -> Document;
         history(document_id: DocumentId) -> DocumentHistoryEntry;
         query(document_query: DocumentQuery) -> Document;
+        search(document_search: DocumentSearch) -> SearchItem;
     }
 
     async fn create(&self, document_creation: DocumentCreation) -> Result<Document, Error> {
@@ -389,24 +355,6 @@ impl CollectionAsync for AsyncCollection {
         let operations = Inline::<()>::buffer(document_operations).await;
         write_documents(self.shared(), DocWrites::of_collection(&name, operations)?).await
     }
-
-    #[cfg(feature = "search")]
-    async fn search(
-        &self,
-        document_search: DocumentSearch,
-    ) -> Result<impl Stream<Item = Result<SearchItem, Error>> + Send + use<>, Error> {
-        let name = self.sync.name.clone();
-        search_hits(self.shared(), "Collection.Search", move || {
-            crate::search::Request::of_collection("Collection.Search", &name, document_search)
-        })
-        .await
-    }
-
-    #[cfg(not(feature = "search"))]
-    offloaded_streams! {
-        CollectionAsync, sync;
-        search(document_search: DocumentSearch) -> SearchItem;
-    }
 }
 
 /// The async object of the mirror of an open Vault.
@@ -423,120 +371,6 @@ impl MirrorAsync for AsyncMirror {
         push(empty: Empty) -> Empty;
         pull(empty: Empty) -> Empty;
         sync(empty: Empty) -> Empty;
-    }
-}
-
-/// The steps of a search, as the sync call runs them in one: the blocking
-/// ones on the pool, inside the gate, and the calls of the embedder and the
-/// reranker awaited. The gate is entered for each step, not held across the
-/// awaits, so `Close` does not wait for a model to answer.
-#[cfg(feature = "search")]
-async fn search_hits(
-    shared: &Arc<Shared>,
-    call: &'static str,
-    request: impl FnOnce() -> Result<crate::search::Request, Error> + Send + 'static,
-) -> Result<ChannelStream<Result<SearchItem, Error>>, Error> {
-    let prepared = in_gate(shared, move |vault| vault.prepare_search(request()?)).await?;
-    let query = match prepared.embedding() {
-        Some(embedding) => {
-            let (port, text) = (Arc::clone(&embedding.port), embedding.text.clone());
-            Some(port.embed_query_async(text).await.context(call)?)
-        }
-        None => None,
-    };
-    let ranked = in_gate(shared, move |_| prepared.rank(query)).await?;
-    let (mut ranked, scoring) = in_gate(shared, move |vault| {
-        let mut ranked = ranked;
-        let scoring = ranked.scoring(vault)?;
-        Ok((ranked, scoring))
-    })
-    .await?;
-    if let Some(scoring) = scoring {
-        let scores = scoring
-            .port
-            .score_async(scoring.query, scoring.documents)
-            .await
-            .context(call)?;
-        ranked.scored(scores)?;
-    }
-    let items = super::hits(shared, ranked.into_stream());
-    Offload::server_streaming(&offload(shared)?, move |_| Ok(items)).await
-}
-
-/// The async object of the Index of an open Vault.
-#[cfg(feature = "find")]
-struct AsyncIndex {
-    sync: Arc<super::IndexObject>,
-}
-
-#[cfg(feature = "find")]
-impl scheda_api::v1::IndexAsync for AsyncIndex {
-    /// Reads the state under a short lock, so it runs in place.
-    async fn status(&self, _empty: Empty) -> Result<scheda_api::v1::IndexState, Error> {
-        self.sync.shared.call(|vault| Ok(vault.indexer().status()))
-    }
-
-    async fn watch(
-        &self,
-        _empty: Empty,
-    ) -> Result<impl Stream<Item = Result<scheda_api::v1::IndexState, Error>> + Send + use<>, Error>
-    {
-        let watch = self
-            .sync
-            .shared
-            .call(|vault| Ok(vault.indexer().watch_stream()))?;
-        Ok(Waiting {
-            shared: Arc::clone(&self.sync.shared),
-            inner: Some(watch),
-        })
-    }
-
-    async fn reindex(&self, empty: Empty) -> Result<Empty, Error> {
-        scheda_api::v1::IndexAsync::reindex(&offload(&self.sync)?, empty).await
-    }
-}
-
-/// A stream that waits for news in a task: the gate is looked at on each
-/// poll and no pass is held while it waits. It ends when the indexer does,
-/// and says that the Vault is closed if that is why.
-#[cfg(feature = "find")]
-struct Waiting<S> {
-    shared: Arc<Shared>,
-    inner: Option<S>,
-}
-
-#[cfg(feature = "find")]
-impl<T, S: Stream<Item = Result<T, Error>> + Unpin> Stream for Waiting<S> {
-    type Item = Result<T, Error>;
-
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
-        use std::task::Poll;
-
-        let this = self.get_mut();
-        let Some(inner) = this.inner.as_mut() else {
-            return Poll::Ready(None);
-        };
-        match this.shared.gate.enter() {
-            Ok(pass) => drop(pass),
-            Err(error) => {
-                this.inner = None;
-                return Poll::Ready(Some(Err(error)));
-            }
-        }
-        match std::pin::Pin::new(inner).poll_next(cx) {
-            Poll::Pending => Poll::Pending,
-            Poll::Ready(None) => {
-                this.inner = None;
-                if this.shared.gate.is_shut() {
-                    return Poll::Ready(Some(Err(super::closed())));
-                }
-                Poll::Ready(None)
-            }
-            Poll::Ready(item) => Poll::Ready(item),
-        }
     }
 }
 

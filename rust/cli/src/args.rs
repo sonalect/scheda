@@ -9,6 +9,10 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 ///
 /// The reply is the Protobuf JSON of the contract, one message per line on
 /// stdout; a failure is one line of JSON on stderr and exit status 1.
+///
+/// The embedder and reranker flags reach the library as they are. This
+/// version of Scheda accepts neither, so a Vault opened with one fails with
+/// `UNIMPLEMENTED`.
 #[derive(Parser, Debug)]
 #[command(
     name = "scheda",
@@ -125,7 +129,7 @@ pub(crate) struct Cli {
     pub(crate) model2vec_embedder: Option<PathBuf>,
 
     /// Cohere or Jina rerank API root, joined with `rerank`. With
-    /// `--reranker-model`, or neither. Used by a search with `rerankLimit`.
+    /// `--reranker-model`, or neither.
     #[arg(long, global = true, value_name = "URL")]
     pub(crate) reranker_cohere_url: Option<String>,
 
@@ -137,11 +141,6 @@ pub(crate) struct Cli {
     /// reranker. Only with the HTTP reranker flags.
     #[arg(long, global = true, value_name = "NAME")]
     pub(crate) reranker_api_key_env_var: Option<String>,
-
-    /// Do not wait for the Index before a query, a count, or a search, and
-    /// do not wait for a rebuild after `index reindex`.
-    #[arg(long, global = true, default_value_t = false)]
-    pub(crate) no_wait: bool,
 
     /// What to call.
     #[command(subcommand)]
@@ -200,24 +199,6 @@ pub(crate) enum Command {
     /// Several Document writes across collections as one; JSON Lines of
     /// `VaultDocumentOperation` on stdin.
     BatchDocuments,
-    /// The Documents that match a filter, across collections.
-    QueryDocuments {
-        /// The `VaultQuery`, as Protobuf JSON.
-        #[arg(long, value_name = "JSON")]
-        query: Option<String>,
-    },
-    /// How many Documents `query-documents` would give.
-    CountDocuments {
-        /// The `VaultQuery`, as Protobuf JSON.
-        #[arg(long, value_name = "JSON")]
-        query: Option<String>,
-    },
-    /// The Documents that best fit a text, across collections.
-    SearchDocuments {
-        /// The `VaultSearch`, as Protobuf JSON.
-        #[arg(long, value_name = "JSON")]
-        search: Option<String>,
-    },
     /// One collection of the Vault.
     Collection {
         /// The collection name.
@@ -231,12 +212,6 @@ pub(crate) enum Command {
         /// What to call on the mirror.
         #[command(subcommand)]
         command: MirrorCommand,
-    },
-    /// The Index of the Vault.
-    Index {
-        /// What to call on the Index.
-        #[command(subcommand)]
-        command: IndexCommand,
     },
 }
 
@@ -337,24 +312,6 @@ pub(crate) enum CollectionCommand {
     /// Several Document writes as one; JSON Lines of `DocumentOperation`
     /// on stdin.
     Batch,
-    /// The Documents that match a filter.
-    Query {
-        /// The `DocumentQuery`, as Protobuf JSON.
-        #[arg(long, value_name = "JSON")]
-        query: Option<String>,
-    },
-    /// How many Documents `query` would give.
-    Count {
-        /// The `DocumentQuery`, as Protobuf JSON.
-        #[arg(long, value_name = "JSON")]
-        query: Option<String>,
-    },
-    /// The Documents that best fit a text, or a Document.
-    Search {
-        /// The `DocumentSearch`, as Protobuf JSON.
-        #[arg(long, value_name = "JSON")]
-        search: Option<String>,
-    },
 }
 
 /// A subcommand of `mirror`.
@@ -382,19 +339,4 @@ pub(crate) struct MirrorSet {
     /// Replace a mirror that is already set.
     #[arg(long, default_value_t = false)]
     pub(crate) replace_existing: bool,
-}
-
-/// A subcommand of `index`.
-#[derive(Subcommand, Debug)]
-pub(crate) enum IndexCommand {
-    /// The state of the Index now.
-    Status,
-    /// The state of the Index, then each change of it.
-    Watch {
-        /// Stop after the first settled state.
-        #[arg(long, default_value_t = false)]
-        until_settled: bool,
-    },
-    /// Rebuild the Index and wait until it is rebuilt.
-    Reindex,
 }

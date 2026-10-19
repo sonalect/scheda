@@ -11,7 +11,6 @@ use scheda_api::v1::{Problem, VaultErrorCode};
 
 use crate::check::problem;
 use crate::error::{Context, Error, Fault, io};
-use crate::index::Index;
 
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
 
@@ -273,64 +272,16 @@ pub(crate) fn restrict_file_below(base: &Path, file: &Path) -> Result<(), Error>
     restrict_file(file)
 }
 
-/// Walks `root` and applies owner-only modes to every directory and file.
-/// For files other code created under `{vault}/.scheda/`. A missing `root`
-/// is a no-op, and symlinks are not followed.
-#[cfg(any(test, feature = "find"))]
-pub(crate) fn restrict_tree(root: &Path) -> Result<(), Error> {
-    let meta = match fs::symlink_metadata(root) {
-        Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => {
-            return Err(io(err)).context("restrict_tree: stat path");
-        }
-    };
-    if meta.file_type().is_symlink() {
-        return Ok(());
-    }
-    if meta.is_dir() {
-        restrict_dir(root)?;
-        let entries = match fs::read_dir(root) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(err) => {
-                return Err(io(err)).context("restrict_tree: read directory");
-            }
-        };
-        for entry in entries {
-            let entry = entry
-                .map_err(io)
-                .context("restrict_tree: read directory entry")?;
-            restrict_tree(&entry.path())?;
-        }
-        return Ok(());
-    }
-    if meta.is_file() {
-        restrict_file(root)?;
-    }
-    Ok(())
-}
-
 /// `{vault}/.scheda/` must be owner-only on Unix (`0700` directories, `0600`
 /// files). Every path with a wider mode is a `FAILED_PRECONDITION` problem
-/// with the Vault-relative path. Other systems do not inspect ACLs. The
-/// folder of the lexical index is left out while a round of the indexer
-/// holds the Index lock.
+/// with the Vault-relative path. Other systems do not inspect ACLs.
 pub(crate) fn check_scheda_owner_only(vault: &Path) -> Result<Vec<Problem>, Error> {
     let mut problems = Vec::new();
     #[cfg(unix)]
     {
         let scheda = vault.join(".scheda");
         if scheda.exists() {
-            // A round of the indexer makes the files of the lexical index
-            // and narrows their modes when it ends, so they are looked at
-            // only while no round runs; holding the lock keeps one from
-            // beginning meanwhile.
-            let index = Index::new(vault);
-            let round = index.try_lock()?;
-            let skip = round.is_none().then(|| index.lexical_dir());
-            check_owner_only_tree(vault, &scheda, skip.as_deref(), &mut problems)?;
-            drop(round);
+            check_owner_only_tree(vault, &scheda, &mut problems)?;
         }
     }
     #[cfg(not(unix))]
@@ -362,13 +313,9 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
 fn check_owner_only_tree(
     vault: &Path,
     path: &Path,
-    skip: Option<&Path>,
     problems: &mut Vec<Problem>,
 ) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
-    if skip == Some(path) {
-        return Ok(());
-    }
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -400,7 +347,7 @@ fn check_owner_only_tree(
         }
         paths.sort();
         for child in paths {
-            check_owner_only_tree(vault, &child, skip, problems)?;
+            check_owner_only_tree(vault, &child, problems)?;
         }
         return Ok(());
     }
@@ -423,7 +370,7 @@ mod tests {
 
     use super::{
         Flock, atomic_write, check_scheda_owner_only, reject_symlinks, rel_posix, restrict_dir,
-        restrict_file, restrict_file_below, restrict_tree,
+        restrict_file, restrict_file_below,
     };
 
     /// A scratch directory that is removed when the test ends.
@@ -547,7 +494,9 @@ mod tests {
         std::fs::write(&file, b"x").unwrap();
         let wide = std::fs::metadata(&scheda).unwrap().permissions().mode() & 0o777 != 0o700;
         assert_eq!(!check_scheda_owner_only(vault).unwrap().is_empty(), wide);
-        restrict_tree(&scheda).unwrap();
+        restrict_dir(&scheda).unwrap();
+        restrict_dir(&scheda.join("deep")).unwrap();
+        restrict_file(&file).unwrap();
         assert!(check_scheda_owner_only(vault).unwrap().is_empty());
         let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode(&scheda), 0o700);
@@ -564,6 +513,5 @@ mod tests {
         restrict_dir(&scheda.join("deep")).unwrap();
         restrict_file_below(vault, &file).unwrap();
         assert!(check_scheda_owner_only(vault).unwrap().is_empty());
-        restrict_tree(&vault.join("missing")).unwrap();
     }
 }

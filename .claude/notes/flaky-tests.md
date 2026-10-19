@@ -31,7 +31,9 @@ uncached gates in a row green):
   - A wait on several Index files checked `commit` first, then the rest:
     a rebuild that started meanwhile removed `commit` after it was read.
     Check `commit` last (the rebuild removes it first).
-- Open, branch `lance-index` (19 October 2026, 1 run in 10):
+- Gone with the search tests in work order 21, L8; kept as the lesson for
+  L6 (wait for the write's token, never for a count of one side). Branch
+  `lance-index` (19 October 2026, 1 run in 10):
   `//rust/scheda:async_test`, `searching::a_search_runs_on_both_runtime_flavors`
   (only `cat2` found) and
   `searching::an_async_embedder_that_takes_a_second_is_awaited_not_blocked_on`

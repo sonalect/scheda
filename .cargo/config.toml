@@ -1,3 +1,2 @@
 # Default Cargo and Bazel: dynamic glibc CRT.
-# Do not set +crt-static here (USearch/cxx).
 # Static Linux CLI: `.cargo/static-glibc.toml`.

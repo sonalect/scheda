@@ -22,9 +22,10 @@ Project state, deferred work, and measurements that outlive one session
   2026), and he looked at the proto files; they wait in
   `l0-protos.patch` for L5. L1 (Lance in the build) is done. Then the
   owner made Scheda async on tokio: `docs/22-scheda-on-tokio.md`
-  (approved 19 October 2026, D1–D12). Order of the branch: 21 L0, L1
-  (done), L8 (the old Index removed: next), 22 A1–A5, then 21 L2–L7, L9,
-  L10. The spike stays on the branch
+  (approved 19 October 2026, D1–D12). Order of the branch: 21 L0, L1,
+  L8 (done: the old Index removed; `Vault.Index` and every port are
+  `UNIMPLEMENTED` until L3, the Rust test suites not run), 22 A1–A5
+  (next), then 21 L2–L7, L9, L10. The spike stays on the branch
   `lance-spike` (worktree `../scheda-lance`, `spikes/lance/`) and never
   reaches `lance-index` or `main`; its `kill` and `verify` commands are
   the models for L2's checks.

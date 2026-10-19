@@ -1,6 +1,6 @@
 # 22. Scheda on tokio
 
-Document 22 of the Scheda package. Version 0.1, 19 October 2026.
+Document 22 of the Scheda package. Version 0.2, 19 October 2026.
 
 Status: approved by the owner on 19 October 2026, decision by decision
 (§6). D3, D4, D9, D11, and D12 were changed or completed with him; the
@@ -259,13 +259,15 @@ D1, D3, D4, D5, D6, D7, D8, D11.
 
 - [ ] `Scheda`, `Vault`, `Collection`, `Mirror`, and the Index object
       implement the async traits on the core, in place of the blocking
-      objects and of `Offload`; the waits of the core (the `git`
+      objects and of `Offload` (`21` L8 left `Vault.Index`
+      `UNIMPLEMENTED`: the Index object comes back async in `21` L3); the waits of the core (the `git`
       processes, the write lock, the wait at `open`) move out of it (D3,
       D5).
 - [ ] The indexer as a task (D6): its signal, `Watch`, the round as a task
       of its own, the poll; the journal id maps its one side.
 - [ ] `Close` and drop per D7.
-- [ ] Ports in their async form (D8).
+- [ ] Ports in their async form (D8): written in `21` L3, since `21` L8
+      makes every port `UNIMPLEMENTED` until then.
 - *Check:* `rust/scheda/tests` on `#[tokio::test]`, on both runtime
   flavors, green; a write whose future is dropped is stored; a push
   dropped midway leaves the commit local and the next push carries it; a

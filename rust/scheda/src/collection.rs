@@ -114,30 +114,6 @@ impl Declaration {
             .and_then(|schema| schema.encrypted)
             .unwrap_or(false)
     }
-
-    /// Whether Documents enter the lexical Index.
-    #[cfg(any(test, feature = "find"))]
-    pub(crate) fn lexical_indexed(&self) -> bool {
-        let excluded = self
-            .collection
-            .schema
-            .as_option()
-            .and_then(|schema| schema.exclude_lexical_index)
-            .unwrap_or(false);
-        !self.encrypted() && !excluded
-    }
-
-    /// Whether Documents are embedded and enter the vector Index.
-    #[cfg(any(test, feature = "find"))]
-    pub(crate) fn vector_indexed(&self) -> bool {
-        let excluded = self
-            .collection
-            .schema
-            .as_option()
-            .and_then(|schema| schema.exclude_vector_index)
-            .unwrap_or(false);
-        !self.encrypted() && !excluded
-    }
 }
 
 /// The collection whose declaration file `path` (Vault-relative, POSIX) is:
@@ -531,19 +507,16 @@ mod tests {
     }
 
     #[test]
-    fn the_marks_are_read_and_decide_what_is_indexed() {
+    fn the_marks_are_read() {
         let plain = declared("name: c\nschema:\n  standard: {}\n").unwrap();
         assert!(!plain.isolated() && !plain.encrypted());
-        assert!(plain.lexical_indexed() && plain.vector_indexed());
         let marked = declared(
             "name: c\nschema:\n  standard: {}\n  isolated: true\n  excludeLexicalIndex: true\n  exclude_vector_index: true\n",
         )
         .unwrap();
-        assert!(marked.isolated());
-        assert!(!marked.lexical_indexed() && !marked.vector_indexed());
+        assert!(marked.isolated() && !marked.encrypted());
         let sealed = declared("name: c\nschema:\n  standard: {}\n  encrypted: true\n").unwrap();
-        assert!(sealed.encrypted());
-        assert!(!sealed.lexical_indexed() && !sealed.vector_indexed());
+        assert!(sealed.encrypted() && !sealed.isolated());
     }
 
     #[test]

@@ -11,7 +11,6 @@ mod exec;
 mod http;
 mod model2vec;
 mod open;
-mod projector;
 mod stdio;
 
 use std::io::Write;
@@ -23,7 +22,7 @@ use scheda::v1::ErrorReport;
 
 use args::Cli;
 use call::Call;
-use exec::Failed;
+use scheda::Error;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -31,18 +30,14 @@ static GLOBAL: MiMalloc = MiMalloc;
 fn main() -> ExitCode {
     match run(std::env::args_os()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(failed) => {
-            let report = match failed {
-                Failed::Error(error) => scheda::error_report(&error),
-                Failed::Report(report) => *report,
-            };
-            emit_report(&report);
+        Err(error) => {
+            emit_report(&scheda::error_report(&error));
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Failed> {
+fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Error> {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
@@ -54,16 +49,15 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Failed>
                 let _ = err.print();
                 return Ok(());
             }
-            return Err(stdio::invalid(err.to_string()).into());
+            return Err(stdio::invalid(err.to_string()));
         }
     };
     let opening = match cli.command {
         args::Command::SchedaInfo => None,
         _ => Some(open::opening(&cli)?),
     };
-    let wait = !cli.no_wait;
     let call = Call::prepare(cli.command)?;
-    exec::execute(call, opening, wait)
+    exec::execute(call, opening)
 }
 
 /// Writes the report as one line on stderr. There is nowhere else to say

@@ -1,6 +1,5 @@
 //! Helpers shared by the CLI test binaries: a scratch directory, the
-//! command line run as a child process, the Projector of the command line
-//! written again as a library port, and a Vault opened by the library on
+//! command line run as a child process, and a Vault opened by the library on
 //! the same folder.
 
 use std::path::{Path, PathBuf};
@@ -8,14 +7,8 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use buffa_types::google::protobuf::Empty;
-use scheda::v1::projector_ref::ProjectorRef;
-use scheda::v1::{
-    CollectionKey, CollectionSync, ColumnKind, IndexColumn, IndexDoc, IndexSchema, IndexValue,
-    OpenOptions, ProjectorDescriptor, ProjectorSync, RawDocument, SchedaSync, VaultOpening,
-    VaultSync, index_value,
-};
-use scheda::{Error, Scheda};
+use scheda::Scheda;
+use scheda::v1::{CollectionKey, CollectionSync, OpenOptions, SchedaSync, VaultOpening, VaultSync};
 use serde_json::Value;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
@@ -211,70 +204,21 @@ pub fn run_on_with(vault: &Path, args: &[&str], setup: &Setup) -> Run {
     run_with(&refs, setup)
 }
 
-/// The projection id of the Projector of the command line.
-pub const PROJECTION_ID: &str = "scheda-cli/whole-file@1";
-
-/// The Projector of the command line written again as a port: one text
-/// column, `body`, that holds the whole Document. A Vault opened with it
-/// shares its Index with the command line.
-pub fn whole_file() -> ProjectorRef {
-    ProjectorRef::from_sync(WholeFile)
-}
-
-struct WholeFile;
-
-impl ProjectorSync for WholeFile {
-    fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
-        Ok(ProjectorDescriptor::default().with_projection_id(PROJECTION_ID))
-    }
-
-    fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
-        Ok(IndexSchema {
-            columns: vec![
-                IndexColumn::default()
-                    .with_name("body")
-                    .with_kind(ColumnKind::COLUMN_KIND_TEXT)
-                    .with_find(true)
-                    .with_fts(true)
-                    .with_vector(true),
-            ],
-            ..IndexSchema::default()
-        })
-    }
-
-    fn project(&self, document: RawDocument) -> Result<IndexDoc, Error> {
-        let mut doc = IndexDoc::default();
-        if let Ok(text) = String::from_utf8(document.raw.unwrap_or_default()) {
-            doc.values.insert(
-                "body".to_owned(),
-                IndexValue {
-                    value: Some(index_value::Value::Text(text)),
-                    ..IndexValue::default()
-                },
-            );
-        }
-        Ok(doc)
-    }
-}
-
 /// The request that opens the Vault at `path` as the command line does
-/// when given [`on`]: the same Projector, an author, and the writer `id`.
+/// when given [`on`]: the writer `id`, and no port.
 pub fn opening(path: &Path, writer: &str) -> VaultOpening {
     let options = OpenOptions::default()
         .with_writer(writer)
         .with_index_poll_ms(10)
         .with_write_timeout_ms(60_000);
-    let mut request = VaultOpening {
+    VaultOpening {
         path: Some(path.display().to_string()),
         options: options.into(),
         ..VaultOpening::default()
-    };
-    request.projector = whole_file().into();
-    request
+    }
 }
 
-/// A Vault opened by the library on `path`, with the Projector of the
-/// command line and no other port.
+/// A Vault opened by the library on `path`, with no port.
 pub fn library(path: &Path) -> Arc<dyn VaultSync> {
     Scheda
         .open(opening(path, "library"))
@@ -302,7 +246,6 @@ pub fn source() -> String {
         include_str!("../../src/main.rs"),
         include_str!("../../src/model2vec.rs"),
         include_str!("../../src/open.rs"),
-        include_str!("../../src/projector.rs"),
         include_str!("../../src/stdio.rs"),
     ]
     .join("\n")

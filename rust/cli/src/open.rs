@@ -1,6 +1,8 @@
 //! The request that opens the Vault, built from the global flags: the
 //! options, the secrets they name, and the ports. Everything wrong with the
-//! flags is `INVALID_ARGUMENT` here, before the Vault is touched.
+//! flags is `INVALID_ARGUMENT` here, before the Vault is touched. The ports
+//! the flags name are given to the library as they are; this version of it
+//! accepts none, and a Vault opened with one fails with `UNIMPLEMENTED`.
 
 use std::path::Path;
 
@@ -12,7 +14,7 @@ use scheda::v1::{Author, Encryption, OpenMode, OpenOptions, VaultOpening};
 
 use crate::args::{Cli, ModeArg};
 use crate::stdio::{invalid, unreadable};
-use crate::{http, model2vec, projector};
+use crate::{http, model2vec};
 
 /// The request that opens the Vault the flags name.
 ///
@@ -31,7 +33,6 @@ pub(crate) fn opening(cli: &Cli) -> Result<VaultOpening, Error> {
     Ok(VaultOpening {
         path: Some(path.to_owned()),
         options: options(cli)?.into(),
-        projector: projector::whole_file().into(),
         embedder: embedder(cli)?.into(),
         reranker: reranker(cli)?.into(),
         ..VaultOpening::default()

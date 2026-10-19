@@ -522,7 +522,7 @@ mod tests {
 
     use super::{IdMap, check_journal_id_maps, in_collection};
     use crate::index::{Index, State};
-    use crate::ports::indexing_ports;
+    use crate::ports::Ports;
     use crate::repo::{Repo, Repos, fixture};
     use crate::vault::Vault;
 
@@ -543,7 +543,7 @@ mod tests {
             let vault = Vault::open(
                 &self.0,
                 OpenOptions::default().with_index_poll_ms(10),
-                indexing_ports(),
+                Ports::default(),
             )
             .unwrap();
             let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
@@ -690,7 +690,7 @@ mod tests {
         let vault = Vault::open(
             &scratch.0,
             OpenOptions::default().with_index_poll_ms(10),
-            indexing_ports(),
+            Ports::default(),
         )
         .unwrap();
         let path = scratch.0.canonicalize().unwrap();

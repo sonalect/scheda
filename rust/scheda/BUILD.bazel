@@ -3,20 +3,15 @@ load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
-# Full CI build (`index` + `find` + `search` + SIMD + the async API). Cargo
-# turns `index` on by default; Bazel lists every feature it builds.
-# `openmp` is Cargo-only (needs libomp).
+# Full CI build (`index` + `encrypt` + the async API). Cargo turns `index` on
+# by default; Bazel lists every feature it builds.
 _SCHEDA_FEATURES = [
-    "find",
     "index",
-    "search",
-    "simd",
     "encrypt",
     "tokio",
 ]
 
-# Cargo's `--no-default-features`: no feature at all. No Lance, Tantivy,
-# USearch, or C++.
+# Cargo's `--no-default-features`: no feature at all. No Lance.
 _SCHEDA_THIN_FEATURES = []
 
 # Shared by every integration test crate (`mod common`).
@@ -55,14 +50,10 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = _SCHEDA_DEPS + [
         "@scheda_cargo//:age",
-        "@scheda_cargo//:cxx",
         "@scheda_cargo//:lance",
         "@scheda_cargo//:lance-index",
         "@scheda_cargo//:lance-linalg",
-        "@scheda_cargo//:sha1",
-        "@scheda_cargo//:tantivy",
         "@scheda_cargo//:tokio",
-        "@scheda_cargo//:usearch",
     ],
 )
 
@@ -327,22 +318,6 @@ rust_test(
         "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:protocontract",
         "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "consumer_test",
-    size = "small",
-    srcs = ["tests/consumer.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/consumer.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:tokio",
     ],
 )
 

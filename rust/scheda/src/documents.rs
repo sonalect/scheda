@@ -63,29 +63,6 @@ pub(crate) fn path_of(decl: &Declaration, id: &str) -> Result<String, Fault> {
     Ok(isolated::vault_rel(decl, id))
 }
 
-/// Reads the Document `id`: the bytes of its file in the commit of `snap`,
-/// or, in an encrypted collection, the bytes the armor holds.
-///
-/// An absent Document is `None`, not an error: no file, a directory where
-/// the file would be, or (for a `singleton`) an id other than its own. A
-/// symlink on the way is `INVALID_ARGUMENT`. An encrypted collection needs
-/// the secret of the handle (`CRYPTO`); a build without the `encrypt`
-/// feature cannot read one (`UNIMPLEMENTED`).
-#[cfg(any(test, feature = "find"))]
-pub(crate) fn read(
-    snap: &Snap,
-    decl: &Declaration,
-    id: &str,
-    encryption: Option<&Encryption>,
-) -> Result<Option<Vec<u8>>, Fault> {
-    require_files(decl)?;
-    if decl.kind() == Kind::Singleton && decl.singleton_id() != Some(id) {
-        return Ok(None);
-    }
-    let rel = path_of(decl, id)?;
-    read_file(snap, &rel, decl, encryption)
-}
-
 /// Reads the file at the Vault-relative `rel`: `None` when the commit holds
 /// no file there.
 fn read_file(
@@ -160,10 +137,12 @@ fn blob_id(file: &[u8]) -> Result<Oid, Fault> {
 }
 
 /// Reads the file of Document `id` in the commit of `snap` and opens it: the
-/// bytes there and the Document in them. An absent Document is `None`, as
-/// for [`read`], and a symlink on the way is `INVALID_ARGUMENT`. An
-/// encrypted collection needs the secret of the handle (`CRYPTO`) and a
-/// build with the `encrypt` feature (`UNIMPLEMENTED`).
+/// bytes there and the Document in them. An absent Document is `None`, not
+/// an error: no file, a directory where the file would be, or (for a
+/// `singleton`) an id other than its own. A symlink on the way is
+/// `INVALID_ARGUMENT`. An encrypted collection needs the secret of the
+/// handle (`CRYPTO`) and a build with the `encrypt` feature
+/// (`UNIMPLEMENTED`).
 pub(crate) fn read_found(
     snap: &Snap,
     decl: &Declaration,
@@ -719,10 +698,21 @@ mod tests {
 
     use scheda_api::v1::{Encryption, VaultErrorCode};
 
-    use super::{Walk, check_documents, encode, path_of, read};
+    use super::{Found, Walk, check_documents, encode, path_of, read_found};
     use crate::collection::{self, Declaration, Declarations};
-    use crate::error::Error;
+    use crate::error::{Error, Fault};
     use crate::repo::{Repos, Snap, Views, fixture};
+
+    /// The bytes of the Document `id` in `snap`, or `None` when it has no
+    /// file.
+    fn read(
+        snap: &Snap,
+        decl: &Declaration,
+        id: &str,
+        encryption: Option<&Encryption>,
+    ) -> Result<Option<Vec<u8>>, Fault> {
+        read_found(snap, decl, id, encryption).map(|found| found.map(Found::into_plain))
+    }
 
     /// A temporary Vault directory that holds collection files and
     /// Document files.

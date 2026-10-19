@@ -14,36 +14,27 @@
 //! .scheda/index/format      the number of the layout of these files
 //! .scheda/index/commit      the state the Index reflects, written last
 //! .scheda/index/journal/    the id maps of the journals
-//! .scheda/index/lexical/    the Tantivy index of the lexical side
-//! .scheda/index/vector/     the vectors of the vector side and the state they reached
-//! .scheda/index/columns     the columns each collection was indexed with
-//! .scheda/index/stale       the collections whose columns changed since
 //! ```
 //!
 //! Every file is written whole (a temporary file, then a rename) and is
 //! owner-only. Only the indexer writes under `index/`, under the lock; a
-//! file of another layout is never read, the Index is made again.
+//! file of another layout is never read, the Index is made again. What an
+//! earlier layout wrote beside these files (`lexical/`, `vector/`,
+//! `columns`, `stale`) is not read either, and stays until the Index is
+//! made again.
 
 use std::collections::BTreeSet;
 use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
-#[cfg(feature = "find")]
-use std::sync::Arc;
 
 use git2::Oid;
-#[cfg(feature = "find")]
-use scheda_api::v1::VaultErrorCode;
 
 use crate::collection::{self, Declarations};
-#[cfg(feature = "find")]
-use crate::error::Fault;
 use crate::error::{Context, Error, io};
 use crate::fs::{
     Flock, atomic_write_private, create_dir_private, restrict_dir, restrict_file_below,
 };
 use crate::isolated;
-#[cfg(feature = "find")]
-use crate::ports::ProjectorPort;
 use crate::repo::{Delta, Repo, Snap, Views};
 
 /// The number of the layout of the files of the Index. An Index with another
@@ -53,13 +44,6 @@ pub(crate) const FORMAT: u32 = 2;
 const FORMAT_FILE: &str = "format";
 const COMMIT_FILE: &str = "commit";
 const JOURNAL_DIR: &str = "journal";
-const LEXICAL_DIR: &str = "lexical";
-#[cfg(feature = "search")]
-const VECTOR_DIR: &str = "vector";
-#[cfg(feature = "find")]
-const COLUMNS_FILE: &str = "columns";
-#[cfg(feature = "find")]
-const STALE_FILE: &str = "stale";
 
 /// The state of the Vault the Index reflects: the commit `HEAD` names in the
 /// main repository, and in the nested repository (`None` where there is no
@@ -164,73 +148,6 @@ impl Index {
     /// The id map file of the journal `collection`.
     pub(crate) fn ids_file(&self, collection: &str) -> PathBuf {
         self.journal_dir().join(collection).join("ids")
-    }
-
-    /// The folder of the Tantivy index of the lexical side.
-    pub(crate) fn lexical_dir(&self) -> PathBuf {
-        self.root.join(LEXICAL_DIR)
-    }
-
-    /// The folder of the vector side: `vectors` (the model, the key map, and
-    /// the HNSW index, in one file) and `state`.
-    #[cfg(feature = "search")]
-    pub(crate) fn vector_dir(&self) -> PathBuf {
-        self.root.join(VECTOR_DIR)
-    }
-
-    /// The file that records the columns of each collection as the lexical
-    /// side indexed them.
-    #[cfg(feature = "find")]
-    pub(crate) fn columns_file(&self) -> PathBuf {
-        self.root.join(COLUMNS_FILE)
-    }
-
-    /// The file that lists the collections whose columns changed since the
-    /// Index was built. Its presence makes the Index stale until a rebuild.
-    #[cfg(feature = "find")]
-    pub(crate) fn stale_file(&self) -> PathBuf {
-        self.root.join(STALE_FILE)
-    }
-
-    /// The state the Index reflects, for a reader.
-    ///
-    /// # Errors
-    ///
-    /// `INDEX_REBUILDING` (retryable) when the Index has no commit, because
-    /// no round has run yet or a rebuild runs, and when it is of another
-    /// format, which the indexer makes again; `INDEX_STALE` when the
-    /// columns of the Projector changed since the Index was built.
-    #[cfg(feature = "search")]
-    pub(crate) fn readable(&self) -> Result<State, Error> {
-        let committed = self.committed()?;
-        if self.stale_file().is_file() {
-            return Err(Fault::new(
-                VaultErrorCode::IndexStale,
-                "the columns of the Projector changed since the Index was built; run Reindex",
-            )
-            .into());
-        }
-        Ok(committed)
-    }
-
-    /// The state the Index reflects, whether or not some collection is
-    /// stale: a reader that looks at the stale collections itself
-    /// ([`read_stale`](crate::lexical::read_stale)) starts here.
-    ///
-    /// # Errors
-    ///
-    /// `INDEX_REBUILDING` (retryable) when the Index has no commit, because
-    /// no round has run yet or a rebuild runs, and when it is of another
-    /// format, which the indexer makes again.
-    #[cfg(feature = "find")]
-    pub(crate) fn committed(&self) -> Result<State, Error> {
-        if !self.has_format()? {
-            return Err(rebuilding("the Index is not built in this format yet"));
-        }
-        let Some(committed) = self.read_commit()? else {
-            return Err(rebuilding("the Index has no commit yet"));
-        };
-        Ok(committed)
     }
 
     /// Takes the lock of a round without waiting: `flock` on
@@ -344,12 +261,6 @@ impl Index {
     }
 }
 
-/// The failure of a reader that finds the Index not built, or being built.
-#[cfg(feature = "find")]
-pub(crate) fn rebuilding(what: &'static str) -> Error {
-    Fault::new(VaultErrorCode::IndexRebuilding, what).into()
-}
-
 /// What a round has read so far, for the progress of a rebuild.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct Counts {
@@ -368,9 +279,6 @@ enum Changes {
     Everything,
     /// What differs between the state the Index reflected and the new one.
     Since {
-        /// The state the Index reflected.
-        #[cfg(feature = "find")]
-        from: State,
         /// The files that differ, in both repositories.
         paths: Vec<Delta>,
         /// The collections whose declaration file differs: all their
@@ -400,12 +308,7 @@ impl Changes {
             .filter_map(|delta| collection::declaration_dir(&delta.path))
             .map(str::to_owned)
             .collect();
-        Ok(Some(Changes::Since {
-            #[cfg(feature = "find")]
-            from,
-            paths,
-            whole,
-        }))
+        Ok(Some(Changes::Since { paths, whole }))
     }
 }
 
@@ -429,41 +332,6 @@ pub(crate) struct Round<'a> {
     changes: Changes,
     counts: Counts,
     tick: &'a mut dyn FnMut(&Counts) -> Result<(), Error>,
-    /// The Projector the round projects with.
-    #[cfg(feature = "find")]
-    projector: Option<Arc<ProjectorPort>>,
-    /// The vector values the lexical side projected, for the vector side;
-    /// `None` when no side wants them.
-    #[cfg(feature = "search")]
-    offers: Option<Vec<Offer>>,
-}
-
-/// The texts one Document gives the vector side: one per value of each
-/// `vector` column, taken from the projection the lexical side made, so a
-/// Document is projected once per round whichever sides are on.
-#[cfg(feature = "search")]
-#[derive(Debug)]
-pub(crate) struct Offer {
-    /// The collection of the Document.
-    pub(crate) collection: String,
-    /// The id of the Document (of the line, for a journal).
-    pub(crate) id: String,
-    /// The Vault-relative file the Document came from.
-    pub(crate) file: String,
-    /// The texts, in the order of the columns.
-    pub(crate) pieces: Vec<Piece>,
-}
-
-/// One text to embed.
-#[cfg(feature = "search")]
-#[derive(Debug)]
-pub(crate) struct Piece {
-    /// The `vector` column it is a value of.
-    pub(crate) column: String,
-    /// Its place among the values of that column (a text list has several).
-    pub(crate) at: u32,
-    /// The text; the vector side moves it into the embedder.
-    pub(crate) text: String,
 }
 
 impl<'a> Round<'a> {
@@ -493,52 +361,7 @@ impl<'a> Round<'a> {
             changes,
             counts: Counts::default(),
             tick,
-            #[cfg(feature = "find")]
-            projector: None,
-            #[cfg(feature = "search")]
-            offers: None,
         }))
-    }
-
-    /// Gives the round the Projector it projects with: the one the check of
-    /// the round passed, so a Projector replaced meanwhile waits for the
-    /// next round.
-    #[cfg(feature = "find")]
-    pub(crate) fn set_projector(&mut self, projector: Option<Arc<ProjectorPort>>) {
-        self.projector = projector;
-    }
-
-    /// The Projector of the round, if the Vault has one.
-    #[cfg(feature = "find")]
-    pub(crate) fn projector(&self) -> Option<Arc<ProjectorPort>> {
-        self.projector.clone()
-    }
-
-    /// Asks the lexical side to offer the vector values of the Documents it
-    /// projects.
-    #[cfg(feature = "search")]
-    pub(crate) fn collect_offers(&mut self) {
-        self.offers.get_or_insert_with(Vec::new);
-    }
-
-    /// Whether the vector side wants the offers of this round.
-    #[cfg(feature = "search")]
-    pub(crate) fn collecting(&self) -> bool {
-        self.offers.is_some()
-    }
-
-    /// Hands over what the lexical side offered.
-    #[cfg(feature = "search")]
-    pub(crate) fn set_offers(&mut self, offers: Vec<Offer>) {
-        if self.offers.is_some() {
-            self.offers = Some(offers);
-        }
-    }
-
-    /// Takes what the lexical side offered; `None` when nobody asked.
-    #[cfg(feature = "search")]
-    pub(crate) fn take_offers(&mut self) -> Option<Vec<Offer>> {
-        self.offers.take()
     }
 
     /// The Index.
@@ -573,36 +396,6 @@ impl<'a> Round<'a> {
             Changes::Everything => true,
             Changes::Since { whole, .. } => whole.contains(name),
         }
-    }
-
-    /// The state the Index reflected before the round; `None` for a rebuild.
-    #[cfg(feature = "find")]
-    pub(crate) fn from(&self) -> Option<State> {
-        match &self.changes {
-            Changes::Everything => None,
-            Changes::Since { from, .. } => Some(*from),
-        }
-    }
-
-    /// The files that differ between the state the Index reflected and the
-    /// new one, in both repositories. Empty for a rebuild, where everything
-    /// is new.
-    #[cfg(feature = "find")]
-    pub(crate) fn deltas(&self) -> &[Delta] {
-        match &self.changes {
-            Changes::Everything => &[],
-            Changes::Since { paths, .. } => paths,
-        }
-    }
-
-    /// The collections whose declaration file differs. Empty for a rebuild.
-    #[cfg(feature = "find")]
-    pub(crate) fn declaration_changes(&self) -> impl Iterator<Item = &str> {
-        let names = match &self.changes {
-            Changes::Everything => None,
-            Changes::Since { whole, .. } => Some(whole),
-        };
-        names.into_iter().flatten().map(String::as_str)
     }
 
     /// Adds to the counts and lets the observer see them. An error ends the

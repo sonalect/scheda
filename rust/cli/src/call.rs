@@ -6,12 +6,11 @@ use scheda::parse_command;
 use scheda::v1::document_selection::Selection;
 use scheda::v1::{
     CollectionDeclaration, CollectionDeletion, DocumentCreation, DocumentDeletion, DocumentId,
-    DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert, Ids, Listing,
-    MirrorSetting, VaultErrorCode, VaultQuery, VaultSearch,
+    DocumentSelection, DocumentUpdate, DocumentUpsert, Ids, Listing, MirrorSetting, VaultErrorCode,
 };
 use scheda::{Error, Fault};
 
-use crate::args::{CollectionCommand, Command, IndexCommand, MirrorCommand};
+use crate::args::{CollectionCommand, Command, MirrorCommand};
 use crate::stdio::{json_arg, raw_bytes};
 
 /// One rpc, with its request when it takes one. A batch reads its
@@ -35,18 +34,10 @@ pub(crate) enum Call {
     BatchCollections,
     /// `Vault.BatchDocuments`.
     BatchDocuments,
-    /// `Vault.QueryDocuments`.
-    QueryDocuments(VaultQuery),
-    /// `Vault.CountDocuments`.
-    CountDocuments(VaultQuery),
-    /// `Vault.SearchDocuments`.
-    SearchDocuments(VaultSearch),
     /// A call on the collection with this name.
     Collection(String, CollectionCall),
     /// A call on the mirror.
     Mirror(MirrorCall),
-    /// A call on the Index.
-    Index(IndexCall),
 }
 
 /// One rpc of `Collection`.
@@ -60,9 +51,6 @@ pub(crate) enum CollectionCall {
     Upsert(DocumentUpsert),
     Delete(DocumentDeletion),
     Batch,
-    Query(DocumentQuery),
-    Count(DocumentQuery),
-    Search(DocumentSearch),
 }
 
 /// One rpc of `Mirror`.
@@ -75,29 +63,7 @@ pub(crate) enum MirrorCall {
     Sync,
 }
 
-/// One rpc of `Index`.
-pub(crate) enum IndexCall {
-    Status,
-    Watch { until_settled: bool },
-    Reindex,
-}
-
 impl Call {
-    /// Whether the call answers from the Index, and so waits for it to
-    /// settle first.
-    pub(crate) fn reads_index(&self) -> bool {
-        matches!(
-            self,
-            Call::QueryDocuments(_)
-                | Call::CountDocuments(_)
-                | Call::SearchDocuments(_)
-                | Call::Collection(
-                    _,
-                    CollectionCall::Query(_) | CollectionCall::Count(_) | CollectionCall::Search(_)
-                )
-        )
-    }
-
     /// The call a subcommand makes, with its input read and parsed.
     ///
     /// # Errors
@@ -126,21 +92,6 @@ impl Call {
             ),
             Command::BatchCollections => Call::BatchCollections,
             Command::BatchDocuments => Call::BatchDocuments,
-            Command::QueryDocuments { query } => Call::QueryDocuments(json_arg(
-                query.as_deref(),
-                "--query",
-                parse_command::<VaultQuery>,
-            )?),
-            Command::CountDocuments { query } => Call::CountDocuments(json_arg(
-                query.as_deref(),
-                "--query",
-                parse_command::<VaultQuery>,
-            )?),
-            Command::SearchDocuments { search } => Call::SearchDocuments(json_arg(
-                search.as_deref(),
-                "--search",
-                parse_command::<VaultSearch>,
-            )?),
             Command::Collection { name, command } => {
                 Call::Collection(name, collection_call(command)?)
             }
@@ -155,11 +106,6 @@ impl Call {
                 MirrorCommand::Push => MirrorCall::Push,
                 MirrorCommand::Pull => MirrorCall::Pull,
                 MirrorCommand::Sync => MirrorCall::Sync,
-            }),
-            Command::Index { command } => Call::Index(match command {
-                IndexCommand::Status => IndexCall::Status,
-                IndexCommand::Watch { until_settled } => IndexCall::Watch { until_settled },
-                IndexCommand::Reindex => IndexCall::Reindex,
             }),
         })
     }
@@ -268,20 +214,5 @@ fn collection_call(command: CollectionCommand) -> Result<CollectionCall, Error> 
             })
         }
         CollectionCommand::Batch => CollectionCall::Batch,
-        CollectionCommand::Query { query } => CollectionCall::Query(json_arg(
-            query.as_deref(),
-            "--query",
-            parse_command::<DocumentQuery>,
-        )?),
-        CollectionCommand::Count { query } => CollectionCall::Count(json_arg(
-            query.as_deref(),
-            "--query",
-            parse_command::<DocumentQuery>,
-        )?),
-        CollectionCommand::Search { search } => CollectionCall::Search(json_arg(
-            search.as_deref(),
-            "--search",
-            parse_command::<DocumentSearch>,
-        )?),
     })
 }
