@@ -8,7 +8,8 @@
 //! join, and the move of the branch.
 //!
 //! A pull takes the write lock like a write, since it moves `HEAD` and the
-//! work tree. What it does with the fetched commit depends on the history:
+//! work tree, and holds it while `git fetch` runs. What it does with the
+//! fetched commit depends on the history:
 //!
 //! - the Vault already holds it: nothing changes;
 //! - the Vault's `HEAD` is an ancestor of it: `HEAD` moves forward to it;
@@ -30,8 +31,11 @@ use git2::build::TreeUpdateBuilder;
 use git2::{Commit, ErrorCode, FileMode, ObjectType, Oid, Repository, Tree};
 use scheda_api::v1::{MirrorInfo, MirrorSetting, VaultErrorCode};
 
-use crate::commit::branch_of;
+use scheda_blocking::Blocking;
+
+use crate::commit::{Held, branch_of};
 use crate::error::{self, Context, Error, Fault, lib_fault, redact_remote_text};
+use crate::gate::Pass;
 use crate::repo::{self, Repo};
 use crate::vault::Vault;
 use crate::{git, stored};
@@ -59,7 +63,7 @@ impl Vault {
     /// # Errors
     ///
     /// `STORAGE` or `REPLICATION` when git cannot be read.
-    pub(crate) fn mirror_info(&self) -> Result<MirrorInfo, Error> {
+    pub(crate) fn mirror_info(&self, _cx: &Blocking) -> Result<MirrorInfo, Error> {
         let snap = self.repos().snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         let mut info = MirrorInfo::default()
@@ -71,28 +75,15 @@ impl Vault {
         Ok(info)
     }
 
-    /// Sets the URL of the mirror, the remote `origin` of the repository.
-    /// Without a mirror, it is set; with the same URL, nothing happens, so a
-    /// repeat is safe; with another URL, the call is `ALREADY_EXISTS` naming
-    /// the current one, unless `replace_existing`. Contacts no network, and
-    /// runs no process.
-    ///
-    /// The setting is checked before the write lock is taken: a URL that is
-    /// not an absolute URI or an scp-style address, or that carries a
-    /// password, is `INVALID_ARGUMENT` (credentials come from git, never
-    /// from the Vault). The call takes the write lock, so it never meets a
-    /// running pull.
-    ///
-    /// # Errors
-    ///
-    /// The codes above; `ABORTED` (retryable) when the write lock is not
-    /// free within `write_timeout_ms`; `STORAGE` or `REPLICATION` when git
-    /// fails.
-    pub(crate) fn set_mirror(&self, mirror_setting: MirrorSetting) -> Result<Empty, Error> {
-        stored::validate(&mirror_setting).context("set the mirror")?;
-        let url = mirror_setting.url.as_deref().unwrap_or_default().trim();
-        let replace = mirror_setting.replace_existing.unwrap_or(false);
-        let lock = self.committer().lock().context("take the write lock")?;
+    /// The URL of the mirror set under the write lock `held`; see [`set`].
+    fn set_mirror_held(
+        &self,
+        cx: &Blocking,
+        held: Held,
+        url: &str,
+        replace: bool,
+    ) -> Result<Empty, Error> {
+        let lock = self.lock(cx, held)?;
         let snap = lock.snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         match repo::origin_of(git)? {
@@ -118,17 +109,9 @@ impl Vault {
         Ok(Empty::default())
     }
 
-    /// Detaches the mirror: the Vault then works locally only. Without a
-    /// mirror, `NOT_FOUND`. Contacts no network, and runs no process. Takes
-    /// the write lock, so it never meets a running pull.
-    ///
-    /// # Errors
-    ///
-    /// `NOT_FOUND` as above; `ABORTED` (retryable) when the write lock is
-    /// not free within `write_timeout_ms`; `STORAGE` or `REPLICATION` when
-    /// git fails.
-    pub(crate) fn remove_mirror(&self, _empty: Empty) -> Result<Empty, Error> {
-        let lock = self.committer().lock().context("take the write lock")?;
+    /// The mirror removed under the write lock `held`; see [`remove`].
+    fn remove_mirror_held(&self, cx: &Blocking, held: Held) -> Result<Empty, Error> {
+        let lock = self.lock(cx, held)?;
         let snap = lock.snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         if repo::origin_of(git)?.is_none() {
@@ -138,105 +121,29 @@ impl Vault {
         Ok(Empty::default())
     }
 
-    /// Sends the stored writes to the mirror: `git push -- origin
-    /// refs/heads/b:refs/heads/b` for the branch `b` `HEAD` names. Takes no
-    /// write lock. Isolated collections never leave the machine.
-    ///
-    /// # Errors
-    ///
-    /// `NOT_FOUND` without a mirror; `MIRROR_AHEAD` when the mirror holds
-    /// writes this Vault has not pulled; `UNAUTHENTICATED` when the mirror
-    /// refuses the credentials; `UNAVAILABLE` when it cannot be reached;
-    /// `REPLICATION` for any other failure of git.
-    pub(crate) fn push(&self, _empty: Empty) -> Result<Empty, Error> {
-        self.push_now().context("push to the mirror")?;
-        self.clear_sync_failure();
-        Ok(Empty::default())
-    }
-
-    /// Brings the writes of the mirror into the Vault. Takes the write lock.
-    ///
-    /// Fetches the branch `HEAD` names with `git fetch -- origin <branch>`
-    /// (`HEAD` of the mirror for a branch with no commit yet); a mirror
-    /// without that branch, an empty mirror, is nothing to pull. Then, in
-    /// process: a commit the Vault holds already changes nothing; a mirror
-    /// that only adds to the Vault's history moves `HEAD` forward; histories
-    /// that both moved are joined path by path in one commit with both
-    /// parents (`join the mirror's writes`). The work tree follows `HEAD` as
-    /// after a write; a file a person changed is left as it is.
-    ///
-    /// # Errors
-    ///
-    /// `NOT_FOUND` without a mirror; `MIRROR_CONFLICT` naming the paths when
-    /// a path was changed on both sides differently, with the Vault, its
-    /// work tree, and git's index as they were; `ABORTED` (retryable) when
-    /// the write lock is not free within `write_timeout_ms` or `HEAD` moved
-    /// under the pull; the codes of [`push`](Self::push) for the network.
-    pub(crate) fn pull(&self, _empty: Empty) -> Result<Empty, Error> {
-        self.pull_now().context("pull from the mirror")?;
-        self.clear_sync_failure();
-        Ok(Empty::default())
-    }
-
-    /// [`pull`](Self::pull), then [`push`](Self::push). Against a mirror that holds
-    /// nothing yet the pull is nothing to pull, so the push sends everything.
-    ///
-    /// # Errors
-    ///
-    /// Those of [`pull`](Self::pull) and [`push`](Self::push); a failed pull stops the
-    /// call before the push.
-    pub(crate) fn sync(&self, _empty: Empty) -> Result<Empty, Error> {
-        self.pull_now().context("pull from the mirror")?;
-        self.push_now().context("push to the mirror")?;
-        self.clear_sync_failure();
-        Ok(Empty::default())
-    }
-
-    /// The pull of `open` with `auto_sync`: only for a Vault that has a
-    /// mirror. A failure is kept, not raised.
-    pub(crate) fn pull_at_open(&self) {
-        if self.auto_sync() {
-            self.auto(Self::pull_now);
-        }
-    }
-
-    /// The push after a write with `auto_sync`, called once the write lock
-    /// is let go: only for a Vault that has a mirror. A failure is kept, not
-    /// raised, and the write stays stored.
-    pub(crate) fn push_after_write(&self) {
-        if self.auto_sync() {
-            self.auto(Self::push_now);
-        }
-    }
-
-    /// Runs `step` if the Vault has a mirror and keeps its outcome.
-    fn auto(&self, step: fn(&Vault) -> Result<(), Error>) {
-        let outcome = match self.has_mirror() {
-            Ok(false) => return,
-            Ok(true) => step(self),
-            Err(error) => Err(error),
-        };
-        self.record_sync(outcome);
-    }
-
-    fn has_mirror(&self) -> Result<bool, Error> {
+    /// Whether the Vault has a mirror.
+    fn has_mirror(&self, _cx: &Blocking) -> Result<bool, Error> {
         let snap = self.repos().snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         Ok(repo::origin_of(git)?.is_some())
     }
 
-    fn push_now(&self) -> Result<(), Error> {
+    /// The branch a push sends: the one `HEAD` names.
+    fn push_branch(&self, _cx: &Blocking) -> Result<String, Error> {
         let snap = self.repos().snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         if repo::origin_of(git)?.is_none() {
             return Err(no_mirror().into());
         }
         let reference = branch_of(git)?;
-        git::push(self.path(), short_name(&reference))
+        Ok(short_name(&reference).to_owned())
     }
 
-    fn pull_now(&self) -> Result<(), Error> {
-        let lock = self.committer().lock().context("take the write lock")?;
+    /// The first step of a pull, under the write lock `held`: what to fetch
+    /// (the branch `HEAD` names, or `HEAD` of the mirror for a branch with
+    /// no commit yet). The lock comes back, for the fetch and the join.
+    fn pull_branch(&self, cx: &Blocking, held: Held) -> Result<(Held, String), Error> {
+        let lock = self.lock(cx, held)?;
         let snap = lock.snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         if repo::origin_of(git)?.is_none() {
@@ -244,13 +151,20 @@ impl Vault {
         }
         let reference = branch_of(git)?;
         let wanted = if snap.commit().is_some() {
-            short_name(&reference)
+            short_name(&reference).to_owned()
         } else {
-            "HEAD"
+            String::from("HEAD")
         };
-        if !git::fetch(lock.root(), wanted).context("fetch")? {
-            return Ok(());
-        }
+        Ok((lock.release(), wanted))
+    }
+
+    /// The last step of a pull, under the write lock `held` taken for its
+    /// first: the commit `git fetch` left in `FETCH_HEAD`, joined to the
+    /// Vault's history.
+    fn pull_join(&self, cx: &Blocking, held: Held) -> Result<(), Error> {
+        let lock = self.committer().resume(cx, held);
+        let snap = lock.snapshot(Repo::Main)?;
+        let git = snap.repository().ok_or_else(repository_missing)?;
         let Some(theirs) = fetched_commit(git)? else {
             return Ok(());
         };
@@ -280,6 +194,166 @@ impl Vault {
             .map_err(lib_fault)?;
         lock.advance_to(&snap, joined, JOIN_MESSAGE)
     }
+}
+
+/// Sets the URL of the mirror, the remote `origin` of the repository.
+/// Without a mirror, it is set; with the same URL, nothing happens, so a
+/// repeat is safe; with another URL, the call is `ALREADY_EXISTS` naming
+/// the current one, unless `replace_existing`. Contacts no network, and
+/// runs no process.
+///
+/// The setting is checked before the write lock is taken: a URL that is
+/// not an absolute URI or an scp-style address, or that carries a
+/// password, is `INVALID_ARGUMENT` (credentials come from git, never from
+/// the Vault). The call takes the write lock, so it never meets a running
+/// pull.
+///
+/// # Errors
+///
+/// The codes above; `ABORTED` (retryable) when the write lock is not free
+/// within `write_timeout_ms`; `STORAGE` or `REPLICATION` when git fails.
+pub(crate) async fn set(pass: &Pass, mirror_setting: MirrorSetting) -> Result<Empty, Error> {
+    stored::validate(&mirror_setting).context("set the mirror")?;
+    let url = mirror_setting
+        .url
+        .as_deref()
+        .unwrap_or_default()
+        .trim()
+        .to_owned();
+    let replace = mirror_setting.replace_existing.unwrap_or(false);
+    let held = acquire(pass).await?;
+    pass.step(move |cx, vault| vault.set_mirror_held(cx, held, &url, replace))
+        .await
+}
+
+/// Detaches the mirror: the Vault then works locally only. Without a
+/// mirror, `NOT_FOUND`. Contacts no network, and runs no process. Takes the
+/// write lock, so it never meets a running pull.
+///
+/// # Errors
+///
+/// `NOT_FOUND` as above; `ABORTED` (retryable) when the write lock is not
+/// free within `write_timeout_ms`; `STORAGE` or `REPLICATION` when git
+/// fails.
+pub(crate) async fn remove(pass: &Pass) -> Result<Empty, Error> {
+    let held = acquire(pass).await?;
+    pass.step(move |cx, vault| vault.remove_mirror_held(cx, held))
+        .await
+}
+
+/// Sends the stored writes to the mirror: `git push -- origin
+/// refs/heads/b:refs/heads/b` for the branch `b` `HEAD` names. Takes no
+/// write lock. Isolated collections never leave the machine. A call that is
+/// dropped while `git` runs kills it: the mirror moves its branch only at
+/// the end of a push, so it holds the writes or it does not, and the next
+/// push sends them.
+///
+/// # Errors
+///
+/// `NOT_FOUND` without a mirror; `MIRROR_AHEAD` when the mirror holds
+/// writes this Vault has not pulled; `UNAUTHENTICATED` when the mirror
+/// refuses the credentials; `UNAVAILABLE` when it cannot be reached;
+/// `REPLICATION` for any other failure of git.
+pub(crate) async fn push(pass: &Pass) -> Result<Empty, Error> {
+    push_now(pass).await.context("push to the mirror")?;
+    pass.vault().clear_sync_failure();
+    Ok(Empty::default())
+}
+
+/// Brings the writes of the mirror into the Vault. Takes the write lock.
+///
+/// Fetches the branch `HEAD` names with `git fetch -- origin <branch>`
+/// (`HEAD` of the mirror for a branch with no commit yet); a mirror without
+/// that branch, an empty mirror, is nothing to pull. Then, in process: a
+/// commit the Vault holds already changes nothing; a mirror that only adds
+/// to the Vault's history moves `HEAD` forward; histories that both moved
+/// are joined path by path in one commit with both parents (`join the
+/// mirror's writes`). The work tree follows `HEAD` as after a write; a file
+/// a person changed is left as it is.
+///
+/// # Errors
+///
+/// `NOT_FOUND` without a mirror; `MIRROR_CONFLICT` naming the paths when a
+/// path was changed on both sides differently, with the Vault, its work
+/// tree, and git's index as they were; `ABORTED` (retryable) when the write
+/// lock is not free within `write_timeout_ms` or `HEAD` moved under the
+/// pull; the codes of [`push`] for the network.
+pub(crate) async fn pull(pass: &Pass) -> Result<Empty, Error> {
+    pull_now(pass).await.context("pull from the mirror")?;
+    pass.vault().clear_sync_failure();
+    Ok(Empty::default())
+}
+
+/// [`pull`], then [`push`]. Against a mirror that holds nothing yet the
+/// pull is nothing to pull, so the push sends everything.
+///
+/// # Errors
+///
+/// Those of [`pull`] and [`push`]; a failed pull stops the call before the
+/// push.
+pub(crate) async fn sync(pass: &Pass) -> Result<Empty, Error> {
+    pull_now(pass).await.context("pull from the mirror")?;
+    push_now(pass).await.context("push to the mirror")?;
+    pass.vault().clear_sync_failure();
+    Ok(Empty::default())
+}
+
+/// The pull of `open` with `auto_sync`: only for a Vault that has a mirror.
+/// A failure is kept, not raised.
+pub(crate) async fn pull_at_open(pass: &Pass) {
+    if pass.vault().auto_sync() {
+        let outcome = match has_mirror(pass).await {
+            Ok(false) => return,
+            Ok(true) => pull_now(pass).await,
+            Err(error) => Err(error),
+        };
+        pass.vault().record_sync(outcome);
+    }
+}
+
+/// The push after a write with `auto_sync`, once the write lock is let go:
+/// only for a Vault that has a mirror. A failure is kept, not raised, and
+/// the write stays stored.
+pub(crate) async fn push_after_write(pass: &Pass) {
+    if pass.vault().auto_sync() {
+        let outcome = match has_mirror(pass).await {
+            Ok(false) => return,
+            Ok(true) => push_now(pass).await,
+            Err(error) => Err(error),
+        };
+        pass.vault().record_sync(outcome);
+    }
+}
+
+async fn has_mirror(pass: &Pass) -> Result<bool, Error> {
+    pass.step(|cx, vault| vault.has_mirror(cx)).await
+}
+
+async fn acquire(pass: &Pass) -> Result<Held, Error> {
+    pass.vault()
+        .committer()
+        .acquire()
+        .await
+        .context("take the write lock")
+}
+
+async fn push_now(pass: &Pass) -> Result<(), Error> {
+    let branch = pass.step(|cx, vault| vault.push_branch(cx)).await?;
+    git::push(pass.vault().path(), &branch).await
+}
+
+async fn pull_now(pass: &Pass) -> Result<(), Error> {
+    let held = acquire(pass).await?;
+    let (held, wanted) = pass
+        .step(move |cx, vault| vault.pull_branch(cx, held))
+        .await?;
+    if !git::fetch(pass.vault().path(), &wanted)
+        .await
+        .context("fetch")?
+    {
+        return Ok(());
+    }
+    pass.step(move |cx, vault| vault.pull_join(cx, held)).await
 }
 
 fn repository_missing() -> Fault {
@@ -432,14 +506,13 @@ fn collides(ours: &Tree<'_>, path: &str) -> Result<bool, Error> {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
 
-    use buffa_types::google::protobuf::Empty;
-    use scheda_api::v1::{
-        CollectionDeclaration, DocumentUpsert, MirrorSetting, OpenOptions, VaultErrorCode,
-    };
+    use scheda_api::v1::{DocumentUpsert, MirrorSetting, OpenOptions, VaultErrorCode};
 
+    use crate::gate::Pass;
     use crate::git::{git, isolate_test_git_env};
-    use crate::ports::Ports;
+    use crate::testing::{create_collection, open, upsert};
     use crate::vault::Vault;
 
     /// A scratch folder that is removed when the test ends.
@@ -499,56 +572,61 @@ mod tests {
         format!("file://{}", path.display())
     }
 
-    fn put(vault: &Vault, id: &str, raw: &str) {
-        vault
-            .upsert(
-                "notes",
-                DocumentUpsert {
-                    id: Some(id.to_owned()),
-                    raw: Some(raw.as_bytes().to_vec()),
-                    note: Some(format!("write {id}")),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+    async fn put(vault: &Arc<Vault>, id: &str, raw: &str) {
+        upsert(
+            vault,
+            "notes",
+            DocumentUpsert {
+                id: Some(id.to_owned()),
+                raw: Some(raw.as_bytes().to_vec()),
+                note: Some(format!("write {id}")),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     }
 
-    fn with_notes(vault: &Vault) {
-        let notes: CollectionDeclaration = serde_json::from_value(
+    async fn with_notes(vault: &Arc<Vault>) {
+        create_collection(
+            vault,
             serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
         )
+        .await
         .unwrap();
-        vault.create_collection(notes).unwrap();
     }
 
-    fn auto(path: &Path) -> Vault {
-        Vault::open(
+    async fn auto(path: &Path) -> Arc<Vault> {
+        open(
             path,
             OpenOptions::default()
                 .with_auto_sync(true)
                 .with_write_timeout_ms(5000),
-            Ports::default(),
         )
+        .await
         .unwrap()
     }
 
-    fn set(vault: &Vault, mirror: &Path) {
-        vault
-            .set_mirror(MirrorSetting::default().with_url(url(mirror)))
-            .unwrap();
+    async fn set(vault: &Arc<Vault>, mirror: &Path) {
+        super::set(
+            &Pass::enter(vault).unwrap(),
+            MirrorSetting::default().with_url(url(mirror)),
+        )
+        .await
+        .unwrap();
     }
 
-    #[test]
-    fn a_push_that_fails_leaves_the_write_stored_and_the_failure_in_the_handle() {
+    #[tokio::test]
+    async fn a_push_that_fails_leaves_the_write_stored_and_the_failure_in_the_handle() {
         let scratch = Scratch::new("push-fails");
         let mirror = scratch.bare("m.git");
         let path = scratch.join("a");
-        let vault = auto(&path);
+        let vault = auto(&path).await;
         // No mirror yet: a write pushes nothing and there is nothing to keep.
-        with_notes(&vault);
+        with_notes(&vault).await;
         assert!(vault.sync_failure().is_none());
-        set(&vault, &mirror);
-        put(&vault, "one.md", "1");
+        set(&vault, &mirror).await;
+        put(&vault, "one.md", "1").await;
         assert!(vault.sync_failure().is_none());
         assert_eq!(
             out(&mirror, &["rev-parse", "refs/heads/main"]),
@@ -586,7 +664,7 @@ mod tests {
             cmd.run().unwrap();
         }
         let commits = out(&path, &["rev-list", "--count", "HEAD"]);
-        put(&vault, "two.md", "2");
+        put(&vault, "two.md", "2").await;
         let kept = vault.sync_failure().expect("the push failed");
         assert!(kept.is(VaultErrorCode::MirrorAhead));
         assert_eq!(
@@ -595,9 +673,9 @@ mod tests {
             "the write is stored"
         );
         // A successful pull clears it, and the next write pushes again.
-        vault.pull(Empty::default()).unwrap();
+        super::pull(&Pass::enter(&vault).unwrap()).await.unwrap();
         assert!(vault.sync_failure().is_none());
-        put(&vault, "three.md", "3");
+        put(&vault, "three.md", "3").await;
         assert!(vault.sync_failure().is_none());
         assert_eq!(
             out(&mirror, &["rev-parse", "refs/heads/main"]),
@@ -606,73 +684,76 @@ mod tests {
         // The mirror is removed: the write stays, the failure is kept, and a
         // later successful push clears it.
         std::fs::remove_dir_all(&mirror).unwrap();
-        put(&vault, "four.md", "4");
+        put(&vault, "four.md", "4").await;
         assert!(vault.sync_failure().is_some());
         let _ = scratch.bare("m.git");
-        vault.push(Empty::default()).unwrap();
+        super::push(&Pass::enter(&vault).unwrap()).await.unwrap();
         assert!(vault.sync_failure().is_none());
     }
 
-    #[test]
-    fn a_pull_failure_at_open_neither_fails_open_nor_is_lost() {
+    #[tokio::test]
+    async fn a_pull_failure_at_open_neither_fails_open_nor_is_lost() {
         let scratch = Scratch::new("pull-fails");
         let mirror = scratch.bare("m.git");
         let path = scratch.join("a");
-        let vault = auto(&path);
-        with_notes(&vault);
-        set(&vault, &mirror);
-        drop(vault);
+        let vault = auto(&path).await;
+        with_notes(&vault).await;
+        set(&vault, &mirror).await;
+        vault.close().await.unwrap();
         std::fs::remove_dir_all(&mirror).unwrap();
-        let reopened = auto(&path);
+        let reopened = auto(&path).await;
         let kept = reopened.sync_failure().expect("the pull failed");
         assert!(kept.is(VaultErrorCode::Replication));
         // The Vault works.
-        put(&reopened, "a.md", "x");
+        put(&reopened, "a.md", "x").await;
         // A Vault without a mirror keeps nothing.
-        let local = auto(&scratch.join("local"));
+        let local = auto(&scratch.join("local")).await;
         assert!(local.sync_failure().is_none());
     }
 
-    #[test]
-    fn a_write_that_stores_nothing_or_goes_to_isolated_does_not_push() {
+    #[tokio::test]
+    async fn a_write_that_stores_nothing_or_goes_to_isolated_does_not_push() {
         let scratch = Scratch::new("no-push");
         let mirror = scratch.bare("m.git");
         let path = scratch.join("a");
-        let vault = auto(&path);
-        with_notes(&vault);
-        let isolated: CollectionDeclaration = serde_json::from_value(serde_json::json!(
-            {"name": "diary", "schema": {"standard": {}, "isolated": true}}
-        ))
+        let vault = auto(&path).await;
+        with_notes(&vault).await;
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "diary", "schema": {"standard": {}, "isolated": true}}),
+        )
+        .await
         .unwrap();
-        vault.create_collection(isolated).unwrap();
-        set(&vault, &mirror);
-        put(&vault, "a.md", "x");
+        set(&vault, &mirror).await;
+        put(&vault, "a.md", "x").await;
         let pushed = out(&mirror, &["rev-parse", "refs/heads/main"]);
         // An unreachable mirror shows a push at once; none is tried for an
         // isolated write or for bytes that change nothing.
-        vault
-            .set_mirror(
-                MirrorSetting::default()
-                    .with_url(url(&scratch.join("gone.git")))
-                    .with_replace_existing(true),
-            )
-            .unwrap();
-        put(&vault, "a.md", "x");
-        vault
-            .upsert(
-                "diary",
-                DocumentUpsert {
-                    id: Some("d".to_owned()),
-                    raw: Some(b"secret".to_vec()),
-                    note: Some("diary".to_owned()),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+        super::set(
+            &Pass::enter(&vault).unwrap(),
+            MirrorSetting::default()
+                .with_url(url(&scratch.join("gone.git")))
+                .with_replace_existing(true),
+        )
+        .await
+        .unwrap();
+        put(&vault, "a.md", "x").await;
+        upsert(
+            &vault,
+            "diary",
+            DocumentUpsert {
+                id: Some("d".to_owned()),
+                raw: Some(b"secret".to_vec()),
+                note: Some("diary".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
         assert!(vault.sync_failure().is_none());
         assert_eq!(out(&mirror, &["rev-parse", "refs/heads/main"]), pushed);
         // A write of the main repository does try, and fails.
-        put(&vault, "b.md", "y");
+        put(&vault, "b.md", "y").await;
         assert!(vault.sync_failure().is_some());
     }
 
@@ -722,8 +803,8 @@ mod tests {
         out
     }
 
-    #[test]
-    fn the_join_takes_each_side_per_path_and_drops_a_folder_the_mirror_emptied() {
+    #[tokio::test]
+    async fn the_join_takes_each_side_per_path_and_drops_a_folder_the_mirror_emptied() {
         let scratch = Scratch::new("join-shapes");
         crate::repo::init_library().unwrap();
         let repo = git2::Repository::init_bare(scratch.join("r")).unwrap();
@@ -759,8 +840,8 @@ mod tests {
         assert_eq!(names(&repo, tree), ["both", "keep", "mine", "theirs"]);
     }
 
-    #[test]
-    fn a_file_where_the_other_side_has_a_folder_is_a_conflict_and_unrelated_histories_join() {
+    #[tokio::test]
+    async fn a_file_where_the_other_side_has_a_folder_is_a_conflict_and_unrelated_histories_join() {
         let scratch = Scratch::new("join-collide");
         crate::repo::init_library().unwrap();
         let repo = git2::Repository::init_bare(scratch.join("r")).unwrap();

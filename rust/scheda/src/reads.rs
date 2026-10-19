@@ -24,6 +24,8 @@ use scheda_api::v1::{
     VaultErrorCode,
 };
 
+use scheda_blocking::Blocking;
+
 use crate::collection::{Declaration, Kind};
 use crate::document_calls::note_of;
 use crate::documents::{self, WalkState};
@@ -101,6 +103,7 @@ impl Vault {
     /// A failure while the stream is read is an item of the stream.
     pub(crate) fn get_many(
         &self,
+        _cx: &Blocking,
         collection: &str,
         selection: DocumentSelection,
     ) -> Result<DocumentStream, Error> {
@@ -194,6 +197,7 @@ impl Vault {
     /// not open included, is an item of the stream.
     pub(crate) fn history(
         &self,
+        _cx: &Blocking,
         collection: &str,
         document_id: DocumentId,
     ) -> Result<HistoryStream, Error> {
@@ -253,7 +257,7 @@ impl Vault {
     /// Only when a check cannot run (an I/O or git failure, a secret the
     /// handle lacks for an encrypted collection); what the checks find is
     /// the report.
-    pub(crate) fn check(&self) -> Result<CheckReport, Error> {
+    pub(crate) fn check(&self, _cx: &Blocking) -> Result<CheckReport, Error> {
         let problems = check::run(self).context("Vault.Check")?;
         Ok(CheckReport {
             problems,
@@ -264,7 +268,11 @@ impl Vault {
 
 impl DocumentStream {
     /// The next Document, `None` at the end. A failure is the last item.
-    pub(crate) fn next(&mut self, vault: &Vault) -> Option<Result<Document, Error>> {
+    pub(crate) fn next(
+        &mut self,
+        _cx: &Blocking,
+        vault: &Vault,
+    ) -> Option<Result<Document, Error>> {
         if self.done || self.left == Some(0) {
             self.done = true;
             return None;
@@ -482,7 +490,11 @@ impl Ord for Pending {
 
 impl HistoryStream {
     /// The next version, `None` at the end. A failure is the last item.
-    pub(crate) fn next(&mut self, vault: &Vault) -> Option<Result<DocumentHistoryEntry, Error>> {
+    pub(crate) fn next(
+        &mut self,
+        _cx: &Blocking,
+        vault: &Vault,
+    ) -> Option<Result<DocumentHistoryEntry, Error>> {
         if self.done {
             return None;
         }
@@ -572,17 +584,17 @@ impl HistoryStream {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use scheda_api::v1::document_selection::Selection;
     use scheda_api::v1::{
-        CollectionDeclaration, DocumentId, DocumentSelection, DocumentUpsert, Listing, OpenOptions,
-        VaultErrorCode,
+        DocumentId, DocumentSelection, DocumentUpsert, Listing, OpenOptions, VaultErrorCode,
     };
 
     use crate::commit::hooks;
     use crate::git::git;
-    use crate::ports::Ports;
     use crate::repo::blob_reads;
+    use crate::testing::{create, create_collection, open, step, upsert_of};
     use crate::vault::Vault;
 
     /// How many Document files the big collection holds: the size the work
@@ -601,13 +613,10 @@ mod tests {
             Scratch(dir)
         }
 
-        fn open(&self) -> Vault {
-            Vault::open(
-                &self.0,
-                OpenOptions::default().with_write_timeout_ms(2000),
-                Ports::default(),
-            )
-            .unwrap()
+        async fn open(&self) -> Arc<Vault> {
+            open(&self.0, OpenOptions::default().with_write_timeout_ms(2000))
+                .await
+                .unwrap()
         }
     }
 
@@ -617,19 +626,17 @@ mod tests {
         }
     }
 
-    fn declare(vault: &Vault, name: &str) {
-        let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
-            "name": name, "schema": {"standard": {}}
-        }))
+    async fn declare(vault: &Arc<Vault>, name: &str) {
+        create_collection(
+            vault,
+            serde_json::json!({"name": name, "schema": {"standard": {}}}),
+        )
+        .await
         .unwrap();
-        vault.create_collection(collection).unwrap();
     }
 
     fn upsert(id: &str, raw: &str) -> DocumentUpsert {
-        DocumentUpsert::default()
-            .with_id(id)
-            .with_raw(raw.as_bytes().to_vec())
-            .with_note("test")
+        upsert_of(id, raw.as_bytes())
     }
 
     fn listing(include_raw: bool) -> DocumentSelection {
@@ -640,32 +647,33 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_journal_page_begins_in_the_segment_of_the_line_it_follows() {
+    #[tokio::test]
+    async fn a_journal_page_begins_in_the_segment_of_the_line_it_follows() {
         use scheda_api::v1::DocumentCreation;
 
         let scratch = Scratch::new("journal-page");
-        let vault = Vault::open(
-            &scratch.0,
-            OpenOptions::default().with_index_poll_ms(10),
-            crate::ports::Ports::default(),
+        let vault = open(&scratch.0, OpenOptions::default().with_index_poll_ms(10))
+            .await
+            .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({
+                "name": "log", "schema": {"journal": {"segment_max_lines": 2}}
+            }),
         )
+        .await
         .unwrap();
-        let log: CollectionDeclaration = serde_json::from_value(serde_json::json!({
-            "name": "log", "schema": {"journal": {"segment_max_lines": 2}}
-        }))
-        .unwrap();
-        vault.create_collection(log).unwrap();
         for n in 0..20 {
-            vault
-                .create(
-                    "log",
-                    DocumentCreation::default()
-                        .with_id(format!("l{n:02}"))
-                        .with_raw(format!("{{\"n\":{n}}}").into_bytes())
-                        .with_note("test"),
-                )
-                .unwrap();
+            create(
+                &vault,
+                "log",
+                DocumentCreation::default()
+                    .with_id(format!("l{n:02}"))
+                    .with_raw(format!("{{\"n\":{n}}}").into_bytes())
+                    .with_note("test"),
+            )
+            .await
+            .unwrap();
         }
         // The id map of the journal is made by the indexer.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -678,7 +686,7 @@ mod tests {
                 std::time::Instant::now() < deadline,
                 "the id map was not made"
             );
-            std::thread::sleep(std::time::Duration::from_millis(10));
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
         let page = |after: &str| DocumentSelection {
@@ -688,29 +696,36 @@ mod tests {
             ))),
             ..DocumentSelection::default()
         };
-        let before = blob_reads();
-        let mut stream = vault.get_many("log", page("l17")).unwrap();
-        let mut ids = Vec::new();
-        while let Some(item) = stream.next(&vault) {
-            ids.push(item.unwrap().id.unwrap_or_default());
-        }
-        assert_eq!(ids, ["l18", "l19"]);
-        assert!(
-            blob_reads() - before <= 2,
-            "the page read the segment of l17 and the next, not the ones before"
-        );
+        // The count of blob reads is of one thread: the whole check is one
+        // step.
+        step(&vault, move |cx, vault| {
+            let before = blob_reads();
+            let mut stream = vault.get_many(cx, "log", page("l17"))?;
+            let mut ids = Vec::new();
+            while let Some(item) = stream.next(cx, vault) {
+                ids.push(item?.id.unwrap_or_default());
+            }
+            assert_eq!(ids, ["l18", "l19"]);
+            assert!(
+                blob_reads() - before <= 2,
+                "the page read the segment of l17 and the next, not the ones before"
+            );
 
-        // A page in the first segments.
-        let mut stream = vault.get_many("log", page("l03")).unwrap();
-        let first = stream.next(&vault).unwrap().unwrap();
-        assert_eq!(first.id.as_deref(), Some("l04"));
+            // A page in the first segments.
+            let mut stream = vault.get_many(cx, "log", page("l03"))?;
+            let first = stream.next(cx, vault).unwrap()?;
+            assert_eq!(first.id.as_deref(), Some("l04"));
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
-    #[test]
-    fn the_first_document_of_a_big_collection_reads_one_blob_and_a_dropped_stream_no_more() {
+    #[tokio::test]
+    async fn the_first_document_of_a_big_collection_reads_one_blob_and_a_dropped_stream_no_more() {
         let scratch = Scratch::new("lazy-documents");
-        let vault = scratch.open();
-        declare(&vault, "notes");
+        let vault = scratch.open().await;
+        declare(&vault, "notes").await;
         let dir = scratch.0.join("notes");
         for n in 0..BIG {
             std::fs::write(dir.join(format!("d{n:06}.md")), format!("document {n}")).unwrap();
@@ -736,76 +751,100 @@ mod tests {
             cmd.run().unwrap();
         }
 
-        let mut stream = vault.get_many("notes", listing(true)).unwrap();
-        let before = blob_reads();
-        let first = stream.next(&vault).unwrap().unwrap();
-        assert_eq!(first.id.as_deref(), Some("d000000.md"));
-        assert_eq!(first.raw.as_deref(), Some(&b"document 0"[..]));
-        assert_eq!(blob_reads() - before, 1, "one Document file was opened");
-        let second = stream.next(&vault).unwrap().unwrap();
-        assert_eq!(second.id.as_deref(), Some("d000001.md"));
-        assert_eq!(blob_reads() - before, 2, "one more per Document");
-        drop(stream);
-        assert_eq!(blob_reads() - before, 2, "a dropped stream reads no more");
+        // The count of blob reads is of one thread: the whole check is one
+        // step.
+        step(&vault, |cx, vault| {
+            let mut stream = vault.get_many(cx, "notes", listing(true))?;
+            let before = blob_reads();
+            let first = stream.next(cx, vault).unwrap()?;
+            assert_eq!(first.id.as_deref(), Some("d000000.md"));
+            assert_eq!(first.raw.as_deref(), Some(&b"document 0"[..]));
+            assert_eq!(blob_reads() - before, 1, "one Document file was opened");
+            let second = stream.next(cx, vault).unwrap()?;
+            assert_eq!(second.id.as_deref(), Some("d000001.md"));
+            assert_eq!(blob_reads() - before, 2, "one more per Document");
+            drop(stream);
+            assert_eq!(blob_reads() - before, 2, "a dropped stream reads no more");
 
-        // Keys and revisions need no blob at all, whatever the size.
-        let mut keys = vault.get_many("notes", listing(false)).unwrap();
-        let before = blob_reads();
-        let mut count = 0;
-        while let Some(item) = keys.next(&vault) {
-            let document = item.unwrap();
-            assert!(document.raw.is_none());
-            assert!(document.revision.is_some());
-            count += 1;
-        }
-        assert_eq!(count, BIG);
-        assert_eq!(blob_reads() - before, 0);
+            // Keys and revisions need no blob at all, whatever the size.
+            let mut keys = vault.get_many(cx, "notes", listing(false))?;
+            let before = blob_reads();
+            let mut count = 0;
+            while let Some(item) = keys.next(cx, vault) {
+                let document = item?;
+                assert!(document.raw.is_none());
+                assert!(document.revision.is_some());
+                count += 1;
+            }
+            assert_eq!(count, BIG);
+            assert_eq!(blob_reads() - before, 0);
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
-    #[test]
-    fn the_first_version_of_a_long_history_reads_one_blob_and_a_dropped_stream_no_more() {
+    #[tokio::test]
+    async fn the_first_version_of_a_long_history_reads_one_blob_and_a_dropped_stream_no_more() {
         let scratch = Scratch::new("lazy-history");
-        let vault = scratch.open();
-        declare(&vault, "notes");
+        let vault = scratch.open().await;
+        declare(&vault, "notes").await;
         for n in 0..200 {
-            vault
-                .upsert("notes", upsert("a.md", &format!("version {n}")))
+            crate::testing::upsert(&vault, "notes", upsert("a.md", &format!("version {n}")))
+                .await
                 .unwrap();
-            vault
-                .upsert("notes", upsert("b.md", &format!("other {n}")))
+            crate::testing::upsert(&vault, "notes", upsert("b.md", &format!("other {n}")))
+                .await
                 .unwrap();
         }
-        let mut stream = vault
-            .history("notes", DocumentId::default().with_id("a.md"))
-            .unwrap();
-        let before = blob_reads();
-        let first = stream.next(&vault).unwrap().unwrap();
-        assert_eq!(first.raw.as_deref(), Some(&b"version 199"[..]));
-        assert_eq!(blob_reads() - before, 1, "one version was opened");
-        let second = stream.next(&vault).unwrap().unwrap();
-        assert_eq!(second.raw.as_deref(), Some(&b"version 198"[..]));
-        assert_eq!(blob_reads() - before, 2);
-        drop(stream);
-        assert_eq!(blob_reads() - before, 2, "a dropped stream reads no more");
+        // The count of blob reads is of one thread: the whole check is one
+        // step.
+        step(&vault, |cx, vault| {
+            let mut stream = vault.history(cx, "notes", DocumentId::default().with_id("a.md"))?;
+            let before = blob_reads();
+            let first = stream.next(cx, vault).unwrap()?;
+            assert_eq!(first.raw.as_deref(), Some(&b"version 199"[..]));
+            assert_eq!(blob_reads() - before, 1, "one version was opened");
+            let second = stream.next(cx, vault).unwrap()?;
+            assert_eq!(second.raw.as_deref(), Some(&b"version 198"[..]));
+            assert_eq!(blob_reads() - before, 2);
+            drop(stream);
+            assert_eq!(blob_reads() - before, 2, "a dropped stream reads no more");
+            Ok(())
+        })
+        .await
+        .unwrap();
     }
 
-    #[test]
-    fn a_write_that_has_not_returned_is_seen_by_no_get_many() {
+    #[tokio::test]
+    async fn a_write_that_has_not_returned_is_seen_by_no_get_many() {
         let scratch = Scratch::new("not-returned");
-        let vault = scratch.open();
-        declare(&vault, "notes");
-        vault.upsert("notes", upsert("old.md", "old")).unwrap();
-        let other = scratch.open();
+        let vault = scratch.open().await;
+        declare(&vault, "notes").await;
+        crate::testing::upsert(&vault, "notes", upsert("old.md", "old"))
+            .await
+            .unwrap();
+        let other = scratch.open().await;
         // The call stops after the list of its paths, before the swap on
         // `HEAD`, as a kill would.
-        hooks::stop_after_list();
-        let error = vault.upsert("notes", upsert("new.md", "new")).unwrap_err();
+        hooks::stop_after_list(&scratch.0.canonicalize().unwrap());
+        let error = crate::testing::upsert(&vault, "notes", upsert("new.md", "new"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
         for handle in [&vault, &other] {
-            let mut stream = handle.get_many("notes", listing(true)).unwrap();
-            let only = stream.next(handle).unwrap().unwrap();
-            assert_eq!(only.id.as_deref(), Some("old.md"));
-            assert!(stream.next(handle).is_none(), "new.md is seen by no read");
+            step(handle, |cx, handle| {
+                let mut stream = handle.get_many(cx, "notes", listing(true))?;
+                let only = stream.next(cx, handle).unwrap()?;
+                assert_eq!(only.id.as_deref(), Some("old.md"));
+                assert!(
+                    stream.next(cx, handle).is_none(),
+                    "new.md is seen by no read"
+                );
+                Ok(())
+            })
+            .await
+            .unwrap();
         }
     }
 }

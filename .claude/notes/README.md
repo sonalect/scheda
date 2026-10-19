@@ -25,8 +25,9 @@ Project state, deferred work, and measurements that outlive one session
   L8 (done: the old Index removed; `Vault.Index` and every port are
   `UNIMPLEMENTED` until L3, the Rust test suites not run). Then, set by
   the owner after L8: a run of every test (done, green), 22 A1 with the
-  L0 patch (done; `IndexState.head` became `stored_version`), A2 (next),
-  a probe of the debug loop, A3 and A4 in one commit, then 21 L2–L7, L9,
+  L0 patch (done; `IndexState.head` became `stored_version`), the probe of
+  the debug loop (done, numbers in 21 L1), 22 A2 + A3 + A4 in one commit
+  (done 20 October 2026), then 21 L2–L7, L9,
   L10 (with A5). The spike stays on the branch
   `lance-spike` (worktree `../scheda-lance`, `spikes/lance/`) and never
   reaches `lance-index` or `main`; its `kill` and `verify` commands are

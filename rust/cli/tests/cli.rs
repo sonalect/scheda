@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 
 use buffa_types::google::protobuf::Empty;
-use scheda::v1::{DocumentId, OpenMode, SchedaSync, VaultErrorCode};
+use scheda::v1::{DocumentId, OpenMode, SchedaAsync, VaultErrorCode};
 use scheda::{Scheda, error_report};
 use serde_json::{Value, json};
 
@@ -246,7 +246,12 @@ fn usage_errors_and_a_missing_vault_are_invalid_argument() {
 fn scheda_info_needs_no_vault() {
     let info = run(&["scheda-info"]).json();
     assert!(info["version"].is_string(), "{info}");
-    let lib = serde_json::to_value(Scheda.info(Empty::default()).unwrap()).unwrap();
+    let lib = serde_json::to_value(
+        common::runtime()
+            .block_on(Scheda.info(Empty::default()))
+            .unwrap(),
+    )
+    .unwrap();
     assert_eq!(info, lib);
 }
 
@@ -979,16 +984,16 @@ fn open_flags_reach_the_library() {
     let empty = scratch.path("empty-folder");
     fs::create_dir_all(&empty).unwrap();
     let flag = run_on(&empty, &["--mode", "open-existing", "info"]);
-    let lib = Scheda
-        .open(opening_with_mode(&empty, OpenMode::OPEN_MODE_OPEN_EXISTING))
+    let lib = common::runtime()
+        .block_on(Scheda.open(opening_with_mode(&empty, OpenMode::OPEN_MODE_OPEN_EXISTING)))
         .err()
         .unwrap();
     assert_eq!(flag.failure()["code"], json!(error_report(&lib).code));
     let made = run_on(&empty, &["--mode", "create-new", "info"]).json();
     assert_eq!(made["path"], json!(empty.display().to_string()));
     let again = run_on(&empty, &["--mode", "create-new", "info"]);
-    let lib = Scheda
-        .open(opening_with_mode(&empty, OpenMode::OPEN_MODE_CREATE_NEW))
+    let lib = common::runtime()
+        .block_on(Scheda.open(opening_with_mode(&empty, OpenMode::OPEN_MODE_CREATE_NEW)))
         .err()
         .unwrap();
     assert_eq!(again.failure()["code"], json!(error_report(&lib).code));

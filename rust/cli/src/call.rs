@@ -5,16 +5,17 @@
 use scheda::parse_command;
 use scheda::v1::document_selection::Selection;
 use scheda::v1::{
-    CollectionDeclaration, CollectionDeletion, DocumentCreation, DocumentDeletion, DocumentId,
-    DocumentSelection, DocumentUpdate, DocumentUpsert, Ids, Listing, MirrorSetting, VaultErrorCode,
+    CollectionDeclaration, CollectionDeletion, CollectionOperation, DocumentCreation,
+    DocumentDeletion, DocumentId, DocumentOperation, DocumentSelection, DocumentUpdate,
+    DocumentUpsert, Ids, Listing, MirrorSetting, VaultDocumentOperation, VaultErrorCode,
 };
 use scheda::{Error, Fault};
 
 use crate::args::{CollectionCommand, Command, MirrorCommand};
-use crate::stdio::{json_arg, raw_bytes};
+use crate::stdio::{json_arg, json_lines, raw_bytes};
 
-/// One rpc, with its request when it takes one. A batch reads its
-/// operations from stdin when it runs, one line at a time.
+/// One rpc, with its request when it takes one. A batch holds the
+/// operations it read from stdin, one per line.
 pub(crate) enum Call {
     /// `Scheda.Info`: the one call that opens no Vault.
     SchedaInfo,
@@ -31,9 +32,9 @@ pub(crate) enum Call {
     /// `Vault.DeleteCollection`.
     DeleteCollection(CollectionDeletion),
     /// `Vault.BatchCollections`.
-    BatchCollections,
+    BatchCollections(Vec<Result<CollectionOperation, Error>>),
     /// `Vault.BatchDocuments`.
-    BatchDocuments,
+    BatchDocuments(Vec<Result<VaultDocumentOperation, Error>>),
     /// A call on the collection with this name.
     Collection(String, CollectionCall),
     /// A call on the mirror.
@@ -50,7 +51,7 @@ pub(crate) enum CollectionCall {
     Update(DocumentUpdate),
     Upsert(DocumentUpsert),
     Delete(DocumentDeletion),
-    Batch,
+    Batch(Vec<Result<DocumentOperation, Error>>),
 }
 
 /// One rpc of `Mirror`.
@@ -90,8 +91,8 @@ impl Call {
                     .with_name(name)
                     .with_ignore_missing(ignore_missing),
             ),
-            Command::BatchCollections => Call::BatchCollections,
-            Command::BatchDocuments => Call::BatchDocuments,
+            Command::BatchCollections => Call::BatchCollections(json_lines(parse_command)),
+            Command::BatchDocuments => Call::BatchDocuments(json_lines(parse_command)),
             Command::Collection { name, command } => {
                 Call::Collection(name, collection_call(command)?)
             }
@@ -213,6 +214,6 @@ fn collection_call(command: CollectionCommand) -> Result<CollectionCall, Error> 
                 None => deletion,
             })
         }
-        CollectionCommand::Batch => CollectionCall::Batch,
+        CollectionCommand::Batch => CollectionCall::Batch(json_lines(parse_command)),
     })
 }

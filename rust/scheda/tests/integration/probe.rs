@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use super::common::command;
+use crate::common::command;
 
 /// The standard output of `git args` in `dir`, without the final newline.
 pub fn git_out(dir: &Path, args: &[&str]) -> String {

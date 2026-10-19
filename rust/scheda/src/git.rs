@@ -3,9 +3,15 @@
 //! `repo`, in process; what stays here is running `git` for `clone`, `fetch`,
 //! `pull`, and `push`, which need the person's SSH configuration, agent, and
 //! credential helpers, and mapping what it prints on `stderr` to a failure.
+//!
+//! A command is awaited, not waited for on a thread: a push holds no thread
+//! for its seconds on the network. A call that is dropped while its command
+//! runs kills the command.
 
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Write};
+use std::io;
+#[cfg(test)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -85,19 +91,35 @@ pub(crate) struct GitCmd {
     dir: Option<PathBuf>,
     args: Vec<OsString>,
     envs: Vec<(OsString, OsString)>,
+    #[cfg(test)]
     input: Option<Vec<u8>>,
 }
 
+/// How many git processes were started in each folder, for the tests that
+/// assert a call starts none. A command run without a folder counts under
+/// the empty path.
 #[cfg(test)]
-thread_local! {
-    static SPAWNED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+static SPAWNED: std::sync::Mutex<Vec<(PathBuf, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// How many git processes were started in `dir` so far.
+#[cfg(test)]
+pub(crate) fn spawned_in(dir: &Path) -> usize {
+    SPAWNED
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(seen, _)| seen == dir)
+        .map_or(0, |(_, count)| *count)
 }
 
-/// How many git processes this thread has started, for the tests that
-/// assert a call starts none.
 #[cfg(test)]
-pub(crate) fn spawned() -> usize {
-    SPAWNED.with(std::cell::Cell::get)
+fn count(dir: Option<&Path>) {
+    let dir = dir.unwrap_or_else(|| Path::new("")).to_path_buf();
+    let mut spawned = SPAWNED.lock().unwrap();
+    match spawned.iter_mut().find(|(seen, _)| *seen == dir) {
+        Some((_, count)) => *count += 1,
+        None => spawned.push((dir, 1)),
+    }
 }
 
 /// A new git command. Tests run it with the user's git configuration
@@ -109,6 +131,7 @@ pub(crate) fn git() -> GitCmd {
         dir: None,
         args: Vec::new(),
         envs: Vec::new(),
+        #[cfg(test)]
         input: None,
     }
 }
@@ -181,10 +204,34 @@ impl GitCmd {
     }
 
     /// Runs the command and returns its output whatever the exit status
-    /// was. Only a command that could not start is an error.
-    pub(crate) fn spawn(self) -> Result<GitOutput, Error> {
+    /// was. Only a command that could not start is an error. Dropping the
+    /// future kills the command.
+    pub(crate) async fn output(self) -> Result<GitOutput, Error> {
         #[cfg(test)]
-        SPAWNED.with(|count| count.set(count.get() + 1));
+        count(self.dir.as_deref());
+        let mut cmd = tokio::process::Command::from(self.command());
+        cmd.kill_on_drop(true);
+        match cmd.output().await {
+            Ok(out) => Ok(GitOutput::from(out)),
+            Err(err) => Err(spawn_fault(err).into()),
+        }
+    }
+
+    /// Runs the command; an exit status other than 0 is a failure.
+    pub(crate) async fn succeed(self) -> Result<GitOutput, Error> {
+        let out = self.output().await?;
+        if out.status.success() {
+            Ok(out)
+        } else {
+            Err(out.failure().into())
+        }
+    }
+
+    /// Runs the command on this thread and returns its output whatever the
+    /// exit status was: the setup of a test.
+    #[cfg(test)]
+    pub(crate) fn spawn(self) -> Result<GitOutput, Error> {
+        count(self.dir.as_deref());
         let mut cmd = self.command();
         let out = match &self.input {
             None => cmd.output(),
@@ -196,7 +243,8 @@ impl GitCmd {
         }
     }
 
-    /// Runs the command; an exit status other than 0 is a failure.
+    /// [`GitCmd::spawn`]; an exit status other than 0 is a failure.
+    #[cfg(test)]
     pub(crate) fn run(self) -> Result<GitOutput, Error> {
         let out = self.spawn()?;
         if out.status.success() {
@@ -210,8 +258,14 @@ impl GitCmd {
 /// `git clone -- url path`: copies the mirror at `url` into the new folder
 /// `path`. The person's SSH configuration, agent, and credential helpers
 /// apply; nothing is prompted for.
-pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
-    git().arg("clone").arg("--").arg(url).arg(path).run()?;
+pub(crate) async fn clone(url: &str, path: &Path) -> Result<(), Error> {
+    git()
+        .arg("clone")
+        .arg("--")
+        .arg(url)
+        .arg(path)
+        .succeed()
+        .await?;
     Ok(())
 }
 
@@ -219,14 +273,15 @@ pub(crate) fn clone(url: &str, path: &Path) -> Result<(), Error> {
 /// `what` (a branch name, or `HEAD`) lands in `FETCH_HEAD`. `false` when the
 /// mirror has no such branch (an empty mirror); every other failure is the
 /// classified one.
-pub(crate) fn fetch(dir: &Path, what: &str) -> Result<bool, Error> {
+pub(crate) async fn fetch(dir: &Path, what: &str) -> Result<bool, Error> {
     let out = git()
         .current_dir(dir)
         .arg("fetch")
         .arg("--")
         .arg("origin")
         .arg(what)
-        .spawn()?;
+        .output()
+        .await?;
     if out.success() {
         Ok(true)
     } else if out.missing_ref() {
@@ -239,7 +294,7 @@ pub(crate) fn fetch(dir: &Path, what: &str) -> Result<bool, Error> {
 /// `git push -- origin refs/heads/b:refs/heads/b` in the work tree at
 /// `dir`, for the branch `b`. A mirror that holds writes the Vault lacks
 /// refuses it: `MIRROR_AHEAD`.
-pub(crate) fn push(dir: &Path, branch: &str) -> Result<(), Error> {
+pub(crate) async fn push(dir: &Path, branch: &str) -> Result<(), Error> {
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
     git()
         .current_dir(dir)
@@ -247,7 +302,8 @@ pub(crate) fn push(dir: &Path, branch: &str) -> Result<(), Error> {
         .arg("--")
         .arg("origin")
         .arg(refspec)
-        .run()?;
+        .succeed()
+        .await?;
     Ok(())
 }
 
@@ -256,6 +312,7 @@ pub(crate) fn push(dir: &Path, branch: &str) -> Result<(), Error> {
 /// it has read everything cannot block on a full pipe. A write the command
 /// cuts short (it exited early) is not an error here: its exit status says
 /// why.
+#[cfg(test)]
 fn output_with_input(cmd: &mut Command, input: &[u8]) -> io::Result<std::process::Output> {
     cmd.stdin(Stdio::piped());
     let mut child = cmd.spawn()?;
@@ -321,13 +378,15 @@ pub(crate) fn isolate_test_git_env() {
 mod tests {
     use scheda_api::v1::VaultErrorCode;
 
-    use super::{git, isolate_test_git_env, spawned};
+    use super::{git, isolate_test_git_env, spawned_in};
 
     #[test]
     fn a_command_runs_with_input_and_counts_as_a_process() {
         isolate_test_git_env();
-        let before = spawned();
+        let dir = std::env::temp_dir();
+        let before = spawned_in(&dir);
         let out = git()
+            .current_dir(&dir)
             .arg("hash-object")
             .arg("--stdin")
             .input(b"x".to_vec())
@@ -337,7 +396,7 @@ mod tests {
             out.stdout_trim().unwrap(),
             "c1b0730e0133447badcfd47fd144e254807b06e1"
         );
-        assert_eq!(spawned(), before + 1);
+        assert_eq!(spawned_in(&dir), before + 1);
     }
 
     #[test]

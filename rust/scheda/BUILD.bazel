@@ -13,21 +13,11 @@ _SCHEDA_FEATURES = [
 # Cargo's `--no-default-features`: no feature at all. No Lance.
 _SCHEDA_THIN_FEATURES = []
 
-# Shared by every integration test crate (`mod common`).
-_TEST_COMMON = [
-    "tests/common/mod.rs",
-]
-
-# What the write tests look at after a write (`mod probe`, which uses
-# `mod common`).
-_TEST_PROBE = _TEST_COMMON + [
-    "tests/probe/mod.rs",
-]
-
 _SCHEDA_SRCS = glob(["src/**/*.rs"])
 
 _SCHEDA_DEPS = [
     "//rust/api:generated_v1",
+    "//rust/blocking",
     "@scheda_cargo//:buffa",
     "@scheda_cargo//:buffa-types",
     "@scheda_cargo//:git2",
@@ -82,340 +72,34 @@ rust_test(
     visibility = ["//rust:__pkg__"],
 )
 
+# The integration tests: one binary, so the library (and Lance) is linked
+# once per build.
+_INTEGRATION_SRCS = glob(["tests/integration/**/*.rs"])
+
+_INTEGRATION_DEPS = [
+    "@scheda_cargo//:buffa-types",
+    "@scheda_cargo//:protocontract",
+    "@scheda_cargo//:serde_json",
+    "@scheda_cargo//:tokio",
+]
+
 rust_test(
-    name = "documents_test",
+    name = "integration_test",
     size = "small",
-    srcs = ["tests/documents.rs"] + _TEST_PROBE,
+    srcs = _INTEGRATION_SRCS,
     crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/documents.rs",
+    crate_root = "tests/integration/main.rs",
     visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
+    deps = [":scheda"] + _INTEGRATION_DEPS,
 )
 
 rust_test(
-    name = "documents_thin_test",
+    name = "integration_thin_test",
     size = "small",
-    srcs = ["tests/documents.rs"] + _TEST_PROBE,
-    crate_root = "tests/documents.rs",
+    srcs = _INTEGRATION_SRCS,
+    crate_root = "tests/integration/main.rs",
     visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "index_test",
-    size = "small",
-    srcs = ["tests/index.rs"] + _TEST_PROBE,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/index.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "index_thin_test",
-    size = "small",
-    srcs = ["tests/index.rs"] + _TEST_PROBE,
-    crate_root = "tests/index.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "mirror_test",
-    size = "small",
-    srcs = ["tests/mirror.rs"] + _TEST_PROBE,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/mirror.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "mirror_thin_test",
-    size = "small",
-    srcs = ["tests/mirror.rs"] + _TEST_PROBE,
-    crate_root = "tests/mirror.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "open_test",
-    size = "small",
-    srcs = ["tests/open.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/open.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "open_thin_test",
-    size = "small",
-    srcs = ["tests/open.rs"] + _TEST_COMMON,
-    crate_root = "tests/open.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "async_test",
-    size = "small",
-    srcs = ["tests/async.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/async.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:tokio",
-    ],
-)
-
-rust_test(
-    name = "async_thin_test",
-    size = "small",
-    srcs = ["tests/async.rs"] + _TEST_COMMON,
-    crate_root = "tests/async.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-        "@scheda_cargo//:tokio",
-    ],
-)
-
-rust_test(
-    name = "collections_test",
-    size = "small",
-    srcs = ["tests/collections.rs"] + _TEST_PROBE,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/collections.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "collections_thin_test",
-    size = "small",
-    srcs = ["tests/collections.rs"] + _TEST_PROBE,
-    crate_root = "tests/collections.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "objects_test",
-    size = "small",
-    srcs = ["tests/objects.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/objects.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "objects_thin_test",
-    size = "small",
-    srcs = ["tests/objects.rs"] + _TEST_COMMON,
-    crate_root = "tests/objects.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "ports_test",
-    size = "small",
-    srcs = ["tests/ports.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/ports.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-    ],
-)
-
-rust_test(
-    name = "ports_thin_test",
-    size = "small",
-    srcs = ["tests/ports.rs"] + _TEST_COMMON,
-    crate_root = "tests/ports.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-    ],
-)
-
-rust_test(
-    name = "query_test",
-    size = "small",
-    srcs = ["tests/query.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/query.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "query_thin_test",
-    size = "small",
-    srcs = ["tests/query.rs"] + _TEST_COMMON,
-    crate_root = "tests/query.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "search_test",
-    size = "small",
-    srcs = ["tests/search.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/search.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "search_thin_test",
-    size = "small",
-    srcs = ["tests/search.rs"] + _TEST_COMMON,
-    crate_root = "tests/search.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "reads_test",
-    size = "small",
-    srcs = ["tests/reads.rs"] + _TEST_COMMON,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/reads.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "reads_thin_test",
-    size = "small",
-    srcs = ["tests/reads.rs"] + _TEST_COMMON,
-    crate_root = "tests/reads.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "write_test",
-    size = "small",
-    srcs = ["tests/write.rs"] + _TEST_PROBE,
-    crate_features = _SCHEDA_FEATURES,
-    crate_root = "tests/write.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "write_thin_test",
-    size = "small",
-    srcs = ["tests/write.rs"] + _TEST_PROBE,
-    crate_root = "tests/write.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":scheda_thin",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:serde_json",
-    ],
+    deps = [":scheda_thin"] + _INTEGRATION_DEPS,
 )
 
 rust_doc(

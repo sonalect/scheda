@@ -1,15 +1,22 @@
 //! Helpers shared by the integration tests: a scratch directory, plain
 //! `git` with the user's configuration kept out, a Vault built on disk
-//! the way a user would build one, without the library, and the objects of
-//! the opening of a Vault by the library.
+//! the way a user would build one, without the library, the objects of the
+//! opening of a Vault by the library, and the two runtimes every test runs
+//! on.
 
+use std::future::{Future, poll_fn};
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::Command;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use scheda::v1::{OpenOptions, SchedaSync, VaultOpening, VaultSync};
+use protocontract::{IterStream, Stream};
+use scheda::v1::{
+    CollectionKey, DynCollectionAsync, DynMirrorAsync, DynVaultAsync, OpenOptions, SchedaAsync,
+    VaultAsync, VaultOpening,
+};
 use scheda::{Error, Scheda};
+use tokio::runtime::Builder;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -143,9 +150,72 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// Runs `test` on a current-thread runtime, then on a multi-thread one:
+/// Scheda never blocks a thread of the runtime, so it works on both.
+pub fn both<F, Fut>(test: F)
+where
+    F: Fn() -> Fut,
+    Fut: Future<Output = ()>,
+{
+    Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(test());
+    Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(test());
+}
+
 /// Opens the Vault at `path` with `options` and no port.
-pub fn open(path: &Path, options: OpenOptions) -> Result<Arc<dyn VaultSync>, Error> {
-    Scheda.open(opening(path, options))?.to_sync()
+pub async fn open(path: &Path, options: OpenOptions) -> Result<DynVaultAsync, Error> {
+    Scheda.open(opening(path, options)).await?.to_async_inline()
+}
+
+/// The collection `name` of `vault`.
+pub async fn collection(vault: &DynVaultAsync, name: &str) -> Result<DynCollectionAsync, Error> {
+    vault
+        .get_collection(CollectionKey::default().with_name(name))
+        .await?
+        .to_async_inline()
+}
+
+/// The mirror of `vault`.
+pub async fn mirror(vault: &DynVaultAsync) -> Result<DynMirrorAsync, Error> {
+    vault
+        .mirror(buffa_types::google::protobuf::Empty::default())
+        .await?
+        .to_async_inline()
+}
+
+/// The next item of `stream`.
+pub async fn next<S: Stream + Unpin>(stream: &mut S) -> Option<S::Item> {
+    poll_fn(|cx| Pin::new(&mut *stream).poll_next(cx)).await
+}
+
+/// Every item of `stream`, up to its first failure.
+pub async fn all<T>(stream: impl Stream<Item = Result<T, Error>>) -> Result<Vec<T>, Error> {
+    let mut stream = Box::pin(stream);
+    let mut items = Vec::new();
+    while let Some(item) = next(&mut stream).await {
+        items.push(item?);
+    }
+    Ok(items)
+}
+
+/// The requests of a batch, as the stream a batch call takes.
+pub fn stream_of<T: Send + 'static>(
+    items: Vec<T>,
+) -> IterStream<std::vec::IntoIter<Result<T, Error>>> {
+    IterStream::new(
+        items
+            .into_iter()
+            .map(Ok)
+            .collect::<Vec<Result<T, Error>>>()
+            .into_iter(),
+    )
 }
 
 /// The request that opens the Vault at `path` with `options` and no port;

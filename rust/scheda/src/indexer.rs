@@ -1,7 +1,7 @@
-//! The indexer: one OS thread per handle that keeps the Index at the state
-//! of `HEAD`.
+//! The indexer: one task per handle that keeps the Index at the state of
+//! `HEAD`, on the runtime that opened the Vault.
 //!
-//! The thread sleeps on a [`Signal`]. A write of this handle that moved
+//! The task sleeps on a [`Signal`]. A write of this handle that moved
 //! `HEAD` (main or nested), and `Reindex`, wake it at once; otherwise it
 //! looks at `HEAD` every `index_poll_ms`, which finds the writes of other
 //! processes, commits made by hand, and pulls. A look reads two ref files
@@ -21,30 +21,34 @@
 //! A round that fails changes no `commit` and fails no write: the status
 //! carries `last_error` and the round is tried again after a pause that
 //! grows while it keeps failing. A panic inside a round is caught and
-//! reported the same way. Only this thread writes under `index/`.
+//! reported the same way. Only this task writes under `index/`.
+//!
+//! A round is one blocking step: every part of it reads or writes files
+//! under `index.lock`. Between two rounds the task waits without a thread.
 
 use std::collections::VecDeque;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
-use std::thread::{Builder, JoinHandle};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use protocontract::RuntimeCode;
 #[cfg(test)]
 use scheda_api::v1::VaultErrorCode;
 use scheda_api::v1::{IndexState, Rebuild, rebuild};
+use scheda_blocking::{Blocking, blocking};
+use tokio::runtime::Handle;
+use tokio::sync::{Notify, watch};
+use tokio::task::JoinHandle;
 
 use crate::collection;
 #[cfg(test)]
 use crate::error::Fault;
-use crate::error::{Context, Error, error_report, io};
+use crate::error::{Context, Error, error_report};
 use crate::idmap::JournalMaps;
 use crate::index::{Counts, Index, Round, Side, State};
 use crate::repo::{Repo, Repos};
-
-/// The name of the thread, which a test counts.
-pub(crate) const THREAD_NAME: &str = "scheda-indexer";
 
 /// How many past states a watcher that falls behind can still read one by
 /// one.
@@ -53,53 +57,36 @@ const HISTORY: usize = 256;
 /// The least time between two progress items of a rebuild.
 const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 
-/// What wakes the indexer thread.
+/// What wakes the indexer.
 #[derive(Debug, Default)]
 pub(crate) struct Signal {
-    flags: Mutex<Flags>,
-    wake: Condvar,
-}
-
-#[derive(Debug, Default)]
-struct Flags {
-    moved: bool,
-    stop: bool,
+    stop: AtomicBool,
+    wake: Notify,
 }
 
 impl Signal {
-    fn flags(&self) -> MutexGuard<'_, Flags> {
-        // Two booleans: a panic cannot leave them half-written.
-        self.flags.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    /// `HEAD` moved, or a rebuild was asked for: look now.
+    /// `HEAD` moved, or a rebuild was asked for: look now. A wake that
+    /// comes while the indexer is at a round counts once it is done.
     pub(crate) fn moved(&self) {
-        self.flags().moved = true;
-        self.wake.notify_all();
+        self.wake.notify_one();
     }
 
     fn stop(&self) {
-        self.flags().stop = true;
-        self.wake.notify_all();
+        self.stop.store(true, Ordering::Release);
+        self.wake.notify_one();
     }
 
     fn stopped(&self) -> bool {
-        self.flags().stop
+        self.stop.load(Ordering::Acquire)
     }
 
-    /// Waits until woken, stopped, or `timeout` passes; a wake that came
-    /// meanwhile counts. Returns `false` when stopped.
-    fn wait(&self, timeout: Duration) -> bool {
-        let mut flags = self.flags();
-        if !flags.moved && !flags.stop {
-            flags = self
-                .wake
-                .wait_timeout_while(flags, timeout, |flags| !flags.moved && !flags.stop)
-                .unwrap_or_else(PoisonError::into_inner)
-                .0;
+    /// Waits until woken, stopped, or `timeout` passes. Returns `false`
+    /// when stopped.
+    async fn wait(&self, timeout: Duration) -> bool {
+        if !self.stopped() {
+            let _ = tokio::time::timeout(timeout, self.wake.notified()).await;
         }
-        flags.moved = false;
-        !flags.stop
+        !self.stopped()
     }
 }
 
@@ -125,7 +112,9 @@ struct Inner {
 struct Shared {
     signal: Arc<Signal>,
     inner: Mutex<Inner>,
-    changed: Condvar,
+    /// The number of the next item, sent each time it moves or the
+    /// indexer ends: what a watcher waits on.
+    changed: watch::Sender<u64>,
 }
 
 impl Shared {
@@ -145,8 +134,9 @@ impl Shared {
             inner.history.pop_front();
         }
         inner.next += 1;
+        let next = inner.next;
         drop(inner);
-        self.changed.notify_all();
+        self.changed.send_replace(next);
     }
 
     /// Changes the state without making an item: what a call to
@@ -156,16 +146,20 @@ impl Shared {
     }
 
     fn close(&self) {
-        self.lock().closed = true;
-        self.changed.notify_all();
+        let next = {
+            let mut inner = self.lock();
+            inner.closed = true;
+            inner.next
+        };
+        self.changed.send_replace(next);
     }
 }
 
-/// The indexer of one handle: its thread and what it shares with the calls.
+/// The indexer of one handle: its task and what it shares with the calls.
 #[derive(Debug)]
 pub(crate) struct Indexer {
     shared: Arc<Shared>,
-    thread: Mutex<Option<JoinHandle<()>>>,
+    task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Indexer {
@@ -183,24 +177,31 @@ impl Indexer {
                     running: false,
                     closed: false,
                 }),
-                changed: Condvar::new(),
+                changed: watch::Sender::new(0),
             }),
-            thread: Mutex::new(None),
+            task: Mutex::new(None),
         }
     }
 
-    /// Starts the thread for the Vault at `vault`, whose repositories
-    /// `repos` reads. It looks at `HEAD` every `poll`.
+    /// Starts the task for the Vault at `vault`, whose repositories `repos`
+    /// reads, on the runtime of the caller. It looks at `HEAD` every
+    /// `poll`.
     ///
     /// # Errors
     ///
-    /// `STORAGE` when the system cannot start a thread.
+    /// `NO_RUNTIME` outside a tokio runtime.
     pub(crate) fn start(
         &self,
         vault: &Path,
         repos: Arc<Repos>,
         poll: Duration,
     ) -> Result<(), Error> {
+        let runtime = Handle::try_current().map_err(|_| {
+            Error::new(
+                RuntimeCode::NoRuntime,
+                "a Vault runs its indexer on a tokio runtime; open it inside one",
+            )
+        })?;
         let worker = Worker {
             shared: Arc::clone(&self.shared),
             repos,
@@ -211,12 +212,8 @@ impl Indexer {
             rebuilding: false,
             cause: None,
         };
-        let handle = Builder::new()
-            .name(THREAD_NAME.to_owned())
-            .spawn(move || worker.run(poll))
-            .map_err(io)
-            .context("start the indexer")?;
-        *self.thread.lock().unwrap_or_else(PoisonError::into_inner) = Some(handle);
+        let task = runtime.spawn(worker.run(poll));
+        *self.task.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
         Ok(())
     }
 
@@ -249,51 +246,59 @@ impl Indexer {
     }
 
     /// A stream of the state now, then of each change. It holds no lock
-    /// while it waits and ends only when the indexer does.
+    /// while it waits and ends only when the indexer does; a watcher that
+    /// drops it is gone at once.
     #[cfg(test)]
     pub(crate) fn watch(&self) -> Watch {
         Watch {
             shared: Arc::clone(&self.shared),
+            changed: self.shared.changed.subscribe(),
             next: None,
         }
     }
 
-    /// Whether the thread runs.
+    /// Whether the task runs.
     #[cfg(test)]
     pub(crate) fn is_running(&self) -> bool {
-        self.thread
+        self.task
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .as_ref()
-            .is_some_and(|handle| !handle.is_finished())
+            .is_some_and(|task| !task.is_finished())
     }
 
-    /// Stops the thread and waits for it: a round in progress ends at its
+    /// Stops the task and waits for it: a round in progress ends at its
     /// next step. Idempotent.
     ///
     /// # Errors
     ///
-    /// `PANICKED` when the thread died by a panic that was not in a round.
-    pub(crate) fn stop(&self) -> Result<(), Error> {
+    /// `PANICKED` when the task died by a panic that was not in a round.
+    pub(crate) async fn stop(&self) -> Result<(), Error> {
         self.shared.signal.stop();
-        self.shared.close();
-        let handle = self
-            .thread
+        let task = self
+            .task
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        match handle {
-            Some(handle) => handle
-                .join()
-                .map_err(|_| Error::new(RuntimeCode::Panicked, "the indexer thread panicked")),
+        let ended = match task {
+            Some(task) => task.await.map_err(|error| {
+                Error::new(
+                    RuntimeCode::Panicked,
+                    format!("the indexer task failed: {error}"),
+                )
+            }),
             None => Ok(()),
-        }
+        };
+        self.shared.close();
+        ended
     }
 }
 
 impl Drop for Indexer {
+    /// A handle dropped without `Close` cannot wait: the task is told to
+    /// stop and ends after its current round, on its own.
     fn drop(&mut self) {
-        let _ = self.stop();
+        self.shared.signal.stop();
     }
 }
 
@@ -330,33 +335,34 @@ impl Inner {
     }
 }
 
-/// A stream of the states of the Index, read on a thread.
+/// A stream of the states of the Index.
 #[cfg(test)]
 pub(crate) struct Watch {
     shared: Arc<Shared>,
+    changed: watch::Receiver<u64>,
     /// The number of the next item to give; `None` before the first.
     next: Option<u64>,
 }
 
 #[cfg(test)]
-impl Iterator for Watch {
-    type Item = Result<IndexState, Error>;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        let mut inner = self.shared.lock();
+impl Watch {
+    /// The next state, `None` once the indexer has ended.
+    pub(crate) async fn next(&mut self) -> Option<Result<IndexState, Error>> {
         loop {
-            match inner.read(self.next) {
+            // Marked seen before the state is read, so a change made after
+            // the read wakes the wait below.
+            self.changed.borrow_and_update();
+            let read = self.shared.lock().read(self.next);
+            match read {
                 Read::Item(state, next) => {
                     self.next = Some(next);
                     return Some(Ok(*state));
                 }
                 Read::End => return None,
                 Read::Wait => {
-                    inner = self
-                        .shared
-                        .changed
-                        .wait(inner)
-                        .unwrap_or_else(PoisonError::into_inner);
+                    if self.changed.changed().await.is_err() {
+                        return None;
+                    }
                 }
             }
         }
@@ -398,7 +404,8 @@ struct Worker {
 }
 
 impl Worker {
-    fn run(mut self, poll: Duration) {
+    async fn run(mut self, poll: Duration) {
+        let shared = Arc::clone(&self.shared);
         let longest = poll.saturating_mul(8);
         let mut backoff = poll;
         let mut pause = Duration::ZERO;
@@ -406,13 +413,26 @@ impl Worker {
             let go = if pause.is_zero() {
                 !self.shared.signal.stopped()
             } else {
-                self.shared.signal.wait(pause)
+                self.shared.signal.wait(pause).await
             };
             if !go {
                 break;
             }
-            let outcome = catch_unwind(AssertUnwindSafe(|| self.round()))
-                .unwrap_or_else(|payload| Err(panicked(payload.as_ref())));
+            let outcome;
+            (self, outcome) = match blocking(move |cx| {
+                let outcome = catch_unwind(AssertUnwindSafe(|| self.round(cx)))
+                    .unwrap_or_else(|payload| Err(panicked(payload.as_ref())));
+                Ok((self, outcome))
+            })
+            .await
+            {
+                Ok(done) => done,
+                // The runtime shuts down: the step never ran.
+                Err(_) => {
+                    shared.close();
+                    return;
+                }
+            };
             match outcome {
                 Ok(Next::Again) => {
                     backoff = poll;
@@ -436,7 +456,7 @@ impl Worker {
     }
 
     /// One look at `HEAD` and, if the Index is behind, one round.
-    fn round(&mut self) -> Result<Next, Error> {
+    fn round(&mut self, _cx: &Blocking) -> Result<Next, Error> {
         let asked = self.shared.lock().requested;
         let committed = if self.index.has_format()? {
             self.index.read_commit()?
@@ -741,13 +761,11 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use scheda_api::v1::{
-        CollectionDeclaration, DocumentCreation, IndexState, OpenOptions, VaultErrorCode,
-    };
+    use scheda_api::v1::{DocumentCreation, IndexState, OpenOptions, VaultErrorCode};
 
     use super::{HISTORY, Indexer, Signal, Watch, hooks};
     use crate::index::Index;
-    use crate::ports::Ports;
+    use crate::testing::{create, create_collection, open};
     use crate::vault::Vault;
 
     struct Scratch(PathBuf);
@@ -761,13 +779,10 @@ mod tests {
             Scratch(dir)
         }
 
-        fn open(&self) -> Vault {
-            Vault::open(
-                &self.0,
-                OpenOptions::default().with_index_poll_ms(10),
-                Ports::default(),
-            )
-            .unwrap()
+        async fn open(&self) -> Arc<Vault> {
+            open(&self.0, OpenOptions::default().with_index_poll_ms(10))
+                .await
+                .unwrap()
         }
 
         fn canonical(&self) -> PathBuf {
@@ -781,26 +796,28 @@ mod tests {
         }
     }
 
-    fn journal(vault: &Vault, name: &str) {
-        let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
-            "name": name, "schema": {"journal": {}}
-        }))
+    async fn journal(vault: &Arc<Vault>, name: &str) {
+        create_collection(
+            vault,
+            serde_json::json!({"name": name, "schema": {"journal": {}}}),
+        )
+        .await
         .unwrap();
-        vault.create_collection(collection).unwrap();
     }
 
-    fn line(vault: &Vault, collection: &str, id: &str) {
-        vault
-            .create(
-                collection,
-                DocumentCreation {
-                    id: Some(id.to_owned()),
-                    raw: Some(b"{}".to_vec()),
-                    note: Some("test".to_owned()),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
+    async fn line(vault: &Arc<Vault>, collection: &str, id: &str) {
+        create(
+            vault,
+            collection,
+            DocumentCreation {
+                id: Some(id.to_owned()),
+                raw: Some(b"{}".to_vec()),
+                note: Some("test".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
     }
 
     fn head(path: &Path) -> String {
@@ -811,11 +828,11 @@ mod tests {
     }
 
     /// Waits until `done` says so, or fails the test after 20 seconds.
-    fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
+    async fn wait_until(what: &str, mut done: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(20);
         while !done() {
             assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 
@@ -826,19 +843,19 @@ mod tests {
             && state.role != Some(true)
     }
 
-    #[test]
-    fn the_watch_gives_the_state_at_once_and_then_one_item_per_round() {
+    #[tokio::test]
+    async fn the_watch_gives_the_state_at_once_and_then_one_item_per_round() {
         let scratch = Scratch::new("watch");
-        let vault = scratch.open();
-        journal(&vault, "log");
+        let vault = scratch.open().await;
+        journal(&vault, "log").await;
         let path = scratch.canonical();
-        wait_until("the first build", || at_head(&vault, &path));
+        wait_until("the first build", || at_head(&vault, &path)).await;
         let mut watch = vault.indexer().watch();
-        let first = watch.next().unwrap().unwrap();
+        let first = watch.next().await.unwrap().unwrap();
         assert_eq!(first.version.as_deref(), Some(head(&path).as_str()));
         assert_eq!(first.stored_version, first.version, "the Index is at HEAD");
-        line(&vault, "log", "one");
-        let moved = watch.next().unwrap().unwrap();
+        line(&vault, "log", "one").await;
+        let moved = watch.next().await.unwrap().unwrap();
         assert_eq!(moved.version.as_deref(), Some(head(&path).as_str()));
         assert_eq!(moved.stored_version.as_deref(), Some(head(&path).as_str()));
         assert_eq!(moved.pending, Some(0));
@@ -846,44 +863,47 @@ mod tests {
         assert!(!moved.last_error.is_set());
         // No further write, no further item.
         assert!(at_head(&vault, &path));
-        vault.close().unwrap();
-        assert!(watch.next().is_none(), "the stream ends with the handle");
+        vault.close().await.unwrap();
+        assert!(
+            watch.next().await.is_none(),
+            "the stream ends with the handle"
+        );
     }
 
-    #[test]
-    fn a_watcher_that_falls_far_behind_skips_to_the_oldest_item_kept() {
+    #[tokio::test]
+    async fn a_watcher_that_falls_far_behind_skips_to_the_oldest_item_kept() {
         let indexer = Indexer::new(Arc::new(Signal::default()));
         let mut watch = indexer.watch();
-        assert!(watch.next().unwrap().unwrap().version.is_none());
+        assert!(watch.next().await.unwrap().unwrap().version.is_none());
         for n in 0..HISTORY + 10 {
             indexer
                 .shared
                 .publish(|inner| inner.state.pending = Some(n as u64));
         }
-        let oldest = watch.next().unwrap().unwrap();
+        let oldest = watch.next().await.unwrap().unwrap();
         assert_eq!(oldest.pending, Some(10));
         assert_eq!(
-            watch.next().unwrap().unwrap().pending,
+            watch.next().await.unwrap().unwrap().pending,
             Some(11),
             "then one by one"
         );
     }
 
-    #[test]
-    fn the_rounds_of_two_handles_of_one_vault_never_overlap() {
+    #[tokio::test]
+    async fn the_rounds_of_two_handles_of_one_vault_never_overlap() {
         let scratch = Scratch::new("overlap");
-        let one = scratch.open();
-        journal(&one, "log");
+        let one = scratch.open().await;
+        journal(&one, "log").await;
         let path = scratch.canonical();
-        wait_until("the first build", || at_head(&one, &path));
+        wait_until("the first build", || at_head(&one, &path)).await;
         hooks::stretch(&path, Duration::from_millis(30));
-        let two = scratch.open();
+        let two = scratch.open().await;
         for n in 0..6 {
-            line(&one, "log", &format!("a{n}"));
-            line(&two, "log", &format!("b{n}"));
+            line(&one, "log", &format!("a{n}")).await;
+            line(&two, "log", &format!("b{n}")).await;
         }
-        wait_until("the first handle", || at_head(&one, &path));
-        wait_until("the second handle", || at_head(&two, &path));
+        wait_until("the first handle", || at_head(&one, &path)).await;
+        wait_until("the second handle", || at_head(&two, &path)).await;
         assert_eq!(hooks::most_at_once(&path), 1);
         assert_eq!(
             one.indexer().status().version,
@@ -895,63 +915,63 @@ mod tests {
 
     /// The first item of `watch` that reports a failed round. The status
     /// itself may have moved on by then: the retry starts one poll later.
-    fn failure(watch: &mut Watch) -> IndexState {
+    async fn failure(watch: &mut Watch) -> IndexState {
         loop {
-            let state = watch.next().unwrap().unwrap();
+            let state = watch.next().await.unwrap().unwrap();
             if state.last_error.is_set() {
                 return state;
             }
         }
     }
 
-    #[test]
-    fn a_round_that_fails_or_panics_is_reported_and_tried_again() {
+    #[tokio::test]
+    async fn a_round_that_fails_or_panics_is_reported_and_tried_again() {
         let scratch = Scratch::new("fail");
-        let vault = scratch.open();
-        journal(&vault, "log");
+        let vault = scratch.open().await;
+        journal(&vault, "log").await;
         let path = scratch.canonical();
-        wait_until("the first build", || at_head(&vault, &path));
+        wait_until("the first build", || at_head(&vault, &path)).await;
         let index = Index::new(&path);
         let before = index.read_commit().unwrap();
         hooks::fail_once(&path);
         let mut watch = vault.indexer().watch();
-        line(&vault, "log", "one");
-        let state = failure(&mut watch);
+        line(&vault, "log", "one").await;
+        let state = failure(&mut watch).await;
         let error = state.last_error.as_option().unwrap();
         assert_eq!(error.code.as_deref(), Some("VAULT_ERROR_CODE_STORAGE"));
         assert_eq!(state.role, Some(false));
         // The write was not failed; the thread goes on and the next round
         // succeeds.
-        wait_until("the retry", || at_head(&vault, &path));
+        wait_until("the retry", || at_head(&vault, &path)).await;
         assert!(!vault.indexer().status().last_error.is_set());
         assert_ne!(index.read_commit().unwrap(), before);
 
         hooks::panic_once(&path);
         let mut watch = vault.indexer().watch();
-        line(&vault, "log", "two");
-        let state = failure(&mut watch);
+        line(&vault, "log", "two").await;
+        let state = failure(&mut watch).await;
         let error = state.last_error.as_option().unwrap();
         assert_eq!(error.code.as_deref(), Some("PANICKED"));
         assert!(error.message.as_deref().unwrap_or("").contains("panicked"));
-        wait_until("the retry", || at_head(&vault, &path));
+        wait_until("the retry", || at_head(&vault, &path)).await;
         assert!(vault.indexer().is_running());
     }
 
-    #[test]
-    fn a_rebuild_waits_for_the_lock_and_a_second_request_is_aborted() {
+    #[tokio::test]
+    async fn a_rebuild_waits_for_the_lock_and_a_second_request_is_aborted() {
         let scratch = Scratch::new("rebuild");
-        let vault = scratch.open();
-        journal(&vault, "log");
-        line(&vault, "log", "one");
+        let vault = scratch.open().await;
+        journal(&vault, "log").await;
+        line(&vault, "log", "one").await;
         let path = scratch.canonical();
-        wait_until("the first build", || at_head(&vault, &path));
+        wait_until("the first build", || at_head(&vault, &path)).await;
         let held = Index::new(&path).try_lock().unwrap().unwrap();
         let mut watch = vault.indexer().watch();
-        watch.next().unwrap().unwrap();
+        watch.next().await.unwrap().unwrap();
         vault.indexer().reindex().unwrap();
         let error = vault.indexer().reindex().unwrap_err();
         assert!(error.is(VaultErrorCode::Aborted));
-        std::thread::sleep(Duration::from_millis(60));
+        tokio::time::sleep(Duration::from_millis(60)).await;
         let state = vault.indexer().status();
         assert_eq!(
             state
@@ -975,7 +995,7 @@ mod tests {
         drop(held);
         let mut stages = Vec::new();
         let last: IndexState = loop {
-            let state = watch.next().unwrap().unwrap();
+            let state = watch.next().await.unwrap().unwrap();
             let stage = state
                 .rebuild
                 .as_option()
@@ -1002,16 +1022,18 @@ mod tests {
         vault.indexer().reindex().unwrap();
     }
 
-    #[test]
-    fn close_and_drop_end_the_thread() {
+    #[tokio::test]
+    async fn close_and_drop_end_the_thread() {
         let scratch = Scratch::new("stop");
-        let one = scratch.open();
-        let two = scratch.open();
+        let one = scratch.open().await;
+        let two = scratch.open().await;
         assert!(one.indexer().is_running());
         let shared = Arc::clone(&two.indexer().shared);
-        one.close().unwrap();
+        one.close().await.unwrap();
         assert!(!shared.lock().closed, "the other handle is not closed");
         drop(two);
+        // The task ends after its current round, on its own.
+        wait_until("the task of the dropped handle", || shared.lock().closed).await;
         assert!(shared.lock().closed, "a dropped handle stops its thread");
     }
 }

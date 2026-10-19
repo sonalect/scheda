@@ -24,6 +24,7 @@ scheda = { workspace = true, features = ["encrypt"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread"] }
 ureq = { workspace = true }
 
 [lints]

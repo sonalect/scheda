@@ -232,11 +232,17 @@ A3 makes a task (D6) and `21` L3 gives a Lance side. Until `21` L5 and L6,
 ## 3. Stages
 
 Order of the whole branch (the owner, after `21` L8; `21` §8.4): `21` L0,
-L1, L8; a run of every test; A1 with the contract of `21` §8; A2; a probe
-of the debug loop (`21` L1); A3 and A4 in one commit; then `21` L2–L7,
+L1, L8; a run of every test; A1 with the contract of `21` §8; a probe of
+the debug loop (`21` L1); A2, A3, and A4 in one commit; then `21` L2–L7,
 L9, L10 (with A5). Inside each stage: code and tests first, then `cargo test`
 and `cargo clippy` green; a box is ticked when its *Check:* passes. One
 docs pass at the end (A5).
+
+On 20 October 2026 the owner set the rule for the rest of the branch: the
+end result counts, a stage in between may be red, and no temporary code
+is written to keep one green. A2 therefore went into the commit of A3 and
+A4: on its own, the blocking objects that A3 removes would have needed a
+second, temporary way to make the token.
 
 ### A1. The contract and the dependencies
 
@@ -262,24 +268,39 @@ D1, D2.
 
 D3, D4.
 
-- [ ] The token `Blocking` and the helper `blocking`; the entry points of
-      the core take the token.
-- *Check:* an async function that calls the core without the helper does
-  not compile (a `compile_fail` doctest).
+- [x] The token `Blocking` and the helper `blocking`, in a crate of their
+      own (`rust/blocking`, `scheda-blocking`); the entry points of the
+      core take the token. A doctest sees only public items, so a
+      `compile_fail` doctest on the private core would fail to compile
+      for the wrong reason and prove nothing; in its own crate the gate is
+      public and its doctests are real. The core's own tests call their
+      steps through `blocking` on a test runtime, so no `cfg(test)`
+      constructor exists.
+- *Check:* `rust/blocking` doctests (20 October 2026): each claim is a
+  pair that differs in one line, one that compiles and runs, one that does
+  not compile, checked to fail for its own reason (a private field, a
+  borrow that outlives the step, a move out of the borrow): the token
+  cannot be made, kept, or copied outside the helper.
 
 ### A3. The objects async
 
 D1, D3, D4, D5, D6, D7, D8, D11.
 
-- [ ] `Scheda`, `Vault`, `Collection`, `Mirror`, and the Index object
+- [x] `Scheda`, `Vault`, `Collection`, `Mirror`, and the Index object
       implement the async traits on the core, in place of the blocking
       objects and of `Offload` (`21` L8 left `Vault.Index`
       `UNIMPLEMENTED`: the Index object comes back async in `21` L3); the waits of the core (the `git`
       processes, the write lock, the wait at `open`) move out of it (D3,
       D5).
-- [ ] The indexer as a task (D6): its signal, `Watch`, the round as a task
-      of its own, the poll; the journal id maps its one side.
-- [ ] `Close` and drop per D7.
+- [x] The indexer as a task (D6): its signal (`Notify`), `Watch` (a
+      `watch` channel over the kept states), the poll; the journal id maps
+      its one side. A round is one blocking step while every part of it
+      reads or writes files; its panic is caught there and becomes
+      `last_error`. `21` L3, whose round awaits Lance, runs the round as a
+      task of its own.
+- [x] `Close` and drop per D7. Each blocking step carries a pass of the
+      gate, so `Close` waits for the step of a call that was dropped, and
+      returns with every lock let go.
 - [ ] Ports in their async form (D8): written in `21` L3, since `21` L8
       makes every port `UNIMPLEMENTED` until then.
 - *Check:* `rust/scheda/tests` on `#[tokio::test]`, on both runtime
@@ -288,15 +309,26 @@ D1, D3, D4, D5, D6, D7, D8, D11.
   Vault wrapped in `Blocking` works on a multi-thread runtime and refuses
   on a current-thread one; a panic in a round becomes `last_error` and
   the next round runs; closing a Vault in the middle of a round returns
-  within one step.
+  within one step. Passed 20 October 2026: the integration tests are one
+  binary (`tests/integration/`, so the library and Lance are linked once,
+  as the probe of `21` L1 advised), each object test run by `both` on a
+  current-thread and a multi-thread runtime;
+  `service::tests::a_write_dropped_during_its_commit_is_stored_and_close_waits_for_it`,
+  `runtime::a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it`,
+  `runtime::a_blocking_caller_wraps_the_vault_on_a_multi_thread_runtime_and_is_refused_on_a_current_thread_one`,
+  `indexer::tests::a_round_that_fails_or_panics_is_reported_and_tried_again`,
+  `index::close_and_drop_end_the_indexer_task`.
 
 ### A4. The CLI
 
 D10.
 
-- [ ] `main` on a multi-thread runtime; the commands on the async objects;
-      the watch helper as a task.
-- *Check:* `rust/cli/tests` green, with the same output as before.
+- [x] `main` on a multi-thread runtime; the commands on the async objects;
+      the watch helper as a task (gone with `index` in `21` L8; it comes
+      back with it in `21` L9). The flags and the input, a batch's stdin
+      included, are read before the runtime starts.
+- *Check:* `rust/cli/tests` green, with the same output as before (20
+  October 2026).
 
 ### A5. Docs
 

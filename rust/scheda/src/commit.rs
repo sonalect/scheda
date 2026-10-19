@@ -1,10 +1,14 @@
 //! The write path: one short lock, a commit first, the files after.
 //!
-//! Every write of a Vault goes through [`Committer::lock`] and
+//! Every write of a Vault goes through [`Committer::acquire`] and
 //! [`WriteLock::commit_in`]. A writer takes its turn among the writes of its
-//! handle, then `flock` on `{vault}/.scheda/commit.lock`, which it waits for
-//! while another handle, of this process or another, holds it. Holding the
-//! lock it builds the commit in the object database through the git library:
+//! handle, first come first served, then `flock` on
+//! `{vault}/.scheda/commit.lock`, which it waits for while another handle, of
+//! this process or another, holds it. Both waits are `await`s: no thread is
+//! held while another writer has the lock, and a writer whose call is
+//! dropped while it waits leaves the queue and takes nothing. Holding the
+//! lock, in one blocking step, it builds the commit in the object database
+//! through the git library:
 //! the new blobs, a tree built on the tree of the commit its checks read,
 //! and the commit. `HEAD` moves by compare and swap on that commit, so a
 //! `git` command run by hand meanwhile makes the write `ABORTED`.
@@ -37,13 +41,14 @@ use std::fs::{self, File, OpenOptions as FileOptions, TryLockError as FileLockEr
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use git2::build::TreeUpdateBuilder;
 use git2::{ErrorCode, Index, IndexEntry, IndexTime, ObjectType, Oid, Repository, Signature};
 use scheda_api::v1::{OpenOptions, VaultErrorCode};
+use scheda_blocking::{Blocking, blocking};
+use tokio::sync::{Mutex as Queue, OwnedMutexGuard};
+use tokio::time::Instant;
 
 use crate::error::{Context, Error, Fault, io, lib_fault};
 use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
@@ -197,10 +202,10 @@ pub(crate) struct Committer {
     timeout: Duration,
     identity: Identity,
     repos: Arc<Repos>,
-    /// Whether a write of this handle has its turn. It guards no data: the
-    /// lock file guards the state of the Vault. A flag, not a mutex, so the
-    /// turn can be taken on one thread and let go on another.
-    turn: Arc<AtomicBool>,
+    /// The turn among the writes of this handle: a fair queue, so the
+    /// writes of the handle take the lock in the order they asked for it.
+    /// It guards no data: the lock file guards the state of the Vault.
+    turn: Arc<Queue<()>>,
     /// Woken when a commit of this handle moves `HEAD`: the indexer looks
     /// at once.
     signal: Arc<Signal>,
@@ -210,6 +215,7 @@ impl Committer {
     /// The write path of the Vault at `root`, with the author and the
     /// timeout `options` give.
     pub(crate) fn new(
+        _cx: &Blocking,
         root: &Path,
         options: &OpenOptions,
         repos: Arc<Repos>,
@@ -222,7 +228,7 @@ impl Committer {
             timeout,
             identity: Identity::resolve(options, &repos).context("resolve the author")?,
             repos,
-            turn: Arc::new(AtomicBool::new(false)),
+            turn: Arc::new(Queue::new(())),
             signal: Arc::new(Signal::default()),
         })
     }
@@ -232,60 +238,27 @@ impl Committer {
         Arc::clone(&self.signal)
     }
 
-    /// Takes the write lock: the turn among the writes of this handle, then
-    /// `flock` on `commit.lock`, polled without blocking until the timeout
-    /// runs out. A list of paths left in the file by a writer that died is
-    /// recovered before the lock is returned.
+    /// Waits for the write lock: the turn among the writes of this handle,
+    /// then `flock` on `commit.lock`, tried without blocking with a pause
+    /// between two tries (1 ms, doubling up to 25 ms), until the timeout
+    /// runs out. Nothing is recovered yet: [`Committer::adopt`] does that,
+    /// in the step that writes. Dropped while it waits, it takes nothing.
     ///
     /// # Errors
     ///
     /// `ABORTED` (retryable) when the lock is not free within the timeout;
-    /// nothing is written then. `STORAGE` or `REPLICATION` when the lock
-    /// file or git fails.
-    pub(crate) fn lock(&self) -> Result<WriteLock<'_>, Error> {
-        let held = self.acquire()?;
-        self.adopt(held)
-    }
-
-    /// Waits for the turn and for `flock`, on the thread of the caller,
-    /// without recovering anything: [`Committer::adopt`] does that.
-    fn acquire(&self) -> Result<Held, Error> {
+    /// nothing is written then. `STORAGE` when the lock file cannot be
+    /// opened.
+    pub(crate) async fn acquire(&self) -> Result<Held, Error> {
         let deadline = Instant::now() + self.timeout;
-        let mut pause = FIRST_POLL;
-        let turn = loop {
-            if let Some(turn) = Turn::take(&self.turn) {
-                break turn;
-            }
-            wait(&mut pause, deadline)?;
-        };
-        let file = open_lock_file(&self.root)?;
-        take_flock(&file, deadline)?;
-        Ok(Held {
-            _turn: turn,
-            flock: Flock::held(file),
-        })
-    }
-
-    /// Waits for the write lock as [`Committer::lock`] does, but in a task:
-    /// each pause is an `await`, so no thread is held while another writer
-    /// has the lock. The result is `'static` and `Send`, so it can move to
-    /// the thread that writes ([`Committer::adopt`]).
-    ///
-    /// # Errors
-    ///
-    /// As [`Committer::lock`], except for the recovery.
-    pub(crate) async fn acquire_async(&self) -> Result<Held, Error> {
-        let deadline = Instant::now() + self.timeout;
-        let mut pause = FIRST_POLL;
-        let turn = loop {
-            if let Some(turn) = Turn::take(&self.turn) {
-                break turn;
-            }
-            wait_async(&mut pause, deadline).await?;
-        };
-        let file = open_lock_file(&self.root)?;
+        let turn = tokio::time::timeout_at(deadline, Arc::clone(&self.turn).lock_owned())
+            .await
+            .map_err(|_| lock_busy())?;
+        let root = self.root.clone();
+        let file = blocking(move |cx| open_lock_file(cx, &root)).await?;
         let mut pause = FIRST_POLL;
         loop {
+            // A try never waits: `flock` without blocking returns at once.
             match file.try_lock() {
                 Ok(()) => break,
                 Err(FileLockError::WouldBlock) => {}
@@ -293,7 +266,10 @@ impl Committer {
                     return Err(io(err)).context("take the write lock");
                 }
             }
-            wait_async(&mut pause, deadline).await?;
+            if Instant::now() >= deadline {
+                return Err(lock_busy());
+            }
+            tokio::time::sleep(grow(&mut pause)).await;
         }
         Ok(Held {
             _turn: turn,
@@ -307,56 +283,33 @@ impl Committer {
     /// # Errors
     ///
     /// `STORAGE` or `REPLICATION` when the recovery fails.
-    pub(crate) fn adopt(&self, held: Held) -> Result<WriteLock<'_>, Error> {
+    pub(crate) fn adopt(&self, _cx: &Blocking, held: Held) -> Result<WriteLock<'_>, Error> {
         recover(&self.root, &self.repos, held.flock.file())
             .context("recover an unfinished write")?;
         Ok(WriteLock {
             committer: self,
-            _turn: held._turn,
-            flock: held.flock,
+            held,
         })
     }
 
-    /// Recovers the unfinished write a dead writer left, if one did. It
-    /// takes the lock for that, with the timeout, and only when the lock
-    /// file holds paths.
-    ///
-    /// # Errors
-    ///
-    /// As [`Committer::lock`].
-    pub(crate) fn recover_pending(&self) -> Result<(), Error> {
-        if pending(&self.root)? {
-            drop(self.lock()?);
+    /// The write lock again, for a lock a step of the same call adopted
+    /// and let go of with [`WriteLock::release`]: nothing to recover, since
+    /// the lock was held all along.
+    pub(crate) fn resume(&self, _cx: &Blocking, held: Held) -> WriteLock<'_> {
+        WriteLock {
+            committer: self,
+            held,
         }
-        Ok(())
     }
 }
 
-/// The turn among the writes of one handle, let go when dropped.
-#[derive(Debug)]
-struct Turn(Arc<AtomicBool>);
-
-impl Turn {
-    /// The turn, if no write has it.
-    fn take(flag: &Arc<AtomicBool>) -> Option<Turn> {
-        flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .ok()
-            .map(|_| Turn(Arc::clone(flag)))
-    }
-}
-
-impl Drop for Turn {
-    fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
-    }
-}
-
-/// The turn and the file lock of a write, taken and not yet recovered: it
-/// owns everything it holds, so it can cross threads before it becomes a
-/// [`WriteLock`] with [`Committer::adopt`].
+/// The turn and the file lock of a write: it owns everything it holds, so
+/// it can wait in a task and cross to the thread that writes, where it
+/// becomes a [`WriteLock`] with [`Committer::adopt`]. Dropping it lets the
+/// lock go.
 #[derive(Debug)]
 pub(crate) struct Held {
-    _turn: Turn,
+    _turn: OwnedMutexGuard<()>,
     flock: Flock,
 }
 
@@ -377,30 +330,12 @@ fn grow(pause: &mut Duration) -> Duration {
     now
 }
 
-/// Sleeps one poll interval, or is `ABORTED` when `deadline` has passed.
-fn wait(pause: &mut Duration, deadline: Instant) -> Result<(), Error> {
-    if Instant::now() >= deadline {
-        return Err(lock_busy());
-    }
-    sleep(grow(pause));
-    Ok(())
-}
-
-/// [`wait`] without holding the thread.
-async fn wait_async(pause: &mut Duration, deadline: Instant) -> Result<(), Error> {
-    if Instant::now() >= deadline {
-        return Err(lock_busy());
-    }
-    tokio::time::sleep(grow(pause)).await;
-    Ok(())
-}
-
 /// `{vault}/.scheda/commit.lock`.
 fn lock_path(root: &Path) -> PathBuf {
     root.join(".scheda").join("commit.lock")
 }
 
-fn open_lock_file(root: &Path) -> Result<File, Error> {
+fn open_lock_file(_cx: &Blocking, root: &Path) -> Result<File, Error> {
     let path = lock_path(root);
     if let Some(dir) = path.parent()
         && !dir.is_dir()
@@ -423,23 +358,9 @@ fn open_lock_file(root: &Path) -> Result<File, Error> {
         .context("open the lock file")
 }
 
-fn take_flock(file: &File, deadline: Instant) -> Result<(), Error> {
-    let mut pause = FIRST_POLL;
-    loop {
-        match file.try_lock() {
-            Ok(()) => return Ok(()),
-            Err(FileLockError::WouldBlock) => {}
-            Err(FileLockError::Error(err)) => {
-                return Err(io(err)).context("take the write lock");
-            }
-        }
-        wait(&mut pause, deadline)?;
-    }
-}
-
 /// Whether the lock file holds a list of paths: a write died midway, or one
 /// is in flight. Reads the file without the lock.
-pub(crate) fn pending(root: &Path) -> Result<bool, Error> {
+pub(crate) fn pending(_cx: &Blocking, root: &Path) -> Result<bool, Error> {
     match fs::metadata(lock_path(root)) {
         Ok(meta) => Ok(meta.len() > 0),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -447,17 +368,22 @@ pub(crate) fn pending(root: &Path) -> Result<bool, Error> {
     }
 }
 
-/// The write lock, held. Dropping it lets the lock go; it leaves the list
-/// of paths alone, so a write that ended in the middle is recovered by the
-/// next holder.
+/// The write lock, held, inside a blocking step. Dropping it lets the lock
+/// go; it leaves the list of paths alone, so a write that ended in the
+/// middle is recovered by the next holder.
 #[derive(Debug)]
 pub(crate) struct WriteLock<'a> {
     committer: &'a Committer,
-    _turn: Turn,
-    flock: Flock,
+    held: Held,
 }
 
 impl WriteLock<'_> {
+    /// The lock, kept for a later step of the same call: a pull waits for
+    /// the network between two steps with the lock in hand.
+    pub(crate) fn release(self) -> Held {
+        self.held
+    }
+
     /// The Vault the lock is for.
     pub(crate) fn root(&self) -> &Path {
         &self.committer.root
@@ -548,25 +474,25 @@ impl WriteLock<'_> {
             return Ok(old);
         };
         let paths: Vec<&str> = changes.iter().map(Change::path).collect();
-        write_list(self.flock.file(), &paths)?;
+        write_list(self.held.flock.file(), &paths)?;
         #[cfg(test)]
-        hooks::after_list()?;
+        hooks::after_list(vault)?;
         #[cfg(test)]
-        hooks::before_swap(&repo.root(vault));
+        hooks::before_swap(vault, &repo.root(vault));
         if let Err(err) = swap(git, &branch, old, new, message) {
             // Nothing was written to the work tree: the note goes.
-            empty_list(self.flock.file())?;
+            empty_list(self.held.flock.file())?;
             return Err(err);
         }
         #[cfg(test)]
-        hooks::after_swap()?;
+        hooks::after_swap(vault)?;
         self.committer.signal.moved();
         let plan = plan_of(snap, changes, &blobs)?;
         // The commit is stored. A git index that cannot be brought up now (a
         // person's `git add` holds its lock) keeps the note, and the next
         // holder of the lock does it.
         if settle(vault, snap, &plan, Mode::Write)? {
-            empty_list(self.flock.file())?;
+            empty_list(self.held.flock.file())?;
         }
         Ok(Some(new))
     }
@@ -646,9 +572,9 @@ impl WriteLock<'_> {
             moved.push((path.to_owned(), want));
         }
         let paths: Vec<&str> = moved.iter().map(|(path, _)| path.as_str()).collect();
-        write_list(self.flock.file(), &paths)?;
+        write_list(self.held.flock.file(), &paths)?;
         if let Err(err) = swap(git, &branch, snap.commit(), new, message) {
-            empty_list(self.flock.file())?;
+            empty_list(self.held.flock.file())?;
             return Err(err);
         }
         self.committer.signal.moved();
@@ -671,7 +597,7 @@ impl WriteLock<'_> {
             });
         }
         if settle(vault, snap, &plan, Mode::Write)? {
-            empty_list(self.flock.file())?;
+            empty_list(self.held.flock.file())?;
         }
         Ok(())
     }
@@ -1302,37 +1228,50 @@ fn restore(vault: &Path, repos: &Repos, repo: Repo, paths: &[String]) -> Result<
 /// command in the middle of one. They exist in test builds only.
 #[cfg(test)]
 pub(crate) mod hooks {
-    use std::cell::{Cell, RefCell};
-    use std::path::Path;
+    use std::collections::HashMap;
+    use std::path::{Path, PathBuf};
+    use std::sync::{Mutex, PoisonError};
 
     use scheda_api::v1::VaultErrorCode;
 
     use crate::error::{Error, Fault};
 
-    type Callback = Box<dyn FnOnce(&Path)>;
+    type Callback = Box<dyn FnOnce(&Path) + Send>;
 
-    thread_local! {
-        static STOP_AFTER_LIST: Cell<bool> = const { Cell::new(false) };
-        static STOP_AFTER_SWAP: Cell<bool> = const { Cell::new(false) };
-        static BEFORE_SWAP: RefCell<Option<Callback>> = const { RefCell::new(None) };
+    /// What the next write to one Vault does at its seams.
+    #[derive(Default)]
+    struct Hook {
+        stop_after_list: bool,
+        stop_after_swap: bool,
+        before_swap: Option<Callback>,
     }
 
-    /// The next write of this thread stops right after it wrote the list of
-    /// its paths, before it moves `HEAD`.
-    pub(crate) fn stop_after_list() {
-        STOP_AFTER_LIST.with(|stop| stop.set(true));
+    /// The hooks of each Vault, by its canonical path: a write runs on the
+    /// blocking pool, not on the thread of the test.
+    static HOOKS: Mutex<Option<HashMap<PathBuf, Hook>>> = Mutex::new(None);
+
+    fn with<T>(vault: &Path, edit: impl FnOnce(&mut Hook) -> T) -> T {
+        let mut guard = HOOKS.lock().unwrap_or_else(PoisonError::into_inner);
+        let hooks = guard.get_or_insert_with(HashMap::new);
+        edit(hooks.entry(vault.to_path_buf()).or_default())
     }
 
-    /// The next write of this thread stops right after it moved `HEAD`,
-    /// before it writes the files.
-    pub(crate) fn stop_after_swap() {
-        STOP_AFTER_SWAP.with(|stop| stop.set(true));
+    /// The next write to `vault` stops right after it wrote the list of its
+    /// paths, before it moves `HEAD`.
+    pub(crate) fn stop_after_list(vault: &Path) {
+        with(vault, |hook| hook.stop_after_list = true);
     }
 
-    /// The next write of this thread runs `callback` with the Vault path
-    /// between the read of `HEAD` and the swap.
-    pub(crate) fn run_before_swap(callback: impl FnOnce(&Path) + 'static) {
-        BEFORE_SWAP.with(|cell| *cell.borrow_mut() = Some(Box::new(callback)));
+    /// The next write to `vault` stops right after it moved `HEAD`, before
+    /// it writes the files.
+    pub(crate) fn stop_after_swap(vault: &Path) {
+        with(vault, |hook| hook.stop_after_swap = true);
+    }
+
+    /// The next write to `vault` runs `callback` with the root of the
+    /// repository it writes, between the read of `HEAD` and the swap.
+    pub(crate) fn run_before_swap(vault: &Path, callback: impl FnOnce(&Path) + Send + 'static) {
+        with(vault, |hook| hook.before_swap = Some(Box::new(callback)));
     }
 
     fn stopped() -> Error {
@@ -1343,21 +1282,21 @@ pub(crate) mod hooks {
         .into()
     }
 
-    pub(super) fn after_list() -> Result<(), Error> {
-        if STOP_AFTER_LIST.with(Cell::take) {
+    pub(super) fn after_list(vault: &Path) -> Result<(), Error> {
+        if with(vault, |hook| std::mem::take(&mut hook.stop_after_list)) {
             return Err(stopped());
         }
         Ok(())
     }
 
-    pub(super) fn before_swap(root: &Path) {
-        if let Some(callback) = BEFORE_SWAP.with(|cell| cell.borrow_mut().take()) {
+    pub(super) fn before_swap(vault: &Path, root: &Path) {
+        if let Some(callback) = with(vault, |hook| hook.before_swap.take()) {
             callback(root);
         }
     }
 
-    pub(super) fn after_swap() -> Result<(), Error> {
-        if STOP_AFTER_SWAP.with(Cell::take) {
+    pub(super) fn after_swap(vault: &Path) -> Result<(), Error> {
+        if with(vault, |hook| std::mem::take(&mut hook.stop_after_swap)) {
             return Err(stopped());
         }
         Ok(())
@@ -1367,14 +1306,31 @@ pub(crate) mod hooks {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use buffa_types::google::protobuf::Empty;
-    use scheda_api::v1::{CollectionDeclaration, OpenOptions, VaultErrorCode};
+    use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
-    use super::{Change, FileMode, Repo, check_relative, hooks, pending};
+    use super::{Change, FileMode, Repo, WriteLock, check_relative, hooks, pending};
+    use crate::error::Error;
     use crate::git::git;
-    use crate::ports::Ports;
+    use crate::testing::{create_collection, open, step};
     use crate::vault::Vault;
+
+    /// Runs `work` inside a blocking step that holds the write lock of
+    /// `vault`.
+    async fn locked<T, F>(vault: &Arc<Vault>, work: F) -> Result<T, Error>
+    where
+        F: FnOnce(&WriteLock<'_>) -> Result<T, Error> + Send + 'static,
+        T: Send + 'static,
+    {
+        let held = vault.committer().acquire().await?;
+        step(vault, move |cx, vault| {
+            let lock = vault.lock(cx, held)?;
+            work(&lock)
+        })
+        .await
+    }
 
     /// A Vault on disk made by `Vault::open`, removed when the test ends.
     struct Scratch(PathBuf);
@@ -1388,13 +1344,14 @@ mod tests {
             Scratch(dir)
         }
 
-        fn open(&self) -> Vault {
-            Vault::open(
-                &self.0,
-                OpenOptions::default().with_write_timeout_ms(2000),
-                Ports::default(),
-            )
-            .unwrap()
+        async fn open(&self) -> Arc<Vault> {
+            open(&self.0, OpenOptions::default().with_write_timeout_ms(2000))
+                .await
+                .unwrap()
+        }
+
+        fn canonical(&self) -> PathBuf {
+            self.0.canonicalize().unwrap()
         }
 
         fn out(&self, args: &[&str]) -> String {
@@ -1429,19 +1386,20 @@ mod tests {
         }
     }
 
-    fn standard(name: &str) -> CollectionDeclaration {
-        serde_json::from_value(serde_json::json!({"name": name, "schema": {"standard": {}}}))
-            .unwrap()
+    fn standard(name: &str) -> serde_json::Value {
+        serde_json::json!({"name": name, "schema": {"standard": {}}})
     }
 
-    #[test]
-    fn a_write_stopped_after_the_list_stores_nothing_and_touches_nothing() {
+    #[tokio::test]
+    async fn a_write_stopped_after_the_list_stores_nothing_and_touches_nothing() {
         let scratch = Scratch::new("list");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         let before = scratch.out(&["rev-parse", "HEAD"]);
         std::fs::write(scratch.0.join("person.txt"), "mine").unwrap();
-        hooks::stop_after_list();
-        let error = vault.create_collection(standard("notes")).unwrap_err();
+        hooks::stop_after_list(&scratch.canonical());
+        let error = create_collection(&vault, standard("notes"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
         assert_eq!(
             scratch.out(&["rev-parse", "HEAD"]),
@@ -1455,7 +1413,7 @@ mod tests {
         assert_eq!(scratch.list(), b"notes/.collection.yaml\0", "paths only");
         // The next write of the running handle recovers the note: the path
         // goes to what HEAD holds, which is nothing, and the file stays out.
-        vault.create_collection(standard("log")).unwrap();
+        create_collection(&vault, standard("log")).await.unwrap();
         assert!(scratch.list().is_empty());
         assert!(!scratch.0.join("notes").exists());
         assert!(scratch.0.join("log/.collection.yaml").is_file());
@@ -1465,14 +1423,14 @@ mod tests {
             "a person's file is not ours"
         );
         // Nothing of the stopped write was declared.
-        vault.create_collection(standard("notes")).unwrap();
+        create_collection(&vault, standard("notes")).await.unwrap();
         assert_eq!(scratch.commits(), 3);
     }
 
-    #[test]
-    fn a_write_stopped_after_the_swap_is_completed_by_the_next_open() {
+    #[tokio::test]
+    async fn a_write_stopped_after_the_swap_is_completed_by_the_next_open() {
         let scratch = Scratch::new("swap-open");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         let commits = scratch.commits();
         std::fs::write(
             scratch.0.join(".gitignore"),
@@ -1480,17 +1438,24 @@ mod tests {
         )
         .unwrap();
         std::fs::write(scratch.0.join("person.txt"), "mine").unwrap();
-        hooks::stop_after_swap();
-        let error = vault.create_collection(standard("notes")).unwrap_err();
+        hooks::stop_after_swap(&scratch.canonical());
+        let error = create_collection(&vault, standard("notes"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
         assert_eq!(scratch.commits(), commits + 1, "the commit landed");
         assert!(!scratch.0.join("notes").exists(), "the files lag");
-        assert!(pending(&scratch.0).unwrap());
-        drop(vault);
-        let vault = scratch.open();
+        let root = scratch.canonical();
+        assert!(step(&vault, move |cx, _| pending(cx, &root)).await.unwrap());
+        vault.close().await.unwrap();
+        let vault = scratch.open().await;
         assert!(scratch.0.join("notes/.collection.yaml").is_file());
         assert!(scratch.list().is_empty());
-        assert!(vault.get_collection(key("notes")).is_ok());
+        assert!(
+            step(&vault, |cx, vault| vault.get_collection(cx, key("notes")))
+                .await
+                .is_ok()
+        );
         assert_eq!(
             scratch.status(),
             " M .gitignore\n?? person.txt",
@@ -1498,38 +1463,38 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_write_stopped_after_the_swap_is_completed_by_the_next_write_of_the_handle() {
+    #[tokio::test]
+    async fn a_write_stopped_after_the_swap_is_completed_by_the_next_write_of_the_handle() {
         let scratch = Scratch::new("swap-write");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         std::fs::write(scratch.0.join("person.txt"), "mine").unwrap();
-        hooks::stop_after_swap();
-        assert!(vault.create_collection(standard("notes")).is_err());
+        hooks::stop_after_swap(&scratch.canonical());
+        assert!(create_collection(&vault, standard("notes")).await.is_err());
         assert!(!scratch.0.join("notes").exists());
-        vault.create_collection(standard("log")).unwrap();
+        create_collection(&vault, standard("log")).await.unwrap();
         assert!(scratch.0.join("notes/.collection.yaml").is_file());
         assert!(scratch.0.join("log/.collection.yaml").is_file());
         assert!(scratch.list().is_empty());
         assert_eq!(scratch.status(), "?? person.txt");
         // The handle read the collections again when HEAD had moved.
-        let error = vault.create_collection(standard("notes")).unwrap_err();
+        let error = create_collection(&vault, standard("notes"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::AlreadyExists));
-        assert_eq!(
-            vault
-                .list_collections(Empty::default())
-                .unwrap()
-                .collections
-                .len(),
-            2
-        );
+        let listed = step(&vault, |cx, vault| {
+            vault.list_collections(cx, Empty::default())
+        })
+        .await
+        .unwrap();
+        assert_eq!(listed.collections.len(), 2);
     }
 
-    #[test]
-    fn a_git_commit_between_the_read_and_the_swap_aborts_the_write() {
+    #[tokio::test]
+    async fn a_git_commit_between_the_read_and_the_swap_aborts_the_write() {
         let scratch = Scratch::new("race");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         let commits = scratch.commits();
-        hooks::run_before_swap(|root| {
+        hooks::run_before_swap(&scratch.canonical(), |root| {
             git()
                 .current_dir(root)
                 .env("GIT_AUTHOR_NAME", "Hand")
@@ -1544,23 +1509,25 @@ mod tests {
                 .run()
                 .unwrap();
         });
-        let error = vault.create_collection(standard("notes")).unwrap_err();
+        let error = create_collection(&vault, standard("notes"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Aborted));
         assert!(error.retryable());
         assert_eq!(scratch.commits(), commits + 1, "only the hand-made commit");
         assert!(!scratch.0.join("notes").exists());
         assert!(scratch.list().is_empty());
         assert_eq!(scratch.status(), "");
-        vault.create_collection(standard("notes")).unwrap();
+        create_collection(&vault, standard("notes")).await.unwrap();
         assert_eq!(scratch.commits(), commits + 2);
         assert_eq!(scratch.status(), "");
     }
 
-    #[test]
-    fn recovery_settles_listed_paths_only_and_passes_over_unsafe_entries() {
+    #[tokio::test]
+    async fn recovery_settles_listed_paths_only_and_passes_over_unsafe_entries() {
         let scratch = Scratch::new("restore");
-        let vault = scratch.open();
-        drop(vault);
+        let vault = scratch.open().await;
+        vault.close().await.unwrap();
         // A person's edits: one of a listed path, one of another.
         std::fs::write(scratch.0.join(".gitignore"), "edited\n").unwrap();
         std::fs::write(scratch.0.join(".scheda.yaml"), "version: 2\n# edited\n").unwrap();
@@ -1585,7 +1552,7 @@ mod tests {
         }
         note.extend_from_slice(b".scheda.yaml"); // no NUL: not finished
         std::fs::write(scratch.0.join(".scheda/commit.lock"), &note).unwrap();
-        let _vault = scratch.open();
+        let _vault = scratch.open().await;
         assert!(scratch.list().is_empty());
         // A listed file a person changed is theirs, even one HEAD never had.
         assert_eq!(
@@ -1611,35 +1578,33 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_write_cut_after_the_swap_is_finished_by_the_next_open_and_a_persons_edit_survives() {
+    #[tokio::test]
+    async fn a_write_cut_after_the_swap_is_finished_by_the_next_open_and_a_persons_edit_survives() {
         let scratch = Scratch::new("cut");
-        let vault = scratch.open();
-        let committer = vault.committer();
-        hooks::stop_after_swap();
-        {
-            let lock = committer.lock().unwrap();
-            let snap = lock.snapshot(Repo::Main).unwrap();
-            let error = lock
-                .commit_in(
-                    &snap,
-                    "two files",
-                    &[
-                        Change::put("a.txt", b"new a".to_vec()),
-                        Change::put("sub/b.txt", b"new b".to_vec()),
-                    ],
-                )
-                .unwrap_err();
-            assert!(error.is(VaultErrorCode::Storage));
-        }
+        let vault = scratch.open().await;
+        hooks::stop_after_swap(&scratch.canonical());
+        let error = locked(&vault, |lock| {
+            let snap = lock.snapshot(Repo::Main)?;
+            lock.commit_in(
+                &snap,
+                "two files",
+                &[
+                    Change::put("a.txt", b"new a".to_vec()),
+                    Change::put("sub/b.txt", b"new b".to_vec()),
+                ],
+            )
+        })
+        .await
+        .unwrap_err();
+        assert!(error.is(VaultErrorCode::Storage));
         assert_eq!(scratch.out(&["show", "HEAD:a.txt"]), "new a");
         assert!(!scratch.0.join("a.txt").exists(), "the files lag");
         assert_eq!(scratch.list(), b"a.txt\0sub/b.txt\0");
         // Meanwhile a person writes one of the listed files.
         std::fs::create_dir_all(scratch.0.join("sub")).unwrap();
         std::fs::write(scratch.0.join("sub/b.txt"), "mine").unwrap();
-        drop(vault);
-        let _vault = scratch.open();
+        vault.close().await.unwrap();
+        let _vault = scratch.open().await;
         assert_eq!(
             std::fs::read_to_string(scratch.0.join("a.txt")).unwrap(),
             "new a"
@@ -1654,21 +1619,23 @@ mod tests {
         assert_eq!(scratch.status(), " M sub/b.txt");
     }
 
-    #[test]
-    fn a_persons_edit_survives_a_write_of_the_same_path_and_git_shows_it() {
+    #[tokio::test]
+    async fn a_persons_edit_survives_a_write_of_the_same_path_and_git_shows_it() {
         let scratch = Scratch::new("edit");
-        let vault = scratch.open();
-        let committer = vault.committer();
-        let put = |bytes: &[u8]| {
-            let lock = committer.lock().unwrap();
-            let snap = lock.snapshot(Repo::Main).unwrap();
-            lock.commit_in(&snap, "put", &[Change::put("a.txt", bytes.to_vec())])
-                .unwrap()
+        let vault = scratch.open().await;
+        let put = async |bytes: &[u8]| {
+            let bytes = bytes.to_vec();
+            locked(&vault, move |lock| {
+                let snap = lock.snapshot(Repo::Main)?;
+                lock.commit_in(&snap, "put", &[Change::put("a.txt", bytes)])
+            })
+            .await
+            .unwrap()
         };
-        put(b"one");
+        put(b"one").await;
         assert_eq!(scratch.status(), "");
         std::fs::write(scratch.0.join("a.txt"), "edited").unwrap();
-        put(b"two");
+        put(b"two").await;
         assert_eq!(scratch.out(&["show", "HEAD:a.txt"]), "two");
         assert_eq!(
             std::fs::read_to_string(scratch.0.join("a.txt")).unwrap(),
@@ -1679,7 +1646,7 @@ mod tests {
         // Nobody touched it: the next write replaces the file.
         std::fs::write(scratch.0.join("a.txt"), "two").unwrap();
         assert_eq!(scratch.status(), "", "the file is what HEAD holds");
-        put(b"three");
+        put(b"three").await;
         assert_eq!(
             std::fs::read_to_string(scratch.0.join("a.txt")).unwrap(),
             "three"
@@ -1687,45 +1654,45 @@ mod tests {
         assert_eq!(scratch.status(), "");
         // A file deleted by hand stays deleted; git shows it.
         std::fs::remove_file(scratch.0.join("a.txt")).unwrap();
-        put(b"four");
+        put(b"four").await;
         assert!(!scratch.0.join("a.txt").exists());
         assert_eq!(scratch.status(), " D a.txt");
     }
 
-    #[test]
-    fn a_detached_head_is_failed_precondition_and_nothing_is_stored() {
+    #[tokio::test]
+    async fn a_detached_head_is_failed_precondition_and_nothing_is_stored() {
         let scratch = Scratch::new("detached");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         scratch.out(&["checkout", "--quiet", "--detach"]);
         let commits = scratch.commits();
-        let error = vault.create_collection(standard("notes")).unwrap_err();
+        let error = create_collection(&vault, standard("notes"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::FailedPrecondition));
         assert_eq!(scratch.commits(), commits);
         assert!(scratch.list().is_empty());
         assert!(!scratch.0.join("notes").exists());
     }
 
-    #[test]
-    fn a_repository_with_gpgsign_gets_unsigned_commits() {
+    #[tokio::test]
+    async fn a_repository_with_gpgsign_gets_unsigned_commits() {
         let scratch = Scratch::new("gpgsign");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         scratch.out(&["config", "commit.gpgSign", "true"]);
         scratch.out(&["config", "gpg.program", "/nonexistent/gpg"]);
-        vault.create_collection(standard("notes")).unwrap();
+        create_collection(&vault, standard("notes")).await.unwrap();
         assert!(scratch.0.join("notes/.collection.yaml").is_file());
         let raw = scratch.out(&["cat-file", "commit", "HEAD"]);
         assert!(!raw.contains("gpgsig"), "{raw}");
         assert_eq!(scratch.status(), "");
     }
 
-    #[test]
-    fn a_commit_stores_modes_removals_and_nothing_twice() {
+    #[tokio::test]
+    async fn a_commit_stores_modes_removals_and_nothing_twice() {
         let scratch = Scratch::new("changes");
-        let vault = scratch.open();
-        let committer = vault.committer();
-        let first = {
-            let lock = committer.lock().unwrap();
-            let snap = lock.snapshot(Repo::Main).unwrap();
+        let vault = scratch.open().await;
+        let first = locked(&vault, |lock| {
+            let snap = lock.snapshot(Repo::Main)?;
             lock.commit_in(
                 &snap,
                 "two files",
@@ -1738,8 +1705,9 @@ mod tests {
                     Change::put("a/plain.txt", b"x\r\ny".to_vec()),
                 ],
             )
-            .unwrap()
-        };
+        })
+        .await
+        .unwrap();
         assert_eq!(
             first.unwrap().to_string(),
             scratch.out(&["rev-parse", "HEAD"])
@@ -1753,22 +1721,21 @@ mod tests {
             "bytes are stored as they are"
         );
         // The same bytes again change nothing and make no commit.
-        let same = {
-            let lock = committer.lock().unwrap();
-            let snap = lock.snapshot(Repo::Main).unwrap();
+        let same = locked(&vault, |lock| {
+            let snap = lock.snapshot(Repo::Main)?;
             lock.commit_in(
                 &snap,
                 "again",
                 &[Change::put("a/plain.txt", b"x\r\ny".to_vec())],
             )
-            .unwrap()
-        };
+        })
+        .await
+        .unwrap();
         assert_eq!(same, first);
         assert!(scratch.list().is_empty());
         // A removal takes the file and the folders it empties.
-        {
-            let lock = committer.lock().unwrap();
-            let snap = lock.snapshot(Repo::Main).unwrap();
+        locked(&vault, |lock| {
+            let snap = lock.snapshot(Repo::Main)?;
             lock.commit_in(
                 &snap,
                 "gone",
@@ -1776,8 +1743,9 @@ mod tests {
                     path: "a/b/run.sh".to_owned(),
                 }],
             )
-            .unwrap();
-        }
+        })
+        .await
+        .unwrap();
         assert!(!scratch.0.join("a/b").exists());
         assert!(scratch.0.join("a/plain.txt").is_file());
         assert_eq!(scratch.status(), "");
@@ -1795,29 +1763,32 @@ mod tests {
         );
     }
 
-    #[test]
-    fn paths_that_step_out_or_name_git_are_refused_before_anything_is_written() {
+    #[tokio::test]
+    async fn paths_that_step_out_or_name_git_are_refused_before_anything_is_written() {
         let scratch = Scratch::new("paths");
-        let vault = scratch.open();
-        let committer = vault.committer();
-        let lock = committer.lock().unwrap();
-        let snap = lock.snapshot(Repo::Main).unwrap();
-        for bad in ["../x", "/x", "a//b", ".git/config", "a/./b", "", "a\\b"] {
-            let error = lock
-                .commit_in(&snap, "bad", &[Change::put(bad, Vec::new())])
-                .unwrap_err();
-            assert!(error.is(VaultErrorCode::InvalidArgument), "{bad}");
-        }
+        let vault = scratch.open().await;
+        locked(&vault, |lock| {
+            let snap = lock.snapshot(Repo::Main)?;
+            for bad in ["../x", "/x", "a//b", ".git/config", "a/./b", "", "a\\b"] {
+                let error = lock
+                    .commit_in(&snap, "bad", &[Change::put(bad, Vec::new())])
+                    .unwrap_err();
+                assert!(error.is(VaultErrorCode::InvalidArgument), "{bad}");
+            }
+            Ok(())
+        })
+        .await
+        .unwrap();
         assert!(check_relative("a/b").is_ok());
         assert!(scratch.list().is_empty());
         assert_eq!(scratch.status(), "");
     }
 
     #[cfg(unix)]
-    #[test]
-    fn a_symlink_on_the_path_of_a_write_is_refused_and_nothing_is_stored() {
+    #[tokio::test]
+    async fn a_symlink_on_the_path_of_a_write_is_refused_and_nothing_is_stored() {
         let scratch = Scratch::new("symlink");
-        let vault = scratch.open();
+        let vault = scratch.open().await;
         let commits = scratch.commits();
         let target = scratch
             .0
@@ -1826,7 +1797,9 @@ mod tests {
             .join("scheda-commit-link-target");
         std::fs::create_dir_all(&target).unwrap();
         std::os::unix::fs::symlink(&target, scratch.0.join("notes")).unwrap();
-        let error = vault.create_collection(standard("notes")).unwrap_err();
+        let error = create_collection(&vault, standard("notes"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
         assert_eq!(scratch.commits(), commits);
         assert!(scratch.list().is_empty());

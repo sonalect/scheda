@@ -1,5 +1,5 @@
 {
-  "checksum": "a07e542020448db78da84ecd013cfef328a5a95289ba475bbadd620d095bc2ec",
+  "checksum": "1f2520cc56d7d58d117e17a7f5d1eea158b675eab0ed3c4e8cd188fb057e46b9",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -9573,9 +9573,25 @@
     },
     "errno 0.3.14": {
       "common_attrs": {
-        "crate_features": [
-          "std"
-        ],
+        "crate_features": {
+          "common": [
+            "std"
+          ],
+          "selects": {
+            "aarch64-apple-darwin": [
+              "default"
+            ],
+            "aarch64-unknown-linux-gnu": [
+              "default"
+            ],
+            "x86_64-unknown-linux-gnu": [
+              "default"
+            ],
+            "x86_64-unknown-nixos-gnu": [
+              "default"
+            ]
+          }
+        },
         "deps": {
           "common": [],
           "selects": {
@@ -24668,6 +24684,38 @@
       ],
       "version": "0.21.0"
     },
+    "scheda-blocking 0.21.0": {
+      "common_attrs": {
+        "deps": [
+          {
+            "id": "protocontract 0.4.1",
+            "target": "protocontract"
+          },
+          {
+            "id": "tokio 1.53.3",
+            "target": "tokio"
+          }
+        ],
+        "edition": "2024"
+      },
+      "library_target_name": "scheda_blocking",
+      "license": "Apache-2.0",
+      "license_ids": [
+        "Apache-2.0"
+      ],
+      "name": "scheda-blocking",
+      "package_url": "https://github.com/amsokol/scheda",
+      "repository": null,
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "scheda_blocking",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "0.21.0"
+    },
     "scheda-cli 0.21.0": {
       "common_attrs": {
         "deps": [
@@ -24706,6 +24754,10 @@
           {
             "id": "sha2 0.11.1",
             "target": "sha2"
+          },
+          {
+            "id": "tokio 1.53.3",
+            "target": "tokio"
           },
           {
             "id": "ureq 3.4.2",
@@ -25875,6 +25927,45 @@
         }
       ],
       "version": "2.0.1"
+    },
+    "signal-hook-registry 1.4.8": {
+      "common_attrs": {
+        "deps": [
+          {
+            "id": "errno 0.3.14",
+            "target": "errno"
+          },
+          {
+            "id": "libc 0.2.190",
+            "target": "libc"
+          }
+        ],
+        "edition": "2015"
+      },
+      "library_target_name": "signal_hook_registry",
+      "license": "MIT OR Apache-2.0",
+      "license_file": "LICENSE-APACHE",
+      "license_ids": [
+        "Apache-2.0",
+        "MIT"
+      ],
+      "name": "signal-hook-registry",
+      "package_url": "https://github.com/vorner/signal-hook",
+      "repository": {
+        "Http": {
+          "sha256": "c4db69cba1110affc0e9f7bcd48bbf87b3f4fc7c61fc9155afd4c469eb3d6c1b",
+          "url": "https://static.crates.io/crates/signal-hook-registry/1.4.8/download"
+        }
+      },
+      "targets": [
+        {
+          "Library": {
+            "crate_name": "signal_hook_registry",
+            "crate_root": "src/lib.rs"
+          }
+        }
+      ],
+      "version": "1.4.8"
     },
     "simd-adler32 0.3.10": {
       "common_attrs": {
@@ -27624,42 +27715,36 @@
             "default",
             "fs",
             "io-util",
+            "libc",
             "macros",
+            "mio",
+            "process",
             "rt",
             "rt-multi-thread",
+            "signal-hook-registry",
             "sync",
             "time",
             "tokio-macros"
           ],
           "selects": {
             "aarch64-apple-darwin": [
-              "libc",
-              "mio",
               "net",
               "socket2"
             ],
             "aarch64-unknown-linux-gnu": [
-              "libc",
-              "mio",
               "net",
               "socket2"
             ],
             "x86_64-pc-windows-msvc": [
-              "libc",
-              "mio",
               "net",
               "socket2",
               "windows-sys"
             ],
             "x86_64-unknown-linux-gnu": [
-              "libc",
-              "mio",
               "net",
               "socket2"
             ],
             "x86_64-unknown-nixos-gnu": [
-              "libc",
-              "mio",
               "net",
               "socket2"
             ]
@@ -27670,6 +27755,10 @@
             {
               "id": "bytes 1.12.1",
               "target": "bytes"
+            },
+            {
+              "id": "mio 1.2.4",
+              "target": "mio"
             },
             {
               "id": "pin-project-lite 0.2.17",
@@ -27683,8 +27772,8 @@
                 "target": "libc"
               },
               {
-                "id": "mio 1.2.4",
-                "target": "mio"
+                "id": "signal-hook-registry 1.4.8",
+                "target": "signal_hook_registry"
               },
               {
                 "id": "socket2 0.6.5",
@@ -27697,19 +27786,21 @@
                 "target": "libc"
               },
               {
-                "id": "mio 1.2.4",
-                "target": "mio"
+                "id": "signal-hook-registry 1.4.8",
+                "target": "signal_hook_registry"
               },
               {
                 "id": "socket2 0.6.5",
                 "target": "socket2"
               }
             ],
-            "x86_64-pc-windows-msvc": [
+            "wasm32-wasip1": [
               {
-                "id": "mio 1.2.4",
-                "target": "mio"
-              },
+                "id": "libc 0.2.190",
+                "target": "libc"
+              }
+            ],
+            "x86_64-pc-windows-msvc": [
               {
                 "id": "socket2 0.6.5",
                 "target": "socket2"
@@ -27725,8 +27816,8 @@
                 "target": "libc"
               },
               {
-                "id": "mio 1.2.4",
-                "target": "mio"
+                "id": "signal-hook-registry 1.4.8",
+                "target": "signal_hook_registry"
               },
               {
                 "id": "socket2 0.6.5",
@@ -27739,8 +27830,8 @@
                 "target": "libc"
               },
               {
-                "id": "mio 1.2.4",
-                "target": "mio"
+                "id": "signal-hook-registry 1.4.8",
+                "target": "signal_hook_registry"
               },
               {
                 "id": "socket2 0.6.5",
@@ -29690,6 +29781,10 @@
     },
     "wasi 0.11.1+wasi-snapshot-preview1": {
       "common_attrs": {
+        "crate_features": [
+          "default",
+          "std"
+        ],
         "edition": "2018"
       },
       "library_target_name": "wasi",
@@ -32035,6 +32130,7 @@
   "workspace_members": {
     "scheda 0.21.0": "rust/scheda",
     "scheda-api 0.21.0": "rust/api",
+    "scheda-blocking 0.21.0": "rust/blocking",
     "scheda-cli 0.21.0": "rust/cli"
   }
 }

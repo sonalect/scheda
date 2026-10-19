@@ -21,6 +21,8 @@ use scheda_api::v1::{
     CollectionOperation, CollectionResult, Collections, VaultErrorCode,
 };
 
+use scheda_blocking::Blocking;
+
 use crate::collection::{self, Declaration, Declarations, Kind};
 use crate::commit::{Change, Held};
 use crate::documents::Walk;
@@ -47,7 +49,12 @@ pub(crate) struct Writes {
 }
 
 impl Writes {
-    /// The write that declares `collection`.
+    /// Whether the call holds no write at all: an empty batch.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+
+    /// The one write that declares `collection`.
     pub(crate) fn create(collection: CollectionDeclaration) -> Writes {
         Writes::one(Write::Create(collection))
     }
@@ -157,7 +164,11 @@ impl crate::vault::Vault {
     ///
     /// `INVALID_ARGUMENT` when a collection file is not valid; `STORAGE` or
     /// `REPLICATION` when git cannot be read.
-    pub(crate) fn list_collections(&self, empty: Empty) -> Result<Collections, Error> {
+    pub(crate) fn list_collections(
+        &self,
+        _cx: &Blocking,
+        empty: Empty,
+    ) -> Result<Collections, Error> {
         let _ = empty;
         let declarations = self.declarations_now().context("list the collections")?;
         Ok(Collections {
@@ -177,6 +188,7 @@ impl crate::vault::Vault {
     /// `NOT_FOUND` for a collection that is not declared.
     pub(crate) fn get_collection(
         &self,
+        _cx: &Blocking,
         collection_key: CollectionKey,
     ) -> Result<CollectionDeclaration, Error> {
         stored::validate(&collection_key).context("get a collection")?;
@@ -188,94 +200,9 @@ impl crate::vault::Vault {
         }
     }
 
-    /// Declares a collection and returns it as stored, defaults filled in.
-    ///
-    /// The declaration is the file `{name}/.collection.yaml`, written with
-    /// what the caller set and no default, in one commit. An isolated
-    /// collection also gets its place under `{vault}/.isolated/`. The
-    /// request is checked (`INVALID_ARGUMENT`, a slug for the name) before
-    /// the write lock is taken.
-    ///
-    /// # Errors
-    ///
-    /// `INVALID_ARGUMENT`; `ALREADY_EXISTS` for a name that is declared;
-    /// `ABORTED` (retryable) when the write lock is not free within
-    /// `write_timeout_ms`, or `HEAD` moved under the write; nothing is
-    /// written then. `STORAGE` or `REPLICATION` when a file or git fails.
-    pub(crate) fn create_collection(
-        &self,
-        collection: CollectionDeclaration,
-    ) -> Result<CollectionDeclaration, Error> {
-        self.write_one(None, Write::Create(collection))
-    }
-
-    /// Changes the schema of an existing collection and returns it as
-    /// stored, defaults filled in.
-    ///
-    /// The file is rewritten in its own format with what the caller
-    /// declared, and no default the caller did not set; the keys of the file
-    /// that this version does not know stay as they were. The kind,
-    /// `isolated`, and `encrypted` change only while the collection holds no
-    /// Document.
-    ///
-    /// # Errors
-    ///
-    /// `INVALID_ARGUMENT`; `NOT_FOUND` for a name that is not declared;
-    /// `FAILED_PRECONDITION` for a change of the kind, `isolated`, or
-    /// `encrypted` of a collection that holds Documents; `ABORTED` as for
-    /// [`create_collection`](Self::create_collection).
-    pub(crate) fn update_collection(
-        &self,
-        collection: CollectionDeclaration,
-    ) -> Result<CollectionDeclaration, Error> {
-        self.write_one(None, Write::Update(collection))
-    }
-
-    /// Deletes an empty collection: its declaration file and its directory
-    /// (and its place under `{vault}/.isolated/`). The name can be declared
-    /// again afterwards.
-    ///
-    /// # Errors
-    ///
-    /// `INVALID_ARGUMENT`; `FAILED_PRECONDITION` for a collection that holds
-    /// Documents; `NOT_FOUND` for a name that is not declared, unless
-    /// `ignore_missing` is set, which makes it a success that stores
-    /// nothing; `ABORTED` as for
-    /// [`create_collection`](Self::create_collection).
-    pub(crate) fn delete_collection(
-        &self,
-        collection_deletion: CollectionDeletion,
-    ) -> Result<Empty, Error> {
-        self.write_one(None, Write::Delete(collection_deletion))
-            .map(|_| Empty::default())
-    }
-
-    /// Several collection writes as one: all happen, in one commit, or none.
-    ///
-    /// The stream is read whole first and no lock is held while it is read.
-    /// An `Err` item, an item that breaks a rule, or a write that fails, and
-    /// nothing is written; the error names the operation by its index. The
-    /// operations are checked in order, each against the state the ones
-    /// before it leave. One result per operation, in order.
-    ///
-    /// # Errors
-    ///
-    /// The errors of the single calls, and the `Err` of an item.
-    pub(crate) fn batch_collections(
-        &self,
-        collection_operations: BoxIter<'static, Result<CollectionOperation, Error>>,
-    ) -> Result<CollectionBatchResult, Error> {
-        self.write_collection_batch(None, Writes::of_operations(collection_operations)?)
-    }
-
-    /// A batch applied as one commit, with the results in order.
-    fn write_collection_batch(
-        &self,
-        held: Option<Held>,
-        writes: Writes,
-    ) -> Result<CollectionBatchResult, Error> {
-        let outcomes = self.write(held, &writes.writes, writes.indexed)?;
-        Ok(CollectionBatchResult {
+    /// The reply of a batch: the results in order.
+    fn collection_batch_result(outcomes: Vec<Outcome>) -> CollectionBatchResult {
+        CollectionBatchResult {
             results: outcomes
                 .into_iter()
                 .map(|outcome| CollectionResult {
@@ -287,64 +214,72 @@ impl crate::vault::Vault {
                 })
                 .collect(),
             ..Default::default()
-        })
+        }
     }
 
-    /// The one write of `writes`, under a write lock the caller already
-    /// waited for. A deletion answers with an empty declaration.
+    /// The one write of `writes` (a declaration, a change of one, or a
+    /// deletion), under the write lock `held`, which the caller waited for:
+    /// the collection as stored, defaults filled in (an empty declaration
+    /// after a deletion), and whether a commit was made (only then is there
+    /// anything to push).
+    ///
+    /// A declaration is the file `{name}/.collection.yaml`, written with
+    /// what the caller set and no default, in one commit; an isolated
+    /// collection also gets its place under `{vault}/.isolated/`. A change
+    /// rewrites the file in its own format, keeping the keys this version
+    /// does not know; the kind, `isolated`, and `encrypted` change only
+    /// while the collection holds no Document. A deletion removes an empty
+    /// collection: its declaration file and its directory.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_ARGUMENT`; `ALREADY_EXISTS` for a name declared already;
+    /// `NOT_FOUND` for a name that is not declared (but a deletion with
+    /// `ignore_missing`); `FAILED_PRECONDITION` for a change of the kind,
+    /// `isolated`, or `encrypted`, or a deletion, of a collection that holds
+    /// Documents; `ABORTED` when `HEAD` moved under the write; `STORAGE` or
+    /// `REPLICATION` when a file or git fails.
     pub(crate) fn write_collection_held(
         &self,
+        cx: &Blocking,
         held: Held,
         writes: Writes,
-    ) -> Result<CollectionDeclaration, Error> {
-        match writes.writes.into_iter().next() {
-            Some(write) => self.write_one(Some(held), write),
-            None => Err(Fault::new(VaultErrorCode::Storage, "the write holds no request").into()),
-        }
+    ) -> Result<(CollectionDeclaration, bool), Error> {
+        let (mut outcomes, pushable) = self.write(cx, held, &writes.writes, false)?;
+        let declaration = match outcomes.pop() {
+            Some(Outcome::Collection(collection)) => collection,
+            Some(Outcome::Deleted) => CollectionDeclaration::default(),
+            None => {
+                return Err(
+                    Fault::new(VaultErrorCode::Storage, "the write returned nothing").into(),
+                );
+            }
+        };
+        Ok((declaration, pushable))
     }
 
-    /// The batch `writes`, under a write lock the caller already waited
-    /// for.
+    /// The batch `writes` as one commit, under the write lock `held`, which
+    /// the caller waited for: all happen, or none; the error names the
+    /// operation by its index. The operations are checked in order, each
+    /// against the state the ones before it leave.
     pub(crate) fn write_collections_held(
         &self,
+        cx: &Blocking,
         held: Held,
         writes: Writes,
-    ) -> Result<CollectionBatchResult, Error> {
-        self.write_collection_batch(Some(held), writes)
+    ) -> Result<(CollectionBatchResult, bool), Error> {
+        let (outcomes, pushable) = self.write(cx, held, &writes.writes, writes.indexed)?;
+        Ok((Self::collection_batch_result(outcomes), pushable))
     }
 
-    /// One write, as the single calls make it.
-    fn write_one(&self, held: Option<Held>, write: Write) -> Result<CollectionDeclaration, Error> {
-        let mut outcomes = self.write(held, &[write], false)?;
-        match outcomes.pop() {
-            Some(Outcome::Collection(collection)) => Ok(collection),
-            Some(Outcome::Deleted) => Ok(CollectionDeclaration::default()),
-            None => Err(Fault::new(VaultErrorCode::Storage, "the write returned nothing").into()),
-        }
-    }
-
-    /// The writes as one commit. `indexed` puts the position of a failing
+    /// The writes as one commit under the write lock `held`, which is let go
+    /// when this returns. Also says whether a commit was made: only then is
+    /// there anything to push. `indexed` puts the position of a failing
     /// write into the error.
     fn write(
         &self,
-        held: Option<Held>,
-        writes: &[Write],
-        indexed: bool,
-    ) -> Result<Vec<Outcome>, Error> {
-        let (outcomes, pushable) = self.write_locked(held, writes, indexed)?;
-        // The write lock is let go: a push waits for no writer.
-        if pushable {
-            self.push_after_write();
-        }
-        Ok(outcomes)
-    }
-
-    /// The writes as one commit under the write lock, which is let go when
-    /// this returns. Also says whether a commit was made: only then is there
-    /// anything to push.
-    fn write_locked(
-        &self,
-        held: Option<Held>,
+        cx: &Blocking,
+        held: Held,
         writes: &[Write],
         indexed: bool,
     ) -> Result<(Vec<Outcome>, bool), Error> {
@@ -357,7 +292,7 @@ impl crate::vault::Vault {
         if writes.is_empty() {
             return Ok((Vec::new(), false));
         }
-        let lock = self.take_lock(held)?;
+        let lock = self.lock(cx, held)?;
         let snap = lock.snapshot(Repo::Main)?;
         let mut declarations = Declarations::clone(&*self.declarations_in(&snap)?);
         let root = self.path();

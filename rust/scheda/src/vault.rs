@@ -4,21 +4,24 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::thread::sleep;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use git2::Oid;
 use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::projector_ref::ProjectorRef;
 use scheda_api::v1::reranker_ref::RerankerRef;
 use scheda_api::v1::{Encryption, OpenMode, OpenOptions, VaultErrorCode, VaultInfo};
+use scheda_blocking::{Blocking, blocking};
+use tokio::time::Instant;
 
 use crate::collection::{self, Declarations};
-use crate::commit::{Change, Committer, Held, WriteLock};
+use crate::commit::{self, Change, Committer, Held, WriteLock};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
+use crate::gate::{Gate, Pass};
 use crate::idmap::IdMaps;
 use crate::index::{Index, State};
 use crate::indexer::Indexer;
@@ -42,14 +45,19 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 /// the collections its root directories declare.
 ///
 /// [`Vault::open`] opens one that exists or makes one, and [`Vault::close`]
-/// ends it. It may be shared between threads: the writes of one Vault take
+/// ends it. It may be shared between tasks: the writes of one Vault take
 /// turns, and the writes of all Vaults open on one path, in this process or
 /// another, take turns on the lock file `.scheda/commit.lock`.
 ///
-/// An open Vault runs one thread, named `scheda-indexer`, that keeps the
-/// Index in `.scheda/index/` at the state of `HEAD`: the maps from the id of
-/// a journal line to its segment. The thread ends with [`Vault::close`] or
-/// when the Vault is dropped.
+/// Its methods that read or write files take a [`Blocking`] token: they run
+/// on the blocking pool, one step at a time, and what waits between two
+/// steps (the write lock, a `git` process, another `open`) is the async
+/// layer's.
+///
+/// An open Vault runs one task, its indexer, that keeps the Index in
+/// `.scheda/index/` at the state of `HEAD`: the maps from the id of a
+/// journal line to its segment. The task ends with [`Vault::close`], or
+/// after its current round when the Vault is dropped.
 #[derive(Debug)]
 pub(crate) struct Vault {
     path: PathBuf,
@@ -68,6 +76,10 @@ pub(crate) struct Vault {
     indexer: Indexer,
     /// The id maps of the journals, as readers use them.
     id_maps: IdMaps,
+    /// What every call passes, and `Close` shuts.
+    gate: Gate,
+    /// Held by a `Close` while it runs, so a second one waits for it.
+    closing: tokio::sync::Mutex<()>,
 }
 
 /// The declarations of a commit, with the commit they were read from.
@@ -161,14 +173,23 @@ impl Vault {
     /// The codes above; `ABORTED` when the write lock is not free within
     /// `write_timeout_ms`; `STORAGE` or `REPLICATION` when the path or git
     /// cannot be read or written.
-    pub(crate) fn open(
-        path: impl AsRef<Path>,
+    pub(crate) async fn open(
+        path: PathBuf,
         options: OpenOptions,
         ports: Ports,
-    ) -> Result<Vault, Error> {
+    ) -> Result<Arc<Vault>, Error> {
         let ports = Installed::new(ports).context("Vault::open: install the ports")?;
-        let mut vault = open(path.as_ref(), options)?;
+        check_options(&options)?;
+        let mode = options
+            .mode
+            .and_then(|mode| mode.as_known())
+            .unwrap_or(OpenMode::OPEN_MODE_UNSPECIFIED);
+        let (mut vault, existed) = open_at(path, options, mode).await?;
         vault.ports = Arc::new(ports);
+        let vault = Arc::new(vault);
+        if existed {
+            crate::mirror::pull_at_open(&Pass::enter(&vault)?).await;
+        }
         let poll = Duration::from_millis(u64::from(
             vault.options.index_poll_ms.unwrap_or(DEFAULT_POLL_MS),
         ));
@@ -186,12 +207,12 @@ impl Vault {
     /// # Errors
     ///
     /// `STORAGE` or `REPLICATION` when `HEAD` cannot be read.
-    pub(crate) fn info(&self) -> Result<VaultInfo, Error> {
+    pub(crate) fn info(&self, cx: &Blocking) -> Result<VaultInfo, Error> {
         Ok(VaultInfo::default()
             .with_path(self.path.to_string_lossy().into_owned())
             .with_index_path(self.index().root().to_string_lossy().into_owned())
             .with_writer(self.writer.clone())
-            .with_version(self.state_now()?.token()))
+            .with_version(self.state_now(cx)?.token()))
     }
 
     /// The stored state of the Vault now: `HEAD` of the Vault's repository
@@ -202,7 +223,7 @@ impl Vault {
     /// # Errors
     ///
     /// `STORAGE` or `REPLICATION` when `HEAD` cannot be read.
-    pub(crate) fn state_now(&self) -> Result<State, Error> {
+    pub(crate) fn state_now(&self, _cx: &Blocking) -> Result<State, Error> {
         Ok(State::of(&self.repos.views().context("read HEAD")?))
     }
 
@@ -293,18 +314,17 @@ impl Vault {
         &self.committer
     }
 
-    /// The write lock for a write: the one `held` stands for, when the caller
-    /// waited for it already, otherwise a wait here.
+    /// The write lock `held` stands for, which the caller waited for, in
+    /// the step that writes: an unfinished write a dead writer left is
+    /// recovered first.
     ///
     /// # Errors
     ///
-    /// As [`Committer::lock`](crate::commit::Committer::lock).
-    pub(crate) fn take_lock(&self, held: Option<Held>) -> Result<WriteLock<'_>, Error> {
-        match held {
-            Some(held) => self.committer.adopt(held),
-            None => self.committer.lock(),
-        }
-        .context("take the write lock")
+    /// As [`Committer::adopt`].
+    pub(crate) fn lock(&self, cx: &Blocking, held: Held) -> Result<WriteLock<'_>, Error> {
+        self.committer
+            .adopt(cx, held)
+            .context("take the write lock")
     }
 
     /// The writer identity of this handle: the name its journal segments
@@ -366,23 +386,36 @@ impl Vault {
         Index::new(&self.path)
     }
 
-    /// Ends the Vault: the indexer thread stops and is waited for (a round
-    /// in progress ends at its next step; nothing it left half done is
-    /// believed, because the Index's `commit` is written last). The Vault
-    /// holds no lock after that. A second call is nothing to do.
+    /// The gate every call of the Vault passes.
+    pub(crate) fn gate(&self) -> &Gate {
+        &self.gate
+    }
+
+    /// Ends the Vault: new calls fail at once (`FAILED_PRECONDITION`); the
+    /// calls inside, and the steps of calls that were dropped, are waited
+    /// for; then the indexer stops and is waited for (a round in progress
+    /// ends at its next step; nothing it left half done is believed,
+    /// because the Index's `commit` is written last). The Vault holds no
+    /// lock after that. A second call is nothing to do; two at once, the
+    /// second waits for the first.
     ///
     /// # Errors
     ///
-    /// `PANICKED` when the indexer thread died by a panic outside a round.
-    pub(crate) fn close(&self) -> Result<(), Error> {
+    /// `PANICKED` when the indexer task died by a panic outside a round.
+    pub(crate) async fn close(&self) -> Result<(), Error> {
+        let _closing = self.closing.lock().await;
+        self.gate.shut().await;
         self.indexer
             .stop()
+            .await
             .context("Vault::close: stop the indexer")
     }
 }
 
-fn open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
-    stored::validate(&options)
+/// The checks of `options` that need no file: they validate, and what
+/// this build or version lacks is `UNIMPLEMENTED`.
+fn check_options(options: &OpenOptions) -> Result<(), Error> {
+    stored::validate(options)
         .map_err(|fault| {
             Fault::new(
                 VaultErrorCode::InvalidArgument,
@@ -406,118 +439,175 @@ fn open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
         )
         .into());
     }
-    let mode = options
-        .mode
-        .and_then(|mode| mode.as_known())
-        .unwrap_or(OpenMode::OPEN_MODE_UNSPECIFIED);
-    match classify(path).context("Vault::open: look at the path")? {
-        Spot::Vault => {
-            if mode == OpenMode::OPEN_MODE_CREATE_NEW {
-                return Err(refusal(
+    Ok(())
+}
+
+/// What `open_at` returns: the Vault, and whether it existed before this
+/// call (only then does `open` pull).
+type Opened = Result<(Vault, bool), Error>;
+
+/// Opens or makes the Vault at `path` as `mode` allows. Boxed: a clone that
+/// finds the Vault made by another `open` meanwhile opens it from the top.
+fn open_at(
+    path: PathBuf,
+    options: OpenOptions,
+    mode: OpenMode,
+) -> Pin<Box<dyn Future<Output = Opened> + Send>> {
+    Box::pin(async move {
+        match classify(&path)
+            .await
+            .context("Vault::open: look at the path")?
+        {
+            Spot::Vault => {
+                if mode == OpenMode::OPEN_MODE_CREATE_NEW {
+                    return Err(refusal(
+                        VaultErrorCode::AlreadyExists,
+                        "the path holds a Vault",
+                    ));
+                }
+                let vault = open_existing(path, options)
+                    .await
+                    .context("Vault::open: open the Vault")?;
+                Ok((vault, true))
+            }
+            Spot::WorkTree => match mode {
+                OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
+                    VaultErrorCode::NotAVault,
+                    "the path is a git work tree without the Vault marker",
+                )),
+                OpenMode::OPEN_MODE_CREATE_NEW => Err(refusal(
                     VaultErrorCode::AlreadyExists,
-                    "the path holds a Vault",
-                ));
-            }
-            let vault = open_existing(path, options).context("Vault::open: open the Vault")?;
-            vault.pull_at_open();
-            Ok(vault)
+                    "the path is a git work tree",
+                )),
+                _ => mark_and_open(path, options)
+                    .await
+                    .context("Vault::open: mark the work tree")
+                    .map(|vault| (vault, false)),
+            },
+            Spot::Other => match mode {
+                OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
+                    VaultErrorCode::NotAVault,
+                    "the path is not a Vault",
+                )),
+                OpenMode::OPEN_MODE_CREATE_NEW => Err(refusal(
+                    VaultErrorCode::AlreadyExists,
+                    "the path is not empty",
+                )),
+                _ => Err(refusal(
+                    VaultErrorCode::InvalidArgument,
+                    "the path is neither an empty folder, a git work tree, nor a Vault",
+                )),
+            },
+            Spot::Empty => match mode {
+                OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
+                    VaultErrorCode::NotAVault,
+                    "the folder is empty and holds no Vault",
+                )),
+                _ => make_new(path, options, mode)
+                    .await
+                    .context("Vault::open: make a Vault"),
+            },
+            Spot::Missing => match mode {
+                OpenMode::OPEN_MODE_OPEN_EXISTING => {
+                    Err(refusal(VaultErrorCode::NotFound, "the path does not exist"))
+                }
+                _ => make_new(path, options, mode)
+                    .await
+                    .context("Vault::open: make a Vault"),
+            },
         }
-        Spot::WorkTree => match mode {
-            OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
-                VaultErrorCode::NotAVault,
-                "the path is a git work tree without the Vault marker",
-            )),
-            OpenMode::OPEN_MODE_CREATE_NEW => Err(refusal(
-                VaultErrorCode::AlreadyExists,
-                "the path is a git work tree",
-            )),
-            _ => mark_and_open(path, options).context("Vault::open: mark the work tree"),
-        },
-        Spot::Other => match mode {
-            OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
-                VaultErrorCode::NotAVault,
-                "the path is not a Vault",
-            )),
-            OpenMode::OPEN_MODE_CREATE_NEW => Err(refusal(
-                VaultErrorCode::AlreadyExists,
-                "the path is not empty",
-            )),
-            _ => Err(refusal(
-                VaultErrorCode::InvalidArgument,
-                "the path is neither an empty folder, a git work tree, nor a Vault",
-            )),
-        },
-        Spot::Empty => match mode {
-            OpenMode::OPEN_MODE_OPEN_EXISTING => Err(refusal(
-                VaultErrorCode::NotAVault,
-                "the folder is empty and holds no Vault",
-            )),
-            _ => make_new(path, options, mode).context("Vault::open: make a Vault"),
-        },
-        Spot::Missing => match mode {
-            OpenMode::OPEN_MODE_OPEN_EXISTING => {
-                Err(refusal(VaultErrorCode::NotFound, "the path does not exist"))
-            }
-            _ => make_new(path, options, mode).context("Vault::open: make a Vault"),
-        },
-    }
+    })
 }
 
 fn refusal(code: VaultErrorCode, message: &str) -> Error {
     Fault::new(code, message).into()
 }
 
+/// What one look at a path found: a place, or a folder whose `.git` is not
+/// a repository yet (another `open` is running `git init` in it).
+enum Look {
+    At(Spot),
+    Becoming,
+}
+
 /// What is at `path`. A git work tree is asked for its marker before
 /// anything else of it is read: a marker of another generation fails here.
-fn classify(path: &Path) -> Result<Spot, Error> {
+/// A folder another `open` is making a repository in is waited for, up to
+/// a moment; one that does not become a work tree is `Spot::Other`.
+async fn classify(path: &Path) -> Result<Spot, Error> {
+    let at = path.to_path_buf();
+    match blocking(move |cx| look_at(cx, &at)).await? {
+        Look::At(spot) => Ok(spot),
+        Look::Becoming => match wait_for_work_tree(path).await {
+            Ok(()) => {
+                let at = path.to_path_buf();
+                blocking(move |cx| marked(cx, &at)).await
+            }
+            Err(error) if error.is(VaultErrorCode::Aborted) => Ok(Spot::Other),
+            Err(error) => Err(error),
+        },
+    }
+}
+
+/// One look at `path`.
+fn look_at(cx: &Blocking, path: &Path) -> Result<Look, Error> {
     let meta = match fs::metadata(path) {
         Ok(meta) => meta,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Spot::Missing),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(Look::At(Spot::Missing));
+        }
         Err(err) => return Err(io(err)).context("stat the path"),
     };
     if !meta.is_dir() {
-        return Ok(Spot::Other);
+        return Ok(Look::At(Spot::Other));
     }
     let mut entries = fs::read_dir(path).map_err(io).context("read the folder")?;
     if entries.next().is_none() {
-        return Ok(Spot::Empty);
+        return Ok(Look::At(Spot::Empty));
     }
-    if !repo::is_work_tree(path)? && !becomes_work_tree(path)? {
-        return Ok(Spot::Other);
+    if repo::is_work_tree(path)? {
+        return marked(cx, path).map(Look::At);
     }
+    if path.join(".git").is_dir() {
+        return Ok(Look::Becoming);
+    }
+    Ok(Look::At(Spot::Other))
+}
+
+/// The place of the git work tree at `path`: a Vault when the commit `HEAD`
+/// names holds the marker, a plain work tree otherwise.
+fn marked(_cx: &Blocking, path: &Path) -> Result<Spot, Error> {
     match marker::read(&Repos::new(path).snapshot(Repo::Main)?)? {
         Some(_) => Ok(Spot::Vault),
         None => Ok(Spot::WorkTree),
     }
 }
 
-/// Whether the folder, which holds a `.git` that is not a repository yet,
-/// becomes a work tree within a moment: another `open` is running
-/// `git init` in it.
-fn becomes_work_tree(path: &Path) -> Result<bool, Error> {
-    if !path.join(".git").is_dir() {
-        return Ok(false);
-    }
-    match wait_for_work_tree(path) {
-        Ok(()) => Ok(true),
-        Err(error) if error.is(VaultErrorCode::Aborted) => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-/// Waits until `path` is a git work tree, which another `open` is making.
-fn wait_for_work_tree(path: &Path) -> Result<(), Error> {
+/// Waits until `path` is a git work tree, which another `open` is making:
+/// a look every 10 ms, for [`OTHER_OPEN_WAIT`] at most.
+async fn wait_for_work_tree(path: &Path) -> Result<(), Error> {
     let deadline = Instant::now() + OTHER_OPEN_WAIT;
-    while !repo::is_work_tree(path)? {
+    loop {
+        let at = path.to_path_buf();
+        if blocking(move |_cx| Ok(repo::is_work_tree(&at)?)).await? {
+            return Ok(());
+        }
         if Instant::now() >= deadline {
             return Err(refusal(
                 VaultErrorCode::Aborted,
                 "another open is making a Vault at this path; try again",
             ));
         }
-        sleep(Duration::from_millis(10));
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    Ok(())
+}
+
+/// What claiming the folder of a new Vault found.
+enum Claim {
+    /// This call made the repository.
+    Made,
+    /// Another `open` claimed the folder first.
+    Taken,
 }
 
 /// Makes a new Vault at `path`, a missing path or an empty folder: the
@@ -525,15 +615,31 @@ fn wait_for_work_tree(path: &Path) -> Result<(), Error> {
 /// under the write lock. The folder's `.git` is created first as the claim
 /// on the path: of two `open`s at once, one makes the repository and the
 /// other waits for it.
-fn make_new(path: &Path, options: OpenOptions, mode: OpenMode) -> Result<Vault, Error> {
+async fn make_new(path: PathBuf, options: OpenOptions, mode: OpenMode) -> Opened {
     if let Some(url) = options.mirror.clone() {
-        return clone_new(path, &url, options).context("clone the mirror");
+        return clone_new(path, url, options, mode)
+            .await
+            .context("clone the mirror");
     }
+    let at = path.clone();
+    match blocking(move |cx| claim(cx, &at, mode)).await? {
+        Claim::Made => {}
+        Claim::Taken => wait_for_work_tree(&path).await?,
+    }
+    Ok((mark_and_open(path, options).await?, false))
+}
+
+/// Creates the folder and its `.git`, the claim on the path, and makes the
+/// repository when the claim is this call's.
+fn claim(_cx: &Blocking, path: &Path, mode: OpenMode) -> Result<Claim, Error> {
     fs::create_dir_all(path)
         .map_err(io)
         .context("create the folder")?;
     match fs::create_dir(path.join(".git")) {
-        Ok(()) => init_repository(path)?,
+        Ok(()) => {
+            init_repository(path)?;
+            Ok(Claim::Made)
+        }
         Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
             if mode == OpenMode::OPEN_MODE_CREATE_NEW {
                 return Err(refusal(
@@ -541,20 +647,38 @@ fn make_new(path: &Path, options: OpenOptions, mode: OpenMode) -> Result<Vault, 
                     "another open is making a Vault at this path",
                 ));
             }
-            wait_for_work_tree(path)?;
+            Ok(Claim::Taken)
         }
-        Err(err) => return Err(io(err)).context("claim the folder"),
+        Err(err) => Err(io(err)).context("claim the folder"),
     }
-    mark_and_open(path, options)
 }
 
-/// A folder beside the path of a new Vault that a clone is made in, removed
-/// when it is dropped (after the move into place it is not there to remove).
-struct Staging(PathBuf);
+/// A folder beside the path of a new Vault that a clone is made in. It is
+/// removed when it is dropped before it was moved into place; a drop on a
+/// thread of the runtime hands the removal to the blocking pool.
+struct Staging {
+    path: PathBuf,
+    /// Moved into place, or removed already: nothing to clean.
+    done: bool,
+}
 
 impl Drop for Staging {
+    /// Only a call dropped midway gets here with a folder left: every
+    /// return of `clone_new` settles the folder first. Nobody waits for the
+    /// dropped call, so the removal runs on the blocking pool; a clone
+    /// killed with its call is gone by then, or goes in a moment, and what
+    /// it wrote after the removal stays, as after a crash.
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        if self.done {
+            return;
+        }
+        let path = std::mem::take(&mut self.path);
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => drop(runtime.spawn_blocking(move || fs::remove_dir_all(&path))),
+            Err(_) => {
+                let _ = fs::remove_dir_all(&path);
+            }
+        }
     }
 }
 
@@ -564,9 +688,63 @@ impl Drop for Staging {
 /// The clone is made in a staging folder in the same parent, classified like
 /// any path (a marker of another generation is `GENERATION`), given its
 /// marker in one commit when it has none, and only then moved to `path`. A
-/// failure at any step leaves nothing at `path`. When the move finds that
-/// another `open` made the Vault meanwhile, this one opens that Vault.
-fn clone_new(path: &Path, url: &str, options: OpenOptions) -> Result<Vault, Error> {
+/// failure at any step removes the staging folder before the call returns,
+/// and leaves nothing at `path`. When the move finds that another `open`
+/// made the Vault meanwhile, this one opens that Vault.
+async fn clone_new(path: PathBuf, url: String, options: OpenOptions, mode: OpenMode) -> Opened {
+    let at = path.clone();
+    let staging = blocking(move |cx| stage(cx, &at)).await?;
+    if let Err(error) = prepare_clone(&staging.path, &url, &options).await {
+        // The step owns the folder: if it never runs, its drop removes it.
+        let _ = blocking(move |cx| {
+            discard(cx, staging);
+            Ok(())
+        })
+        .await;
+        return Err(error);
+    }
+    let target = path.clone();
+    match blocking(move |cx| place_clone(cx, staging, &target)).await? {
+        None => Ok((open_existing(path, options).await?, false)),
+        Some(err) => match classify(&path).await {
+            Ok(Spot::Vault | Spot::WorkTree | Spot::Other) => open_at(path, options, mode).await,
+            _ => Err(io(err)).context("move the clone into place"),
+        },
+    }
+}
+
+/// The clone of `url` in the staging folder `place`, looked at, and given
+/// its marker when it has none.
+async fn prepare_clone(place: &Path, url: &str, options: &OpenOptions) -> Result<(), Error> {
+    git::clone(url, place).await.context("clone")?;
+    let at = place.to_path_buf();
+    let spot = blocking(move |cx| {
+        repo::enable_long_paths_at(&at).context("set up the clone")?;
+        match look_at(cx, &at).context("look at the clone")? {
+            Look::At(spot) => Ok(spot),
+            Look::Becoming => Ok(Spot::Other),
+        }
+    })
+    .await?;
+    match spot {
+        Spot::Vault => Ok(()),
+        Spot::WorkTree => {
+            drop(
+                mark_and_open(place.to_path_buf(), options.clone())
+                    .await
+                    .context("mark the clone")?,
+            );
+            Ok(())
+        }
+        _ => Err(refusal(
+            VaultErrorCode::Replication,
+            "the mirror did not clone into a git work tree",
+        )),
+    }
+}
+
+/// A new staging folder for a clone of the Vault at `path`.
+fn stage(_cx: &Blocking, path: &Path) -> Result<Staging, Error> {
     let parent = match path.parent() {
         Some(parent) if !parent.as_os_str().is_empty() => parent,
         _ => Path::new("."),
@@ -578,34 +756,39 @@ fn clone_new(path: &Path, url: &str, options: OpenOptions) -> Result<Vault, Erro
         || String::from("vault"),
         |name| name.to_string_lossy().into_owned(),
     );
-    let staging = Staging(parent.join(format!(
+    let staging = parent.join(format!(
         ".{name}.scheda-clone-{}-{}",
         std::process::id(),
         NEXT_STAGING.fetch_add(1, Ordering::Relaxed)
-    )));
-    let _ = fs::remove_dir_all(&staging.0);
-    git::clone(url, &staging.0).context("clone")?;
-    repo::enable_long_paths_at(&staging.0).context("set up the clone")?;
-    match classify(&staging.0).context("look at the clone")? {
-        Spot::Vault => {}
-        Spot::WorkTree => {
-            drop(mark_and_open(&staging.0, options.clone()).context("mark the clone")?)
+    ));
+    let _ = fs::remove_dir_all(&staging);
+    Ok(Staging {
+        path: staging,
+        done: false,
+    })
+}
+
+/// Removes the staging folder of a clone that failed.
+fn discard(_cx: &Blocking, mut staging: Staging) {
+    staging.done = true;
+    let _ = fs::remove_dir_all(&staging.path);
+}
+
+/// Moves the clone in `staging` to `path`: `None` when it moved, the
+/// failure of the move otherwise, with the staging folder removed.
+fn place_clone(
+    cx: &Blocking,
+    mut staging: Staging,
+    path: &Path,
+) -> Result<Option<std::io::Error>, Error> {
+    match fs::rename(&staging.path, path) {
+        Ok(()) => {
+            staging.done = true;
+            Ok(None)
         }
-        _ => {
-            return Err(refusal(
-                VaultErrorCode::Replication,
-                "the mirror did not clone into a git work tree",
-            ));
-        }
-    }
-    match fs::rename(&staging.0, path) {
-        Ok(()) => open_existing(path, options),
         Err(err) => {
-            drop(staging);
-            match classify(path) {
-                Ok(Spot::Vault | Spot::WorkTree | Spot::Other) => open(path, options),
-                _ => Err(io(err)).context("move the clone into place"),
-            }
+            discard(cx, staging);
+            Ok(Some(err))
         }
     }
 }
@@ -619,11 +802,17 @@ fn init_repository(path: &Path) -> Result<(), Error> {
     made.map_err(Error::from).context("make the repository")
 }
 
-/// Gives the git work tree at `path` its marker and the missing entries of
-/// `.gitignore` in one commit, unless another `open` did already; then opens
-/// it. The mirror a caller names is checked first, so a refusal writes
-/// nothing.
-fn mark_and_open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
+/// The pieces of a Vault before it is complete: its canonical path, its
+/// repositories, and its write path.
+struct Parts {
+    canonical: PathBuf,
+    repos: Arc<Repos>,
+    committer: Committer,
+}
+
+/// The parts of the Vault at `path`, which a caller's mirror must be the
+/// origin of; with `scheda`, `.scheda/` is created first.
+fn parts(cx: &Blocking, path: &Path, options: &OpenOptions, scheda: bool) -> Result<Parts, Error> {
     let canonical = path
         .canonicalize()
         .map_err(io)
@@ -631,21 +820,49 @@ fn mark_and_open(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
     if let Some(mirror) = options.mirror.as_deref() {
         check_mirror(&canonical, mirror)?;
     }
-    prepare_scheda(&canonical)?;
-    let repos = Arc::new(Repos::new(&canonical));
-    let committer = Committer::new(&canonical, &options, Arc::clone(&repos))?;
-    {
-        let lock = committer.lock().context("take the write lock")?;
-        // A second look, now that nobody else writes: another `open` may
-        // have made the Vault meanwhile.
-        let snap = lock.snapshot(Repo::Main)?;
-        if marker::read(&snap)?.is_none() {
-            let changes = service_changes(&snap)?;
-            lock.commit_in(&snap, MARK_MESSAGE, &changes)
-                .context("commit the marker")?;
-        }
+    if scheda {
+        prepare_scheda(&canonical)?;
     }
-    finish(canonical, options, committer, repos)
+    let repos = Arc::new(Repos::new(&canonical));
+    let committer = Committer::new(cx, &canonical, options, Arc::clone(&repos))?;
+    Ok(Parts {
+        canonical,
+        repos,
+        committer,
+    })
+}
+
+/// Gives the git work tree at `path` its marker and the missing entries of
+/// `.gitignore` in one commit, unless another `open` did already; then opens
+/// it. The mirror a caller names is checked first, so a refusal writes
+/// nothing.
+async fn mark_and_open(path: PathBuf, options: OpenOptions) -> Result<Vault, Error> {
+    let checked = options.clone();
+    let parts = blocking(move |cx| parts(cx, &path, &checked, true)).await?;
+    let held = parts
+        .committer
+        .acquire()
+        .await
+        .context("take the write lock")?;
+    let parts = blocking(move |cx| {
+        mark(cx, &parts.committer, held)?;
+        Ok(parts)
+    })
+    .await?;
+    finish(parts, options).await
+}
+
+/// The marker and `.gitignore` committed under the write lock `held`, after
+/// a second look: another `open` may have made the Vault meanwhile.
+fn mark(cx: &Blocking, committer: &Committer, held: Held) -> Result<(), Error> {
+    let lock = committer.adopt(cx, held).context("take the write lock")?;
+    let snap = lock.snapshot(Repo::Main)?;
+    if marker::read(&snap)?.is_none() {
+        let changes = service_changes(&snap)?;
+        lock.commit_in(&snap, MARK_MESSAGE, &changes)
+            .context("commit the marker")?;
+    }
+    Ok(())
 }
 
 /// The marker, and `.gitignore` with the entries Scheda needs, as the commit
@@ -701,30 +918,41 @@ fn prepare_scheda(root: &Path) -> Result<(), Error> {
 }
 
 /// Opens the Vault at `path`, whose marker `classify` has accepted.
-fn open_existing(path: &Path, options: OpenOptions) -> Result<Vault, Error> {
-    let canonical = path
-        .canonicalize()
-        .map_err(io)
-        .context("resolve the path")?;
-    if let Some(mirror) = options.mirror.as_deref() {
-        check_mirror(&canonical, mirror)?;
-    }
-    let repos = Arc::new(Repos::new(&canonical));
-    let committer = Committer::new(&canonical, &options, Arc::clone(&repos))?;
-    finish(canonical, options, committer, repos)
+async fn open_existing(path: PathBuf, options: OpenOptions) -> Result<Vault, Error> {
+    let checked = options.clone();
+    let parts = blocking(move |cx| parts(cx, &path, &checked, false)).await?;
+    finish(parts, options).await
 }
 
-/// Completes the handle of the Vault at `canonical`: recovers a write a
-/// dead writer left, reads the collection files of `HEAD` (an invalid one
-/// fails here, before anything is created), then creates `.scheda/` and the
-/// writer identity.
-fn finish(
-    canonical: PathBuf,
-    options: OpenOptions,
-    committer: Committer,
-    repos: Arc<Repos>,
-) -> Result<Vault, Error> {
-    committer.recover_pending()?;
+/// Completes the handle of the Vault whose `parts` are made: recovers a
+/// write a dead writer left (taking the write lock for that only when the
+/// lock file holds paths), reads the collection files of `HEAD` (an invalid
+/// one fails here, before anything is created), then creates `.scheda/` and
+/// the writer identity.
+async fn finish(mut parts: Parts, options: OpenOptions) -> Result<Vault, Error> {
+    let root = parts.canonical.clone();
+    if blocking(move |cx| commit::pending(cx, &root)).await? {
+        let held = parts
+            .committer
+            .acquire()
+            .await
+            .context("take the write lock")?;
+        parts = blocking(move |cx| {
+            drop(parts.committer.adopt(cx, held)?);
+            Ok(parts)
+        })
+        .await?;
+    }
+    blocking(move |cx| complete(cx, parts, options)).await
+}
+
+/// The Vault of `parts`, with its collections read.
+fn complete(_cx: &Blocking, parts: Parts, options: OpenOptions) -> Result<Vault, Error> {
+    let Parts {
+        canonical,
+        repos,
+        committer,
+    } = parts;
     let snap = repos.snapshot(Repo::Main)?;
     let declarations = Arc::new(collection::load(&snap)?);
     prepare_scheda(&canonical)?;
@@ -745,6 +973,8 @@ fn finish(
         ports: Arc::new(Installed::default()),
         indexer,
         id_maps,
+        gate: Gate::default(),
+        closing: tokio::sync::Mutex::new(()),
     })
 }
 
@@ -784,6 +1014,7 @@ mod tests {
     use super::Vault;
     use crate::git::{git, isolate_test_git_env};
     use crate::ports::Ports;
+    use crate::testing::{open, step};
 
     /// A Vault on disk, made with plain git, removed when the test ends.
     struct Scratch(PathBuf);
@@ -813,31 +1044,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_existing_vault_opens_with_its_collections_and_a_writer_and_closes() {
+    #[tokio::test]
+    async fn an_existing_vault_opens_with_its_collections_and_a_writer_and_closes() {
         let scratch = Scratch::vault("open");
-        let vault = Vault::open(&scratch.0, OpenOptions::default(), Ports::default()).unwrap();
+        let vault = open(&scratch.0, OpenOptions::default()).await.unwrap();
         assert_eq!(vault.path, scratch.0.canonicalize().unwrap());
-        let declarations = vault.declarations_now().unwrap();
+        let declarations = step(&vault, |_cx, vault| vault.declarations_now())
+            .await
+            .unwrap();
         assert_eq!(declarations.len(), 1);
         assert!(declarations.get("notes").is_some());
         assert_eq!(vault.writer.len(), 16);
         assert_eq!(vault.options.mirror, None);
-        vault.close().unwrap();
+        vault.close().await.unwrap();
         assert!(scratch.0.join(".scheda/writer").is_file());
-        let again = Vault::open(
-            &scratch.0,
-            OpenOptions::default().with_writer("alice"),
-            Ports::default(),
-        )
-        .unwrap();
+        let again = open(&scratch.0, OpenOptions::default().with_writer("alice"))
+            .await
+            .unwrap();
         assert_eq!(again.writer, "alice");
     }
 
-    #[test]
-    fn a_port_is_refused_and_removing_one_that_is_not_there_is_nothing_to_do() {
+    #[tokio::test]
+    async fn a_port_is_refused_and_removing_one_that_is_not_there_is_nothing_to_do() {
         let scratch = Scratch::vault("no-ports");
-        let vault = Vault::open(&scratch.0, OpenOptions::default(), Ports::default()).unwrap();
+        let vault = open(&scratch.0, OpenOptions::default()).await.unwrap();
         vault.set_embedder(None).unwrap();
         vault.set_reranker(None).unwrap();
         vault.set_projector(None).unwrap();
@@ -847,15 +1077,17 @@ mod tests {
         assert!(error.is(VaultErrorCode::Unimplemented));
     }
 
-    #[test]
-    fn a_port_is_refused_by_open_before_the_path_is_touched() {
+    #[tokio::test]
+    async fn a_port_is_refused_by_open_before_the_path_is_touched() {
         let scratch = Scratch::vault("bad-ports");
         let missing = scratch.0.join("nowhere");
         let ports = Ports {
             embedder: Some(EmbedderRef::from_sync(AnyEmbedder)),
             ..Ports::default()
         };
-        let error = Vault::open(&missing, OpenOptions::default(), ports).unwrap_err();
+        let error = Vault::open(missing.clone(), OpenOptions::default(), ports)
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Unimplemented));
         assert!(!missing.exists());
     }
@@ -892,12 +1124,12 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_mirror_must_be_the_origin_of_the_vault() {
+    #[tokio::test]
+    async fn a_mirror_must_be_the_origin_of_the_vault() {
         let scratch = Scratch::vault("mirror");
         let url = "https://example.test/org/repo.git";
         let options = || OpenOptions::default().with_mirror(url);
-        let error = Vault::open(&scratch.0, options(), Ports::default()).unwrap_err();
+        let error = open(&scratch.0, options()).await.unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument), "no origin yet");
         git()
             .current_dir(Path::new(&scratch.0))
@@ -907,14 +1139,14 @@ mod tests {
             .arg(url)
             .run()
             .unwrap();
-        Vault::open(&scratch.0, options(), Ports::default()).unwrap();
+        open(&scratch.0, options()).await.unwrap();
         let other = OpenOptions::default().with_mirror("https://example.test/org/other.git");
-        let error = Vault::open(&scratch.0, other, Ports::default()).unwrap_err();
+        let error = open(&scratch.0, other).await.unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
-    #[test]
-    fn options_that_break_a_rule_are_invalid_argument() {
+    #[tokio::test]
+    async fn options_that_break_a_rule_are_invalid_argument() {
         let scratch = Scratch::vault("options");
         for options in [
             OpenOptions::default().with_writer("Not Valid"),
@@ -924,7 +1156,7 @@ mod tests {
             OpenOptions::default().with_filter_max_depth(0),
             OpenOptions::default().with_filter_max_depth(101),
         ] {
-            let error = Vault::open(&scratch.0, options, Ports::default()).unwrap_err();
+            let error = open(&scratch.0, options).await.unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));
         }
         assert!(
@@ -933,8 +1165,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_options_of_the_index_wait_and_the_filter_depth_are_accepted_within_their_bounds() {
+    #[tokio::test]
+    async fn the_options_of_the_index_wait_and_the_filter_depth_are_accepted_within_their_bounds() {
         let scratch = Scratch::vault("options-bounds");
         for options in [
             OpenOptions::default().with_index_wait_timeout_ms(1),
@@ -942,8 +1174,8 @@ mod tests {
             OpenOptions::default().with_filter_max_depth(1),
             OpenOptions::default().with_filter_max_depth(100),
         ] {
-            let vault = Vault::open(&scratch.0, options, Ports::default()).unwrap();
-            vault.close().unwrap();
+            let vault = open(&scratch.0, options).await.unwrap();
+            vault.close().await.unwrap();
         }
     }
 }

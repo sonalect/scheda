@@ -38,6 +38,8 @@ use scheda_api::v1::{
 };
 use serde_json::json;
 
+use scheda_blocking::Blocking;
+
 use crate::collection::{Declaration, Declarations, Kind};
 use crate::commit::{Change, Held};
 use crate::documents::{self, Found, Plain};
@@ -456,7 +458,12 @@ impl crate::vault::Vault {
     /// encrypted collection when the Vault has no secret or the wrong one;
     /// `UNIMPLEMENTED` for an encrypted collection in a build without the
     /// `encrypt` feature; `STORAGE` when a file cannot be read.
-    pub(crate) fn get(&self, collection: &str, document_id: DocumentId) -> Result<Document, Error> {
+    pub(crate) fn get(
+        &self,
+        _cx: &Blocking,
+        collection: &str,
+        document_id: DocumentId,
+    ) -> Result<Document, Error> {
         stored::validate(&document_id).context("get a Document")?;
         let id = document_id.id.unwrap_or_default();
         let declarations = self.declarations_now().context("get a Document")?;
@@ -503,145 +510,9 @@ impl crate::vault::Vault {
         })
     }
 
-    /// Creates a Document in `collection` and returns it as stored, with its
-    /// revision, and the state token of the write. In a journal, appends a
-    /// line. Present, `ALREADY_EXISTS`, or, with `keep_existing`, the
-    /// Document already stored is returned and nothing is written.
-    ///
-    /// The request is checked before the write lock is taken: it validates
-    /// (an `id` and a `note`, not empty), the collection is declared, the id
-    /// (a singleton's must be its declared one) and a journal payload (no
-    /// `\n`, no `\r`) are well formed, and encryption is available for an
-    /// encrypted collection. Identical bytes store nothing and keep the
-    /// revision.
-    ///
-    /// # Errors
-    ///
-    /// `INVALID_ARGUMENT` for the checks above; `NOT_FOUND` for an unknown
-    /// collection; `ALREADY_EXISTS`; `CRYPTO` and `UNIMPLEMENTED` as for
-    /// [`get`](Self::get); `ABORTED` (retryable) when the write lock is not
-    /// free within `write_timeout_ms`, or `HEAD` moved under the write;
-    /// nothing is written then. `STORAGE` or `REPLICATION` when a file or
-    /// git fails.
-    pub(crate) fn create(
-        &self,
-        collection: &str,
-        document_creation: DocumentCreation,
-    ) -> Result<DocumentWriteResult, Error> {
-        self.write_document(
-            None,
-            Write::new(collection, Request::Create(document_creation)),
-        )
-    }
-
-    /// Replaces an existing Document and returns it as stored, and the state
-    /// token of the write. Absent, `NOT_FOUND`. With `revision`, the stored revision must be that one,
-    /// or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes
-    /// store nothing and keep the revision.
-    ///
-    /// # Errors
-    ///
-    /// As [`create`](Self::create), with `NOT_FOUND` for an absent Document
-    /// and `FAILED_PRECONDITION` for a stale `revision`.
-    pub(crate) fn update(
-        &self,
-        collection: &str,
-        document_update: DocumentUpdate,
-    ) -> Result<DocumentWriteResult, Error> {
-        self.write_document(
-            None,
-            Write::new(collection, Request::Update(document_update)),
-        )
-    }
-
-    /// Creates the Document, or replaces it when present, and returns it as
-    /// stored, and the state token of the write. A journal, `UNIMPLEMENTED`.
-    /// The same bytes store nothing and keep the revision.
-    ///
-    /// # Errors
-    ///
-    /// As [`create`](Self::create), but a Document that is present is not an
-    /// error.
-    pub(crate) fn upsert(
-        &self,
-        collection: &str,
-        document_upsert: DocumentUpsert,
-    ) -> Result<DocumentWriteResult, Error> {
-        self.write_document(
-            None,
-            Write::new(collection, Request::Upsert(document_upsert)),
-        )
-    }
-
-    /// Deletes a Document and returns the state token of the write, with no
-    /// Document. Absent, `NOT_FOUND`, or nothing with `ignore_missing`. With
-    /// `revision`, the stored revision must be that
-    /// one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
-    /// line never leaves.
-    ///
-    /// # Errors
-    ///
-    /// As [`update`](Self::update).
-    pub(crate) fn delete(
-        &self,
-        collection: &str,
-        document_deletion: DocumentDeletion,
-    ) -> Result<DocumentWriteResult, Error> {
-        self.write_document(
-            None,
-            Write::new(collection, Request::Delete(document_deletion)),
-        )
-    }
-
-    /// Several Document writes in `collection` as one: all happen, or none.
-    /// As [`batch_documents`](Self::batch_documents) within one collection.
-    ///
-    /// # Errors
-    ///
-    /// The errors of the single calls, and the `Err` of an item.
-    pub(crate) fn batch(
-        &self,
-        collection: &str,
-        document_operations: BoxIter<'static, Result<DocumentOperation, Error>>,
-    ) -> Result<DocumentBatchResult, Error> {
-        self.write_batch(
-            None,
-            Writes::of_collection(collection, document_operations)?,
-        )
-    }
-
-    /// Several Document writes as one, across collections: all happen, or
-    /// none. An `Err` item, a broken stream, or one write that fails, and
-    /// none happened; the error names the operation by its index. One
-    /// result per operation, in order. Collections are not written here
-    /// (`batch_collections`).
-    ///
-    /// The stream is read whole first and no lock is held while it is read.
-    /// The operations are applied in order, each against the state the ones
-    /// before it leave: two operations on one Document see each other. The
-    /// whole batch is one commit, and a batch that changes nothing makes
-    /// none. One call writes the Documents of the main tree or those of
-    /// isolated collections, never both (`INVALID_ARGUMENT`).
-    ///
-    /// # Errors
-    ///
-    /// The errors of the single calls, and the `Err` of an item.
-    pub(crate) fn batch_documents(
-        &self,
-        operations: BoxIter<'static, Result<VaultDocumentOperation, Error>>,
-    ) -> Result<DocumentBatchResult, Error> {
-        self.write_batch(None, Writes::of_vault(operations)?)
-    }
-
-    /// A batch applied as one commit, with the results in order and the
-    /// state token of the commit.
-    fn write_batch(
-        &self,
-        held: Option<Held>,
-        writes: Writes,
-    ) -> Result<DocumentBatchResult, Error> {
-        let written = self.write_documents(held, writes.writes, writes.indexed)?;
-        Ok(DocumentBatchResult {
+    /// The reply of a batch: the results in order and the state token.
+    fn batch_result(written: Written) -> DocumentBatchResult {
+        DocumentBatchResult {
             version: Some(written.version),
             results: written
                 .outcomes
@@ -655,7 +526,7 @@ impl crate::vault::Vault {
                 })
                 .collect(),
             ..Default::default()
-        })
+        }
     }
 
     /// The checks of `writes` that need no lock, as the write makes them
@@ -672,40 +543,76 @@ impl crate::vault::Vault {
     ///
     /// The errors of the write calls that need no lock: `INVALID_ARGUMENT`,
     /// `NOT_FOUND`, `UNIMPLEMENTED`, `CRYPTO`.
-    pub(crate) fn precheck_documents(&self, writes: Writes) -> Result<Writes, Error> {
+    pub(crate) fn precheck_documents(
+        &self,
+        _cx: &Blocking,
+        writes: Writes,
+    ) -> Result<Writes, Error> {
         if !writes.writes.is_empty() {
             self.inspect_writes(&writes.writes, writes.indexed)?;
         }
         Ok(writes)
     }
 
-    /// The one write of `writes`, as the single calls make it, under a write
-    /// lock the caller already waited for.
+    /// The one write of `writes`, as the single calls make it, under the
+    /// write lock `held`, which the caller waited for: the Document as
+    /// stored (none after a deletion) and the state token of the write, and
+    /// whether a commit of the main repository was made (only then is
+    /// there anything to push).
     pub(crate) fn write_document_held(
         &self,
+        cx: &Blocking,
         held: Held,
         writes: Writes,
-    ) -> Result<DocumentWriteResult, Error> {
-        match writes.writes.into_iter().next() {
-            Some(write) => self.write_document(Some(held), write),
-            None => Err(storage("the write holds no request").into()),
-        }
+    ) -> Result<(DocumentWriteResult, bool), Error> {
+        let Some(write) = writes.writes.into_iter().next() else {
+            return Err(storage("the write holds no request").into());
+        };
+        let (mut written, pushable) = self.write_documents(cx, held, vec![write], false)?;
+        let document = match written.outcomes.pop() {
+            Some(Outcome::Document(document)) => document.into(),
+            Some(Outcome::Deleted) => MessageField::none(),
+            None => return Err(storage("the write returned nothing").into()),
+        };
+        let result = DocumentWriteResult {
+            document,
+            version: Some(written.version),
+            ..Default::default()
+        };
+        Ok((result, pushable))
     }
 
-    /// The batch `writes`, under a write lock the caller already waited
-    /// for.
+    /// The batch `writes` as one commit, under the write lock `held`, which
+    /// the caller waited for: all happen, or none. The operations are
+    /// applied in order, each against the state the ones before it leave:
+    /// two operations on one Document see each other. A batch that changes
+    /// nothing makes no commit. One call writes the Documents of the main
+    /// tree or those of isolated collections, never both
+    /// (`INVALID_ARGUMENT`). Also says whether a commit of the main
+    /// repository was made.
     pub(crate) fn write_documents_held(
         &self,
+        cx: &Blocking,
         held: Held,
         writes: Writes,
-    ) -> Result<DocumentBatchResult, Error> {
-        self.write_batch(Some(held), writes)
+    ) -> Result<(DocumentBatchResult, bool), Error> {
+        let (written, pushable) = self.write_documents(cx, held, writes.writes, writes.indexed)?;
+        Ok((Self::batch_result(written), pushable))
     }
 
     /// The batch `writes` when it holds no write: it stores nothing, takes
-    /// no lock, and answers with the state now, as the sync call does.
-    pub(crate) fn write_no_documents(&self, writes: Writes) -> Result<DocumentBatchResult, Error> {
-        self.write_batch(None, writes)
+    /// no lock, and answers with the state now, read as `Vault.Info` reads
+    /// it.
+    pub(crate) fn write_no_documents(
+        &self,
+        cx: &Blocking,
+        writes: Writes,
+    ) -> Result<DocumentBatchResult, Error> {
+        let _ = writes;
+        Ok(Self::batch_result(Written {
+            outcomes: Vec::new(),
+            version: self.state_now(cx)?.token(),
+        }))
     }
 
     /// Validates every write and inspects them against the declarations now.
@@ -725,68 +632,23 @@ impl crate::vault::Vault {
         Ok((inspected, repo, before))
     }
 
-    /// One write, as the single calls make it: the Document as stored (none
-    /// after a deletion) and the state token of the write.
-    fn write_document(
-        &self,
-        held: Option<Held>,
-        write: Write,
-    ) -> Result<DocumentWriteResult, Error> {
-        let mut written = self.write_documents(held, vec![write], false)?;
-        let document = match written.outcomes.pop() {
-            Some(Outcome::Document(document)) => document.into(),
-            Some(Outcome::Deleted) => MessageField::none(),
-            None => return Err(storage("the write returned nothing").into()),
-        };
-        Ok(DocumentWriteResult {
-            document,
-            version: Some(written.version),
-            ..Default::default()
-        })
-    }
-
-    /// The writes as one commit. `indexed` puts the position of a failing
-    /// write into the error.
+    /// The writes as one commit under the write lock `held`, which is let
+    /// go when this returns. The state token of the call is read under that
+    /// lock: the commit the call made in its repository and `HEAD` of the
+    /// other one, or, when the call stored nothing, the state its checks
+    /// found. Also says whether a commit of the main repository was made:
+    /// only then is there anything to push.
     fn write_documents(
         &self,
-        held: Option<Held>,
-        writes: Vec<Write>,
-        indexed: bool,
-    ) -> Result<Written, Error> {
-        let (written, pushable) = self.write_documents_locked(held, writes, indexed)?;
-        // The write lock is let go: a push waits for no writer.
-        if pushable {
-            self.push_after_write();
-        }
-        Ok(written)
-    }
-
-    /// The writes as one commit under the write lock, which is let go when
-    /// this returns. The state token of the call is read under that lock:
-    /// the commit the call made in its repository and `HEAD` of the other
-    /// one, or, when the call stored nothing, the state its checks found.
-    /// An empty call stores nothing and waits for no lock: its token is the
-    /// state now, read without the lock as `Vault.Info` reads it. Also says
-    /// whether a commit of the main repository was made: only then is there
-    /// anything to push.
-    fn write_documents_locked(
-        &self,
-        held: Option<Held>,
+        cx: &Blocking,
+        held: Held,
         writes: Vec<Write>,
         indexed: bool,
     ) -> Result<(Written, bool), Error> {
-        if writes.is_empty() {
-            // Nothing to store, so no lock.
-            let written = Written {
-                outcomes: Vec::new(),
-                version: self.state_now()?.token(),
-            };
-            return Ok((written, false));
-        }
         let encryption = self.encryption();
         let (mut inspected, mut repo, before) = self.inspect_writes(&writes, indexed)?;
         let first_note = first_line(writes.first().map_or("", Write::note));
-        let lock = self.take_lock(held)?;
+        let lock = self.lock(cx, held)?;
         let main = lock.snapshot(Repo::Main)?;
         let declarations = self.declarations_in(&main)?;
         if !Arc::ptr_eq(&before, &declarations) {
@@ -1323,16 +1185,18 @@ fn read_segment(snap: &Snap, path: &std::path::Path) -> Result<Vec<u8>, Error> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use scheda_api::v1::{
-        CollectionDeclaration, DocumentCreation, DocumentDeletion, DocumentId, DocumentOperation,
+        Document, DocumentCreation, DocumentDeletion, DocumentId, DocumentOperation,
         DocumentUpsert, OpenOptions, VaultErrorCode,
     };
 
-    use super::{Error, Operation, first_line, message, note_of, trailer};
+    use super::{Operation, first_line, message, note_of, trailer};
     use crate::commit::hooks;
-    use crate::git::{git, spawned};
-    use crate::ports::Ports;
+    use crate::error::Error;
+    use crate::git::{git, spawned_in};
+    use crate::testing::{batch, create, create_collection, delete, open, step, upsert as write};
     use crate::vault::Vault;
 
     /// A Vault on disk made by `Vault::open`, removed when the test ends.
@@ -1347,13 +1211,14 @@ mod tests {
             Scratch(dir)
         }
 
-        fn open(&self) -> Vault {
-            Vault::open(
-                &self.0,
-                OpenOptions::default().with_write_timeout_ms(2000),
-                Ports::default(),
-            )
-            .unwrap()
+        async fn open(&self) -> Arc<Vault> {
+            open(&self.0, OpenOptions::default().with_write_timeout_ms(2000))
+                .await
+                .unwrap()
+        }
+
+        fn canonical(&self) -> PathBuf {
+            self.0.canonicalize().unwrap()
         }
 
         fn out(&self, dir: &str, args: &[&str]) -> String {
@@ -1384,12 +1249,21 @@ mod tests {
         }
     }
 
-    fn declare(vault: &Vault, name: &str, isolated: bool) {
-        let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
-            "name": name, "schema": {"standard": {}, "isolated": isolated}
-        }))
+    async fn declare(vault: &Arc<Vault>, name: &str, isolated: bool) {
+        create_collection(
+            vault,
+            serde_json::json!({
+                "name": name, "schema": {"standard": {}, "isolated": isolated}
+            }),
+        )
+        .await
         .unwrap();
-        vault.create_collection(collection).unwrap();
+    }
+
+    /// `Collection.Get` of `id`.
+    async fn get(vault: &Arc<Vault>, collection: &str, id: DocumentId) -> Result<Document, Error> {
+        let collection = collection.to_owned();
+        step(vault, move |cx, vault| vault.get(cx, &collection, id)).await
     }
 
     fn upsert(id: &str, raw: &str) -> DocumentUpsert {
@@ -1417,80 +1291,95 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_read_and_a_write_without_a_mirror_start_no_process() {
+    #[tokio::test]
+    async fn a_read_and_a_write_without_a_mirror_start_no_process() {
         let scratch = Scratch::new("no-process");
-        let vault = scratch.open();
-        let before = spawned();
-        declare(&vault, "notes", false);
-        declare(&vault, "diary", true);
-        vault.upsert("notes", upsert("a.md", "x")).unwrap();
-        vault.create("notes", creation("b.md", "y")).unwrap();
-        vault.create("diary", creation("d", "secret")).unwrap();
-        let operations: Vec<Result<DocumentOperation, Error>> = vec![
-            Ok(DocumentOperation {
+        let vault = scratch.open().await;
+        let path = scratch.canonical();
+        let before = (spawned_in(&path), spawned_in(&path.join(".isolated")));
+        declare(&vault, "notes", false).await;
+        declare(&vault, "diary", true).await;
+        write(&vault, "notes", upsert("a.md", "x")).await.unwrap();
+        create(&vault, "notes", creation("b.md", "y"))
+            .await
+            .unwrap();
+        create(&vault, "diary", creation("d", "secret"))
+            .await
+            .unwrap();
+        let operations: Vec<DocumentOperation> = vec![
+            DocumentOperation {
                 operation: Some(Operation::Upsert(Box::new(upsert("c.md", "z")))),
                 ..Default::default()
-            }),
-            Ok(DocumentOperation {
+            },
+            DocumentOperation {
                 operation: Some(Operation::Delete(Box::new(DocumentDeletion {
                     id: Some("b.md".to_owned()),
                     note: Some("gone".to_owned()),
                     ..Default::default()
                 }))),
                 ..Default::default()
-            }),
+            },
         ];
-        vault
-            .batch("notes", Box::new(operations.into_iter()))
-            .unwrap();
+        batch(&vault, "notes", operations).await.unwrap();
         for _ in 0..3 {
-            let got = vault.get("notes", key("a.md")).unwrap();
+            let got = get(&vault, "notes", key("a.md")).await.unwrap();
             assert_eq!(got.raw.as_deref(), Some(&b"x"[..]));
         }
         assert!(
-            vault
-                .get("notes", key("absent.md"))
+            get(&vault, "notes", key("absent.md"))
+                .await
                 .unwrap_err()
                 .is(VaultErrorCode::NotFound)
         );
         assert!(
-            vault
-                .get("unknown", key("a"))
+            get(&vault, "unknown", key("a"))
+                .await
                 .unwrap_err()
                 .is(VaultErrorCode::NotFound)
         );
         assert_eq!(
-            vault.get("diary", key("d")).unwrap().raw.as_deref(),
+            get(&vault, "diary", key("d")).await.unwrap().raw.as_deref(),
             Some(&b"secret"[..])
         );
-        assert_eq!(spawned(), before, "no call started a git process");
+        assert_eq!(
+            (spawned_in(&path), spawned_in(&path.join(".isolated"))),
+            before,
+            "no call started a git process"
+        );
     }
 
-    #[test]
-    fn a_write_that_has_not_returned_is_seen_by_no_read_and_touches_no_file() {
+    #[tokio::test]
+    async fn a_write_that_has_not_returned_is_seen_by_no_read_and_touches_no_file() {
         let scratch = Scratch::new("not-returned");
-        let vault = scratch.open();
-        declare(&vault, "notes", false);
-        vault.upsert("notes", upsert("old.md", "old")).unwrap();
-        let other = scratch.open();
+        let vault = scratch.open().await;
+        declare(&vault, "notes", false).await;
+        write(&vault, "notes", upsert("old.md", "old"))
+            .await
+            .unwrap();
+        let other = scratch.open().await;
         let head = scratch.out(".", &["rev-parse", "HEAD"]);
         std::fs::write(scratch.0.join("person.txt"), "mine").unwrap();
         // The call stops after the list of its paths, before the swap on
         // `HEAD`, as a kill would.
-        hooks::stop_after_list();
-        let error = vault.upsert("notes", upsert("new.md", "new")).unwrap_err();
+        hooks::stop_after_list(&scratch.canonical());
+        let error = write(&vault, "notes", upsert("new.md", "new"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
         assert_eq!(scratch.lock(), b"notes/new.md\0", "paths only, never bytes");
         for handle in [&vault, &other] {
             assert!(
-                handle
-                    .get("notes", key("new.md"))
+                get(handle, "notes", key("new.md"))
+                    .await
                     .unwrap_err()
                     .is(VaultErrorCode::NotFound)
             );
             assert_eq!(
-                handle.get("notes", key("old.md")).unwrap().raw.as_deref(),
+                get(handle, "notes", key("old.md"))
+                    .await
+                    .unwrap()
+                    .raw
+                    .as_deref(),
                 Some(&b"old"[..])
             );
         }
@@ -1498,25 +1387,29 @@ mod tests {
         assert!(!scratch.0.join("notes/new.md").exists());
         assert_eq!(scratch.status("."), "?? person.txt");
         // The next write of a handle recovers the note.
-        other.upsert("notes", upsert("next.md", "next")).unwrap();
+        write(&other, "notes", upsert("next.md", "next"))
+            .await
+            .unwrap();
         assert!(scratch.lock().is_empty());
         assert!(!scratch.0.join("notes/new.md").exists());
         assert_eq!(scratch.status("."), "?? person.txt");
     }
 
-    #[test]
-    fn a_nested_write_cut_after_the_swap_is_restored_from_the_nested_head() {
+    #[tokio::test]
+    async fn a_nested_write_cut_after_the_swap_is_restored_from_the_nested_head() {
         let scratch = Scratch::new("nested-swap");
-        let vault = scratch.open();
-        declare(&vault, "diary", true);
-        vault.upsert("diary", upsert("kept", "kept")).unwrap();
+        let vault = scratch.open().await;
+        declare(&vault, "diary", true).await;
+        write(&vault, "diary", upsert("kept", "kept"))
+            .await
+            .unwrap();
         let main = scratch.out(".", &["rev-parse", "HEAD"]);
         let nested = scratch.out(".isolated", &["rev-parse", "HEAD"]);
         // A person edits another nested file by hand.
         std::fs::write(scratch.0.join(".isolated/diary/person"), "mine").unwrap();
-        hooks::stop_after_swap();
-        let error = vault
-            .create("diary", creation("cut", "the whole write"))
+        hooks::stop_after_swap(&scratch.canonical());
+        let error = create(&vault, "diary", creation("cut", "the whole write"))
+            .await
             .unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
         // The commit landed in the nested repository only; its file lags.
@@ -1524,8 +1417,8 @@ mod tests {
         assert_eq!(scratch.out(".", &["rev-parse", "HEAD"]), main);
         assert!(!scratch.0.join(".isolated/diary/cut").exists());
         assert_eq!(scratch.lock(), b".isolated/diary/cut\0");
-        drop(vault);
-        let vault = scratch.open();
+        vault.close().await.unwrap();
+        let vault = scratch.open().await;
         assert_eq!(
             std::fs::read(scratch.0.join(".isolated/diary/cut")).unwrap(),
             b"the whole write"
@@ -1535,41 +1428,51 @@ mod tests {
         assert_eq!(scratch.status("."), "");
         assert_eq!(scratch.out(".", &["rev-parse", "HEAD"]), main);
         assert_eq!(
-            vault.get("diary", key("cut")).unwrap().raw.as_deref(),
+            get(&vault, "diary", key("cut"))
+                .await
+                .unwrap()
+                .raw
+                .as_deref(),
             Some(&b"the whole write"[..])
         );
     }
 
-    #[test]
-    fn a_nested_write_cut_before_the_swap_is_dropped_from_the_nested_tree() {
+    #[tokio::test]
+    async fn a_nested_write_cut_before_the_swap_is_dropped_from_the_nested_tree() {
         let scratch = Scratch::new("nested-list");
-        let vault = scratch.open();
-        declare(&vault, "diary", true);
-        vault.upsert("diary", upsert("kept", "kept")).unwrap();
+        let vault = scratch.open().await;
+        declare(&vault, "diary", true).await;
+        write(&vault, "diary", upsert("kept", "kept"))
+            .await
+            .unwrap();
         let nested = scratch.out(".isolated", &["rev-parse", "HEAD"]);
-        hooks::stop_after_list();
+        hooks::stop_after_list(&scratch.canonical());
         assert!(
-            vault
-                .create("diary", creation("cut", "lost"))
+            create(&vault, "diary", creation("cut", "lost"))
+                .await
                 .unwrap_err()
                 .is(VaultErrorCode::Storage)
         );
         assert_eq!(scratch.out(".isolated", &["rev-parse", "HEAD"]), nested);
         assert!(!scratch.0.join(".isolated/diary/cut").exists());
-        vault.upsert("diary", upsert("next", "next")).unwrap();
+        write(&vault, "diary", upsert("next", "next"))
+            .await
+            .unwrap();
         assert!(scratch.lock().is_empty());
         assert!(!scratch.0.join(".isolated/diary/cut").exists());
         assert_eq!(scratch.status(".isolated"), "");
     }
 
-    #[test]
-    fn a_hand_made_commit_in_the_nested_repository_aborts_the_write() {
+    #[tokio::test]
+    async fn a_hand_made_commit_in_the_nested_repository_aborts_the_write() {
         let scratch = Scratch::new("nested-race");
-        let vault = scratch.open();
-        declare(&vault, "diary", true);
-        vault.upsert("diary", upsert("kept", "kept")).unwrap();
+        let vault = scratch.open().await;
+        declare(&vault, "diary", true).await;
+        write(&vault, "diary", upsert("kept", "kept"))
+            .await
+            .unwrap();
         let nested = scratch.out(".isolated", &["rev-list", "--count", "HEAD"]);
-        hooks::run_before_swap(|root| {
+        hooks::run_before_swap(&scratch.canonical(), |root| {
             git()
                 .current_dir(root)
                 .env("GIT_AUTHOR_NAME", "Hand")
@@ -1584,7 +1487,9 @@ mod tests {
                 .run()
                 .unwrap();
         });
-        let error = vault.create("diary", creation("raced", "x")).unwrap_err();
+        let error = create(&vault, "diary", creation("raced", "x"))
+            .await
+            .unwrap_err();
         assert!(error.is(VaultErrorCode::Aborted));
         assert!(error.retryable());
         assert!(!scratch.0.join(".isolated/diary/raced").exists());
@@ -1594,39 +1499,41 @@ mod tests {
             after.parse::<usize>().unwrap(),
             nested.parse::<usize>().unwrap() + 1
         );
-        vault.create("diary", creation("raced", "x")).unwrap();
+        create(&vault, "diary", creation("raced", "x"))
+            .await
+            .unwrap();
         assert_eq!(scratch.status(".isolated"), "");
     }
 
-    #[test]
-    fn a_delete_writes_no_bytes_into_the_note_either() {
+    #[tokio::test]
+    async fn a_delete_writes_no_bytes_into_the_note_either() {
         let scratch = Scratch::new("delete-list");
-        let vault = scratch.open();
-        declare(&vault, "notes", false);
-        vault
-            .upsert("notes", upsert("a.md", "secret body"))
+        let vault = scratch.open().await;
+        declare(&vault, "notes", false).await;
+        write(&vault, "notes", upsert("a.md", "secret body"))
+            .await
             .unwrap();
-        hooks::stop_after_list();
+        hooks::stop_after_list(&scratch.canonical());
         let deletion = DocumentDeletion {
             id: Some("a.md".to_owned()),
             note: Some("remove".to_owned()),
             ..Default::default()
         };
-        assert!(vault.delete("notes", deletion).is_err());
+        assert!(delete(&vault, "notes", deletion).await.is_err());
         assert_eq!(scratch.lock(), b"notes/a.md\0");
         assert!(
             scratch.0.join("notes/a.md").is_file(),
             "the file is untouched"
         );
-        vault.upsert("notes", upsert("b.md", "b")).unwrap();
+        write(&vault, "notes", upsert("b.md", "b")).await.unwrap();
         assert_eq!(
             std::fs::read(scratch.0.join("notes/a.md")).unwrap(),
             b"secret body"
         );
     }
 
-    #[test]
-    fn the_message_is_the_first_note_line_and_one_trailer_per_write() {
+    #[tokio::test]
+    async fn the_message_is_the_first_note_line_and_one_trailer_per_write() {
         assert_eq!(
             first_line("\n  why it was made  \nsecond"),
             "why it was made"
@@ -1647,8 +1554,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_note_of_a_document_is_the_trailer_that_names_its_collection_and_id() {
+    #[tokio::test]
+    async fn the_note_of_a_document_is_the_trailer_that_names_its_collection_and_id() {
         let text = message(
             "first",
             &[

@@ -1,10 +1,12 @@
 //! What the command line reads and writes: the replies on stdout, the
 //! request text from flags, files and stdin, and the failures of both.
 
+use std::future::poll_fn;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::path::Path;
+use std::pin::pin;
 
-use protocontract::BoxIter;
+use protocontract::Stream;
 use scheda::v1::VaultErrorCode;
 use scheda::{Error, Fault};
 use serde::Serialize;
@@ -65,10 +67,11 @@ pub(crate) fn emit(value: &impl Serialize) -> Result<Flow, Error> {
 /// # Errors
 ///
 /// The failure of the stream, or of [`emit`].
-pub(crate) fn emit_stream<T: Serialize>(
-    stream: BoxIter<'static, Result<T, Error>>,
+pub(crate) async fn emit_stream<T: Serialize>(
+    stream: impl Stream<Item = Result<T, Error>>,
 ) -> Result<(), Error> {
-    for item in stream {
+    let mut stream = pin!(stream);
+    while let Some(item) = poll_fn(|cx| stream.as_mut().poll_next(cx)).await {
         if emit(&item?)? == Flow::Closed {
             break;
         }
@@ -125,19 +128,19 @@ pub(crate) fn raw_bytes(file: Option<&Path>) -> Result<Vec<u8>, Error> {
     }
 }
 
-/// The non-blank lines of stdin, each parsed as the JSON of one message and
-/// read only when the consumer asks for it. A line that does not parse, or
-/// stdin failing, is an `Err` item that names the line, and the stream ends
-/// there.
-pub(crate) fn json_lines<T: Send + 'static>(
-    parse: fn(&[u8]) -> Result<T, Error>,
-) -> BoxIter<'static, Result<T, Error>> {
-    Box::new(JsonLines {
+/// The non-blank lines of stdin, each parsed as the JSON of one message,
+/// read whole before the Vault is opened. A line that does not parse, or
+/// stdin failing, is an `Err` item that names the line, and the items end
+/// there: the batch that gets them fails with the index of that item and
+/// writes nothing.
+pub(crate) fn json_lines<T>(parse: fn(&[u8]) -> Result<T, Error>) -> Vec<Result<T, Error>> {
+    JsonLines {
         reader: BufReader::new(io::stdin()),
         line: 0,
         parse,
         ended: false,
-    })
+    }
+    .collect()
 }
 
 /// The iterator of [`json_lines`].

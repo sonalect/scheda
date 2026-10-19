@@ -4,12 +4,15 @@
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use scheda::Scheda;
-use scheda::v1::{CollectionKey, CollectionSync, OpenOptions, SchedaSync, VaultOpening, VaultSync};
+use scheda::v1::{
+    CollectionKey, CollectionSync, OpenOptions, SchedaAsync, VaultOpening, VaultSync,
+};
 use serde_json::Value;
+use tokio::runtime::Runtime;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
@@ -218,22 +221,35 @@ pub fn opening(path: &Path, writer: &str) -> VaultOpening {
     }
 }
 
+/// The runtime the library side of a test runs on. A test is a caller
+/// without async code: it takes the blocking form of each object
+/// (protocontract's `Blocking`), which needs a multi-thread runtime.
+pub fn runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    })
+}
+
 /// A Vault opened by the library on `path`, with no port.
 pub fn library(path: &Path) -> Arc<dyn VaultSync> {
-    Scheda
-        .open(opening(path, "library"))
-        .unwrap()
-        .to_sync()
-        .unwrap()
+    let reference = runtime()
+        .block_on(Scheda.open(opening(path, "library")))
+        .unwrap();
+    let _inside = runtime().enter();
+    reference.to_sync().unwrap()
 }
 
 /// The collection `name` of `vault`.
 pub fn collection(vault: &Arc<dyn VaultSync>, name: &str) -> Arc<dyn CollectionSync> {
-    vault
+    let reference = vault
         .get_collection(CollectionKey::default().with_name(name))
-        .unwrap()
-        .to_sync()
-        .unwrap()
+        .unwrap();
+    let _inside = runtime().enter();
+    reference.to_sync().unwrap()
 }
 
 /// The source text of the command line.

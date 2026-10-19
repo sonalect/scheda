@@ -85,8 +85,8 @@ changes; they grow with each part of the move.
   `scheda::Scheda` (the only public type besides the error, the
   fixed-portion adapters, and `parse_age_identity`) opens a Vault:
   `Scheda.open(VaultOpening { path, options, projector, embedder,
-  reranker })` returns a `VaultRef`, and `vault_ref.to_sync()?` gives an
-  `Arc<dyn VaultSync>` (and an async form).
+  reranker })` returns a `VaultRef`, and `vault_ref.to_async_inline()?`
+  gives the Vault (see the async bullet below).
   The Vault gives `GetCollection` → `CollectionRef` (the Documents of one
   collection), `Mirror` → `MirrorRef`, and `Index` → `IndexRef`
   (`UNIMPLEMENTED` until the Index on Lance). `scheda::Vault`,
@@ -128,14 +128,35 @@ changes; they grow with each part of the move.
   Vault's reranker and is `INVALID_ARGUMENT` without one or below `k`.
   Both weights 0 is `INVALID_ARGUMENT`. A collection with
   `exclude_lexical_index` is searched by the vector leg only.
-- Async: `Scheda` implements `SchedaAsync`, whose
-  `open` returns references in the async form (`VaultAsync`,
-  `CollectionAsync`, …). Calls run on the blocking pool of the runtime of
-  the call; an `Index.Watch` stream, a write waiting for the write lock,
-  and a search waiting for an async embedder or reranker hold no thread.
-  `AsyncVault`, `AsyncCollection`, and `scheda::nonblocking` are gone; a
-  Vault opened by the sync `Scheda.open` gives protocontract's generic
-  async form through `to_async_offload()`.
+- Scheda is async only, on the tokio runtime of its caller (either
+  flavor, with the time and I/O drivers on: `Builder::enable_all`).
+  `Scheda` implements `SchedaAsync` and no longer `SchedaSync`; the
+  objects behind every reference are async (`VaultAsync`,
+  `CollectionAsync`, `MirrorAsync`): take them with `to_async_inline()`.
+  A caller without async code builds a multi-thread runtime and takes
+  `to_sync()` inside it (protocontract's `Blocking`); on a current-thread
+  runtime that form fails with `CANNOT_BLOCK` instead of hanging.
+  `to_async_offload()` of a Scheda reference is no longer needed.
+- No call holds a thread while it waits: a write waits for its turn
+  (first come, first served) and for `commit.lock` with an `await`;
+  `git clone`, `fetch`, and `push` run as child processes that are
+  awaited; `open` waits for another `open` of the same new path the same
+  way. The work itself runs on the blocking pool of the runtime, one
+  step at a time (one commit, one Document read).
+- A call whose future is dropped stops at its next `await`: dropped while
+  it waits for the write lock, a write stores nothing and takes no lock;
+  dropped during its commit, the commit completes and is stored; dropped
+  during the push of `auto_sync`, the `git` process is killed, the commit
+  stays local, and the next push carries it.
+- `Collection.GetMany` and `Collection.History` read one Document per
+  item, nothing ahead of the reader.
+- The indexer of an open Vault is a task on the runtime that opened it,
+  not a thread. `Vault.Close` waits for it, and for the work of calls
+  that were dropped midway, and returns with every lock let go; a Vault
+  dropped without `Close` tells its indexer to stop and does not wait.
+- CLI: `scheda` runs on a multi-thread runtime; a batch reads its
+  operations from stdin whole before it opens the Vault. Flags, JSON, and
+  exit codes do not change.
 - `Vault.Close` replaces `Vault::close(self)`: every call through the
   Vault, its collections, its mirror, and its Index then fails with
   `FAILED_PRECONDITION`; it returns once the calls that run have ended,

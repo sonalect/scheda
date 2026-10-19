@@ -2,6 +2,10 @@
 //! it opens the Vault, makes the call, prints the reply as Protobuf JSON,
 //! one message per line, closes the Vault, and exits. A failure is the JSON
 //! of its `ErrorReport` on stderr and exit status 1.
+//!
+//! The flags and the input (a file, stdin) are read first, on the main
+//! thread; the call then runs on a multi-thread tokio runtime, as Scheda's
+//! objects are async.
 
 use mimalloc::MiMalloc;
 
@@ -18,11 +22,11 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use clap::error::ErrorKind as ClapErrorKind;
-use scheda::v1::ErrorReport;
+use scheda::v1::{ErrorReport, VaultErrorCode};
+use scheda::{Error, Fault};
 
 use args::Cli;
 use call::Call;
-use scheda::Error;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -57,7 +61,16 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Error> 
         _ => Some(open::opening(&cli)?),
     };
     let call = Call::prepare(cli.command)?;
-    exec::execute(call, opening)
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| {
+            Error::from(
+                Fault::new(VaultErrorCode::Storage, "cannot start the async runtime")
+                    .with_source(err),
+            )
+        })?;
+    runtime.block_on(exec::execute(call, opening))
 }
 
 /// Writes the report as one line on stderr. There is nowhere else to say

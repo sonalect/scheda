@@ -17,6 +17,7 @@ rust_binary(
         "@scheda_cargo//:serde",
         "@scheda_cargo//:serde_json",
         "@scheda_cargo//:sha2",
+        "@scheda_cargo//:tokio",
         "@scheda_cargo//:ureq",
     ],
 )
@@ -38,6 +39,7 @@ rust_test(
         "@scheda_cargo//:serde",
         "@scheda_cargo//:serde_json",
         "@scheda_cargo//:sha2",
+        "@scheda_cargo//:tokio",
         "@scheda_cargo//:ureq",
     ],
 )
@@ -62,6 +64,7 @@ rust_test(
         "@scheda_cargo//:protocontract",
         "@scheda_cargo//:serde",
         "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
     ],
 )
 
@@ -84,5 +87,6 @@ rust_test(
         "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:protocontract",
         "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
     ],
 )

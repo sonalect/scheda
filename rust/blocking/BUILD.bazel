@@ -1,0 +1,29 @@
+load("@rules_rust//rust:defs.bzl", "rust_doc_test", "rust_library", "rust_test")
+
+exports_files(["Cargo.toml"])
+
+rust_library(
+    name = "blocking",
+    srcs = ["src/lib.rs"],
+    crate_name = "scheda_blocking",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:tokio",
+    ],
+)
+
+rust_test(
+    name = "blocking_test",
+    size = "small",
+    crate = ":blocking",
+    visibility = ["//rust:__pkg__"],
+)
+
+# The examples of the crate's documentation: each claim of the gate is a
+# pair, one that compiles and runs, one that does not compile.
+rust_doc_test(
+    name = "blocking_doc_test",
+    size = "small",
+    crate = ":blocking",
+)

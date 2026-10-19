@@ -2,10 +2,12 @@
 //!
 //! [`Scheda`] opens a Vault and returns a reference to it
 //! ([`v1::vault_ref::VaultRef`]); the Vault gives its collections and its
-//! mirror the same way. A caller takes the form of an object it needs from
-//! its reference (`to_sync`, or an async form on a Tokio runtime) and
-//! calls the traits of the contract ([`v1::VaultSync`],
-//! [`v1::CollectionSync`], …).
+//! mirror the same way. The objects are async, on the tokio runtime of the
+//! caller: a caller takes the async form of an object from its reference
+//! (`to_async_inline`) and calls the traits of the contract
+//! ([`v1::VaultAsync`], [`v1::CollectionAsync`], …). A caller without
+//! async code takes the blocking form (`to_sync`) inside a multi-thread
+//! runtime.
 //!
 //! This version of Scheda has no Index to query or search: `Vault.Index`,
 //! the queries, the counts, and the searches answer `UNIMPLEMENTED`, and so
@@ -22,6 +24,7 @@ mod document_calls;
 mod documents;
 mod error;
 mod fs;
+mod gate;
 mod git;
 mod id;
 mod idmap;
@@ -36,6 +39,8 @@ mod reads;
 mod repo;
 mod service;
 mod stored;
+#[cfg(test)]
+mod testing;
 mod vault;
 mod writer;
 

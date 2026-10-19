@@ -312,15 +312,23 @@ D1, D14, D18.
       Bazel (annotations); `run-commands.md` updated.
 - [x] The feature `index` (D14) declared, `find` / `search` / `simd`
       still present until L8 removes them.
-- [ ] The debug loop measured and written down: a cold
+- [x] The debug loop measured and written down: a cold
       `cargo build -p scheda --all-features`, and a rebuild after
       touching one file of `rust/scheda/src`. If the rebuild is slow,
       say so to the owner before L2 (the owner cares about debug builds,
       not release ones). Measured on 19 October 2026: 235 s for the new
       crates (238 of them, the rest of the target directory warm); the
       rebuild after `touch rust/scheda/src/lib.rs` took 0.9 s, which
-      proves nothing yet because no code uses Lance. Repeat before `22`
-      A3, with a probe whose code calls Lance (the owner, after L8).
+      proves nothing yet because no code uses Lance. Repeated on 20
+      October 2026 with a probe whose code calls Lance (write, the three
+      index kinds, delete, compaction, filter, BM25, vector search),
+      after a one-line edit of `vault.rs`: Cargo rebuilds the library in
+      0.8 s (0.5 s without Lance) and one test binary in 2.8 s (0.8 s);
+      all twelve test binaries of the time took 14 s (1.5 s), each about
+      2 GB of debug information. Bazel takes 22 s for one test target
+      (3.4 s), almost all in its link with the system `ld`, where Cargo
+      uses Rust's own `lld`. Taken into `22` A3: the integration tests
+      became one binary.
 - *Check:* `cargo build` and `cargo clippy --workspace --all-targets
   --all-features` green; `bazel build //rust/scheda/...` green on Linux,
   macOS, and Windows CI.

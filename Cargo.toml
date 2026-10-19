@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["rust/api", "rust/cli", "rust/scheda"]
+members = ["rust/api", "rust/blocking", "rust/cli", "rust/scheda"]
 
 [workspace.package]
 edition = "2024"
@@ -36,6 +36,7 @@ protovalidate-buffa = { version = "=0.7.2", default-features = false }
 regex = "=1.13.1"
 scheda = { path = "rust/scheda" }
 scheda-api = { path = "rust/api" }
+scheda-blocking = { path = "rust/blocking" }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_ignored = "=0.1.14"
 serde_json = "=1.0.154"

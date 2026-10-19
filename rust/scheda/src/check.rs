@@ -126,14 +126,20 @@ pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::sync::Arc;
 
     use scheda_api::v1::{OpenOptions, Problem, VaultErrorCode};
 
-    use super::{problem, problem_of, run};
-    use crate::error::Fault;
+    use super::{problem, problem_of};
+    use crate::error::{Error, Fault};
     use crate::git::{git, isolate_test_git_env};
-    use crate::ports::Ports;
+    use crate::testing::{open, step};
     use crate::vault::Vault;
+
+    /// The problems `check::run` finds in `vault`.
+    async fn run(vault: &Arc<Vault>) -> Result<Vec<Problem>, Error> {
+        step(vault, |_cx, vault| super::run(vault)).await
+    }
 
     /// A Vault work tree made with plain git, removed when the test ends.
     struct Scratch(PathBuf);
@@ -202,10 +208,9 @@ mod tests {
             scratch
         }
 
-        fn open(&self) -> Vault {
-            let vault = Vault::open(&self.0, OpenOptions::default(), Ports::default()).unwrap();
+        async fn open(&self) -> Arc<Vault> {
             // `open` makes `.scheda/` owner-only.
-            vault
+            open(&self.0, OpenOptions::default()).await.unwrap()
         }
     }
 
@@ -243,20 +248,20 @@ mod tests {
         assert!(!scratch.git(&["merge", "--quiet", "--no-edit", "other"]));
     }
 
-    #[test]
-    fn a_sound_vault_has_no_problem() {
+    #[tokio::test]
+    async fn a_sound_vault_has_no_problem() {
         let scratch = Scratch::vault("sound");
         scratch.write("notes/a.md", b"text");
         scratch.write("log/00000001-w.jsonl", b"a: 1\n");
         scratch.write(".isolated/diary/b", b"secret");
         scratch.commit("fixture");
-        let vault = scratch.open();
-        assert!(run(&vault).unwrap().is_empty());
-        vault.close().unwrap();
+        let vault = scratch.open().await;
+        assert!(run(&vault).await.unwrap().is_empty());
+        vault.close().await.unwrap();
     }
 
-    #[test]
-    fn a_binary_file_with_marker_lines_passes_and_a_real_unmerged_path_is_reported() {
+    #[tokio::test]
+    async fn a_binary_file_with_marker_lines_passes_and_a_real_unmerged_path_is_reported() {
         let scratch = Scratch::vault("unmerged");
         let mut png = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0xFF, 0x00];
         png.extend_from_slice(b"\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> other\n");
@@ -267,12 +272,15 @@ mod tests {
         );
         scratch.write("log/00000001-w.jsonl", b"a: <<<<<<< HEAD\n");
         scratch.commit("markers that are not conflicts");
-        let vault = scratch.open();
-        assert!(run(&vault).unwrap().is_empty(), "no merge, no conflict");
+        let vault = scratch.open().await;
+        assert!(
+            run(&vault).await.unwrap().is_empty(),
+            "no merge, no conflict"
+        );
 
         // A real merge conflict in a Document file, with plain git.
         conflict(&scratch, "notes/clash.md");
-        let problems = run(&vault).unwrap();
+        let problems = run(&vault).await.unwrap();
         assert_eq!(
             found(&problems),
             [(
@@ -283,17 +291,17 @@ mod tests {
         // Finishing the merge clears it.
         scratch.write("notes/clash.md", b"resolved\n");
         scratch.commit("resolved");
-        assert!(run(&vault).unwrap().is_empty());
+        assert!(run(&vault).await.unwrap().is_empty());
     }
 
-    #[test]
-    fn two_problems_in_one_vault_are_both_reported() {
+    #[tokio::test]
+    async fn two_problems_in_one_vault_are_both_reported() {
         let scratch = Scratch::vault("both");
         scratch.write("log/00000001-w.jsonl", b"a: 1\nbroken\n");
         scratch.write("notes/ bad name", b"x");
         conflict(&scratch, "notes/clash.md");
-        let vault = scratch.open();
-        let problems = run(&vault).unwrap();
+        let vault = scratch.open().await;
+        let problems = run(&vault).await.unwrap();
         assert_eq!(
             found(&problems),
             [
@@ -313,15 +321,15 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_tracked_isolated_path_and_a_wide_mode_are_reported() {
+    #[tokio::test]
+    async fn a_tracked_isolated_path_and_a_wide_mode_are_reported() {
         let scratch = Scratch::vault("perimeter");
         scratch.write(".isolated/diary/b", b"secret");
         scratch.commit("fixture");
-        let vault = scratch.open();
-        assert!(run(&vault).unwrap().is_empty());
+        let vault = scratch.open().await;
+        assert!(run(&vault).await.unwrap().is_empty());
         assert!(scratch.git(&["add", "--force", ".isolated/diary/b"]));
-        let problems = run(&vault).unwrap();
+        let problems = run(&vault).await.unwrap();
         assert_eq!(
             found(&problems),
             [(VaultErrorCode::InvalidArgument, ".isolated".to_owned())]
@@ -331,7 +339,7 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             let path = scratch.0.join(".scheda/writer");
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
-            let problems = run(&vault).unwrap();
+            let problems = run(&vault).await.unwrap();
             assert_eq!(
                 found(&problems),
                 [
@@ -345,8 +353,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn files_a_person_changed_and_did_not_commit_are_listed_and_a_write_does_not_clear_them() {
+    #[tokio::test]
+    async fn files_a_person_changed_and_did_not_commit_are_listed_and_a_write_does_not_clear_them()
+    {
         use scheda_api::v1::{DocumentCreation, DocumentUpsert};
         let scratch = Scratch::vault("changed");
         for rel in ["notes/a.md", "notes/b.md", "notes/c.md"] {
@@ -354,17 +363,18 @@ mod tests {
         }
         scratch.write("draft.txt", b"outside the collections");
         scratch.commit("fixture");
-        let vault = scratch.open();
-        vault
-            .create(
-                "diary",
-                DocumentCreation::default()
-                    .with_id("d")
-                    .with_raw(b"secret".to_vec())
-                    .with_note("test"),
-            )
-            .unwrap();
-        assert!(run(&vault).unwrap().is_empty());
+        let vault = scratch.open().await;
+        crate::testing::create(
+            &vault,
+            "diary",
+            DocumentCreation::default()
+                .with_id("d")
+                .with_raw(b"secret".to_vec())
+                .with_note("test"),
+        )
+        .await
+        .unwrap();
+        assert!(run(&vault).await.unwrap().is_empty());
         scratch.write("notes/a.md", b"modified");
         std::fs::remove_file(scratch.0.join("notes/b.md")).unwrap();
         scratch.write("notes/c.md", b"staged");
@@ -385,19 +395,20 @@ mod tests {
                 "notes/new.md".to_owned(),
             ),
         ];
-        assert_eq!(found(&run(&vault).unwrap()), expected);
+        assert_eq!(found(&run(&vault).await.unwrap()), expected);
         // A write of the same Document lands in HEAD; the person's file still
         // differs from what the Vault stores.
-        vault
-            .upsert(
-                "notes",
-                DocumentUpsert::default()
-                    .with_id("a.md")
-                    .with_raw(b"by the API".to_vec())
-                    .with_note("test"),
-            )
-            .unwrap();
-        assert_eq!(found(&run(&vault).unwrap()), expected);
+        crate::testing::upsert(
+            &vault,
+            "notes",
+            DocumentUpsert::default()
+                .with_id("a.md")
+                .with_raw(b"by the API".to_vec())
+                .with_note("test"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(found(&run(&vault).await.unwrap()), expected);
         // Once the person commits what they have, nothing differs.
         assert!(scratch.git(&["add", "--all"]));
         assert!(scratch.git(&["commit", "--quiet", "--message", "by hand"]));
@@ -415,11 +426,11 @@ mod tests {
                 .unwrap()
                 .success()
         );
-        assert!(run(&vault).unwrap().is_empty());
+        assert!(run(&vault).await.unwrap().is_empty());
     }
 
-    #[test]
-    fn a_problem_carries_its_code_path_and_message() {
+    #[tokio::test]
+    async fn a_problem_carries_its_code_path_and_message() {
         let plain = problem(VaultErrorCode::Crypto, None, "m");
         assert_eq!(
             plain.code.and_then(|c| c.as_known()),

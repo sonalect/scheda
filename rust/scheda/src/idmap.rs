@@ -516,14 +516,15 @@ fn in_collection(path: &str, dir: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use scheda_api::v1::{CollectionDeclaration, DocumentCreation, OpenOptions, VaultErrorCode};
+    use scheda_api::v1::{DocumentCreation, OpenOptions, VaultErrorCode};
 
     use super::{IdMap, check_journal_id_maps, in_collection};
     use crate::index::{Index, State};
-    use crate::ports::Ports;
     use crate::repo::{Repo, Repos, fixture};
+    use crate::testing::{create, create_collection, open};
     use crate::vault::Vault;
 
     struct Scratch(PathBuf);
@@ -539,38 +540,37 @@ mod tests {
 
         /// A Vault with the journal `log` and the line `old`, its indexer
         /// stopped after it built the map: the test makes the map itself.
-        fn vault(&self) -> (PathBuf, Vault) {
-            let vault = Vault::open(
-                &self.0,
-                OpenOptions::default().with_index_poll_ms(10),
-                Ports::default(),
-            )
-            .unwrap();
-            let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
-                "name": "log", "schema": {"journal": {}}
-            }))
-            .unwrap();
-            vault.create_collection(collection).unwrap();
-            vault
-                .create(
-                    "log",
-                    DocumentCreation {
-                        id: Some("old".to_owned()),
-                        raw: Some(b"{}".to_vec()),
-                        note: Some("test".to_owned()),
-                        ..Default::default()
-                    },
-                )
+        async fn vault(&self) -> (PathBuf, Arc<Vault>) {
+            let vault = open(&self.0, OpenOptions::default().with_index_poll_ms(10))
+                .await
                 .unwrap();
+            create_collection(
+                &vault,
+                serde_json::json!({"name": "log", "schema": {"journal": {}}}),
+            )
+            .await
+            .unwrap();
+            create(
+                &vault,
+                "log",
+                DocumentCreation {
+                    id: Some("old".to_owned()),
+                    raw: Some(b"{}".to_vec()),
+                    note: Some("test".to_owned()),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
             let path = self.0.canonicalize().unwrap();
             let deadline = Instant::now() + Duration::from_secs(20);
             while Index::new(&path).read_commit().unwrap().map(State::token)
                 != Some(State::of(&Repos::new(&path).views().unwrap()).token())
             {
                 assert!(Instant::now() < deadline, "the Index never caught up");
-                std::thread::sleep(Duration::from_millis(5));
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            vault.indexer().stop().unwrap();
+            vault.indexer().stop().await.unwrap();
             (path, vault)
         }
     }
@@ -605,10 +605,10 @@ mod tests {
         vault.id_maps().find(&snap, decl, id).unwrap().is_some()
     }
 
-    #[test]
-    fn an_absent_id_is_looked_for_only_in_the_segments_changed_since_the_map() {
+    #[tokio::test]
+    async fn an_absent_id_is_looked_for_only_in_the_segments_changed_since_the_map() {
         let scratch = Scratch::new("changed");
-        let (path, vault) = scratch.vault();
+        let (path, vault) = scratch.vault().await;
         // A map true at HEAD that lacks `old`, which is in an unchanged
         // segment: a whole scan would find it, the map's rule does not.
         craft(&path, head(&path), &[]);
@@ -632,10 +632,10 @@ mod tests {
         assert!(find(&vault, &path, "old"));
     }
 
-    #[test]
-    fn the_check_lists_a_broken_map_a_map_outside_its_journal_and_a_map_that_lies() {
+    #[tokio::test]
+    async fn the_check_lists_a_broken_map_a_map_outside_its_journal_and_a_map_that_lies() {
         let scratch = Scratch::new("check");
-        let (path, vault) = scratch.vault();
+        let (path, vault) = scratch.vault().await;
         let check = || {
             let views = Repos::new(&path).views().unwrap();
             let declarations = vault.declarations_now().unwrap();
@@ -684,37 +684,35 @@ mod tests {
         assert!(check().is_empty());
     }
 
-    #[test]
-    fn the_map_of_a_collection_that_is_not_a_journal_is_removed_by_a_round() {
+    #[tokio::test]
+    async fn the_map_of_a_collection_that_is_not_a_journal_is_removed_by_a_round() {
         let scratch = Scratch::new("stale");
-        let vault = Vault::open(
-            &scratch.0,
-            OpenOptions::default().with_index_poll_ms(10),
-            Ports::default(),
-        )
-        .unwrap();
+        let vault = open(&scratch.0, OpenOptions::default().with_index_poll_ms(10))
+            .await
+            .unwrap();
         let path = scratch.0.canonicalize().unwrap();
         let ghost = path.join(".scheda/index/journal/ghost");
         let deadline = Instant::now() + Duration::from_secs(20);
         while !Index::new(&path).root().join("commit").exists() {
             assert!(Instant::now() < deadline);
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
         std::fs::create_dir_all(&ghost).unwrap();
         std::fs::write(ghost.join("ids"), "x").unwrap();
-        let collection: CollectionDeclaration = serde_json::from_value(serde_json::json!({
-            "name": "log", "schema": {"journal": {}}
-        }))
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "log", "schema": {"journal": {}}}),
+        )
+        .await
         .unwrap();
-        vault.create_collection(collection).unwrap();
         while ghost.exists() {
             assert!(Instant::now() < deadline, "the stale map stays");
-            std::thread::sleep(Duration::from_millis(5));
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 
-    #[test]
-    fn a_map_round_trips_and_writes_only_the_segments_it_uses() {
+    #[tokio::test]
+    async fn a_map_round_trips_and_writes_only_the_segments_it_uses() {
         let mut map = IdMap::new(State::default());
         let a = map.intern("log/00000001-w.jsonl");
         let _unused = map.intern("log/00000002-w.jsonl");
@@ -731,8 +729,8 @@ mod tests {
         assert_eq!(again.state, State::default());
     }
 
-    #[test]
-    fn bytes_that_are_not_a_map_are_index_broken() {
+    #[tokio::test]
+    async fn bytes_that_are_not_a_map_are_index_broken() {
         for bytes in [
             &b""[..],
             b"scheda-ids 2\n",
@@ -746,8 +744,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_segment_belongs_to_a_collection_by_its_path() {
+    #[tokio::test]
+    async fn a_segment_belongs_to_a_collection_by_its_path() {
         assert!(in_collection("log/00000001-w.jsonl", "log/"));
         assert!(!in_collection("log/sub/00000001-w.jsonl", "log/"));
         assert!(!in_collection("other/00000001-w.jsonl", "log/"));
