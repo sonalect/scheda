@@ -47,6 +47,18 @@ each is small.
   so `python/BUILD.bazel` ignores the advisory for now. From 20 October
   2026 10:03 UTC: bump `vllm` in `pyproject.toml`, relock `uv.lock`, drop
   the ignore.
+- **huggingface-hub 2.x comes with that vllm bump.** With vllm 0.31.0 it
+  cannot: vllm 0.31.0 caps `transformers<5.18`, and transformers 5.17.0
+  requires `huggingface-hub<2.0`. vllm 0.32.0 allows `transformers<5.20`;
+  transformers 5.18.0 and later, and tokenizers 0.23.3, allow
+  `huggingface-hub<3.0`; vllm itself asks only `>=1.31.0`. Our calls
+  (`hf_hub_download` with `repo_id`, `filename`, `revision`, `local_dir`,
+  `token`, `user_agent`; `snapshot_download` with `repo_id`, `token`;
+  `huggingface_hub.errors.HfHubHTTPError`) are all in 2.2.0 (checked on
+  its wheel, 19 October 2026). huggingface-hub 2.2.0 (8 October) and
+  transformers 5.19.0 (6 October) are past the quarantine. Do it in one
+  step: `vllm==0.32.0`, `huggingface-hub==2.2.0` in `pyproject.toml`,
+  relock, run the driver (`import`, `search`) and a sidecar once.
 
 **How to apply:** take these with the docs pass or right after the merge;
 the first one changes library code and needs its own test; the vllm bump
