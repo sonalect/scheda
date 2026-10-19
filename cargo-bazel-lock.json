@@ -1,5 +1,5 @@
 {
-  "checksum": "bf1db519c90fbc988a4c30e26de041df6fc8fdbe724eb695becfcef2d7aa830a",
+  "checksum": "dce329e24a1d2175d49ee8628f1ece68d223d0c78d45a33773ea1cd363e530cc",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -13856,6 +13856,10 @@
             "target": "age"
           },
           {
+            "id": "buffa-types 0.9.2",
+            "target": "buffa_types"
+          },
+          {
             "id": "clap 4.6.7",
             "target": "clap"
           },
@@ -13866,6 +13870,10 @@
           {
             "id": "model2vec-rs 0.3.0",
             "target": "model2vec_rs"
+          },
+          {
+            "id": "protocontract 0.4.0",
+            "target": "protocontract"
           },
           {
             "id": "serde 1.0.229",

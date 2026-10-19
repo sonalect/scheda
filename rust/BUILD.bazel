@@ -20,6 +20,7 @@ rust_clippy_test(
         "//rust/scheda:async_test",
         "//rust/scheda:collections_test",
         "//rust/scheda:collections_thin_test",
+        "//rust/scheda:consumer_test",
         "//rust/scheda:documents_test",
         "//rust/scheda:documents_thin_test",
         "//rust/scheda:index_test",

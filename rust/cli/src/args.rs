@@ -1,73 +1,116 @@
-//! Clap surface for the thin CLI. Command names match the library methods.
+//! The clap surface of the command line: the global flags that open the
+//! Vault and the subcommands, one per rpc of the contract.
 
 use std::path::PathBuf;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
-/// Thin encoding of the Scheda library API.
+/// The `scheda` command line: each subcommand is one rpc of the contract.
 ///
-/// JSON of Records and errors is the Protobuf JSON mapping of `api/v1`.
+/// The reply is the Protobuf JSON of the contract, one message per line on
+/// stdout; a failure is one line of JSON on stderr and exit status 1.
 #[derive(Parser, Debug)]
 #[command(
     name = "scheda",
     version = env!("CARGO_PKG_VERSION"),
-    about = "Thin encoding of the Scheda library API.",
+    about = "One rpc of the Scheda contract per subcommand.",
     subcommand_required = true,
     disable_help_subcommand = true
 )]
-pub struct Cli {
-    /// Vault working tree. The only filesystem path the caller supplies.
+pub(crate) struct Cli {
+    /// The Vault folder. Required by every subcommand but `scheda-info`.
     #[arg(long, global = true, value_name = "PATH")]
-    pub vault: Option<PathBuf>,
+    pub(crate) vault: Option<PathBuf>,
 
-    /// Pull on open and push after a local commit when a Remote exists.
-    /// Default off: `open` stays local.
+    /// Whether to open an existing Vault, make one, or both. Unset: the
+    /// library default (open, or make when there is none).
+    #[arg(long, global = true, value_enum, value_name = "MODE")]
+    pub(crate) mode: Option<ModeArg>,
+
+    /// The mirror of the Vault (a git remote URL), set at open.
+    #[arg(long, global = true, value_name = "URL")]
+    pub(crate) mirror: Option<String>,
+
+    /// Pull on open and push after a local commit when a mirror exists.
     #[arg(long, global = true, default_value_t = false)]
-    pub auto_sync: bool,
+    pub(crate) auto_sync: bool,
 
-    /// OpenAI-compatible API root. Joined with `embeddings`.
-    /// Must be set with `--embedder-model` and `--embedder-dimensions`, or none.
+    /// The author of the commits. With `--author-email`, or neither.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub(crate) author_name: Option<String>,
+
+    /// The author's e-mail. With `--author-name`, or neither.
+    #[arg(long, global = true, value_name = "EMAIL")]
+    pub(crate) author_email: Option<String>,
+
+    /// The writer id of this process.
+    #[arg(long, global = true, value_name = "ID")]
+    pub(crate) writer: Option<String>,
+
+    /// How long a write waits for the write lock, in milliseconds.
+    #[arg(long, global = true, value_name = "N")]
+    pub(crate) write_timeout_ms: Option<u32>,
+
+    /// Env var that holds the passphrase of encrypted collections.
+    #[arg(
+        long,
+        global = true,
+        value_name = "NAME",
+        conflicts_with = "encryption_identity_file"
+    )]
+    pub(crate) encryption_passphrase_env_var: Option<String>,
+
+    /// File with an age identity (`AGE-SECRET-KEY-…`) for encrypted
+    /// collections.
+    #[arg(
+        long,
+        global = true,
+        value_name = "PATH",
+        conflicts_with = "encryption_passphrase_env_var"
+    )]
+    pub(crate) encryption_identity_file: Option<PathBuf>,
+
+    /// OpenAI-compatible API root, joined with `embeddings`. With
+    /// `--embedder-model` and `--embedder-dimensions`, or none.
     #[arg(
         long,
         global = true,
         value_name = "URL",
         conflicts_with = "model2vec_embedder"
     )]
-    pub embedder_openai_url: Option<String>,
+    pub(crate) embedder_openai_url: Option<String>,
 
-    /// Embeddings `model` JSON field. With `--embedder-openai-url` and
-    /// `--embedder-dimensions`, or none.
+    /// The `model` field of the embeddings request, and the model id of the
+    /// embedder.
     #[arg(
         long,
         global = true,
         value_name = "NAME",
         conflicts_with = "model2vec_embedder"
     )]
-    pub embedder_model: Option<String>,
+    pub(crate) embedder_model: Option<String>,
 
-    /// Declared vector length (`Embedder.dimensions`). With
-    /// `--embedder-openai-url` and `--embedder-model`, or none.
+    /// The length of the vectors the HTTP embedder gives.
     #[arg(
         long,
         global = true,
         value_name = "N",
         conflicts_with = "model2vec_embedder"
     )]
-    pub embedder_dimensions: Option<usize>,
+    pub(crate) embedder_dimensions: Option<u32>,
 
-    /// Env var whose value is `Authorization: Bearer`. Unset → no auth.
-    /// Only with the HTTP embedder flags. Missing/empty var → `invalid`.
+    /// Env var whose value is the `Authorization: Bearer` token of the HTTP
+    /// embedder. Only with the HTTP embedder flags.
     #[arg(
         long,
         global = true,
         value_name = "NAME",
         conflicts_with = "model2vec_embedder"
     )]
-    pub embedder_api_key_env_var: Option<String>,
+    pub(crate) embedder_api_key_env_var: Option<String>,
 
-    /// Directory with Model2Vec files (`config.json`, `tokenizer.json`,
-    /// `model.safetensors`). Unset → vector leg off unless the HTTP
-    /// embedder flags are set.
+    /// A folder with a Model2Vec model (`config.json`, `tokenizer.json`,
+    /// `model.safetensors`), the embedder of the Vault.
     #[arg(
         long,
         global = true,
@@ -79,229 +122,279 @@ pub struct Cli {
             "embedder_api_key_env_var"
         ]
     )]
-    pub model2vec_embedder: Option<PathBuf>,
+    pub(crate) model2vec_embedder: Option<PathBuf>,
 
-    /// Git author and committer name. With `--author-email`, or neither.
+    /// Cohere or Jina rerank API root, joined with `rerank`. With
+    /// `--reranker-model`, or neither. Used by a search with `rerankLimit`.
+    #[arg(long, global = true, value_name = "URL")]
+    pub(crate) reranker_cohere_url: Option<String>,
+
+    /// The `model` field of the rerank request.
     #[arg(long, global = true, value_name = "NAME")]
-    pub author_name: Option<String>,
+    pub(crate) reranker_model: Option<String>,
 
-    /// Git author and committer address. With `--author-name`, or neither.
-    #[arg(long, global = true, value_name = "EMAIL")]
-    pub author_email: Option<String>,
+    /// Env var whose value is the `Authorization: Bearer` token of the HTTP
+    /// reranker. Only with the HTTP reranker flags.
+    #[arg(long, global = true, value_name = "NAME")]
+    pub(crate) reranker_api_key_env_var: Option<String>,
 
-    /// Env var whose value is `OpenOptions.encryption.passphrase`.
-    /// Missing or empty var → `invalid` before `open`. Not with
-    /// `--encryption-identity-file`.
-    #[arg(
-        long,
-        global = true,
-        value_name = "NAME",
-        conflicts_with = "encryption_identity_file"
-    )]
-    pub encryption_passphrase_env_var: Option<String>,
-
-    /// Age identity file (`AGE-SECRET-KEY-…`, `age-keygen` comments allowed).
-    /// Unreadable or malformed → `invalid` before `open`. Not with
-    /// `--encryption-passphrase-env-var`.
-    #[arg(
-        long,
-        global = true,
-        value_name = "PATH",
-        conflicts_with = "encryption_passphrase_env_var"
-    )]
-    pub encryption_identity_file: Option<PathBuf>,
-
-    /// `find` / `search` query the Index as it is instead of waiting up to
-    /// 60 s for it to reach `HEAD`. Commits this or a previous command made
-    /// may then be missing from the result.
+    /// Do not wait for the Index before a query, a count, or a search, and
+    /// do not wait for a rebuild after `index reindex`.
     #[arg(long, global = true, default_value_t = false)]
-    pub no_wait: bool,
+    pub(crate) no_wait: bool,
 
+    /// What to call.
     #[command(subcommand)]
-    pub command: Command,
+    pub(crate) command: Command,
 }
 
+/// `--mode`: what `Scheda.Open` does when the folder is, or is not, a Vault.
+#[derive(Clone, Copy, Debug, ValueEnum)]
+pub(crate) enum ModeArg {
+    /// Open the Vault, or make one when the folder holds none.
+    OpenOrCreate,
+    /// Open a Vault that exists; fail when there is none.
+    OpenExisting,
+    /// Make a Vault; fail when the folder holds one.
+    CreateNew,
+}
+
+/// A subcommand: one rpc, reached from the Vault.
 #[derive(Subcommand, Debug)]
-pub enum Command {
-    /// Open or create a Vault. `--remote-repo` fills a missing path from that
-    /// URL (absolute URI or scp-style `git@host:path`); on an existing Vault
-    /// it must match `origin`.
-    Open {
-        #[arg(long)]
-        remote_repo: Option<String>,
-    },
-    /// `api.v1.VaultInfo`: path, Index path, `remote`, `auto_sync`, collections.
+pub(crate) enum Command {
+    /// This build of Scheda: its version and features. Opens no Vault.
+    SchedaInfo,
+    /// The path of the Vault, of its Index, and its writer id.
     Info,
-    /// Write one collection Schema. `--schema` is Protobuf JSON `Schema`.
-    #[command(name = "create-collection")]
+    /// Problems found in the stored files of the Vault.
+    Check,
+    /// The declarations of every collection.
+    ListCollections,
+    /// Make a collection. The Schema comes from `--schema` or stdin.
     CreateCollection {
+        /// The collection name.
         name: String,
-        #[arg(long)]
+        /// The Schema, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
         schema: Option<String>,
-        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
-        #[arg(long)]
-        message: Option<String>,
     },
-    /// Collection handle.
-    Collection {
+    /// Replace the Schema of a collection.
+    UpdateCollection {
+        /// The collection name.
         name: String,
+        /// The Schema, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        schema: Option<String>,
+    },
+    /// Delete a collection and its Documents.
+    DeleteCollection {
+        /// The collection name.
+        name: String,
+        /// Succeed when there is no such collection.
+        #[arg(long, default_value_t = false)]
+        ignore_missing: bool,
+    },
+    /// Several collection operations as one; JSON Lines of
+    /// `CollectionOperation` on stdin.
+    BatchCollections,
+    /// Several Document writes across collections as one; JSON Lines of
+    /// `VaultDocumentOperation` on stdin.
+    BatchDocuments,
+    /// The Documents that match a filter, across collections.
+    QueryDocuments {
+        /// The `VaultQuery`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        query: Option<String>,
+    },
+    /// How many Documents `query-documents` would give.
+    CountDocuments {
+        /// The `VaultQuery`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        query: Option<String>,
+    },
+    /// The Documents that best fit a text, across collections.
+    SearchDocuments {
+        /// The `VaultSearch`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        search: Option<String>,
+    },
+    /// One collection of the Vault.
+    Collection {
+        /// The collection name.
+        name: String,
+        /// What to call on the collection.
         #[command(subcommand)]
         command: CollectionCommand,
     },
-    /// Validate declarations, encodings, ids, and conflict markers.
-    Check,
-    /// Rebuild the derived Index from the commits at `HEAD`.
-    Reindex,
-    /// Where the Index stands against `HEAD`: each leg's commit, Records
-    /// still to index, roles this process holds, `modelMismatch`, and the
-    /// last indexing error. Does not wait.
-    #[command(name = "index-status")]
-    IndexStatus,
-    /// Wait until the Index reaches `HEAD`, then print `index-status`.
-    /// Past the timeout: `io_timed_out`.
-    #[command(name = "wait-indexed")]
-    WaitIndexed {
-        /// Longest wait.
-        #[arg(long, default_value_t = 60, value_name = "N")]
-        timeout_secs: u64,
+    /// The mirror of the Vault.
+    Mirror {
+        /// What to call on the mirror.
+        #[command(subcommand)]
+        command: MirrorCommand,
     },
-    /// Tantivy Query, then files. Unset `--collections` → every non-isolated,
-    /// non-encrypted collection that is in the lexical Index.
-    Find {
-        #[arg(long, value_delimiter = ',', value_name = "NAME")]
-        collections: Vec<String>,
-        #[arg(long)]
-        filter: Option<String>,
-        #[arg(long)]
-        offset: u32,
-        #[arg(long)]
-        count: u32,
-        /// `FindQuery.include_raw`. Default false: omit `Record.raw`.
-        #[arg(long, default_value_t = false)]
-        include_raw: bool,
+    /// The Index of the Vault.
+    Index {
+        /// What to call on the Index.
+        #[command(subcommand)]
+        command: IndexCommand,
     },
-    /// Hybrid search (BM25, ANN, RRF). `--query` is Protobuf JSON `SearchQuery`.
-    /// Unset `--collections` → every non-isolated, non-encrypted collection
-    /// that has at least one Index leg.
-    Search {
-        #[arg(long, value_delimiter = ',', value_name = "NAME")]
-        collections: Vec<String>,
-        #[command(flatten)]
-        search: SearchArgs,
-    },
-    /// Push to the Remote (default `origin`).
-    Push,
-    /// Fetch and fast-forward from the Remote.
-    Pull,
-    /// `pull` then `push`.
-    Sync,
-    /// Push `{vault}/.isolated/` to its own Remote. Does not touch the main tree.
-    #[command(name = "push-isolated")]
-    PushIsolated,
-    /// Pull `{vault}/.isolated/` from its own Remote.
-    #[command(name = "pull-isolated")]
-    PullIsolated,
-    /// Isolated `pull` then `push`.
-    #[command(name = "sync-isolated")]
-    SyncIsolated,
 }
 
+/// A subcommand of `collection NAME`.
 #[derive(Subcommand, Debug)]
-pub enum CollectionCommand {
-    /// Collection Schema as Protobuf JSON.
-    #[command(name = "schema")]
-    Schema,
-    /// Create a Record. `--file` is UTF-8 bytes, or stdin when omitted.
-    Add {
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        file: Option<PathBuf>,
-        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
-        #[arg(long)]
-        message: Option<String>,
-    },
-    /// Read one Record by id. Stdout is `Record.raw` bytes, not JSON.
+pub(crate) enum CollectionCommand {
+    /// The declaration of the collection.
+    Describe,
+    /// One Document; `raw` is Base64 in the JSON.
     Get {
+        /// The Document id.
         #[arg(long)]
         id: String,
     },
-    /// Git history of that Record file. Newest first.
-    History {
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        offset: u32,
-        #[arg(long)]
-        count: u32,
-    },
-    /// Replace a `document` or `singleton`. `--file` is UTF-8 bytes, or stdin when omitted.
-    Replace {
-        #[arg(long)]
-        id: String,
-        #[arg(long)]
-        file: Option<PathBuf>,
-        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
-        #[arg(long)]
-        message: Option<String>,
-    },
-    /// Delete a `document` or `singleton`. `journal` → `unsupported`.
-    Remove {
-        #[arg(long)]
-        id: String,
-        /// Git commit subject. Unset → `scheda`. Empty → `invalid`.
-        #[arg(long)]
-        message: Option<String>,
-    },
-    /// Walk Record files of this `document` or `singleton` in `id` order.
-    /// `journal` → `unsupported`. Encrypted collection without a secret →
-    /// `crypto`.
-    Documents,
-    /// Ids of this `document` or `singleton` in the same order as `documents`.
-    /// `journal` → `unsupported`. Encrypted collections do not need a secret.
-    Ids,
-    /// Tantivy Query on this collection, then files.
-    Find {
-        #[arg(long)]
-        filter: Option<String>,
-        #[arg(long)]
-        offset: u32,
-        #[arg(long)]
-        count: u32,
-        /// `FindQuery.include_raw`. Default false: omit `Record.raw`.
+    /// Many Documents: the given ids, or the collection page by page.
+    GetMany {
+        /// Comma-separated ids. Not with `--limit` or `--start-after`.
+        #[arg(
+            long,
+            value_delimiter = ',',
+            value_name = "ID,…",
+            conflicts_with_all = ["limit", "start_after"]
+        )]
+        ids: Option<Vec<String>>,
+        /// At most this many Documents of the listing.
+        #[arg(long, value_name = "N")]
+        limit: Option<u32>,
+        /// The listing continues after this id.
+        #[arg(long, value_name = "ID")]
+        start_after: Option<String>,
+        /// Include `raw` in each Document.
         #[arg(long, default_value_t = false)]
         include_raw: bool,
     },
-    /// Hybrid search on this collection (BM25, ANN, RRF).
+    /// The past versions of a Document, newest first.
+    History {
+        /// The Document id.
+        #[arg(long)]
+        id: String,
+    },
+    /// Create a Document. The bytes come from `--file` or stdin.
+    Create {
+        /// The Document id.
+        #[arg(long)]
+        id: String,
+        /// Read the bytes from this file instead of stdin.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// The commit note.
+        #[arg(long)]
+        note: String,
+        /// When the Document exists, return it and write nothing.
+        #[arg(long, default_value_t = false)]
+        keep_existing: bool,
+    },
+    /// Replace a Document. The bytes come from `--file` or stdin.
+    Update {
+        /// The Document id.
+        #[arg(long)]
+        id: String,
+        /// Read the bytes from this file instead of stdin.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// The commit note.
+        #[arg(long)]
+        note: String,
+        /// The revision the stored Document must have.
+        #[arg(long, value_name = "REV")]
+        revision: Option<String>,
+    },
+    /// Create a Document, or replace it when present.
+    Upsert {
+        /// The Document id.
+        #[arg(long)]
+        id: String,
+        /// Read the bytes from this file instead of stdin.
+        #[arg(long, value_name = "PATH")]
+        file: Option<PathBuf>,
+        /// The commit note.
+        #[arg(long)]
+        note: String,
+    },
+    /// Delete a Document.
+    Delete {
+        /// The Document id.
+        #[arg(long)]
+        id: String,
+        /// The commit note.
+        #[arg(long)]
+        note: String,
+        /// The revision the stored Document must have.
+        #[arg(long, value_name = "REV")]
+        revision: Option<String>,
+        /// Succeed when there is no such Document.
+        #[arg(long, default_value_t = false)]
+        ignore_missing: bool,
+    },
+    /// Several Document writes as one; JSON Lines of `DocumentOperation`
+    /// on stdin.
+    Batch,
+    /// The Documents that match a filter.
+    Query {
+        /// The `DocumentQuery`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        query: Option<String>,
+    },
+    /// How many Documents `query` would give.
+    Count {
+        /// The `DocumentQuery`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        query: Option<String>,
+    },
+    /// The Documents that best fit a text, or a Document.
     Search {
-        #[command(flatten)]
-        search: SearchArgs,
+        /// The `DocumentSearch`, as Protobuf JSON.
+        #[arg(long, value_name = "JSON")]
+        search: Option<String>,
     },
 }
 
+/// A subcommand of `mirror`.
+#[derive(Subcommand, Debug)]
+pub(crate) enum MirrorCommand {
+    /// The URL of the mirror, its auto-sync flag, and its last failure.
+    Info,
+    /// Set the mirror.
+    Set(MirrorSet),
+    /// Remove the mirror.
+    Remove,
+    /// Push the Vault to the mirror.
+    Push,
+    /// Pull the mirror into the Vault.
+    Pull,
+    /// Pull, then push.
+    Sync,
+}
+
+/// The arguments of `mirror set`.
 #[derive(Args, Debug)]
-pub struct SearchArgs {
-    /// Protobuf JSON `SearchQuery`. Omit to read stdin.
-    #[arg(long)]
-    pub query: Option<String>,
-    /// Cohere/Jina API root. Joined with `rerank`. With `--reranker-model`,
-    /// or none. Unset → RRF.
-    #[arg(long, value_name = "URL")]
-    pub reranker_cohere_url: Option<String>,
-    /// Rerank `model` JSON field. With `--reranker-cohere-url`, or none.
-    #[arg(long, value_name = "NAME")]
-    pub reranker_model: Option<String>,
-    /// Env var whose value is `Authorization: Bearer`. Unset → no auth.
-    /// Only with the HTTP reranker flags. Missing/empty var → `invalid`.
-    #[arg(long, value_name = "NAME")]
-    pub reranker_api_key_env_var: Option<String>,
-    /// `SearchQuery.rerank_limit`. Unset → score every fused hit at pool
-    /// `max(k, 50)`. Set to N → both legs retrieve `max(k, 50, N)` and the
-    /// reranker scores the top N. Ignored when no reranker is passed. Zero
-    /// and a value below `k` are `invalid`.
-    #[arg(long, value_name = "N")]
-    pub rerank_limit: Option<u32>,
-    /// `SearchQuery.include_raw`. Default false: omit `Hit.raw`.
+pub(crate) struct MirrorSet {
+    /// The mirror URL.
+    pub(crate) url: String,
+    /// Replace a mirror that is already set.
     #[arg(long, default_value_t = false)]
-    pub include_raw: bool,
+    pub(crate) replace_existing: bool,
+}
+
+/// A subcommand of `index`.
+#[derive(Subcommand, Debug)]
+pub(crate) enum IndexCommand {
+    /// The state of the Index now.
+    Status,
+    /// The state of the Index, then each change of it.
+    Watch {
+        /// Stop after the first settled state.
+        #[arg(long, default_value_t = false)]
+        until_settled: bool,
+    },
+    /// Rebuild the Index and wait until it is rebuilt.
+    Reindex,
 }

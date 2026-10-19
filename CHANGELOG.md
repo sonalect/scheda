@@ -12,6 +12,15 @@ The breaking `0.22.0` is under way on the branch `proto-contract`: the
 whole API becomes protobuf services. The notes below say what a caller
 changes; they grow with each part of the move.
 
+### Added
+
+- `scheda::parse_command`: parses the Protobuf JSON of a request strictly
+  (a key the message does not know is `INVALID_ARGUMENT` naming its path)
+  and validates it, for a transport that takes requests as JSON.
+- `scheda::error_report`: a failure written out as `v1::ErrorReport`
+  (the name of its code, the message, the retry flag, the stack, the
+  path), the form the CLI prints on stderr.
+
 ### Fixed
 
 - `Check` could report a file under `.scheda/index/` as not owner-only
@@ -262,6 +271,34 @@ changes; they grow with each part of the move.
   (`uv.lock`). No API or format change.
 - `protocontract` 0.4.0 and `protoc-gen-protocontract-buffa` v0.4.0 (from
   `bazel_utils` 0.4.1): references to a service.
+- The CLI is the contract on the command line: each subcommand is one
+  call, named after it in kebab case (`info`, `list-collections`,
+  `create-collection NAME --schema JSON`, `batch-documents`,
+  `query-documents --query JSON`, `search-documents --search JSON`,
+  `collection NAME get|get-many|history|create|update|upsert|delete|batch|
+  query|count|search`, `mirror info|set|remove|push|pull|sync`, `index
+  status|watch|reindex`, `scheda-info`). stdout is the Protobuf JSON of
+  the reply, one line, and a stream is JSON Lines; `collection … get`
+  prints the Document as JSON (`raw` in base64) instead of its bytes.
+  stderr is an `ErrorReport` (`"code": "VAULT_ERROR_CODE_NOT_FOUND"`, …).
+  A request is its Protobuf JSON (`--schema`, `--query`, `--search`, or
+  stdin), parsed strictly; a batch reads JSON Lines from stdin and writes
+  all or nothing; each write takes `--note`. The open options are global
+  flags (`--mode`, `--mirror`, `--auto-sync`, `--author-name` and
+  `--author-email`, `--writer`, `--write-timeout-ms`), and so are the
+  reranker flags, now a port of the Vault used by a search with
+  `rerankLimit`. A process indexes only with an embedder flag (the
+  whole-file Projector marks `body` `vector`), unless a collection sets
+  `excludeVectorIndex`. A query, count, or search waits up to 60 s for
+  the Index first, and `index reindex` waits for the rebuild to end
+  (`--no-wait` skips both); `index watch --until-settled` replaces
+  `wait-indexed`. An HTTP embedder or reranker failure carries the port's
+  code: `UNAVAILABLE` (retryable for a transport failure, 408, 429, and
+  5xx; not for 401 and 403) or `REFUSED`.
+- The CLI test driver (`python/cli`) speaks the new subcommands and
+  matches `VAULT_ERROR_CODE_NOT_FOUND`; it passes the embedder on every
+  call that should index, and `--lexical-only` ranks by the lexical leg
+  only (`vectorWeight: 0`).
 - Rust toolchain and `rust-version` (MSRV) raised from 1.99.0 to 1.99.1:
   build Scheda with Rust 1.99.1 or newer.
 - The test gate checks behaviour only: the OPS-1 / OPS-2 timing bands are
@@ -277,6 +314,15 @@ changes; they grow with each part of the move.
   collection file.
 - Transactions and the old write calls: `begin`, `commit`, `discard`,
   `transaction`, `add`, `replace`, `remove`, and `create_collection`.
+- CLI subcommands without a call of their own: `open` (any subcommand
+  opens; `--mode create-new` makes a Vault), `reindex`, `index-status`,
+  and `wait-indexed` (now under `index`), `find` and `search` (now
+  `query-documents` and `search-documents`, and `collection NAME query`
+  and `search`), `push-isolated`, `pull-isolated`, and `sync-isolated`
+  (isolated collections never leave the machine), and `collection NAME
+  schema`, `add`, `replace`, `remove`, `documents`, and `ids` (now
+  `describe`, `create`, `update`, `delete`, and `get-many`). The CLI no
+  longer defaults a commit message: `--message` is `--note`, required.
 
 ## [0.21.0] - 2026-10-12
 

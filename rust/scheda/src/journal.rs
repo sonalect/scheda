@@ -14,16 +14,8 @@
 //! work tree. Appending a line, and the id maps of the Index, belong to the
 //! writes. A segment is named here by its Vault-relative path.
 
-// The layers that append lines and index journals call the rest.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that append lines and index journals are not built yet"
-    )
-)]
-
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+#[cfg(test)]
 use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -115,7 +107,7 @@ pub(crate) fn split_lines(bytes: &[u8]) -> (Vec<&[u8]>, Option<&[u8]>) {
 
 /// The lines of a segment that parse, in order. A line that does not parse
 /// and a tail without `\n` are left out; reading a journal strictly is
-/// [`JournalLines`], and [`check_journals`] reports what is left out.
+/// [`LinesState`], and [`check_journals`] reports what is left out.
 pub(crate) fn parse_segment(bytes: &[u8]) -> Vec<Line> {
     split_lines(bytes)
         .0
@@ -214,11 +206,13 @@ fn require_journal(decl: &Declaration) -> Result<(), Fault> {
 ///
 /// A walk borrows its snapshot. A stream that must own the snapshot keeps a
 /// [`LinesState`] next to it and passes it at each step.
+#[cfg(test)]
 pub(crate) struct JournalLines<'a> {
     snap: &'a Snap,
     state: LinesState,
 }
 
+#[cfg(test)]
 impl<'a> JournalLines<'a> {
     /// Starts a walk of `decl`, a journal.
     pub(crate) fn new(snap: &'a Snap, decl: &Declaration) -> Result<JournalLines<'a>, Fault> {
@@ -312,6 +306,7 @@ impl LinesState {
     }
 }
 
+#[cfg(test)]
 impl Iterator for JournalLines<'_> {
     type Item = Result<Line, Fault>;
 
@@ -320,6 +315,7 @@ impl Iterator for JournalLines<'_> {
     }
 }
 
+#[cfg(test)]
 impl FusedIterator for JournalLines<'_> {}
 
 /// Scans the segments in append order for the line with `id`. A line that
@@ -589,6 +585,7 @@ pub(crate) fn next_segment_name(
 /// The segment `writer` appends a line of `line_len` bytes to: its last
 /// segment, unless that is full, otherwise a new one named by
 /// [`next_segment_name`]. A segment of another writer is never chosen.
+#[cfg(test)]
 pub(crate) fn segment_for_append(
     snap: &Snap,
     decl: &Declaration,
@@ -599,7 +596,7 @@ pub(crate) fn segment_for_append(
     segment_for_append_in(snap, decl, line_len, writer, today, &BTreeMap::new())
 }
 
-/// [`segment_for_append`] for a call that appends several lines before any
+/// The segment `writer` appends a line to, for a call that appends several lines before any
 /// is stored: `pending` holds the whole new bytes of the segments the call
 /// has appended to so far, by path. A segment in it is measured by those
 /// bytes, and one that is not on disk yet counts as a segment of the writer.

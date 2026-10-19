@@ -4,16 +4,6 @@
 //! `pull`, and `push`, which need the person's SSH configuration, agent, and
 //! credential helpers, and mapping what it prints on `stderr` to a failure.
 
-// The standard output of a command, its input, and its environment are for
-// the tests that drive git by hand; the network commands read none of them.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the tests that drive git by hand use the output, the input, and the environment"
-    )
-)]
-
 use std::ffi::{OsStr, OsString};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -21,10 +11,13 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use scheda_api::v1::VaultErrorCode;
 
-use crate::error::{Error, Fault, OrFault, git_fault, io as io_fault};
+#[cfg(test)]
+use crate::error::OrFault;
+use crate::error::{Error, Fault, git_fault, io as io_fault};
 
 /// What a finished git command left behind.
 pub(crate) struct GitOutput {
+    #[cfg(test)]
     stdout: Vec<u8>,
     stderr: String,
     status: ExitStatus,
@@ -58,6 +51,7 @@ impl GitOutput {
     }
 
     /// `stdout` as UTF-8 text.
+    #[cfg(test)]
     pub(crate) fn stdout_str(&self) -> Result<&str, Error> {
         std::str::from_utf8(&self.stdout)
             .or_fault(
@@ -68,6 +62,7 @@ impl GitOutput {
     }
 
     /// `stdout` as UTF-8 text without the surrounding whitespace.
+    #[cfg(test)]
     pub(crate) fn stdout_trim(&self) -> Result<&str, Error> {
         Ok(self.stdout_str()?.trim())
     }
@@ -76,6 +71,7 @@ impl GitOutput {
 impl From<std::process::Output> for GitOutput {
     fn from(out: std::process::Output) -> Self {
         Self {
+            #[cfg(test)]
             stdout: out.stdout,
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
             status: out.status,
@@ -130,6 +126,7 @@ impl GitCmd {
     }
 
     /// Sets one environment variable of the child.
+    #[cfg(test)]
     pub(crate) fn env(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
         self.envs
             .push((key.as_ref().to_os_string(), value.as_ref().to_os_string()));
@@ -137,6 +134,7 @@ impl GitCmd {
     }
 
     /// Feeds `bytes` to the standard input of the command.
+    #[cfg(test)]
     pub(crate) fn input(mut self, bytes: Vec<u8>) -> Self {
         self.input = Some(bytes);
         self

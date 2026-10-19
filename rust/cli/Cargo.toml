@@ -15,9 +15,11 @@ path = "src/main.rs"
 [dependencies]
 # Not used in code: makes `@scheda_cargo//:age` a hub alias for scheda `encrypt`.
 age = { workspace = true }
+buffa-types = { workspace = true }
 clap = { workspace = true }
 mimalloc = { workspace = true }
 model2vec-rs = { workspace = true }
+protocontract = { workspace = true }
 scheda = { workspace = true, features = ["find", "search", "simd", "encrypt"] }
 serde = { workspace = true }
 serde_json = { workspace = true }

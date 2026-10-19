@@ -5,27 +5,10 @@
 //! holds a [`Fault`] and the stack of operations the failure passed on its
 //! way out. Callers branch on the code (`Error::is`, `Error::code_as`),
 //! never on the message.
-//!
-//! The `bail!` and `ensure!` macros are in scope in every module declared
-//! after this one (`#[macro_use]`).
-
-// Helpers wait here for the layers that call them. Each layer that uses an
-// item makes the expectation of the first unused one fail, which is the
-// reminder to drop it.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        unused_macros,
-        reason = "the layers that call these helpers are not built yet"
-    )
-)]
 
 use std::backtrace::Backtrace;
 use std::fmt;
 use std::sync::{Mutex, MutexGuard, PoisonError};
-#[cfg(feature = "find")]
-use std::sync::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 use protocontract::{Code, RuntimeCode};
 pub use protocontract::{Context, Error};
@@ -186,6 +169,7 @@ pub(crate) fn io(err: std::io::Error) -> Fault {
 /// Turns the error of a foreign crate (`serde_json`, `yaml_serde`,
 /// Tantivy, USearch, UTF-8, ...) into a [`Fault`] with a code of the
 /// caller's choice. The foreign error stays the source.
+#[cfg(any(test, feature = "find"))]
 pub(crate) trait OrFault<T> {
     /// The result, with the error replaced by a [`Fault`] of `code` and
     /// `message`.
@@ -199,6 +183,7 @@ pub(crate) trait OrFault<T> {
     ) -> Result<T, Fault>;
 }
 
+#[cfg(any(test, feature = "find"))]
 impl<T, E: std::error::Error + Send + Sync + 'static> OrFault<T> for Result<T, E> {
     fn or_fault(self, code: VaultErrorCode, message: impl Into<String>) -> Result<T, Fault> {
         self.map_err(|err| Fault::new(code, message).with_source(err))
@@ -223,38 +208,18 @@ pub(crate) fn mutex<'a, T>(
     })
 }
 
-/// Fail closed if a previous holder panicked with this `RwLock`.
-#[cfg(feature = "find")]
-pub(crate) fn rw_read<'a, T>(
-    lock: &'a RwLock<T>,
-    frame: &'static str,
-) -> Result<RwLockReadGuard<'a, T>, Error> {
-    lock.read()
-        .map_err(|_: PoisonError<RwLockReadGuard<'a, T>>| {
-            Error::new(RuntimeCode::Panicked, "rwlock poisoned").context(frame)
-        })
-}
-
-/// Fail closed if a previous holder panicked with this `RwLock`.
-#[cfg(feature = "find")]
-pub(crate) fn rw_write<'a, T>(
-    lock: &'a RwLock<T>,
-    frame: &'static str,
-) -> Result<RwLockWriteGuard<'a, T>, Error> {
-    lock.write()
-        .map_err(|_: PoisonError<RwLockWriteGuard<'a, T>>| {
-            Error::new(RuntimeCode::Panicked, "rwlock poisoned").context(frame)
-        })
-}
-
-/// The failure `error` as a report: what a status carries when a round of the
-/// indexer failed. The code is the name of the code, the flag and the stack
-/// are the error's, and the path is the one of a [`Fault`]. The message is
-/// the one of a [`Fault`] or of protocontract's `Failure`; any other fault
-/// has none of its own in the contract, so the message is the `Display` of
-/// the error, which also carries its stack and code. A fault of a port of an
-/// unknown type has no separate message until protocontract offers one.
-pub(crate) fn report(error: &Error) -> ErrorReport {
+/// The failure `error` written out as an [`ErrorReport`], the form a
+/// transport carries: what the command line prints on stderr, and what
+/// `IndexState.last_error` and `MirrorInfo.last_auto_sync_error` hold.
+///
+/// The code is the name of the error's code (`VAULT_ERROR_CODE_NOT_FOUND`,
+/// or the code of a port or of the runtime); the retry flag and the stack
+/// are the error's; the path is the one a [`Fault`] carries. The message is
+/// that of a [`Fault`] or of protocontract's `Failure`; for a fault of any
+/// other type it is the `Display` of the error, which also carries the
+/// stack and the code.
+#[must_use]
+pub fn error_report(error: &Error) -> ErrorReport {
     let fault = error.downcast_ref::<Fault>();
     let message = match fault {
         Some(fault) => fault.message().to_owned(),
@@ -364,11 +329,10 @@ impl GitFailure {
     }
 }
 
-/// The cause of a [`Fault`] made by [`git_fault`]: the class and the
-/// redacted `stderr` of the git command.
+/// The cause of a [`Fault`] made by [`git_fault`]: the redacted `stderr`
+/// of the git command.
 #[derive(Debug)]
 pub(crate) struct GitError {
-    failure: GitFailure,
     stderr: String,
 }
 
@@ -387,10 +351,7 @@ impl std::error::Error for GitError {}
 pub(crate) fn git_fault(stderr: &str) -> Fault {
     let failure = GitFailure::classify(stderr);
     let redacted = redact_remote_text(stderr.trim());
-    Fault::new(failure.code(), redacted.clone()).with_source(GitError {
-        failure,
-        stderr: redacted,
-    })
+    Fault::new(failure.code(), redacted.clone()).with_source(GitError { stderr: redacted })
 }
 
 /// A [`Fault`] for a failure of the git library. The code comes from what
@@ -411,15 +372,6 @@ pub(crate) fn lib_fault(err: git2::Error) -> Fault {
         VaultErrorCode::Replication
     };
     Fault::new(code, redact_remote_text(err.message())).with_source(err)
-}
-
-/// The class of the git failure behind `err`, when it came from
-/// [`git_fault`]. For branching inside Scheda; a caller branches on the
-/// code.
-#[must_use]
-pub(crate) fn git_failure(err: &Error) -> Option<GitFailure> {
-    let source = std::error::Error::source(err)?;
-    source.downcast_ref::<GitError>().map(|git| git.failure)
 }
 
 fn matches_auth(hay: &str) -> bool {
@@ -579,22 +531,6 @@ fn redact_span(span: &str, scp: bool) -> String {
     format!("{scheme}://{host}")
 }
 
-/// Returns early with an error: anything that is `Into<Error>`.
-macro_rules! bail {
-    ($err:expr $(,)?) => {
-        return ::core::result::Result::Err(::core::convert::Into::into($err))
-    };
-}
-
-/// Returns early with an error unless the condition holds.
-macro_rules! ensure {
-    ($cond:expr, $err:expr $(,)?) => {
-        if !$cond {
-            return ::core::result::Result::Err(::core::convert::Into::into($err));
-        }
-    };
-}
-
 #[cfg(test)]
 mod tests {
     use std::error::Error as _;
@@ -605,8 +541,8 @@ mod tests {
     use scheda_api::v1::VaultErrorCode as C;
 
     use super::{
-        Context, Error, Fault, GitFailure, OrFault, default_retryable, git_failure, git_fault, io,
-        mutex, redact_remote_text,
+        Context, Error, Fault, GitFailure, OrFault, default_retryable, git_fault, io, mutex,
+        redact_remote_text,
     };
 
     #[test]
@@ -618,7 +554,7 @@ mod tests {
         )
         .context("write")
         .context("round");
-        let report = super::report(&error);
+        let report = super::error_report(&error);
         assert_eq!(report.code.as_deref(), Some("VAULT_ERROR_CODE_STORAGE"));
         assert_eq!(report.message.as_deref(), Some("the disk is full"));
         assert_eq!(report.retryable, Some(true));
@@ -629,7 +565,7 @@ mod tests {
     #[test]
     fn a_report_of_a_failure_or_a_foreign_fault_has_a_message_and_no_path() {
         let failure = Error::new(RuntimeCode::Cancelled, "the feed broke");
-        let report = super::report(&failure);
+        let report = super::error_report(&failure);
         assert_eq!(report.code.as_deref(), Some("CANCELLED"));
         assert_eq!(report.message.as_deref(), Some("the feed broke"));
         assert_eq!(report.path, None);
@@ -650,7 +586,7 @@ mod tests {
                 true
             }
         }
-        let report = super::report(&Error::from(Foreign).context("embed"));
+        let report = super::error_report(&Error::from(Foreign).context("embed"));
         assert_eq!(report.code.as_deref(), Some("VAULT_ERROR_CODE_UNAVAILABLE"));
         assert_eq!(report.retryable, Some(true));
         assert!(
@@ -853,26 +789,6 @@ mod tests {
         assert_eq!(error.stack(), ["lock the queue"]);
     }
 
-    #[cfg(feature = "find")]
-    #[test]
-    fn a_poisoned_rwlock_is_panicked() {
-        use super::{rw_read, rw_write};
-        use std::sync::RwLock;
-        let lock = Arc::new(RwLock::new(0_u8));
-        let held = Arc::clone(&lock);
-        let joined = std::thread::spawn(move || {
-            let _guard = held.write();
-            panic!("poison the lock");
-        })
-        .join();
-        assert!(joined.is_err());
-        let read = rw_read(&lock, "read the index").map(|_| ()).unwrap_err();
-        assert!(read.is(RuntimeCode::Panicked));
-        let write = rw_write(&lock, "write the index").map(|_| ()).unwrap_err();
-        assert!(write.is(RuntimeCode::Panicked));
-        assert_eq!(write.stack(), ["write the index"]);
-    }
-
     #[test]
     fn git_stderr_gives_its_class_code_and_retry_flag() {
         let cases: &[(&str, GitFailure)] = &[
@@ -985,7 +901,6 @@ mod tests {
             assert_eq!(GitFailure::classify(stderr), *want, "{stderr}");
             let error = Error::from(git_fault(stderr));
             assert!(error.is(want.code()), "{stderr}");
-            assert_eq!(git_failure(&error), Some(*want), "{stderr}");
         }
         assert_eq!(
             GitFailure::classify("some unrecognized git failure"),
@@ -1070,14 +985,6 @@ mod tests {
     }
 
     #[test]
-    fn git_failure_is_none_for_other_causes() {
-        let error = Error::from(io(std::io::Error::from(ErrorKind::NotFound)));
-        assert_eq!(git_failure(&error), None);
-        let plain = Error::from(Fault::new(C::NotFound, "x"));
-        assert_eq!(git_failure(&plain), None);
-    }
-
-    #[test]
     fn redact_remote_text_drops_userinfo_path_and_query() {
         let out = redact_remote_text(
             "could not find repository from 'https://user:token@example.test/org/repo.git?token=leak'",
@@ -1089,26 +996,5 @@ mod tests {
         let scp = redact_remote_text("failed git@host.example:org/secret.git");
         assert_eq!(scp, "failed git@host.example");
         assert_eq!(redact_remote_text("no remotes here"), "no remotes here");
-    }
-
-    fn require_id(id: &str) -> Result<(), Error> {
-        ensure!(
-            !id.is_empty(),
-            Fault::new(C::InvalidArgument, "id is empty")
-        );
-        Ok(())
-    }
-
-    fn give_up() -> Result<(), Error> {
-        bail!(Fault::new(C::Unimplemented, "no journal replace"));
-    }
-
-    #[test]
-    fn ensure_and_bail_take_anything_into_error() {
-        let error = require_id("").unwrap_err();
-        assert!(error.is(C::InvalidArgument));
-        assert!(require_id("n1").is_ok());
-        let error = give_up().unwrap_err();
-        assert!(error.is(C::Unimplemented));
     }
 }

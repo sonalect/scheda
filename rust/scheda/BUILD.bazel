@@ -27,11 +27,7 @@ _TEST_PROBE = _TEST_COMMON + [
     "tests/probe/mod.rs",
 ]
 
-# `src/old/` is the material of the layers not built yet; it is not compiled.
-_SCHEDA_SRCS = glob(
-    ["src/**/*.rs"],
-    exclude = ["src/old/**"],
-)
+_SCHEDA_SRCS = glob(["src/**/*.rs"])
 
 _SCHEDA_DEPS = [
     "//rust/api:generated_v1",
@@ -99,6 +95,7 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
+        "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:serde_json",
     ],
 )
@@ -111,6 +108,7 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:serde_json",
     ],
 )
@@ -178,6 +176,7 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda",
+        "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:serde_json",
     ],
 )
@@ -190,6 +189,7 @@ rust_test(
     visibility = ["//rust:__pkg__"],
     deps = [
         ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:serde_json",
     ],
 )
@@ -321,6 +321,22 @@ rust_test(
         "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:protocontract",
         "@scheda_cargo//:serde_json",
+    ],
+)
+
+rust_test(
+    name = "consumer_test",
+    size = "small",
+    srcs = ["tests/consumer.rs"] + _TEST_COMMON,
+    crate_features = _SCHEDA_FEATURES,
+    crate_root = "tests/consumer.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
     ],
 )
 

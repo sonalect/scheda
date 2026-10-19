@@ -1157,9 +1157,9 @@ impl<'a> Ledger<'a> {
             });
         }
         let sealed = {
-            let encoded = documents::encode(decl, &id, &raw, encryption)
+            let bytes = documents::encode(decl, &id, &raw, encryption)
                 .map_err(|fault| fault.with_path(path.clone()))?;
-            match encoded.bytes {
+            match bytes {
                 Cow::Owned(sealed) => Some(sealed),
                 Cow::Borrowed(_) => None,
             }

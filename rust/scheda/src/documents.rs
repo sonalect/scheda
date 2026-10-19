@@ -12,15 +12,6 @@
 //! tree; writing is the committer's, and [`encode`] only says which path
 //! and which bytes.
 
-// The layers that write and index Documents call the rest.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that write and index Documents are not built yet"
-    )
-)]
-
 use std::borrow::Cow;
 
 use git2::{ObjectType, Oid};
@@ -35,15 +26,6 @@ use crate::repo::{NodeKind, Snap, Views};
 
 fn invalid(message: impl Into<String>) -> Fault {
     Fault::new(VaultErrorCode::InvalidArgument, message)
-}
-
-/// What a write puts on disk for one Document.
-#[derive(Debug)]
-pub(crate) struct Encoded<'a> {
-    /// The Vault-relative POSIX path of the file.
-    pub(crate) path: String,
-    /// The bytes of the file: the Document as it is, or its age armor.
-    pub(crate) bytes: Cow<'a, [u8]>,
 }
 
 /// `INVALID_ARGUMENT` unless `decl` keeps one file per Document.
@@ -89,6 +71,7 @@ pub(crate) fn path_of(decl: &Declaration, id: &str) -> Result<String, Fault> {
 /// symlink on the way is `INVALID_ARGUMENT`. An encrypted collection needs
 /// the secret of the handle (`CRYPTO`); a build without the `encrypt`
 /// feature cannot read one (`UNIMPLEMENTED`).
+#[cfg(any(test, feature = "find"))]
 pub(crate) fn read(
     snap: &Snap,
     decl: &Declaration,
@@ -301,9 +284,9 @@ fn no_encrypt(decl: &Declaration) -> Fault {
     )
 }
 
-/// Encodes the Document `id` with the bytes `raw` for a write: the path of
-/// its file and the bytes the file is to hold, sealed for an encrypted
-/// collection. Nothing is written.
+/// Encodes the Document `id` with the bytes `raw` for a write: the bytes
+/// its file is to hold, the Document as it is or, for an encrypted
+/// collection, its age armor. Nothing is written.
 ///
 /// The id is checked as [`path_of`] does. An encrypted collection needs the
 /// secret of the handle (`CRYPTO`); a build without the `encrypt` feature
@@ -313,10 +296,9 @@ pub(crate) fn encode<'a>(
     id: &str,
     raw: &'a [u8],
     encryption: Option<&Encryption>,
-) -> Result<Encoded<'a>, Fault> {
+) -> Result<Cow<'a, [u8]>, Fault> {
     let path = path_of(decl, id)?;
-    let bytes = seal(decl, raw, encryption, &path)?;
-    Ok(Encoded { path, bytes })
+    seal(decl, raw, encryption, &path)
 }
 
 #[cfg(feature = "encrypt")]
@@ -898,9 +880,9 @@ mod tests {
         ] {
             let decl = decl(&declarations, name);
             assert_eq!(read(&scratch.snap(&decl), &decl, id, None).unwrap(), None);
-            let encoded = encode(&decl, id, &png, None).unwrap();
-            assert_eq!(&*encoded.bytes, png.as_slice());
-            scratch.write(&encoded.path, &encoded.bytes);
+            let bytes = encode(&decl, id, &png, None).unwrap();
+            assert_eq!(&*bytes, png.as_slice());
+            scratch.write(&path_of(&decl, id).unwrap(), &bytes);
             assert_eq!(
                 read(&scratch.snap(&decl), &decl, id, None).unwrap(),
                 Some(png.clone())
@@ -954,14 +936,11 @@ mod tests {
             ("one", "only", test_identity()),
         ] {
             let decl = decl(&declarations, name);
-            let encoded = encode(&decl, id, &png, Some(&secret)).unwrap();
-            assert_ne!(&*encoded.bytes, png.as_slice());
-            assert!(
-                encoded
-                    .bytes
-                    .starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----")
-            );
-            scratch.write(&encoded.path, &encoded.bytes);
+            let bytes = encode(&decl, id, &png, Some(&secret)).unwrap();
+            let path = path_of(&decl, id).unwrap();
+            assert_ne!(&*bytes, png.as_slice());
+            assert!(bytes.starts_with(b"-----BEGIN AGE ENCRYPTED FILE-----"));
+            scratch.write(&path, &bytes);
             let snap = scratch.snap(&decl);
             assert_eq!(
                 read(&snap, &decl, id, Some(&secret)).unwrap(),
@@ -973,7 +952,7 @@ mod tests {
             );
             let wrong = test_passphrase("wrong");
             let fault = read(&snap, &decl, id, Some(&wrong)).unwrap_err();
-            assert_eq!(fault.path(), Some(encoded.path.as_str()));
+            assert_eq!(fault.path(), Some(path.as_str()));
             assert_eq!(code_of(fault), Some(VaultErrorCode::Crypto));
             assert_eq!(
                 code_of(encode(&decl, id, &png, None).unwrap_err()),
@@ -1216,8 +1195,8 @@ mod tests {
         let right = test_passphrase("right");
         for id in ["a", "b"] {
             let plain = binary();
-            let encoded = encode(&vault, id, &plain, Some(&right)).unwrap();
-            scratch.write(&encoded.path, &encoded.bytes);
+            let bytes = encode(&vault, id, &plain, Some(&right)).unwrap();
+            scratch.write(&path_of(&vault, id).unwrap(), &bytes);
         }
         scratch.write("vault/plain", b"not armor");
         let views = scratch.views();

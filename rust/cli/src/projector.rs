@@ -1,35 +1,58 @@
-//! CLI-only whole-file Projector: one text column `body`.
+//! The Projector of the command line: one text column, `body`, that holds
+//! the whole Document.
 
-use std::sync::Arc;
+use buffa_types::google::protobuf::Empty;
+use scheda::Error;
+use scheda::v1::projector_ref::ProjectorRef;
+use scheda::v1::{
+    CollectionKey, ColumnKind, IndexColumn, IndexDoc, IndexSchema, IndexValue, ProjectorDescriptor,
+    ProjectorSync, RawDocument, index_value,
+};
 
-use scheda::{ColumnKind, Error, IndexColumn, IndexDoc, IndexSchema, IndexValue, Projector};
+/// The identity of the projection: the Index built by it is rebuilt when it
+/// changes.
+const PROJECTION_ID: &str = "scheda-cli/whole-file@1";
 
-/// Whole-file Projector used on every CLI `Vault::open_with`.
-pub(crate) fn cli_projector() -> Arc<dyn Projector> {
-    Arc::new(WholeFileProjector)
+/// The reference the command line gives every Vault it opens.
+pub(crate) fn whole_file() -> ProjectorRef {
+    ProjectorRef::from_sync(WholeFile)
 }
 
-struct WholeFileProjector;
+/// Says that every collection has one text column, `body`, for the filter,
+/// the full-text search, and the vectors, and that its value is the whole
+/// Document when it is UTF-8 text.
+struct WholeFile;
 
-impl Projector for WholeFileProjector {
-    fn schema(&self, _collection: &str) -> Result<IndexSchema, Error> {
+impl ProjectorSync for WholeFile {
+    fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
+        Ok(ProjectorDescriptor::default().with_projection_id(PROJECTION_ID))
+    }
+
+    fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
         Ok(IndexSchema {
-            columns: vec![IndexColumn::default()
-                .with_name("body")
-                .with_kind(ColumnKind::Text)
-                .with_find(true)
-                .with_fts(true)
-                .with_vector(true)],
+            columns: vec![
+                IndexColumn::default()
+                    .with_name("body")
+                    .with_kind(ColumnKind::COLUMN_KIND_TEXT)
+                    .with_find(true)
+                    .with_fts(true)
+                    .with_vector(true),
+            ],
             ..IndexSchema::default()
         })
     }
 
-    fn project(&self, _collection: &str, _id: &str, raw: &[u8]) -> Result<IndexDoc, Error> {
-        let Ok(text) = str::from_utf8(raw) else {
+    fn project(&self, document: RawDocument) -> Result<IndexDoc, Error> {
+        let raw = document.raw.unwrap_or_default();
+        let Ok(text) = String::from_utf8(raw) else {
             return Ok(IndexDoc::default());
         };
-        Ok(IndexDoc {
-            values: [(String::from("body"), IndexValue::Text(text.to_owned()))].into(),
-        })
+        let value = IndexValue {
+            value: Some(index_value::Value::Text(text)),
+            ..IndexValue::default()
+        };
+        let mut doc = IndexDoc::default();
+        doc.values.insert(String::from("body"), value);
+        Ok(doc)
     }
 }

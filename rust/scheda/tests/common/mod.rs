@@ -109,8 +109,9 @@ pub fn vault(dir: &Path) {
 }
 
 /// Every file below `dir` with its bytes, sorted by path: what a refusal
-/// must leave as it was. The Index (`.scheda/index/`) is left out: it is
-/// derived, and the indexer of the handle writes it in the background.
+/// must leave as it was. The Index (`.scheda/index/`) and the lock of its
+/// rounds (`.scheda/index.lock`) are left out: they are derived, and the
+/// indexer of the handle writes them in the background.
 pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     fn walk(base: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) {
         let mut entries: Vec<_> = std::fs::read_dir(dir)
@@ -124,7 +125,7 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
                 .unwrap()
                 .to_string_lossy()
                 .into_owned();
-            if rel == ".scheda/index" {
+            if rel == ".scheda/index" || rel == ".scheda/index.lock" {
                 continue;
             }
             if path.is_dir() {

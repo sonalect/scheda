@@ -4,8 +4,8 @@ description: >-
   Raise and process Scheda failures (scheda::Error = protocontract::Error,
   Fault, VaultErrorCode, retryable, stack). Use when adding a
   VaultErrorCode, editing error.proto, constructing a failure, converting
-  map_err / anyhow-style sites, or bubbling failures with context / ensure /
-  bail.
+  map_err / anyhow-style sites, bubbling failures with context, or writing a
+  failure out as an ErrorReport.
 ---
 
 # Error handling
@@ -66,11 +66,12 @@ return Err(Fault::new(VaultErrorCode::NotFound, "no such collection").into());
 | Method knows the retry answer | `.with_retryable(bool)` |
 | Add a frame | `.context(frame)`; lazy: `.with_context(\|\| format!(…))` |
 | `std::io::Error` | `.map_err(error::io)` (then `.with_path`, `.context`) |
-| git CLI failure (stderr) | `error::git_fault(stderr)`; branch inside Scheda with `git_failure(&err)` |
+| git CLI failure (stderr) | `error::git_fault(stderr)` (the code from `GitFailure::classify`) |
 | git library failure (`git2::Error`) | `error::lib_fault(err)`: a locked file (`ErrorCode::Locked`) -> `ABORTED`; class `Os`, `Filesystem`, `NoMemory` -> `STORAGE`; the rest -> `REPLICATION`; the library error is the source. A repository of a format the library cannot read (SHA-256, reftable) is `UNIMPLEMENTED`, raised where it is opened (`repo`) |
 | Other foreign error (serde, Tantivy, USearch, UTF-8) | `.or_fault(code, message)` / `.or_fault_with(code, \|\| …)` |
 | Poisoned lock | `error::mutex(&m, frame)` (`RuntimeCode::Panicked`) |
-| Guard / early return | `ensure!(cond, fault)` / `bail!(fault)` (anything `Into<Error>`) |
+| Guard / early return | `return Err(fault.into())` (anything `Into<Error>`) |
+| For a transport (CLI stderr, a status) | `scheda::error_report(&err)` -> `ErrorReport` |
 
 ```rust
 // GOOD

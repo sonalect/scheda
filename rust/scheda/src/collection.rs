@@ -7,15 +7,6 @@
 //! unknown fields of its file and the file's name and format, so that a
 //! later rewrite changes only what it means to change.
 
-// The layers that write collections and index them call the rest.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that write collections and Documents are not built yet"
-    )
-)]
-
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -125,6 +116,7 @@ impl Declaration {
     }
 
     /// Whether Documents enter the lexical Index.
+    #[cfg(any(test, feature = "find"))]
     pub(crate) fn lexical_indexed(&self) -> bool {
         let excluded = self
             .collection
@@ -136,6 +128,7 @@ impl Declaration {
     }
 
     /// Whether Documents are embedded and enter the vector Index.
+    #[cfg(any(test, feature = "find"))]
     pub(crate) fn vector_indexed(&self) -> bool {
         let excluded = self
             .collection
@@ -173,6 +166,7 @@ impl Declarations {
     }
 
     /// How many collections are declared.
+    #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.collections.len()
     }

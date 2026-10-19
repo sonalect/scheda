@@ -7,14 +7,6 @@
 //! async form) and calls the traits of the contract ([`v1::VaultSync`],
 //! [`v1::CollectionSync`], …). The caller's ports (an embedder, a reranker,
 //! a Projector) are given the same way, as references.
-//!
-//! The crate is being rebuilt layer by layer on the protobuf contract
-//! (`scheda-api`), as `docs/20-proto-contract.md` §4 describes. A module
-//! is declared here when its layer is finished; the rest stays in the tree
-//! as material for its layer.
-
-#[macro_use]
-mod error;
 
 mod check;
 mod collection;
@@ -24,6 +16,7 @@ mod commit;
 mod crypto;
 mod document_calls;
 mod documents;
+mod error;
 #[cfg(feature = "find")]
 mod filter;
 mod fs;
@@ -56,7 +49,8 @@ mod writer;
 
 #[cfg(feature = "encrypt")]
 pub use crypto::parse_age_identity;
-pub use error::{Context, Error, Fault, redact_remote_text};
+pub use error::{Context, Error, Fault, error_report, redact_remote_text};
 pub use ports::{FixedEmbedder, FixedReranker};
 pub use scheda_api::v1;
 pub use service::Scheda;
+pub use stored::parse_command;

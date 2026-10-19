@@ -15,15 +15,6 @@
 //! The module works on bytes. The caller reads and writes the file, and adds
 //! the file's path to a failure with [`Fault::with_path`].
 
-// `parse_command` waits for the command line.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the command line that parses commands is not built yet"
-    )
-)]
-
 use std::fmt::Write as _;
 use std::path::Path;
 
@@ -34,7 +25,7 @@ use serde::de::DeserializeOwned;
 use serde_ignored::Path as SerdePath;
 use yaml_serde::Value;
 
-use crate::error::Fault;
+use crate::error::{Error, Fault};
 
 /// The syntax of a stored file.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,6 +74,7 @@ impl Unknown {
     }
 
     /// The value the file had under the key.
+    #[cfg(test)]
     pub(crate) fn value(&self) -> &Value {
         &self.value
     }
@@ -211,10 +203,17 @@ pub(crate) fn encode<T: Serialize>(
     }
 }
 
-/// Parses the Protobuf JSON of a command a caller sends, strictly: a key
-/// the message `T` does not know is `INVALID_ARGUMENT` naming its path, and
-/// so is a broken protovalidate rule.
-pub(crate) fn parse_command<T>(json: &[u8]) -> Result<T, Fault>
+/// Parses the Protobuf JSON of a request a caller sends (a message of
+/// [`v1`](crate::v1)), strictly: a key the message `T` does not know is
+/// `INVALID_ARGUMENT` naming its path, because ignoring it would do
+/// something other than what the caller asked; so is JSON that does not
+/// parse and a broken protovalidate rule. A file Scheda stores is read the
+/// other way, its unknown keys kept.
+///
+/// # Errors
+///
+/// `INVALID_ARGUMENT`, as above.
+pub fn parse_command<T>(json: &[u8]) -> Result<T, Error>
 where
     T: DeserializeOwned + Validate,
 {
@@ -229,7 +228,7 @@ where
             names.push_str(&path_string(field.path()));
         }
         let message = format!("the command has fields this version does not know: {names}");
-        return Err(Fault::new(VaultErrorCode::InvalidArgument, message));
+        return Err(Fault::new(VaultErrorCode::InvalidArgument, message).into());
     }
     Ok(stored.message)
 }
@@ -612,19 +611,18 @@ schema:
     #[test]
     fn a_command_with_an_unknown_field_is_invalid_argument_naming_its_path() {
         let json = br#"{"name": "c", "schema": {"journal": {"bogus": true}, "standard": null}}"#;
-        let fault = parse_command::<CollectionDeclaration>(json).unwrap_err();
+        let error = parse_command::<CollectionDeclaration>(json).unwrap_err();
         assert!(
-            fault.message().contains("schema.journal.bogus"),
-            "{}",
-            fault.message()
+            error.to_string().contains("schema.journal.bogus"),
+            "{error}"
         );
-        assert!(code(fault).is(VaultErrorCode::InvalidArgument));
-        let fault = parse_command::<CollectionDeclaration>(
+        assert!(error.is(VaultErrorCode::InvalidArgument));
+        let error = parse_command::<CollectionDeclaration>(
             br#"{"name": "c", "extra": 1, "schema": {"standard": {}}}"#,
         )
         .unwrap_err();
-        assert!(fault.message().contains("extra"));
-        assert!(code(fault).is(VaultErrorCode::InvalidArgument));
+        assert!(error.to_string().contains("extra"), "{error}");
+        assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
     #[test]
@@ -634,9 +632,9 @@ schema:
         )
         .unwrap();
         assert_eq!(message.name.as_deref(), Some("c"));
-        let error = code(parse_command::<CollectionDeclaration>(br#"{"name": "c"}"#).unwrap_err());
+        let error = parse_command::<CollectionDeclaration>(br#"{"name": "c"}"#).unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = code(parse_command::<CollectionDeclaration>(b"{").unwrap_err());
+        let error = parse_command::<CollectionDeclaration>(b"{").unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 

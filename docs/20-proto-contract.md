@@ -1,6 +1,6 @@
 # 20. The proto contract
 
-Document 20 of the Scheda package. Version 0.8, 18 October 2026.
+Document 20 of the Scheda package. Version 0.9, 19 October 2026.
 
 Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
@@ -8,7 +8,8 @@ were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
 layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
 done but for `ErrorReport`. The object API (D24, approved 18 October
-2026) replaces P6 and P7 with R1–R5, all done; P8 is next.
+2026) replaces P6 and P7 with R1–R5, all done, and P8 is done: the branch
+waits for the merge into `main`, then the docs pass (§5).
 
 Work order: define the whole library API as protobuf services and generate
 its Rust surface with `protoc-gen-protocontract-buffa`, as the other
@@ -1917,24 +1918,84 @@ D11, D24. The async of P7.
 
 D16.
 
-- [ ] CLI per D16, with the `batch-documents` and `batch-collections`
+- [x] CLI per D16, with the `batch-documents` and `batch-collections`
       subcommands, and the test ports of its tests on the generated
-      traits; the Python driver follows.
-- [ ] `tests/consumer.rs` rewritten from the anchor consumer's real use:
+      traits; the Python driver follows (`rust/cli/`, `python/cli/main.py`).
+- [x] `tests/consumer.rs` rewritten from the anchor consumer's real use:
       `Scheda.Open` with a Projector and an embedder port; streams with
       `Collection.Upsert`, `Collection.Create` with `keep_existing`, and
       `Collection.Delete` with `ignore_missing`, each sent twice; a
       `BatchCollections` of `create` and `update`; vector-only
       `Search`; `Vault.SetEmbedder`; `Index.Status` and `Index.Watch`
       until the Index has a write; `Mirror.Sync` to an empty mirror.
+- Settled in the build (19 October 2026):
+  - Each subcommand is one rpc in kebab case: the Vault's at the top
+    (`info`, `check`, `list-collections`, `create-collection`,
+    `update-collection`, `delete-collection`, `batch-collections`,
+    `batch-documents`, `query-documents`, `count-documents`,
+    `search-documents`), `collection NAME` with `describe`, `get`,
+    `get-many`, `history`, `create`, `update`, `upsert`, `delete`,
+    `batch`, `query`, `count`, `search`, `mirror` with `info`, `set`,
+    `remove`, `push`, `pull`, `sync`, `index` with `status`, `watch`,
+    `reindex`, and `scheda-info` for `Scheda.Info` (no Vault). The
+    process opens the Vault, makes the call, and closes the Vault. Port
+    management is not a subcommand: the ports come from the flags at
+    open.
+  - A structured request comes as its Protobuf JSON (`--schema`,
+    `--query`, `--search`, or stdin); scalar fields are flags; a
+    Document's bytes come from `--file` or stdin. Every JSON is parsed
+    strictly (D21) by `scheda::parse_command`, now public. A batch reads
+    JSON Lines from stdin, lazily; a line that does not parse is an `Err`
+    item, so nothing is written. Each write takes `--note`: the CLI
+    supplies no default.
+  - stdout is the Protobuf JSON of the reply, one line; a stream reply is
+    JSON Lines, one item per line, written as it comes; `Empty` is `{}`.
+    `collection … get` prints the `Document` (its `raw` in base64): the
+    old raw-bytes exception is gone. stderr is the `ErrorReport` of
+    `scheda::error_report`, now public; exit status 1. A reader that
+    closes stdout ends the command quietly.
+  - The open options are flags (`--mode`, `--mirror`, `--auto-sync`,
+    `--author-name` with `--author-email`, `--writer`,
+    `--write-timeout-ms`, the two secret flags); the reranker flags are
+    global, since the reranker is a port of the Vault, used by a search
+    with `rerankLimit`.
+  - The whole-file Projector (`scheda-cli/whole-file@1`) marks `body`
+    `vector`, so a CLI process indexes only with an embedder flag, unless
+    a collection declares `exclude_vector_index` (who indexes, D23).
+  - A process is short and `Close` stops its indexer, so a query, count,
+    or search first waits up to 60 s on `Index.Watch` for a settled
+    state (a `version`, `pending` 0, no rebuild running, or a
+    `last_error`), then runs as the Index is; `index reindex` waits for
+    the rebuild it started to end, and a failed rebuild is its failure;
+    `--no-wait` skips both. `index watch --until-settled` replaces
+    `wait-indexed`.
+  - The HTTP and Model2Vec ports are built on `FixedEmbedder` and
+    `FixedReranker`. A transport failure, 408, 429, and 5xx are the port's
+    `UNAVAILABLE`, retryable; 401 and 403 `UNAVAILABLE`, not retryable;
+    another status `REFUSED`; a body of the wrong shape `UNAVAILABLE`, not
+    retryable.
+  - The Python driver speaks the new subcommands and passes the embedder
+    on every call that should index; `--lexical-only` sets
+    `vectorWeight: 0` (the embedder is still needed to index).
 - *Check:* the CLI and the library give the same JSON for `Vault.Info`,
-  `Collection.Query`, one `Collection.Search`, and the same error `code`.
-- *Check:* `tests/consumer.rs` green.
+  `Collection.Query`, one `Collection.Search`, and the same error `code`
+  (`rust/cli/tests/cli.rs`:
+  `the_cli_and_the_library_give_the_same_json_and_code`; `tests/agent.rs`:
+  `the_cli_and_the_library_create_collections_with_the_same_json_and_code`).
+- *Check:* `tests/consumer.rs` green (eleven tests, among them
+  `each_batch_sent_twice_changes_nothing_the_second_time`,
+  `ensuring_the_collections_again_finds_nothing_to_do`,
+  `a_vector_only_search_runs_the_vector_leg_and_ranks_best_first`,
+  `a_vault_without_an_embedder_does_not_index_until_one_is_set`,
+  `watch_reports_the_version_of_a_write_and_the_write_is_then_found`,
+  `sync_to_an_empty_mirror_pushes_the_commit`,
+  `the_batches_and_the_search_run_inside_spawn_blocking`).
 - *Check:* `rust/scheda/src/old/` and `rust/scheda/tests/old/` are
   gone; no `expect(dead_code, …)` and no `todo!` left from the layering
-  (`git grep -n -e 'expect(' -e 'todo!' rust/scheda/src`); `bazel test
-  //...` green on the branch;
-  then it merges into `main`.
+  (`git grep -n -e 'expect(' -e 'todo!' rust/scheda/src`: what is left
+  is conditional on a feature, in `ports`, `service`, and `vault`, or
+  marks a field only the tests read, in `lexical`); `bazel test //...`
+  green on the branch; then it merges into `main`.
 
 ---
 

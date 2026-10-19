@@ -2916,9 +2916,11 @@ name = "scheda-cli"
 version = "0.21.0"
 dependencies = [
  "age",
+ "buffa-types",
  "clap",
  "mimalloc",
  "model2vec-rs",
+ "protocontract",
  "scheda",
  "serde",
  "serde_json",

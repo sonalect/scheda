@@ -45,7 +45,7 @@ use scheda_api::v1::{ErrorReport, IndexState, Rebuild, rebuild};
 use crate::collection;
 #[cfg(any(feature = "find", test))]
 use crate::error::Fault;
-use crate::error::{Context, Error, io, report};
+use crate::error::{Context, Error, error_report, io};
 use crate::idmap::JournalMaps;
 use crate::index::{Counts, Index, Round, Side, State};
 #[cfg(feature = "find")]
@@ -819,7 +819,7 @@ impl Worker {
         {
             self.who
                 .stale()
-                .then(|| report(&crate::who::stale_fault().into()))
+                .then(|| error_report(&crate::who::stale_fault().into()))
         }
         #[cfg(not(feature = "find"))]
         {
@@ -867,7 +867,7 @@ impl Worker {
 
     /// A round failed: the status says so.
     fn fail(&mut self, error: &Error) {
-        let report = report(error);
+        let report = error_report(error);
         let rebuilding = std::mem::take(&mut self.rebuilding);
         self.shared.publish(|inner| {
             inner.state.role = Some(false);

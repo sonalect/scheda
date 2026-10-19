@@ -2,15 +2,6 @@
 //! writes, the advisory lock, symlink checks, owner-only modes, and the
 //! POSIX form of a Vault-relative path.
 
-// The writers of the next layers call what `open` does not.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the layers that write Documents and take the write lock are not built yet"
-    )
-)]
-
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Component, Path};
@@ -245,46 +236,6 @@ fn symlink_on_path(vault: &Path, path: &Path) -> Result<Option<String>, Fault> {
     Ok(None)
 }
 
-/// Every symlink on the way to `dir` or below it, as Vault-relative paths
-/// in walk order. A link on the way to `dir` is the only one reported:
-/// nothing below it is read. A `dir` that does not exist has none.
-pub(crate) fn find_symlinks(vault: &Path, dir: &Path) -> Result<Vec<String>, Error> {
-    let mut found = Vec::new();
-    if let Some(rel) = symlink_on_path(vault, dir).context("find_symlinks: stat component")? {
-        found.push(rel);
-        return Ok(found);
-    }
-    if dir.is_dir() {
-        walk_symlinks(vault, dir, &mut found)?;
-    }
-    Ok(found)
-}
-
-fn walk_symlinks(vault: &Path, dir: &Path, found: &mut Vec<String>) -> Result<(), Error> {
-    let entries = fs::read_dir(dir)
-        .map_err(io)
-        .context("find_symlinks: read directory")?;
-    let mut paths = Vec::new();
-    for entry in entries {
-        let entry = entry
-            .map_err(io)
-            .context("find_symlinks: read directory entry")?;
-        paths.push(entry.path());
-    }
-    paths.sort();
-    for path in paths {
-        let meta = fs::symlink_metadata(&path)
-            .map_err(io)
-            .context("find_symlinks: stat entry")?;
-        if meta.file_type().is_symlink() {
-            found.push(rel_posix(vault, &path)?);
-        } else if meta.is_dir() {
-            walk_symlinks(vault, &path, found)?;
-        }
-    }
-    Ok(())
-}
-
 fn symlink_fault(rel: String) -> Fault {
     Fault::new(
         VaultErrorCode::InvalidArgument,
@@ -325,6 +276,7 @@ pub(crate) fn restrict_file_below(base: &Path, file: &Path) -> Result<(), Error>
 /// Walks `root` and applies owner-only modes to every directory and file.
 /// For files other code created under `{vault}/.scheda/`. A missing `root`
 /// is a no-op, and symlinks are not followed.
+#[cfg(any(test, feature = "find"))]
 pub(crate) fn restrict_tree(root: &Path) -> Result<(), Error> {
     let meta = match fs::symlink_metadata(root) {
         Ok(meta) => meta,
@@ -470,8 +422,8 @@ mod tests {
     use scheda_api::v1::VaultErrorCode;
 
     use super::{
-        Flock, atomic_write, check_scheda_owner_only, find_symlinks, reject_symlinks, rel_posix,
-        restrict_dir, restrict_file, restrict_file_below, restrict_tree,
+        Flock, atomic_write, check_scheda_owner_only, reject_symlinks, rel_posix, restrict_dir,
+        restrict_file, restrict_file_below, restrict_tree,
     };
 
     /// A scratch directory that is removed when the test ends.
@@ -575,25 +527,7 @@ mod tests {
         let vault = &scratch.0;
         std::fs::create_dir_all(vault.join("c/sub")).unwrap();
         std::fs::write(vault.join("outside.txt"), b"x").unwrap();
-        assert!(find_symlinks(vault, &vault.join("c")).unwrap().is_empty());
-        assert!(
-            find_symlinks(vault, &vault.join("missing"))
-                .unwrap()
-                .is_empty()
-        );
         std::os::unix::fs::symlink(vault.join("outside.txt"), vault.join("c/sub/link")).unwrap();
-        std::os::unix::fs::symlink(vault.join("outside.txt"), vault.join("c/other")).unwrap();
-        // Every link is reported, not the first only.
-        assert_eq!(
-            find_symlinks(vault, &vault.join("c")).unwrap(),
-            vec!["c/other".to_owned(), "c/sub/link".to_owned()]
-        );
-        // A link on the way to the directory is the only one reported.
-        std::os::unix::fs::symlink(vault.join("c"), vault.join("via")).unwrap();
-        assert_eq!(
-            find_symlinks(vault, &vault.join("via")).unwrap(),
-            vec!["via".to_owned()]
-        );
         let fault = reject_symlinks(vault, &vault.join("c/sub/link")).unwrap_err();
         assert_eq!(fault.path(), Some("c/sub/link"));
         assert!(crate::error::Error::from(fault).is(VaultErrorCode::InvalidArgument));

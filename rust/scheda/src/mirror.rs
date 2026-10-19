@@ -66,7 +66,7 @@ impl Vault {
             .with_url(repo::origin_of(git)?.unwrap_or_default())
             .with_auto_sync(self.auto_sync());
         if let Some(failure) = self.sync_failure() {
-            info.last_auto_sync_error = error::report(&failure).into();
+            info.last_auto_sync_error = error::error_report(&failure).into();
         }
         Ok(info)
     }

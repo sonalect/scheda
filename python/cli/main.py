@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import logging
@@ -24,7 +25,7 @@ from huggingface_hub.errors import HfHubHTTPError
 _LOG = logging.getLogger("python.cli")
 
 _FRONT_MATTER = "---"
-_NOT_FOUND = "CODE_NOT_FOUND"
+_NOT_FOUND = "VAULT_ERROR_CODE_NOT_FOUND"
 _SCHEMA_NAME = ".collection.yaml"
 _TOPICS_NAME = "topics.yaml"
 _ENV_BACKEND = "SCHEDA_CLI_BACKEND"
@@ -49,6 +50,9 @@ _DEFAULT_JINA_RERANKER_MODEL = "jinaai/jina-reranker-v3.5"
 _ALL_FILTER_JSON = '{"all":{}}'
 _DEFAULT_FIND_COUNT = 50
 _DEFAULT_SEARCH_K = 10
+# How many fused hits the reranker scores when a search reranks: at least `k`.
+_DEFAULT_RERANK_LIMIT = 50
+_IMPORT_NOTE = "import fixture"
 _DOWNLOAD_TIMEOUT_S = 300
 _DOWNLOAD_CHUNK = 1024 * 1024
 
@@ -89,11 +93,12 @@ class Topic:
 
 @dataclass(frozen=True, slots=True)
 class SearchCall:
-    """Vault or collection `search` scope plus whether to rerank."""
+    """Vault or collection search scope, and how to rank."""
 
     collection: str | None
     collections: tuple[str, ...]
     rerank: bool
+    lexical_only: bool
     include_raw: bool
 
 
@@ -128,7 +133,7 @@ class Paths:
 
 @dataclass(frozen=True, slots=True)
 class DriverModels:
-    """Embedder / reranker flags for `scheda` (`14`). Empty when `--lexical-only`."""
+    """Embedder and reranker flags for `scheda`, the ports of the Vault."""
 
     backend: Backend
     lexical_only: bool
@@ -140,9 +145,12 @@ class DriverModels:
     model2vec_dir: Path | None
 
     def embedder_argv(self) -> tuple[str, ...]:
-        """Global embedder flags, or none."""
-        if self.lexical_only:
-            return ()
+        """Global embedder flags, or none.
+
+        A Vault indexes only with an embedder (the CLI Projector marks its
+        column `vector`), so `--lexical-only` still passes it: it changes the
+        ranking, not who indexes.
+        """
         if self.backend is Backend.MODEL2VEC:
             if self.model2vec_dir is None:
                 return ()
@@ -157,8 +165,8 @@ class DriverModels:
         )
 
     def reranker_argv(self) -> tuple[str, ...]:
-        """`--reranker-*` flags for `search` only, or none."""
-        if self.lexical_only or self.backend is Backend.MODEL2VEC:
+        """Global `--reranker-*` flags for a search that reranks, or none."""
+        if not self.reranks():
             return ()
         return (
             "--reranker-cohere-url",
@@ -166,6 +174,10 @@ class DriverModels:
             "--reranker-model",
             self.reranker_model,
         )
+
+    def reranks(self) -> bool:
+        """Whether this backend has a reranker to pass."""
+        return not self.lexical_only and self.backend is not Backend.MODEL2VEC
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -188,7 +200,7 @@ def _parser() -> argparse.ArgumentParser:
             f"{Backend.JINA}: Jina HTTP sidecars (CC BY-NC) and "
             f"{_DEFAULT_VAULT_JINA}. "
             f"{Backend.MODEL2VEC}: {_DEFAULT_VAULT_MODEL2VEC}; "
-            f"Model2Vec ({_DEFAULT_MODEL2VEC_DIR}) on reindex and search."
+            f"Model2Vec ({_DEFAULT_MODEL2VEC_DIR}) on reindex, find, and search."
         ),
         suggest_on_error=True,
     )
@@ -200,7 +212,7 @@ def _parser() -> argparse.ArgumentParser:
             f"{Backend.LLMS}: HTTP embedder/reranker and {_DEFAULT_VAULT_LLMS}. "
             f"{Backend.JINA}: Jina HTTP (CC BY-NC) and {_DEFAULT_VAULT_JINA}. "
             f"{Backend.MODEL2VEC}: {_DEFAULT_VAULT_MODEL2VEC}; "
-            f"--model2vec-embedder on reindex and search. "
+            f"--model2vec-embedder on reindex, find, and search. "
             f"Default: {_ENV_BACKEND}, or required. "
             "Must precede the subcommand. Bazel targets pass this flag."
         ),
@@ -275,13 +287,16 @@ def _parser() -> argparse.ArgumentParser:
             f"Model2Vec directory (default: <workspace>/{_DEFAULT_MODEL2VEC_DIR}; "
             f"downloads {_MODEL2VEC_REPO} when files are missing). "
             f"Only with --backend {Backend.MODEL2VEC}. "
-            "Passed to scheda on reindex and search."
+            "Passed to scheda on reindex, find, and search."
         ),
     )
     shared.add_argument(
         "--lexical-only",
         action="store_true",
-        help="Do not pass embedder/reranker flags (BM25 / RRF only)",
+        help=(
+            "Rank by the lexical leg only (vectorWeight 0, no reranker); "
+            "the embedder is still passed, since the Vault indexes with it"
+        ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
     import_cmd = sub.add_parser(
@@ -298,24 +313,24 @@ def _parser() -> argparse.ArgumentParser:
     reindex_cmd = sub.add_parser(
         "reindex",
         parents=[shared],
-        help="Vault reindex (`14`); YAML ReindexResult on stdout",
+        help="Rebuild the Index and wait for it; YAML IndexState on stdout",
     )
     reindex_cmd.set_defaults(func=_cmd_reindex)
     scope = argparse.ArgumentParser(add_help=False)
     scope.add_argument(
         "--collection",
         metavar="NAME",
-        help="collection NAME find|search (no --collections)",
+        help="collection NAME query|search (no --collections)",
     )
     scope.add_argument(
         "--collections",
         metavar="NAME,...",
-        help="comma-separated Vault find|search names",
+        help="comma-separated names for query-documents|search-documents",
     )
     find_cmd = sub.add_parser(
         "find",
         parents=[shared, scope],
-        help="Vault or collection find (`14`); YAML records on stdout",
+        help="Vault or collection query; YAML count and Documents on stdout",
     )
     find_cmd.add_argument(
         "--filter",
@@ -334,28 +349,28 @@ def _parser() -> argparse.ArgumentParser:
     find_cmd.add_argument(
         "--include-raw",
         action="store_true",
-        help="FindQuery.include_raw: include Record.raw in YAML",
+        help="includeRaw: include each Document's raw text in YAML",
     )
     find_cmd.set_defaults(func=_cmd_find)
     search_cmd = sub.add_parser(
         "search",
         parents=[shared, scope],
         help=(
-            "Vault or collection search (`14`); YAML hits on stdout. "
+            "Vault or collection search; YAML hits on stdout. "
             "With no --text/--query/--topic, run every fixture topic"
         ),
     )
-    search_cmd.add_argument("--text", metavar="TEXT", help="SearchQuery.text")
+    search_cmd.add_argument("--text", metavar="TEXT", help="DocumentSearch.text")
     search_cmd.add_argument(
         "--k",
         type=int,
         metavar="N",
-        help=f"SearchQuery.k (default: {_DEFAULT_SEARCH_K}, or the topic k)",
+        help=f"DocumentSearch.k (default: {_DEFAULT_SEARCH_K}, or the topic k)",
     )
     search_cmd.add_argument(
         "--query",
         metavar="JSON",
-        help="Protobuf JSON SearchQuery (overrides --text/--k/--filter)",
+        help="Protobuf JSON DocumentSearch (overrides --text/--k/--filter)",
     )
     search_cmd.add_argument(
         "--topic",
@@ -365,17 +380,17 @@ def _parser() -> argparse.ArgumentParser:
     search_cmd.add_argument(
         "--filter",
         metavar="JSON",
-        help="Optional Filter JSON on SearchQuery (not with --query)",
+        help="Optional Filter JSON on DocumentSearch (not with --query)",
     )
     search_cmd.add_argument(
         "--no-reranker",
         action="store_true",
-        help="Do not pass --reranker-* (RRF order)",
+        help="Do not rerank (RRF order)",
     )
     search_cmd.add_argument(
         "--include-raw",
         action="store_true",
-        help="SearchQuery.include_raw: include Hit.raw in YAML",
+        help="includeRaw: include each hit's raw text in YAML",
     )
     search_cmd.set_defaults(func=_cmd_search)
     return parser
@@ -385,7 +400,7 @@ def _cmd_import(args: argparse.Namespace) -> None:
     paths, models, cli = _session(args)
     _ensure_vault(cli, paths.vault)
     collections = _fixture_collections(paths.fixture)
-    existing = _collection_names(cli.info())
+    existing = _collection_names(cli.list_collections())
     for name, decl_path, _docs in collections:
         if name not in existing:
             _LOG.info("create-collection %s", name)
@@ -393,19 +408,22 @@ def _cmd_import(args: argparse.Namespace) -> None:
             existing.add(name)
     added = 0
     skipped = 0
-    pass_embedder = models.backend is not Backend.MODEL2VEC
     for name, _decl_path, docs in collections:
         for doc in docs:
             if cli.get(name, doc.record_id) is not None:
                 _LOG.info("skip %s/%s (exists)", name, doc.record_id)
                 skipped += 1
                 continue
-            _LOG.info("add %s/%s", name, doc.record_id)
-            cli.add(name, doc, embedder=pass_embedder)
+            _LOG.info("create %s/%s", name, doc.record_id)
+            cli.create(name, doc)
             added += 1
-    if pass_embedder and not models.lexical_only and skipped:
-        _LOG.info("reindex (vectors for existing records)")
-        cli.reindex()
+    # A write does not wait for the Index, and each `scheda` process stops
+    # its indexer when it exits. One process with the embedder brings the
+    # Index to the writes; Model2Vec is loaded later, by find / search /
+    # reindex.
+    if models.backend is not Backend.MODEL2VEC:
+        _LOG.info("index the writes")
+        cli.settle_index()
     _LOG.info(
         "import done: added %d, skipped %d, vault %s", added, skipped, paths.vault
     )
@@ -427,7 +445,7 @@ def _cmd_find(args: argparse.Namespace) -> None:
     if args.count < 1:
         msg = "--count must be >= 1"
         raise ToolError(msg)
-    page = cli.find(
+    page = cli.query(
         collection=collection,
         collections=collections,
         filter_json=args.filter,
@@ -438,13 +456,14 @@ def _cmd_find(args: argparse.Namespace) -> None:
 
 
 def _cmd_search(args: argparse.Namespace) -> None:
-    paths, _models, cli = _session(args)
+    paths, models, cli = _session(args)
     _require_existing_vault(paths.vault)
     collection, collections = _scope(args)
     call = SearchCall(
         collection=collection,
         collections=tuple(collections),
-        rerank=not args.no_reranker,
+        rerank=models.reranks() and not args.no_reranker,
+        lexical_only=models.lexical_only,
         include_raw=args.include_raw,
     )
     n_sources = sum(value is not None for value in (args.text, args.query, args.topic))
@@ -455,9 +474,7 @@ def _cmd_search(args: argparse.Namespace) -> None:
         msg = "--filter cannot be combined with --query"
         raise ToolError(msg)
     if args.query is not None:
-        _emit_search(
-            cli, call, _with_include_raw(args.query, include_raw=call.include_raw)
-        )
+        _emit_search(cli, call, _with_call(args.query, call))
         return
     if args.text is not None:
         _emit_search(
@@ -467,7 +484,7 @@ def _cmd_search(args: argparse.Namespace) -> None:
                 args.text,
                 _search_k(args.k, _DEFAULT_SEARCH_K),
                 args.filter,
-                include_raw=call.include_raw,
+                call,
             ),
         )
         return
@@ -481,7 +498,7 @@ def _cmd_search(args: argparse.Namespace) -> None:
                 topic.text,
                 _search_k(args.k, topic.k),
                 args.filter,
-                include_raw=call.include_raw,
+                call,
             ),
         )
         _require_topic_ok(topic, hits)
@@ -493,9 +510,8 @@ def _emit_search(cli: SchedaCli, call: SearchCall, query_json: str) -> dict[str,
     hits = cli.search(
         collection=call.collection,
         collections=list(call.collections),
-        query_json=query_json,
+        search_json=query_json,
         rerank=call.rerank,
-        include_raw=call.include_raw,
     )
     _write_yaml(hits, include_raw=call.include_raw)
     return hits
@@ -515,14 +531,13 @@ def _search_topics(
             topic.text,
             _search_k(k_override, topic.k),
             filter_json,
-            include_raw=call.include_raw,
+            call,
         )
         hits = cli.search(
             collection=call.collection,
             collections=list(call.collections),
-            query_json=query_json,
+            search_json=query_json,
             rerank=call.rerank,
-            include_raw=call.include_raw,
         )
         report = _topic_report(topic, hits)
         reports.append(report)
@@ -583,7 +598,7 @@ def _search_k(override: int | None, default: int) -> int:
 
 
 def _search_query_json(
-    text: str, k: int, filter_json: str | None, *, include_raw: bool
+    text: str, k: int, filter_json: str | None, call: SearchCall
 ) -> str:
     if not text:
         msg = "search text must be non-empty"
@@ -591,14 +606,10 @@ def _search_query_json(
     body: dict[str, Any] = {"text": text, "k": k}
     if filter_json:
         body["filter"] = _parse_filter_object(filter_json)
-    if include_raw:
-        body["includeRaw"] = True
-    return json.dumps(body, ensure_ascii=False)
+    return json.dumps(_shape_search(body, call), ensure_ascii=False)
 
 
-def _with_include_raw(query_json: str, *, include_raw: bool) -> str:
-    if not include_raw:
-        return query_json
+def _with_call(query_json: str, call: SearchCall) -> str:
     try:
         data = json.loads(query_json)
     except json.JSONDecodeError as err:
@@ -607,8 +618,19 @@ def _with_include_raw(query_json: str, *, include_raw: bool) -> str:
     if not isinstance(data, dict):
         msg = "--query must be a JSON object"
         raise ToolError(msg)
-    data["includeRaw"] = True
-    return json.dumps(data, ensure_ascii=False)
+    return json.dumps(_shape_search(data, call), ensure_ascii=False)
+
+
+def _shape_search(body: dict[str, Any], call: SearchCall) -> dict[str, Any]:
+    """Set what the call asks for on a `DocumentSearch`: raw, rerank, legs."""
+    if call.include_raw:
+        body["includeRaw"] = True
+    if call.lexical_only:
+        body["vectorWeight"] = 0
+    if call.rerank and "rerankLimit" not in body:
+        k = body.get("k", _DEFAULT_SEARCH_K)
+        body["rerankLimit"] = max(k if isinstance(k, int) else 0, _DEFAULT_RERANK_LIMIT)
+    return body
 
 
 def _parse_filter_object(filter_json: str) -> dict[str, Any]:
@@ -639,7 +661,7 @@ def _backend(args: argparse.Namespace) -> Backend:
         raise ToolError(msg) from None
 
 
-_YAML_DOC_KEYS = ("records", "hits", "topics")
+_YAML_DOC_KEYS = ("documents", "hits", "topics")
 _YAML_BOOL_NULL = frozenset(
     {
         "true",
@@ -832,11 +854,7 @@ def _driver_models(
         if reranker_model == _DEFAULT_RERANKER_MODEL:
             reranker_model = _DEFAULT_JINA_RERANKER_MODEL
     model2vec_dir: Path | None = None
-    if (
-        backend is Backend.MODEL2VEC
-        and not args.lexical_only
-        and command in ("reindex", "search")
-    ):
+    if backend is Backend.MODEL2VEC and command in ("reindex", "find", "search"):
         directory = _model2vec_dir(workspace, args.model2vec_embedder)
         if command == "reindex":
             model2vec_dir = _ensure_model2vec_embedder(directory)
@@ -857,11 +875,10 @@ def _driver_models(
 
 def _log_models(models: DriverModels) -> None:
     if models.lexical_only:
-        _LOG.info("embedder off (--lexical-only)")
-        return
+        _LOG.info("lexical ranking only (--lexical-only)")
     if models.backend is Backend.MODEL2VEC:
         if models.model2vec_dir is None:
-            _LOG.info("model2vec embedder only on reindex and search")
+            _LOG.info("model2vec embedder only on reindex, find, and search")
             return
         _LOG.info("model2vec embedder %s", models.model2vec_dir)
         return
@@ -871,7 +888,8 @@ def _log_models(models: DriverModels) -> None:
         models.embedder_url,
         models.embedder_dimensions,
     )
-    _LOG.info("reranker %s %s (search)", models.reranker_model, models.reranker_url)
+    if models.reranks():
+        _LOG.info("reranker %s %s (search)", models.reranker_model, models.reranker_url)
 
 
 def resolve_paths(
@@ -1213,8 +1231,8 @@ def _ensure_vault(cli: SchedaCli, vault: Path) -> None:
     if vault.exists():
         msg = f"path exists but is not a Vault (missing .git): {vault}"
         raise ToolError(msg)
-    _LOG.info("open (create) vault %s", vault)
-    cli.open()
+    _LOG.info("create vault %s", vault)
+    cli.create_vault()
 
 
 def _require_existing_vault(vault: Path) -> None:
@@ -1573,25 +1591,36 @@ def _yaml_scalar(text: str) -> Any:
 
 
 class SchedaCli:
-    """One `scheda --vault PATH` subprocess per call."""
+    """One `scheda --vault PATH` subprocess per call.
+
+    Each subcommand of `scheda` is one call of the library: stdout is the
+    Protobuf JSON of its reply (a stream reply is one JSON object per line),
+    stderr the `ErrorReport` JSON of a failure.
+    """
 
     def __init__(self, binary: Path, vault: Path, models: DriverModels) -> None:
-        """Bind one binary to one Vault path and optional embedder flags."""
+        """Bind one binary to one Vault path and its ports."""
         self._binary = binary
         self._vault = vault
         self._models = models
 
-    def open(self) -> None:
-        """`open`: create the Vault if the path is missing."""
-        self._run("open", expect_stdout=False, embedder=False)
+    def create_vault(self) -> None:
+        """Make the Vault (`--mode create-new info`)."""
+        self._run("info", mode="create-new", expect_stdout=True, embedder=False)
 
-    def info(self) -> dict[str, Any]:
-        """`info`: `api.v1.VaultInfo` JSON."""
-        return self._run_json("info", embedder=False)
+    def list_collections(self) -> dict[str, Any]:
+        """`list-collections`: `Collections` JSON."""
+        return self._run_json("list-collections", embedder=False)
+
+    def settle_index(self) -> dict[str, Any]:
+        """`index watch --until-settled`: let this process index the writes."""
+        lines = self._run_lines("index", "watch", "--until-settled")
+        return lines[-1] if lines else {}
 
     def reindex(self) -> dict[str, Any]:
-        """`reindex`: rebuild lexical / vector / journal maps from files."""
-        return self._run_json("reindex")
+        """`index reindex`, which waits for the rebuild; then `index status`."""
+        self._run("index", "reindex", expect_stdout=True)
+        return self._run_json("index", "status", embedder=False)
 
     def create_collection(self, name: str, schema_json: str) -> None:
         """`create-collection NAME --schema JSON`."""
@@ -1604,36 +1633,37 @@ class SchedaCli:
             embedder=False,
         )
 
-    def get(self, collection: str, record_id: str) -> str | None:
-        """`collection NAME get --id ID`. Raw UTF-8. `None` if `CODE_NOT_FOUND`."""
+    def get(self, collection: str, record_id: str) -> dict[str, Any] | None:
+        """`collection NAME get --id ID`: the Document, `None` when not found."""
         result = self._invoke(
             "collection", collection, "get", "--id", record_id, embedder=False
         )
         if result.returncode == 0:
-            return result.stdout
+            data = _parse_json(result.stdout, result.args, "stdout")
+            return data if isinstance(data, dict) else None
         error = _parse_error(result)
         if error.get("code") == _NOT_FOUND:
             return None
         msg = _error_message(result, error)
         raise ToolError(msg)
 
-    def add(
-        self, collection: str, document: Document, *, embedder: bool = True
-    ) -> None:
-        """`collection NAME add --id ID --file PATH`."""
+    def create(self, collection: str, document: Document) -> None:
+        """`collection NAME create --id ID --file PATH --note TEXT`."""
         self._run(
             "collection",
             collection,
-            "add",
+            "create",
             "--id",
             document.record_id,
             "--file",
             str(document.path),
-            expect_stdout=False,
-            embedder=embedder,
+            "--note",
+            _IMPORT_NOTE,
+            expect_stdout=True,
+            embedder=False,
         )
 
-    def find(
+    def query(
         self,
         *,
         collection: str | None,
@@ -1642,59 +1672,55 @@ class SchedaCli:
         paging: tuple[int, int],
         include_raw: bool,
     ) -> dict[str, Any]:
-        """Vault or collection `find`. Protobuf JSON `FindResult`."""
-        offset, count = paging
-        paging_args: list[str] = [
-            "--filter",
-            filter_json,
-            "--offset",
-            str(offset),
-            "--count",
-            str(count),
-        ]
+        """A query and its count: `{"total": N, "documents": [...]}`."""
+        offset, limit = paging
+        body: dict[str, Any] = {"filter": _parse_filter_object(filter_json)}
+        if collection is None and collections:
+            body["collections"] = {"names": collections}
+        page = dict(body, offset=offset, limit=limit)
         if include_raw:
-            paging_args.append("--include-raw")
+            page["includeRaw"] = True
         if collection is not None:
-            return self._run_json(
-                "collection", collection, "find", *paging_args, embedder=False
-            )
-        if collections:
-            return self._run_json(
-                "find",
-                "--collections",
-                ",".join(collections),
-                *paging_args,
-                embedder=False,
-            )
-        return self._run_json("find", *paging_args, embedder=False)
+            scope: tuple[str, ...] = ("collection", collection)
+            query_cmd, count_cmd = "query", "count"
+        else:
+            scope = ()
+            query_cmd, count_cmd = "query-documents", "count-documents"
+        count = self._run_json(*scope, count_cmd, "--query", json.dumps(body))
+        documents = self._run_lines(*scope, query_cmd, "--query", json.dumps(page))
+        return {
+            "total": int(count.get("count", 0)),
+            "documents": [_readable(document) for document in documents],
+        }
 
     def search(
         self,
         *,
         collection: str | None,
         collections: list[str],
-        query_json: str,
+        search_json: str,
         rerank: bool,
-        include_raw: bool,
     ) -> dict[str, Any]:
-        """Vault or collection `search`. Protobuf JSON `SearchHits`."""
-        query = ("--query", query_json)
+        """A search: `{"vectorLeg": …, "hits": [...]}`, each hit flattened."""
         extra = self._models.reranker_argv() if rerank else ()
-        raw = ("--include-raw",) if include_raw else ()
         if collection is not None:
-            return self._run_json(
-                "collection", collection, "search", *query, *extra, *raw
+            items = self._run_lines(
+                *extra, "collection", collection, "search", "--search", search_json
             )
-        if collections:
-            return self._run_json(
-                "search",
-                "--collections",
-                ",".join(collections),
-                *query,
-                *extra,
-                *raw,
+        else:
+            request: dict[str, Any] = {"search": json.loads(search_json)}
+            if collections:
+                request["collections"] = {"names": collections}
+            items = self._run_lines(
+                *extra, "search-documents", "--search", json.dumps(request)
             )
-        return self._run_json("search", *query, *extra, *raw)
+        out: dict[str, Any] = {"vectorLeg": None, "hits": []}
+        for item in items:
+            if "summary" in item:
+                out["vectorLeg"] = item["summary"].get("vectorLeg")
+            elif "hit" in item:
+                out["hits"].append(_flat_hit(item["hit"]))
+        return out
 
     def _run_json(self, *args: str, embedder: bool = True) -> dict[str, Any]:
         result = self._run(*args, expect_stdout=True, embedder=embedder)
@@ -1704,8 +1730,27 @@ class SchedaCli:
             raise ToolError(msg)
         return data
 
-    def _run(self, *args: str, expect_stdout: bool, embedder: bool = True) -> CliResult:
-        result = self._invoke(*args, embedder=embedder)
+    def _run_lines(self, *args: str, embedder: bool = True) -> list[dict[str, Any]]:
+        result = self._run(*args, expect_stdout=False, embedder=embedder)
+        items: list[dict[str, Any]] = []
+        for line in result.stdout.splitlines():
+            if not line.strip():
+                continue
+            data = _parse_json(line, result.args, "stdout")
+            if not isinstance(data, dict):
+                msg = f"scheda {' '.join(result.args)} stdout line is not an object"
+                raise ToolError(msg)
+            items.append(data)
+        return items
+
+    def _run(
+        self,
+        *args: str,
+        expect_stdout: bool,
+        embedder: bool = True,
+        mode: str = "open-existing",
+    ) -> CliResult:
+        result = self._invoke(*args, embedder=embedder, mode=mode)
         if result.returncode != 0:
             msg = _error_message(result, _parse_error(result))
             raise ToolError(msg)
@@ -1714,12 +1759,16 @@ class SchedaCli:
             raise ToolError(msg)
         return result
 
-    def _invoke(self, *args: str, embedder: bool = True) -> CliResult:
+    def _invoke(
+        self, *args: str, embedder: bool = True, mode: str = "open-existing"
+    ) -> CliResult:
         flags = self._models.embedder_argv() if embedder else ()
         cmd = [
             str(self._binary),
             "--vault",
             str(self._vault),
+            "--mode",
+            mode,
             *flags,
             *args,
         ]
@@ -1739,6 +1788,24 @@ class SchedaCli:
             stdout=completed.stdout,
             stderr=completed.stderr,
         )
+
+
+def _readable(document: dict[str, Any]) -> dict[str, Any]:
+    """A `Document` with `raw` as text (Protobuf JSON carries it as base64)."""
+    raw = document.get("raw")
+    if not isinstance(raw, str):
+        return document
+    text = base64.b64decode(raw).decode("utf-8", errors="replace")
+    return dict(document, raw=text)
+
+
+def _flat_hit(hit: dict[str, Any]) -> dict[str, Any]:
+    """A `SearchHit` with its Document's fields at the top, `raw` as text."""
+    document = hit.get("document")
+    flat = {key: value for key, value in hit.items() if key != "document"}
+    if isinstance(document, dict):
+        flat = {**_readable(document), **flat}
+    return flat
 
 
 def _parse_json(text: str, args: tuple[str, ...], stream: str) -> Any:

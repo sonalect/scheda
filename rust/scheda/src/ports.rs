@@ -307,10 +307,7 @@ impl Embedded {
     /// # Errors
     ///
     /// The failure that ended the call.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "only the tests read all the vectors")
-    )]
+    #[cfg(test)]
     pub(crate) fn into_result(self) -> Result<Vec<Vec<f32>>, Error> {
         match self.failure {
             None => Ok(self.vectors),

@@ -1,56 +1,117 @@
-//! HTTP embedder / reranker: OpenAI embeddings and Cohere/Jina rerank.
+//! The HTTP ports: an OpenAI-style embedder (`POST …/embeddings`) and a
+//! Cohere or Jina style reranker (`POST …/rerank`), built on the port
+//! adapters of the library.
 
 use std::env;
 use std::num::NonZeroUsize;
-use std::sync::Arc;
 use std::time::Duration;
 
-use scheda::{Embedder, Error, Record, Repeat, Reranker, redact_remote_text};
+use protocontract::{ErrorCode, Failure};
+use scheda::v1::embedder_ref::EmbedderRef;
+use scheda::v1::reranker_ref::RerankerRef;
+use scheda::v1::{EmbedderErrorCode, RerankerErrorCode};
+use scheda::{Error, FixedEmbedder, FixedReranker, redact_remote_text};
 use serde_json::{Value, json};
+
+use crate::stdio::invalid;
 
 const EMBEDDINGS_LEAF: &str = "embeddings";
 const RERANK_LEAF: &str = "rerank";
 
-pub fn load_embedder(
+/// How many texts one embeddings request carries at most.
+const EMBED_PORTION: NonZeroUsize = match NonZeroUsize::new(2048) {
+    Some(n) => n,
+    None => unreachable!(),
+};
+
+/// How many Documents one rerank request carries at most.
+const RERANK_PORTION: NonZeroUsize = match NonZeroUsize::new(1000) {
+    Some(n) => n,
+    None => unreachable!(),
+};
+
+/// How often a request a signal interrupted (`EINTR`) is sent again.
+const INTERRUPTED_ATTEMPTS: u32 = 3;
+
+/// The embedder at `url`, as a reference for `VaultOpening`. Its model id
+/// is `model` exactly: the URL may carry userinfo or a key in its query,
+/// and a host change is not a model change.
+///
+/// # Errors
+///
+/// `INVALID_ARGUMENT` for an empty model, a URL that is not http or https,
+/// and a key variable that is unset or empty.
+pub(crate) fn embedder(
     url: &str,
     model: &str,
-    dimensions: usize,
+    dimensions: u32,
     key_env: Option<&str>,
-) -> Result<Arc<dyn Embedder>, Error> {
+) -> Result<EmbedderRef, Error> {
     let model = require_model(model)?;
-    let dimensions = NonZeroUsize::new(dimensions)
-        .ok_or_else(|| Error::invalid("--embedder-dimensions must be a positive integer"))?;
-    let url = join_url(url, EMBEDDINGS_LEAF)?;
-    // The model name alone: the URL may carry userinfo or an API key in its
-    // query, and a host change is not a model change.
-    let model_id = model.clone();
-    Ok(Arc::new(OpenAiEmbedder {
-        agent: http_agent(),
-        url,
+    let post = Post::new(join_url(url, EMBEDDINGS_LEAF)?, env_bearer(key_env)?);
+    let length = usize::try_from(dimensions).unwrap_or(usize::MAX);
+    let sent_model = model.clone();
+    Ok(EmbedderRef::from_sync(FixedEmbedder::new(
         model,
-        model_id,
-        key: env_bearer(key_env)?,
         dimensions,
-    }))
+        EMBED_PORTION,
+        move |texts: Vec<String>| {
+            let input = match texts.as_slice() {
+                [one] => json!(one),
+                many => json!(many),
+            };
+            let body = json!({"model": sent_model, "input": input});
+            post.send(&body)
+                .and_then(|value| parse_embeddings(&value, texts.len(), length))
+                .map_err(|problem| {
+                    problem.into_error(
+                        EmbedderErrorCode::EMBEDDER_ERROR_CODE_UNAVAILABLE,
+                        EmbedderErrorCode::EMBEDDER_ERROR_CODE_REFUSED,
+                    )
+                })
+        },
+    )))
 }
 
-pub fn load_reranker(
+/// The reranker at `url`, as a reference for `VaultOpening`.
+///
+/// # Errors
+///
+/// As [`embedder`].
+pub(crate) fn reranker(
     url: &str,
     model: &str,
     key_env: Option<&str>,
-) -> Result<Arc<dyn Reranker>, Error> {
-    Ok(Arc::new(CohereReranker {
-        agent: http_agent(),
-        url: join_url(url, RERANK_LEAF)?,
-        model: require_model(model)?,
-        key: env_bearer(key_env)?,
-    }))
+) -> Result<RerankerRef, Error> {
+    let model = require_model(model)?;
+    let post = Post::new(join_url(url, RERANK_LEAF)?, env_bearer(key_env)?);
+    Ok(RerankerRef::from_sync(FixedReranker::new(
+        RERANK_PORTION,
+        move |query: &str, documents: Vec<scheda::v1::Document>| {
+            let texts: Vec<String> = documents
+                .iter()
+                .map(|document| {
+                    String::from_utf8_lossy(document.raw.as_deref().unwrap_or_default())
+                        .into_owned()
+                })
+                .collect();
+            let body = json!({"model": model, "query": query, "documents": texts});
+            post.send(&body)
+                .and_then(|value| parse_scores(&value, texts.len()))
+                .map_err(|problem| {
+                    problem.into_error(
+                        RerankerErrorCode::RERANKER_ERROR_CODE_UNAVAILABLE,
+                        RerankerErrorCode::RERANKER_ERROR_CODE_REFUSED,
+                    )
+                })
+        },
+    )))
 }
 
 fn require_model(model: &str) -> Result<String, Error> {
     let model = model.trim();
     if model.is_empty() {
-        return Err(Error::invalid("embedder/reranker model is empty"));
+        return Err(invalid("embedder/reranker model is empty"));
     }
     Ok(model.to_owned())
 }
@@ -58,12 +119,10 @@ fn require_model(model: &str) -> Result<String, Error> {
 fn join_url(base: &str, leaf: &str) -> Result<String, Error> {
     let url = base.trim();
     if url.is_empty() {
-        return Err(Error::invalid("embedder/reranker URL is empty"));
+        return Err(invalid("embedder/reranker URL is empty"));
     }
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(Error::invalid(
-            "embedder/reranker URL must be http or https",
-        ));
+        return Err(invalid("embedder/reranker URL must be http or https"));
     }
     let (path, query) = match url.split_once('?') {
         Some((path, query)) => (path, Some(query)),
@@ -84,283 +143,146 @@ fn env_bearer(name: Option<&str>) -> Result<Option<String>, Error> {
     };
     match env::var(name) {
         Ok(value) if !value.is_empty() => Ok(Some(value)),
-        Ok(_) | Err(_) => Err(Error::invalid(format!(
+        Ok(_) | Err(_) => Err(invalid(format!(
             "environment variable {name} is not set or empty"
         ))),
     }
 }
 
-struct OpenAiEmbedder {
-    agent: ureq::Agent,
-    url: String,
-    model: String,
-    model_id: String,
-    key: Option<String>,
-    dimensions: NonZeroUsize,
+/// Why a call to the service failed, before it is given the code of the
+/// port that made it.
+#[derive(Debug)]
+enum Problem {
+    /// The service cannot answer now, or the credentials must change.
+    Unavailable {
+        /// What happened, without the body of the reply.
+        message: String,
+        /// Whether the same call may succeed later.
+        retryable: bool,
+    },
+    /// The service will never answer this input.
+    Refused(String),
 }
 
-impl Embedder for OpenAiEmbedder {
-    fn model_id(&self) -> &str {
-        &self.model_id
-    }
-
-    fn dimensions(&self) -> NonZeroUsize {
-        self.dimensions
-    }
-
-    fn many_limit(&self) -> NonZeroUsize {
-        const LIMIT: NonZeroUsize = match NonZeroUsize::new(2048) {
-            Some(n) => n,
-            None => unreachable!(),
-        };
-        LIMIT
-    }
-
-    fn embed(&self, text: &str) -> Result<Vec<f32>, Error> {
-        let body = json!({
-            "model": self.model,
-            "input": text,
-        });
-        let value = post_json(
-            &self.agent,
-            &self.url,
-            self.key.as_deref(),
-            body,
-            "[OpenAiEmbedder::embed] POST embeddings",
-        )?;
-        parse_embeddings(&value, 1, self.dimensions.get())?
-            .into_iter()
-            .next()
-            .ok_or_else(|| Error::invalid("embeddings response has no data"))
-    }
-
-    fn embed_many(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>, Error> {
-        if texts.is_empty() {
-            return Ok(Vec::new());
+impl Problem {
+    /// This problem as the failure of a port with the codes given.
+    fn into_error<C: ErrorCode>(self, unavailable: C, refused: C) -> Error {
+        match self {
+            Problem::Unavailable { message, retryable } => Failure::new(unavailable, message)
+                .with_retryable(retryable)
+                .into(),
+            Problem::Refused(message) => Failure::new(refused, message).into(),
         }
-        let body = json!({
-            "model": self.model,
-            "input": texts,
-        });
-        let value = post_json(
-            &self.agent,
-            &self.url,
-            self.key.as_deref(),
-            body,
-            "[OpenAiEmbedder::embed_many] POST embeddings",
-        )?;
-        parse_embeddings(&value, texts.len(), self.dimensions.get())
+    }
+
+    fn unusable_reply(message: &str) -> Problem {
+        Problem::Unavailable {
+            message: message.to_owned(),
+            retryable: false,
+        }
     }
 }
 
-struct CohereReranker {
+/// The class of a non-success HTTP status. The message is the status and
+/// the host only: the body may echo the request, which carries the key.
+/// 408, 429 and 5xx are transient; 401 and 403 need other credentials; any
+/// other status refuses the input.
+fn status_problem(status: u16, host: &str) -> Problem {
+    let message = format!("HTTP {status} from {host}");
+    match status {
+        408 | 429 | 500..=599 => Problem::Unavailable {
+            message,
+            retryable: true,
+        },
+        401 | 403 => Problem::Unavailable {
+            message,
+            retryable: false,
+        },
+        _ => Problem::Refused(message),
+    }
+}
+
+/// A JSON service at one URL.
+struct Post {
     agent: ureq::Agent,
     url: String,
-    model: String,
     key: Option<String>,
 }
 
-impl Reranker for CohereReranker {
-    fn many_limit(&self) -> NonZeroUsize {
-        const LIMIT: NonZeroUsize = match NonZeroUsize::new(1000) {
-            Some(n) => n,
-            None => unreachable!(),
-        };
-        LIMIT
+impl Post {
+    fn new(url: String, key: Option<String>) -> Post {
+        let agent = ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .http_status_as_error(false)
+            .build()
+            .new_agent();
+        Post { agent, url, key }
     }
 
-    fn score(&self, query: &str, record: &Record) -> Result<f64, Error> {
-        let scores = self.score_many(query, &[record])?;
-        scores
-            .into_iter()
-            .next()
-            .ok_or_else(|| Error::invalid("rerank response has no relevance_score"))
+    /// POSTs `body` and parses the JSON answer. A request a signal
+    /// interrupted is sent again, up to [`INTERRUPTED_ATTEMPTS`] times: the
+    /// embedding and rerank calls change nothing.
+    fn send(&self, body: &Value) -> Result<Value, Problem> {
+        let mut attempt = 1;
+        loop {
+            match self.send_once(body) {
+                Err(Sent::Interrupted(_)) if attempt < INTERRUPTED_ATTEMPTS => attempt += 1,
+                Err(Sent::Interrupted(err)) => return Err(transport(&err, true)),
+                Err(Sent::Failed(problem)) => return Err(problem),
+                Ok(value) => return Ok(value),
+            }
+        }
     }
 
-    fn score_many(&self, query: &str, records: &[&Record]) -> Result<Vec<f64>, Error> {
-        if records.is_empty() {
-            return Ok(Vec::new());
+    fn send_once(&self, body: &Value) -> Result<Value, Sent> {
+        let mut request = self
+            .agent
+            .post(&self.url)
+            .header("Content-Type", "application/json");
+        if let Some(key) = &self.key {
+            request = request.header("Authorization", format!("Bearer {key}"));
         }
-        let documents = records
-            .iter()
-            .copied()
-            .map(document_text)
-            .collect::<Result<Vec<_>, _>>()?;
-        let body = json!({
-            "model": self.model,
-            "query": query,
-            "documents": documents,
-        });
-        let value = post_json(
-            &self.agent,
-            &self.url,
-            self.key.as_deref(),
-            body,
-            "[CohereReranker::score_many] POST rerank",
-        )?;
-        let results = value
-            .get("results")
-            .and_then(Value::as_array)
-            .ok_or_else(|| Error::invalid("rerank response has no results"))?;
-        let mut scores = vec![None; records.len()];
-        for hit in results {
-            let index = hit
-                .get("index")
-                .and_then(Value::as_u64)
-                .ok_or_else(|| Error::invalid("rerank response is missing index"))?
-                as usize;
-            let score = hit
-                .get("relevance_score")
-                .and_then(Value::as_f64)
-                .ok_or_else(|| Error::invalid("rerank response has no relevance_score"))?;
-            let Some(slot) = scores.get_mut(index) else {
-                return Err(Error::invalid("rerank response index is out of range"));
-            };
-            *slot = Some(score);
+        let mut response = request
+            .send_json(body)
+            .map_err(|err| Sent::classify(err, true))?;
+        let status = response.status();
+        if !status.is_success() {
+            // The body is not read: an error page may echo the request.
+            return Err(Sent::Failed(status_problem(
+                status.as_u16(),
+                &host_for_error(&self.url),
+            )));
         }
-        scores
-            .into_iter()
-            .map(|score| {
-                score.ok_or_else(|| Error::invalid("rerank response is missing a document"))
-            })
-            .collect()
+        response
+            .body_mut()
+            .read_json()
+            .map_err(|err| Sent::classify(err, false))
     }
 }
-
-fn parse_embeddings(
-    value: &Value,
-    count: usize,
-    dimensions: usize,
-) -> Result<Vec<Vec<f32>>, Error> {
-    let data = value
-        .get("data")
-        .and_then(Value::as_array)
-        .ok_or_else(|| Error::invalid("embeddings response has no data"))?;
-    let mut slots: Vec<Option<Vec<f32>>> = vec![None; count];
-    for (i, row) in data.iter().enumerate() {
-        let index = row
-            .get("index")
-            .and_then(Value::as_u64)
-            .map(|n| n as usize)
-            .unwrap_or(i);
-        let embedding = row
-            .get("embedding")
-            .and_then(Value::as_array)
-            .ok_or_else(|| Error::invalid("embeddings response has no embedding"))?;
-        let mut vector = Vec::with_capacity(embedding.len());
-        for item in embedding {
-            let Some(n) = item.as_f64() else {
-                return Err(Error::invalid("embeddings response is not float32"));
-            };
-            vector.push(n as f32);
-        }
-        if vector.is_empty() {
-            return Err(Error::invalid("embeddings response is empty"));
-        }
-        if vector.len() != dimensions {
-            return Err(Error::invalid(
-                "embedding length does not match --embedder-dimensions",
-            ));
-        }
-        let Some(slot) = slots.get_mut(index) else {
-            return Err(Error::invalid("embeddings response index is out of range"));
-        };
-        *slot = Some(vector);
-    }
-    slots
-        .into_iter()
-        .map(|vector| vector.ok_or_else(|| Error::invalid("embeddings response is missing a text")))
-        .collect()
-}
-
-fn document_text(record: &Record) -> Result<String, Error> {
-    match record.raw.as_deref() {
-        Some(raw) => {
-            String::from_utf8(raw.to_vec()).map_err(|err| Error::not_utf8(err.to_string()))
-        }
-        None => Ok(String::new()),
-    }
-}
-
-fn http_agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(30)))
-        .http_status_as_error(false)
-        .build()
-        .new_agent()
-}
-
-/// POST `body` and parse the JSON answer. A request a signal interrupted
-/// (`EINTR`) is sent again, up to [`INTERRUPTED_ATTEMPTS`] times: the
-/// embedding and rerank calls are idempotent.
-fn post_json(
-    agent: &ureq::Agent,
-    url: &str,
-    key: Option<&str>,
-    body: Value,
-    frame: &str,
-) -> Result<Value, Error> {
-    let mut attempt = 1;
-    loop {
-        match post_json_once(agent, url, key, &body, frame) {
-            Err(Sent::Interrupted(_)) if attempt < INTERRUPTED_ATTEMPTS => attempt += 1,
-            Err(Sent::Interrupted(err)) => return Err(map_ureq(err, frame)),
-            Err(Sent::Failed(err)) => return Err(err),
-            Ok(value) => return Ok(value),
-        }
-    }
-}
-
-const INTERRUPTED_ATTEMPTS: u32 = 3;
 
 /// How one POST failed: interrupted by a signal, or for good.
 enum Sent {
     Interrupted(ureq::Error),
-    Failed(Error),
+    Failed(Problem),
 }
 
-fn post_json_once(
-    agent: &ureq::Agent,
-    url: &str,
-    key: Option<&str>,
-    body: &Value,
-    frame: &str,
-) -> Result<Value, Sent> {
-    let failed = |err: ureq::Error| match &err {
-        ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::Interrupted => {
-            Sent::Interrupted(err)
+impl Sent {
+    /// `retryable` is whether the failure happened before an answer began:
+    /// then the same call may succeed later.
+    fn classify(err: ureq::Error, retryable: bool) -> Sent {
+        match &err {
+            ureq::Error::Io(io) if io.kind() == std::io::ErrorKind::Interrupted => {
+                Sent::Interrupted(err)
+            }
+            _ => Sent::Failed(transport(&err, retryable)),
         }
-        _ => Sent::Failed(map_ureq(err, frame)),
-    };
-    let mut request = agent.post(url);
-    request = request.header("Content-Type", "application/json");
-    if let Some(key) = key {
-        request = request.header("Authorization", format!("Bearer {key}"));
     }
-    let mut response = request.send_json(body).map_err(failed)?;
-    let status = response.status();
-    if !status.is_success() {
-        // The body is not read: an error page may echo the request, and the
-        // request carries the API key.
-        return Err(Sent::Failed(
-            status_error(status.as_u16(), &host_for_error(url)).context(frame),
-        ));
-    }
-    response.body_mut().read_json().map_err(failed)
 }
 
-/// A non-success HTTP status as an `Error`. The message is the status and
-/// the host only. 408, 429 and 5xx are transient (`Repeat::Allowed`); 401
-/// and 403 are `io_permission` that a retry does not fix; any other status
-/// is `invalid`.
-fn status_error(status: u16, host: &str) -> Error {
-    let message = format!("HTTP {status} from {host}");
-    match status {
-        408 | 504 => Error::io_timed_out(message),
-        429 => Error::io_resource_busy(message),
-        500..=599 => Error::io_other(message).with_repeat(Repeat::Allowed),
-        401 | 403 => Error::io_permission(message).with_repeat(Repeat::Forbidden),
-        _ => Error::invalid(message),
+fn transport(err: &ureq::Error, retryable: bool) -> Problem {
+    Problem::Unavailable {
+        message: redact_remote_text(&err.to_string()),
+        retryable,
     }
 }
 
@@ -369,10 +291,7 @@ fn host_for_error(url: &str) -> String {
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
         .unwrap_or(url);
-    let hostport = rest
-        .rsplit_once('@')
-        .map(|(_, hostport)| hostport)
-        .unwrap_or(rest);
+    let hostport = rest.rsplit_once('@').map_or(rest, |(_, hostport)| hostport);
     let host = hostport
         .split(['/', '?', '#'])
         .next()
@@ -385,31 +304,98 @@ fn host_for_error(url: &str) -> String {
     }
 }
 
-fn map_ureq(err: ureq::Error, frame: &str) -> Error {
-    let msg = redact_remote_text(&err.to_string());
-    let lowered = msg.to_ascii_lowercase();
-    let error = if lowered.contains("connection refused") {
-        Error::io_connection_refused(msg)
-    } else if lowered.contains("timed out") || lowered.contains("timeout") {
-        Error::io_timed_out(msg)
-    } else {
-        Error::io_other(msg)
-    };
-    error.context(frame)
+fn parse_embeddings(
+    value: &Value,
+    count: usize,
+    dimensions: usize,
+) -> Result<Vec<Vec<f32>>, Problem> {
+    let data = value
+        .get("data")
+        .and_then(Value::as_array)
+        .ok_or_else(|| Problem::unusable_reply("embeddings response has no data"))?;
+    let mut slots: Vec<Option<Vec<f32>>> = vec![None; count];
+    for (i, row) in data.iter().enumerate() {
+        let index = row
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .unwrap_or(i);
+        let embedding = row
+            .get("embedding")
+            .and_then(Value::as_array)
+            .ok_or_else(|| Problem::unusable_reply("embeddings response has no embedding"))?;
+        let mut vector = Vec::with_capacity(embedding.len());
+        for item in embedding {
+            let Some(n) = item.as_f64() else {
+                return Err(Problem::unusable_reply(
+                    "embeddings response is not float32",
+                ));
+            };
+            vector.push(n as f32);
+        }
+        if vector.len() != dimensions {
+            return Err(Problem::unusable_reply(
+                "embedding length does not match --embedder-dimensions",
+            ));
+        }
+        let Some(slot) = slots.get_mut(index) else {
+            return Err(Problem::unusable_reply(
+                "embeddings response index is out of range",
+            ));
+        };
+        *slot = Some(vector);
+    }
+    slots
+        .into_iter()
+        .map(|vector| {
+            vector.ok_or_else(|| Problem::unusable_reply("embeddings response is missing a text"))
+        })
+        .collect()
+}
+
+fn parse_scores(value: &Value, count: usize) -> Result<Vec<f64>, Problem> {
+    let results = value
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or_else(|| Problem::unusable_reply("rerank response has no results"))?;
+    let mut scores = vec![None; count];
+    for hit in results {
+        let index = hit
+            .get("index")
+            .and_then(Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+            .ok_or_else(|| Problem::unusable_reply("rerank response is missing index"))?;
+        let score = hit
+            .get("relevance_score")
+            .and_then(Value::as_f64)
+            .ok_or_else(|| Problem::unusable_reply("rerank response has no relevance_score"))?;
+        let Some(slot) = scores.get_mut(index) else {
+            return Err(Problem::unusable_reply(
+                "rerank response index is out of range",
+            ));
+        };
+        *slot = Some(score);
+    }
+    scores
+        .into_iter()
+        .map(|score| {
+            score.ok_or_else(|| Problem::unusable_reply("rerank response is missing a document"))
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use scheda::{Code, Repeat};
-
     use std::io::{Read, Write};
     use std::net::TcpListener;
 
-    use super::{host_for_error, http_agent, post_json, status_error};
+    use scheda::v1::{EmbedderErrorCode, Query};
+
+    use super::{Post, Problem, embedder, host_for_error, status_problem};
 
     /// A server that answers once with an HTML error page, as a proxy does.
     #[test]
-    fn post_json_checks_status_before_parsing_the_body() {
+    fn send_checks_the_status_before_the_body() {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
@@ -431,45 +417,46 @@ mod tests {
                 body.len()
             );
         });
-        let url = format!("http://{addr}/v1/embeddings");
-        let err = post_json(
-            &http_agent(),
-            &url,
-            None,
-            serde_json::json!({}),
-            "[test] POST",
-        )
-        .unwrap_err();
+        let post = Post::new(format!("http://{addr}/v1/embeddings"), None);
+        let problem = post.send(&serde_json::json!({})).unwrap_err();
         server.join().unwrap();
-        assert_eq!(err.known_code(), Some(Code::IoOther));
-        assert_eq!(err.known_repeat(), Some(Repeat::Allowed));
-        let message = err.message.as_deref().unwrap_or_default();
+        let Problem::Unavailable { message, retryable } = problem else {
+            panic!("a 502 is unavailable");
+        };
+        assert!(retryable);
         assert_eq!(message, format!("HTTP 502 from {addr}"));
         assert!(!message.contains("sk-leak"));
     }
 
     #[test]
-    fn status_error_maps_transient_and_permanent_statuses() {
-        for (status, code, repeat) in [
-            (408, Code::IoTimedOut, Repeat::Allowed),
-            (429, Code::IoResourceBusy, Repeat::Allowed),
-            (500, Code::IoOther, Repeat::Allowed),
-            (502, Code::IoOther, Repeat::Allowed),
-            (503, Code::IoOther, Repeat::Allowed),
-            (504, Code::IoTimedOut, Repeat::Allowed),
-            (401, Code::IoPermission, Repeat::Forbidden),
-            (403, Code::IoPermission, Repeat::Forbidden),
-            (400, Code::Invalid, Repeat::Forbidden),
-            (404, Code::Invalid, Repeat::Forbidden),
-            (422, Code::Invalid, Repeat::Forbidden),
+    fn statuses_map_to_transient_credential_and_refused_problems() {
+        for (status, retryable) in [
+            (408, Some(true)),
+            (429, Some(true)),
+            (500, Some(true)),
+            (503, Some(true)),
+            (504, Some(true)),
+            (401, Some(false)),
+            (403, Some(false)),
+            (400, None),
+            (404, None),
+            (422, None),
         ] {
-            let err = status_error(status, "api.example.test");
-            assert_eq!(err.known_code(), Some(code), "status {status}");
-            assert_eq!(err.known_repeat(), Some(repeat), "status {status}");
-            assert_eq!(
-                err.message.as_deref(),
-                Some(format!("HTTP {status} from api.example.test").as_str())
-            );
+            let message = format!("HTTP {status} from api.example.test");
+            match (status_problem(status, "api.example.test"), retryable) {
+                (
+                    Problem::Unavailable {
+                        message: got,
+                        retryable: r,
+                    },
+                    Some(want),
+                ) => {
+                    assert_eq!(got, message, "status {status}");
+                    assert_eq!(r, want, "status {status}");
+                }
+                (Problem::Refused(got), None) => assert_eq!(got, message, "status {status}"),
+                (other, _) => panic!("status {status}: {other:?}"),
+            }
         }
     }
 
@@ -482,6 +469,88 @@ mod tests {
         assert_eq!(
             host_for_error("http://127.0.0.1:8080/v1/rerank"),
             "127.0.0.1:8080"
+        );
+    }
+
+    /// A server that answers one request with `status` and `body`; the URL
+    /// of its API root.
+    fn serve_once(status: &'static str, body: &'static str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !request.windows(4).any(|w| w == b"\r\n\r\n") {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => request.extend_from_slice(&chunk[..n]),
+                }
+            }
+            // The body of the request follows the headers; read what is
+            // left of it so the close below is not a reset.
+            let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+            let _ = stream.read(&mut chunk);
+            let _ = write!(
+                stream,
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+        });
+        format!("http://{addr}/v1")
+    }
+
+    /// The code and the retry flag of the failure of `embed_query` on a
+    /// service at `url`.
+    fn embed_failure(url: &str) -> (Option<EmbedderErrorCode>, bool) {
+        let port = embedder(url, "m", 2, None).unwrap().to_sync().unwrap();
+        let error = port
+            .embed_query(Query::default().with_text("x"))
+            .unwrap_err();
+        (error.code_as::<EmbedderErrorCode>(), error.retryable())
+    }
+
+    #[test]
+    fn the_embedder_fails_with_the_code_of_its_port() {
+        use EmbedderErrorCode::{EMBEDDER_ERROR_CODE_REFUSED, EMBEDDER_ERROR_CODE_UNAVAILABLE};
+
+        // Nothing listens: a transport failure, which may pass.
+        let dead = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/v1", dead.local_addr().unwrap());
+        drop(dead);
+        assert_eq!(
+            embed_failure(&url),
+            (Some(EMBEDDER_ERROR_CODE_UNAVAILABLE), true)
+        );
+
+        assert_eq!(
+            embed_failure(&serve_once("503 Service Unavailable", "{}")),
+            (Some(EMBEDDER_ERROR_CODE_UNAVAILABLE), true)
+        );
+        assert_eq!(
+            embed_failure(&serve_once("401 Unauthorized", "{}")),
+            (Some(EMBEDDER_ERROR_CODE_UNAVAILABLE), false)
+        );
+        assert_eq!(
+            embed_failure(&serve_once("400 Bad Request", "{}")),
+            (Some(EMBEDDER_ERROR_CODE_REFUSED), false)
+        );
+        // A 2xx answer that is not the expected JSON, or has the wrong
+        // vector length.
+        assert_eq!(
+            embed_failure(&serve_once("200 OK", "{\"nodata\":1}")),
+            (Some(EMBEDDER_ERROR_CODE_UNAVAILABLE), false)
+        );
+        assert_eq!(
+            embed_failure(&serve_once("200 OK", "not json")),
+            (Some(EMBEDDER_ERROR_CODE_UNAVAILABLE), false)
+        );
+        assert_eq!(
+            embed_failure(&serve_once(
+                "200 OK",
+                "{\"data\":[{\"index\":0,\"embedding\":[1.0,2.0,3.0]}]}"
+            )),
+            (Some(EMBEDDER_ERROR_CODE_UNAVAILABLE), false)
         );
     }
 }

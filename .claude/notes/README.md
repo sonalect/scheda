@@ -7,6 +7,7 @@ Project state, deferred work, and measurements that outlive one session
 |---|---|
 | [flaky-tests.md](flaky-tests.md) | Races the tmpfs gate exposed, their fixes, how to reproduce |
 | [api-objects.md](api-objects.md) | The approved object API (Scheda, Vault, Collection, Mirror, Index; service references): thirteen decisions, what is open |
+| [p8-follow-ups.md](p8-follow-ups.md) | Small follow-ups found while building the CLI and the consumer test (P8): a vector-leg reason, CLI waits, the docs pass |
 
 ## Pointers
 
@@ -17,10 +18,12 @@ Project state, deferred work, and measurements that outlive one session
   right, not fast. Work goes on the branch `proto-contract`, layer by
   layer, with no transitional code; branch commits need `cargo` green,
   `bazel test //...` only before the merge (owner's waiver, §4). P1–P5
-  done (P2 but for `ErrorReport`), and the object API of 18 October 2026
-  (D24, stages R1–R5 in place of P6 and P7; `api-objects.md`) is done.
-  Next: P8 (CLI per D16, the Python driver, `tests/consumer.rs`, the
-  rest of `src/old` and `tests/old` deleted, `bazel test //...`, merge).
+  done (P2 but for `ErrorReport`), the object API of 18 October 2026
+  (D24, stages R1–R5 in place of P6 and P7; `api-objects.md`) is done,
+  and P8 is done (19 October 2026: the CLI per D16, the Python driver,
+  `tests/consumer.rs`, `src/old` and `tests/old` deleted). Next: the merge
+  into `main`, with the owner's leave, and the docs pass (§5);
+  `p8-follow-ups.md`.
 - Previous: `docs/19-follow-ups.md` (F1–F5 done, 5 October 2026; not
   yet released), `docs/18-review-fixes.md` (S1–S8) and
   `docs/17-background-index-and-tokio.md` (background Index, `tokio`
