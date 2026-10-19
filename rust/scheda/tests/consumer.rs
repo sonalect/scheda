@@ -670,13 +670,14 @@ fn a_vault_without_an_embedder_does_not_index_until_one_is_set() {
     wait_indexed(&builder, &path);
     drop(builder);
 
-    // A Vault without one does not take over the indexing.
+    // A Vault without one does not take over the indexing. Before its
+    // first look at `HEAD` it reports no `role` at all.
     let vault = open_vault(&path, false);
     put(&vault, "cat1");
     let quiet = Instant::now() + Duration::from_millis(300);
     while Instant::now() < quiet {
         let state = index(&vault).status(Empty::default()).unwrap();
-        assert_eq!(state.role, Some(false));
+        assert_ne!(state.role, Some(true));
         assert_ne!(state.version.as_deref(), Some(head(&path).as_str()));
         std::thread::sleep(Duration::from_millis(20));
     }
