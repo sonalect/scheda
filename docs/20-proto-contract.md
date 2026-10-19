@@ -2010,7 +2010,12 @@ D16.
 - `05`: the collection file has no `version`; the kind key is `standard`;
   SCH-13 retired; an unknown key is read past and kept on a rewrite, a
   command's is refused (D21).
-- `06`: IDX-8 and QRY-5 are ports.
+- `06`: IDX-8 and QRY-5 are ports. *Done 19 October 2026, ahead of the
+  pass:* the Index text follows D23 in `06` (IDX-1, IDX-2, IDX-5, IDX-9,
+  QRY-4), `13` (§1 freshness, §2, §5, the Index codes of §6), `04`
+  (STO-4 locks, `Index.Reindex`), `02` (Index, `reindex`), and `07`
+  (LIB-16, LIB-27, LIB-28, the `check` and LIB-11 Index sentences); the
+  pass renames the rest of those documents around them.
 - `09`: ISO-6 rewritten per D14: isolated collections never leave the
   machine; what is private and must survive is an encrypted collection.
   ISO-9 seals any bytes (D20).

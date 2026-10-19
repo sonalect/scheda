@@ -256,6 +256,12 @@ changes; they grow with each part of the move.
   one, and a text that did not change keeps its vector. A text the
   embedder refuses (`REFUSED`) leaves its Document out of the vector
   side; its file stays.
+- Docs: `06` (IDX-1, IDX-2, IDX-5, IDX-9, QRY-4), `13`, `04`, `02`, and
+  `07` describe the Index as the indexer now builds it: one `commit` for
+  the whole Index and no generations; a rebuild empties the Index and
+  embeds every text again, with queries `INDEX_REBUILDING` meanwhile; a
+  damaged Index is `INDEX_BROKEN` until `Index.Reindex`; `Index.Status` /
+  `Index.Watch` replace `index_status` / `wait_indexed`.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

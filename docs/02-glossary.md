@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.58, 4 October 2026.
+Document 2 of the Scheda package. Version 0.59, 19 October 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -112,7 +112,7 @@ For `document`, `{collection}/{id}` (`/` in `id` is a directory). For `journal`,
 
 **Index** — the disposable search layer.
 
-Built from the commits of the Vault, not the work tree, and kept on git `HEAD` by a background thread (eventually consistent; `wait_indexed` waits for it). Stored under `{vault}/.scheda/` (gitignored), not committed with the Vault, safe to delete. Rebuild (`reindex`) reads the commits at `HEAD`. A corrupt Index must not serve stale ids: `find` / `search` return empty or an error. `get` and `history` still read files (IDX-10).
+Built from the commits of the Vault, not the work tree, and kept at git `HEAD` by the indexer thread of each open Vault, one round at a time under `index.lock` (eventually consistent; `Index.Status` and `Index.Watch` report the state it reached). One state, the file `commit`, covers the whole Index: the lexical side, the vector side, and the journal `id` maps. Stored under `{vault}/.scheda/index/` (gitignored), not committed with the Vault, safe to delete. A rebuild empties it and indexes `HEAD` from nothing; meanwhile queries are `INDEX_REBUILDING`. A damaged Index must not serve stale ids: queries fail with an Index code. `get` and `history` still read files (IDX-10).
 
 Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win for `get` and `history`. Other methods trust the Index for which `id`s exist, then read those files.
 
@@ -180,7 +180,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`sync`** — `pull` then `push`. Independent of `auto_sync`.
 
-**`reindex`** — rebuild the Index from the commits at `HEAD` (and the Projector, if any) into a new generation; the way to move vectors to a new embedder model.
+**`reindex`** (`Index.Reindex`) — ask the indexer to rebuild the Index from the commits at `HEAD` with this Vault's ports, and return at once; the rebuild empties the Index first and embeds every text again. The way to move vectors to a new embedder model or the Index to a new projection, and to repair an `INDEX_BROKEN` one.
 
 **`check`** — validate the Vault against collection declarations, encodings, and envelopes without necessarily writing. Does not type-check Record contents.
 

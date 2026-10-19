@@ -8,6 +8,7 @@ Project state, deferred work, and measurements that outlive one session
 | [flaky-tests.md](flaky-tests.md) | Races the tmpfs gate exposed, their fixes, how to reproduce |
 | [api-objects.md](api-objects.md) | The approved object API (Scheda, Vault, Collection, Mirror, Index; service references): thirteen decisions, what is open |
 | [p8-follow-ups.md](p8-follow-ups.md) | Small follow-ups found while building the CLI and the consumer test (P8): a vector-leg reason, CLI waits, the docs pass |
+| [index-risks.md](index-risks.md) | Audit of the indexer (19 October 2026): thirteen risks with probes and recommendations, to discuss; probes in `index-probes.patch` |
 
 ## Pointers
 

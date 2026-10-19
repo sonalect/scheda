@@ -1,6 +1,8 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.43, 5 October 2026.
+Document 13 of the Scheda package. Version 0.44, 19 October 2026.
+
+§1 (freshness), §2, §5, and the Index codes of §6 follow the indexer of the `proto-contract` branch (`06` IDX-9, `20` D23). The rest still uses the names of `0.21` until the docs pass of `20` §5.
 
 How `find` and `search` must work. Messages: `api/v1/find.proto`, `api/v1/search.proto`, `api/v1/index.proto`. Index columns: `Projector.schema(collection)` at `open`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat `search` as a query string only, are wrong.
 
@@ -20,7 +22,7 @@ Files are source of truth. The Index is disposable (`{vault}/.scheda/`, gitignor
 
 Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Record path on the request. `Record.collection` and `Hit.collection` are output only. No `scan`: every indexed Record in the selected collections is `Filter` `all`. Unknown name → `not_found`. Isolated name on this handle → an ordinary query. Encrypted name → `unsupported`. Empty set stays non-isolated and non-encrypted.
 
-`get` / `add` / `history` / `lines` / `replace` / `remove` do not wait on the Index: they use the Record file (a journal `get`, the `id` map, which writes update at once). `find` / `search` take `id`s from the Index, then open files. The Index follows the last commit in the background (`06` IDX-9), so `find` / `search` are eventually consistent: a write is found after its commit has been indexed. A caller that must see its own write calls `wait_indexed` first; `index_status` says how far behind the Index is. Inside a transaction, queries do not see its uncommitted writes. Orphan or uncommitted file: `get` works; `find` / `search` skip it until a commit holds it and the indexer has applied it. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
+`get` / `add` / `history` / `lines` / `replace` / `remove` do not wait on the Index: they use the Document file (a journal `get` uses the `id` map, and looks in the segments changed since the map for a line it does not list, `06` IDX-5). `find` / `search` take `id`s from the Index, then open files. The Index follows the last commit in the background (`06` IDX-9), so `find` / `search` are eventually consistent: a write is found after its commit has been indexed. `Index.Status` and `Index.Watch` report the state the Index reached as an opaque `version`; there is no token for `HEAD` to compare it with. Inside a transaction, queries do not see its uncommitted writes. Orphan or uncommitted file: `get` works; `find` / `search` skip it until a commit holds it and the indexer has applied it. Ordered journal read without the Index is `lines` (`07` LIB-19), not `find` and not `scan`.
 
 ---
 
@@ -28,11 +30,11 @@ Names are a method argument, not a field on `FindQuery` / `SearchQuery`. No Reco
 
 The **library** calls the engine APIs. The caller never writes Tantivy or USearch files.
 
-- **Tantivy** creates and owns `{vault}/.scheda/index/<generation>/lexical/` (`Index::create_in_dir` / open). Scheda names identity columns and Projector columns, then adds documents. On-disk layout is Tantivy’s (crate pin), not a Scheda spec.
-- **USearch** creates and owns the vector dump under `{vault}/.scheda/`. Scheda only passes dimensions, keys, and `f32` arrays. On-disk layout is USearch’s.
-- Scheda writes `{vault}/.scheda/index/<generation>/format` (decimal version) and `{vault}/.scheda/index/current` (live generation name). Wrong version → `index_version` / empty `find`/`search`, not foreign ids.
+- **Tantivy** creates and owns `{vault}/.scheda/index/lexical/` (`Index::create_in_dir` / open). Scheda names identity columns and Projector columns, then adds documents, and commits once per indexer round with the state it reached as the commit payload. On-disk layout is Tantivy’s (crate pin), not a Scheda spec.
+- **USearch** serializes the HNSW index into `{vault}/.scheda/index/vector/vectors`, which Scheda writes whole after the model record and the key map. Scheda only passes dimensions, keys, and `f32` arrays; the bytes of the HNSW part are USearch’s.
+- Scheda writes `{vault}/.scheda/index/format` (the layout number, now `2`), `commit` (the state the whole Index reflects), `columns`, `stale`, the journal `id` maps, and `vector/state` (`06` IDX-2). Another `format` or no `commit` → `INDEX_REBUILDING` while the indexer rebuilds; never foreign ids.
 
-The background indexer (`06` IDX-9) or `reindex` creates the engines if missing and keeps them on `HEAD`; writes do not touch them. No LLM is used to create either index.
+The indexer (`06` IDX-9) creates the engines when missing and keeps them at `HEAD`; writes do not touch them. No LLM is used to create either index.
 
 ---
 
@@ -112,24 +114,24 @@ Scheda does not ship weights or a chat LLM.
 
 ---
 
-## 5. Building vectors (background indexer and `reindex`)
+## 5. Building vectors (the indexer)
 
-For each Record, for **each** Projector column marked `vector` that `project` filled:
+In each indexer round (`06` IDX-9), for each changed Document, for **each** Projector column marked `vector` that `Project` filled:
 
-1. Take that column’s text (`text list`: join values for that column).
-2. Hash that exact string as a git blob (SHA-1 of `blob {len}\0{bytes}`, the same digest git stores for file content). Compare it to the digest already stored for that `(collection, id, column)` slot in `keys.json`.
-3. If the digest matches and the Index `model_id` and dimensions match the current embedder, leave the USearch entry untouched — do not call the embedder.
-4. Otherwise call `embed` when that Record has one non-empty vector column that needs a new vector, or when `many_limit` is 1. Otherwise call `embed_many` in chunks of `many_limit` for the slots that changed or are new. A leftover chunk of one text uses `embed`.
-5. Store one vector in USearch. Key: `(collection, id, column name)`. Write the digest next to the slot in `keys.json`. An Index written before digests existed loads with an empty digest (`serde` default) and re-embeds each slot once.
-6. A slot that is gone — `schema` no longer marks the column `vector`, or this Record's `project` omits it — is removed from USearch. `search` must not return that content. USearch `remove` leaves tombstones, so the dump can grow across many incremental cycles; this release does not compact it.
+1. Take each value of that column (a `text list` gives one text per element).
+2. Hash that exact text as a git blob (SHA-1 of `blob {len}\0{bytes}`). That digest is stored with the slot in the key map inside `vectors`.
+3. A text whose digest the Index already holds keeps its stored vector: the embedder is not called for it. Vectors the embedder returned before a failed try of the round are kept in the indexing Vault's memory the same way, by digest, until a round succeeds.
+4. Every other text goes to `Embedder.Embed` in one stream per round, in the order of the Documents; the embedder forms its own portions. A failure ends the stream: the vectors that came before it are kept (step 3), and a `REFUSED` text leaves its Document out of the vector side.
+5. Each vector is stored in USearch under a fresh `u64` key. The key map gives the key its collection, `id`, Vault-relative file, column, place in the column, and digest, so a hit leads back to its Document and a changed or deleted Document (or journal segment) drops exactly its own vectors.
+6. A slot that is gone (`Columns` no longer marks the column `vector`, or this Document's `Project` omits it) is removed. USearch reuses the room of removed vectors, so the file does not grow across incremental rounds.
 
-Do not glue several columns into one blob. One column, one vector. Do not hash the Record file or a git tree: the digest is of the embedder text, so a commit that changes other bytes of the Record does not re-embed it.
+Do not glue several columns into one blob. One value, one vector. Do not hash the Document file or a git tree: the digest is of the embedder text, so a commit that changes other bytes of the Document does not re-embed it. A journal segment that changed is projected again line by line, and its unchanged lines keep their vectors by digest.
 
-If `embed` is missing, skip all vector writes. Tantivy still indexes `fts` columns.
+Without an embedder there is no vector side; Tantivy still indexes `fts` columns. A collection with a `vector` column needs an embedder for the Index to move at all (`06` IDX-9, who indexes).
 
-Index remembers `model_id` and `dimensions`. Only a handle whose embedder matches them writes vectors (the `vector.lock` role, `06` IDX-9). A handle with another model writes none, does not embed its queries, and its `search` runs on the lexical leg alone; `index_status().model_mismatch` is true. Moving to a new model is the caller's `reindex` with the new embedder: the new generation starts with an empty vector table and every slot is embedded. With the same model, `reindex` copies the previous generation's vector dump (when it loads) and applies the skip/remove rules above, so only changed text is embedded; without an embedder it carries the previous vectors over unchanged. The lexical Index of a new generation is always built in full.
+`vectors` records `model_id` and `dimensions`. Only a Vault whose embedder matches them indexes. A Vault with another model indexes nothing, does not embed its queries, and its `search` runs on the lexical leg alone; `IndexState.model_mismatch` is true. Moving to a new model is `Index.Reindex` from a Vault with the new embedder: the rebuild removes the Index and embeds every text again. A `Reindex` with the same model embeds every text again too, since the stored vectors go with the rest of the Index.
 
-The embedder runs on the background indexer's thread, never inside `add` / `replace` / `commit`: a slow, blocking, or failing embedder delays vectors and is retried with backoff (`index_status().last_error`), but fails no write.
+The embedder runs on the indexer's thread, never inside a write: a slow, blocking, or failing embedder delays the Index and is retried with backoff (`IndexState.last_error`), but fails no write. While it fails, `commit` and the reported `version` do not move for the whole Index.
 
 ---
 
@@ -151,9 +153,9 @@ Steps:
    - **Reranker present:** RRF does not decide membership. Fill the pool by alternating legs — vector rank 1, lexical rank 1, vector rank 2, lexical rank 2, and so on — skipping a document already taken, until the pool is full or both legs are exhausted. A short leg does not leave the pool short while the other still has hits. When both weights are non-zero the interleave is one-for-one; the weights no longer choose who enters the pool.
 5. If a **reranker** is passed to `search`: cut the fused list to `rerank_limit` when it is set, then `get` each remaining Record; call `score` when there is one candidate or `many_limit` is 1; otherwise `score_many` in chunks of `many_limit` (a leftover chunk of one Record uses `score`). Sort by that score (higher first); keep `k`. Set `Hit.rerank_score`. If no reranker: return the fused list truncated to `k` (no `rerank_score`); `rerank_limit` does not change the pool.
 6. `include_raw` true: fill `Hit.raw` from the Record file (after truncate to `k` when there is no reranker). Unset or false → omit `raw`.
-7. Set `SearchHits.vector_leg` on every reply, early empty ones included. It is decided before step 3 from what the handle already holds (no extra I/O, no diff), the first that applies: `VECTOR_LEG_NOT_ASKED` (`vector_weight` 0); `VECTOR_LEG_NO_VECTOR_COLLECTION` (no selected collection has vector slots: excluded or encrypted, no Projector, or no Projector column marked `vector`); `VECTOR_LEG_NO_EMBEDDER`; `VECTOR_LEG_NO_VECTORS` (the Index holds none yet); `VECTOR_LEG_MODEL_MISMATCH` (the embedder's `model_id` or dimensions differ from the Index vectors; the query is not embedded); else `VECTOR_LEG_RAN`. A vector-only query (`lexical_weight` 0) with no hits and any value but `RAN` did not search vectors at all, which is how a caller tells that from "nothing matched" without `index_status`.
+7. Set `SearchHits.vector_leg` on every reply, early empty ones included. It is decided before step 3 from what the handle already holds (no extra I/O, no diff), the first that applies: `VECTOR_LEG_NOT_ASKED` (`vector_weight` 0); `VECTOR_LEG_NO_VECTOR_COLLECTION` (no selected collection has vector slots: excluded or encrypted, no Projector, or no Projector column marked `vector`); `VECTOR_LEG_NO_EMBEDDER`; `VECTOR_LEG_NO_VECTORS` (the Index holds none yet); `VECTOR_LEG_MODEL_MISMATCH` (the embedder's `model_id` or dimensions differ from the Index vectors; the query is not embedded); else `VECTOR_LEG_RAN`. A vector-only query (`lexical_weight` 0) with no hits and any value but `RAN` did not search vectors at all, which is how a caller tells that from "nothing matched" without `Index.Status`.
 
-Invalid / missing Index → no hits or an Index code (`index_version`, `index_lexical`, `index_missing`, `index_corrupt`), never another Vault’s ids. `search` checks the generation's projector dump like `find`, Filter or not: a generation another Projector built is `index_version` with `repeat: forbidden` (IDX-2). An Index that `open` could not read (Tantivy files, `ord.json`, or the vector dump the vector leg needs) is not read as empty: `find` and `search` return that Index code until the lexical-role indexer has rebuilt the generation, which the failed `open` flags. A query Tantivy refuses because of what the caller put in it (a `regex_phrase` pattern, a `fuzzy.distance` above 2) is `invalid`, never an Index code, and does not flag the generation.
+Index not built, or of another format → `INDEX_REBUILDING` (retryable); a file of the Index that does not read → `INDEX_BROKEN` until `Index.Reindex`; another projection, or a collection whose columns changed → `INDEX_STALE` (`06` IDX-2, IDX-9, QRY-4). Never another Vault’s ids, and never an empty answer in place of those codes. A query Tantivy refuses because of what the caller put in it (a `regex_phrase` pattern, a `fuzzy.distance` above 2) is `INVALID_ARGUMENT`, never an Index code.
 
 ### Reranker
 

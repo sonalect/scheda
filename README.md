@@ -260,7 +260,7 @@ bazel run //python/cli:cli_LLMs -- reindex
 `import` `open`s `.vault-test-LLMs` if needed, `create-collection` from
 each `.collection.yaml`, then `add`s missing document files. Embedder
 flags go on `add` / `reindex` / `search`, so the background indexer of
-each command fills `.scheda/index/<generation>/vector/` after its commit. `reindex` rebuilds
+each command fills `.scheda/index/vector/` after its commit. `reindex` rebuilds
 lexical and vector indexes from the commits (use it after a change of
 embedder model, or if you imported without the embedder; an old Index
 format is rebuilt by itself).
@@ -366,7 +366,7 @@ bazel run //python/cli:cli_model2vec -- reindex
 `import` `open`s `.vault-test-model2vec` if needed, `create-collection`
 from each `.collection.yaml`, then `add`s missing document files. It
 does not load Model2Vec. `reindex` downloads the cache if needed, loads
-the embedder once, and fills `.scheda/index/<generation>/vector/`. A later `reindex` rebuilds
+the embedder once, and fills `.scheda/index/vector/`. A later `reindex` rebuilds
 lexical and vector indexes after a change of embedder model. Stdout of
 `reindex` is `ReindexResult` YAML. The CLI default Projector is one text
 column `body` (the whole UTF-8 Record).

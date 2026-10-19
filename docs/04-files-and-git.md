@@ -1,6 +1,8 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.41, 4 October 2026.
+Document 4 of the Scheda package. Version 0.42, 19 October 2026.
+
+The Index locks below (STO-4) follow the indexer of the `proto-contract` branch (`06` IDX-9, `20` D23). The write model (the write lock is now `{vault}/.scheda/commit.lock`, `20` D6) waits for the docs pass of `20` §5.
 
 Normative rules for bytes on disk, the git working tree, the write lock, `commit`, Remote, `push` / `pull` / `sync`, and how `open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -18,29 +20,29 @@ An assertion without a check is not a requirement. This package does not use Git
 
 **STO-3. Journal lines are not rewritten.** Same as MOD-16: no update/delete API (`replace` and `remove` are `unsupported`). On read/`check`, a broken line is an error: a final line without `\n`, a line with no `:` delimiter, or an empty envelope `id`. It is not “JSON object failed Schema”. Scheda does not silently truncate or rewrite the segment to “fix” it. Valid lines before the damage remain readable. *Check:* flip bytes in the middle of a closed segment → `check` fails; `replace` / `remove` on the collection → error. *Check:* a line with no `:` is `invalid`; an empty payload line `{id}: \n` is a Record.
 
-**STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. The lock is held for an open transaction and for the duration of one mutating call outside a transaction. `commit` and `discard` release it before they return; dropping the handle releases it. Writes do not touch the lexical or vector Index; the background indexer (`06` IDX-9) writes it under its own role locks, `{vault}/.scheda/index.lock` and `vector.lock`, and never takes `write.lock`. `open` with `auto_sync` off does not take the lock. `open` with `auto_sync` on and a Remote exists takes the lock for the auto-pull, then releases it (GIT-10, LIB-4). *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5). *Check:* `open` with `auto_sync` on while another handle holds the write lock → `locked`. *Check:* write, `commit`, drop, immediately `open` the same path and write again → not `locked`. *Check:* write, `commit`, and a second handle writes while the first is still open → not `index_lexical`. A `locked` failure names the operation that took the lock in its stack frames.
+**STO-4. One writer per Vault working tree.** A process that will mutate the Vault holds a write lock. Many readers are allowed. A reader is not blocked by the writer and may see a state slightly older than the writer's latest write. The lock is held for an open transaction and for the duration of one mutating call outside a transaction. `commit` and `discard` release it before they return; dropping the handle releases it. Writes do not touch the Index, the journal `id` maps included; the indexer (`06` IDX-9) writes it under `{vault}/.scheda/index.lock`, held for one round and taken without waiting, and never takes the write lock. `open` with `auto_sync` off does not take the lock. `open` with `auto_sync` on and a Remote exists takes the lock for the auto-pull, then releases it (GIT-10, LIB-4). *Check:* a second `open` for write fails while the first writer holds the lock; a reader can `get` during `add` without tearing the file (STO-5). *Check:* `open` with `auto_sync` on while another handle holds the write lock → `locked`. *Check:* write, `commit`, drop, immediately `open` the same path and write again → not `locked`. *Check:* write, `commit`, and a second handle writes while the first is still open → not `index_lexical`. A `locked` failure names the operation that took the lock in its stack frames.
 
 The lock is an OS file lock on `{vault}/.scheda/write.lock` (not a pid-file,
 not under `index/`). It is released when the process dies because the kernel
 closes the descriptor. Stale pid-files are not the mechanism: they would
-survive a crash. Every lock file Scheda takes (`write.lock`, `reindex.lock`,
-the indexer's role locks, the journal `ids.lock`) is unlocked before its
-descriptor closes: a close alone leaves the lock held while a child process
+survive a crash. Every lock file Scheda takes (`commit.lock` for writes, `index.lock` for an
+indexer round) is unlocked before its descriptor closes: a close alone leaves the lock held while a child process
 another thread just forked (a `git` call) still has the descriptor, and a
 handle trying the lock in that moment would find it taken. Locks do not travel with `git push` / `git pull`. Two clones
 are two working trees: each may have a writer. NFS/SMB lock semantics are not
 relied on; Vaults on those shares are outside **core**.
 
-With `find`, `reindex` takes no `write.lock`: it builds the new generation
-from the commits at `HEAD`, so `add` / `replace` / `remove`, transactions,
-`create_collection`, `pull`, `sync`, and `discard` in other handles go on
-while it runs (LIB-16). It holds a second flock,
-`{vault}/.scheda/reindex.lock`, from start until after publish; the
-background indexer takes it too when it rebuilds an Index by itself. It is
-`try_lock`: a second `reindex` is `locked`. Without `find`, `reindex` holds
-`write.lock` for the whole call. *Check:* a second handle `add`s during a
-`reindex` build and is not `locked`. *Check:* a second `reindex` while the
-first holds `reindex.lock` → `locked` with `reindex` in the stack.
+`Index.Reindex` takes no write lock and no lock of its own: it asks this
+Vault's indexer for a rebuild and returns. The rebuild is an indexer round
+under `index.lock` (`06` IDX-9), so writes, pulls, and syncs in every
+handle go on while it runs; queries and searches are `INDEX_REBUILDING`
+meanwhile. A second `Reindex` of the same Vault while one is asked for or
+runs is `ABORTED`. A build without `find` has no Index object; its
+Vaults keep the journal `id` maps. *Check:* `Reindex` returns before the
+rebuild and a second one is `ABORTED` (`tests/index.rs`:
+`reindex_returns_before_the_rebuild_a_second_is_aborted_and_the_maps_match`);
+the rounds of two Vaults on one path never overlap
+(`indexer::tests::the_rounds_of_two_handles_of_one_vault_never_overlap`).
 
 **STO-5. A failed write is not the new truth.** Validation failure, a full disk, or a killed process must not leave a half-written `document` or `singleton` as the file at the Record path, must not leave a `journal` segment cut in the middle of a line as an accepted Record, and must not leave a partial `remove` (the path holds the whole file or no file). *Check:* interrupt `replace` / `add` / `remove`; after reopen, the set of accepted Records equals the last successful write. Technique for `document`/`singleton` writes: write a sibling temp file in the same directory, `fsync`, rename over the target. Technique for `remove`: unlink the Record file (atomic: the path holds the file or nothing). Technique for `journal`: write one complete line including `\n`; a tail without `\n` is not a Record (STO-3).
 

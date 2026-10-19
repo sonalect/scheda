@@ -1,0 +1,499 @@
+diff --git a/rust/scheda/src/vector.rs b/rust/scheda/src/vector.rs
+index db9bcaf..94e4634 100644
+--- a/rust/scheda/src/vector.rs
++++ b/rust/scheda/src/vector.rs
+@@ -2095,4 +2095,494 @@ mod tests {
+         .unwrap();
+         assert_eq!(waiting, (1, "a".to_owned(), "model-async".to_owned()));
+     }
++
++    // ---- Audit probes (throwaway; never committed) ----
++
++    fn hold(fx: &Fixture) -> crate::fs::Flock {
++        loop {
++            if let Some(held) = fx.index().try_lock().unwrap() {
++                return held;
++            }
++            std::thread::sleep(Duration::from_millis(1));
++        }
++    }
++
++    /// Watches `fx` for `span`: whether the `commit` file reached `HEAD`
++    /// with no error in the status, and the last error code seen.
++    fn observe(fx: &Fixture, span: Duration) -> (bool, Option<String>, usize) {
++        let want = head(&fx.path);
++        let deadline = Instant::now() + span;
++        let mut last = None;
++        while Instant::now() < deadline {
++            let state = fx.vault.indexer().status();
++            if let Some(error) = state.last_error.as_option() {
++                last = error.code.clone();
++            }
++            let on_disk = fx.index().read_commit().unwrap().map(State::token);
++            if on_disk.as_deref() == Some(want.as_str()) && !state.last_error.is_set() {
++                return (true, last, 0);
++            }
++            std::thread::sleep(Duration::from_millis(5));
++        }
++        (false, last, 0)
++    }
++
++    #[test]
++    fn probe_a_kill_after_vectors_before_commit_then_head_moves() {
++        let fx = Fixture::new("probe-a", &[standard("notes")]);
++        fx.put("notes", "a", r#"{"body":"alpha"}"#);
++        fx.built();
++        let c1 = fx.index().read_commit().unwrap().unwrap();
++        fx.put("notes", "b", r#"{"body":"beta"}"#);
++        fx.built();
++        let held = hold(&fx);
++        // As if the process died after `vectors` and `state`, before `commit`.
++        fx.index().write_commit(c1).unwrap();
++        fx.put("notes", "c", r#"{"body":"gamma"}"#);
++        drop(held);
++        let (reached, code, _) = observe(&fx, Duration::from_secs(3));
++        eprintln!("PROBE-A reached_head={reached} last_error={code:?}");
++        let (reached, code, _) = observe(&fx, Duration::from_secs(2));
++        eprintln!("PROBE-A after 5s reached_head={reached} last_error={code:?}");
++    }
++
++    #[test]
++    fn probe_b_kill_between_vectors_and_state() {
++        let fx = Fixture::new("probe-b", &[standard("notes")]);
++        fx.put("notes", "a", r#"{"body":"alpha"}"#);
++        fx.built();
++        let c1 = fx.index().read_commit().unwrap().unwrap();
++        let state_c1 = std::fs::read(super::state_file(&fx.index())).unwrap();
++        fx.put("notes", "b", r#"{"body":"beta"}"#);
++        fx.built();
++        let held = hold(&fx);
++        // As if the process died after the rename of `vectors`, before `state`.
++        fx.index().write_commit(c1).unwrap();
++        std::fs::write(super::state_file(&fx.index()), &state_c1).unwrap();
++        drop(held);
++        let (reached, code, _) = observe(&fx, Duration::from_secs(3));
++        eprintln!("PROBE-B HEAD unchanged: reached_head={reached} last_error={code:?}");
++    }
++
++    #[test]
++    fn probe_c_kill_after_vectors_before_commit_head_stays() {
++        let fx = Fixture::new("probe-c", &[standard("notes")]);
++        fx.put("notes", "a", r#"{"body":"alpha"}"#);
++        fx.built();
++        let c1 = fx.index().read_commit().unwrap().unwrap();
++        fx.put("notes", "b", r#"{"body":"beta"}"#);
++        fx.built();
++        let held = hold(&fx);
++        fx.index().write_commit(c1).unwrap();
++        fx.projected.lock().unwrap().clear();
++        drop(held);
++        // Nothing wakes the indexer but its look at HEAD.
++        let (reached, code, _) = observe(&fx, Duration::from_secs(3));
++        eprintln!(
++            "PROBE-C reached_head={reached} last_error={code:?} projections={}",
++            fx.projected.lock().unwrap().len()
++        );
++    }
++
++    #[test]
++    fn probe_d_embedder_down_reprojects_the_diff_on_every_retry() {
++        let fx = Fixture::new("probe-d", &[standard("notes")]);
++        fx.embedded.set_down(true);
++        let held = hold(&fx);
++        for n in 0..10 {
++            fx.put("notes", &format!("n{n}"), &format!(r#"{{"body":"text {n}"}}"#));
++        }
++        fx.projected.lock().unwrap().clear();
++        let before = fx.embedded.texts().len();
++        drop(held);
++        std::thread::sleep(Duration::from_secs(2));
++        let projections = fx.projected.lock().unwrap().len();
++        let calls = fx.embedded.texts().len() - before;
++        eprintln!(
++            "PROBE-D in 2 s with poll 10 ms: {projections} Project calls for a 10-Document diff, {calls} Embed calls"
++        );
++        let index = fx.index();
++        let meta = std::fs::metadata(index.lexical_dir().join("meta.json")).unwrap();
++        eprintln!("PROBE-D meta.json modified {:?} ago", meta.modified().unwrap().elapsed().unwrap());
++    }
++
++    #[test]
++    fn probe_e_journal_append_reprojects_the_whole_segment() {
++        let fx = Fixture::new(
++            "probe-e",
++            &[serde_json::json!({"name": "log", "schema": {"journal": {}}})],
++        );
++        let line = |n: usize| {
++            fx.vault
++                .create(
++                    "log",
++                    DocumentCreation {
++                        id: Some(format!("l{n:04}")),
++                        raw: Some(format!(r#"{{"body":"entry {n}"}}"#).into_bytes()),
++                        note: Some("test".to_owned()),
++                        ..Default::default()
++                    },
++                )
++                .unwrap();
++        };
++        let held = hold(&fx);
++        for n in 0..200 {
++            line(n);
++        }
++        drop(held);
++        fx.built();
++        let size0 = std::fs::metadata(super::vectors_file(&fx.index())).unwrap().len();
++        fx.projected.lock().unwrap().clear();
++        let sent0 = fx.embedded.texts().iter().map(Vec::len).sum::<usize>();
++        line(200);
++        fx.built();
++        eprintln!(
++            "PROBE-E one appended line to a 200-line segment: {} Project calls, {} texts embedded",
++            fx.projected.lock().unwrap().len(),
++            fx.embedded.texts().iter().map(Vec::len).sum::<usize>() - sent0
++        );
++        for n in 201..240 {
++            line(n);
++            fx.built();
++        }
++        let size1 = std::fs::metadata(super::vectors_file(&fx.index())).unwrap().len();
++        let snapshot = fx.snapshot();
++        eprintln!(
++            "PROBE-E vectors file {size0} bytes at 200 lines, {size1} bytes at 240 lines after 40 single appends; live vectors {}",
++            snapshot.len()
++        );
++    }
++
++    #[test]
++    fn probe_f_ann_remove_and_add_growth() {
++        let ann = super::Ann::new(DIMS).unwrap();
++        let mut key = 0u64;
++        let mut live = Vec::new();
++        ann.reserve(100).unwrap();
++        for _ in 0..100 {
++            ann.add(key, &vector_of(&format!("t{key}"))).unwrap();
++            live.push(key);
++            key += 1;
++        }
++        let mut sizes = Vec::new();
++        for _ in 0..20 {
++            for k in live.drain(..) {
++                ann.remove(k).unwrap();
++            }
++            ann.reserve(100).unwrap();
++            for _ in 0..100 {
++                ann.add(key, &vector_of(&format!("t{key}"))).unwrap();
++                live.push(key);
++                key += 1;
++            }
++            let mut bytes = Vec::new();
++            ann.append_to(&mut bytes).unwrap();
++            sizes.push((ann.len(), ann.inner.capacity(), bytes.len()));
++        }
++        eprintln!("PROBE-F (len, capacity, bytes) per cycle: {sizes:?}");
++    }
++
++    #[test]
++    fn probe_g_drop_waits_for_a_slow_embedder() {
++        struct Slow;
++        impl EmbedderSync for Slow {
++            fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
++                Ok(EmbedderDescriptor::default()
++                    .with_model_id("model-slow")
++                    .with_dimensions(DIMS as u32))
++            }
++            fn embed(
++                &self,
++                texts: BoxIter<'static, Result<Text, Error>>,
++            ) -> Result<BoxIter<'static, Result<Vector, Error>>, Error> {
++                Ok(Box::new(texts.map(|text| {
++                    std::thread::sleep(Duration::from_millis(200));
++                    Ok(Vector {
++                        values: vector_of(&text?.text.unwrap_or_default()),
++                        ..Vector::default()
++                    })
++                })))
++            }
++            fn embed_query(&self, query: Query) -> Result<Vector, Error> {
++                Ok(Vector {
++                    values: vector_of(&query.text.unwrap_or_default()),
++                    ..Vector::default()
++                })
++            }
++        }
++        let scratch = Scratch::new("probe-g");
++        let projected = Arc::new(Mutex::new(Vec::new()));
++        let ports = Ports {
++            projector: Some(ProjectorRef::from_sync(Json(projected))),
++            embedder: Some(EmbedderRef::from_sync(Slow)),
++            ..Ports::default()
++        };
++        let vault = Vault::open(scratch.0.join("vault"), options(), ports).unwrap();
++        vault
++            .create_collection(collection(standard("notes")))
++            .unwrap();
++        let path = scratch.0.join("vault").canonicalize().unwrap();
++        let held = loop {
++            if let Some(held) = Index::new(&path).try_lock().unwrap() {
++                break held;
++            }
++            std::thread::sleep(Duration::from_millis(1));
++        };
++        for n in 0..20 {
++            vault
++                .upsert(
++                    "notes",
++                    DocumentUpsert {
++                        id: Some(format!("n{n}")),
++                        raw: Some(format!(r#"{{"body":"text {n}"}}"#).into_bytes()),
++                        note: Some("test".to_owned()),
++                        ..Default::default()
++                    },
++                )
++                .unwrap();
++        }
++        drop(held);
++        std::thread::sleep(Duration::from_millis(500));
++        let started = Instant::now();
++        drop(vault);
++        eprintln!(
++            "PROBE-G drop of the Vault 500 ms into a 4 s embedding took {:?}",
++            started.elapsed()
++        );
++    }
++
++    #[test]
++    fn probe_i_reindex_with_the_same_embedder_reembeds_everything() {
++        let fx = Fixture::new("probe-i", &[standard("notes")]);
++        for n in 0..10 {
++            fx.put("notes", &format!("n{n}"), &format!(r#"{{"body":"text {n}"}}"#));
++        }
++        fx.built();
++        let before: usize = fx.embedded.texts().iter().map(Vec::len).sum();
++        fx.vault.indexer().reindex().unwrap();
++        let deadline = Instant::now() + DEADLINE;
++        loop {
++            let state = fx.vault.indexer().status();
++            let done = state.rebuild.as_option().is_some_and(|rebuild| {
++                rebuild.stage.and_then(|stage| stage.as_known()) == Some(rebuild::Stage::STAGE_DONE)
++                    && rebuild.documents_read == Some(10)
++            });
++            if done {
++                break;
++            }
++            assert!(Instant::now() < deadline);
++            std::thread::sleep(Duration::from_millis(5));
++        }
++        let after: usize = fx.embedded.texts().iter().map(Vec::len).sum();
++        eprintln!(
++            "PROBE-I Reindex with the same embedder and unchanged texts embedded {} of 10 texts again",
++            after - before
++        );
++    }
++
++    #[test]
++    fn probe_j_outage_with_moving_head_rewalks_the_vault_each_retry() {
++        let fx = Fixture::new("probe-j", &[standard("notes")]);
++        let held = hold(&fx);
++        for n in 0..30 {
++            fx.put("notes", &format!("n{n}"), &format!(r#"{{"body":"text {n}"}}"#));
++        }
++        drop(held);
++        fx.built();
++        fx.embedded.set_down(true);
++        fx.projected.lock().unwrap().clear();
++        for k in 0..10 {
++            fx.put("notes", &format!("x{k}"), &format!(r#"{{"body":"new {k}"}}"#));
++            std::thread::sleep(Duration::from_millis(200));
++        }
++        let projected = fx.projected.lock().unwrap().clone();
++        let unchanged = projected.iter().filter(|(_, id)| id == "n0").count();
++        eprintln!(
++            "PROBE-J 10 writes in 2 s during an outage, 30 unchanged Documents: {} Project calls; the unchanged n0 projected {unchanged} times",
++            projected.len()
++        );
++    }
++
++    #[test]
++    fn probe_k_a_handle_without_ports_reports_nothing_pending_while_behind() {
++        let fx = Fixture::new("probe-k", &[standard("notes")]);
++        fx.put("notes", "a", r#"{"body":"alpha"}"#);
++        fx.built();
++        let (bare, _items) = fx.handle(Ports::default());
++        let held = hold(&fx);
++        fx.put("notes", "b", r#"{"body":"beta"}"#);
++        std::thread::sleep(Duration::from_millis(300));
++        let state = bare.indexer().status();
++        eprintln!(
++            "PROBE-K Index one commit behind HEAD; the handle without ports says version_is_head={} pending={:?} role={:?} last_error_set={}",
++            state.version.as_deref() == Some(head(&fx.path).as_str()),
++            state.pending,
++            state.role,
++            state.last_error.is_set()
++        );
++        drop(held);
++    }
++
++    #[test]
++    fn probe_l_one_stale_collection_blocks_vector_reads_of_all() {
++        struct Shifting(Arc<std::sync::atomic::AtomicBool>);
++        impl ProjectorSync for Shifting {
++            fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
++                Ok(ProjectorDescriptor::default().with_projection_id("shift@1"))
++            }
++            fn columns(&self, collection: CollectionKey) -> Result<IndexSchema, Error> {
++                let mut columns = vec![column("body", ColumnKind::COLUMN_KIND_TEXT, true)];
++                if collection.name.as_deref() == Some("other")
++                    && self.0.load(std::sync::atomic::Ordering::SeqCst)
++                {
++                    columns.push(column("extra", ColumnKind::COLUMN_KIND_TEXT, false));
++                }
++                Ok(IndexSchema {
++                    columns,
++                    ..IndexSchema::default()
++                })
++            }
++            fn project(&self, document: RawDocument) -> Result<IndexDoc, Error> {
++                Json(Arc::new(Mutex::new(Vec::new()))).project(document)
++            }
++        }
++        let shifted = Arc::new(std::sync::atomic::AtomicBool::new(false));
++        let scratch = Scratch::new("probe-l");
++        let embedded = Embedded::new("model-a");
++        let ports = Ports {
++            projector: Some(ProjectorRef::from_sync(Shifting(Arc::clone(&shifted)))),
++            embedder: Some(EmbedderRef::from_sync(Counting(Arc::clone(&embedded)))),
++            ..Ports::default()
++        };
++        let vault = Vault::open(scratch.0.join("vault"), options(), ports).unwrap();
++        vault.create_collection(collection(standard("notes"))).unwrap();
++        vault.create_collection(collection(standard("other"))).unwrap();
++        let path = scratch.0.join("vault").canonicalize().unwrap();
++        let items = Items::of(&vault);
++        let put = |name: &str, id: &str, body: &str| {
++            vault
++                .upsert(
++                    name,
++                    DocumentUpsert {
++                        id: Some(id.to_owned()),
++                        raw: Some(format!(r#"{{"body":"{body}"}}"#).into_bytes()),
++                        note: Some("test".to_owned()),
++                        ..Default::default()
++                    },
++                )
++                .unwrap();
++        };
++        put("notes", "a", "alpha");
++        put("other", "o", "omega");
++        items.built(&vault, &path);
++        assert!(vault.vectors().snapshot().is_ok());
++        shifted.store(true, std::sync::atomic::Ordering::SeqCst);
++        put("notes", "b", "beta");
++        items.built(&vault, &path);
++        let stale = crate::lexical::read_stale(&Index::new(&path)).unwrap();
++        let lexical_notes = vault.lexical().snapshot(&["notes"]).map(|_| ()).map_err(|e| if e.is(VaultErrorCode::IndexStale) { "INDEX_STALE" } else { "other" });
++        let vector = vault.vectors().snapshot().map(|_| ()).map_err(|e| if e.is(VaultErrorCode::IndexStale) { "INDEX_STALE" } else { "other" });
++        eprintln!(
++            "PROBE-L stale={stale:?}; lexical read of notes: {lexical_notes:?}; vector read (any scope): {vector:?}"
++        );
++    }
++
++    #[test]
++    fn probe_m_check_sees_wide_modes_during_rounds() {
++        let fx = Fixture::new("probe-m", &[standard("notes")]);
++        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
++        let found = Arc::new(Mutex::new(Vec::<String>::new()));
++        let checks = Arc::new(AtomicUsize::new(0));
++        std::thread::scope(|scope| {
++            scope.spawn(|| {
++                while !stop.load(Ordering::SeqCst) {
++                    if let Ok(problems) = crate::check::run(&fx.vault) {
++                        for problem in problems {
++                            let text = format!("{problem:?}");
++                            if text.contains("index") {
++                                found.lock().unwrap().push(text);
++                            }
++                        }
++                    }
++                    checks.fetch_add(1, Ordering::SeqCst);
++                }
++            });
++            for n in 0..150 {
++                fx.put("notes", &format!("n{n}"), &format!(r#"{{"title":"t{n}","body":"text {n}"}}"#));
++            }
++            fx.built();
++            stop.store(true, Ordering::SeqCst);
++        });
++        let found = found.lock().unwrap();
++        eprintln!(
++            "PROBE-M {} checks during 150 indexed writes: {} problems under .scheda/index; first: {:?}",
++            checks.load(Ordering::SeqCst),
++            found.len(),
++            found.first().map(|text| text.chars().take(200).collect::<String>())
++        );
++    }
++
++    #[test]
++    fn probe_h_history_rewrite_rebuilds_only_when_the_commit_is_gone() {
++        let git = |path: &Path, args: &[&str]| {
++            let out = std::process::Command::new("git")
++                .arg("-C")
++                .arg(path)
++                .args(args)
++                .output()
++                .unwrap();
++            assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
++            String::from_utf8(out.stdout).unwrap().trim().to_owned()
++        };
++        let fx = Fixture::new("probe-h", &[standard("notes")]);
++        let marker = fx.index().root().join("probe-marker");
++        let wait_at = |want: &str| {
++            let deadline = Instant::now() + DEADLINE;
++            while fx.index().read_commit().unwrap().map(State::token).as_deref() != Some(want) {
++                assert!(Instant::now() < deadline, "the Index did not reach {want}");
++                std::thread::sleep(Duration::from_millis(5));
++            }
++        };
++        fx.put("notes", "a", r#"{"body":"alpha"}"#);
++        fx.built();
++        let c1 = git(&fx.path, &["rev-parse", "HEAD"]);
++        fx.put("notes", "b", r#"{"body":"beta"}"#);
++        fx.built();
++        let held = hold(&fx);
++        std::fs::write(&marker, b"x").unwrap();
++        git(&fx.path, &["reset", "--hard", &c1]);
++        drop(held);
++        wait_at(&c1);
++        eprintln!(
++            "PROBE-H reset to an older commit (object kept): rebuild ran={}",
++            !marker.exists()
++        );
++        fx.put("notes", "c", r#"{"body":"gamma"}"#);
++        fx.built();
++        let c3 = git(&fx.path, &["rev-parse", "HEAD"]);
++        let held = hold(&fx);
++        std::fs::write(&marker, b"x").unwrap();
++        git(&fx.path, &["reset", "--hard", &c1]);
++        let _ = std::fs::remove_file(fx.path.join(".git/ORIG_HEAD"));
++        eprintln!("PROBE-H refs: {}", git(&fx.path, &["for-each-ref"]));
++        git(&fx.path, &["reflog", "expire", "--expire=now", "--all"]);
++        git(&fx.path, &["gc", "--prune=now", "--quiet"]);
++        let gone = !std::process::Command::new("git")
++            .arg("-C")
++            .arg(&fx.path)
++            .args(["cat-file", "-e", &c3])
++            .status()
++            .unwrap()
++            .success();
++        eprintln!("PROBE-H indexed commit object gone after gc: {gone}");
++        fx.vault.indexer().stop().unwrap();
++        let (fresh, _items) = fx.handle(ports(&fx.projected, &fx.embedded));
++        drop(held);
++        wait_at(&c1);
++        eprintln!(
++            "PROBE-H reset + gc of the indexed commit, fresh handle: rebuild ran={}",
++            !marker.exists()
++        );
++        drop(fresh);
++    }
+ }
