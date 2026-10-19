@@ -1065,7 +1065,7 @@ impl<T: ProjectorAsync + 'static> ProjectorSync for ::protocontract::Blocking<T>
         )
     }
 }
-/// The reference type of `scheda.v1.EmbedderRef`: [`EmbedderRef`].
+/// The reference type of `scheda.v1.EmbedderRef`: [`EmbedderRef`](embedder_ref::EmbedderRef).
 pub mod embedder_ref {
     /// A reference to an implementation of `Embedder`.
     ///
@@ -1396,7 +1396,7 @@ pub mod embedder_ref {
         }
     }
 }
-/// The reference type of `scheda.v1.RerankerRef`: [`RerankerRef`].
+/// The reference type of `scheda.v1.RerankerRef`: [`RerankerRef`](reranker_ref::RerankerRef).
 pub mod reranker_ref {
     /// A reference to an implementation of `Reranker`.
     ///
@@ -1709,7 +1709,7 @@ pub mod reranker_ref {
         }
     }
 }
-/// The reference type of `scheda.v1.ProjectorRef`: [`ProjectorRef`].
+/// The reference type of `scheda.v1.ProjectorRef`: [`ProjectorRef`](projector_ref::ProjectorRef).
 pub mod projector_ref {
     /// A reference to an implementation of `Projector`.
     ///

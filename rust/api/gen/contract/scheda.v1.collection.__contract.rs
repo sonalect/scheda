@@ -1464,7 +1464,7 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         )
     }
 }
-/// The reference type of `scheda.v1.CollectionRef`: [`CollectionRef`].
+/// The reference type of `scheda.v1.CollectionRef`: [`CollectionRef`](collection_ref::CollectionRef).
 pub mod collection_ref {
     /// A reference to one collection of a Vault.
     ///

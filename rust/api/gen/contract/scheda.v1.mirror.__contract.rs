@@ -579,7 +579,7 @@ impl<T: MirrorAsync + 'static> MirrorSync for ::protocontract::Blocking<T> {
         Self::block_on(self, <T as MirrorAsync>::sync(Self::get_ref(self), empty))
     }
 }
-/// The reference type of `scheda.v1.MirrorRef`: [`MirrorRef`].
+/// The reference type of `scheda.v1.MirrorRef`: [`MirrorRef`](mirror_ref::MirrorRef).
 pub mod mirror_ref {
     /// A reference to the mirror of a Vault.
     ///

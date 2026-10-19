@@ -381,7 +381,7 @@ impl<T: IndexAsync + 'static> IndexSync for ::protocontract::Blocking<T> {
         Self::block_on(self, <T as IndexAsync>::reindex(Self::get_ref(self), empty))
     }
 }
-/// The reference type of `scheda.v1.IndexRef`: [`IndexRef`].
+/// The reference type of `scheda.v1.IndexRef`: [`IndexRef`](index_ref::IndexRef).
 pub mod index_ref {
     /// A reference to the Index of a Vault.
     ///

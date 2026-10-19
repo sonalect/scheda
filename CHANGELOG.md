@@ -287,8 +287,10 @@ changes; they grow with each part of the move.
 - `tantivy` 0.27.0 (from 0.26.2), with its crates (`frostem` in place of
   `rust-stemmers`, `zstd` 0.14). Its index format is unchanged, so an
   Index built before opens as it is, with no rebuild. No API change.
-- `protocontract` 0.4.0 and `protoc-gen-protocontract-buffa` v0.4.0 (from
-  `bazel_utils` 0.4.1): references to a service.
+- `protocontract` 0.4.1 and `protoc-gen-protocontract-buffa` v0.4.1 (from
+  `bazel_utils` 0.4.2): references to a service; the docs of the generated
+  reference modules link their types, so `cargo doc` of `scheda-api` passes
+  with warnings denied.
 - The CLI is the contract on the command line: each subcommand is one
   call, named after it in kebab case (`info`, `list-collections`,
   `create-collection NAME --schema JSON`, `batch-documents`,

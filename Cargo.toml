@@ -29,7 +29,7 @@ model2vec-rs = { version = "=0.3.0", default-features = false, features = [
     "fancy-regex",
     "local-only",
 ] }
-protocontract = "=0.4.0"
+protocontract = "=0.4.1"
 protovalidate-buffa = { version = "=0.7.2", default-features = false }
 regex = "=1.13.1"
 scheda = { path = "rust/scheda" }

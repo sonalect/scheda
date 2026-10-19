@@ -58,16 +58,11 @@ each is small.
   GPU is free. `~/.cache/huggingface/xet` is owned by root on this
   machine, so hf-xet logs to the console instead of its log file.
 
-- **Broken doc links in the generated reference modules.** `cargo doc -p
-  scheda-api` (rustdoc warnings denied by the workspace lints) fails on
-  seven `unresolved link` errors: protoc-gen-protocontract-buffa writes
-  `/// The reference type of … : [`CollectionRef`].` on `pub mod
-  collection_ref`, where `CollectionRef` is not in scope (same for
-  `IndexRef`, `MirrorRef`, `VaultRef`, `EmbedderRef`, `RerankerRef`,
-  `ProjectorRef`). It was there before the split into one file per proto
-  (19 October 2026); the Pages build (`//rust/scheda:pages`) does not trip
-  on it. Fix in the plugin (link `collection_ref::CollectionRef`), release,
-  regenerate.
+- **Broken doc links in the generated reference modules: done 19 October
+  2026.** Fixed in protoc-gen-protocontract-buffa v0.4.1 (the module doc
+  links `collection_ref::CollectionRef`), catalogued in `bazel_utils`
+  0.4.2; Scheda pins both and `protocontract` 0.4.1, and `cargo doc -p
+  scheda-api` passes.
 
 **How to apply:** take these with the docs pass or right after the merge;
 the first one changes library code and needs its own test.

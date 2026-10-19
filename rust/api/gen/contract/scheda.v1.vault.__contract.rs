@@ -2217,7 +2217,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         )
     }
 }
-/// The reference type of `scheda.v1.VaultRef`: [`VaultRef`].
+/// The reference type of `scheda.v1.VaultRef`: [`VaultRef`](vault_ref::VaultRef).
 pub mod vault_ref {
     /// A reference to an open Vault.
     ///
