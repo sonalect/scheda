@@ -116,9 +116,9 @@ For `standard`, `{collection}/{id}` (`/` in `id` is a directory). For `journal`,
 
 **Index** — the disposable search layer.
 
-Built from the commits of the Vault, not the work tree, and kept at git `HEAD` by the indexer thread of each open Vault, one round at a time under `index.lock` (eventually consistent; `Index.Status` and `Index.Watch` report the state it reached). One state, the file `commit`, covers the whole Index: the lexical side, the vector side, and the journal `id` maps. Stored under `{vault}/.scheda/index/` (gitignored), not committed with the Vault, safe to delete. A rebuild empties it and indexes `HEAD` from nothing; meanwhile queries are `INDEX_REBUILDING`. A damaged Index must not serve stale ids: queries fail with an Index code. `Collection.Get` and `Collection.History` still read files (IDX-10).
+Built from the commits of the Vault, not the work tree, and kept at git `HEAD` by the indexer thread of an open Vault that has every port the Index needs (`06` IDX-9), one round at a time under `index.lock` (eventually consistent; `Index.Status` and `Index.Watch` report the state it reached). One state, the file `commit`, covers the whole Index: the lexical side, the vector side, and the journal `id` maps. Stored under `{vault}/.scheda/index/` (gitignored), not committed with the Vault, safe to delete. A rebuild empties it and indexes `HEAD` from nothing; meanwhile queries are `INDEX_REBUILDING`. A damaged Index must not serve stale ids: queries fail with an Index code. `Collection.Get` and `Collection.History` do not use it: they read the commit at `HEAD` (IDX-10).
 
-Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the files disagree, the files win for `Collection.Get` and `Collection.History`. Other methods trust the Index for which `id`s exist, then read those files.
+Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the commit at `HEAD` disagree, the commit wins for `Collection.Get` and `Collection.History`. Queries and searches trust the Index for which `id`s exist, then read those Documents.
 
 Identity columns (`collection`, `id`, ordinal) are the library's. Every other column comes from a **Projector**.
 

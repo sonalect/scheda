@@ -7,7 +7,7 @@
 //! never on the message.
 
 use std::backtrace::Backtrace;
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use protocontract::{Code, RuntimeCode};
@@ -215,9 +215,9 @@ pub(crate) fn mutex<'a, T>(
 /// The code is the name of the error's code (`VAULT_ERROR_CODE_NOT_FOUND`,
 /// or the code of a port or of the runtime); the retry flag and the stack
 /// are the error's; the path is the one a [`Fault`] carries. The message is
-/// that of a [`Fault`] or of protocontract's `Failure`; for a fault of any
-/// other type it is the `Display` of the error, which also carries the
-/// stack and the code.
+/// that of a [`Fault`] or of protocontract's `Failure`, and for a fault of
+/// any other type (a port's own) its `Display`, without the stack and the
+/// code that the `Display` of the error puts before it.
 #[must_use]
 pub fn error_report(error: &Error) -> ErrorReport {
     let fault = error.downcast_ref::<Fault>();
@@ -225,7 +225,7 @@ pub fn error_report(error: &Error) -> ErrorReport {
         Some(fault) => fault.message().to_owned(),
         None => match error.downcast_ref::<protocontract::Failure>() {
             Some(failure) => failure.message().to_owned(),
-            None => error.to_string(),
+            None => foreign_message(error),
         },
     };
     let mut report = ErrorReport::default()
@@ -236,6 +236,22 @@ pub fn error_report(error: &Error) -> ErrorReport {
     match fault.and_then(Fault::path) {
         Some(path) => report.with_path(path),
         None => report,
+    }
+}
+
+/// The message of a fault of a type Scheda does not know: the `Display` of
+/// the error without what protocontract writes before the fault's own
+/// (`frame: frame: CODE: message`, outermost frame first).
+fn foreign_message(error: &Error) -> String {
+    let text = error.to_string();
+    let mut prefix = String::new();
+    for frame in error.stack() {
+        let _ = write!(prefix, "{frame}: ");
+    }
+    let _ = write!(prefix, "{}: ", error.code());
+    match text.strip_prefix(&prefix) {
+        Some(message) => message.to_owned(),
+        None => text,
     }
 }
 
@@ -589,13 +605,7 @@ mod tests {
         let report = super::error_report(&Error::from(Foreign).context("embed"));
         assert_eq!(report.code.as_deref(), Some("VAULT_ERROR_CODE_UNAVAILABLE"));
         assert_eq!(report.retryable, Some(true));
-        assert!(
-            report
-                .message
-                .as_deref()
-                .unwrap()
-                .contains("a port fell over")
-        );
+        assert_eq!(report.message.as_deref(), Some("a port fell over"));
         assert_eq!(report.stack, ["embed"]);
     }
 

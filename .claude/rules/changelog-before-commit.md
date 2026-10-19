@@ -27,7 +27,7 @@ wrong, edit it.
 ## Skip (nothing notable)
 
 - The commit is **only** `CHANGELOG.md`.
-- rustfmt / comment-only / agent rules (`.claude/**`, `.cursor/**`) with
+- rustfmt / comment-only / agent rules (`.claude/**`) with
   no library, CLI, or `docs/` product change.
 - Clippy / rustc lint-only: same contract, same on-disk bytes, same CLI.
 - The owner explicitly waived the changelog for this commit.

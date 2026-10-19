@@ -30,31 +30,16 @@ each is small.
   Vault and asks at once, before its indexer has looked: the state is
   `{}`. Use `index watch --until-settled` (the Python driver does after
   `reindex`); the docs pass says so in `14`.
-- **`ErrorReport.message` of a foreign fault.** `scheda::error_report`
-  gives the message of a `scheda::Fault` or a `protocontract::Failure`;
-  for a port fault of another type it falls back to the `Display` of the
-  error, which also carries the stack and the code (P2 box still open).
-- **Docs pass (§5): done 19 October 2026.** Left for the owner: the
-  docs pass found these sentences of the owner's Index paragraphs (commit
-  `107ae60`) at odds with the code, and renamed them only:
-  - `13` §1: "Orphan or uncommitted file: `Get` works" — `Collection.Get`
-    reads `HEAD` (D22), so an uncommitted file is seen by no `Get`
-    (`tests/documents.rs`:
-    `a_persons_uncommitted_edit_is_seen_by_no_get_document_and_a_commit_by_hand_is`).
-  - `13` §1: "Inside a transaction, queries do not see its uncommitted
-    writes" — there is no transaction (D6); renamed to "Inside a batch",
-    which says little.
-  - `07` LIB-28: "Then it drops the handle, returning an error where
-    `Drop` cannot" and "`Collection` objects … keep reading and writing,
-    but nothing indexes their commits" — after `Vault.Close` every call
-    of every object is `FAILED_PRECONDITION` (D24 item 9, `vault.proto`,
-    `tests/objects.rs`:
-    `after_close_every_object_is_failed_precondition_and_a_second_close_is_nothing`).
-  - `02` Index: "kept at git `HEAD` by the indexer thread of each open
-    Vault" — only a Vault with every port the Index needs indexes (D23,
-    `who.rs`); "`get` and `history` still read files … the files win" —
-    they read the git objects of `HEAD` (D22).
-
+- **`ErrorReport.message` of a foreign fault: done 19 October 2026.** It
+  is the fault's own `Display`, without the frames and the code
+  protocontract writes before it; P2 is closed.
+- **Docs pass (§5): done 19 October 2026.** The four sentences of the
+  owner's Index paragraphs (`107ae60`) that disagreed with the code were
+  fixed on the owner's word ("everything needed for the merge"): `13` §1
+  (an uncommitted file is seen by no call, `Get` included; no query sees
+  a write before its call returns), `07` LIB-28 (after `Vault.Close`
+  every object is `FAILED_PRECONDITION`), `02` Index (only a Vault with
+  every port indexes; `Get` and `History` read `HEAD`).
 - **vllm 0.32.0 after its quarantine.** `//python:vuln` found
   PYSEC-2026-4319 (CVE-2026-105922, a denial of service in vllm's penalty
   handler) in vllm 0.31.0, the local sidecars' pin. The fix, vllm 0.32.0,

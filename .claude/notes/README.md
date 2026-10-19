@@ -19,7 +19,7 @@ Project state, deferred work, and measurements that outlive one session
   right, not fast. Work goes on the branch `proto-contract`, layer by
   layer, with no transitional code; branch commits need `cargo` green,
   `bazel test //...` only before the merge (owner's waiver, §4). P1–P5
-  done (P2 but for `ErrorReport`), the object API of 18 October 2026
+  done, the object API of 18 October 2026
   (D24, stages R1–R5 in place of P6 and P7; `api-objects.md`) is done,
   and P8 is done (19 October 2026: the CLI per D16, the Python driver,
   `tests/consumer.rs`, `src/old` and `tests/old` deleted), and so is the

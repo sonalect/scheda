@@ -6,8 +6,7 @@ Status: reviewed with the owner, method by method, on 17 October 2026.
 Every decision stands (those marked *settled* were discussed; the rest
 were accepted as proposed). The protos of §3 are written under
 `api/scheda/v1/`. The work goes on the branch `proto-contract`, layer by
-layer, without transitional code (§4). P1, P3, P4, and P5 are done; P2 is
-done but for `ErrorReport`. The object API (D24, approved 18 October
+layer, without transitional code (§4). P1–P5 are done. The object API (D24, approved 18 October
 2026) replaces P6 and P7 with R1–R5, all done; P8 and the docs pass (§5)
 are done, and the branch merges into `main`.
 
@@ -1353,10 +1352,13 @@ D9.
       One module maps causes to `VaultErrorCode` per the D9 table: the
       `std::io::ErrorKind`s, git's failures (the classifier of git's
       stderr moves here), Tantivy, USearch, age.
-- [ ] `ErrorReport` from an `Error`, for the CLI and
-      `IndexState.last_error`. Waits for a way to read the message of a
-      fault of any type from `protocontract::Error` (asked of the owner,
-      17 October 2026).
+- [x] `ErrorReport` from an `Error`, for the CLI and
+      `IndexState.last_error` (`scheda::error_report`, public since P8).
+      The message of a fault of a type Scheda does not know (a port's own)
+      is its `Display`, taken from the `Display` of the error without the
+      frames and the code protocontract documents before it (`frame:
+      frame: CODE: message`), so protocontract needs no new call
+      (`error::tests::a_report_of_a_failure_or_a_foreign_fault_has_a_message_and_no_path`).
 - [x] `.claude/rules/error-handling.md` and
       `.claude/skills/error-handling/` rewritten for the new model, so
       the later layers follow it.
