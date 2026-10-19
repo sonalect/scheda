@@ -243,6 +243,13 @@ pub struct VaultInfoView<'a> {
     ///
     /// Field 3: `writer`
     pub writer: ::core::option::Option<&'a str>,
+    /// The state token of the stored state of the Vault now: what `HEAD`
+    /// names in the Vault and in its isolated repository. Passed as
+    /// `not_before`, it makes a query see every write stored on this path
+    /// before this call, by any Vault, process, or `git` command.
+    ///
+    /// Field 4: `version`
+    pub version: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
@@ -296,6 +303,13 @@ impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
                 )?;
                 view.writer = Some(::buffa::types::borrow_str(&mut cur)?);
             }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.version = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -321,6 +335,7 @@ impl<'a> ::buffa::MessageView<'a> for VaultInfoView<'a> {
             path: self.path.map(|s| s.to_string()),
             index_path: self.index_path.map(|s| s.to_string()),
             writer: self.writer.map(|s| s.to_string()),
+            version: self.version.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -339,6 +354,9 @@ impl<'a> ::buffa::ViewEncode<'a> for VaultInfoView<'a> {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
         if let Some(ref v) = self.writer {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
+        if let Some(ref v) = self.version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
@@ -360,6 +378,9 @@ impl<'a> ::buffa::ViewEncode<'a> for VaultInfoView<'a> {
         }
         if let Some(ref v) = self.writer {
             ::buffa::types::put_string_field(3u32, v, buf);
+        }
+        if let Some(ref v) = self.version {
+            ::buffa::types::put_string_field(4u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -390,6 +411,9 @@ impl<'__a> ::serde::Serialize for VaultInfoView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.writer {
             __map.serialize_entry("writer", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.version {
+            __map.serialize_entry("version", __v)?;
         }
         __map.end()
     }
@@ -503,6 +527,16 @@ impl VaultInfoOwnedView {
     #[must_use]
     pub fn writer(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().writer
+    }
+    /// The state token of the stored state of the Vault now: what `HEAD`
+    /// names in the Vault and in its isolated repository. Passed as
+    /// `not_before`, it makes a query see every write stored on this path
+    /// before this call, by any Vault, process, or `git` command.
+    ///
+    /// Field 4: `version`
+    #[must_use]
+    pub fn version(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().version
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<VaultInfoView<'static>>>

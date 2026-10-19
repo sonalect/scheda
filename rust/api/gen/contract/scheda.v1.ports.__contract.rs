@@ -13,7 +13,8 @@
 pub trait EmbedderSync: ::core::marker::Send + ::core::marker::Sync {
     /// The model and the length of its vectors. Read once, when the embedder
     /// is installed. The model id is stored with the vectors, so an embedder
-    /// of another model is seen, not mixed into the same Index.
+    /// of another model is seen, not mixed into the same Index: the Vault is
+    /// `INDEX_STALE` until its `Index.Reindex` embeds every text with it.
     fn describe(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -70,7 +71,8 @@ pub trait EmbedderSync: ::core::marker::Send + ::core::marker::Sync {
 pub trait EmbedderAsync: ::core::marker::Send + ::core::marker::Sync {
     /// The model and the length of its vectors. Read once, when the embedder
     /// is installed. The model id is stored with the vectors, so an embedder
-    /// of another model is seen, not mixed into the same Index.
+    /// of another model is seen, not mixed into the same Index: the Vault is
+    /// `INDEX_STALE` until its `Index.Reindex` embeds every text with it.
     fn describe(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -351,7 +353,6 @@ impl<T: EmbedderSync> EmbedderAsync for ::protocontract::Inline<T> {
         <T as EmbedderSync>::embed_query(Self::get_ref(self), query)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: EmbedderSync + 'static> EmbedderAsync for ::protocontract::Offload<T> {
     fn describe(
         &self,
@@ -400,7 +401,6 @@ impl<T: EmbedderSync + 'static> EmbedderAsync for ::protocontract::Offload<T> {
         Self::call(self, move |service| <T as EmbedderSync>::embed_query(service, query))
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: EmbedderAsync + 'static> EmbedderSync for ::protocontract::Blocking<T> {
     fn describe(
         &self,
@@ -665,7 +665,6 @@ impl<T: RerankerSync> RerankerAsync for ::protocontract::Inline<T> {
             .map(Self::reply_stream)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: RerankerSync + 'static> RerankerAsync for ::protocontract::Offload<T> {
     fn score<R>(
         &self,
@@ -692,7 +691,6 @@ impl<T: RerankerSync + 'static> RerankerAsync for ::protocontract::Offload<T> {
         Self::bidirectional(self, score_items, <T as RerankerSync>::score)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: RerankerAsync + 'static> RerankerSync for ::protocontract::Blocking<T> {
     fn score(
         &self,
@@ -736,9 +734,9 @@ impl<T: RerankerAsync + 'static> RerankerSync for ::protocontract::Blocking<T> {
 pub trait ProjectorSync: ::core::marker::Send + ::core::marker::Sync {
     /// Which projection it makes. Read once, when the Projector is given to a
     /// Vault. The projection is stored with the Index, so a Projector of
-    /// another projection is seen, not mixed into the same Index: the Index is
-    /// `INDEX_STALE` for that Vault, which does not index, until a `Reindex`
-    /// by a Vault with the new Projector.
+    /// another projection is seen, not mixed into the same Index: the Vault
+    /// is `INDEX_STALE` until its `Index.Reindex` builds the Index for that
+    /// projection. Only `Reindex` starts such a rebuild.
     fn describe(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -747,8 +745,9 @@ pub trait ProjectorSync: ::core::marker::Send + ::core::marker::Sync {
         ::protocontract::Error,
     >;
     /// The columns of one collection. None: its Documents are indexed by
-    /// identity only. Changing the columns of a collection makes the Index
-    /// stale until `Reindex`.
+    /// identity only. Columns other than the Index was built with make the
+    /// Vault `INDEX_STALE`, as another projection does; change the
+    /// projection with them.
     fn columns(
         &self,
         collection_key: crate::proto::scheda::v1::CollectionKey,
@@ -781,9 +780,9 @@ pub trait ProjectorSync: ::core::marker::Send + ::core::marker::Sync {
 pub trait ProjectorAsync: ::core::marker::Send + ::core::marker::Sync {
     /// Which projection it makes. Read once, when the Projector is given to a
     /// Vault. The projection is stored with the Index, so a Projector of
-    /// another projection is seen, not mixed into the same Index: the Index is
-    /// `INDEX_STALE` for that Vault, which does not index, until a `Reindex`
-    /// by a Vault with the new Projector.
+    /// another projection is seen, not mixed into the same Index: the Vault
+    /// is `INDEX_STALE` until its `Index.Reindex` builds the Index for that
+    /// projection. Only `Reindex` starts such a rebuild.
     fn describe(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -794,8 +793,9 @@ pub trait ProjectorAsync: ::core::marker::Send + ::core::marker::Sync {
         >,
     > + ::core::marker::Send;
     /// The columns of one collection. None: its Documents are indexed by
-    /// identity only. Changing the columns of a collection makes the Index
-    /// stale until `Reindex`.
+    /// identity only. Columns other than the Index was built with make the
+    /// Vault `INDEX_STALE`, as another projection does; change the
+    /// projection with them.
     fn columns(
         &self,
         collection_key: crate::proto::scheda::v1::CollectionKey,
@@ -987,7 +987,6 @@ impl<T: ProjectorSync> ProjectorAsync for ::protocontract::Inline<T> {
         <T as ProjectorSync>::project(Self::get_ref(self), raw_document)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: ProjectorSync + 'static> ProjectorAsync for ::protocontract::Offload<T> {
     fn describe(
         &self,
@@ -1029,7 +1028,6 @@ impl<T: ProjectorSync + 'static> ProjectorAsync for ::protocontract::Offload<T> 
         )
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: ProjectorAsync + 'static> ProjectorSync for ::protocontract::Blocking<T> {
     fn describe(
         &self,
@@ -1139,26 +1137,16 @@ pub mod embedder_ref {
                     ::core::result::Result::Ok(::std::sync::Arc::clone(service))
                 }
                 ::protocontract::reference::Form::Async(service) => {
-                    #[cfg(feature = "tokio")]
-                    {
-                        ::core::result::Result::Ok(
-                            ::std::sync::Arc::new(
-                                ::protocontract::Blocking::new(
-                                    ::core::clone::Clone::clone(service),
-                                    ::protocontract::reference::current_handle(
-                                        "scheda.v1.Embedder",
-                                    )?,
-                                ),
+                    ::core::result::Result::Ok(
+                        ::std::sync::Arc::new(
+                            ::protocontract::Blocking::new(
+                                ::core::clone::Clone::clone(service),
+                                ::protocontract::reference::current_handle(
+                                    "scheda.v1.Embedder",
+                                )?,
                             ),
-                        )
-                    }
-                    #[cfg(not(feature = "tokio"))]
-                    {
-                        let _ = service;
-                        ::core::result::Result::Err(
-                            ::protocontract::reference::no_runtime("scheda.v1.Embedder"),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -1195,7 +1183,6 @@ pub mod embedder_ref {
         ///
         /// `UNBOUND` when the reference holds no implementation;
         /// `NO_RUNTIME` for a blocking one outside a tokio runtime.
-        #[cfg(feature = "tokio")]
         pub fn to_async_offload(
             &self,
         ) -> ::core::result::Result<super::DynEmbedderAsync, ::protocontract::Error> {
@@ -1470,26 +1457,16 @@ pub mod reranker_ref {
                     ::core::result::Result::Ok(::std::sync::Arc::clone(service))
                 }
                 ::protocontract::reference::Form::Async(service) => {
-                    #[cfg(feature = "tokio")]
-                    {
-                        ::core::result::Result::Ok(
-                            ::std::sync::Arc::new(
-                                ::protocontract::Blocking::new(
-                                    ::core::clone::Clone::clone(service),
-                                    ::protocontract::reference::current_handle(
-                                        "scheda.v1.Reranker",
-                                    )?,
-                                ),
+                    ::core::result::Result::Ok(
+                        ::std::sync::Arc::new(
+                            ::protocontract::Blocking::new(
+                                ::core::clone::Clone::clone(service),
+                                ::protocontract::reference::current_handle(
+                                    "scheda.v1.Reranker",
+                                )?,
                             ),
-                        )
-                    }
-                    #[cfg(not(feature = "tokio"))]
-                    {
-                        let _ = service;
-                        ::core::result::Result::Err(
-                            ::protocontract::reference::no_runtime("scheda.v1.Reranker"),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -1526,7 +1503,6 @@ pub mod reranker_ref {
         ///
         /// `UNBOUND` when the reference holds no implementation;
         /// `NO_RUNTIME` for a blocking one outside a tokio runtime.
-        #[cfg(feature = "tokio")]
         pub fn to_async_offload(
             &self,
         ) -> ::core::result::Result<super::DynRerankerAsync, ::protocontract::Error> {
@@ -1783,26 +1759,16 @@ pub mod projector_ref {
                     ::core::result::Result::Ok(::std::sync::Arc::clone(service))
                 }
                 ::protocontract::reference::Form::Async(service) => {
-                    #[cfg(feature = "tokio")]
-                    {
-                        ::core::result::Result::Ok(
-                            ::std::sync::Arc::new(
-                                ::protocontract::Blocking::new(
-                                    ::core::clone::Clone::clone(service),
-                                    ::protocontract::reference::current_handle(
-                                        "scheda.v1.Projector",
-                                    )?,
-                                ),
+                    ::core::result::Result::Ok(
+                        ::std::sync::Arc::new(
+                            ::protocontract::Blocking::new(
+                                ::core::clone::Clone::clone(service),
+                                ::protocontract::reference::current_handle(
+                                    "scheda.v1.Projector",
+                                )?,
                             ),
-                        )
-                    }
-                    #[cfg(not(feature = "tokio"))]
-                    {
-                        let _ = service;
-                        ::core::result::Result::Err(
-                            ::protocontract::reference::no_runtime("scheda.v1.Projector"),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -1839,7 +1805,6 @@ pub mod projector_ref {
         ///
         /// `UNBOUND` when the reference holds no implementation;
         /// `NO_RUNTIME` for a blocking one outside a tokio runtime.
-        #[cfg(feature = "tokio")]
         pub fn to_async_offload(
             &self,
         ) -> ::core::result::Result<super::DynProjectorAsync, ::protocontract::Error> {

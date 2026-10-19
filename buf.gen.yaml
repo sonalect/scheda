@@ -2,9 +2,9 @@
 # messages, protovalidate-buffa their `Validate` impls, and
 # protoc-gen-protocontract-buffa the traits of the services, all into the
 # crate `scheda-api` (`rust/api`). The bridges `Offload` and `Blocking`
-# need tokio, so `gate_tokio_feature` puts them behind the crate's `tokio`
-# feature. The traits come one file per proto (`<stem>.__contract.rs`),
-# joined by `scheda.v1.mod.rs`, as buffa lays out the messages.
+# need tokio, which the crate always has (protocontract's `tokio` feature).
+# The traits come one file per proto (`<stem>.__contract.rs`), joined by
+# `scheda.v1.mod.rs`, as buffa lays out the messages.
 #
 # `json=true` gives the messages their serde derives and field names; the
 # files on disk are written from them, so it is part of the format.
@@ -53,6 +53,5 @@ plugins:
       - extern_path=.scheda.v1.EmbedderRef=crate::traits::embedder_ref::EmbedderRef
       - extern_path=.scheda.v1.RerankerRef=crate::traits::reranker_ref::RerankerRef
       - extern_path=.scheda.v1.ProjectorRef=crate::traits::projector_ref::ProjectorRef
-      - gate_tokio_feature
       - json=true
       - validate=true

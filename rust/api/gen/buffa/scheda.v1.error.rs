@@ -46,11 +46,16 @@ pub enum VaultErrorCode {
     VAULT_ERROR_CODE_MIRROR_CONFLICT = 13i32,
     /// A file holds an unfinished merge. Resolve it by hand.
     VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 14i32,
-    /// The Index has not been built yet, or is moving to a new format.
-    /// Retryable soon; `Index.Watch` says when.
+    /// The Index has not been built yet: its first build runs, and there is
+    /// no Index to answer from (a new Vault, or an Index of an earlier version
+    /// of Scheda, removed). Retryable soon; `Index.Watch` says when. A rebuild
+    /// of a built Index never gives it.
     VAULT_ERROR_CODE_INDEX_REBUILDING = 15i32,
-    /// The Index was built by a Projector of another projection, or with
-    /// other columns, than this Vault's. `Index.Reindex`.
+    /// The Index was built by a Projector of another projection, with other
+    /// columns, or with an embedder of another model or vector length, than
+    /// this Vault's. The Vault does not index, and its queries and searches
+    /// fail with this code, until an `Index.Reindex` of a Vault with these
+    /// ports has switched the Index to them.
     VAULT_ERROR_CODE_INDEX_STALE = 16i32,
     /// The Index is damaged. `Index.Reindex`.
     VAULT_ERROR_CODE_INDEX_BROKEN = 17i32,
@@ -59,6 +64,10 @@ pub enum VaultErrorCode {
     VAULT_ERROR_CODE_STORAGE = 18i32,
     /// Exchanging writes with the mirror failed otherwise.
     VAULT_ERROR_CODE_REPLICATION = 19i32,
+    /// A query, a count, or a search with `not_before`: the Index did not
+    /// reach that state within `OpenOptions.index_wait_timeout_ms`. Retryable;
+    /// `Index.Status` says where the Index stands.
+    VAULT_ERROR_CODE_DEADLINE_EXCEEDED = 20i32,
 }
 impl VaultErrorCode {
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_UNSPECIFIED`]; `Debug` prints the variant name.
@@ -121,6 +130,9 @@ impl VaultErrorCode {
     ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_REPLICATION`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
     pub const Replication: Self = Self::VAULT_ERROR_CODE_REPLICATION;
+    ///Idiomatic alias for [`Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED`]; `Debug` prints the variant name.
+    #[allow(non_upper_case_globals)]
+    pub const DeadlineExceeded: Self = Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED;
 }
 impl ::core::default::Default for VaultErrorCode {
     fn default() -> Self {
@@ -244,6 +256,9 @@ impl ::buffa::Enumeration for VaultErrorCode {
             17i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_INDEX_BROKEN),
             18i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_STORAGE),
             19i32 => ::core::option::Option::Some(Self::VAULT_ERROR_CODE_REPLICATION),
+            20i32 => {
+                ::core::option::Option::Some(Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED)
+            }
             _ => ::core::option::Option::None,
         }
     }
@@ -280,6 +295,9 @@ impl ::buffa::Enumeration for VaultErrorCode {
             Self::VAULT_ERROR_CODE_INDEX_BROKEN => "VAULT_ERROR_CODE_INDEX_BROKEN",
             Self::VAULT_ERROR_CODE_STORAGE => "VAULT_ERROR_CODE_STORAGE",
             Self::VAULT_ERROR_CODE_REPLICATION => "VAULT_ERROR_CODE_REPLICATION",
+            Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED => {
+                "VAULT_ERROR_CODE_DEADLINE_EXCEEDED"
+            }
         }
     }
     fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
@@ -344,6 +362,9 @@ impl ::buffa::Enumeration for VaultErrorCode {
             "VAULT_ERROR_CODE_REPLICATION" => {
                 ::core::option::Option::Some(Self::VAULT_ERROR_CODE_REPLICATION)
             }
+            "VAULT_ERROR_CODE_DEADLINE_EXCEEDED" => {
+                ::core::option::Option::Some(Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED)
+            }
             _ => ::core::option::Option::None,
         }
     }
@@ -369,6 +390,7 @@ impl ::buffa::Enumeration for VaultErrorCode {
             Self::VAULT_ERROR_CODE_INDEX_BROKEN,
             Self::VAULT_ERROR_CODE_STORAGE,
             Self::VAULT_ERROR_CODE_REPLICATION,
+            Self::VAULT_ERROR_CODE_DEADLINE_EXCEEDED,
         ]
     }
 }

@@ -1,5 +1,5 @@
-//! The async form of the objects (feature `tokio`): what `Scheda` gives
-//! through `SchedaAsync::open`.
+//! The async form of the objects: what `Scheda` gives through
+//! `SchedaAsync::open`.
 //!
 //! Each object shares the state, the gate, and the `Close` of the sync
 //! objects of [`super`]; it differs in how a call waits.
@@ -31,9 +31,10 @@ use scheda_api::v1::{
     CheckReport, CollectionAsync, CollectionBatchResult, CollectionDeclaration, CollectionDeletion,
     CollectionKey, CollectionOperation, Collections, Count, Document, DocumentBatchResult,
     DocumentCreation, DocumentDeletion, DocumentHistoryEntry, DocumentId, DocumentOperation,
-    DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert, MirrorAsync,
-    MirrorInfo, MirrorSetting, SchedaAsync, SchedaInfo, SearchItem, VaultAsync,
-    VaultDocumentOperation, VaultInfo, VaultOpening, VaultQuery, VaultSearch,
+    DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert,
+    DocumentWriteResult, MirrorAsync, MirrorInfo, MirrorSetting, QueryItem, SchedaAsync,
+    SchedaInfo, SearchItem, VaultAsync, VaultDocumentOperation, VaultInfo, VaultOpening,
+    VaultQuery, VaultSearch,
 };
 use tokio::runtime::Handle;
 
@@ -96,7 +97,10 @@ async fn write<W: Send + 'static, T: Send + 'static>(
 }
 
 /// A document write: the checks, then the write.
-async fn write_document(shared: &Arc<Shared>, writes: DocWrites) -> Result<Document, Error> {
+async fn write_document(
+    shared: &Arc<Shared>,
+    writes: DocWrites,
+) -> Result<DocumentWriteResult, Error> {
     write(
         shared,
         writes,
@@ -106,11 +110,15 @@ async fn write_document(shared: &Arc<Shared>, writes: DocWrites) -> Result<Docum
     .await
 }
 
-/// A document batch: the checks, then the write.
+/// A document batch: the checks, then the write. A batch with no write
+/// stores nothing and waits for no lock: it answers with the state now.
 async fn write_documents(
     shared: &Arc<Shared>,
     writes: DocWrites,
 ) -> Result<DocumentBatchResult, Error> {
+    if writes.is_empty() {
+        return in_gate(shared, move |vault| vault.write_no_documents(writes)).await;
+    }
     write(
         shared,
         writes,
@@ -293,7 +301,7 @@ impl VaultAsync for AsyncVault {
 
     offloaded_streams! {
         VaultAsync, sync;
-        query_documents(vault_query: VaultQuery) -> Document;
+        query_documents(vault_query: VaultQuery) -> QueryItem;
         search_documents(vault_search: VaultSearch) -> SearchItem;
     }
 }
@@ -321,30 +329,34 @@ impl CollectionAsync for AsyncCollection {
         CollectionAsync, sync;
         get_many(document_selection: DocumentSelection) -> Document;
         history(document_id: DocumentId) -> DocumentHistoryEntry;
-        query(document_query: DocumentQuery) -> Document;
+        query(document_query: DocumentQuery) -> QueryItem;
         search(document_search: DocumentSearch) -> SearchItem;
     }
 
-    async fn create(&self, document_creation: DocumentCreation) -> Result<Document, Error> {
+    async fn create(
+        &self,
+        document_creation: DocumentCreation,
+    ) -> Result<DocumentWriteResult, Error> {
         let name = self.sync.name.clone();
         write_document(self.shared(), DocWrites::one(&name, document_creation)).await
     }
 
-    async fn update(&self, document_update: DocumentUpdate) -> Result<Document, Error> {
+    async fn update(&self, document_update: DocumentUpdate) -> Result<DocumentWriteResult, Error> {
         let name = self.sync.name.clone();
         write_document(self.shared(), DocWrites::one(&name, document_update)).await
     }
 
-    async fn upsert(&self, document_upsert: DocumentUpsert) -> Result<Document, Error> {
+    async fn upsert(&self, document_upsert: DocumentUpsert) -> Result<DocumentWriteResult, Error> {
         let name = self.sync.name.clone();
         write_document(self.shared(), DocWrites::one(&name, document_upsert)).await
     }
 
-    async fn delete(&self, document_deletion: DocumentDeletion) -> Result<Empty, Error> {
+    async fn delete(
+        &self,
+        document_deletion: DocumentDeletion,
+    ) -> Result<DocumentWriteResult, Error> {
         let name = self.sync.name.clone();
-        write_document(self.shared(), DocWrites::one(&name, document_deletion))
-            .await
-            .map(|_| Empty::default())
+        write_document(self.shared(), DocWrites::one(&name, document_deletion)).await
     }
 
     async fn batch<R>(&self, document_operations: R) -> Result<DocumentBatchResult, Error>

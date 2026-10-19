@@ -1439,7 +1439,7 @@ mod tests {
         IndexColumn::default()
             .with_name(name)
             .with_kind(ColumnKind::COLUMN_KIND_TEXT)
-            .with_find(true)
+            .with_scalar_index(true)
     }
 
     fn projector(proj: Proj) -> Arc<ProjectorPort> {
@@ -1579,8 +1579,7 @@ mod tests {
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
-    #[cfg(feature = "tokio")]
-    mod with_tokio {
+    mod async_port {
         use super::*;
 
         #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

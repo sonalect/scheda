@@ -48,24 +48,20 @@ pub(crate) struct Writes {
 
 impl Writes {
     /// The write that declares `collection`.
-    #[cfg(feature = "tokio")]
     pub(crate) fn create(collection: CollectionDeclaration) -> Writes {
         Writes::one(Write::Create(collection))
     }
 
     /// The write that changes the declaration `collection`.
-    #[cfg(feature = "tokio")]
     pub(crate) fn update(collection: CollectionDeclaration) -> Writes {
         Writes::one(Write::Update(collection))
     }
 
     /// The write that deletes a collection.
-    #[cfg(feature = "tokio")]
     pub(crate) fn delete(deletion: CollectionDeletion) -> Writes {
         Writes::one(Write::Delete(deletion))
     }
 
-    #[cfg(feature = "tokio")]
     fn one(write: Write) -> Writes {
         Writes {
             writes: vec![write],
@@ -103,7 +99,6 @@ impl Writes {
     ///
     /// `INVALID_ARGUMENT` for a request that breaks a rule, with the index
     /// of the operation in a batch.
-    #[cfg(feature = "tokio")]
     pub(crate) fn check(self) -> Result<Writes, Error> {
         for (index, write) in self.writes.iter().enumerate() {
             write
@@ -297,7 +292,6 @@ impl crate::vault::Vault {
 
     /// The one write of `writes`, under a write lock the caller already
     /// waited for. A deletion answers with an empty declaration.
-    #[cfg(feature = "tokio")]
     pub(crate) fn write_collection_held(
         &self,
         held: Held,
@@ -311,7 +305,6 @@ impl crate::vault::Vault {
 
     /// The batch `writes`, under a write lock the caller already waited
     /// for.
-    #[cfg(feature = "tokio")]
     pub(crate) fn write_collections_held(
         &self,
         held: Held,

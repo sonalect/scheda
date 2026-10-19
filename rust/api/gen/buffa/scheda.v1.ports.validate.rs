@@ -1403,6 +1403,51 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                             for_key: false,
                         });
                 }
+                {
+                    static RE_NAME: ::std::sync::OnceLock<
+                        ::protovalidate_buffa::regex::Regex,
+                    > = ::std::sync::OnceLock::new();
+                    let re = RE_NAME
+                        .get_or_init(|| {
+                            ::protovalidate_buffa::regex::Regex::new("^[a-z][a-z0-9_]*$")
+                                .expect("pattern regex compiled at code-gen time")
+                        });
+                    if !re.is_match(::core::convert::AsRef::<str>::as_ref(&(v))) {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(1i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("name")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::String), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(14i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(6i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("pattern")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::String), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value must match pattern /{}/", "^[a-z][a-z0-9_]*$"
+                                    ),
+                                ),
+                                for_key: false,
+                            });
+                    }
+                }
             }
         }
         if self.kind.is_none() {
@@ -1432,9 +1477,59 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                 });
         }
         if self.kind.is_some() {}
+        {
+            if !(((!(self.vector.unwrap_or(false)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (1i64 as i64))))
+            {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath::default(),
+                        rule: ::protovalidate_buffa::FieldPath::default(),
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "index_column.vector_text",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "a vector column must be text: one vector per Document",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
+        {
+            if !((((!(self.fts.unwrap_or(false)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (1i64 as i64)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (5i64 as i64))))
+            {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath::default(),
+                        rule: ::protovalidate_buffa::FieldPath::default(),
+                        rule_id: ::std::borrow::Cow::Borrowed("index_column.fts_text"),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "an fts column must be text or text list",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.name.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
-            if !(((((__cel_this)) != ("id")) && (((__cel_this)) != ("collection")))) {
+            if !((!(["id", "order", "file", "collection"].as_slice())
+                .iter()
+                .any(|__x| {
+                    let __l: &str = ::core::convert::AsRef::as_ref(&__x);
+                    __l == ((__cel_this))
+                })))
+            {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1457,10 +1552,10 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed(
-                            "index_column.name.not_identity",
+                            "index_column.name.not_reserved",
                         ),
                         message: ::std::borrow::Cow::Borrowed(
-                            "name must not be id or collection",
+                            "name must not be id, order, file, or collection",
                         ),
                         for_key: false,
                     });
@@ -1564,6 +1659,51 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                             for_key: false,
                         });
                 }
+                {
+                    static RE_NAME: ::std::sync::OnceLock<
+                        ::protovalidate_buffa::regex::Regex,
+                    > = ::std::sync::OnceLock::new();
+                    let re = RE_NAME
+                        .get_or_init(|| {
+                            ::protovalidate_buffa::regex::Regex::new("^[a-z][a-z0-9_]*$")
+                                .expect("pattern regex compiled at code-gen time")
+                        });
+                    if !re.is_match(::core::convert::AsRef::<str>::as_ref(&(v))) {
+                        violations
+                            .push(::protovalidate_buffa::Violation {
+                                field: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(1i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("name")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::String), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule: ::protovalidate_buffa::FieldPath {
+                                    elements: ::std::vec![
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(14i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("string")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::Message), key_type :
+                                        None, value_type : None, subscript : None, },
+                                        ::protovalidate_buffa::FieldPathElement { field_number :
+                                        Some(6i32), field_name :
+                                        Some(::std::borrow::Cow::Borrowed("pattern")), field_type :
+                                        Some(::protovalidate_buffa::FieldType::String), key_type :
+                                        None, value_type : None, subscript : None, },
+                                    ],
+                                },
+                                rule_id: ::std::borrow::Cow::Borrowed("string.pattern"),
+                                message: ::std::borrow::Cow::Owned(
+                                    ::std::format!(
+                                        "value must match pattern /{}/", "^[a-z][a-z0-9_]*$"
+                                    ),
+                                ),
+                                for_key: false,
+                            });
+                    }
+                }
             }
         }
         if self.kind.is_none() {
@@ -1593,9 +1733,59 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                 });
         }
         if self.kind.is_some() {}
+        {
+            if !(((!(self.vector.unwrap_or(false)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (1i64 as i64))))
+            {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath::default(),
+                        rule: ::protovalidate_buffa::FieldPath::default(),
+                        rule_id: ::std::borrow::Cow::Borrowed(
+                            "index_column.vector_text",
+                        ),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "a vector column must be text: one vector per Document",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
+        {
+            if !((((!(self.fts.unwrap_or(false)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (1i64 as i64)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (5i64 as i64))))
+            {
+                violations
+                    .push(::protovalidate_buffa::Violation {
+                        field: ::protovalidate_buffa::FieldPath::default(),
+                        rule: ::protovalidate_buffa::FieldPath::default(),
+                        rule_id: ::std::borrow::Cow::Borrowed("index_column.fts_text"),
+                        message: ::std::borrow::Cow::Borrowed(
+                            "an fts column must be text or text list",
+                        ),
+                        for_key: false,
+                    });
+            }
+        }
         if let ::core::option::Option::Some(__cel_inner) = self.name.as_ref() {
             let __cel_this = ::core::convert::AsRef::<str>::as_ref(__cel_inner);
-            if !(((((__cel_this)) != ("id")) && (((__cel_this)) != ("collection")))) {
+            if !((!(["id", "order", "file", "collection"].as_slice())
+                .iter()
+                .any(|__x| {
+                    let __l: &str = ::core::convert::AsRef::as_ref(&__x);
+                    __l == ((__cel_this))
+                })))
+            {
                 violations
                     .push(::protovalidate_buffa::Violation {
                         field: ::protovalidate_buffa::FieldPath {
@@ -1618,10 +1808,10 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                             ],
                         },
                         rule_id: ::std::borrow::Cow::Borrowed(
-                            "index_column.name.not_identity",
+                            "index_column.name.not_reserved",
                         ),
                         message: ::std::borrow::Cow::Borrowed(
-                            "name must not be id or collection",
+                            "name must not be id, order, file, or collection",
                         ),
                         for_key: false,
                     });
@@ -2043,32 +2233,6 @@ impl ::protovalidate_buffa::Validate for IndexValue {
                         );
                 }
             }
-            Some(__buffa::oneof::index_value::Value::Null(v)) => {
-                if let Err(sub) = v.validate() {
-                    violations
-                        .extend(
-                            sub
-                                .violations
-                                .into_iter()
-                                .map(|mut v| {
-                                    v.field
-                                        .elements
-                                        .insert(
-                                            0,
-                                            ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(6i32),
-                                                field_name: Some(::std::borrow::Cow::Borrowed("null")),
-                                                field_type: Some(::protovalidate_buffa::FieldType::Message),
-                                                key_type: None,
-                                                value_type: None,
-                                                subscript: None,
-                                            },
-                                        );
-                                    v
-                                }),
-                        );
-                }
-            }
             Some(_) => {}
             None => {
                 violations
@@ -2152,32 +2316,6 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexValueView<'_> {
                         );
                 }
             }
-            Some(__buffa::view::oneof::index_value::Value::Null(v)) => {
-                if let Err(sub) = v.validate() {
-                    violations
-                        .extend(
-                            sub
-                                .violations
-                                .into_iter()
-                                .map(|mut v| {
-                                    v.field
-                                        .elements
-                                        .insert(
-                                            0,
-                                            ::protovalidate_buffa::FieldPathElement {
-                                                field_number: Some(6i32),
-                                                field_name: Some(::std::borrow::Cow::Borrowed("null")),
-                                                field_type: Some(::protovalidate_buffa::FieldType::Message),
-                                                key_type: None,
-                                                value_type: None,
-                                                subscript: None,
-                                            },
-                                        );
-                                    v
-                                }),
-                        );
-                }
-            }
             Some(_) => {}
             None => {
                 violations
@@ -2200,74 +2338,6 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexValueView<'_> {
                     });
             }
         }
-        if let Some(index) = violations
-            .iter()
-            .position(|v| v.rule_id == "__cel_runtime_error__")
-        {
-            let v = violations.swap_remove(index);
-            return ::core::result::Result::Err(::protovalidate_buffa::ValidationError {
-                runtime_error: ::core::option::Option::Some(v.message.into_owned()),
-                ..::core::default::Default::default()
-            });
-        }
-        if violations.is_empty() {
-            Ok(())
-        } else {
-            Err(::protovalidate_buffa::ValidationError {
-                violations,
-                ..::core::default::Default::default()
-            })
-        }
-    }
-}
-#[allow(
-    clippy::all,
-    unused_mut,
-    unused_variables,
-    unused_parens,
-    dead_code,
-    unreachable_patterns,
-    reason = "protovalidate-buffa generated validators — codegen emits uniform scaffolding regardless of which rules apply"
-)]
-impl ::protovalidate_buffa::Validate for index_value::Null {
-    fn validate(
-        &self,
-    ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
-        let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
-        if let Some(index) = violations
-            .iter()
-            .position(|v| v.rule_id == "__cel_runtime_error__")
-        {
-            let v = violations.swap_remove(index);
-            return ::core::result::Result::Err(::protovalidate_buffa::ValidationError {
-                runtime_error: ::core::option::Option::Some(v.message.into_owned()),
-                ..::core::default::Default::default()
-            });
-        }
-        if violations.is_empty() {
-            Ok(())
-        } else {
-            Err(::protovalidate_buffa::ValidationError {
-                violations,
-                ..::core::default::Default::default()
-            })
-        }
-    }
-}
-#[allow(
-    clippy::all,
-    unused_mut,
-    unused_variables,
-    unused_parens,
-    dead_code,
-    unreachable_patterns,
-    reason = "protovalidate-buffa generated validators — codegen emits uniform scaffolding regardless of which rules apply"
-)]
-impl ::protovalidate_buffa::Validate for __buffa::view::index_value::NullView<'_> {
-    fn validate(
-        &self,
-    ) -> ::core::result::Result<(), ::protovalidate_buffa::ValidationError> {
-        let mut violations: ::std::vec::Vec<::protovalidate_buffa::Violation> = ::std::vec::Vec::new();
         if let Some(index) = violations
             .iter()
             .position(|v| v.rule_id == "__cel_runtime_error__")

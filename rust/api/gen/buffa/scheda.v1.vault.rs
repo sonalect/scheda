@@ -130,6 +130,14 @@ pub struct VaultInfo {
     /// Field 3: `writer`
     #[serde(rename = "writer", skip_serializing_if = "::core::option::Option::is_none")]
     pub writer: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The state token of the stored state of the Vault now: what `HEAD`
+    /// names in the Vault and in its isolated repository. Passed as
+    /// `not_before`, it makes a query see every write stored on this path
+    /// before this call, by any Vault, process, or `git` command.
+    ///
+    /// Field 4: `version`
+    #[serde(rename = "version", skip_serializing_if = "::core::option::Option::is_none")]
+    pub version: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -140,6 +148,7 @@ impl ::core::fmt::Debug for VaultInfo {
             .field("path", &self.path)
             .field("index_path", &self.index_path)
             .field("writer", &self.writer)
+            .field("version", &self.version)
             .finish()
     }
 }
@@ -181,6 +190,16 @@ impl VaultInfo {
         self.writer = Some(value.into());
         self
     }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::version`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_version(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.version = Some(value.into());
+        self
+    }
 }
 ::buffa::impl_default_instance!(VaultInfo);
 impl ::buffa::MessageName for VaultInfo {
@@ -211,6 +230,9 @@ impl ::buffa::Message for VaultInfo {
         if let Some(ref v) = self.writer {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.version {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -229,6 +251,9 @@ impl ::buffa::Message for VaultInfo {
         }
         if let Some(ref v) = self.writer {
             ::buffa::types::put_string_field(3u32, v, buf);
+        }
+        if let Some(ref v) = self.version {
+            ::buffa::types::put_string_field(4u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -275,6 +300,16 @@ impl ::buffa::Message for VaultInfo {
                     buf,
                 )?;
             }
+            4u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self.version.get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -286,6 +321,7 @@ impl ::buffa::Message for VaultInfo {
         self.path = ::core::option::Option::None;
         self.index_path = ::core::option::Option::None;
         self.writer = ::core::option::Option::None;
+        self.version = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

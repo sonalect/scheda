@@ -1,5 +1,5 @@
-//! The generated contract: the traits of the services in every build, the
-//! `Offload` / `Blocking` bridges with `tokio`, `Validate` impls that hold
+//! The generated contract: the blocking and the async traits of the
+//! services, the `Offload` / `Blocking` bridges, `Validate` impls that hold
 //! the rules of the protos, and the references to a service.
 
 use std::sync::Arc;
@@ -36,7 +36,7 @@ fn reranker_async<T: RerankerAsync>() {}
 fn projector_async<T: ProjectorAsync>() {}
 
 #[test]
-fn both_forms_exist_in_every_build() {
+fn both_forms_exist() {
     scheda_sync::<dyn SchedaSync>();
     collection_sync::<dyn CollectionSync>();
     mirror_sync::<dyn MirrorSync>();
@@ -55,9 +55,8 @@ fn both_forms_exist_in_every_build() {
     projector_async::<DynProjectorAsync>();
 }
 
-#[cfg(feature = "tokio")]
 #[test]
-fn bridges_with_tokio() {
+fn bridges_exist() {
     use protocontract::{Blocking, Offload};
 
     scheda_sync::<Blocking<DynSchedaAsync>>();

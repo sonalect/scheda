@@ -2333,7 +2333,9 @@ pub const __RAW_DOCUMENT_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buff
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct IndexColumn {
-    /// Its name in a `Filter`. Not empty, and not `id` or `collection`.
+    /// Its name in a `Filter` and in an order: a lowercase letter, then
+    /// lowercase letters, digits, and `_`. Not `id`, `order`, `file`, or
+    /// `collection`, which the Index keeps for itself.
     ///
     /// Field 1: `name`
     #[serde(rename = "name", skip_serializing_if = "::core::option::Option::is_none")]
@@ -2345,17 +2347,24 @@ pub struct IndexColumn {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub kind: ::core::option::Option<::buffa::EnumValue<ColumnKind>>,
-    /// A `Filter` can name it.
+    /// The Index keeps a scalar index on it, so a `Filter` or an order on it
+    /// reads that index instead of every row. A Filter may name any column;
+    /// this only makes it fast.
     ///
-    /// Field 3: `find`
-    #[serde(rename = "find", skip_serializing_if = "::core::option::Option::is_none")]
-    pub find: ::core::option::Option<bool>,
-    /// The lexical leg of a search reads it.
+    /// Field 3: `scalar_index`
+    #[serde(
+        rename = "scalarIndex",
+        alias = "scalar_index",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub scalar_index: ::core::option::Option<bool>,
+    /// The lexical leg of a search reads it (BM25). A `text` or a `text
+    /// list`.
     ///
     /// Field 4: `fts`
     #[serde(rename = "fts", skip_serializing_if = "::core::option::Option::is_none")]
     pub fts: ::core::option::Option<bool>,
-    /// The vector leg embeds it, one vector per value.
+    /// The vector leg embeds it: one vector per Document. A `text` only.
     ///
     /// Field 5: `vector`
     #[serde(rename = "vector", skip_serializing_if = "::core::option::Option::is_none")]
@@ -2369,7 +2378,7 @@ impl ::core::fmt::Debug for IndexColumn {
         f.debug_struct("IndexColumn")
             .field("name", &self.name)
             .field("kind", &self.kind)
-            .field("find", &self.find)
+            .field("scalar_index", &self.scalar_index)
             .field("fts", &self.fts)
             .field("vector", &self.vector)
             .finish()
@@ -2405,9 +2414,9 @@ impl IndexColumn {
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
-    ///Sets [`Self::find`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_find(mut self, value: bool) -> Self {
-        self.find = Some(value);
+    ///Sets [`Self::scalar_index`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_scalar_index(mut self, value: bool) -> Self {
+        self.scalar_index = Some(value);
         self
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
@@ -2451,7 +2460,7 @@ impl ::buffa::Message for IndexColumn {
         if let Some(ref v) = self.kind {
             size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
         }
-        if self.find.is_some() {
+        if self.scalar_index.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
         if self.fts.is_some() {
@@ -2476,7 +2485,7 @@ impl ::buffa::Message for IndexColumn {
         if let Some(ref v) = self.kind {
             ::buffa::types::put_int32_field(2u32, v.to_i32(), buf);
         }
-        if let Some(v) = self.find {
+        if let Some(v) = self.scalar_index {
             ::buffa::types::put_bool_field(3u32, v, buf);
         }
         if let Some(v) = self.fts {
@@ -2522,7 +2531,7 @@ impl ::buffa::Message for IndexColumn {
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
-                self.find = ::core::option::Option::Some(
+                self.scalar_index = ::core::option::Option::Some(
                     ::buffa::types::decode_bool(buf)?,
                 );
             }
@@ -2554,7 +2563,7 @@ impl ::buffa::Message for IndexColumn {
     fn clear(&mut self) {
         self.name = ::core::option::Option::None;
         self.kind = ::core::option::Option::None;
-        self.find = ::core::option::Option::None;
+        self.scalar_index = ::core::option::Option::None;
         self.fts = ::core::option::Option::None;
         self.vector = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
@@ -2732,8 +2741,11 @@ pub const __INDEX_SCHEMA_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buff
     is_wkt: false,
 };
 /// The values of the columns for one Document. A column left out has no
-/// value; `IndexValue.null` is a stored null. Empty: the Document is
-/// indexed by identity only.
+/// value: a `Filter`'s condition on it is false. A key no column of the
+/// collection declares is ignored. A value of another kind than its
+/// column's leaves the Document out of the Index, as
+/// `PROJECTOR_ERROR_CODE_REFUSED` does. Empty: the Document is indexed by
+/// identity only.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -2932,14 +2944,6 @@ impl ::buffa::Message for IndexValue {
                         += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
                             + inner as u64;
                 }
-                __buffa::oneof::index_value::Value::Null(x) => {
-                    let __slot = __cache.reserve();
-                    let inner = x.compute_size(__cache);
-                    __cache.set(__slot, inner);
-                    size
-                        += 1u64 + ::buffa::encoding::varint_len(inner as u64) as u64
-                            + inner as u64;
-                }
             }
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
@@ -2969,14 +2973,6 @@ impl ::buffa::Message for IndexValue {
                 __buffa::oneof::index_value::Value::TextList(x) => {
                     ::buffa::types::put_len_delimited_header(
                         5u32,
-                        u64::from(__cache.consume_next()),
-                        buf,
-                    );
-                    x.write_to(__cache, buf);
-                }
-                __buffa::oneof::index_value::Value::Null(x) => {
-                    ::buffa::types::put_len_delimited_header(
-                        6u32,
                         u64::from(__cache.consume_next()),
                         buf,
                     );
@@ -3056,26 +3052,6 @@ impl ::buffa::Message for IndexValue {
                     ::buffa::Message::merge_length_delimited(&mut val, buf, ctx)?;
                     self.value = ::core::option::Option::Some(
                         __buffa::oneof::index_value::Value::TextList(
-                            ::buffa::alloc::boxed::Box::new(val),
-                        ),
-                    );
-                }
-            }
-            6u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::LengthDelimited,
-                )?;
-                if let ::core::option::Option::Some(
-                    __buffa::oneof::index_value::Value::Null(ref mut existing),
-                ) = self.value
-                {
-                    ::buffa::Message::merge_length_delimited(&mut **existing, buf, ctx)?;
-                } else {
-                    let mut val = ::core::default::Default::default();
-                    ::buffa::Message::merge_length_delimited(&mut val, buf, ctx)?;
-                    self.value = ::core::option::Option::Some(
-                        __buffa::oneof::index_value::Value::Null(
                             ::buffa::alloc::boxed::Box::new(val),
                         ),
                     );
@@ -3249,30 +3225,6 @@ impl<'de> ::serde::Deserialize<'de> for IndexValue {
                                 );
                             }
                         }
-                        "null" => {
-                            let v: ::core::option::Option<index_value::Null> = map
-                                .next_value_seed(
-                                    ::buffa::json_helpers::NullableDeserializeSeed(
-                                        ::buffa::json_helpers::DefaultDeserializeSeed::<
-                                            index_value::Null,
-                                        >::new(),
-                                    ),
-                                )?;
-                            if let Some(v) = v {
-                                if __oneof_value.is_some() {
-                                    return Err(
-                                        ::serde::de::Error::custom(
-                                            "multiple oneof fields set for 'value'",
-                                        ),
-                                    );
-                                }
-                                __oneof_value = Some(
-                                    __buffa::oneof::index_value::Value::Null(
-                                        ::buffa::alloc::boxed::Box::new(v),
-                                    ),
-                                );
-                            }
-                        }
                         _ => {
                             map.next_value::<::serde::de::IgnoredAny>()?;
                         }
@@ -3309,111 +3261,7 @@ pub const __INDEX_VALUE_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa
 pub mod index_value {
     #[allow(unused_imports)]
     use super::*;
-    /// A stored null.
-    #[derive(Clone, PartialEq, Default)]
-    #[derive(::serde::Serialize, ::serde::Deserialize)]
-    #[serde(default)]
-    pub struct Null {
-        #[serde(skip)]
-        #[doc(hidden)]
-        pub __buffa_unknown_fields: ::buffa::UnknownFields,
-    }
-    impl ::core::fmt::Debug for Null {
-        fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
-            f.debug_struct("Null").finish()
-        }
-    }
-    impl Null {
-        /// Protobuf type URL for this message, for use with `Any::pack` and
-        /// `Any::unpack_if`.
-        ///
-        /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
-        pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.IndexValue.Null";
-    }
-    ::buffa::impl_default_instance!(Null);
-    impl ::buffa::MessageName for Null {
-        const PACKAGE: &'static str = "scheda.v1";
-        const NAME: &'static str = "IndexValue.Null";
-        const FULL_NAME: &'static str = "scheda.v1.IndexValue.Null";
-        const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.IndexValue.Null";
-    }
-    impl ::buffa::Message for Null {
-        /// Returns the total encoded size in bytes.
-        ///
-        /// Accumulates in `u64` (which cannot overflow for in-memory
-        /// data) and saturates to `u32` at return, so a message whose
-        /// encoded size exceeds the 2 GiB protobuf limit yields a value
-        /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
-        /// points reject, never a silently wrapped size.
-        #[allow(clippy::let_and_return)]
-        fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
-            #[allow(unused_imports)]
-            use ::buffa::Enumeration as _;
-            let mut size = 0u64;
-            size += self.__buffa_unknown_fields.encoded_len() as u64;
-            ::buffa::saturate_size(size)
-        }
-        fn write_to(
-            &self,
-            _cache: &mut ::buffa::SizeCache,
-            buf: &mut impl ::buffa::EncodeSink,
-        ) {
-            #[allow(unused_imports)]
-            use ::buffa::Enumeration as _;
-            self.__buffa_unknown_fields.write_to(buf);
-        }
-        fn merge_field(
-            &mut self,
-            tag: ::buffa::encoding::Tag,
-            buf: &mut impl ::buffa::bytes::Buf,
-            ctx: ::buffa::DecodeContext<'_>,
-        ) -> ::core::result::Result<(), ::buffa::DecodeError> {
-            #[allow(unused_imports)]
-            use ::buffa::bytes::Buf as _;
-            #[allow(unused_imports)]
-            use ::buffa::Enumeration as _;
-            match tag.field_number() {
-                _ => {
-                    self.__buffa_unknown_fields
-                        .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
-                }
-            }
-            ::core::result::Result::Ok(())
-        }
-        fn clear(&mut self) {
-            self.__buffa_unknown_fields.clear();
-        }
-    }
-    impl ::buffa::ExtensionSet for Null {
-        const PROTO_FQN: &'static str = "scheda.v1.IndexValue.Null";
-        fn unknown_fields(&self) -> &::buffa::UnknownFields {
-            &self.__buffa_unknown_fields
-        }
-        fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
-            &mut self.__buffa_unknown_fields
-        }
-    }
-    impl ::buffa::json_helpers::ProtoElemJson for Null {
-        fn serialize_proto_json<S: ::serde::Serializer>(
-            v: &Self,
-            s: S,
-        ) -> ::core::result::Result<S::Ok, S::Error> {
-            ::serde::Serialize::serialize(v, s)
-        }
-        fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
-            d: D,
-        ) -> ::core::result::Result<Self, D::Error> {
-            <Self as ::serde::Deserialize>::deserialize(d)
-        }
-    }
-    #[doc(hidden)]
-    pub const __NULL_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
-        type_url: "type.googleapis.com/scheda.v1.IndexValue.Null",
-        to_json: ::buffa::type_registry::any_to_json::<Null>,
-        from_json: ::buffa::type_registry::any_from_json::<Null>,
-        is_wkt: false,
-    };
-    /// Several texts; each is a term of its own.
+    /// Several texts, in order.
     #[derive(Clone, PartialEq, Default)]
     #[derive(::serde::Serialize, ::serde::Deserialize)]
     #[serde(default)]
@@ -3544,10 +3392,6 @@ pub mod index_value {
     };
     #[doc(inline)]
     pub use super::__buffa::oneof::index_value::Value;
-    #[doc(inline)]
-    pub use super::__buffa::view::index_value::NullView;
-    #[doc(inline)]
-    pub use super::__buffa::view::index_value::NullOwnedView;
     #[doc(inline)]
     pub use super::__buffa::view::index_value::TextListView;
     #[doc(inline)]

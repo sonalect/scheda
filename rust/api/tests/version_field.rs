@@ -1,8 +1,8 @@
-//! Every proto field named `version` must be field number 1.
-//! An `int32 version` is the format generation of the Vault marker and
-//! must carry protovalidate `const` equal to the generation, 2
-//! (`api/scheda/v1/marker.proto`). A `string version` (`IndexState`) has
-//! no such rule.
+//! An `int32 version` is the format generation of the Vault marker: it must
+//! be field number 1 and carry protovalidate `const` equal to the
+//! generation, 2 (`api/scheda/v1/marker.proto`). A `string version` is a
+//! state token (`IndexState`, `VaultInfo`, the replies of writes): it has
+//! no such rule and sits where its message wants it.
 //! This test fails if someone writes `int32 version = 2`.
 //!
 //! Do not match `schema_version` or the word version in comments.
@@ -193,7 +193,7 @@ fn all_proto_files() -> Vec<PathBuf> {
 }
 
 #[test]
-fn every_version_field_is_number_one_with_const() {
+fn an_int32_version_is_number_one_with_const() {
     let files = all_proto_files();
     assert!(
         !files.is_empty(),
@@ -204,23 +204,25 @@ fn every_version_field_is_number_one_with_const() {
         std::env::current_dir().ok(),
     );
 
-    let mut saw_version_field = false;
+    let mut saw_generation = false;
     let mut errors = Vec::new();
     for path in &files {
         let text = fs::read_to_string(path).unwrap_or_else(|err| {
             panic!("read {}: {err}", path.display());
         });
         for field in scan_version_fields(&text) {
-            saw_version_field = true;
+            if field.ty != "int32" {
+                continue;
+            }
+            saw_generation = true;
             if field.number != 1 {
                 errors.push(format!(
-                    "{}: field `version` must be number 1, found {} (type {})",
+                    "{}: field `int32 version` must be number 1, found {}",
                     path.display(),
-                    field.number,
-                    field.ty
+                    field.number
                 ));
             }
-            if field.ty == "int32" && !has_int32_const_generation(&field.options) {
+            if !has_int32_const_generation(&field.options) {
                 errors.push(format!(
                     "{}: `int32 version` must carry protovalidate const: {GENERATION}",
                     path.display()
@@ -229,8 +231,8 @@ fn every_version_field_is_number_one_with_const() {
         }
     }
     assert!(
-        saw_version_field,
-        "no `version` field declarations in {:?}",
+        saw_generation,
+        "no `int32 version` field declaration in {:?}",
         files
     );
     assert!(errors.is_empty(), "{}", errors.join("\n"));

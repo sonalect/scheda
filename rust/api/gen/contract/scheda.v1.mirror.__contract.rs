@@ -450,7 +450,6 @@ impl<T: MirrorSync> MirrorAsync for ::protocontract::Inline<T> {
         <T as MirrorSync>::sync(Self::get_ref(self), empty)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: MirrorSync + 'static> MirrorAsync for ::protocontract::Offload<T> {
     fn info(
         &self,
@@ -519,7 +518,6 @@ impl<T: MirrorSync + 'static> MirrorAsync for ::protocontract::Offload<T> {
         Self::call(self, move |service| <T as MirrorSync>::sync(service, empty))
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: MirrorAsync + 'static> MirrorSync for ::protocontract::Blocking<T> {
     fn info(
         &self,
@@ -653,26 +651,16 @@ pub mod mirror_ref {
                     ::core::result::Result::Ok(::std::sync::Arc::clone(service))
                 }
                 ::protocontract::reference::Form::Async(service) => {
-                    #[cfg(feature = "tokio")]
-                    {
-                        ::core::result::Result::Ok(
-                            ::std::sync::Arc::new(
-                                ::protocontract::Blocking::new(
-                                    ::core::clone::Clone::clone(service),
-                                    ::protocontract::reference::current_handle(
-                                        "scheda.v1.Mirror",
-                                    )?,
-                                ),
+                    ::core::result::Result::Ok(
+                        ::std::sync::Arc::new(
+                            ::protocontract::Blocking::new(
+                                ::core::clone::Clone::clone(service),
+                                ::protocontract::reference::current_handle(
+                                    "scheda.v1.Mirror",
+                                )?,
                             ),
-                        )
-                    }
-                    #[cfg(not(feature = "tokio"))]
-                    {
-                        let _ = service;
-                        ::core::result::Result::Err(
-                            ::protocontract::reference::no_runtime("scheda.v1.Mirror"),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -709,7 +697,6 @@ pub mod mirror_ref {
         ///
         /// `UNBOUND` when the reference holds no implementation;
         /// `NO_RUNTIME` for a blocking one outside a tokio runtime.
-        #[cfg(feature = "tokio")]
         pub fn to_async_offload(
             &self,
         ) -> ::core::result::Result<super::DynMirrorAsync, ::protocontract::Error> {

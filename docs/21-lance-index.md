@@ -760,7 +760,7 @@ of that meaning (`ABORTED` is contention, `UNAVAILABLE` a dependency that
 cannot be reached). *Alternative:* a deadline per request; additive later.
 *Recommendation:* accept.
 
-**C13. Telling the Index is behind.** `IndexState.head` (7): the token of
+**C13. Telling the Index is behind.** `IndexState.stored_version` (6; `head` in the review, renamed in `22` A1 because no name of the contract carries a git term): the token of
 `HEAD` now, set in every Vault, whether it indexes or not; the Index is
 behind while `version` differs from it. `pending` becomes unset in a Vault
 that does not index, where today it is `0` and reads as "caught up"
@@ -962,7 +962,7 @@ as changed, there is no claim.
 
 **C32. A token comes from one commit.** A write's `version` is made under
 the write lock from the commit it made; a call that wrote nothing takes it
-from the commit it read. `head` reads the two repositories one after the
+from the commit it read. `stored_version` reads the two repositories one after the
 other, so it may pair commits that were never `HEAD` together. That is
 harmless, because a token is compared repository by repository (C11), but
 `version == head` means only "caught up", nothing more. *Recommendation:*
@@ -1038,8 +1038,8 @@ What follows from the messages above (`14`), applied in L9:
   `DocumentBatchResult` with `version`.
 - `info` prints `version`; `scheda-info` lists `FEATURE_INDEX` in place of
   `FEATURE_FIND` and `FEATURE_SEARCH`.
-- `index status` and `index watch` print `head` and `rebuild.cause`;
-  `--until-settled` stops when `version` equals `head` and no rebuild runs,
+- `index status` and `index watch` print `stored_version` and `rebuild.cause`;
+  `--until-settled` stops when `version` equals `stored_version` and no rebuild runs,
   or when `lastError` is set.
 - The wait before a query, a count, or a search: today up to 60 s on
   `Index.Watch` for a settled state, then the call runs on the Index as it
@@ -1304,7 +1304,7 @@ diff --git a/api/scheda/v1/index.proto b/api/scheda/v1/index.proto
 -  // ending. The stream does not end by itself; the caller drops it when it
 -  // has what it waited for.
 +  // once, then one item whenever the state changes: an indexer round,
-+  // `head` moving, a rebuild starting, moving on, and ending. A Vault that
++  // `stored_version` moving, a rebuild starting, moving on, and ending. A Vault that
 +  // does not index sees the rounds of the one that does within
 +  // `OpenOptions.index_poll_ms`. The stream does not end by itself; the
 +  // caller drops it when it has what it waited for.
@@ -1344,12 +1344,12 @@ diff --git a/api/scheda/v1/index.proto b/api/scheda/v1/index.proto
 -  // the count needs no read of the segments. `0` when the Index is where
 -  // this Vault last found the stored state; unset when the files could not be
 -  // counted (`last_error` then says why).
-+  // The files the Index has yet to read to reach `head`, while a round or a
++  // The files the Index has yet to read to reach `stored_version`, while a round or a
 +  // rebuild runs: the files of declared collections that changed since
 +  // `version`, and every file of a collection being built again. It counts
 +  // files, not Documents: a journal segment is one file however many lines
 +  // it holds, so that the count needs no read of the segments. `0` when the
-+  // Index is at `head`. Counted by the Vault that indexes (`role`); unset
++  // Index is at `stored_version`. Counted by the Vault that indexes (`role`); unset
 +  // in the others, and when the files could not be counted (`last_error`
 +  // then says why).
    uint64 pending = 2;
@@ -1382,7 +1382,7 @@ diff --git a/api/scheda/v1/index.proto b/api/scheda/v1/index.proto
 +  // in the Vault and in its isolated repository, read when this state was
 +  // made. The Index is behind while `version` differs from it. Set in
 +  // every Vault, whether it indexes or not.
-+  string head = 6;
++  string stored_version = 6;
  }
  
 -// A rebuild of the Index: the Index made again from nothing. `Reindex` asks

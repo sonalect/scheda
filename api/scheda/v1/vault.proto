@@ -27,7 +27,9 @@ import "scheda/v1/query.proto";
 // the order they were made; no write fails because another one is running.
 // Reads see stored state only. The Index follows the stored state in the
 // background: queries and searches answer from what it holds, and
-// `Index.Watch` tells how far it is.
+// `Index.Watch` tells how far it is. A write returns the state token of
+// the state it made; a query, a count, or a search given that token
+// (`not_before`) waits until the Index reflects it.
 //
 // After `Close`, every call of this Vault and of every object reached from
 // it fails with `FAILED_PRECONDITION`. A Vault whose references are all
@@ -35,8 +37,9 @@ import "scheda/v1/query.proto";
 service Vault {
   // The Vault.
 
-  // What this Vault holds: its path, the Index path, and the writer
-  // identity of this clone. Reads no Document.
+  // What this Vault holds: its path, the Index path, the writer identity
+  // of this clone, and the state token of its stored state now. Reads no
+  // Document.
   rpc Info(google.protobuf.Empty) returns (VaultInfo);
 
   // Checks the whole Vault, file by file, and lists every problem it
@@ -57,7 +60,7 @@ service Vault {
   // The mirror of the Vault, set or not: `Mirror.Info` says which.
   rpc Mirror(google.protobuf.Empty) returns (MirrorRef);
 
-  // The Index of the Vault. A build without `find`, `UNIMPLEMENTED`.
+  // The Index of the Vault. A build without `index`, `UNIMPLEMENTED`.
   rpc Index(google.protobuf.Empty) returns (IndexRef);
 
   // Ports. A port is the Vault's until it is removed or replaced, and may
@@ -127,13 +130,13 @@ service Vault {
   // repositories. Collections are not written here (`BatchCollections`).
   rpc BatchDocuments(stream VaultDocumentOperation) returns (DocumentBatchResult);
 
-  // The Documents of several collections that match a condition, as
-  // `Collection.Query` within one; a leaf on a Projector column names its
-  // collection.
-  rpc QueryDocuments(VaultQuery) returns (stream Document);
+  // The Documents of several collections that match a filter, as
+  // `Collection.Query` within one; the filter applies to each collection
+  // in scope (`VaultQuery.filter`).
+  rpc QueryDocuments(VaultQuery) returns (stream QueryItem);
 
-  // How many Documents `QueryDocuments` would give for the same query. The
-  // codes of `QueryDocuments`.
+  // How many Documents the filter matches: the `QuerySummary.total` of
+  // `QueryDocuments` for the same query. The codes of `QueryDocuments`.
   rpc CountDocuments(VaultQuery) returns (Count);
 
   // The Documents of several collections that best fit a text, or a
@@ -155,6 +158,11 @@ message VaultInfo {
   // The machine-local identity of this clone, as `OpenOptions.writer` or
   // as generated into `{vault}/.scheda/writer`.
   string writer = 3;
+  // The state token of the stored state of the Vault now: what `HEAD`
+  // names in the Vault and in its isolated repository. Passed as
+  // `not_before`, it makes a query see every write stored on this path
+  // before this call, by any Vault, process, or `git` command.
+  string version = 4;
 }
 
 // One item of `Vault.BatchDocuments`: a Document write in one collection.

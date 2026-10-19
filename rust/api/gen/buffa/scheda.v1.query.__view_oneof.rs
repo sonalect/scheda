@@ -6,14 +6,19 @@ pub mod filter {
     use super::*;
     #[derive(Clone, Debug)]
     pub enum Kind<'a> {
-        All(
+        AllOf(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::AllView<'a>,
+                super::super::super::super::__buffa::view::filter::FiltersView<'a>,
             >,
         ),
-        Empty(
+        AnyOf(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::EmptyView<'a>,
+                super::super::super::super::__buffa::view::filter::FiltersView<'a>,
+            >,
+        ),
+        NoneOf(
+            ::buffa::alloc::boxed::Box<
+                super::super::super::super::__buffa::view::filter::FiltersView<'a>,
             >,
         ),
         Term(
@@ -21,34 +26,9 @@ pub mod filter {
                 super::super::super::super::__buffa::view::filter::TermView<'a>,
             >,
         ),
-        TermSet(
+        Terms(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::TermSetView<'a>,
-            >,
-        ),
-        Phrase(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::PhraseView<'a>,
-            >,
-        ),
-        PhrasePrefix(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::PhrasePrefixView<'a>,
-            >,
-        ),
-        Fuzzy(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::FuzzyTermView<'a>,
-            >,
-        ),
-        Regex(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::RegexView<'a>,
-            >,
-        ),
-        RegexPhrase(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::RegexPhraseView<'a>,
+                super::super::super::super::__buffa::view::filter::TermsView<'a>,
             >,
         ),
         Range(
@@ -61,28 +41,39 @@ pub mod filter {
                 super::super::super::super::__buffa::view::filter::ExistsView<'a>,
             >,
         ),
-        Boolean(
+        Prefix(
             ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::filter::BooleanView<'a>,
+                super::super::super::super::__buffa::view::filter::PrefixView<'a>,
             >,
         ),
     }
-    pub mod bound {
+    pub mod value {
         #[allow(unused_imports)]
         use super::*;
         #[derive(Clone, Debug)]
         pub enum Kind<'a> {
-            Included(
-                ::buffa::alloc::boxed::Box<
-                    ::buffa_types::google::protobuf::__buffa::view::ValueView<'a>,
-                >,
-            ),
-            Excluded(
-                ::buffa::alloc::boxed::Box<
-                    ::buffa_types::google::protobuf::__buffa::view::ValueView<'a>,
-                >,
-            ),
+            Text(&'a str),
+            Integer(i64),
+            Number(f64),
+            Boolean(bool),
         }
+    }
+}
+pub mod query_item {
+    #[allow(unused_imports)]
+    use super::*;
+    #[derive(Clone, Debug)]
+    pub enum Item<'a> {
+        Summary(
+            ::buffa::alloc::boxed::Box<
+                super::super::super::super::__buffa::view::QuerySummaryView<'a>,
+            >,
+        ),
+        Document(
+            ::buffa::alloc::boxed::Box<
+                super::super::super::super::__buffa::view::DocumentView<'a>,
+            >,
+        ),
     }
 }
 pub mod document_search {

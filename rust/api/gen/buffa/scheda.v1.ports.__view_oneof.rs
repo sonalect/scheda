@@ -28,10 +28,5 @@ pub mod index_value {
                 super::super::super::super::__buffa::view::index_value::TextListView<'a>,
             >,
         ),
-        Null(
-            ::buffa::alloc::boxed::Box<
-                super::super::super::super::__buffa::view::index_value::NullView<'a>,
-            >,
-        ),
     }
 }

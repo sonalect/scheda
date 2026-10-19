@@ -12,11 +12,10 @@
 //! `FAILED_PRECONDITION`. A Vault whose references are all dropped (its
 //! collections', mirror's, and its streams, included) ends as `Close` would.
 //!
-//! With the `tokio` feature [`Scheda`] is also a `SchedaAsync`, and its
-//! `open` returns references that hold the async form of the same objects
-//! over the same state and gate (see `asynchronous`).
+//! [`Scheda`] is also a `SchedaAsync`, and its `open` returns references
+//! that hold the async form of the same objects over the same state and
+//! gate (see `asynchronous`).
 
-#[cfg(feature = "tokio")]
 mod asynchronous;
 
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
@@ -34,10 +33,10 @@ use scheda_api::v1::{
     CheckReport, CollectionBatchResult, CollectionDeclaration, CollectionDeletion, CollectionKey,
     CollectionOperation, CollectionSync, Collections, Count, Document, DocumentBatchResult,
     DocumentCreation, DocumentDeletion, DocumentHistoryEntry, DocumentId, DocumentOperation,
-    DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert, Feature,
-    MirrorInfo, MirrorSetting, MirrorSync, SchedaInfo, SchedaSync, SearchItem,
-    VaultDocumentOperation, VaultErrorCode, VaultInfo, VaultOpening, VaultQuery, VaultSearch,
-    VaultSync,
+    DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert,
+    DocumentWriteResult, Feature, MirrorInfo, MirrorSetting, MirrorSync, QueryItem, SchedaInfo,
+    SchedaSync, SearchItem, VaultDocumentOperation, VaultErrorCode, VaultInfo, VaultOpening,
+    VaultQuery, VaultSearch, VaultSync,
 };
 
 use crate::error::{Context, Error, Fault};
@@ -54,11 +53,11 @@ use crate::vault::Vault;
 /// collections and its mirror the same way. The objects behind the
 /// references are Scheda's own; a caller works through the traits.
 ///
-/// With the `tokio` feature, `Scheda` also implements
-/// [`SchedaAsync`](scheda_api::v1::SchedaAsync). Its `open` runs the sync
-/// open on the blocking pool of the current runtime and returns a reference
-/// that holds the **async** form of the Vault, and the Vault gives
-/// collections and a mirror in the async form too. Those objects run their
+/// `Scheda` also implements [`SchedaAsync`](scheda_api::v1::SchedaAsync).
+/// Its `open` runs the sync open on the blocking pool of the current
+/// runtime and returns a reference that holds the **async** form of the
+/// Vault, and the Vault gives collections and a mirror in the async form
+/// too. Those objects run their
 /// calls on the blocking pool of the runtime of the call, and wait natively
 /// where a thread would only stand idle: the turn and the lock file of a
 /// write. A sync caller can still take `to_sync()` of such a reference,
@@ -74,6 +73,8 @@ pub struct Scheda;
 
 impl SchedaSync for Scheda {
     fn info(&self, _empty: Empty) -> Result<SchedaInfo, Error> {
+        // The Index is not listed: this version of Scheda answers none of its
+        // calls, with or without the `index` feature.
         let mut features = Vec::new();
         if cfg!(feature = "encrypt") {
             features.push(Feature::FEATURE_ENCRYPT.into());
@@ -246,7 +247,7 @@ struct VaultObject {
 
 impl VaultSync for VaultObject {
     fn info(&self, _empty: Empty) -> Result<VaultInfo, Error> {
-        self.shared.call(|vault| Ok(vault.info()))
+        self.shared.call(Vault::info)
     }
 
     fn check(&self, _empty: Empty) -> Result<CheckReport, Error> {
@@ -367,7 +368,7 @@ impl VaultSync for VaultObject {
     fn query_documents(
         &self,
         _vault_query: VaultQuery,
-    ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
+    ) -> Result<BoxIter<'static, Result<QueryItem, Error>>, Error> {
         Err(unavailable("Vault.QueryDocuments"))
     }
 
@@ -427,22 +428,22 @@ impl CollectionSync for CollectionObject {
         Ok(Box::new(Guarded::holding(&self.shared, items)))
     }
 
-    fn create(&self, document_creation: DocumentCreation) -> Result<Document, Error> {
+    fn create(&self, document_creation: DocumentCreation) -> Result<DocumentWriteResult, Error> {
         self.shared
             .call(|vault| vault.create(&self.name, document_creation))
     }
 
-    fn update(&self, document_update: DocumentUpdate) -> Result<Document, Error> {
+    fn update(&self, document_update: DocumentUpdate) -> Result<DocumentWriteResult, Error> {
         self.shared
             .call(|vault| vault.update(&self.name, document_update))
     }
 
-    fn upsert(&self, document_upsert: DocumentUpsert) -> Result<Document, Error> {
+    fn upsert(&self, document_upsert: DocumentUpsert) -> Result<DocumentWriteResult, Error> {
         self.shared
             .call(|vault| vault.upsert(&self.name, document_upsert))
     }
 
-    fn delete(&self, document_deletion: DocumentDeletion) -> Result<Empty, Error> {
+    fn delete(&self, document_deletion: DocumentDeletion) -> Result<DocumentWriteResult, Error> {
         self.shared
             .call(|vault| vault.delete(&self.name, document_deletion))
     }
@@ -458,7 +459,7 @@ impl CollectionSync for CollectionObject {
     fn query(
         &self,
         _document_query: DocumentQuery,
-    ) -> Result<BoxIter<'static, Result<Document, Error>>, Error> {
+    ) -> Result<BoxIter<'static, Result<QueryItem, Error>>, Error> {
         Err(unavailable("Collection.Query"))
     }
 

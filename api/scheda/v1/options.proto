@@ -68,6 +68,23 @@ message OpenOptions {
   // is not read: the author of Scheda's commits is the Vault's (`author`),
   // not the person whose git configuration it is.
   Signing signing = 9;
+  // How long a query, a count, or a search with `not_before` waits for the
+  // Index to reach that state, in milliseconds. Past it the call is
+  // `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait at once, with
+  // `FAILED_PRECONDITION`. Unset: 60000.
+  uint32 index_wait_timeout_ms = 10 [(buf.validate.field) = {
+    uint32: {gte: 1}
+  }];
+  // How deep a `Filter` of this Vault's queries and searches may nest: a
+  // leaf is one level, each `all_of`, `any_of`, or `none_of` one more.
+  // Deeper, `INVALID_ARGUMENT`. Unset: 32. At most 100, a depth every step
+  // that walks a Filter is tested to take on a 2 MiB thread stack.
+  uint32 filter_max_depth = 11 [(buf.validate.field) = {
+    uint32: {
+      gte: 1
+      lte: 100
+    }
+  }];
 }
 
 // A key to sign commits with. Scheda names the key only; the secret stays

@@ -77,26 +77,24 @@ pub mod __buffa {
         reg.register_json_any(super::__DOCUMENT_DELETION_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_OPERATION_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_BATCH_RESULT_JSON_ANY);
+        reg.register_json_any(super::__DOCUMENT_WRITE_RESULT_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_RESULT_JSON_ANY);
         reg.register_json_any(super::__FILTER_JSON_ANY);
-        reg.register_json_any(super::filter::__ALL_JSON_ANY);
-        reg.register_json_any(super::filter::__EMPTY_JSON_ANY);
+        reg.register_json_any(super::filter::__FILTERS_JSON_ANY);
+        reg.register_json_any(super::filter::__VALUE_JSON_ANY);
         reg.register_json_any(super::filter::__TERM_JSON_ANY);
-        reg.register_json_any(super::filter::__TERM_SET_JSON_ANY);
-        reg.register_json_any(super::filter::__PHRASE_JSON_ANY);
-        reg.register_json_any(super::filter::__PHRASE_PREFIX_JSON_ANY);
-        reg.register_json_any(super::filter::__FUZZY_TERM_JSON_ANY);
-        reg.register_json_any(super::filter::__REGEX_JSON_ANY);
-        reg.register_json_any(super::filter::__REGEX_PHRASE_JSON_ANY);
+        reg.register_json_any(super::filter::__TERMS_JSON_ANY);
         reg.register_json_any(super::filter::__BOUND_JSON_ANY);
         reg.register_json_any(super::filter::__RANGE_JSON_ANY);
         reg.register_json_any(super::filter::__EXISTS_JSON_ANY);
-        reg.register_json_any(super::filter::__CLAUSE_JSON_ANY);
-        reg.register_json_any(super::filter::__BOOLEAN_JSON_ANY);
+        reg.register_json_any(super::filter::__PREFIX_JSON_ANY);
         reg.register_json_any(super::__COLLECTION_NAMES_JSON_ANY);
+        reg.register_json_any(super::__ORDER_BY_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_QUERY_JSON_ANY);
         reg.register_json_any(super::__VAULT_QUERY_JSON_ANY);
         reg.register_json_any(super::__COUNT_JSON_ANY);
+        reg.register_json_any(super::__QUERY_ITEM_JSON_ANY);
+        reg.register_json_any(super::__QUERY_SUMMARY_JSON_ANY);
         reg.register_json_any(super::__DOCUMENT_SEARCH_JSON_ANY);
         reg.register_json_any(super::__VAULT_SEARCH_JSON_ANY);
         reg.register_json_any(super::__SEARCH_ITEM_JSON_ANY);
@@ -138,7 +136,6 @@ pub mod __buffa {
         reg.register_json_any(super::__INDEX_SCHEMA_JSON_ANY);
         reg.register_json_any(super::__INDEX_DOC_JSON_ANY);
         reg.register_json_any(super::__INDEX_VALUE_JSON_ANY);
-        reg.register_json_any(super::index_value::__NULL_JSON_ANY);
         reg.register_json_any(super::index_value::__TEXT_LIST_JSON_ANY);
         reg.register_json_any(super::__VAULT_REF_JSON_ANY);
         reg.register_json_any(super::__VAULT_INFO_JSON_ANY);
@@ -218,6 +215,10 @@ pub use self::__buffa::view::DocumentBatchResultView;
 #[doc(inline)]
 pub use self::__buffa::view::DocumentBatchResultOwnedView;
 #[doc(inline)]
+pub use self::__buffa::view::DocumentWriteResultView;
+#[doc(inline)]
+pub use self::__buffa::view::DocumentWriteResultOwnedView;
+#[doc(inline)]
 pub use self::__buffa::view::DocumentResultView;
 #[doc(inline)]
 pub use self::__buffa::view::DocumentResultOwnedView;
@@ -230,6 +231,10 @@ pub use self::__buffa::view::CollectionNamesView;
 #[doc(inline)]
 pub use self::__buffa::view::CollectionNamesOwnedView;
 #[doc(inline)]
+pub use self::__buffa::view::OrderByView;
+#[doc(inline)]
+pub use self::__buffa::view::OrderByOwnedView;
+#[doc(inline)]
 pub use self::__buffa::view::DocumentQueryView;
 #[doc(inline)]
 pub use self::__buffa::view::DocumentQueryOwnedView;
@@ -241,6 +246,14 @@ pub use self::__buffa::view::VaultQueryOwnedView;
 pub use self::__buffa::view::CountView;
 #[doc(inline)]
 pub use self::__buffa::view::CountOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::QueryItemView;
+#[doc(inline)]
+pub use self::__buffa::view::QueryItemOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::QuerySummaryView;
+#[doc(inline)]
+pub use self::__buffa::view::QuerySummaryOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::DocumentSearchView;
 #[doc(inline)]

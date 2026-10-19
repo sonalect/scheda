@@ -6,44 +6,16 @@ pub mod filter {
     use super::*;
     #[derive(Clone, PartialEq, Debug)]
     pub enum Kind {
-        All(::buffa::alloc::boxed::Box<super::super::super::filter::All>),
-        Empty(::buffa::alloc::boxed::Box<super::super::super::filter::Empty>),
+        AllOf(::buffa::alloc::boxed::Box<super::super::super::filter::Filters>),
+        AnyOf(::buffa::alloc::boxed::Box<super::super::super::filter::Filters>),
+        NoneOf(::buffa::alloc::boxed::Box<super::super::super::filter::Filters>),
         Term(::buffa::alloc::boxed::Box<super::super::super::filter::Term>),
-        TermSet(::buffa::alloc::boxed::Box<super::super::super::filter::TermSet>),
-        Phrase(::buffa::alloc::boxed::Box<super::super::super::filter::Phrase>),
-        PhrasePrefix(
-            ::buffa::alloc::boxed::Box<super::super::super::filter::PhrasePrefix>,
-        ),
-        Fuzzy(::buffa::alloc::boxed::Box<super::super::super::filter::FuzzyTerm>),
-        Regex(::buffa::alloc::boxed::Box<super::super::super::filter::Regex>),
-        RegexPhrase(
-            ::buffa::alloc::boxed::Box<super::super::super::filter::RegexPhrase>,
-        ),
+        Terms(::buffa::alloc::boxed::Box<super::super::super::filter::Terms>),
         Range(::buffa::alloc::boxed::Box<super::super::super::filter::Range>),
         Exists(::buffa::alloc::boxed::Box<super::super::super::filter::Exists>),
-        Boolean(::buffa::alloc::boxed::Box<super::super::super::filter::Boolean>),
+        Prefix(::buffa::alloc::boxed::Box<super::super::super::filter::Prefix>),
     }
     impl ::buffa::Oneof for Kind {}
-    impl From<super::super::super::filter::All> for Kind {
-        fn from(v: super::super::super::filter::All) -> Self {
-            Self::All(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::All> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::All) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
-    impl From<super::super::super::filter::Empty> for Kind {
-        fn from(v: super::super::super::filter::Empty) -> Self {
-            Self::Empty(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::Empty> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::Empty) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
     impl From<super::super::super::filter::Term> for Kind {
         fn from(v: super::super::super::filter::Term) -> Self {
             Self::Term(::buffa::alloc::boxed::Box::new(v))
@@ -54,65 +26,13 @@ pub mod filter {
             Self::Some(Kind::from(v))
         }
     }
-    impl From<super::super::super::filter::TermSet> for Kind {
-        fn from(v: super::super::super::filter::TermSet) -> Self {
-            Self::TermSet(::buffa::alloc::boxed::Box::new(v))
+    impl From<super::super::super::filter::Terms> for Kind {
+        fn from(v: super::super::super::filter::Terms) -> Self {
+            Self::Terms(::buffa::alloc::boxed::Box::new(v))
         }
     }
-    impl From<super::super::super::filter::TermSet> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::TermSet) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
-    impl From<super::super::super::filter::Phrase> for Kind {
-        fn from(v: super::super::super::filter::Phrase) -> Self {
-            Self::Phrase(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::Phrase> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::Phrase) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
-    impl From<super::super::super::filter::PhrasePrefix> for Kind {
-        fn from(v: super::super::super::filter::PhrasePrefix) -> Self {
-            Self::PhrasePrefix(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::PhrasePrefix>
-    for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::PhrasePrefix) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
-    impl From<super::super::super::filter::FuzzyTerm> for Kind {
-        fn from(v: super::super::super::filter::FuzzyTerm) -> Self {
-            Self::Fuzzy(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::FuzzyTerm> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::FuzzyTerm) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
-    impl From<super::super::super::filter::Regex> for Kind {
-        fn from(v: super::super::super::filter::Regex) -> Self {
-            Self::Regex(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::Regex> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::Regex) -> Self {
-            Self::Some(Kind::from(v))
-        }
-    }
-    impl From<super::super::super::filter::RegexPhrase> for Kind {
-        fn from(v: super::super::super::filter::RegexPhrase) -> Self {
-            Self::RegexPhrase(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::filter::RegexPhrase>
-    for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::RegexPhrase) -> Self {
+    impl From<super::super::super::filter::Terms> for ::core::option::Option<Kind> {
+        fn from(v: super::super::super::filter::Terms) -> Self {
             Self::Some(Kind::from(v))
         }
     }
@@ -136,13 +56,13 @@ pub mod filter {
             Self::Some(Kind::from(v))
         }
     }
-    impl From<super::super::super::filter::Boolean> for Kind {
-        fn from(v: super::super::super::filter::Boolean) -> Self {
-            Self::Boolean(::buffa::alloc::boxed::Box::new(v))
+    impl From<super::super::super::filter::Prefix> for Kind {
+        fn from(v: super::super::super::filter::Prefix) -> Self {
+            Self::Prefix(::buffa::alloc::boxed::Box::new(v))
         }
     }
-    impl From<super::super::super::filter::Boolean> for ::core::option::Option<Kind> {
-        fn from(v: super::super::super::filter::Boolean) -> Self {
+    impl From<super::super::super::filter::Prefix> for ::core::option::Option<Kind> {
+        fn from(v: super::super::super::filter::Prefix) -> Self {
             Self::Some(Kind::from(v))
         }
     }
@@ -154,32 +74,20 @@ pub mod filter {
             use ::serde::ser::SerializeMap;
             let mut map = s.serialize_map(Some(1))?;
             match self {
-                Self::All(v) => {
-                    map.serialize_entry("all", &**v)?;
+                Self::AllOf(v) => {
+                    map.serialize_entry("allOf", &**v)?;
                 }
-                Self::Empty(v) => {
-                    map.serialize_entry("empty", &**v)?;
+                Self::AnyOf(v) => {
+                    map.serialize_entry("anyOf", &**v)?;
+                }
+                Self::NoneOf(v) => {
+                    map.serialize_entry("noneOf", &**v)?;
                 }
                 Self::Term(v) => {
                     map.serialize_entry("term", &**v)?;
                 }
-                Self::TermSet(v) => {
-                    map.serialize_entry("termSet", &**v)?;
-                }
-                Self::Phrase(v) => {
-                    map.serialize_entry("phrase", &**v)?;
-                }
-                Self::PhrasePrefix(v) => {
-                    map.serialize_entry("phrasePrefix", &**v)?;
-                }
-                Self::Fuzzy(v) => {
-                    map.serialize_entry("fuzzy", &**v)?;
-                }
-                Self::Regex(v) => {
-                    map.serialize_entry("regex", &**v)?;
-                }
-                Self::RegexPhrase(v) => {
-                    map.serialize_entry("regexPhrase", &**v)?;
+                Self::Terms(v) => {
+                    map.serialize_entry("terms", &**v)?;
                 }
                 Self::Range(v) => {
                     map.serialize_entry("range", &**v)?;
@@ -187,20 +95,22 @@ pub mod filter {
                 Self::Exists(v) => {
                     map.serialize_entry("exists", &**v)?;
                 }
-                Self::Boolean(v) => {
-                    map.serialize_entry("boolean", &**v)?;
+                Self::Prefix(v) => {
+                    map.serialize_entry("prefix", &**v)?;
                 }
             }
             map.end()
         }
     }
-    pub mod bound {
+    pub mod value {
         #[allow(unused_imports)]
         use super::*;
         #[derive(Clone, PartialEq, Debug)]
         pub enum Kind {
-            Included(::buffa::alloc::boxed::Box<::buffa_types::google::protobuf::Value>),
-            Excluded(::buffa::alloc::boxed::Box<::buffa_types::google::protobuf::Value>),
+            Text(::buffa::alloc::string::String),
+            Integer(i64),
+            Number(f64),
+            Boolean(bool),
         }
         impl ::buffa::Oneof for Kind {}
         impl ::serde::Serialize for Kind {
@@ -211,15 +121,75 @@ pub mod filter {
                 use ::serde::ser::SerializeMap;
                 let mut map = s.serialize_map(Some(1))?;
                 match self {
-                    Self::Included(v) => {
-                        map.serialize_entry("included", &**v)?;
+                    Self::Text(v) => {
+                        map.serialize_entry("text", v)?;
                     }
-                    Self::Excluded(v) => {
-                        map.serialize_entry("excluded", &**v)?;
+                    Self::Integer(v) => {
+                        map.serialize_entry(
+                            "integer",
+                            &::buffa::json_helpers::ProtoJson(v),
+                        )?;
+                    }
+                    Self::Number(v) => {
+                        map.serialize_entry(
+                            "number",
+                            &::buffa::json_helpers::ProtoJson(v),
+                        )?;
+                    }
+                    Self::Boolean(v) => {
+                        map.serialize_entry("boolean", v)?;
                     }
                 }
                 map.end()
             }
+        }
+    }
+}
+pub mod query_item {
+    #[allow(unused_imports)]
+    use super::*;
+    #[derive(Clone, PartialEq, Debug)]
+    pub enum Item {
+        Summary(::buffa::alloc::boxed::Box<super::super::super::QuerySummary>),
+        Document(::buffa::alloc::boxed::Box<super::super::super::Document>),
+    }
+    impl ::buffa::Oneof for Item {}
+    impl From<super::super::super::QuerySummary> for Item {
+        fn from(v: super::super::super::QuerySummary) -> Self {
+            Self::Summary(::buffa::alloc::boxed::Box::new(v))
+        }
+    }
+    impl From<super::super::super::QuerySummary> for ::core::option::Option<Item> {
+        fn from(v: super::super::super::QuerySummary) -> Self {
+            Self::Some(Item::from(v))
+        }
+    }
+    impl From<super::super::super::Document> for Item {
+        fn from(v: super::super::super::Document) -> Self {
+            Self::Document(::buffa::alloc::boxed::Box::new(v))
+        }
+    }
+    impl From<super::super::super::Document> for ::core::option::Option<Item> {
+        fn from(v: super::super::super::Document) -> Self {
+            Self::Some(Item::from(v))
+        }
+    }
+    impl ::serde::Serialize for Item {
+        fn serialize<S: ::serde::Serializer>(
+            &self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            use ::serde::ser::SerializeMap;
+            let mut map = s.serialize_map(Some(1))?;
+            match self {
+                Self::Summary(v) => {
+                    map.serialize_entry("summary", &**v)?;
+                }
+                Self::Document(v) => {
+                    map.serialize_entry("document", &**v)?;
+                }
+            }
+            map.end()
         }
     }
 }

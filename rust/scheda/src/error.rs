@@ -134,7 +134,10 @@ impl protocontract::Fault for Fault {
 pub(crate) fn default_retryable(code: VaultErrorCode) -> bool {
     matches!(
         code,
-        VaultErrorCode::Aborted | VaultErrorCode::Unavailable | VaultErrorCode::IndexRebuilding
+        VaultErrorCode::Aborted
+            | VaultErrorCode::Unavailable
+            | VaultErrorCode::IndexRebuilding
+            | VaultErrorCode::DeadlineExceeded
     )
 }
 
@@ -601,6 +604,7 @@ mod tests {
             (C::IndexBroken, false),
             (C::Storage, false),
             (C::Replication, false),
+            (C::DeadlineExceeded, true),
         ];
         for (code, retryable) in rows {
             assert_eq!(default_retryable(code), retryable, "{code:?}");

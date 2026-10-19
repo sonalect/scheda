@@ -63,47 +63,48 @@ pub trait CollectionSync: ::core::marker::Send + ::core::marker::Sync {
         >,
         ::protocontract::Error,
     >;
-    /// Creates a Document and returns it as stored, with its revision. In a
-    /// journal, appends a line. Present, `ALREADY_EXISTS`, or, with
-    /// `keep_existing`, the Document already stored is returned and nothing
-    /// is written.
+    /// Creates a Document and returns it as stored, with its revision, and
+    /// the state token of the write. In a journal, appends a line. Present,
+    /// `ALREADY_EXISTS`, or, with `keep_existing`, the Document already stored
+    /// is returned and nothing is written.
     fn create(
         &self,
         document_creation: crate::proto::scheda::v1::DocumentCreation,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     >;
-    /// Replaces an existing Document and returns it as stored. Absent,
-    /// `NOT_FOUND`. With `revision`, the stored revision must be that one, or
-    /// `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes store
-    /// nothing and keep the revision.
+    /// Replaces an existing Document and returns it as stored, and the state
+    /// token of the write. Absent, `NOT_FOUND`. With `revision`, the stored
+    /// revision must be that one, or `FAILED_PRECONDITION`. A journal,
+    /// `UNIMPLEMENTED`. The same bytes store nothing and keep the revision.
     fn update(
         &self,
         document_update: crate::proto::scheda::v1::DocumentUpdate,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     >;
     /// Creates the Document, or replaces it when present, and returns it as
-    /// stored. A journal, `UNIMPLEMENTED`. The same bytes store nothing and
-    /// keep the revision.
+    /// stored, and the state token of the write. A journal, `UNIMPLEMENTED`.
+    /// The same bytes store nothing and keep the revision.
     fn upsert(
         &self,
         document_upsert: crate::proto::scheda::v1::DocumentUpsert,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     >;
-    /// Deletes a Document. Absent, `NOT_FOUND`, or nothing with
-    /// `ignore_missing`. With `revision`, the stored revision must be that
-    /// one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
-    /// line never leaves.
+    /// Deletes a Document and returns the state token of the write, with no
+    /// `document`. Absent, `NOT_FOUND`, or nothing with `ignore_missing`. With
+    /// `revision`, the stored revision must be that one, or
+    /// `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal line never
+    /// leaves.
     fn delete(
         &self,
         document_deletion: crate::proto::scheda::v1::DocumentDeletion,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     >;
     /// Several Document writes as one: all happen, or none. An `Err` item, a
@@ -123,11 +124,16 @@ pub trait CollectionSync: ::core::marker::Send + ::core::marker::Sync {
         crate::proto::scheda::v1::DocumentBatchResult,
         ::protocontract::Error,
     >;
-    /// The Documents that match a condition: the exact set, in a stable
-    /// order (`id`; a journal in append order), without scores. A lazy
-    /// stream, read from one snapshot of the Index, so nothing written
-    /// meanwhile moves it. An Index not built yet, `INDEX_REBUILDING`; one
-    /// built by another Projector, `INDEX_STALE`. A build without `find`,
+    /// The Documents that match a filter (`DocumentQuery.filter`): the
+    /// exact set, in the order of the query (by default `id`; a journal in
+    /// append order), without scores. The first item is a summary, with how
+    /// many Documents match; then the Documents of the page. With
+    /// `not_before`, it first waits for the Index to reach that state. The
+    /// total and the keys of the page come from one snapshot of the Index,
+    /// taken when the call starts, so nothing written meanwhile moves them;
+    /// the Documents are read as the stream reaches them. An Index never
+    /// built, `INDEX_REBUILDING`; one built for another Projector or embedder
+    /// than this Vault's, `INDEX_STALE`. A build without `index`,
     /// `UNIMPLEMENTED`.
     fn query(
         &self,
@@ -136,14 +142,15 @@ pub trait CollectionSync: ::core::marker::Send + ::core::marker::Sync {
         ::protocontract::BoxIter<
             'static,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::QueryItem,
                 ::protocontract::Error,
             >,
         >,
         ::protocontract::Error,
     >;
-    /// How many Documents `Query` would give for the same query, counted in
-    /// the Index without opening a file. The codes of `Query`.
+    /// How many Documents the filter matches: the `QuerySummary.total` of
+    /// `Query` for the same query, counted in the Index without opening a
+    /// file. The codes of `Query`.
     fn count(
         &self,
         document_query: crate::proto::scheda::v1::DocumentQuery,
@@ -154,8 +161,10 @@ pub trait CollectionSync: ::core::marker::Send + ::core::marker::Sync {
     /// legs; then the hits, best first. A lazy stream: the ranking is
     /// computed whole, the Documents are read as the stream reaches them. A
     /// ranking is computed again by each call, so pages from two calls need
-    /// not agree. An Index not built yet, `INDEX_REBUILDING`. A build without
-    /// `search`, `UNIMPLEMENTED`.
+    /// not agree. With `not_before`, it first waits for the Index to reach
+    /// that state. An Index never built, `INDEX_REBUILDING`; one built for
+    /// another Projector or embedder than this Vault's, `INDEX_STALE`. A build
+    /// without `index`, `UNIMPLEMENTED`.
     fn search(
         &self,
         document_search: crate::proto::scheda::v1::DocumentSearch,
@@ -238,54 +247,55 @@ pub trait CollectionAsync: ::core::marker::Send + ::core::marker::Sync {
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// Creates a Document and returns it as stored, with its revision. In a
-    /// journal, appends a line. Present, `ALREADY_EXISTS`, or, with
-    /// `keep_existing`, the Document already stored is returned and nothing
-    /// is written.
+    /// Creates a Document and returns it as stored, with its revision, and
+    /// the state token of the write. In a journal, appends a line. Present,
+    /// `ALREADY_EXISTS`, or, with `keep_existing`, the Document already stored
+    /// is returned and nothing is written.
     fn create(
         &self,
         document_creation: crate::proto::scheda::v1::DocumentCreation,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// Replaces an existing Document and returns it as stored. Absent,
-    /// `NOT_FOUND`. With `revision`, the stored revision must be that one, or
-    /// `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes store
-    /// nothing and keep the revision.
+    /// Replaces an existing Document and returns it as stored, and the state
+    /// token of the write. Absent, `NOT_FOUND`. With `revision`, the stored
+    /// revision must be that one, or `FAILED_PRECONDITION`. A journal,
+    /// `UNIMPLEMENTED`. The same bytes store nothing and keep the revision.
     fn update(
         &self,
         document_update: crate::proto::scheda::v1::DocumentUpdate,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
     /// Creates the Document, or replaces it when present, and returns it as
-    /// stored. A journal, `UNIMPLEMENTED`. The same bytes store nothing and
-    /// keep the revision.
+    /// stored, and the state token of the write. A journal, `UNIMPLEMENTED`.
+    /// The same bytes store nothing and keep the revision.
     fn upsert(
         &self,
         document_upsert: crate::proto::scheda::v1::DocumentUpsert,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// Deletes a Document. Absent, `NOT_FOUND`, or nothing with
-    /// `ignore_missing`. With `revision`, the stored revision must be that
-    /// one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
-    /// line never leaves.
+    /// Deletes a Document and returns the state token of the write, with no
+    /// `document`. Absent, `NOT_FOUND`, or nothing with `ignore_missing`. With
+    /// `revision`, the stored revision must be that one, or
+    /// `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal line never
+    /// leaves.
     fn delete(
         &self,
         document_deletion: crate::proto::scheda::v1::DocumentDeletion,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
@@ -309,11 +319,16 @@ pub trait CollectionAsync: ::core::marker::Send + ::core::marker::Sync {
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + 'static;
-    /// The Documents that match a condition: the exact set, in a stable
-    /// order (`id`; a journal in append order), without scores. A lazy
-    /// stream, read from one snapshot of the Index, so nothing written
-    /// meanwhile moves it. An Index not built yet, `INDEX_REBUILDING`; one
-    /// built by another Projector, `INDEX_STALE`. A build without `find`,
+    /// The Documents that match a filter (`DocumentQuery.filter`): the
+    /// exact set, in the order of the query (by default `id`; a journal in
+    /// append order), without scores. The first item is a summary, with how
+    /// many Documents match; then the Documents of the page. With
+    /// `not_before`, it first waits for the Index to reach that state. The
+    /// total and the keys of the page come from one snapshot of the Index,
+    /// taken when the call starts, so nothing written meanwhile moves them;
+    /// the Documents are read as the stream reaches them. An Index never
+    /// built, `INDEX_REBUILDING`; one built for another Projector or embedder
+    /// than this Vault's, `INDEX_STALE`. A build without `index`,
     /// `UNIMPLEMENTED`.
     fn query(
         &self,
@@ -322,15 +337,16 @@ pub trait CollectionAsync: ::core::marker::Send + ::core::marker::Sync {
         Output = ::core::result::Result<
             impl ::protocontract::Stream<
                 Item = ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + use<Self>,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// How many Documents `Query` would give for the same query, counted in
-    /// the Index without opening a file. The codes of `Query`.
+    /// How many Documents the filter matches: the `QuerySummary.total` of
+    /// `Query` for the same query, counted in the Index without opening a
+    /// file. The codes of `Query`.
     fn count(
         &self,
         document_query: crate::proto::scheda::v1::DocumentQuery,
@@ -346,8 +362,10 @@ pub trait CollectionAsync: ::core::marker::Send + ::core::marker::Sync {
     /// legs; then the hits, best first. A lazy stream: the ranking is
     /// computed whole, the Documents are read as the stream reaches them. A
     /// ranking is computed again by each call, so pages from two calls need
-    /// not agree. An Index not built yet, `INDEX_REBUILDING`. A build without
-    /// `search`, `UNIMPLEMENTED`.
+    /// not agree. With `not_before`, it first waits for the Index to reach
+    /// that state. An Index never built, `INDEX_REBUILDING`; one built for
+    /// another Projector or embedder than this Vault's, `INDEX_STALE`. A build
+    /// without `index`, `UNIMPLEMENTED`.
     fn search(
         &self,
         document_search: crate::proto::scheda::v1::DocumentSearch,
@@ -451,7 +469,7 @@ impl CollectionAsync for DynCollectionAsync {
         document_creation: crate::proto::scheda::v1::DocumentCreation,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -462,7 +480,7 @@ impl CollectionAsync for DynCollectionAsync {
         document_update: crate::proto::scheda::v1::DocumentUpdate,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -473,7 +491,7 @@ impl CollectionAsync for DynCollectionAsync {
         document_upsert: crate::proto::scheda::v1::DocumentUpsert,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -484,7 +502,7 @@ impl CollectionAsync for DynCollectionAsync {
         document_deletion: crate::proto::scheda::v1::DocumentDeletion,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -516,7 +534,7 @@ impl CollectionAsync for DynCollectionAsync {
         Output = ::core::result::Result<
             impl ::protocontract::Stream<
                 Item = ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + use<>,
@@ -616,7 +634,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         >;
@@ -626,7 +644,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         >;
@@ -636,7 +654,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         >;
@@ -646,7 +664,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         >;
@@ -675,7 +693,7 @@ mod __dyn_collection_async {
                 ::protocontract::BoxStream<
                     'static,
                     ::core::result::Result<
-                        crate::proto::scheda::v1::Document,
+                        crate::proto::scheda::v1::QueryItem,
                         ::protocontract::Error,
                     >,
                 >,
@@ -805,7 +823,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         > {
@@ -819,7 +837,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         > {
@@ -833,7 +851,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         > {
@@ -847,7 +865,7 @@ mod __dyn_collection_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::DocumentWriteResult,
                 ::protocontract::Error,
             >,
         > {
@@ -884,7 +902,7 @@ mod __dyn_collection_async {
                 ::protocontract::BoxStream<
                     'static,
                     ::core::result::Result<
-                        crate::proto::scheda::v1::Document,
+                        crate::proto::scheda::v1::QueryItem,
                         ::protocontract::Error,
                     >,
                 >,
@@ -899,7 +917,7 @@ mod __dyn_collection_async {
                         as ::protocontract::BoxStream<
                             'static,
                             ::core::result::Result<
-                                crate::proto::scheda::v1::Document,
+                                crate::proto::scheda::v1::QueryItem,
                                 ::protocontract::Error,
                             >,
                         >,
@@ -1006,7 +1024,7 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
         &self,
         document_creation: crate::proto::scheda::v1::DocumentCreation,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         <T as CollectionSync>::create(Self::get_ref(self), document_creation)
@@ -1015,7 +1033,7 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
         &self,
         document_update: crate::proto::scheda::v1::DocumentUpdate,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         <T as CollectionSync>::update(Self::get_ref(self), document_update)
@@ -1024,7 +1042,7 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
         &self,
         document_upsert: crate::proto::scheda::v1::DocumentUpsert,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         <T as CollectionSync>::upsert(Self::get_ref(self), document_upsert)
@@ -1033,7 +1051,7 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
         &self,
         document_deletion: crate::proto::scheda::v1::DocumentDeletion,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         <T as CollectionSync>::delete(Self::get_ref(self), document_deletion)
@@ -1062,7 +1080,7 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
     ) -> ::core::result::Result<
         impl ::protocontract::Stream<
             Item = ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::QueryItem,
                 ::protocontract::Error,
             >,
         > + ::core::marker::Send + use<T>,
@@ -1096,7 +1114,6 @@ impl<T: CollectionSync> CollectionAsync for ::protocontract::Inline<T> {
             .map(Self::reply_stream)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T> {
     fn describe(
         &self,
@@ -1163,7 +1180,7 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
         document_creation: crate::proto::scheda::v1::DocumentCreation,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1177,7 +1194,7 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
         document_update: crate::proto::scheda::v1::DocumentUpdate,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1191,7 +1208,7 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
         document_upsert: crate::proto::scheda::v1::DocumentUpsert,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1205,7 +1222,7 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
         document_deletion: crate::proto::scheda::v1::DocumentDeletion,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1240,7 +1257,7 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
         Output = ::core::result::Result<
             impl ::protocontract::Stream<
                 Item = ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + use<T>,
@@ -1286,7 +1303,6 @@ impl<T: CollectionSync + 'static> CollectionAsync for ::protocontract::Offload<T
         )
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<T> {
     fn describe(
         &self,
@@ -1352,7 +1368,7 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         &self,
         document_creation: crate::proto::scheda::v1::DocumentCreation,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -1364,7 +1380,7 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         &self,
         document_update: crate::proto::scheda::v1::DocumentUpdate,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -1376,7 +1392,7 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         &self,
         document_upsert: crate::proto::scheda::v1::DocumentUpsert,
     ) -> ::core::result::Result<
-        crate::proto::scheda::v1::Document,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -1388,7 +1404,7 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         &self,
         document_deletion: crate::proto::scheda::v1::DocumentDeletion,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::DocumentWriteResult,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -1422,7 +1438,7 @@ impl<T: CollectionAsync + 'static> CollectionSync for ::protocontract::Blocking<
         ::protocontract::BoxIter<
             'static,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::QueryItem,
                 ::protocontract::Error,
             >,
         >,
@@ -1540,28 +1556,16 @@ pub mod collection_ref {
                     ::core::result::Result::Ok(::std::sync::Arc::clone(service))
                 }
                 ::protocontract::reference::Form::Async(service) => {
-                    #[cfg(feature = "tokio")]
-                    {
-                        ::core::result::Result::Ok(
-                            ::std::sync::Arc::new(
-                                ::protocontract::Blocking::new(
-                                    ::core::clone::Clone::clone(service),
-                                    ::protocontract::reference::current_handle(
-                                        "scheda.v1.Collection",
-                                    )?,
-                                ),
+                    ::core::result::Result::Ok(
+                        ::std::sync::Arc::new(
+                            ::protocontract::Blocking::new(
+                                ::core::clone::Clone::clone(service),
+                                ::protocontract::reference::current_handle(
+                                    "scheda.v1.Collection",
+                                )?,
                             ),
-                        )
-                    }
-                    #[cfg(not(feature = "tokio"))]
-                    {
-                        let _ = service;
-                        ::core::result::Result::Err(
-                            ::protocontract::reference::no_runtime(
-                                "scheda.v1.Collection",
-                            ),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -1598,7 +1602,6 @@ pub mod collection_ref {
         ///
         /// `UNBOUND` when the reference holds no implementation;
         /// `NO_RUNTIME` for a blocking one outside a tokio runtime.
-        #[cfg(feature = "tokio")]
         pub fn to_async_offload(
             &self,
         ) -> ::core::result::Result<super::DynCollectionAsync, ::protocontract::Error> {
@@ -1692,7 +1695,7 @@ pub mod collection_ref {
             &self,
             document_creation: crate::proto::scheda::v1::DocumentCreation,
         ) -> ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         > {
             self.0.create(document_creation)
@@ -1701,7 +1704,7 @@ pub mod collection_ref {
             &self,
             document_update: crate::proto::scheda::v1::DocumentUpdate,
         ) -> ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         > {
             self.0.update(document_update)
@@ -1710,7 +1713,7 @@ pub mod collection_ref {
             &self,
             document_upsert: crate::proto::scheda::v1::DocumentUpsert,
         ) -> ::core::result::Result<
-            crate::proto::scheda::v1::Document,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         > {
             self.0.upsert(document_upsert)
@@ -1719,7 +1722,7 @@ pub mod collection_ref {
             &self,
             document_deletion: crate::proto::scheda::v1::DocumentDeletion,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::DocumentWriteResult,
             ::protocontract::Error,
         > {
             self.0.delete(document_deletion)
@@ -1746,7 +1749,7 @@ pub mod collection_ref {
             ::protocontract::BoxIter<
                 'static,
                 ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             >,

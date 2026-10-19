@@ -26,7 +26,8 @@ import "scheda/v1/document.proto";
 service Embedder {
   // The model and the length of its vectors. Read once, when the embedder
   // is installed. The model id is stored with the vectors, so an embedder
-  // of another model is seen, not mixed into the same Index.
+  // of another model is seen, not mixed into the same Index: the Vault is
+  // `INDEX_STALE` until its `Index.Reindex` embeds every text with it.
   rpc Describe(google.protobuf.Empty) returns (EmbedderDescriptor);
 
   // One vector per text, in the order of the texts, each of the declared
@@ -142,14 +143,15 @@ enum RerankerErrorCode {
 service Projector {
   // Which projection it makes. Read once, when the Projector is given to a
   // Vault. The projection is stored with the Index, so a Projector of
-  // another projection is seen, not mixed into the same Index: the Index is
-  // `INDEX_STALE` for that Vault, which does not index, until a `Reindex`
-  // by a Vault with the new Projector.
+  // another projection is seen, not mixed into the same Index: the Vault
+  // is `INDEX_STALE` until its `Index.Reindex` builds the Index for that
+  // projection. Only `Reindex` starts such a rebuild.
   rpc Describe(google.protobuf.Empty) returns (ProjectorDescriptor);
 
   // The columns of one collection. None: its Documents are indexed by
-  // identity only. Changing the columns of a collection makes the Index
-  // stale until `Reindex`.
+  // identity only. Columns other than the Index was built with make the
+  // Vault `INDEX_STALE`, as another projection does; change the
+  // projection with them.
   rpc Columns(CollectionKey) returns (IndexSchema);
 
   // The values of the columns for one Document.
@@ -193,15 +195,31 @@ enum ColumnKind {
 
 // One column of the Index.
 message IndexColumn {
-  // Its name in a `Filter`. Not empty, and not `id` or `collection`.
+  option (buf.validate.message).cel = {
+    id: "index_column.vector_text"
+    message: "a vector column must be text: one vector per Document"
+    expression: "!this.vector || this.kind == 1"
+  };
+  option (buf.validate.message).cel = {
+    id: "index_column.fts_text"
+    message: "an fts column must be text or text list"
+    expression: "!this.fts || this.kind == 1 || this.kind == 5"
+  };
+
+  // Its name in a `Filter` and in an order: a lowercase letter, then
+  // lowercase letters, digits, and `_`. Not `id`, `order`, `file`, or
+  // `collection`, which the Index keeps for itself.
   string name = 1 [(buf.validate.field) = {
     required: true
-    string: {min_len: 1}
+    string: {
+      min_len: 1
+      pattern: "^[a-z][a-z0-9_]*$"
+    }
     cel: [
       {
-        id: "index_column.name.not_identity"
-        message: "name must not be id or collection"
-        expression: "this != 'id' && this != 'collection'"
+        id: "index_column.name.not_reserved"
+        message: "name must not be id, order, file, or collection"
+        expression: "!(this in ['id', 'order', 'file', 'collection'])"
       }
     ]
   }];
@@ -212,11 +230,14 @@ message IndexColumn {
       not_in: [0]
     }
   }];
-  // A `Filter` can name it.
-  bool find = 3;
-  // The lexical leg of a search reads it.
+  // The Index keeps a scalar index on it, so a `Filter` or an order on it
+  // reads that index instead of every row. A Filter may name any column;
+  // this only makes it fast.
+  bool scalar_index = 3;
+  // The lexical leg of a search reads it (BM25). A `text` or a `text
+  // list`.
   bool fts = 4;
-  // The vector leg embeds it, one vector per value.
+  // The vector leg embeds it: one vector per Document. A `text` only.
   bool vector = 5;
 }
 
@@ -235,18 +256,18 @@ message IndexSchema {
 }
 
 // The values of the columns for one Document. A column left out has no
-// value; `IndexValue.null` is a stored null. Empty: the Document is
-// indexed by identity only.
+// value: a `Filter`'s condition on it is false. A key no column of the
+// collection declares is ignored. A value of another kind than its
+// column's leaves the Document out of the Index, as
+// `PROJECTOR_ERROR_CODE_REFUSED` does. Empty: the Document is indexed by
+// identity only.
 message IndexDoc {
   map<string, IndexValue> values = 1;
 }
 
 // One value of a column, of the column's kind.
 message IndexValue {
-  // A stored null.
-  message Null {}
-
-  // Several texts; each is a term of its own.
+  // Several texts, in order.
   message TextList {
     repeated string texts = 1;
   }
@@ -259,7 +280,6 @@ message IndexValue {
     double number = 3;
     bool boolean = 4;
     TextList text_list = 5;
-    Null null = 6;
   }
 }
 

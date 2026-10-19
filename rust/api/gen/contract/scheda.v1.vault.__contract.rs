@@ -12,7 +12,9 @@
 /// the order they were made; no write fails because another one is running.
 /// Reads see stored state only. The Index follows the stored state in the
 /// background: queries and searches answer from what it holds, and
-/// `Index.Watch` tells how far it is.
+/// `Index.Watch` tells how far it is. A write returns the state token of
+/// the state it made; a query, a count, or a search given that token
+/// (`not_before`) waits until the Index reflects it.
 ///
 /// After `Close`, every call of this Vault and of every object reached from
 /// it fails with `FAILED_PRECONDITION`. A Vault whose references are all
@@ -23,8 +25,9 @@
 /// Implement it for work that computes; implement `VaultAsync` for work that waits on I/O. The trait is dyn-compatible: hold an implementation as `Arc<dyn VaultSync>` to choose it at run time. `Blocking` gives an `VaultAsync` implementation this form.
 #[allow(clippy::wrong_self_convention)]
 pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
-    /// What this Vault holds: its path, the Index path, and the writer
-    /// identity of this clone. Reads no Document.
+    /// What this Vault holds: its path, the Index path, the writer identity
+    /// of this clone, and the state token of its stored state now. Reads no
+    /// Document.
     fn info(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -63,7 +66,7 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         crate::traits::mirror_ref::MirrorRef,
         ::protocontract::Error,
     >;
-    /// The Index of the Vault. A build without `find`, `UNIMPLEMENTED`.
+    /// The Index of the Vault. A build without `index`, `UNIMPLEMENTED`.
     fn index(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -205,9 +208,9 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         crate::proto::scheda::v1::DocumentBatchResult,
         ::protocontract::Error,
     >;
-    /// The Documents of several collections that match a condition, as
-    /// `Collection.Query` within one; a leaf on a Projector column names its
-    /// collection.
+    /// The Documents of several collections that match a filter, as
+    /// `Collection.Query` within one; the filter applies to each collection
+    /// in scope (`VaultQuery.filter`).
     fn query_documents(
         &self,
         vault_query: crate::proto::scheda::v1::VaultQuery,
@@ -215,14 +218,14 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         ::protocontract::BoxIter<
             'static,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::QueryItem,
                 ::protocontract::Error,
             >,
         >,
         ::protocontract::Error,
     >;
-    /// How many Documents `QueryDocuments` would give for the same query. The
-    /// codes of `QueryDocuments`.
+    /// How many Documents the filter matches: the `QuerySummary.total` of
+    /// `QueryDocuments` for the same query. The codes of `QueryDocuments`.
     fn count_documents(
         &self,
         vault_query: crate::proto::scheda::v1::VaultQuery,
@@ -254,7 +257,9 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
 /// the order they were made; no write fails because another one is running.
 /// Reads see stored state only. The Index follows the stored state in the
 /// background: queries and searches answer from what it holds, and
-/// `Index.Watch` tells how far it is.
+/// `Index.Watch` tells how far it is. A write returns the state token of
+/// the state it made; a query, a count, or a search given that token
+/// (`not_before`) waits until the Index reflects it.
 ///
 /// After `Close`, every call of this Vault and of every object reached from
 /// it fails with `FAILED_PRECONDITION`. A Vault whose references are all
@@ -265,8 +270,9 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
 /// Implement it with plain `async fn` for work that waits on I/O; implement `VaultSync` for work that computes. A reply stream must not borrow `self`. Generic callers (`impl VaultAsync`) call it without boxing; `DynVaultAsync` holds an implementation chosen at run time. `Inline` and `Offload` give a `VaultSync` implementation this form.
 #[allow(clippy::wrong_self_convention)]
 pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
-    /// What this Vault holds: its path, the Index path, and the writer
-    /// identity of this clone. Reads no Document.
+    /// What this Vault holds: its path, the Index path, the writer identity
+    /// of this clone, and the state token of its stored state now. Reads no
+    /// Document.
     fn info(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -313,7 +319,7 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// The Index of the Vault. A build without `find`, `UNIMPLEMENTED`.
+    /// The Index of the Vault. A build without `index`, `UNIMPLEMENTED`.
     fn index(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -485,9 +491,9 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + 'static;
-    /// The Documents of several collections that match a condition, as
-    /// `Collection.Query` within one; a leaf on a Projector column names its
-    /// collection.
+    /// The Documents of several collections that match a filter, as
+    /// `Collection.Query` within one; the filter applies to each collection
+    /// in scope (`VaultQuery.filter`).
     fn query_documents(
         &self,
         vault_query: crate::proto::scheda::v1::VaultQuery,
@@ -495,15 +501,15 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
         Output = ::core::result::Result<
             impl ::protocontract::Stream<
                 Item = ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + use<Self>,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// How many Documents `QueryDocuments` would give for the same query. The
-    /// codes of `QueryDocuments`.
+    /// How many Documents the filter matches: the `QuerySummary.total` of
+    /// `QueryDocuments` for the same query. The codes of `QueryDocuments`.
     fn count_documents(
         &self,
         vault_query: crate::proto::scheda::v1::VaultQuery,
@@ -780,7 +786,7 @@ impl VaultAsync for DynVaultAsync {
         Output = ::core::result::Result<
             impl ::protocontract::Stream<
                 Item = ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + use<>,
@@ -1023,7 +1029,7 @@ mod __dyn_vault_async {
                 ::protocontract::BoxStream<
                     'static,
                     ::core::result::Result<
-                        crate::proto::scheda::v1::Document,
+                        crate::proto::scheda::v1::QueryItem,
                         ::protocontract::Error,
                     >,
                 >,
@@ -1324,7 +1330,7 @@ mod __dyn_vault_async {
                 ::protocontract::BoxStream<
                     'static,
                     ::core::result::Result<
-                        crate::proto::scheda::v1::Document,
+                        crate::proto::scheda::v1::QueryItem,
                         ::protocontract::Error,
                     >,
                 >,
@@ -1339,7 +1345,7 @@ mod __dyn_vault_async {
                         as ::protocontract::BoxStream<
                             'static,
                             ::core::result::Result<
-                                crate::proto::scheda::v1::Document,
+                                crate::proto::scheda::v1::QueryItem,
                                 ::protocontract::Error,
                             >,
                         >,
@@ -1583,7 +1589,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
     ) -> ::core::result::Result<
         impl ::protocontract::Stream<
             Item = ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::QueryItem,
                 ::protocontract::Error,
             >,
         > + ::core::marker::Send + use<T>,
@@ -1617,7 +1623,6 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
             .map(Self::reply_stream)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
     fn info(
         &self,
@@ -1890,7 +1895,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         Output = ::core::result::Result<
             impl ::protocontract::Stream<
                 Item = ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             > + ::core::marker::Send + use<T>,
@@ -1936,7 +1941,6 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         )
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
     fn info(
         &self,
@@ -2175,7 +2179,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         ::protocontract::BoxIter<
             'static,
             ::core::result::Result<
-                crate::proto::scheda::v1::Document,
+                crate::proto::scheda::v1::QueryItem,
                 ::protocontract::Error,
             >,
         >,
@@ -2288,26 +2292,16 @@ pub mod vault_ref {
                     ::core::result::Result::Ok(::std::sync::Arc::clone(service))
                 }
                 ::protocontract::reference::Form::Async(service) => {
-                    #[cfg(feature = "tokio")]
-                    {
-                        ::core::result::Result::Ok(
-                            ::std::sync::Arc::new(
-                                ::protocontract::Blocking::new(
-                                    ::core::clone::Clone::clone(service),
-                                    ::protocontract::reference::current_handle(
-                                        "scheda.v1.Vault",
-                                    )?,
-                                ),
+                    ::core::result::Result::Ok(
+                        ::std::sync::Arc::new(
+                            ::protocontract::Blocking::new(
+                                ::core::clone::Clone::clone(service),
+                                ::protocontract::reference::current_handle(
+                                    "scheda.v1.Vault",
+                                )?,
                             ),
-                        )
-                    }
-                    #[cfg(not(feature = "tokio"))]
-                    {
-                        let _ = service;
-                        ::core::result::Result::Err(
-                            ::protocontract::reference::no_runtime("scheda.v1.Vault"),
-                        )
-                    }
+                        ),
+                    )
                 }
             }
         }
@@ -2344,7 +2338,6 @@ pub mod vault_ref {
         ///
         /// `UNBOUND` when the reference holds no implementation;
         /// `NO_RUNTIME` for a blocking one outside a tokio runtime.
-        #[cfg(feature = "tokio")]
         pub fn to_async_offload(
             &self,
         ) -> ::core::result::Result<super::DynVaultAsync, ::protocontract::Error> {
@@ -2565,7 +2558,7 @@ pub mod vault_ref {
             ::protocontract::BoxIter<
                 'static,
                 ::core::result::Result<
-                    crate::proto::scheda::v1::Document,
+                    crate::proto::scheda::v1::QueryItem,
                     ::protocontract::Error,
                 >,
             >,

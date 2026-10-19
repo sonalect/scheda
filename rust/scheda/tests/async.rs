@@ -1,4 +1,4 @@
-//! The async form of the objects (feature `tokio`): `Scheda` opens a Vault
+//! The async form of the objects: `Scheda` opens a Vault
 //! through `SchedaAsync`, and the references it gives hold the async form
 //! of the Vault, its collections, and its mirror. They run their calls on
 //! the blocking pool and wait natively where a thread would only stand
@@ -6,7 +6,6 @@
 //!
 //! What counts blob reads in the async form is only reachable from inside
 //! the library: that is a unit test in `src/service/asynchronous.rs`.
-#![cfg(feature = "tokio")]
 
 mod common;
 
@@ -30,7 +29,7 @@ use scheda::{Error, Scheda};
 use serde_json::json;
 use tokio::runtime::{Builder, Runtime};
 
-use common::{Scratch, open, opening, snapshot, vault as built_vault};
+use common::{Scratch, command, open, opening, snapshot, vault as built_vault};
 
 /// How long a step may take before the test gives up on it.
 const DEADLINE: Duration = Duration::from_secs(60);
@@ -145,6 +144,14 @@ fn operation(operation: Operation) -> DocumentOperation {
     }
 }
 
+/// `HEAD` of the Vault at `path`: the state token of a Vault that holds no
+/// isolated Document.
+fn head(path: &Path) -> String {
+    let out = command(path, &["rev-parse", "HEAD"]).output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+}
+
 /// Takes the write lock of the Vault at `path` as another process would.
 fn hold_write_lock(path: &Path) -> File {
     let file = File::options()
@@ -186,8 +193,15 @@ async fn round_trip() {
         Some("notes")
     );
 
-    notes.create(creation("a.md", "one")).await.unwrap();
-    notes.upsert(upsert("b.md", "two")).await.unwrap();
+    // A write returns the token of the commit it made, and a write that
+    // stores nothing the token it found.
+    let created = notes.create(creation("a.md", "one")).await.unwrap();
+    assert_eq!(created.version.as_deref(), Some(head(&path).as_str()));
+    let upserted = notes.upsert(upsert("b.md", "two")).await.unwrap();
+    assert_eq!(upserted.version.as_deref(), Some(head(&path).as_str()));
+    assert_ne!(upserted.version, created.version);
+    let again = notes.upsert(upsert("b.md", "two")).await.unwrap();
+    assert_eq!(again.version, upserted.version);
     let updated = notes
         .update(
             DocumentUpdate::default()
@@ -197,7 +211,11 @@ async fn round_trip() {
         )
         .await
         .unwrap();
-    assert_eq!(updated.raw.as_deref(), Some(&b"uno"[..]));
+    assert_eq!(
+        updated.document.as_option().and_then(|d| d.raw.as_deref()),
+        Some(&b"uno"[..])
+    );
+    assert_eq!(updated.version.as_deref(), Some(head(&path).as_str()));
     assert_eq!(
         notes.get(id("a.md")).await.unwrap().raw.as_deref(),
         Some(&b"uno"[..])
@@ -229,6 +247,18 @@ async fn round_trip() {
         .await
         .unwrap();
     assert_eq!(batch.results.len(), 2);
+    assert_eq!(batch.version.as_deref(), Some(head(&path).as_str()));
+    let deleted = notes
+        .delete(
+            scheda::v1::DocumentDeletion::default()
+                .with_id("c.md")
+                .with_note("test"),
+        )
+        .await
+        .unwrap();
+    assert!(deleted.document.is_unset());
+    assert_eq!(deleted.version.as_deref(), Some(head(&path).as_str()));
+    notes.create(creation("c.md", "three")).await.unwrap();
 
     let documents = all(notes.get_many(listing()).await.unwrap()).await;
     let ids: Vec<_> = documents.iter().map(|d| d.id.clone().unwrap()).collect();
@@ -263,6 +293,16 @@ async fn round_trip() {
         .await
         .unwrap();
     assert_eq!(across.results.len(), 2);
+    assert_eq!(across.version.as_deref(), Some(head(&path).as_str()));
+    assert_eq!(
+        vault
+            .info(Empty::default())
+            .await
+            .unwrap()
+            .version
+            .as_deref(),
+        Some(head(&path).as_str())
+    );
     let extra = collection(&vault, "extra").await;
     assert_eq!(
         extra.get(id("e.md")).await.unwrap().raw.as_deref(),
@@ -535,6 +575,48 @@ fn a_write_waiting_for_the_write_lock_holds_no_pool_thread_and_aborts_at_the_dea
         before
     });
     assert_eq!(snapshot(&path), before, "an aborted write stores nothing");
+}
+
+#[test]
+fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
+    let (_scratch, path) = fresh("async-empty-batch");
+    let rt = runtime(2, 1);
+    rt.block_on(async {
+        // The deadline of a write that waits is two seconds: a batch with no
+        // write must not be one.
+        let vault = open_async(&path, options().with_write_timeout_ms(2_000)).await;
+        let notes = collection(&vault, "notes").await;
+        let held = hold_write_lock(&path);
+        let started = Instant::now();
+        let in_collection = within(
+            "an empty batch of a collection",
+            notes.batch(stream_of(Vec::<DocumentOperation>::new())),
+        )
+        .await
+        .unwrap();
+        let in_vault = within(
+            "an empty batch of the Vault",
+            vault.batch_documents(stream_of(Vec::<VaultDocumentOperation>::new())),
+        )
+        .await
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_millis(1_500));
+        for reply in [in_collection, in_vault] {
+            assert!(reply.results.is_empty());
+            assert_eq!(reply.version.as_deref(), Some(head(&path).as_str()));
+        }
+        // A batch that writes waits for the lock and is refused at the
+        // deadline.
+        let error = notes
+            .batch(stream_of(vec![operation(Operation::Upsert(Box::new(
+                upsert("a.md", "late"),
+            )))]))
+            .await
+            .unwrap_err();
+        assert!(error.is(Code::Aborted), "{error}");
+        drop(held);
+        vault.close(Empty::default()).await.unwrap();
+    });
 }
 
 #[test]

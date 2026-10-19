@@ -242,14 +242,21 @@ docs pass at the end (A5).
 
 D1, D2.
 
-- [ ] tokio required in `scheda` and `scheda-api`; the feature `tokio`
+- [x] tokio required in `scheda` and `scheda-api`; the feature `tokio`
       removed; `gate_tokio_feature` out of `buf.gen.yaml`; generate.
-- [ ] In the same generate, the contract of `21` §8 (`git apply
+- [x] In the same generate, the contract of `21` §8 (`git apply
       .claude/notes/l0-protos.patch`, moved from `21` L5), and the code
-      follows it: a write returns its `version` (moved from `21` L7);
-      `Scheda.Info` lists `FEATURE_INDEX` only from `21` L3.
+      follows it: a write returns its `version` (moved from `21` L7),
+      read under the write lock; an empty batch reads it without the
+      lock, as `VaultInfo.version` does (the owner); `Scheda.Info` lists
+      `FEATURE_INDEX` only from `21` L3. `IndexState.head` of the review
+      is `stored_version`: the contract's own test forbids git terms in
+      names (the owner).
 - *Check:* `cargo build --workspace` and `bazel build //...` green;
-  `bazel test //...` green.
+  `bazel test //...` green (19 October 2026); the token tests in
+  `tests/documents.rs` (`a_write_returns_the_token_of_the_commit_it_made_in_the_main_repository`,
+  `the_token_of_a_write_names_its_own_commit_among_many_writers`,
+  `an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now`).
 
 ### A2. The core and its gate
 

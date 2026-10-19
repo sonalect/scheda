@@ -20,7 +20,7 @@ use crate::commit::{Change, Committer, Held, WriteLock};
 use crate::error::{self, Context, Error, Fault, io, redact_remote_text};
 use crate::fs::restrict_dir;
 use crate::idmap::IdMaps;
-use crate::index::Index;
+use crate::index::{Index, State};
 use crate::indexer::Indexer;
 use crate::ports::{Installed, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
@@ -179,13 +179,31 @@ impl Vault {
         Ok(vault)
     }
 
-    /// What this Vault holds: its path, the Index path, and its writer
-    /// identity. Reads no Document.
-    pub(crate) fn info(&self) -> VaultInfo {
-        VaultInfo::default()
+    /// What this Vault holds: its path, the Index path, its writer identity,
+    /// and the state token of the stored state now ([`Vault::state_now`]).
+    /// Reads no Document.
+    ///
+    /// # Errors
+    ///
+    /// `STORAGE` or `REPLICATION` when `HEAD` cannot be read.
+    pub(crate) fn info(&self) -> Result<VaultInfo, Error> {
+        Ok(VaultInfo::default()
             .with_path(self.path.to_string_lossy().into_owned())
             .with_index_path(self.index().root().to_string_lossy().into_owned())
             .with_writer(self.writer.clone())
+            .with_version(self.state_now()?.token()))
+    }
+
+    /// The stored state of the Vault now: `HEAD` of the Vault's repository
+    /// and of the isolated one, read in turn, without the write lock. A
+    /// writer may move one of them between the two reads; every commit the
+    /// state names was stored before this call returned.
+    ///
+    /// # Errors
+    ///
+    /// `STORAGE` or `REPLICATION` when `HEAD` cannot be read.
+    pub(crate) fn state_now(&self) -> Result<State, Error> {
+        Ok(State::of(&self.repos.views().context("read HEAD")?))
     }
 
     /// Removes the Projector when `projector` is `None`, which a Vault that
@@ -902,6 +920,9 @@ mod tests {
             OpenOptions::default().with_writer("Not Valid"),
             OpenOptions::default().with_mirror("not a url"),
             OpenOptions::default().with_index_poll_ms(1),
+            OpenOptions::default().with_index_wait_timeout_ms(0),
+            OpenOptions::default().with_filter_max_depth(0),
+            OpenOptions::default().with_filter_max_depth(101),
         ] {
             let error = Vault::open(&scratch.0, options, Ports::default()).unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));
@@ -910,5 +931,19 @@ mod tests {
             !scratch.0.join(".scheda").exists(),
             "a refusal writes nothing"
         );
+    }
+
+    #[test]
+    fn the_options_of_the_index_wait_and_the_filter_depth_are_accepted_within_their_bounds() {
+        let scratch = Scratch::vault("options-bounds");
+        for options in [
+            OpenOptions::default().with_index_wait_timeout_ms(1),
+            OpenOptions::default().with_index_wait_timeout_ms(60_000),
+            OpenOptions::default().with_filter_max_depth(1),
+            OpenOptions::default().with_filter_max_depth(100),
+        ] {
+            let vault = Vault::open(&scratch.0, options, Ports::default()).unwrap();
+            vault.close().unwrap();
+        }
     }
 }

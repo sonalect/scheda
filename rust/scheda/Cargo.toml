@@ -22,10 +22,6 @@ index = [
 # Age ASCII-armor Record files. Off by default: a consumer that encrypts
 # nothing does not compile scrypt / ChaCha20-Poly1305 / X25519.
 encrypt = ["dep:age"]
-# Async form of the objects: `Scheda` also implements `SchedaAsync`, and the
-# Vault it opens runs its calls on Tokio's blocking pool and waits natively
-# (the write lock). Wraps what the build has.
-tokio = ["dep:tokio", "scheda-api/tokio"]
 
 [dependencies]
 age = { workspace = true, optional = true }
@@ -43,7 +39,7 @@ scheda-api = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, optional = true, features = ["rt", "sync", "time"] }
+tokio = { workspace = true, features = ["rt", "sync", "time"] }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]

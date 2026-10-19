@@ -3,8 +3,13 @@
 // The Index lives under `{vault}/.scheda/`, is never committed, and
 // follows the stored state of the Vault in the background: one open Vault
 // of all those on one path, in any process, indexes at a time; the others
-// follow it and take over when it ends. Versions here are opaque tokens:
-// equal tokens are the same stored state.
+// follow it and take over when it ends. A stored state of the Vault is
+// named by a state token: a write returns the token of the state it made,
+// `Vault.Info` the token of the stored state now, and `IndexState` the
+// token of the state the Index reflects. Equal tokens are the same stored
+// state; a token means nothing else to the caller. A query, a count, or a
+// search given a token (`not_before`) waits until the Index reflects a
+// state that contains it.
 
 edition = "2024";
 
@@ -14,22 +19,28 @@ import "google/protobuf/empty.proto";
 import "protocontract/v1/options.proto";
 import "scheda/v1/error.proto";
 
-// The Index of one Vault, from `Vault.Index`. A build without `find` has
+// The Index of one Vault, from `Vault.Index`. A build without `index` has
 // none.
 service Index {
   // Where the Index stands now.
   rpc Status(google.protobuf.Empty) returns (IndexState);
 
   // Where the Index stands, now and at every change: the first item at
-  // once, then one item for each indexer round, for the Index catching up
-  // with the last write, and for a rebuild starting, moving on, and
-  // ending. The stream does not end by itself; the caller drops it when it
-  // has what it waited for.
+  // once, then one item whenever the state changes: an indexer round,
+  // `stored_version` moving, a rebuild starting, moving on, and ending. A
+  // Vault that does not index sees the rounds of the one that does within
+  // `OpenOptions.index_poll_ms`. The stream does not end by itself; the
+  // caller drops it when it has what it waited for.
   rpc Watch(google.protobuf.Empty) returns (stream IndexState);
 
   // Starts a rebuild of the Index from the stored Documents, with the
   // ports of this Vault, and returns at once; `Watch` shows its progress
-  // and its result. A rebuild already running, `ABORTED`. A Vault that
+  // and its result. The new Index is built beside the live one, which
+  // answers queries and searches until the switch (`Rebuild`), and is of
+  // this Vault's projection, columns, and embedder model: after the
+  // switch, a Vault of other ones is `INDEX_STALE`. The only way any of
+  // them changes in the Index. A rebuild already running, `ABORTED`. A
+  // Vault that
   // lacks a port the Index needs (a Projector, or an embedder for a
   // `vector` column), `FAILED_PRECONDITION` naming it.
   rpc Reindex(google.protobuf.Empty) returns (google.protobuf.Empty);
@@ -42,56 +53,69 @@ message IndexRef {
 
 // Where the Index stands.
 message IndexState {
-  // The stored state of the Vault the Index has reached: the state `HEAD`
-  // named, in the Vault and in its isolated repository, when the Index last
-  // finished a round. The Index has one such state for all its parts, and
-  // none while it is not built yet (before the first round ends, and while
-  // a rebuild runs). Equal tokens are the same state; the token means
-  // nothing else.
+  // The stored state of the Vault the Index reflects, as a state token: the
+  // state `HEAD` named, in the Vault and in its isolated repository, when
+  // the Index last finished a round. Every collection of the Index is at
+  // this state. Unset only before the first build of the Index ends; a
+  // rebuild leaves it at the state of the live Index until the switch.
   string version = 1;
-  // The files the Index has yet to read to reach the stored state of the
-  // Vault, while a round or a rebuild runs: the files of declared
-  // collections that changed since `version`, and every file of a
-  // collection whose declaration changed. It counts files, not Documents:
-  // a journal segment is one file however many lines it holds, so that
-  // the count needs no read of the segments. `0` when the Index is where
-  // this Vault last found the stored state; unset when the files could not be
-  // counted (`last_error` then says why).
+  // The files the Index has yet to read to reach `stored_version`, while a
+  // round or a rebuild runs: the files of declared collections that changed
+  // since `version`, and every file of a collection being built again. It
+  // counts files, not Documents: a journal segment is one file however many
+  // lines it holds, so that the count needs no read of the segments. `0`
+  // when the Index is at `stored_version`. Counted by the Vault that indexes
+  // (`role`); unset in the others, and when the files could not be counted
+  // (`last_error` then says why).
   uint64 pending = 2;
   // This Vault's indexer is the one indexing now. One indexer of all the
   // Vaults open on one path indexes at a time; the others look again later
   // and take over when it ends.
   bool role = 3;
-  // This Vault's embedder is of another model or length than the vectors
-  // of the Index: it writes no vector, and its searches run without the
-  // vector leg, rather than mix two models. `Reindex` moves the Index to
-  // it.
-  bool model_mismatch = 4;
   // The last rebuild this Vault's indexer ran, while it runs and after it
-  // ends: one `Reindex` asked for, or the building of an Index that did not
-  // exist or was made in another format. Unset when this Vault ran none.
-  Rebuild rebuild = 5;
+  // ends. Unset when this Vault ran none.
+  Rebuild rebuild = 4;
   // The failure of this Vault's last indexing round; unset after a round
   // that succeeds. A failed round changes no version and fails no write; the
-  // indexer tries it again after a pause. `INDEX_STALE` while the Index was
-  // built by a Projector of another projection than this Vault's: the Vault
-  // then does not index until its own `Reindex`.
-  ErrorReport last_error = 6;
+  // indexer tries it again after a pause. `INDEX_STALE` while the Index
+  // was built for another Projector or embedder than this Vault's: the
+  // Vault then does not index until a `Reindex`.
+  ErrorReport last_error = 5;
+  // The stored state of the Vault now, as a state token: what `HEAD` names
+  // in the Vault and in its isolated repository, read when this state was
+  // made. The Index is behind while `version` differs from `stored_version`.
+  // Set in every Vault, whether it indexes or not.
+  string stored_version = 6;
 }
 
-// A rebuild of the Index: the Index made again from nothing. `Reindex` asks
-// for one; an Index not built yet, or built in a format this version does
-// not read, is rebuilt the same way. While it runs the Index has no
-// `version`, and a query is `INDEX_REBUILDING`.
+// A rebuild of the Index: a new Index made from the stored Documents,
+// beside the live one. While it runs, queries and searches answer from the
+// live Index, which stays at its `version`: the writes made meanwhile
+// appear at the switch, and a `not_before` past that version waits for
+// it. At its end the Vault switches to the new Index in one step, and
+// removes the old one an hour later. An Index never built has no live
+// one: its queries and searches are `INDEX_REBUILDING`.
 message Rebuild {
+  // Why it runs.
+  enum Cause {
+    CAUSE_UNSPECIFIED = 0;
+    // `Index.Reindex` asked for it.
+    CAUSE_REINDEX = 1;
+    // There was no Index this version reads: none yet, or one of an
+    // earlier version of Scheda, which is removed.
+    CAUSE_NEW = 2;
+  }
+
   enum Stage {
     STAGE_UNSPECIFIED = 0;
     // It runs.
     STAGE_RUNNING = 1;
-    // It ended and the Index is built: `version` is set again.
+    // It ended with the switch: the new Index is the live one, and
+    // `version` is its state.
     STAGE_DONE = 2;
-    // It ended without building the Index; `error` says why. The indexer
-    // starts it again after a pause.
+    // It ended without the switch; `error` says why. The live Index, when
+    // there is one, stays. The indexer starts the rebuild again after a
+    // pause.
     STAGE_FAILED = 3;
   }
 
@@ -104,4 +128,6 @@ message Rebuild {
   uint64 segments_read = 4;
   // Why a failed rebuild failed.
   ErrorReport error = 5;
+  // Why it runs.
+  Cause cause = 6;
 }

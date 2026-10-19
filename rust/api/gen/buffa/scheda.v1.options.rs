@@ -274,6 +274,32 @@ pub struct OpenOptions {
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
     pub signing: ::buffa::MessageField<Signing, ::buffa::Inline<Signing>>,
+    /// How long a query, a count, or a search with `not_before` waits for the
+    /// Index to reach that state, in milliseconds. Past it the call is
+    /// `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait at once, with
+    /// `FAILED_PRECONDITION`. Unset: 60000.
+    ///
+    /// Field 10: `index_wait_timeout_ms`
+    #[serde(
+        rename = "indexWaitTimeoutMs",
+        alias = "index_wait_timeout_ms",
+        with = "::buffa::json_helpers::opt_uint32",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub index_wait_timeout_ms: ::core::option::Option<u32>,
+    /// How deep a `Filter` of this Vault's queries and searches may nest: a
+    /// leaf is one level, each `all_of`, `any_of`, or `none_of` one more.
+    /// Deeper, `INVALID_ARGUMENT`. Unset: 32. At most 100, a depth every step
+    /// that walks a Filter is tested to take on a 2 MiB thread stack.
+    ///
+    /// Field 11: `filter_max_depth`
+    #[serde(
+        rename = "filterMaxDepth",
+        alias = "filter_max_depth",
+        with = "::buffa::json_helpers::opt_uint32",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub filter_max_depth: ::core::option::Option<u32>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -290,6 +316,8 @@ impl ::core::fmt::Debug for OpenOptions {
             .field("mode", &self.mode)
             .field("write_timeout_ms", &self.write_timeout_ms)
             .field("signing", &self.signing)
+            .field("index_wait_timeout_ms", &self.index_wait_timeout_ms)
+            .field("filter_max_depth", &self.filter_max_depth)
             .finish()
     }
 }
@@ -347,6 +375,20 @@ impl OpenOptions {
     ///Sets [`Self::write_timeout_ms`] to `Some(value)`, consuming and returning `self`.
     pub fn with_write_timeout_ms(mut self, value: u32) -> Self {
         self.write_timeout_ms = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::index_wait_timeout_ms`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_index_wait_timeout_ms(mut self, value: u32) -> Self {
+        self.index_wait_timeout_ms = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::filter_max_depth`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_filter_max_depth(mut self, value: u32) -> Self {
+        self.filter_max_depth = Some(value);
         self
     }
 }
@@ -412,6 +454,12 @@ impl ::buffa::Message for OpenOptions {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(v) = self.index_wait_timeout_ms {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.filter_max_depth {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -463,6 +511,12 @@ impl ::buffa::Message for OpenOptions {
                 buf,
             );
             self.signing.write_to(__cache, buf);
+        }
+        if let Some(v) = self.index_wait_timeout_ms {
+            ::buffa::types::put_uint32_field(10u32, v, buf);
+        }
+        if let Some(v) = self.filter_max_depth {
+            ::buffa::types::put_uint32_field(11u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -566,6 +620,24 @@ impl ::buffa::Message for OpenOptions {
                     ctx,
                 )?;
             }
+            10u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.index_wait_timeout_ms = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint32(buf)?,
+                );
+            }
+            11u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.filter_max_depth = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint32(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -583,6 +655,8 @@ impl ::buffa::Message for OpenOptions {
         self.mode = ::core::option::Option::None;
         self.write_timeout_ms = ::core::option::Option::None;
         self.signing = ::buffa::MessageField::none();
+        self.index_wait_timeout_ms = ::core::option::Option::None;
+        self.filter_max_depth = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

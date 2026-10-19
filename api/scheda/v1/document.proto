@@ -207,9 +207,25 @@ message DocumentOperation {
 }
 
 // The answer of `Collection.Batch` and `Vault.BatchDocuments`: one result
-// per operation, in order.
+// per operation, in order, and the state token of the commit they made.
 message DocumentBatchResult {
   repeated DocumentResult results = 1;
+  // The state token of the Vault once the batch is stored, as
+  // `DocumentWriteResult.version`.
+  string version = 2;
+}
+
+// The answer of `Collection.Create`, `Update`, `Upsert`, and `Delete`.
+message DocumentWriteResult {
+  // The Document as stored, with its revision. Unset after `Delete`.
+  Document document = 1;
+  // The state token of the Vault once the write is stored: pass it as
+  // `not_before` to a query, a count, or a search that must see this
+  // write. When the call stored nothing (`keep_existing`, the same bytes,
+  // `ignore_missing`), the token of the stored state it found, which holds
+  // the Document as returned. Set in every build, with the Index or
+  // without.
+  string version = 2;
 }
 
 // What one Document call of a batch returned.

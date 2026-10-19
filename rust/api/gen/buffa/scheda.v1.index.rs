@@ -110,24 +110,23 @@ pub const __INDEX_REF_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct IndexState {
-    /// The stored state of the Vault the Index has reached: the state `HEAD`
-    /// named, in the Vault and in its isolated repository, when the Index last
-    /// finished a round. The Index has one such state for all its parts, and
-    /// none while it is not built yet (before the first round ends, and while
-    /// a rebuild runs). Equal tokens are the same state; the token means
-    /// nothing else.
+    /// The stored state of the Vault the Index reflects, as a state token: the
+    /// state `HEAD` named, in the Vault and in its isolated repository, when
+    /// the Index last finished a round. Every collection of the Index is at
+    /// this state. Unset only before the first build of the Index ends; a
+    /// rebuild leaves it at the state of the live Index until the switch.
     ///
     /// Field 1: `version`
     #[serde(rename = "version", skip_serializing_if = "::core::option::Option::is_none")]
     pub version: ::core::option::Option<::buffa::alloc::string::String>,
-    /// The files the Index has yet to read to reach the stored state of the
-    /// Vault, while a round or a rebuild runs: the files of declared
-    /// collections that changed since `version`, and every file of a
-    /// collection whose declaration changed. It counts files, not Documents:
-    /// a journal segment is one file however many lines it holds, so that
-    /// the count needs no read of the segments. `0` when the Index is where
-    /// this Vault last found the stored state; unset when the files could not be
-    /// counted (`last_error` then says why).
+    /// The files the Index has yet to read to reach `stored_version`, while a
+    /// round or a rebuild runs: the files of declared collections that changed
+    /// since `version`, and every file of a collection being built again. It
+    /// counts files, not Documents: a journal segment is one file however many
+    /// lines it holds, so that the count needs no read of the segments. `0`
+    /// when the Index is at `stored_version`. Counted by the Vault that indexes
+    /// (`role`); unset in the others, and when the files could not be counted
+    /// (`last_error` then says why).
     ///
     /// Field 2: `pending`
     #[serde(
@@ -143,23 +142,10 @@ pub struct IndexState {
     /// Field 3: `role`
     #[serde(rename = "role", skip_serializing_if = "::core::option::Option::is_none")]
     pub role: ::core::option::Option<bool>,
-    /// This Vault's embedder is of another model or length than the vectors
-    /// of the Index: it writes no vector, and its searches run without the
-    /// vector leg, rather than mix two models. `Reindex` moves the Index to
-    /// it.
-    ///
-    /// Field 4: `model_mismatch`
-    #[serde(
-        rename = "modelMismatch",
-        alias = "model_mismatch",
-        skip_serializing_if = "::core::option::Option::is_none"
-    )]
-    pub model_mismatch: ::core::option::Option<bool>,
     /// The last rebuild this Vault's indexer ran, while it runs and after it
-    /// ends: one `Reindex` asked for, or the building of an Index that did not
-    /// exist or was made in another format. Unset when this Vault ran none.
+    /// ends. Unset when this Vault ran none.
     ///
-    /// Field 5: `rebuild`
+    /// Field 4: `rebuild`
     #[serde(
         rename = "rebuild",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
@@ -167,17 +153,29 @@ pub struct IndexState {
     pub rebuild: ::buffa::MessageField<Rebuild, ::buffa::Inline<Rebuild>>,
     /// The failure of this Vault's last indexing round; unset after a round
     /// that succeeds. A failed round changes no version and fails no write; the
-    /// indexer tries it again after a pause. `INDEX_STALE` while the Index was
-    /// built by a Projector of another projection than this Vault's: the Vault
-    /// then does not index until its own `Reindex`.
+    /// indexer tries it again after a pause. `INDEX_STALE` while the Index
+    /// was built for another Projector or embedder than this Vault's: the
+    /// Vault then does not index until a `Reindex`.
     ///
-    /// Field 6: `last_error`
+    /// Field 5: `last_error`
     #[serde(
         rename = "lastError",
         alias = "last_error",
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
     pub last_error: ::buffa::MessageField<ErrorReport, ::buffa::Inline<ErrorReport>>,
+    /// The stored state of the Vault now, as a state token: what `HEAD` names
+    /// in the Vault and in its isolated repository, read when this state was
+    /// made. The Index is behind while `version` differs from `stored_version`.
+    /// Set in every Vault, whether it indexes or not.
+    ///
+    /// Field 6: `stored_version`
+    #[serde(
+        rename = "storedVersion",
+        alias = "stored_version",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub stored_version: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -188,9 +186,9 @@ impl ::core::fmt::Debug for IndexState {
             .field("version", &self.version)
             .field("pending", &self.pending)
             .field("role", &self.role)
-            .field("model_mismatch", &self.model_mismatch)
             .field("rebuild", &self.rebuild)
             .field("last_error", &self.last_error)
+            .field("stored_version", &self.stored_version)
             .finish()
     }
 }
@@ -228,9 +226,12 @@ impl IndexState {
     }
     #[must_use = "with_* setters return `self` by value; assign or chain the result"]
     #[inline]
-    ///Sets [`Self::model_mismatch`] to `Some(value)`, consuming and returning `self`.
-    pub fn with_model_mismatch(mut self, value: bool) -> Self {
-        self.model_mismatch = Some(value);
+    ///Sets [`Self::stored_version`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_stored_version(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.stored_version = Some(value.into());
         self
     }
 }
@@ -263,9 +264,6 @@ impl ::buffa::Message for IndexState {
         if self.role.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
-        if self.model_mismatch.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
         if self.rebuild.is_set() {
             let __slot = __cache.reserve();
             let inner_size = self.rebuild.compute_size(__cache);
@@ -281,6 +279,9 @@ impl ::buffa::Message for IndexState {
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
+        }
+        if let Some(ref v) = self.stored_version {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
@@ -301,12 +302,9 @@ impl ::buffa::Message for IndexState {
         if let Some(v) = self.role {
             ::buffa::types::put_bool_field(3u32, v, buf);
         }
-        if let Some(v) = self.model_mismatch {
-            ::buffa::types::put_bool_field(4u32, v, buf);
-        }
         if self.rebuild.is_set() {
             ::buffa::types::put_len_delimited_header(
-                5u32,
+                4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -314,11 +312,14 @@ impl ::buffa::Message for IndexState {
         }
         if self.last_error.is_set() {
             ::buffa::types::put_len_delimited_header(
-                6u32,
+                5u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
             self.last_error.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.stored_version {
+            ::buffa::types::put_string_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -364,11 +365,13 @@ impl ::buffa::Message for IndexState {
             4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::Varint,
+                    ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                self.model_mismatch = ::core::option::Option::Some(
-                    ::buffa::types::decode_bool(buf)?,
-                );
+                ::buffa::Message::merge_length_delimited(
+                    self.rebuild.get_or_insert_default(),
+                    buf,
+                    ctx,
+                )?;
             }
             5u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -376,7 +379,7 @@ impl ::buffa::Message for IndexState {
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
                 ::buffa::Message::merge_length_delimited(
-                    self.rebuild.get_or_insert_default(),
+                    self.last_error.get_or_insert_default(),
                     buf,
                     ctx,
                 )?;
@@ -386,10 +389,11 @@ impl ::buffa::Message for IndexState {
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
-                ::buffa::Message::merge_length_delimited(
-                    self.last_error.get_or_insert_default(),
+                ::buffa::types::merge_string(
+                    self
+                        .stored_version
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
                     buf,
-                    ctx,
                 )?;
             }
             _ => {
@@ -403,9 +407,9 @@ impl ::buffa::Message for IndexState {
         self.version = ::core::option::Option::None;
         self.pending = ::core::option::Option::None;
         self.role = ::core::option::Option::None;
-        self.model_mismatch = ::core::option::Option::None;
         self.rebuild = ::buffa::MessageField::none();
         self.last_error = ::buffa::MessageField::none();
+        self.stored_version = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -438,10 +442,13 @@ pub const __INDEX_STATE_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa
     from_json: ::buffa::type_registry::any_from_json::<IndexState>,
     is_wkt: false,
 };
-/// A rebuild of the Index: the Index made again from nothing. `Reindex` asks
-/// for one; an Index not built yet, or built in a format this version does
-/// not read, is rebuilt the same way. While it runs the Index has no
-/// `version`, and a query is `INDEX_REBUILDING`.
+/// A rebuild of the Index: a new Index made from the stored Documents,
+/// beside the live one. While it runs, queries and searches answer from the
+/// live Index, which stays at its `version`: the writes made meanwhile
+/// appear at the switch, and a `not_before` past that version waits for
+/// it. At its end the Vault switches to the new Index in one step, and
+/// removes the old one an hour later. An Index never built has no live
+/// one: its queries and searches are `INDEX_REBUILDING`.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
@@ -491,6 +498,15 @@ pub struct Rebuild {
         skip_serializing_if = "::buffa::json_helpers::skip_if::is_unset_message_field"
     )]
     pub error: ::buffa::MessageField<ErrorReport, ::buffa::Inline<ErrorReport>>,
+    /// Why it runs.
+    ///
+    /// Field 6: `cause`
+    #[serde(
+        rename = "cause",
+        with = "::buffa::json_helpers::opt_enum",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub cause: ::core::option::Option<::buffa::EnumValue<rebuild::Cause>>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -503,6 +519,7 @@ impl ::core::fmt::Debug for Rebuild {
             .field("documents_skipped", &self.documents_skipped)
             .field("segments_read", &self.segments_read)
             .field("error", &self.error)
+            .field("cause", &self.cause)
             .finish()
     }
 }
@@ -543,6 +560,16 @@ impl Rebuild {
     ///Sets [`Self::segments_read`] to `Some(value)`, consuming and returning `self`.
     pub fn with_segments_read(mut self, value: u64) -> Self {
         self.segments_read = Some(value);
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::cause`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_cause(
+        mut self,
+        value: impl Into<::buffa::EnumValue<rebuild::Cause>>,
+    ) -> Self {
+        self.cause = Some(value.into());
         self
     }
 }
@@ -586,6 +613,9 @@ impl ::buffa::Message for Rebuild {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(ref v) = self.cause {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -615,6 +645,9 @@ impl ::buffa::Message for Rebuild {
                 buf,
             );
             self.error.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.cause {
+            ::buffa::types::put_int32_field(6u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -676,6 +709,15 @@ impl ::buffa::Message for Rebuild {
                     ctx,
                 )?;
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.cause = ::core::option::Option::Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(buf)?),
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -689,6 +731,7 @@ impl ::buffa::Message for Rebuild {
         self.documents_skipped = ::core::option::Option::None;
         self.segments_read = ::core::option::Option::None;
         self.error = ::buffa::MessageField::none();
+        self.cause = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }
@@ -724,6 +767,153 @@ pub const __REBUILD_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::ty
 pub mod rebuild {
     #[allow(unused_imports)]
     use super::*;
+    /// Why it runs.
+    #[allow(non_camel_case_types)]
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    #[repr(i32)]
+    pub enum Cause {
+        CAUSE_UNSPECIFIED = 0i32,
+        /// `Index.Reindex` asked for it.
+        CAUSE_REINDEX = 1i32,
+        /// There was no Index this version reads: none yet, or one of an
+        /// earlier version of Scheda, which is removed.
+        CAUSE_NEW = 2i32,
+    }
+    impl Cause {
+        ///Idiomatic alias for [`Self::CAUSE_UNSPECIFIED`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const Unspecified: Self = Self::CAUSE_UNSPECIFIED;
+        ///Idiomatic alias for [`Self::CAUSE_REINDEX`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const Reindex: Self = Self::CAUSE_REINDEX;
+        ///Idiomatic alias for [`Self::CAUSE_NEW`]; `Debug` prints the variant name.
+        #[allow(non_upper_case_globals)]
+        pub const New: Self = Self::CAUSE_NEW;
+    }
+    impl ::core::default::Default for Cause {
+        fn default() -> Self {
+            Self::CAUSE_UNSPECIFIED
+        }
+    }
+    impl ::serde::Serialize for Cause {
+        fn serialize<S: ::serde::Serializer>(
+            &self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            s.serialize_str(::buffa::Enumeration::proto_name(self))
+        }
+    }
+    impl<'de> ::serde::Deserialize<'de> for Cause {
+        fn deserialize<D: ::serde::Deserializer<'de>>(
+            d: D,
+        ) -> ::core::result::Result<Self, D::Error> {
+            struct _V;
+            impl ::serde::de::Visitor<'_> for _V {
+                type Value = Cause;
+                fn expecting(
+                    &self,
+                    f: &mut ::core::fmt::Formatter<'_>,
+                ) -> ::core::fmt::Result {
+                    f.write_str(
+                        concat!("a string, integer, or null for ", stringify!(Cause)),
+                    )
+                }
+                fn visit_str<E: ::serde::de::Error>(
+                    self,
+                    v: &str,
+                ) -> ::core::result::Result<Cause, E> {
+                    <Cause as ::buffa::Enumeration>::from_proto_name(v)
+                        .ok_or_else(|| { ::serde::de::Error::unknown_variant(v, &[]) })
+                }
+                fn visit_i64<E: ::serde::de::Error>(
+                    self,
+                    v: i64,
+                ) -> ::core::result::Result<Cause, E> {
+                    let v32 = i32::try_from(v)
+                        .map_err(|_| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("enum value {v} out of i32 range"),
+                            )
+                        })?;
+                    <Cause as ::buffa::Enumeration>::from_i32(v32)
+                        .ok_or_else(|| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("unknown enum value {v32}"),
+                            )
+                        })
+                }
+                fn visit_u64<E: ::serde::de::Error>(
+                    self,
+                    v: u64,
+                ) -> ::core::result::Result<Cause, E> {
+                    let v32 = i32::try_from(v)
+                        .map_err(|_| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("enum value {v} out of i32 range"),
+                            )
+                        })?;
+                    <Cause as ::buffa::Enumeration>::from_i32(v32)
+                        .ok_or_else(|| {
+                            ::serde::de::Error::custom(
+                                ::buffa::alloc::format!("unknown enum value {v32}"),
+                            )
+                        })
+                }
+                fn visit_unit<E: ::serde::de::Error>(
+                    self,
+                ) -> ::core::result::Result<Cause, E> {
+                    ::core::result::Result::Ok(::core::default::Default::default())
+                }
+            }
+            d.deserialize_any(_V)
+        }
+    }
+    impl ::buffa::json_helpers::ProtoElemJson for Cause {
+        fn serialize_proto_json<S: ::serde::Serializer>(
+            v: &Self,
+            s: S,
+        ) -> ::core::result::Result<S::Ok, S::Error> {
+            ::serde::Serialize::serialize(v, s)
+        }
+        fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+            d: D,
+        ) -> ::core::result::Result<Self, D::Error> {
+            <Self as ::serde::Deserialize>::deserialize(d)
+        }
+    }
+    impl ::buffa::Enumeration for Cause {
+        fn from_i32(value: i32) -> ::core::option::Option<Self> {
+            match value {
+                0i32 => ::core::option::Option::Some(Self::CAUSE_UNSPECIFIED),
+                1i32 => ::core::option::Option::Some(Self::CAUSE_REINDEX),
+                2i32 => ::core::option::Option::Some(Self::CAUSE_NEW),
+                _ => ::core::option::Option::None,
+            }
+        }
+        fn to_i32(&self) -> i32 {
+            *self as i32
+        }
+        fn proto_name(&self) -> &'static str {
+            match self {
+                Self::CAUSE_UNSPECIFIED => "CAUSE_UNSPECIFIED",
+                Self::CAUSE_REINDEX => "CAUSE_REINDEX",
+                Self::CAUSE_NEW => "CAUSE_NEW",
+            }
+        }
+        fn from_proto_name(name: &str) -> ::core::option::Option<Self> {
+            match name {
+                "CAUSE_UNSPECIFIED" => {
+                    ::core::option::Option::Some(Self::CAUSE_UNSPECIFIED)
+                }
+                "CAUSE_REINDEX" => ::core::option::Option::Some(Self::CAUSE_REINDEX),
+                "CAUSE_NEW" => ::core::option::Option::Some(Self::CAUSE_NEW),
+                _ => ::core::option::Option::None,
+            }
+        }
+        fn values() -> &'static [Self] {
+            &[Self::CAUSE_UNSPECIFIED, Self::CAUSE_REINDEX, Self::CAUSE_NEW]
+        }
+    }
     #[allow(non_camel_case_types)]
     #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
     #[repr(i32)]
@@ -731,10 +921,12 @@ pub mod rebuild {
         STAGE_UNSPECIFIED = 0i32,
         /// It runs.
         STAGE_RUNNING = 1i32,
-        /// It ended and the Index is built: `version` is set again.
+        /// It ended with the switch: the new Index is the live one, and
+        /// `version` is its state.
         STAGE_DONE = 2i32,
-        /// It ended without building the Index; `error` says why. The indexer
-        /// starts it again after a pause.
+        /// It ended without the switch; `error` says why. The live Index, when
+        /// there is one, stays. The indexer starts the rebuild again after a
+        /// pause.
         STAGE_FAILED = 3i32,
     }
     impl Stage {

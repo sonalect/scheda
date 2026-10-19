@@ -47,6 +47,7 @@ use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
 use crate::error::{Context, Error, Fault, io, lib_fault};
 use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
+use crate::index::State;
 use crate::indexer::Signal;
 use crate::isolated;
 pub(crate) use crate::repo::Repo;
@@ -273,7 +274,6 @@ impl Committer {
     /// # Errors
     ///
     /// As [`Committer::lock`], except for the recovery.
-    #[cfg(feature = "tokio")]
     pub(crate) async fn acquire_async(&self) -> Result<Held, Error> {
         let deadline = Instant::now() + self.timeout;
         let mut pause = FIRST_POLL;
@@ -387,7 +387,6 @@ fn wait(pause: &mut Duration, deadline: Instant) -> Result<(), Error> {
 }
 
 /// [`wait`] without holding the thread.
-#[cfg(feature = "tokio")]
 async fn wait_async(pause: &mut Duration, deadline: Instant) -> Result<(), Error> {
     if Instant::now() >= deadline {
         return Err(lock_busy());
@@ -468,6 +467,21 @@ impl WriteLock<'_> {
     /// write read, and what its commit is built on.
     pub(crate) fn snapshot(&self, repo: Repo) -> Result<Snap, Fault> {
         self.committer.repos.snapshot(repo)
+    }
+
+    /// The state of the Vault after a write that left the repository `repo`
+    /// at `commit`: that commit, and `HEAD` of the other repository, read
+    /// now, while this lock is held. Scheda moves `HEAD` only under this
+    /// lock (a write, a pull), so the state names exactly what the write
+    /// made; a `git` command run by hand is not bound by it, and shows in
+    /// the state as the commit it left. For a write that stored nothing,
+    /// `commit` is the commit its checks read, and the state is the one the
+    /// write found.
+    pub(crate) fn state_after(&self, repo: Repo, commit: Option<Oid>) -> Result<State, Fault> {
+        Ok(match repo {
+            Repo::Main => State::new(commit, self.snapshot(Repo::Isolated)?.commit()),
+            Repo::Isolated => State::new(self.snapshot(Repo::Main)?.commit(), commit),
+        })
     }
 
     /// Stores `changes` as one commit with `message` on top of the commit of

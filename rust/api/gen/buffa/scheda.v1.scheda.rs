@@ -7,23 +7,19 @@
 #[repr(i32)]
 pub enum Feature {
     FEATURE_UNSPECIFIED = 0i32,
-    /// The Index, the queries and counts, and the `Index` object.
-    FEATURE_FIND = 1i32,
-    /// The searches, the vector leg, and the embedder and reranker ports.
-    FEATURE_SEARCH = 2i32,
+    /// The Index: the queries, counts, and searches, the `Index` object, and
+    /// the Projector, embedder, and reranker ports.
+    FEATURE_INDEX = 1i32,
     /// Encrypted collections.
-    FEATURE_ENCRYPT = 3i32,
+    FEATURE_ENCRYPT = 2i32,
 }
 impl Feature {
     ///Idiomatic alias for [`Self::FEATURE_UNSPECIFIED`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
     pub const Unspecified: Self = Self::FEATURE_UNSPECIFIED;
-    ///Idiomatic alias for [`Self::FEATURE_FIND`]; `Debug` prints the variant name.
+    ///Idiomatic alias for [`Self::FEATURE_INDEX`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
-    pub const Find: Self = Self::FEATURE_FIND;
-    ///Idiomatic alias for [`Self::FEATURE_SEARCH`]; `Debug` prints the variant name.
-    #[allow(non_upper_case_globals)]
-    pub const Search: Self = Self::FEATURE_SEARCH;
+    pub const Index: Self = Self::FEATURE_INDEX;
     ///Idiomatic alias for [`Self::FEATURE_ENCRYPT`]; `Debug` prints the variant name.
     #[allow(non_upper_case_globals)]
     pub const Encrypt: Self = Self::FEATURE_ENCRYPT;
@@ -123,9 +119,8 @@ impl ::buffa::Enumeration for Feature {
     fn from_i32(value: i32) -> ::core::option::Option<Self> {
         match value {
             0i32 => ::core::option::Option::Some(Self::FEATURE_UNSPECIFIED),
-            1i32 => ::core::option::Option::Some(Self::FEATURE_FIND),
-            2i32 => ::core::option::Option::Some(Self::FEATURE_SEARCH),
-            3i32 => ::core::option::Option::Some(Self::FEATURE_ENCRYPT),
+            1i32 => ::core::option::Option::Some(Self::FEATURE_INDEX),
+            2i32 => ::core::option::Option::Some(Self::FEATURE_ENCRYPT),
             _ => ::core::option::Option::None,
         }
     }
@@ -135,8 +130,7 @@ impl ::buffa::Enumeration for Feature {
     fn proto_name(&self) -> &'static str {
         match self {
             Self::FEATURE_UNSPECIFIED => "FEATURE_UNSPECIFIED",
-            Self::FEATURE_FIND => "FEATURE_FIND",
-            Self::FEATURE_SEARCH => "FEATURE_SEARCH",
+            Self::FEATURE_INDEX => "FEATURE_INDEX",
             Self::FEATURE_ENCRYPT => "FEATURE_ENCRYPT",
         }
     }
@@ -145,19 +139,13 @@ impl ::buffa::Enumeration for Feature {
             "FEATURE_UNSPECIFIED" => {
                 ::core::option::Option::Some(Self::FEATURE_UNSPECIFIED)
             }
-            "FEATURE_FIND" => ::core::option::Option::Some(Self::FEATURE_FIND),
-            "FEATURE_SEARCH" => ::core::option::Option::Some(Self::FEATURE_SEARCH),
+            "FEATURE_INDEX" => ::core::option::Option::Some(Self::FEATURE_INDEX),
             "FEATURE_ENCRYPT" => ::core::option::Option::Some(Self::FEATURE_ENCRYPT),
             _ => ::core::option::Option::None,
         }
     }
     fn values() -> &'static [Self] {
-        &[
-            Self::FEATURE_UNSPECIFIED,
-            Self::FEATURE_FIND,
-            Self::FEATURE_SEARCH,
-            Self::FEATURE_ENCRYPT,
-        ]
+        &[Self::FEATURE_UNSPECIFIED, Self::FEATURE_INDEX, Self::FEATURE_ENCRYPT]
     }
 }
 /// What `Scheda.Info` reports. Output only.

@@ -313,9 +313,12 @@ pub struct Schema {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub encrypted: ::core::option::Option<bool>,
-    /// No Document of this collection enters the lexical Index; a query that
-    /// names it is refused, not answered empty. The journal id map is still
-    /// kept. Redundant, and allowed, on `encrypted`, which no Index holds.
+    /// The Index holds none of the columns of this collection, only its
+    /// identity and, unless `exclude_vector_index`, its vectors: a query of
+    /// it, or a search of it with a `filter`, is refused (`UNIMPLEMENTED`), not
+    /// answered empty, and the lexical leg passes it by. The journal id map
+    /// is still kept. Redundant, and allowed, on `encrypted`, which no Index
+    /// holds.
     ///
     /// Field 6: `exclude_lexical_index`
     #[serde(
@@ -324,7 +327,7 @@ pub struct Schema {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub exclude_lexical_index: ::core::option::Option<bool>,
-    /// No Document of this collection is embedded or enters the vector
+    /// No Document of this collection is embedded or holds a vector in the
     /// Index; the embedder is never called for it. Redundant, and allowed,
     /// on `encrypted`.
     ///

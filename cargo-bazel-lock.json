@@ -1,5 +1,5 @@
 {
-  "checksum": "1351db73a5aa2b55ded92624513ffee797e832c6af03de60b925bff5076f1f10",
+  "checksum": "a07e542020448db78da84ecd013cfef328a5a95289ba475bbadd620d095bc2ec",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -21698,10 +21698,7 @@
             "target": "tokio"
           }
         ],
-        "edition": "2024",
-        "extra_deps": [
-          "@scheda_cargo//:tokio"
-        ]
+        "edition": "2024"
       },
       "extra_aliased_targets": {
         "protocontract_protos": "protos"
@@ -24535,8 +24532,7 @@
         "crate_features": [
           "default",
           "encrypt",
-          "index",
-          "tokio"
+          "index"
         ],
         "deps": [
           {
@@ -24626,9 +24622,6 @@
     },
     "scheda-api 0.21.0": {
       "common_attrs": {
-        "crate_features": [
-          "tokio"
-        ],
         "deps": [
           {
             "id": "buffa 0.9.2",

@@ -56,12 +56,11 @@ message SchedaInfo {
 // A feature a build of Scheda may have.
 enum Feature {
   FEATURE_UNSPECIFIED = 0;
-  // The Index, the queries and counts, and the `Index` object.
-  FEATURE_FIND = 1;
-  // The searches, the vector leg, and the embedder and reranker ports.
-  FEATURE_SEARCH = 2;
+  // The Index: the queries, counts, and searches, the `Index` object, and
+  // the Projector, embedder, and reranker ports.
+  FEATURE_INDEX = 1;
   // Encrypted collections.
-  FEATURE_ENCRYPT = 3;
+  FEATURE_ENCRYPT = 2;
 }
 
 // The request of `Scheda.Open`. It has a Protobuf JSON form only without

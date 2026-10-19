@@ -98,12 +98,10 @@ cargo.annotation(
     repositories = ["scheda_cargo"],
 )
 
-# protocontract's `tokio` feature (the `Offload` / `Blocking` bridges) is
-# optional in Cargo, so the lock resolves without it. `scheda-api` builds
-# its tokio-gated traits under Bazel, so turn it on here. The crate also
-# ships `protocontract/v1/options.proto` under `proto/`, which the contract
-# imports: `@scheda_cargo//:protocontract_protos` exposes it to buf, in the
-# version of the crate the lock pins.
+# The crate ships `protocontract/v1/options.proto` under `proto/`, which the
+# contract imports: `@scheda_cargo//:protocontract_protos` exposes it to buf,
+# in the version of the crate the lock pins. (Its `tokio` feature, the
+# `Offload` / `Blocking` bridges, is on in `scheda-api`'s `Cargo.toml`.)
 cargo.annotation(
     additive_build_file_content = """\
 filegroup(
@@ -113,10 +111,8 @@ filegroup(
 )
 """,
     crate = "protocontract",
-    crate_features = ["tokio"],
     extra_aliased_targets = {"protocontract_protos": "protos"},
     repositories = ["scheda_cargo"],
-    deps = ["@scheda_cargo//:tokio"],
 )
 cargo.from_cargo(
     name = "scheda_cargo",

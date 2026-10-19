@@ -3,7 +3,7 @@
 //! [`Scheda`] opens a Vault and returns a reference to it
 //! ([`v1::vault_ref::VaultRef`]); the Vault gives its collections and its
 //! mirror the same way. A caller takes the form of an object it needs from
-//! its reference (`to_sync`, or with the `tokio` feature an async form) and
+//! its reference (`to_sync`, or an async form on a Tokio runtime) and
 //! calls the traits of the contract ([`v1::VaultSync`],
 //! [`v1::CollectionSync`], …).
 //!

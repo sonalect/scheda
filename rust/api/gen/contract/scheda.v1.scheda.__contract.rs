@@ -190,7 +190,6 @@ impl<T: SchedaSync> SchedaAsync for ::protocontract::Inline<T> {
         <T as SchedaSync>::open(Self::get_ref(self), vault_opening)
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: SchedaSync + 'static> SchedaAsync for ::protocontract::Offload<T> {
     fn info(
         &self,
@@ -215,7 +214,6 @@ impl<T: SchedaSync + 'static> SchedaAsync for ::protocontract::Offload<T> {
         Self::call(self, move |service| <T as SchedaSync>::open(service, vault_opening))
     }
 }
-#[cfg(feature = "tokio")]
 impl<T: SchedaAsync + 'static> SchedaSync for ::protocontract::Blocking<T> {
     fn info(
         &self,

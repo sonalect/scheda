@@ -42,7 +42,14 @@ fn new_vault(scratch: &Scratch) -> PathBuf {
     path
 }
 
-/// The Document `id` created in `collection` with `text` for its bytes.
+/// The state token a write returns for a Vault with no isolated collection:
+/// the commit `HEAD` names.
+fn head(path: &Path) -> String {
+    common_git(path, &["rev-parse", "HEAD"]).trim().to_owned()
+}
+
+/// The reply of creating the Document `id` in `collection` with `text` for
+/// its bytes: a `DocumentWriteResult`.
 fn put(path: &Path, collection: &str, id: &str, text: &str) -> Value {
     run_on_with(
         path,
@@ -257,6 +264,11 @@ fn the_cli_and_the_library_give_the_same_json_and_code() {
         info,
         serde_json::to_value(vault.info(Empty::default()).unwrap()).unwrap()
     );
+    assert_eq!(
+        info["version"],
+        json!(head(&path)),
+        "info prints the token of the stored state now"
+    );
 
     let cli = run_on(&path, &["collection", NOTES, "get", "--id", "a"]).json();
     let lib = serde_json::to_value(
@@ -291,10 +303,15 @@ fn writes_round_trip_with_a_note() {
     );
 
     let created = put(&path, NOTES, "a", "one");
-    assert_eq!(created["id"], "a");
-    assert_eq!(created["raw"], b64(b"one"));
+    assert_eq!(created["document"]["id"], "a");
+    assert_eq!(created["document"]["raw"], b64(b"one"));
+    assert_eq!(
+        created["version"],
+        json!(head(&path)),
+        "the reply carries the token of the commit the write made"
+    );
     assert_eq!(fs::read(file("a")).unwrap(), b"one");
-    let first = created["revision"].as_str().unwrap().to_owned();
+    let first = created["document"]["revision"].as_str().unwrap().to_owned();
 
     let updated = run_on_with(
         &path,
@@ -315,8 +332,10 @@ fn writes_round_trip_with_a_note() {
         },
     )
     .json();
-    assert_eq!(updated["raw"], b64(b"two"));
-    assert_ne!(updated["revision"], json!(first));
+    assert_eq!(updated["document"]["raw"], b64(b"two"));
+    assert_ne!(updated["document"]["revision"], json!(first));
+    assert_eq!(updated["version"], json!(head(&path)));
+    assert_ne!(updated["version"], created["version"]);
     assert_eq!(fs::read(file("a")).unwrap(), b"two");
 
     let stale = run_on_with(
@@ -367,7 +386,15 @@ fn writes_round_trip_with_a_note() {
         },
     )
     .json();
-    assert_eq!(kept["raw"], b64(b"two"), "the Document stored is returned");
+    assert_eq!(
+        kept["document"]["raw"],
+        b64(b"two"),
+        "the Document stored is returned"
+    );
+    assert_eq!(
+        kept["version"], updated["version"],
+        "nothing was stored: the token of the state found"
+    );
 
     let upsert = |text: &'static [u8]| {
         run_on_with(
@@ -380,8 +407,10 @@ fn writes_round_trip_with_a_note() {
         )
         .json()
     };
-    assert_eq!(upsert(b"bee")["raw"], b64(b"bee"));
-    assert_eq!(upsert(b"bee2")["raw"], b64(b"bee2"));
+    assert_eq!(upsert(b"bee")["document"]["raw"], b64(b"bee"));
+    let bee2 = upsert(b"bee2");
+    assert_eq!(bee2["document"]["raw"], b64(b"bee2"));
+    assert_eq!(bee2["version"], json!(head(&path)));
 
     let history = run_on(&path, &["collection", NOTES, "history", "--id", "a"]).lines();
     let notes: Vec<&Value> = history.iter().map(|entry| &entry["note"]).collect();
@@ -429,7 +458,11 @@ fn writes_round_trip_with_a_note() {
         &path,
         &["collection", NOTES, "delete", "--id", "a", "--note", "del"],
     );
-    assert_eq!(deleted.json(), json!({}));
+    assert_eq!(
+        deleted.json(),
+        json!({"version": head(&path)}),
+        "a deletion returns the token alone"
+    );
     assert!(!file("a").exists());
     let missing = run_on(
         &path,
@@ -449,7 +482,11 @@ fn writes_round_trip_with_a_note() {
             "--ignore-missing",
         ],
     );
-    assert_eq!(ignored.json(), json!({}));
+    assert_eq!(
+        ignored.json(),
+        json!({"version": head(&path)}),
+        "nothing was stored: the token of the state found"
+    );
     let get = run_on(&path, &["collection", NOTES, "get", "--id", "a"]);
     assert_eq!(get.code(), "VAULT_ERROR_CODE_NOT_FOUND");
 
@@ -768,6 +805,11 @@ fn batch_documents_and_collection_batch_are_all_or_nothing() {
     assert_eq!(results[0]["document"]["collection"], NOTES);
     assert_eq!(results[1]["document"]["collection"], "tc_pages");
     assert_eq!(results[2]["document"]["raw"], b64(b"ex2"));
+    assert_eq!(
+        ok["version"],
+        json!(head(&path)),
+        "the batch carries the token of its commit"
+    );
     assert_eq!(fs::read(path.join(NOTES).join("x")).unwrap(), b"ex2");
 
     let before = (tree(&path), commits(&path));
@@ -822,6 +864,7 @@ fn batch_documents_and_collection_batch_are_all_or_nothing() {
     )
     .json();
     assert_eq!(ok["results"].as_array().unwrap().len(), 2);
+    assert_eq!(ok["version"], json!(head(&path)));
     let before = (tree(&path), commits(&path));
     let bad = [own("create", "o", "eo"), own("update", "absent", "a")].join("\n");
     let failed = run_on_with(
@@ -1070,7 +1113,7 @@ fn encryption_flags_round_trip_and_the_secret_stays_off_the_output() {
         ],
         &with_pass,
     );
-    assert_eq!(created.json()["raw"], b64(b"sealed text"));
+    assert_eq!(created.json()["document"]["raw"], b64(b"sealed text"));
     let got = run_pass(
         &["collection", "tc_sealed", "get", "--id", "k"],
         &Setup {
@@ -1163,7 +1206,7 @@ fn encryption_flags_round_trip_and_the_secret_stays_off_the_output() {
             ..Setup::default()
         },
     );
-    assert_eq!(stored.json()["raw"], b64(b"id sealed"));
+    assert_eq!(stored.json()["document"]["raw"], b64(b"id sealed"));
     let back = run_id(
         &["collection", "tc_sealed", "get", "--id", "k"],
         &Setup::default(),

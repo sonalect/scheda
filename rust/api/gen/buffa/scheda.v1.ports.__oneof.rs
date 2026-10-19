@@ -49,7 +49,6 @@ pub mod index_value {
         Number(f64),
         Boolean(bool),
         TextList(::buffa::alloc::boxed::Box<super::super::super::index_value::TextList>),
-        Null(::buffa::alloc::boxed::Box<super::super::super::index_value::Null>),
     }
     impl ::buffa::Oneof for Value {}
     impl From<super::super::super::index_value::TextList> for Value {
@@ -60,16 +59,6 @@ pub mod index_value {
     impl From<super::super::super::index_value::TextList>
     for ::core::option::Option<Value> {
         fn from(v: super::super::super::index_value::TextList) -> Self {
-            Self::Some(Value::from(v))
-        }
-    }
-    impl From<super::super::super::index_value::Null> for Value {
-        fn from(v: super::super::super::index_value::Null) -> Self {
-            Self::Null(::buffa::alloc::boxed::Box::new(v))
-        }
-    }
-    impl From<super::super::super::index_value::Null> for ::core::option::Option<Value> {
-        fn from(v: super::super::super::index_value::Null) -> Self {
             Self::Some(Value::from(v))
         }
     }
@@ -98,9 +87,6 @@ pub mod index_value {
                 }
                 Self::TextList(v) => {
                     map.serialize_entry("textList", &**v)?;
-                }
-                Self::Null(v) => {
-                    map.serialize_entry("null", &**v)?;
                 }
             }
             map.end()

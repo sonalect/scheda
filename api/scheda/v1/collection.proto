@@ -49,28 +49,29 @@ service Collection {
 
   // Writes.
 
-  // Creates a Document and returns it as stored, with its revision. In a
-  // journal, appends a line. Present, `ALREADY_EXISTS`, or, with
-  // `keep_existing`, the Document already stored is returned and nothing
-  // is written.
-  rpc Create(DocumentCreation) returns (Document);
+  // Creates a Document and returns it as stored, with its revision, and
+  // the state token of the write. In a journal, appends a line. Present,
+  // `ALREADY_EXISTS`, or, with `keep_existing`, the Document already stored
+  // is returned and nothing is written.
+  rpc Create(DocumentCreation) returns (DocumentWriteResult);
 
-  // Replaces an existing Document and returns it as stored. Absent,
-  // `NOT_FOUND`. With `revision`, the stored revision must be that one, or
-  // `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes store
-  // nothing and keep the revision.
-  rpc Update(DocumentUpdate) returns (Document);
+  // Replaces an existing Document and returns it as stored, and the state
+  // token of the write. Absent, `NOT_FOUND`. With `revision`, the stored
+  // revision must be that one, or `FAILED_PRECONDITION`. A journal,
+  // `UNIMPLEMENTED`. The same bytes store nothing and keep the revision.
+  rpc Update(DocumentUpdate) returns (DocumentWriteResult);
 
   // Creates the Document, or replaces it when present, and returns it as
-  // stored. A journal, `UNIMPLEMENTED`. The same bytes store nothing and
-  // keep the revision.
-  rpc Upsert(DocumentUpsert) returns (Document);
+  // stored, and the state token of the write. A journal, `UNIMPLEMENTED`.
+  // The same bytes store nothing and keep the revision.
+  rpc Upsert(DocumentUpsert) returns (DocumentWriteResult);
 
-  // Deletes a Document. Absent, `NOT_FOUND`, or nothing with
-  // `ignore_missing`. With `revision`, the stored revision must be that
-  // one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
-  // line never leaves.
-  rpc Delete(DocumentDeletion) returns (google.protobuf.Empty);
+  // Deletes a Document and returns the state token of the write, with no
+  // `document`. Absent, `NOT_FOUND`, or nothing with `ignore_missing`. With
+  // `revision`, the stored revision must be that one, or
+  // `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal line never
+  // leaves.
+  rpc Delete(DocumentDeletion) returns (DocumentWriteResult);
 
   // Several Document writes as one: all happen, or none. An `Err` item, a
   // broken stream, or one write that fails, and none happened; the error
@@ -80,16 +81,22 @@ service Collection {
 
   // The Index.
 
-  // The Documents that match a condition: the exact set, in a stable
-  // order (`id`; a journal in append order), without scores. A lazy
-  // stream, read from one snapshot of the Index, so nothing written
-  // meanwhile moves it. An Index not built yet, `INDEX_REBUILDING`; one
-  // built by another Projector, `INDEX_STALE`. A build without `find`,
+  // The Documents that match a filter (`DocumentQuery.filter`): the
+  // exact set, in the order of the query (by default `id`; a journal in
+  // append order), without scores. The first item is a summary, with how
+  // many Documents match; then the Documents of the page. With
+  // `not_before`, it first waits for the Index to reach that state. The
+  // total and the keys of the page come from one snapshot of the Index,
+  // taken when the call starts, so nothing written meanwhile moves them;
+  // the Documents are read as the stream reaches them. An Index never
+  // built, `INDEX_REBUILDING`; one built for another Projector or embedder
+  // than this Vault's, `INDEX_STALE`. A build without `index`,
   // `UNIMPLEMENTED`.
-  rpc Query(DocumentQuery) returns (stream Document);
+  rpc Query(DocumentQuery) returns (stream QueryItem);
 
-  // How many Documents `Query` would give for the same query, counted in
-  // the Index without opening a file. The codes of `Query`.
+  // How many Documents the filter matches: the `QuerySummary.total` of
+  // `Query` for the same query, counted in the Index without opening a
+  // file. The codes of `Query`.
   rpc Count(DocumentQuery) returns (scheda.v1.Count);
 
   // The Documents that best fit a text, or a Document, by relevance: a
@@ -98,8 +105,10 @@ service Collection {
   // legs; then the hits, best first. A lazy stream: the ranking is
   // computed whole, the Documents are read as the stream reaches them. A
   // ranking is computed again by each call, so pages from two calls need
-  // not agree. An Index not built yet, `INDEX_REBUILDING`. A build without
-  // `search`, `UNIMPLEMENTED`.
+  // not agree. With `not_before`, it first waits for the Index to reach
+  // that state. An Index never built, `INDEX_REBUILDING`; one built for
+  // another Projector or embedder than this Vault's, `INDEX_STALE`. A build
+  // without `index`, `UNIMPLEMENTED`.
   rpc Search(DocumentSearch) returns (stream SearchItem);
 }
 
@@ -152,11 +161,14 @@ message Schema {
   // the Vault's secret. Independent of `isolated`. A journal may not set
   // it.
   bool encrypted = 5;
-  // No Document of this collection enters the lexical Index; a query that
-  // names it is refused, not answered empty. The journal id map is still
-  // kept. Redundant, and allowed, on `encrypted`, which no Index holds.
+  // The Index holds none of the columns of this collection, only its
+  // identity and, unless `exclude_vector_index`, its vectors: a query of
+  // it, or a search of it with a `filter`, is refused (`UNIMPLEMENTED`), not
+  // answered empty, and the lexical leg passes it by. The journal id map
+  // is still kept. Redundant, and allowed, on `encrypted`, which no Index
+  // holds.
   bool exclude_lexical_index = 6;
-  // No Document of this collection is embedded or enters the vector
+  // No Document of this collection is embedded or holds a vector in the
   // Index; the embedder is never called for it. Redundant, and allowed,
   // on `encrypted`.
   bool exclude_vector_index = 7;

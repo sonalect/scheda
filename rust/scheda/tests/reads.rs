@@ -66,6 +66,9 @@ fn put(collection: &Arc<dyn CollectionSync>, id: &str, raw: &str, note: &str) ->
                 .with_note(note),
         )
         .unwrap()
+        .document
+        .into_option()
+        .unwrap()
 }
 
 fn append(collection: &Arc<dyn CollectionSync>, id: &str, raw: &str) {

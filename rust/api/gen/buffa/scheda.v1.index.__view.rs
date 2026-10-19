@@ -230,23 +230,22 @@ impl ::serde::Serialize for IndexRefOwnedView {
 /// Where the Index stands.
 #[derive(Clone, Debug, Default)]
 pub struct IndexStateView<'a> {
-    /// The stored state of the Vault the Index has reached: the state `HEAD`
-    /// named, in the Vault and in its isolated repository, when the Index last
-    /// finished a round. The Index has one such state for all its parts, and
-    /// none while it is not built yet (before the first round ends, and while
-    /// a rebuild runs). Equal tokens are the same state; the token means
-    /// nothing else.
+    /// The stored state of the Vault the Index reflects, as a state token: the
+    /// state `HEAD` named, in the Vault and in its isolated repository, when
+    /// the Index last finished a round. Every collection of the Index is at
+    /// this state. Unset only before the first build of the Index ends; a
+    /// rebuild leaves it at the state of the live Index until the switch.
     ///
     /// Field 1: `version`
     pub version: ::core::option::Option<&'a str>,
-    /// The files the Index has yet to read to reach the stored state of the
-    /// Vault, while a round or a rebuild runs: the files of declared
-    /// collections that changed since `version`, and every file of a
-    /// collection whose declaration changed. It counts files, not Documents:
-    /// a journal segment is one file however many lines it holds, so that
-    /// the count needs no read of the segments. `0` when the Index is where
-    /// this Vault last found the stored state; unset when the files could not be
-    /// counted (`last_error` then says why).
+    /// The files the Index has yet to read to reach `stored_version`, while a
+    /// round or a rebuild runs: the files of declared collections that changed
+    /// since `version`, and every file of a collection being built again. It
+    /// counts files, not Documents: a journal segment is one file however many
+    /// lines it holds, so that the count needs no read of the segments. `0`
+    /// when the Index is at `stored_version`. Counted by the Vault that indexes
+    /// (`role`); unset in the others, and when the files could not be counted
+    /// (`last_error` then says why).
     ///
     /// Field 2: `pending`
     pub pending: ::core::option::Option<u64>,
@@ -256,29 +255,28 @@ pub struct IndexStateView<'a> {
     ///
     /// Field 3: `role`
     pub role: ::core::option::Option<bool>,
-    /// This Vault's embedder is of another model or length than the vectors
-    /// of the Index: it writes no vector, and its searches run without the
-    /// vector leg, rather than mix two models. `Reindex` moves the Index to
-    /// it.
-    ///
-    /// Field 4: `model_mismatch`
-    pub model_mismatch: ::core::option::Option<bool>,
     /// The last rebuild this Vault's indexer ran, while it runs and after it
-    /// ends: one `Reindex` asked for, or the building of an Index that did not
-    /// exist or was made in another format. Unset when this Vault ran none.
+    /// ends. Unset when this Vault ran none.
     ///
-    /// Field 5: `rebuild`
+    /// Field 4: `rebuild`
     pub rebuild: ::buffa::MessageFieldView<super::super::__buffa::view::RebuildView<'a>>,
     /// The failure of this Vault's last indexing round; unset after a round
     /// that succeeds. A failed round changes no version and fails no write; the
-    /// indexer tries it again after a pause. `INDEX_STALE` while the Index was
-    /// built by a Projector of another projection than this Vault's: the Vault
-    /// then does not index until its own `Reindex`.
+    /// indexer tries it again after a pause. `INDEX_STALE` while the Index
+    /// was built for another Projector or embedder than this Vault's: the
+    /// Vault then does not index until a `Reindex`.
     ///
-    /// Field 6: `last_error`
+    /// Field 5: `last_error`
     pub last_error: ::buffa::MessageFieldView<
         super::super::__buffa::view::ErrorReportView<'a>,
     >,
+    /// The stored state of the Vault now, as a state token: what `HEAD` names
+    /// in the Vault and in its isolated repository, read when this state was
+    /// made. The Index is behind while `version` differs from `stored_version`.
+    /// Set in every Vault, whether it indexes or not.
+    ///
+    /// Field 6: `stored_version`
+    pub stored_version: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
@@ -335,13 +333,6 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
             4u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                view.model_mismatch = Some(::buffa::types::decode_bool(&mut cur)?);
-            }
-            5u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
                     ::buffa::encoding::WireType::LengthDelimited,
                 )?;
                 let __sub_ctx = ctx.descend()?;
@@ -360,7 +351,7 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
                     }
                 }
             }
-            6u32 => {
+            5u32 => {
                 ::buffa::encoding::check_wire_type(
                     tag,
                     ::buffa::encoding::WireType::LengthDelimited,
@@ -380,6 +371,13 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
                         );
                     }
                 }
+            }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.stored_version = Some(::buffa::types::borrow_str(&mut cur)?);
             }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
@@ -406,7 +404,6 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
             version: self.version.map(|s| s.to_string()),
             pending: self.pending,
             role: self.role,
-            model_mismatch: self.model_mismatch,
             rebuild: match self.rebuild.as_option() {
                 Some(v) => {
                     ::buffa::MessageField::<
@@ -425,6 +422,7 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
                 }
                 None => ::buffa::MessageField::none(),
             },
+            stored_version: self.stored_version.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -445,9 +443,6 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         if self.role.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
-        if self.model_mismatch.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
         if self.rebuild.is_set() {
             let __slot = __cache.reserve();
             let inner_size = self.rebuild.compute_size(__cache);
@@ -463,6 +458,9 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
             size
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
+        }
+        if let Some(ref v) = self.stored_version {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
@@ -484,12 +482,9 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         if let Some(v) = self.role {
             ::buffa::types::put_bool_field(3u32, v, buf);
         }
-        if let Some(v) = self.model_mismatch {
-            ::buffa::types::put_bool_field(4u32, v, buf);
-        }
         if self.rebuild.is_set() {
             ::buffa::types::put_len_delimited_header(
-                5u32,
+                4u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
@@ -497,11 +492,14 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         }
         if self.last_error.is_set() {
             ::buffa::types::put_len_delimited_header(
-                6u32,
+                5u32,
                 u64::from(__cache.consume_next()),
                 buf,
             );
             self.last_error.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.stored_version {
+            ::buffa::types::put_string_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -533,9 +531,6 @@ impl<'__a> ::serde::Serialize for IndexStateView<'__a> {
         if let ::core::option::Option::Some(__v) = self.role {
             __map.serialize_entry("role", &__v)?;
         }
-        if let ::core::option::Option::Some(__v) = self.model_mismatch {
-            __map.serialize_entry("modelMismatch", &__v)?;
-        }
         {
             if let ::core::option::Option::Some(__v) = self.rebuild.as_option() {
                 __map.serialize_entry("rebuild", __v)?;
@@ -545,6 +540,9 @@ impl<'__a> ::serde::Serialize for IndexStateView<'__a> {
             if let ::core::option::Option::Some(__v) = self.last_error.as_option() {
                 __map.serialize_entry("lastError", __v)?;
             }
+        }
+        if let ::core::option::Option::Some(__v) = self.stored_version {
+            __map.serialize_entry("storedVersion", __v)?;
         }
         __map.end()
     }
@@ -637,26 +635,25 @@ impl IndexStateOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// The stored state of the Vault the Index has reached: the state `HEAD`
-    /// named, in the Vault and in its isolated repository, when the Index last
-    /// finished a round. The Index has one such state for all its parts, and
-    /// none while it is not built yet (before the first round ends, and while
-    /// a rebuild runs). Equal tokens are the same state; the token means
-    /// nothing else.
+    /// The stored state of the Vault the Index reflects, as a state token: the
+    /// state `HEAD` named, in the Vault and in its isolated repository, when
+    /// the Index last finished a round. Every collection of the Index is at
+    /// this state. Unset only before the first build of the Index ends; a
+    /// rebuild leaves it at the state of the live Index until the switch.
     ///
     /// Field 1: `version`
     #[must_use]
     pub fn version(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().version
     }
-    /// The files the Index has yet to read to reach the stored state of the
-    /// Vault, while a round or a rebuild runs: the files of declared
-    /// collections that changed since `version`, and every file of a
-    /// collection whose declaration changed. It counts files, not Documents:
-    /// a journal segment is one file however many lines it holds, so that
-    /// the count needs no read of the segments. `0` when the Index is where
-    /// this Vault last found the stored state; unset when the files could not be
-    /// counted (`last_error` then says why).
+    /// The files the Index has yet to read to reach `stored_version`, while a
+    /// round or a rebuild runs: the files of declared collections that changed
+    /// since `version`, and every file of a collection being built again. It
+    /// counts files, not Documents: a journal segment is one file however many
+    /// lines it holds, so that the count needs no read of the segments. `0`
+    /// when the Index is at `stored_version`. Counted by the Vault that indexes
+    /// (`role`); unset in the others, and when the files could not be counted
+    /// (`last_error` then says why).
     ///
     /// Field 2: `pending`
     #[must_use]
@@ -672,21 +669,10 @@ impl IndexStateOwnedView {
     pub fn role(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().role
     }
-    /// This Vault's embedder is of another model or length than the vectors
-    /// of the Index: it writes no vector, and its searches run without the
-    /// vector leg, rather than mix two models. `Reindex` moves the Index to
-    /// it.
-    ///
-    /// Field 4: `model_mismatch`
-    #[must_use]
-    pub fn model_mismatch(&self) -> ::core::option::Option<bool> {
-        self.0.reborrow().model_mismatch
-    }
     /// The last rebuild this Vault's indexer ran, while it runs and after it
-    /// ends: one `Reindex` asked for, or the building of an Index that did not
-    /// exist or was made in another format. Unset when this Vault ran none.
+    /// ends. Unset when this Vault ran none.
     ///
-    /// Field 5: `rebuild`
+    /// Field 4: `rebuild`
     #[must_use]
     pub fn rebuild(
         &self,
@@ -695,16 +681,26 @@ impl IndexStateOwnedView {
     }
     /// The failure of this Vault's last indexing round; unset after a round
     /// that succeeds. A failed round changes no version and fails no write; the
-    /// indexer tries it again after a pause. `INDEX_STALE` while the Index was
-    /// built by a Projector of another projection than this Vault's: the Vault
-    /// then does not index until its own `Reindex`.
+    /// indexer tries it again after a pause. `INDEX_STALE` while the Index
+    /// was built for another Projector or embedder than this Vault's: the
+    /// Vault then does not index until a `Reindex`.
     ///
-    /// Field 6: `last_error`
+    /// Field 5: `last_error`
     #[must_use]
     pub fn last_error(
         &self,
     ) -> &::buffa::MessageFieldView<super::super::__buffa::view::ErrorReportView<'_>> {
         &self.0.reborrow().last_error
+    }
+    /// The stored state of the Vault now, as a state token: what `HEAD` names
+    /// in the Vault and in its isolated repository, read when this state was
+    /// made. The Index is behind while `version` differs from `stored_version`.
+    /// Set in every Vault, whether it indexes or not.
+    ///
+    /// Field 6: `stored_version`
+    #[must_use]
+    pub fn stored_version(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().stored_version
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<IndexStateView<'static>>>
@@ -737,10 +733,13 @@ impl ::serde::Serialize for IndexStateOwnedView {
         ::serde::Serialize::serialize(&self.0, __s)
     }
 }
-/// A rebuild of the Index: the Index made again from nothing. `Reindex` asks
-/// for one; an Index not built yet, or built in a format this version does
-/// not read, is rebuilt the same way. While it runs the Index has no
-/// `version`, and a query is `INDEX_REBUILDING`.
+/// A rebuild of the Index: a new Index made from the stored Documents,
+/// beside the live one. While it runs, queries and searches answer from the
+/// live Index, which stays at its `version`: the writes made meanwhile
+/// appear at the switch, and a `not_before` past that version waits for
+/// it. At its end the Vault switches to the new Index in one step, and
+/// removes the old one an hour later. An Index never built has no live
+/// one: its queries and searches are `INDEX_REBUILDING`.
 #[derive(Clone, Debug, Default)]
 pub struct RebuildView<'a> {
     /// Field 1: `stage`
@@ -763,6 +762,10 @@ pub struct RebuildView<'a> {
     pub error: ::buffa::MessageFieldView<
         super::super::__buffa::view::ErrorReportView<'a>,
     >,
+    /// Why it runs.
+    ///
+    /// Field 6: `cause`
+    pub cause: ::core::option::Option<::buffa::EnumValue<super::super::rebuild::Cause>>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for RebuildView<'a> {
@@ -846,6 +849,15 @@ impl<'a> ::buffa::MessageView<'a> for RebuildView<'a> {
                     }
                 }
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.cause = Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(&mut cur)?),
+                );
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -881,6 +893,7 @@ impl<'a> ::buffa::MessageView<'a> for RebuildView<'a> {
                 }
                 None => ::buffa::MessageField::none(),
             },
+            cause: self.cause,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -912,6 +925,9 @@ impl<'a> ::buffa::ViewEncode<'a> for RebuildView<'a> {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(ref v) = self.cause {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -942,6 +958,9 @@ impl<'a> ::buffa::ViewEncode<'a> for RebuildView<'a> {
                 buf,
             );
             self.error.write_to(__cache, buf);
+        }
+        if let Some(ref v) = self.cause {
+            ::buffa::types::put_int32_field(6u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -992,6 +1011,9 @@ impl<'__a> ::serde::Serialize for RebuildView<'__a> {
             if let ::core::option::Option::Some(__v) = self.error.as_option() {
                 __map.serialize_entry("error", __v)?;
             }
+        }
+        if let ::core::option::Option::Some(ref __v) = self.cause {
+            __map.serialize_entry("cause", __v)?;
         }
         __map.end()
     }
@@ -1118,6 +1140,15 @@ impl RebuildOwnedView {
         &self,
     ) -> &::buffa::MessageFieldView<super::super::__buffa::view::ErrorReportView<'_>> {
         &self.0.reborrow().error
+    }
+    /// Why it runs.
+    ///
+    /// Field 6: `cause`
+    #[must_use]
+    pub fn cause(
+        &self,
+    ) -> ::core::option::Option<::buffa::EnumValue<super::super::rebuild::Cause>> {
+        self.0.reborrow().cause
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<RebuildView<'static>>>

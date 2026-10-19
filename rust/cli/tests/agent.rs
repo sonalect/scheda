@@ -230,7 +230,8 @@ fn writes_cannot_bypass_the_schema() {
             &payload,
         ],
     );
-    assert_eq!(ok.json()["id"], "main");
+    assert_eq!(ok.json()["document"]["id"], "main");
+    assert!(ok.json()["version"].is_string(), "{}", ok.stdout);
     let listing = run_on(
         &path,
         &["collection", "ag_one", "get-many", "--include-raw"],
@@ -242,7 +243,7 @@ fn writes_cannot_bypass_the_schema() {
         &["collection", "ag_log", "create", "--id", "l", "--note", "n"],
         b"one line",
     );
-    assert_eq!(line.json()["collection"], "ag_log");
+    assert_eq!(line.json()["document"]["collection"], "ag_log");
 }
 
 #[test]

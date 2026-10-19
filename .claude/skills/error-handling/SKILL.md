@@ -31,6 +31,7 @@ in a new code.
 | `FAILED_PRECONDITION` | no | stored state is not what the request requires (revision) |
 | `UNIMPLEMENTED` | no | unsupported call, or a feature the build lacks |
 | `ABORTED` | yes | the write lock was held for the whole write timeout, or `HEAD` moved under a write |
+| `DEADLINE_EXCEEDED` | yes | a wait the caller bounded ran out (a query's `not_before` past `index_wait_timeout_ms`) |
 | `UNAVAILABLE` | yes | mirror, network, port |
 | `UNAUTHENTICATED` | no | mirror refused the credentials |
 | `NOT_A_VAULT` | no | path holds no Vault |

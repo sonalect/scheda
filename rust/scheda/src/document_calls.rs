@@ -26,14 +26,15 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use buffa::MessageField;
 use buffa_types::google::protobuf::Empty;
 use protocontract::BoxIter;
 use scheda_api::v1::document_operation::Operation;
 use scheda_api::v1::document_result::Result as ResultArm;
 use scheda_api::v1::{
     Document, DocumentBatchResult, DocumentCreation, DocumentDeletion, DocumentId,
-    DocumentOperation, DocumentResult, DocumentUpdate, DocumentUpsert, Encryption,
-    VaultDocumentOperation, VaultErrorCode,
+    DocumentOperation, DocumentResult, DocumentUpdate, DocumentUpsert, DocumentWriteResult,
+    Encryption, VaultDocumentOperation, VaultErrorCode,
 };
 use serde_json::json;
 
@@ -63,8 +64,12 @@ pub(crate) struct Writes {
 }
 
 impl Writes {
+    /// Whether the call holds no write at all: an empty batch.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.writes.is_empty()
+    }
+
     /// The one write `request` asks for in `collection`.
-    #[cfg(feature = "tokio")]
     pub(crate) fn one(collection: &str, request: impl Into<Request>) -> Writes {
         Writes {
             writes: vec![Write::new(collection, request.into())],
@@ -212,6 +217,17 @@ enum Draft {
 enum Outcome {
     Document(Document),
     Deleted,
+}
+
+/// What a call of writes did, once it is stored.
+struct Written {
+    /// One outcome per write, in order.
+    outcomes: Vec<Outcome>,
+    /// The state token of the Vault once the call is stored, read under the
+    /// write lock the call held; of the state the call found when it stored
+    /// nothing. A call with no write at all takes no lock and reads the
+    /// state now ([`Vault::state_now`](crate::vault::Vault::state_now)).
+    version: String,
 }
 
 fn invalid(message: impl Into<String>) -> Fault {
@@ -488,9 +504,9 @@ impl crate::vault::Vault {
     }
 
     /// Creates a Document in `collection` and returns it as stored, with its
-    /// revision. In a journal, appends a line. Present, `ALREADY_EXISTS`,
-    /// or, with `keep_existing`, the Document already stored is returned and
-    /// nothing is written.
+    /// revision, and the state token of the write. In a journal, appends a
+    /// line. Present, `ALREADY_EXISTS`, or, with `keep_existing`, the
+    /// Document already stored is returned and nothing is written.
     ///
     /// The request is checked before the write lock is taken: it validates
     /// (an `id` and a `note`, not empty), the collection is declared, the id
@@ -511,15 +527,15 @@ impl crate::vault::Vault {
         &self,
         collection: &str,
         document_creation: DocumentCreation,
-    ) -> Result<Document, Error> {
+    ) -> Result<DocumentWriteResult, Error> {
         self.write_document(
             None,
             Write::new(collection, Request::Create(document_creation)),
         )
     }
 
-    /// Replaces an existing Document and returns it as stored. Absent,
-    /// `NOT_FOUND`. With `revision`, the stored revision must be that one,
+    /// Replaces an existing Document and returns it as stored, and the state
+    /// token of the write. Absent, `NOT_FOUND`. With `revision`, the stored revision must be that one,
     /// or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`. The same bytes
     /// store nothing and keep the revision.
     ///
@@ -531,7 +547,7 @@ impl crate::vault::Vault {
         &self,
         collection: &str,
         document_update: DocumentUpdate,
-    ) -> Result<Document, Error> {
+    ) -> Result<DocumentWriteResult, Error> {
         self.write_document(
             None,
             Write::new(collection, Request::Update(document_update)),
@@ -539,8 +555,8 @@ impl crate::vault::Vault {
     }
 
     /// Creates the Document, or replaces it when present, and returns it as
-    /// stored. A journal, `UNIMPLEMENTED`. The same bytes store nothing and
-    /// keep the revision.
+    /// stored, and the state token of the write. A journal, `UNIMPLEMENTED`.
+    /// The same bytes store nothing and keep the revision.
     ///
     /// # Errors
     ///
@@ -550,15 +566,16 @@ impl crate::vault::Vault {
         &self,
         collection: &str,
         document_upsert: DocumentUpsert,
-    ) -> Result<Document, Error> {
+    ) -> Result<DocumentWriteResult, Error> {
         self.write_document(
             None,
             Write::new(collection, Request::Upsert(document_upsert)),
         )
     }
 
-    /// Deletes a Document. Absent, `NOT_FOUND`, or nothing with
-    /// `ignore_missing`. With `revision`, the stored revision must be that
+    /// Deletes a Document and returns the state token of the write, with no
+    /// Document. Absent, `NOT_FOUND`, or nothing with `ignore_missing`. With
+    /// `revision`, the stored revision must be that
     /// one, or `FAILED_PRECONDITION`. A journal, `UNIMPLEMENTED`: a journal
     /// line never leaves.
     ///
@@ -569,12 +586,11 @@ impl crate::vault::Vault {
         &self,
         collection: &str,
         document_deletion: DocumentDeletion,
-    ) -> Result<Empty, Error> {
+    ) -> Result<DocumentWriteResult, Error> {
         self.write_document(
             None,
             Write::new(collection, Request::Delete(document_deletion)),
         )
-        .map(|_| Empty::default())
     }
 
     /// Several Document writes in `collection` as one: all happen, or none.
@@ -617,15 +633,18 @@ impl crate::vault::Vault {
         self.write_batch(None, Writes::of_vault(operations)?)
     }
 
-    /// A batch applied as one commit, with the results in order.
+    /// A batch applied as one commit, with the results in order and the
+    /// state token of the commit.
     fn write_batch(
         &self,
         held: Option<Held>,
         writes: Writes,
     ) -> Result<DocumentBatchResult, Error> {
-        let outcomes = self.write_documents(held, writes.writes, writes.indexed)?;
+        let written = self.write_documents(held, writes.writes, writes.indexed)?;
         Ok(DocumentBatchResult {
-            results: outcomes
+            version: Some(written.version),
+            results: written
+                .outcomes
                 .into_iter()
                 .map(|outcome| DocumentResult {
                     result: Some(match outcome {
@@ -653,7 +672,6 @@ impl crate::vault::Vault {
     ///
     /// The errors of the write calls that need no lock: `INVALID_ARGUMENT`,
     /// `NOT_FOUND`, `UNIMPLEMENTED`, `CRYPTO`.
-    #[cfg(feature = "tokio")]
     pub(crate) fn precheck_documents(&self, writes: Writes) -> Result<Writes, Error> {
         if !writes.writes.is_empty() {
             self.inspect_writes(&writes.writes, writes.indexed)?;
@@ -663,12 +681,11 @@ impl crate::vault::Vault {
 
     /// The one write of `writes`, as the single calls make it, under a write
     /// lock the caller already waited for.
-    #[cfg(feature = "tokio")]
     pub(crate) fn write_document_held(
         &self,
         held: Held,
         writes: Writes,
-    ) -> Result<Document, Error> {
+    ) -> Result<DocumentWriteResult, Error> {
         match writes.writes.into_iter().next() {
             Some(write) => self.write_document(Some(held), write),
             None => Err(storage("the write holds no request").into()),
@@ -677,13 +694,18 @@ impl crate::vault::Vault {
 
     /// The batch `writes`, under a write lock the caller already waited
     /// for.
-    #[cfg(feature = "tokio")]
     pub(crate) fn write_documents_held(
         &self,
         held: Held,
         writes: Writes,
     ) -> Result<DocumentBatchResult, Error> {
         self.write_batch(Some(held), writes)
+    }
+
+    /// The batch `writes` when it holds no write: it stores nothing, takes
+    /// no lock, and answers with the state now, as the sync call does.
+    pub(crate) fn write_no_documents(&self, writes: Writes) -> Result<DocumentBatchResult, Error> {
+        self.write_batch(None, writes)
     }
 
     /// Validates every write and inspects them against the declarations now.
@@ -703,14 +725,24 @@ impl crate::vault::Vault {
         Ok((inspected, repo, before))
     }
 
-    /// One write, as the single calls make it.
-    fn write_document(&self, held: Option<Held>, write: Write) -> Result<Document, Error> {
-        let mut outcomes = self.write_documents(held, vec![write], false)?;
-        match outcomes.pop() {
-            Some(Outcome::Document(document)) => Ok(document),
-            Some(Outcome::Deleted) => Ok(Document::default()),
-            None => Err(storage("the write returned nothing").into()),
-        }
+    /// One write, as the single calls make it: the Document as stored (none
+    /// after a deletion) and the state token of the write.
+    fn write_document(
+        &self,
+        held: Option<Held>,
+        write: Write,
+    ) -> Result<DocumentWriteResult, Error> {
+        let mut written = self.write_documents(held, vec![write], false)?;
+        let document = match written.outcomes.pop() {
+            Some(Outcome::Document(document)) => document.into(),
+            Some(Outcome::Deleted) => MessageField::none(),
+            None => return Err(storage("the write returned nothing").into()),
+        };
+        Ok(DocumentWriteResult {
+            document,
+            version: Some(written.version),
+            ..Default::default()
+        })
     }
 
     /// The writes as one commit. `indexed` puts the position of a failing
@@ -720,26 +752,36 @@ impl crate::vault::Vault {
         held: Option<Held>,
         writes: Vec<Write>,
         indexed: bool,
-    ) -> Result<Vec<Outcome>, Error> {
-        let (outcomes, pushable) = self.write_documents_locked(held, writes, indexed)?;
+    ) -> Result<Written, Error> {
+        let (written, pushable) = self.write_documents_locked(held, writes, indexed)?;
         // The write lock is let go: a push waits for no writer.
         if pushable {
             self.push_after_write();
         }
-        Ok(outcomes)
+        Ok(written)
     }
 
     /// The writes as one commit under the write lock, which is let go when
-    /// this returns. Also says whether a commit of the main repository was
-    /// made: only then is there anything to push.
+    /// this returns. The state token of the call is read under that lock:
+    /// the commit the call made in its repository and `HEAD` of the other
+    /// one, or, when the call stored nothing, the state its checks found.
+    /// An empty call stores nothing and waits for no lock: its token is the
+    /// state now, read without the lock as `Vault.Info` reads it. Also says
+    /// whether a commit of the main repository was made: only then is there
+    /// anything to push.
     fn write_documents_locked(
         &self,
         held: Option<Held>,
         writes: Vec<Write>,
         indexed: bool,
-    ) -> Result<(Vec<Outcome>, bool), Error> {
+    ) -> Result<(Written, bool), Error> {
         if writes.is_empty() {
-            return Ok((Vec::new(), false));
+            // Nothing to store, so no lock.
+            let written = Written {
+                outcomes: Vec::new(),
+                version: self.state_now()?.token(),
+            };
+            return Ok((written, false));
         }
         let encryption = self.encryption();
         let (mut inspected, mut repo, before) = self.inspect_writes(&writes, indexed)?;
@@ -777,7 +819,9 @@ impl crate::vault::Vault {
                 .into_iter()
                 .map(|draft| draft.settle(None))
                 .collect::<Result<_, _>>()?;
-            return Ok((outcomes, false));
+            // Nothing is stored: the state the checks found.
+            let version = lock.state_after(repo, snap.commit())?.token();
+            return Ok((Written { outcomes, version }, false));
         }
         if repo == Repo::Isolated {
             isolated::ensure(self.path())?;
@@ -795,12 +839,15 @@ impl crate::vault::Vault {
         if repo == Repo::Main {
             self.remember(head, declarations)?;
         }
+        // The commit this call made (or, if the tree did not change, the one
+        // it found), and `HEAD` of the other repository, under the lock.
+        let version = lock.state_after(repo, head)?.token();
         let mut files = take_files(&drafts, changes);
         let outcomes = drafts
             .into_iter()
             .map(|draft| draft.settle(Some(&mut files)))
             .collect::<Result<_, _>>()?;
-        Ok((outcomes, pushable))
+        Ok((Written { outcomes, version }, pushable))
     }
 }
 

@@ -103,8 +103,9 @@ fn scheda_info_gives_the_version_and_the_features_of_the_build() {
         .iter()
         .filter_map(|feature| feature.as_known())
         .collect();
-    assert!(!features.contains(&Feature::FEATURE_FIND));
-    assert!(!features.contains(&Feature::FEATURE_SEARCH));
+    // The Index is listed once it exists, whether or not the build has the
+    // feature `index`.
+    assert!(!features.contains(&Feature::FEATURE_INDEX));
     assert_eq!(
         features.contains(&Feature::FEATURE_ENCRYPT),
         cfg!(feature = "encrypt")

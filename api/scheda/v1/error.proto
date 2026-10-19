@@ -46,11 +46,16 @@ enum VaultErrorCode {
   VAULT_ERROR_CODE_MIRROR_CONFLICT = 13;
   // A file holds an unfinished merge. Resolve it by hand.
   VAULT_ERROR_CODE_UNRESOLVED_CONFLICT = 14;
-  // The Index has not been built yet, or is moving to a new format.
-  // Retryable soon; `Index.Watch` says when.
+  // The Index has not been built yet: its first build runs, and there is
+  // no Index to answer from (a new Vault, or an Index of an earlier version
+  // of Scheda, removed). Retryable soon; `Index.Watch` says when. A rebuild
+  // of a built Index never gives it.
   VAULT_ERROR_CODE_INDEX_REBUILDING = 15;
-  // The Index was built by a Projector of another projection, or with
-  // other columns, than this Vault's. `Index.Reindex`.
+  // The Index was built by a Projector of another projection, with other
+  // columns, or with an embedder of another model or vector length, than
+  // this Vault's. The Vault does not index, and its queries and searches
+  // fail with this code, until an `Index.Reindex` of a Vault with these
+  // ports has switched the Index to them.
   VAULT_ERROR_CODE_INDEX_STALE = 16;
   // The Index is damaged. `Index.Reindex`.
   VAULT_ERROR_CODE_INDEX_BROKEN = 17;
@@ -59,6 +64,10 @@ enum VaultErrorCode {
   VAULT_ERROR_CODE_STORAGE = 18;
   // Exchanging writes with the mirror failed otherwise.
   VAULT_ERROR_CODE_REPLICATION = 19;
+  // A query, a count, or a search with `not_before`: the Index did not
+  // reach that state within `OpenOptions.index_wait_timeout_ms`. Retryable;
+  // `Index.Status` says where the Index stands.
+  VAULT_ERROR_CODE_DEADLINE_EXCEEDED = 20;
 }
 
 // A failure, as a transport (the CLI, a status) carries it. The library

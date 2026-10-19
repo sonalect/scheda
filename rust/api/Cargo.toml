@@ -11,14 +11,10 @@ description = "Contract of Scheda: the messages and service traits generated fro
 [lib]
 path = "lib.rs"
 
-[features]
-# The `Offload` and `Blocking` bridges and the async forms of the traits.
-tokio = ["protocontract/tokio"]
-
 [dependencies]
 buffa = { workspace = true }
 buffa-types = { workspace = true }
-protocontract = { workspace = true }
+protocontract = { workspace = true, features = ["tokio"] }
 protovalidate-buffa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

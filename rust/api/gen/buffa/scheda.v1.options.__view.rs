@@ -61,6 +61,20 @@ pub struct OpenOptionsView<'a> {
     ///
     /// Field 9: `signing`
     pub signing: ::buffa::MessageFieldView<super::super::__buffa::view::SigningView<'a>>,
+    /// How long a query, a count, or a search with `not_before` waits for the
+    /// Index to reach that state, in milliseconds. Past it the call is
+    /// `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait at once, with
+    /// `FAILED_PRECONDITION`. Unset: 60000.
+    ///
+    /// Field 10: `index_wait_timeout_ms`
+    pub index_wait_timeout_ms: ::core::option::Option<u32>,
+    /// How deep a `Filter` of this Vault's queries and searches may nest: a
+    /// leaf is one level, each `all_of`, `any_of`, or `none_of` one more.
+    /// Deeper, `INVALID_ARGUMENT`. Unset: 32. At most 100, a depth every step
+    /// that walks a Filter is tested to take on a 2 MiB thread stack.
+    ///
+    /// Field 11: `filter_max_depth`
+    pub filter_max_depth: ::core::option::Option<u32>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
@@ -200,6 +214,22 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                     }
                 }
             }
+            10u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.index_wait_timeout_ms = Some(
+                    ::buffa::types::decode_uint32(&mut cur)?,
+                );
+            }
+            11u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.filter_max_depth = Some(::buffa::types::decode_uint32(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -255,6 +285,8 @@ impl<'a> ::buffa::MessageView<'a> for OpenOptionsView<'a> {
                 }
                 None => ::buffa::MessageField::none(),
             },
+            index_wait_timeout_ms: self.index_wait_timeout_ms,
+            filter_max_depth: self.filter_max_depth,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -308,6 +340,12 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
                 += 1u64 + ::buffa::encoding::varint_len(inner_size as u64) as u64
                     + inner_size as u64;
         }
+        if let Some(v) = self.index_wait_timeout_ms {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
+        if let Some(v) = self.filter_max_depth {
+            size += 1u64 + ::buffa::types::uint32_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -360,6 +398,12 @@ impl<'a> ::buffa::ViewEncode<'a> for OpenOptionsView<'a> {
                 buf,
             );
             self.signing.write_to(__cache, buf);
+        }
+        if let Some(v) = self.index_wait_timeout_ms {
+            ::buffa::types::put_uint32_field(10u32, v, buf);
+        }
+        if let Some(v) = self.filter_max_depth {
+            ::buffa::types::put_uint32_field(11u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -422,6 +466,20 @@ impl<'__a> ::serde::Serialize for OpenOptionsView<'__a> {
             if let ::core::option::Option::Some(__v) = self.signing.as_option() {
                 __map.serialize_entry("signing", __v)?;
             }
+        }
+        if let ::core::option::Option::Some(__v) = self.index_wait_timeout_ms {
+            __map
+                .serialize_entry(
+                    "indexWaitTimeoutMs",
+                    &::buffa::json_helpers::ProtoJson(&__v),
+                )?;
+        }
+        if let ::core::option::Option::Some(__v) = self.filter_max_depth {
+            __map
+                .serialize_entry(
+                    "filterMaxDepth",
+                    &::buffa::json_helpers::ProtoJson(&__v),
+                )?;
         }
         __map.end()
     }
@@ -603,6 +661,26 @@ impl OpenOptionsOwnedView {
         &self,
     ) -> &::buffa::MessageFieldView<super::super::__buffa::view::SigningView<'_>> {
         &self.0.reborrow().signing
+    }
+    /// How long a query, a count, or a search with `not_before` waits for the
+    /// Index to reach that state, in milliseconds. Past it the call is
+    /// `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait at once, with
+    /// `FAILED_PRECONDITION`. Unset: 60000.
+    ///
+    /// Field 10: `index_wait_timeout_ms`
+    #[must_use]
+    pub fn index_wait_timeout_ms(&self) -> ::core::option::Option<u32> {
+        self.0.reborrow().index_wait_timeout_ms
+    }
+    /// How deep a `Filter` of this Vault's queries and searches may nest: a
+    /// leaf is one level, each `all_of`, `any_of`, or `none_of` one more.
+    /// Deeper, `INVALID_ARGUMENT`. Unset: 32. At most 100, a depth every step
+    /// that walks a Filter is tested to take on a 2 MiB thread stack.
+    ///
+    /// Field 11: `filter_max_depth`
+    #[must_use]
+    pub fn filter_max_depth(&self) -> ::core::option::Option<u32> {
+        self.0.reborrow().filter_max_depth
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<OpenOptionsView<'static>>>

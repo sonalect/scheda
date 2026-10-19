@@ -3,12 +3,11 @@ load("//bazel:rustdoc_pages.bzl", "rustdoc_pages")
 
 exports_files(["Cargo.toml"])
 
-# Full CI build (`index` + `encrypt` + the async API). Cargo turns `index` on
-# by default; Bazel lists every feature it builds.
+# Full CI build (`index` + `encrypt`). Cargo turns `index` on by default;
+# Bazel lists every feature it builds.
 _SCHEDA_FEATURES = [
     "index",
     "encrypt",
-    "tokio",
 ]
 
 # Cargo's `--no-default-features`: no feature at all. No Lance.
@@ -39,6 +38,7 @@ _SCHEDA_DEPS = [
     "@scheda_cargo//:serde",
     "@scheda_cargo//:serde_ignored",
     "@scheda_cargo//:serde_json",
+    "@scheda_cargo//:tokio",
     "@scheda_cargo//:yaml_serde",
 ]
 
@@ -53,7 +53,6 @@ rust_library(
         "@scheda_cargo//:lance",
         "@scheda_cargo//:lance-index",
         "@scheda_cargo//:lance-linalg",
-        "@scheda_cargo//:tokio",
     ],
 )
 
@@ -208,6 +207,21 @@ rust_test(
 )
 
 rust_test(
+    name = "async_thin_test",
+    size = "small",
+    srcs = ["tests/async.rs"] + _TEST_COMMON,
+    crate_root = "tests/async.rs",
+    visibility = ["//rust:__pkg__"],
+    deps = [
+        ":scheda_thin",
+        "@scheda_cargo//:buffa-types",
+        "@scheda_cargo//:protocontract",
+        "@scheda_cargo//:serde_json",
+        "@scheda_cargo//:tokio",
+    ],
+)
+
+rust_test(
     name = "collections_test",
     size = "small",
     srcs = ["tests/collections.rs"] + _TEST_PROBE,
@@ -277,8 +291,6 @@ rust_test(
     ],
 )
 
-# Without `tokio` a `Port` has one variant: this target is where that is
-# compiled and run.
 rust_test(
     name = "ports_thin_test",
     size = "small",

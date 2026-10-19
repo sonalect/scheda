@@ -18,7 +18,7 @@ use scheda::v1::document_result::Result as ResultArm;
 use scheda::v1::{
     CollectionDeclaration, CollectionKey, CollectionSync, Document, DocumentCreation,
     DocumentDeletion, DocumentId, DocumentKey, DocumentOperation, DocumentUpdate, DocumentUpsert,
-    OpenOptions, VaultDocumentOperation, VaultErrorCode as Code, VaultSync,
+    DocumentWriteResult, OpenOptions, VaultDocumentOperation, VaultErrorCode as Code, VaultSync,
 };
 use scheda::{Error, Fault};
 use serde_json::{Value, json};
@@ -127,12 +127,29 @@ fn collection_of(vault: &Arc<dyn VaultSync>, name: &str) -> Result<Arc<dyn Colle
 /// The single Document calls of `Collection`, made through a Vault: each
 /// request names its collection, and the call goes to that collection's
 /// object.
+///
+/// A write answers with the Document it stored, as the tests read it; the
+/// token of the write is in `*_result`. A deletion answers with no
+/// Document, which `delete` checks.
 trait Calls {
     fn get(&self, key: DocumentKey) -> Result<Document, Error>;
     fn create(&self, write: To<DocumentCreation>) -> Result<Document, Error>;
     fn update(&self, write: To<DocumentUpdate>) -> Result<Document, Error>;
     fn upsert(&self, write: To<DocumentUpsert>) -> Result<Document, Error>;
     fn delete(&self, write: To<DocumentDeletion>) -> Result<Empty, Error>;
+    fn create_result(&self, write: To<DocumentCreation>) -> Result<DocumentWriteResult, Error>;
+    fn update_result(&self, write: To<DocumentUpdate>) -> Result<DocumentWriteResult, Error>;
+    fn upsert_result(&self, write: To<DocumentUpsert>) -> Result<DocumentWriteResult, Error>;
+    fn delete_result(&self, write: To<DocumentDeletion>) -> Result<DocumentWriteResult, Error>;
+}
+
+/// The Document a write stored, and the token of the write: both are set.
+fn written(result: DocumentWriteResult) -> Document {
+    assert!(
+        result.version.as_deref().is_some_and(|v| !v.is_empty()),
+        "a write returns its token"
+    );
+    result.document.into_option().unwrap()
 }
 
 impl Calls for Arc<dyn VaultSync> {
@@ -146,18 +163,41 @@ impl Calls for Arc<dyn VaultSync> {
     }
 
     fn create(&self, write: To<DocumentCreation>) -> Result<Document, Error> {
-        collection_of(self, &write.0)?.create(write.1)
+        self.create_result(write).map(written)
     }
 
     fn update(&self, write: To<DocumentUpdate>) -> Result<Document, Error> {
-        collection_of(self, &write.0)?.update(write.1)
+        self.update_result(write).map(written)
     }
 
     fn upsert(&self, write: To<DocumentUpsert>) -> Result<Document, Error> {
-        collection_of(self, &write.0)?.upsert(write.1)
+        self.upsert_result(write).map(written)
     }
 
     fn delete(&self, write: To<DocumentDeletion>) -> Result<Empty, Error> {
+        self.delete_result(write).map(|result| {
+            assert!(result.document.is_unset(), "a deletion returns no Document");
+            assert!(
+                result.version.as_deref().is_some_and(|v| !v.is_empty()),
+                "a write returns its token"
+            );
+            Empty::default()
+        })
+    }
+
+    fn create_result(&self, write: To<DocumentCreation>) -> Result<DocumentWriteResult, Error> {
+        collection_of(self, &write.0)?.create(write.1)
+    }
+
+    fn update_result(&self, write: To<DocumentUpdate>) -> Result<DocumentWriteResult, Error> {
+        collection_of(self, &write.0)?.update(write.1)
+    }
+
+    fn upsert_result(&self, write: To<DocumentUpsert>) -> Result<DocumentWriteResult, Error> {
+        collection_of(self, &write.0)?.upsert(write.1)
+    }
+
+    fn delete_result(&self, write: To<DocumentDeletion>) -> Result<DocumentWriteResult, Error> {
         collection_of(self, &write.0)?.delete(write.1)
     }
 }
@@ -1883,4 +1923,420 @@ fn an_encrypted_collection_in_a_build_without_the_feature_is_unimplemented() {
             .is(Code::NotFound)
     );
     assert_eq!(commits(&path), before);
+}
+
+// ---------------------------------------------------------------------
+// The state token of a write, and of `Vault.Info`.
+
+/// `HEAD` of the repository at `dir`; `None` when it is not there or holds
+/// no commit.
+fn head_of(dir: &Path) -> Option<String> {
+    if !dir.join(".git").exists() {
+        return None;
+    }
+    let out = command(dir, &["rev-parse", "--verify", "--quiet", "HEAD"])
+        .output()
+        .unwrap();
+    out.status
+        .success()
+        .then(|| String::from_utf8(out.stdout).unwrap().trim().to_owned())
+}
+
+/// The state token as git shows it: `HEAD` of the Vault, then `+` and `HEAD`
+/// of the nested repository once that holds a commit.
+fn token_of(root: &Path) -> String {
+    let main = head_of(root).unwrap();
+    match head_of(&root.join(".isolated")) {
+        Some(nested) => format!("{main}+{nested}"),
+        None => main,
+    }
+}
+
+/// The token a reply carries.
+fn version_of(result: &DocumentWriteResult) -> String {
+    result.version.clone().unwrap()
+}
+
+/// Whether the commit `commit` of the repository at `dir` holds the file
+/// `rel`.
+fn holds(dir: &Path, commit: &str, rel: &str) -> bool {
+    command(dir, &["cat-file", "-e", &format!("{commit}:{rel}")])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+#[test]
+fn a_write_returns_the_token_of_the_commit_it_made_in_the_main_repository() {
+    let (_scratch, path, vault) = fresh("token-main");
+    let mut seen = vec![token_of(&path)];
+    let mut check = |result: DocumentWriteResult| {
+        let version = version_of(&result);
+        assert_eq!(version, token_of(&path), "the token names the commit made");
+        assert_eq!(version, git_out(&path, &["rev-parse", "HEAD"]));
+        assert!(
+            !seen.contains(&version),
+            "a write that stores moves the state"
+        );
+        seen.push(version);
+        result
+    };
+    let first = check(
+        vault
+            .create_result(creation("notes", "a.md", b"one", "n"))
+            .unwrap(),
+    );
+    assert_eq!(
+        first.document.as_option().unwrap().raw,
+        Some(b"one".to_vec())
+    );
+    check(
+        vault
+            .update_result(update("notes", "a.md", b"two", None))
+            .unwrap(),
+    );
+    check(vault.upsert_result(upsert("notes", "b.md", b"b")).unwrap());
+    check(
+        vault
+            .upsert_result(upsert("config", "settings", b"S"))
+            .unwrap(),
+    );
+    check(
+        vault
+            .create_result(creation("log", "l1", b"line", "n"))
+            .unwrap(),
+    );
+    let deleted = check(vault.delete_result(deletion("notes", "a.md")).unwrap());
+    assert!(
+        deleted.document.is_unset(),
+        "a deletion returns no Document"
+    );
+    settled(&path);
+}
+
+#[test]
+fn a_write_to_an_isolated_collection_changes_the_nested_part_of_the_token_only() {
+    let (_scratch, path, vault) = fresh("token-isolated");
+    let split = |token: &str| -> (String, Option<String>) {
+        match token.split_once('+') {
+            Some((main, nested)) => (main.to_owned(), Some(nested.to_owned())),
+            None => (token.to_owned(), None),
+        }
+    };
+    let main_write = vault
+        .create_result(creation("notes", "a.md", b"a", "n"))
+        .unwrap();
+    let (main_one, nested_none) = split(&version_of(&main_write));
+    assert_eq!(nested_none, None, "no nested repository yet");
+    assert_eq!(version_of(&main_write), token_of(&path));
+
+    // The first isolated write makes the nested repository.
+    let isolated = vault
+        .create_result(creation("diary", "d1", b"d", "n"))
+        .unwrap();
+    assert_eq!(version_of(&isolated), token_of(&path));
+    let (main_two, nested_one) = split(&version_of(&isolated));
+    assert_eq!(main_two, main_one, "the Vault repository did not move");
+    assert_eq!(
+        nested_one.as_deref(),
+        head_of(&path.join(".isolated")).as_deref()
+    );
+
+    // An isolated journal, in the same repository.
+    let trail = vault
+        .create_result(creation("trail", "t1", b"line", "n"))
+        .unwrap();
+    let (main_three, nested_two) = split(&version_of(&trail));
+    assert_eq!(main_three, main_one);
+    assert_ne!(nested_two, nested_one);
+    assert_eq!(version_of(&trail), token_of(&path));
+
+    // A write to the main repository keeps the nested part of the token.
+    let again = vault
+        .create_result(creation("notes", "b.md", b"b", "n"))
+        .unwrap();
+    let (main_four, nested_three) = split(&version_of(&again));
+    assert_ne!(main_four, main_one);
+    assert_eq!(nested_three, nested_two);
+    assert_eq!(version_of(&again), token_of(&path));
+
+    // An update and a deletion in the nested repository.
+    let updated = vault
+        .update_result(update("diary", "d1", b"dd", None))
+        .unwrap();
+    assert_eq!(version_of(&updated), token_of(&path));
+    let deleted = vault.delete_result(deletion("diary", "d1")).unwrap();
+    assert!(deleted.document.is_unset());
+    assert_eq!(version_of(&deleted), token_of(&path));
+    assert_ne!(version_of(&deleted), version_of(&updated));
+    settled(&path);
+}
+
+#[test]
+fn a_write_that_stores_nothing_returns_the_token_of_the_state_it_found() {
+    let (_scratch, path, vault) = fresh("token-nothing");
+    vault
+        .create_result(creation("notes", "a.md", b"one", "n"))
+        .unwrap();
+    vault
+        .create_result(creation("diary", "d1", b"d", "n"))
+        .unwrap();
+    let found = token_of(&path);
+    let commits_main = commits(&path);
+    let commits_nested = nested_commits(&path);
+
+    let kept = vault
+        .create_result(keeping("notes", "a.md", b"other"))
+        .unwrap();
+    assert_eq!(version_of(&kept), found);
+    assert_eq!(
+        kept.document.as_option().unwrap().raw,
+        Some(b"one".to_vec())
+    );
+    let same = vault
+        .update_result(update("notes", "a.md", b"one", None))
+        .unwrap();
+    assert_eq!(version_of(&same), found);
+    let upserted = vault
+        .upsert_result(upsert("notes", "a.md", b"one"))
+        .unwrap();
+    assert_eq!(version_of(&upserted), found);
+    let missing = {
+        let mut write = deletion("notes", "absent.md");
+        write.1.ignore_missing = Some(true);
+        vault.delete_result(write).unwrap()
+    };
+    assert_eq!(version_of(&missing), found);
+    assert!(missing.document.is_unset());
+    // The same in the nested repository, and with it the token holds both parts.
+    let kept = vault
+        .create_result(keeping("diary", "d1", b"other"))
+        .unwrap();
+    assert_eq!(version_of(&kept), found);
+    let same = vault.upsert_result(upsert("diary", "d1", b"d")).unwrap();
+    assert_eq!(version_of(&same), found);
+    assert!(
+        found.contains('+'),
+        "the token holds the nested commit: {found}"
+    );
+    assert_eq!(commits(&path), commits_main);
+    assert_eq!(nested_commits(&path), commits_nested);
+
+    // A commit made by hand is part of the state a later no-op finds.
+    git(
+        &path,
+        &["commit", "--quiet", "--allow-empty", "--message", "by hand"],
+    );
+    let by_hand = token_of(&path);
+    assert_ne!(by_hand, found);
+    let after = vault
+        .upsert_result(upsert("notes", "a.md", b"one"))
+        .unwrap();
+    assert_eq!(version_of(&after), by_hand);
+    assert_eq!(commits(&path), commits_main + 1);
+}
+
+#[test]
+fn a_batch_returns_the_token_of_its_commit_and_an_empty_one_the_state_now() {
+    let (_scratch, path, vault) = fresh("token-batch");
+    let made = batch(
+        &vault,
+        ok(vec![
+            create_op("notes", "a.md", b"A", "a"),
+            create_op("log", "l1", b"line", "b"),
+            upsert_op("config", "settings", b"S", "c"),
+        ]),
+    )
+    .unwrap();
+    assert_eq!(made.version.as_deref(), Some(token_of(&path).as_str()));
+    assert_eq!(
+        made.version.as_deref(),
+        Some(git_out(&path, &["rev-parse", "HEAD"]).as_str())
+    );
+
+    // Nothing to store: the token found, and no commit.
+    let before = commits(&path);
+    let same = batch(&vault, ok(vec![upsert_op("notes", "a.md", b"A", "again")])).unwrap();
+    assert_eq!(same.version, made.version);
+    // No write at all: the state now, read as `Vault.Info` reads it.
+    let empty = batch(&vault, Vec::new()).unwrap();
+    assert!(empty.results.is_empty());
+    assert_eq!(empty.version.as_deref(), Some(token_of(&path).as_str()));
+    assert_eq!(empty.version, made.version);
+    git(
+        &path,
+        &["commit", "--quiet", "--allow-empty", "--message", "by hand"],
+    );
+    let moved = batch(&vault, Vec::new()).unwrap();
+    assert_eq!(moved.version.as_deref(), Some(token_of(&path).as_str()));
+    assert_ne!(moved.version, made.version);
+    let before = before + 1;
+    assert_eq!(commits(&path), before);
+
+    // A batch of one collection.
+    let notes = collection_of(&vault, "notes").unwrap();
+    let items: Vec<Result<DocumentOperation, Error>> = vec![Ok(DocumentOperation {
+        operation: Some(Operation::Create(Box::new(
+            creation("notes", "b.md", b"B", "b").1,
+        ))),
+        ..Default::default()
+    })];
+    let one = notes.batch(Box::new(items.into_iter())).unwrap();
+    assert_eq!(one.version.as_deref(), Some(token_of(&path).as_str()));
+    assert_ne!(one.version, made.version);
+
+    // A batch of isolated collections: the nested commit is in the token.
+    let isolated = batch(
+        &vault,
+        ok(vec![
+            create_op("diary", "one", b"1", "n"),
+            create_op("trail", "t1", b"line", "n"),
+        ]),
+    )
+    .unwrap();
+    let token = isolated.version.unwrap();
+    assert_eq!(token, token_of(&path));
+    let (main, nested) = token.split_once('+').unwrap();
+    assert_eq!(Some(main.to_owned()), head_of(&path));
+    assert_eq!(Some(nested.to_owned()), head_of(&path.join(".isolated")));
+}
+
+#[test]
+fn vault_info_gives_the_token_of_head_now() {
+    let (_scratch, path, vault) = fresh("token-info");
+    let info = |vault: &Arc<dyn VaultSync>| vault.info(Empty::default()).unwrap().version.unwrap();
+    assert_eq!(info(&vault), token_of(&path));
+    let made = vault
+        .create_result(creation("notes", "a.md", b"A", "n"))
+        .unwrap();
+    assert_eq!(info(&vault), version_of(&made));
+
+    // A commit made by hand moves the token, with no write of the library.
+    git(
+        &path,
+        &["commit", "--quiet", "--allow-empty", "--message", "by hand"],
+    );
+    assert_eq!(info(&vault), token_of(&path));
+    assert_ne!(info(&vault), version_of(&made));
+
+    // The nested repository joins it once it has a commit.
+    let isolated = vault
+        .create_result(creation("diary", "d1", b"d", "n"))
+        .unwrap();
+    assert!(info(&vault).contains('+'));
+    assert_eq!(info(&vault), version_of(&isolated));
+    assert_eq!(info(&vault), token_of(&path));
+
+    // Another handle on the path reads the same state.
+    let other = open(&path, OpenOptions::default()).unwrap();
+    assert_eq!(info(&other), info(&vault));
+}
+
+/// Each token of a write names the commit that write made, and no later
+/// one: the commit it names holds the file and its parent does not.
+#[test]
+fn the_token_of_a_write_names_its_own_commit_among_many_writers() {
+    let (_scratch, path, vault) = fresh("token-threads");
+    const EACH: usize = 8;
+    let tokens: Vec<(String, String, bool)> = std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for n in 0..EACH {
+            for isolated in [false, true] {
+                let vault = Arc::clone(&vault);
+                workers.push(scope.spawn(move || {
+                    let (collection, id) = if isolated {
+                        ("diary", format!("d{n}"))
+                    } else {
+                        ("notes", format!("n{n}.md"))
+                    };
+                    let result = vault
+                        .create_result(creation(collection, &id, b"x", "thread"))
+                        .unwrap();
+                    (version_of(&result), id, isolated)
+                }));
+            }
+        }
+        workers
+            .into_iter()
+            .map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    let nested = path.join(".isolated");
+    for (token, id, isolated) in &tokens {
+        let (main, nested_part) = match token.split_once('+') {
+            Some((main, nested)) => (main.to_owned(), Some(nested.to_owned())),
+            None => (token.clone(), None),
+        };
+        if *isolated {
+            let commit = nested_part
+                .clone()
+                .expect("an isolated write has a nested part");
+            assert!(holds(&nested, &commit, &format!("diary/{id}")));
+            assert!(
+                !holds(&nested, &format!("{commit}^"), &format!("diary/{id}")),
+                "{id} was made by the commit its token names"
+            );
+        } else {
+            assert!(holds(&path, &main, &format!("notes/{id}")));
+            assert!(
+                !holds(&path, &format!("{main}^"), &format!("notes/{id}")),
+                "{id} was made by the commit its token names"
+            );
+        }
+        // Every part of every token is a commit that is still in the history.
+        let reaches = |dir: &Path, commit: &str| {
+            command(dir, &["merge-base", "--is-ancestor", commit, "HEAD"])
+                .status()
+                .unwrap()
+                .success()
+        };
+        assert!(reaches(&path, &main));
+        if let Some(part) = &nested_part {
+            assert!(reaches(&nested, part));
+        }
+    }
+    settled(&path);
+}
+
+#[test]
+fn an_empty_batch_waits_for_no_lock_and_answers_with_the_state_now() {
+    let scratch = Scratch::new("token-empty-locked");
+    let path = scratch.join("vault");
+    // A short deadline: a batch that waited for the lock would be
+    // `ABORTED` after two seconds, and the test would fail on it.
+    let vault = open(&path, OpenOptions::default().with_write_timeout_ms(2_000)).unwrap();
+    declare(&vault, json!({"name": "notes", "schema": {"standard": {}}}));
+    let before = commits(&path);
+    let held = File::options()
+        .read(true)
+        .write(true)
+        .open(path.join(".scheda/commit.lock"))
+        .unwrap();
+    held.lock().unwrap();
+
+    let started = Instant::now();
+    let in_vault = batch(&vault, Vec::new()).unwrap();
+    let notes = collection_of(&vault, "notes").unwrap();
+    let in_collection = notes
+        .batch(Box::new(
+            Vec::<Result<DocumentOperation, Error>>::new().into_iter(),
+        ))
+        .unwrap();
+    assert!(
+        started.elapsed() < Duration::from_millis(1_500),
+        "an empty batch does not wait for the lock"
+    );
+    for reply in [in_vault, in_collection] {
+        assert!(reply.results.is_empty());
+        assert_eq!(reply.version.as_deref(), Some(token_of(&path).as_str()));
+    }
+    assert_eq!(commits(&path), before);
+
+    // A batch that writes still waits for the lock, and is refused at the
+    // deadline.
+    let error = batch(&vault, ok(vec![create_op("notes", "a.md", b"x", "n")])).unwrap_err();
+    assert!(error.is(Code::Aborted));
+    held.unlock().unwrap();
+    drop(held);
 }

@@ -55,12 +55,18 @@ pub(crate) struct State {
 }
 
 impl State {
+    /// The state in which the main repository is at `main` and the nested
+    /// one at `isolated`.
+    pub(crate) fn new(main: Option<Oid>, isolated: Option<Oid>) -> State {
+        State { main, isolated }
+    }
+
     /// The state the snapshots of `views` are of.
     pub(crate) fn of(views: &Views) -> State {
-        State {
-            main: views.of(Repo::Main).commit(),
-            isolated: views.of(Repo::Isolated).commit(),
-        }
+        State::new(
+            views.of(Repo::Main).commit(),
+            views.of(Repo::Isolated).commit(),
+        )
     }
 
     /// The commit of `repo` in this state.

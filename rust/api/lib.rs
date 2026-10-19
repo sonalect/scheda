@@ -5,7 +5,8 @@
 //! `protoc-gen-buffa`, with serde), their [`Validate`](protovalidate_buffa::Validate)
 //! impls (by `protoc-gen-protovalidate-buffa`), and the traits of the
 //! services and ports (by `protoc-gen-protocontract-buffa`). The async forms
-//! and the `Offload` / `Blocking` bridges exist with the `tokio` feature.
+//! and the `Offload` / `Blocking` bridges are always there: the crate
+//! depends on Tokio.
 
 /// The messages, as `protoc-gen-buffa` writes them
 /// (`buffa_module=crate::proto`).

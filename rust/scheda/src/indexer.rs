@@ -209,6 +209,7 @@ impl Indexer {
             index: Index::new(vault),
             sides: vec![Box::new(JournalMaps)],
             rebuilding: false,
+            cause: None,
         };
         let handle = Builder::new()
             .name(THREAD_NAME.to_owned())
@@ -391,6 +392,9 @@ struct Worker {
     sides: Vec<Box<dyn Side>>,
     /// A rebuild has begun and has not ended.
     rebuilding: bool,
+    /// Why the rebuild that runs, or ran last, began; `None` when neither
+    /// cause the status names fits.
+    cause: Option<rebuild::Cause>,
 }
 
 impl Worker {
@@ -439,16 +443,17 @@ impl Worker {
         } else {
             None
         };
-        if !asked
-            && let Some(committed) = committed
-            && committed == State::of(&self.repos.views()?)
-        {
-            self.follow(Some(committed));
+        let head = State::of(&self.repos.views().context("read HEAD")?);
+        if !asked && committed == Some(head) {
+            self.follow(committed, head);
             return Ok(Next::Idle);
         }
         let Some(lock) = self.index.try_lock()? else {
             // Another indexer holds the lock; it will do the round.
-            self.shared.adjust(|inner| inner.state.role = Some(false));
+            self.shared.adjust(|inner| {
+                inner.state.role = Some(false);
+                inner.state.stored_version = Some(head.token());
+            });
             return Ok(Next::Idle);
         };
         let applied = self.apply();
@@ -456,7 +461,7 @@ impl Worker {
         drop(lock);
         match applied? {
             Applied::Current(state) => {
-                self.follow(Some(state));
+                self.follow(Some(state), state);
                 Ok(Next::Idle)
             }
             Applied::Built {
@@ -465,15 +470,17 @@ impl Worker {
                 rebuilt,
             } => {
                 self.rebuilding = false;
+                let cause = self.cause;
                 self.shared.publish(|inner| {
                     inner.state.version = Some(head.token());
+                    inner.state.stored_version = Some(head.token());
                     inner.state.pending = Some(0);
                     inner.state.role = Some(false);
-                    inner.state.model_mismatch = Some(false);
                     inner.state.last_error = buffa::MessageField::none();
                     if rebuilt {
                         inner.running = false;
-                        inner.state.rebuild = rebuild_of(rebuild::Stage::STAGE_DONE, counts).into();
+                        inner.state.rebuild =
+                            rebuild_of(rebuild::Stage::STAGE_DONE, counts, cause).into();
                     }
                 });
                 Ok(Next::Again)
@@ -498,6 +505,17 @@ impl Worker {
         let declarations =
             collection::load(views.of(Repo::Main)).context("read the collections")?;
         let from = if asked { None } else { committed };
+        // Why a rebuild would run: `Reindex` asked, or there is no Index
+        // this version reads. A rebuild because the commit the Index
+        // reflects is gone from its repository has neither cause.
+        self.cause = if asked {
+            Some(rebuild::Cause::CAUSE_REINDEX)
+        } else if committed.is_none() {
+            Some(rebuild::Cause::CAUSE_NEW)
+        } else {
+            None
+        };
+        let cause = self.cause;
         let shared = Arc::clone(&self.shared);
         let mut last = Instant::now();
         let mut tick = |counts: &Counts| -> Result<(), Error> {
@@ -511,7 +529,8 @@ impl Worker {
                 last = Instant::now();
                 let counts = *counts;
                 shared.publish(|inner| {
-                    inner.state.rebuild = rebuild_of(rebuild::Stage::STAGE_RUNNING, counts).into();
+                    inner.state.rebuild =
+                        rebuild_of(rebuild::Stage::STAGE_RUNNING, counts, cause).into();
                 });
             }
             Ok(())
@@ -537,7 +556,7 @@ impl Worker {
                 inner.running = true;
                 inner.state.version = None;
                 inner.state.rebuild =
-                    rebuild_of(rebuild::Stage::STAGE_RUNNING, Counts::default()).into();
+                    rebuild_of(rebuild::Stage::STAGE_RUNNING, Counts::default(), cause).into();
             });
         }
         #[cfg(test)]
@@ -558,26 +577,27 @@ impl Worker {
     }
 
     /// Nothing is to be done by this handle: the Index is at `committed`
-    /// (or not built), and either it is at `HEAD` or another handle has to
-    /// bring it there. Another indexer may have moved it, and an earlier
-    /// failure is over.
-    fn follow(&self, committed: Option<State>) {
+    /// (or not built), and either it is at `head`, the state of `HEAD` now,
+    /// or another handle has to bring it there. Another indexer may have
+    /// moved it, and an earlier failure is over.
+    fn follow(&self, committed: Option<State>, head: State) {
         let token = committed.map(State::token);
+        let head = Some(head.token());
         let pending = committed.map(|_| 0);
         let differs = {
             let inner = self.shared.lock();
             inner.state.version != token
+                || inner.state.stored_version != head
                 || inner.state.last_error.is_set()
                 || inner.state.role != Some(false)
                 || inner.state.pending != pending
-                || inner.state.model_mismatch != Some(false)
         };
         if differs {
             self.shared.publish(|inner| {
                 inner.state.version = token;
+                inner.state.stored_version = head;
                 inner.state.pending = pending;
                 inner.state.role = Some(false);
-                inner.state.model_mismatch = Some(false);
                 inner.state.last_error = buffa::MessageField::none();
             });
         }
@@ -587,12 +607,13 @@ impl Worker {
     fn fail(&mut self, error: &Error) {
         let report = error_report(error);
         let rebuilding = std::mem::take(&mut self.rebuilding);
+        let cause = self.cause;
         self.shared.publish(|inner| {
             inner.state.role = Some(false);
             inner.state.last_error = report.clone().into();
             if rebuilding {
                 inner.running = false;
-                let mut failed = rebuild_of(rebuild::Stage::STAGE_FAILED, Counts::default());
+                let mut failed = rebuild_of(rebuild::Stage::STAGE_FAILED, Counts::default(), cause);
                 failed.error = report.into();
                 inner.state.rebuild = failed.into();
             }
@@ -600,12 +621,16 @@ impl Worker {
     }
 }
 
-fn rebuild_of(stage: rebuild::Stage, counts: Counts) -> Rebuild {
-    Rebuild::default()
+fn rebuild_of(stage: rebuild::Stage, counts: Counts, cause: Option<rebuild::Cause>) -> Rebuild {
+    let rebuild = Rebuild::default()
         .with_stage(stage)
         .with_documents_read(counts.documents_read)
         .with_documents_skipped(counts.documents_skipped)
-        .with_segments_read(counts.segments_read)
+        .with_segments_read(counts.segments_read);
+    match cause {
+        Some(cause) => rebuild.with_cause(cause),
+        None => rebuild,
+    }
 }
 
 /// The error of a round that panicked.
@@ -811,9 +836,11 @@ mod tests {
         let mut watch = vault.indexer().watch();
         let first = watch.next().unwrap().unwrap();
         assert_eq!(first.version.as_deref(), Some(head(&path).as_str()));
+        assert_eq!(first.stored_version, first.version, "the Index is at HEAD");
         line(&vault, "log", "one");
         let moved = watch.next().unwrap().unwrap();
         assert_eq!(moved.version.as_deref(), Some(head(&path).as_str()));
+        assert_eq!(moved.stored_version.as_deref(), Some(head(&path).as_str()));
         assert_eq!(moved.pending, Some(0));
         assert_eq!(moved.role, Some(false));
         assert!(!moved.last_error.is_set());
@@ -936,6 +963,15 @@ mod tests {
             "the lock is held: the rebuild has not begun, the first build is the last"
         );
         assert!(state.version.is_some());
+        assert_eq!(
+            state
+                .rebuild
+                .as_option()
+                .and_then(|rebuild| rebuild.cause)
+                .and_then(|cause| cause.as_known()),
+            Some(scheda_api::v1::rebuild::Cause::CAUSE_NEW),
+            "the first build began for want of an Index"
+        );
         drop(held);
         let mut stages = Vec::new();
         let last: IndexState = loop {
@@ -955,6 +991,10 @@ mod tests {
         assert_eq!(
             rebuild.stage.and_then(|stage| stage.as_known()),
             Some(scheda_api::v1::rebuild::Stage::STAGE_DONE)
+        );
+        assert_eq!(
+            rebuild.cause.and_then(|cause| cause.as_known()),
+            Some(scheda_api::v1::rebuild::Cause::CAUSE_REINDEX)
         );
         assert_eq!(rebuild.documents_read, Some(1));
         assert_eq!(rebuild.segments_read, Some(1));

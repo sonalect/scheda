@@ -20,20 +20,9 @@ _API_DEPS = [
 rust_library(
     name = "generated_v1",
     srcs = ["lib.rs"] + glob(["gen/**/*.rs"]),
-    crate_features = ["tokio"],
     crate_name = "scheda_api",
     tags = ["no_rustfmt"],
     visibility = ["//visibility:public"],
-    deps = _API_DEPS,
-)
-
-# The build without the `tokio` feature: the sync forms only.
-rust_library(
-    name = "generated_v1_thin",
-    srcs = ["lib.rs"] + glob(["gen/**/*.rs"]),
-    crate_name = "scheda_api",
-    tags = ["no_rustfmt"],
-    visibility = ["//rust:__pkg__"],
     deps = _API_DEPS,
 )
 
@@ -44,39 +33,15 @@ rust_test(
     visibility = ["//rust:__pkg__"],
 )
 
-rust_test(
-    name = "generated_v1_thin_test",
-    size = "small",
-    crate = ":generated_v1_thin",
-    visibility = ["//rust:__pkg__"],
-)
-
-# The traits in every build, the bridges with `tokio`, the `Validate` rules.
+# The traits of both forms, the bridges, the `Validate` rules.
 rust_test(
     name = "contract_test",
     size = "small",
     srcs = ["tests/contract.rs"],
-    crate_features = ["tokio"],
     crate_root = "tests/contract.rs",
     visibility = ["//rust:__pkg__"],
     deps = [
         ":generated_v1",
-        "@scheda_cargo//:buffa",
-        "@scheda_cargo//:buffa-types",
-        "@scheda_cargo//:protocontract",
-        "@scheda_cargo//:protovalidate-buffa",
-        "@scheda_cargo//:serde_json",
-    ],
-)
-
-rust_test(
-    name = "contract_thin_test",
-    size = "small",
-    srcs = ["tests/contract.rs"],
-    crate_root = "tests/contract.rs",
-    visibility = ["//rust:__pkg__"],
-    deps = [
-        ":generated_v1_thin",
         "@scheda_cargo//:buffa",
         "@scheda_cargo//:buffa-types",
         "@scheda_cargo//:protocontract",
