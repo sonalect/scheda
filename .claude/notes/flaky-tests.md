@@ -31,6 +31,15 @@ uncached gates in a row green):
   - A wait on several Index files checked `commit` first, then the rest:
     a rebuild that started meanwhile removed `commit` after it was read.
     Check `commit` last (the rebuild removes it first).
+- Open, branch `lance-index` (19 October 2026, 1 run in 10):
+  `//rust/scheda:async_test`, `searching::a_search_runs_on_both_runtime_flavors`
+  (only `cat2` found) and
+  `searching::an_async_embedder_that_takes_a_second_is_awaited_not_blocked_on`
+  (the search ended before the slow embedder could answer). `corpus` in
+  `tests/async.rs` waits for `Count` to reach 3, the lexical side, not for
+  the vectors, so a search can run before them (`index-risks.md` item 4).
+  Not fixed in `0.22`: work order 21 replaces it with the write's token
+  (L7) and rewrites the search tests (L6).
 
 **Why:** a rare red gate wastes a run and hides real failures.
 
