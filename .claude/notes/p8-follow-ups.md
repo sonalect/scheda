@@ -40,26 +40,23 @@ each is small.
   a write before its call returns), `07` LIB-28 (after `Vault.Close`
   every object is `FAILED_PRECONDITION`), `02` Index (only a Vault with
   every port indexes; `Get` and `History` read `HEAD`).
-- **vllm 0.32.0 after its quarantine.** `//python:vuln` found
-  PYSEC-2026-4319 (CVE-2026-105922, a denial of service in vllm's penalty
-  handler) in vllm 0.31.0, the local sidecars' pin. The fix, vllm 0.32.0,
-  was published 18 October 2026 10:03 UTC, inside the two-day quarantine,
-  so `python/BUILD.bazel` ignores the advisory for now. From 20 October
-  2026 10:03 UTC: bump `vllm` in `pyproject.toml`, relock `uv.lock`, drop
-  the ignore.
-- **huggingface-hub 2.x comes with that vllm bump.** With vllm 0.31.0 it
-  cannot: vllm 0.31.0 caps `transformers<5.18`, and transformers 5.17.0
-  requires `huggingface-hub<2.0`. vllm 0.32.0 allows `transformers<5.20`;
-  transformers 5.18.0 and later, and tokenizers 0.23.3, allow
-  `huggingface-hub<3.0`; vllm itself asks only `>=1.31.0`. Our calls
-  (`hf_hub_download` with `repo_id`, `filename`, `revision`, `local_dir`,
-  `token`, `user_agent`; `snapshot_download` with `repo_id`, `token`;
-  `huggingface_hub.errors.HfHubHTTPError`) are all in 2.2.0 (checked on
-  its wheel, 19 October 2026). huggingface-hub 2.2.0 (8 October) and
-  transformers 5.19.0 (6 October) are past the quarantine. Do it in one
-  step: `vllm==0.32.0`, `huggingface-hub==2.2.0` in `pyproject.toml`,
-  relock, run the driver (`import`, `search`) and a sidecar once.
+- **vllm 0.32.0 and huggingface-hub 2.2.0: done 19 October 2026.** vllm
+  0.32.0 was taken a day inside its quarantine on the owner's word, after
+  a check: its PyPI files match the GitHub release `v0.32.0` byte for
+  byte (sha256), released by the same release manager as 0.30.0 and 0.31.0
+  from `releases/v0.32.0`, whose commits are cherry-picks of merged PRs;
+  vLLM publishes no PEP 740 attestations for any release. Every other
+  package that moved is past the quarantine (`uv lock --exclude-newer` with
+  a per-package exception for vllm, then `uv lock` again so the lock keeps
+  no `[options]`). huggingface-hub 2.x came with it (transformers 5.19.0
+  allows `<3.0`). The PYSEC-2026-4319 ignore is gone; PYSEC-2026-3447
+  (setuptools) stays, since vllm 0.32.0 still caps `setuptools<81`.
+  Checked: the driver end to end on the local Qwen3-4B sidecars, and the
+  Model2Vec download through `hf_hub_download` of 2.2.0. Not run: a vllm
+  0.32.0 sidecar itself (its wheels and torch are not in the Bazel cache,
+  and the GPU was busy); run `bazel run //python/vllm:embedder` once the
+  GPU is free. `~/.cache/huggingface/xet` is owned by root on this
+  machine, so hf-xet logs to the console instead of its log file.
 
 **How to apply:** take these with the docs pass or right after the merge;
-the first one changes library code and needs its own test; the vllm bump
-as soon as its date has passed.
+the first one changes library code and needs its own test.

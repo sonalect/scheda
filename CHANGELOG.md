@@ -281,6 +281,9 @@ changes; they grow with each part of the move.
   Buf CLI v1.74.0, `protoc-gen-protovalidate-buffa` v0.10.4 (generated
   code unchanged), and patch and minor updates in the Python sidecar lock
   (`uv.lock`). No API or format change.
+- The Python sidecars and the CLI test driver use vllm 0.32.0 (it fixes
+  PYSEC-2026-4319, a denial of service in vLLM's penalty handler) and
+  huggingface-hub 2.2.0, with transformers 5.19.0, in `uv.lock`.
 - `tantivy` 0.27.0 (from 0.26.2), with its crates (`frostem` in place of
   `rust-stemmers`, `zstd` 0.14). Its index format is unchanged, so an
   Index built before opens as it is, with no rebuild. No API change.
