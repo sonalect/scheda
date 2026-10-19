@@ -14,6 +14,10 @@ changes; they grow with each part of the move.
 
 ### Added
 
+- The feature `index` (Lance), on by default, declared with its
+  dependencies (`lance`, `lance-index`, `lance-linalg`, pinned `=13.0.0`,
+  no cloud object stores). Building it needs `protoc` (`PROTOC`, or on
+  `PATH`); `default-features = false` drops it. It holds no code yet.
 - `scheda::parse_command`: parses the Protobuf JSON of a request strictly
   (a key the message does not know is `INVALID_ARGUMENT` naming its path)
   and validates it, for a transport that takes requests as JSON.

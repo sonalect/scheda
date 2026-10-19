@@ -21,6 +21,9 @@ cxx = "=1.0.205"
 git2 = { version = "=0.21.0", default-features = false, features = [
     "vendored-libgit2",
 ] }
+lance = { version = "=13.0.0", default-features = false }
+lance-index = { version = "=13.0.0", default-features = false }
+lance-linalg = { version = "=13.0.0", default-features = false }
 libgit2-sys = "=0.18.8"
 mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.3", features = [
     "override",

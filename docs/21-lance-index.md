@@ -239,13 +239,19 @@ comparing the tree of `HEAD` with the table of files (D8), not by a
 rebuild. The journal id maps stay as they are. *Recommendation:* accept.
 
 **D18. Dependencies.** *Proposed.* `lance` (and the `lance-*` crates the
-code names) pinned exactly (`=13.0.0` today), the `arrow-*` crates at the
-version Lance uses. Lance publishes a major version about every month:
+code names: `lance-index` for `IndexType` and the index parameters,
+`lance-linalg` for `DistanceType`, which `lance` does not re-export) pinned
+exactly (`=13.0.0` today), all with default features off: Lance's defaults
+pull every cloud object store and `geo`, and Scheda uses local paths only.
+No `arrow-*` or `datafusion` pin of its own: `lance::deps` re-exports
+`arrow_array`, `arrow_schema`, and `datafusion` at the versions Lance uses. Lance publishes a major version about every month:
 upgrade one version at a time, deliberately, re-running L2's checks. The
 build scripts of `lance-datafusion`, `lance-encoding`, `lance-file`,
 `lance-index`, and `lance-table` need `protoc`: Cargo gets it from
 `PROTOC` (`run-commands.md` says so), Bazel from crate_universe
-annotations that hand those build scripts the Bazel `protoc`. Every new
+annotations that hand those build scripts `//bazel:protoc` and
+`//bazel:protoc_include` (the well-known types, which prost-build reads from
+`PROTOC_INCLUDE`). Every new
 crate version passes the two-day quarantine (`dependency-quarantine.md`;
 the spike found three too young: `arc-swap` 1.9.3, `cc` 1.9.0,
 `find-msvc-tools` 0.1.15). *Recommendation:* accept.
@@ -296,19 +302,22 @@ the whole patch with the generate, so every commit stays green.
 
 D1, D14, D18.
 
-- [ ] `lance` and its crates in the workspace (`=13.0.0`), sorted
+- [x] `lance` and its crates in the workspace (`=13.0.0`), sorted
       (`dependency-order.md`), every new version checked against the
       quarantine; `Cargo.lock` and `cargo-bazel-lock.json` repinned
       (`cargo-bazel-lock.md`).
-- [ ] `protoc` for the Lance build scripts in Cargo (`PROTOC`) and in
+- [x] `protoc` for the Lance build scripts in Cargo (`PROTOC`) and in
       Bazel (annotations); `run-commands.md` updated.
-- [ ] The feature `index` (D14) declared, `find` / `search` / `simd`
+- [x] The feature `index` (D14) declared, `find` / `search` / `simd`
       still present until L8 removes them.
 - [ ] The debug loop measured and written down: a cold
       `cargo build -p scheda --all-features`, and a rebuild after
       touching one file of `rust/scheda/src`. If the rebuild is slow,
       say so to the owner before L2 (the owner cares about debug builds,
-      not release ones).
+      not release ones). Measured on 19 October 2026: 235 s for the new
+      crates (238 of them, the rest of the target directory warm); the
+      rebuild after `touch rust/scheda/src/lib.rs` took 0.9 s, which
+      proves nothing yet because no code uses Lance. Repeat in L2.
 - *Check:* `cargo build` and `cargo clippy --workspace --all-targets
   --all-features` green; `bazel build //rust/scheda/...` green on Linux,
   macOS, and Windows CI.

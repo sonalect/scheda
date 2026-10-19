@@ -58,6 +58,83 @@ cargo.annotation_select(
     ],
 )
 
+# The Lance crates compile .proto files in their build scripts with
+# prost-build, which runs the `protoc` named by `PROTOC`. Hand them the Bazel
+# `protoc` and its well-known-type include directory (`//bazel:protoc`,
+# `//bazel:protoc_include`, module `protobuf`).
+cargo.annotation(
+    build_script_data = [
+        "@@//bazel:protoc",
+        "@@//bazel:protoc_include",
+    ],
+    build_script_env = {
+        "PROTOC": "$(execpath @@//bazel:protoc)",
+        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
+    },
+    crate = "lance",
+    repositories = ["scheda_cargo"],
+)
+cargo.annotation(
+    build_script_data = [
+        "@@//bazel:protoc",
+        "@@//bazel:protoc_include",
+    ],
+    build_script_env = {
+        "PROTOC": "$(execpath @@//bazel:protoc)",
+        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
+    },
+    crate = "lance-datafusion",
+    repositories = ["scheda_cargo"],
+)
+cargo.annotation(
+    build_script_data = [
+        "@@//bazel:protoc",
+        "@@//bazel:protoc_include",
+    ],
+    build_script_env = {
+        "PROTOC": "$(execpath @@//bazel:protoc)",
+        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
+    },
+    crate = "lance-encoding",
+    repositories = ["scheda_cargo"],
+)
+cargo.annotation(
+    build_script_data = [
+        "@@//bazel:protoc",
+        "@@//bazel:protoc_include",
+    ],
+    build_script_env = {
+        "PROTOC": "$(execpath @@//bazel:protoc)",
+        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
+    },
+    crate = "lance-file",
+    repositories = ["scheda_cargo"],
+)
+cargo.annotation(
+    build_script_data = [
+        "@@//bazel:protoc",
+        "@@//bazel:protoc_include",
+    ],
+    build_script_env = {
+        "PROTOC": "$(execpath @@//bazel:protoc)",
+        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
+    },
+    crate = "lance-index",
+    repositories = ["scheda_cargo"],
+)
+cargo.annotation(
+    build_script_data = [
+        "@@//bazel:protoc",
+        "@@//bazel:protoc_include",
+    ],
+    build_script_env = {
+        "PROTOC": "$(execpath @@//bazel:protoc)",
+        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
+    },
+    crate = "lance-table",
+    repositories = ["scheda_cargo"],
+)
+
 # protocontract's `tokio` feature (the `Offload` / `Blocking` bridges) is
 # optional in Cargo, so the lock resolves without it. `scheda-api` builds
 # its tokio-gated traits under Bazel, so turn it on here. The crate also

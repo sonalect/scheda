@@ -1,5 +1,6 @@
 load("@bazel_utils_bazel//:bazel.bzl", "buildifier_format", "buildifier_test")
 load("@bazel_utils_md//:markdown.bzl", "markdownlint_test")
+load(":protoc_include.bzl", "protoc_include")
 
 buildifier_test(
     name = "lint",
@@ -24,3 +25,20 @@ markdownlint_test(
 )
 
 exports_files(["rustdoc_pages_index.html"])
+
+# The `protoc` of module `protobuf`. The build scripts of the Lance crates run
+# it through crate_universe annotations (`rust.MODULE.bazel`), which cannot
+# see the root module's repository names, only `@@//` labels.
+alias(
+    name = "protoc",
+    actual = "@protobuf//:protoc",
+    visibility = ["//visibility:public"],
+)
+
+# The include directory that goes with it: `google/protobuf/any.proto` and the
+# other well-known types, which Lance's protos import.
+protoc_include(
+    name = "protoc_include",
+    srcs = ["@protobuf//:well_known_type_protos"],
+    visibility = ["//visibility:public"],
+)

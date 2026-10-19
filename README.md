@@ -189,7 +189,9 @@ bazel run //bazel:format        # buildifier -mode=fix
 ```
 
 `cargo test` / `cargo clippy` still work for local iteration. `cargo test
--p scheda --lib` is the fast loop: no feature, no C++ compile. For `find`
+-p scheda --lib --no-default-features` is the fast loop: no feature, no
+Lance, no C++ compile. The default feature `index` (Lance) needs `protoc`
+to build (`PROTOC`, or `protoc` on `PATH`). For `find`
 / `search` tests: `cargo test -p scheda --features search,simd`. GitHub
 Actions CI (Bazel) is currently disabled.
 `cargo build --release` uses thin LTO, one codegen unit, and symbol strip.

@@ -10,6 +10,16 @@ readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
 [features]
+# `index` (Lance): the Index of a Vault. Needs `protoc` to build (see
+# `.claude/rules/run-commands.md`). The old `find` / `search` / `simd`
+# features stay until the Tantivy and USearch code is removed.
+default = ["index"]
+index = [
+    "dep:lance",
+    "dep:lance-index",
+    "dep:lance-linalg",
+    "tokio/rt-multi-thread",
+]
 # Tantivy `find` (lexical Index). `search` pulls this in.
 find = ["dep:tantivy"]
 # Hybrid `search` (BM25 + USearch). Turns `find` on; the reverse does not.
@@ -33,6 +43,9 @@ buffa = { workspace = true }
 buffa-types = { workspace = true }
 cxx = { workspace = true, optional = true }
 git2 = { workspace = true }
+lance = { workspace = true, optional = true }
+lance-index = { workspace = true, optional = true }
+lance-linalg = { workspace = true, optional = true }
 libgit2-sys = { workspace = true }
 protocontract = { workspace = true }
 protovalidate-buffa = { workspace = true }
