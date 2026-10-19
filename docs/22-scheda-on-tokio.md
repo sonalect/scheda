@@ -231,8 +231,10 @@ A3 makes a task (D6) and `21` L3 gives a Lance side. Until `21` L5 and L6,
 
 ## 3. Stages
 
-Order of the whole branch: `21` L0, L1, L8; then A1–A5 here; then `21`
-L2–L7, L9, L10. Inside each stage: code and tests first, then `cargo test`
+Order of the whole branch (the owner, after `21` L8; `21` §8.4): `21` L0,
+L1, L8; a run of every test; A1 with the contract of `21` §8; A2; a probe
+of the debug loop (`21` L1); A3 and A4 in one commit; then `21` L2–L7,
+L9, L10 (with A5). Inside each stage: code and tests first, then `cargo test`
 and `cargo clippy` green; a box is ticked when its *Check:* passes. One
 docs pass at the end (A5).
 
@@ -242,7 +244,12 @@ D1, D2.
 
 - [ ] tokio required in `scheda` and `scheda-api`; the feature `tokio`
       removed; `gate_tokio_feature` out of `buf.gen.yaml`; generate.
-- *Check:* `cargo build --workspace` and `bazel build //...` green.
+- [ ] In the same generate, the contract of `21` §8 (`git apply
+      .claude/notes/l0-protos.patch`, moved from `21` L5), and the code
+      follows it: a write returns its `version` (moved from `21` L7);
+      `Scheda.Info` lists `FEATURE_INDEX` only from `21` L3.
+- *Check:* `cargo build --workspace` and `bazel build //...` green;
+  `bazel test //...` green.
 
 ### A2. The core and its gate
 

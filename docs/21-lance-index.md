@@ -20,8 +20,10 @@ expressions, with no SQL from the caller.
 
 Order: the contract first (L0: every proto change, reviewed by the owner
 before any code), then L1, then L8 (the old Index removed, moved forward
-by the owner), then the stages of `22` (Scheda on tokio, A1–A5), then
-L2–L7, L9, L10. Inside each later stage: code and tests first, then
+by the owner), then (the owner, after L8, §8.4) a run of every test,
+`22` A1 with the contract of §8 (moved from L5), `22` A2, a probe of the
+debug loop (L1), `22` A3 and A4 in one commit, then L2–L7, L9, and L10
+with `22` A5. Inside each later stage: code and tests first, then
 `cargo test` and `cargo clippy` (with and without `--all-features`)
 green, then the box is ticked when its *Check:* passes. `bazel test
 //...` before the work merges into `main`. One docs pass at the end
@@ -317,7 +319,8 @@ D1, D14, D18.
       not release ones). Measured on 19 October 2026: 235 s for the new
       crates (238 of them, the rest of the target directory warm); the
       rebuild after `touch rust/scheda/src/lib.rs` took 0.9 s, which
-      proves nothing yet because no code uses Lance. Repeat in L2.
+      proves nothing yet because no code uses Lance. Repeat before `22`
+      A3, with a probe whose code calls Lance (the owner, after L8).
 - *Check:* `cargo build` and `cargo clippy --workspace --all-targets
   --all-features` green; `bazel build //rust/scheda/...` green on Linux,
   macOS, and Windows CI.
@@ -428,9 +431,8 @@ D4, D17.
 
 D3, D15.
 
-- [ ] The contract of §8 in `api/scheda/v1`: `git apply
-      .claude/notes/l0-protos.patch`, then `bazel run //api:generate`; the
-      code of every stage before follows it in the same commit.
+- The contract of §8 is applied in `22` A1 (moved there by the owner,
+  after L8), so `22` A3 makes the final contract async once.
 - [ ] `Collection.Query`, `Collection.Count`, `Vault.QueryDocuments`,
       `Vault.CountDocuments` on the datasets: the filter as a DataFusion
       expression, the order, `start_after`, `offset`, `limit`, the total;
@@ -464,7 +466,8 @@ D3, D15.
 
 D5.
 
-- [ ] Writes return the state token (`Document`, the batch results).
+- Writes return the state token from `22` A1 (moved there with the
+  contract).
 - [ ] `not_before` on queries, counts, and searches, with a deadline
       (`OpenOptions`), the ancestry check, and the rewritten-history
       case.
@@ -1082,6 +1085,18 @@ and its `index` subcommand until L9 but keeps the embedder and reranker
 flags. The Check's grep covers `rust/scheda` and `rust/cli` only
 (`rust/api/gen` follows `api/`), and L8 has the gate of L1, without the
 Rust test suites.
+
+After L8, the owner set the path through `21` and `22` together. One run
+of every test on the commit of L8, and the tests run again in every
+*Check:* from there. The contract of §8 goes in with `22` A1, in the same
+generate, because `22` A3 turns the writes and their tests async and the
+patch changes what a write returns: done after A3, both would be
+rewritten twice. A write returns its `version` from then on (the first
+box of L7); `Scheda.Info` lists `FEATURE_INDEX` only from L3, when there
+is an Index. The debug loop is measured before `22` A3, by a probe whose
+code calls Lance: a slow link of the test binaries is cheapest to fix
+while A3 rewrites them. `22` A3 and A4 land in one commit, since the
+blocking CLI cannot build against async-only objects.
 
 ### 8.5 The diff
 
