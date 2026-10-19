@@ -34,10 +34,10 @@ mod validators {
 }
 
 /// The traits of the services, as `protoc-gen-protocontract-buffa` writes
-/// them (`file_per_package`).
+/// them: one file per proto, joined by `scheda.v1.mod.rs`.
 #[rustfmt::skip]
 mod traits {
-    include!("gen/contract/scheda.v1.rs");
+    include!("gen/contract/scheda.v1.mod.rs");
 }
 
 /// Package `scheda.v1`: messages, enums, and service traits.
