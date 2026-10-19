@@ -262,6 +262,12 @@ changes; they grow with each part of the move.
   embeds every text again, with queries `INDEX_REBUILDING` meanwhile; a
   damaged Index is `INDEX_BROKEN` until `Index.Reindex`; `Index.Status` /
   `Index.Watch` replace `index_status` / `wait_indexed`.
+- Docs: `01`–`10`, `13`, `14`, and README describe the 0.22 contract: the
+  objects and their calls, Documents as bytes, the write model (one
+  commit per write or batch, writers taking turns), one mirror, the ports,
+  the codes of `VaultErrorCode`, and the CLI as built. `07` keeps what
+  spans calls; each call's contract is its comment in
+  `api/scheda/v1/*.proto`.
 - A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
   and the `not_utf8` code are gone, and an encrypted collection seals any
   bytes. A journal payload holds any bytes except `\n` and `\r`.

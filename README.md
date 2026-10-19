@@ -5,24 +5,33 @@ document store: records are ordinary text files in a git working tree,
 not a database file. It is not a wiki, a second brain, a daemon, or a
 hosted product.
 
-**What it is.** Records live as ordinary UTF-8 files in a **Vault** — a git
+**What it is.** Documents live as ordinary files in a **Vault** — a git
 working tree a person can open in an editor and in `git` without this
-library. Collections are `document` (one file per record; path is the `id`),
-`journal` (append-only envelope lines), or `singleton`. A **collection
-declaration** in the Vault names write mode and perimeter, not Record
-fields. Columns for `find` / `search` come from a caller **Projector** at
-`open`. The library does not know a consumer's types or file format. The
-**Index** is derived, lives under `{vault}/.scheda/` (gitignored), and can
-be deleted and rebuilt from files. A folder is a Vault when it is a git
-working tree with the committed marker file `.scheda.yaml` (`version: 1`);
-`open` creates a missing Vault, and adds the marker in one commit to a git
-working tree that lacks it, unless `OpenOptions.existing_only` asks it to
-refuse such a folder untouched (`not_a_vault`). The public API is CRUD-shaped
-(`open`, `add`, `get`, `replace`, `remove`, `find`, `search`, `begin`, `commit`,
-`discard`). The CLI encodes those operations except `begin` / `commit` /
-`discard` (each mutating CLI command autocommits). It is not a compatibility layer for MongoDB, CouchDB, or SQL.
-The first implementation is Rust; others (Python, Java, Go, TypeScript, and
-more) may follow.
+library. A Document is bytes: Scheda does not know their format. Collections
+are `standard` (one file per Document; the path is the `id`), `journal`
+(append-only envelope lines), or `singleton`. A **collection declaration**
+in the Vault names the kind and perimeter, not Document fields. Columns for
+queries and searches come from a caller **Projector** passed when the Vault
+is opened. The library does not know a consumer's types or file format.
+The **Index** is derived, lives under `{vault}/.scheda/` (gitignored), and
+can be deleted and rebuilt from files. A folder is a Vault when it is a git
+working tree with the committed marker file `.scheda.yaml` (`version: 2`,
+the generation); `Scheda.Open` with the default mode creates a missing
+Vault, and adds the marker in one commit to a git working tree that lacks
+it, unless `OpenOptions.mode` asks to open an existing Vault only
+(`NOT_A_VAULT`) or to create a new one only.
+
+The public API is protobuf services in one package, `scheda.v1`
+(`api/scheda/v1`), reached through objects: `Scheda` opens a `Vault`, which
+gives `Collection`, `Mirror`, and `Index`. Each write call is one commit
+(`Collection.Create`, `Update`, `Upsert`, `Delete`; `Collection.Batch` and
+`Vault.BatchDocuments` for several as one). Reads are `Collection.Get`,
+`GetMany`, and `History`, and the queries over the Index are
+`Collection.Query` and `Collection.Search` (`Vault.QueryDocuments` and
+`Vault.SearchDocuments` across collections). The CLI is one subcommand per
+rpc. It is not a compatibility layer for MongoDB, CouchDB, or SQL. The first
+implementation is Rust; others (Python, Java, Go, TypeScript, and more) may
+follow.
 
 **Why it exists.** Work that matters still lands as text: notes, configs,
 journals, Markdown, YAML, TOML. Git already versions that text. The
@@ -34,20 +43,29 @@ index does not see until someone remembers to sync. Scheda is the case in
 between: **files stay the source of truth**, git stays the history, and a
 library gives structured access and search without inventing a second store.
 
-**How it is useful.** A program can `find` and `search` (BM25, in-process
-ANN, RRF) and write records without treating the index as the database:
+**How it is useful.** A program can query and search (BM25, in-process
+ANN, RRF) and write Documents without treating the Index as the database:
 wipe the Index, rebuild, get the same files back. An AI agent gets the same
-operations as the library (plus `info` from collection declarations and `create_collection`),
-not a looser “write any Markdown anywhere” path. A person still diffs a
-field as text and recovers last week's bytes with git. Embedding weights,
-if any, stay in the caller's install; without an embedder, vector search is
-off and the rest still works. The library does not score records for a UI,
-does not call a language model, and does not know a profession.
+calls as the library (plus `Vault.ListCollections` from collection
+declarations and `Vault.CreateCollection`), not a looser “write any Markdown
+anywhere” path. A person still diffs a Document as text and recovers last
+week's bytes with git. Embedding weights, if any, stay in the caller's
+install; without an embedder, vector search is off and the rest still works.
+The library does not score Documents for a UI, does not call a language
+model, and does not know a profession.
 
-**Status: core C0–C10, search C9, and agent A0–A7 in the Rust crate.** Files, git, collection declaration, `find` /
-`get`, journal `id` map, hybrid `search` (BM25 + in-process ANN +
-RRF from Projector slots), core acceptance, listing via `Vault.info`, `create_collection`, a CLI encoding
-of `07` (default whole-file Projector column `body`), HTTP embedder/reranker, and agent tools that omit isolated sealed values. Opaque Records (`16` F0–F19) are in. Consumer readiness P0–P16 is in (`12` §4): fixture, journal `{id}: {payload}` envelopes, `Collection.lines` without the Index, many journal writes as one library `begin`/`commit`, unencrypted `{vault}/.isolated/` nested git, dead `id` knobs out so the slug is the whole `id` rule, `find` / `search` as crate features, `remove` on `document` and `singleton`, acceptance on that fixture, a readable commit subject plus an identity the caller chooses, `documents` / `ids`, collection encryption (`encrypt` feature), one owner-only Index so a named isolated collection is an ordinary `find` / `search`, a CLI that can carry an encryption secret, and a Remote for the nested isolated tree. The Index follows git `HEAD` in a background thread (`17` Part B): writes do not wait for it, `find` / `search` are eventually consistent (`wait_indexed` / `index_status`), several processes share one indexer, and an old or damaged Index rebuilds itself. A handle sees collections declared after it opened, `search` says whether its vector leg ran, and a batch is one `transaction` (sync or async) that keeps the caller's error type (`19`). CLI mutations autocommit; batch writes are in-process.
+**Status: the 0.22 proto contract is built on the branch `proto-contract`**
+(`docs/20`): the API as protobuf services and objects, with a sync form and
+an async form (`tokio` feature); one commit per write call and batches that
+are all or nothing; a Vault that never needs the Index to read or write; an
+Index that follows git `HEAD` in a background thread, so queries are
+eventually consistent (`Index.Status`, `Index.Watch`) and an old or damaged
+Index rebuilds itself; hybrid search (BM25 + in-process ANN + RRF, with a
+caller `Embedder` and `Reranker`) as crate features; one mirror
+(`Mirror.Push`, `Pull`, `Sync`, `auto_sync`); isolated collections that never
+leave the machine; collection encryption (`encrypt` feature); and a CLI that
+encodes every rpc (`docs/14`). The step-by-step work orders of the earlier
+stages (`11`, `12`, `15`–`19`) are history.
 
 ## Documents
 
@@ -56,34 +74,35 @@ The design is a numbered package in `docs/`, in English.
 | File                                                  | Contents                                                                                                              |
 | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | [01-concept.md](docs/01-concept.md)                   | Why Scheda exists, what a Vault is, what the library refuses to be                                                    |
-| [02-glossary.md](docs/02-glossary.md)                 | Normative vocabulary: Vault, Collection, Record, collection declaration, Projector, Index, kinds, API names           |
-| [03-model.md](docs/03-model.md)                       | Collection kinds, Record `id` and paths, opaque bytes, journal envelope                                               |
-| [04-files-and-git.md](docs/04-files-and-git.md)       | Files as truth, write lock, commit, `auto_sync`, `sync`, clone, no LFS                                                |
-| [05-collection-declaration.md](docs/05-collection-declaration.md) | Collection declaration: write mode, perimeter, generation `version`, journal caps                                     |
-| [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, `get`                                                                                               |
-| [13-find-and-search.md](docs/13-find-and-search.md)   | Target `find` / `search`: Tantivy Query, hybrid BM25 + USearch, Projector columns, optional reranker                   |
-| [14-cli.md](docs/14-cli.md)                           | Target `scheda` CLI argv (`07`; `--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url` on `search`) |
-| [07-api.md](docs/07-api.md)                           | Language-neutral library operations; message fields in `api/v1`                                                       |
-| [08-agent.md](docs/08-agent.md)                       | Same operations for an AI agent, declaration listing, thin transport                                                  |
-| [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated git root and age encryption (**later**, in this crate)                      |
+| [02-glossary.md](docs/02-glossary.md)                 | Normative vocabulary: Vault, Collection, Document, collection declaration, Projector, Index, kinds, API names           |
+| [03-model.md](docs/03-model.md)                       | Collection kinds, Document `id` and paths, bytes, journal envelope                                               |
+| [04-files-and-git.md](docs/04-files-and-git.md)       | Files as truth, write lock, one commit per write, the mirror, `auto_sync`, clone, no LFS                                                |
+| [05-collection-declaration.md](docs/05-collection-declaration.md) | Collection declaration: kind, perimeter, journal caps; the generation is the marker's                                     |
+| [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, who indexes, `Collection.Get`                                                                                               |
+| [13-find-and-search.md](docs/13-find-and-search.md)   | Queries select, searches rank: Tantivy Filter, hybrid BM25 + USearch, Projector columns, optional reranker                   |
+| [14-cli.md](docs/14-cli.md)                           | The `scheda` CLI: one subcommand per rpc, global flags, JSON in and out (`--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url`) |
+| [07-api.md](docs/07-api.md)                           | What spans the calls of the contract (objects, write model, errors, `Close`); each rpc is described in `api/scheda/v1`                                                       |
+| [08-agent.md](docs/08-agent.md)                       | Same calls for an AI agent, declaration listing, thin transport                                                  |
+| [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated collections and age encryption (**later**, in this crate)                      |
 | [10-roadmap.md](docs/10-roadmap.md)                   | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
-| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in (`14` secret flags, nested Remote) |
-| [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order: `reindex` without holding `write.lock` for the walk (R0–R8); its queue is replaced by `17` |
-| [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order: opaque UTF-8 Records, collection declaration without field Schema, Projector callback (F0–F19 done). |
+| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in |
+| [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order (history): `reindex` without holding `write.lock` for the walk (R0–R8); its queue is replaced by `17` |
+| [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order (history): Documents as bytes, collection declaration without field Schema, Projector callback (F0–F19 done). |
 | [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature with an async API (T1–T4 done) |
 | [18-review-fixes.md](docs/18-review-fixes.md) | Rust work order: fixes from the 5 October 2026 full review (S1–S8) |
-| [19-follow-ups.md](docs/19-follow-ups.md) | Rust work order: declarations follow the work tree, `search` vector-leg signal, `index_version` repeat, sync and async `transaction` (F1–F5 done) |
+| [19-follow-ups.md](docs/19-follow-ups.md) | Rust work order (history): declarations follow the work tree, search vector-leg signal, `index_version` repeat, sync and async `transaction` (F1–F5 done) |
+| [20-proto-contract.md](docs/20-proto-contract.md) | The 0.22 contract: decisions D1–D24, the layers P1–P8 and R1–R5, what is out of scope |
 
 ## Layout
 
 | Path                               | Role                                                                                                                                              |
 | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`Cargo.toml`](Cargo.toml)         | Workspace: members, pinned dependency versions, lints                                                                                             |
-| [`api/v1`](api/v1)                 | Library API messages (Protobuf edition 2024; not the Vault on-disk format)                                                                        |
-| [`rust/api`](rust/api)             | Generated Rust stubs (`scheda-api`) from `api/v1`                                                                                                 |
+| [`api/scheda/v1`](api/scheda/v1)   | The contract: services and messages (Protobuf edition 2024); the rpc comments are the per-call contract                                           |
+| [`rust/api`](rust/api)             | Generated Rust messages and service traits (`scheda-api`) from `api/scheda/v1`                                                                     |
 | [`rust/scheda`](rust/scheda)       | First implementation: Rust crate `scheda`                                                                                                         |
-| [`rust/cli`](rust/cli)             | Thin CLI binary `scheda` (`07` / `14`, AGT-2–5)                                                                                                   |
+| [`rust/cli`](rust/cli)             | Thin CLI binary `scheda`, one subcommand per rpc (`14`, AGT-2–5)                                                                                                   |
 | [`python/vllm`](python/vllm)       | `bazel run` vLLM sidecars (locked `uv.lock`; Linux)                                                                                               |
 | [`python/cli`](python/cli)         | Testdata driver: `cli_LLMs`, `cli_jina` (CC BY-NC), `cli_model2vec`; fixtures in `python/cli/testdata` |
 | [`MODULE.bazel`](MODULE.bazel)     | Bazel module: host toolchain, crate_universe, Buf, linters                                                                                        |
@@ -104,11 +123,10 @@ and host-key checking match a plain `git` command. Features
 `find` and `search` are opt-in: Tantivy `find` and hybrid `search`
 (BM25 + USearch). `search` turns `find` on. `simd` turns `search` on
 and enables USearch SIMD kernels. `openmp` is opt-in (Linux
-`libomp-dev`). `tokio` is opt-in: an async API (`AsyncVault`,
-`AsyncCollection`) that runs each call on Tokio's blocking pool, with
-`AsyncVault::transaction` for batches of writes. There are no default
-features: `cargo add scheda` is git plus Records, without Tantivy,
-USearch, or Tokio. Add `features = ["search", "simd"]` for ANN + SIMD,
+`libomp-dev`). `tokio` is opt-in: the async form of the objects
+(`SchedaAsync`, `VaultAsync`, `CollectionAsync`, …), whose calls run on
+Tokio's blocking pool. There are no default features: `cargo add scheda` is
+git plus Documents, without Tantivy, USearch, or Tokio. Add `features = ["search", "simd"]` for ANN + SIMD,
 or `features = ["find"]` for Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
 **clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
 build without `search` does not need C++. Bazel on Debian 13, macOS,
@@ -144,23 +162,19 @@ bazel build //rust/scheda:pages        # same HTML plus redirect and .nojekyll
 bazel test //rust/scheda:scheda_doc_test
 ```
 
-Generate Rust stubs from `api/version.proto`, `api/v1`, and
-`api/collection/v1` (writes `rust/api/version/`,
-`rust/api/api/v1/`, and `rust/api/api/collection/v1/`;
-`bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test`
-checks they match):
+Generate Rust stubs from `api/scheda/v1` (writes `rust/api/gen/buffa/`,
+the messages, and `rust/api/gen/contract/`, the service traits;
+`bazel test //api:generate_test` checks they match):
 
 ```bash
 bazel run //api:generate
-bazel run //api/collection/v1:generate
-bazel run //api/v1:generate
-bazel test //api:generate_test //api/v1:generate_test //api/collection/v1:generate_test
+bazel test //api:generate_test
 ```
 
 Lint (`bazel test` never rewrites files; format is `bazel run` only):
 
 ```bash
-bazel test //api:lint //api/v1:lint //api/collection/v1:lint        # Protobuf (buf)
+bazel test //api:lint           # Protobuf (buf)
 bazel test //rust:lint          # clippy
 bazel test //python:lint        # ruff
 bazel test //bazel:lint         # Starlark (buildifier)
@@ -168,7 +182,7 @@ bazel test //bazel:markdown     # markdownlint-cli2
 bazel test //rust:vuln          # cargo-audit (needs network)
 bazel test //python:vuln        # uv audit (needs network)
 
-bazel run //api:format //api/v1:format //api/collection/v1:format       # buf format
+bazel run //api:format         # buf format
 bazel run //python:format       # ruff format
 bazel run //bazel:format        # buildifier -mode=fix
 ```
@@ -237,7 +251,8 @@ GPU memory so embedder and reranker fit on one card. First start
 cache, start the embedder and wait until it is listening before the
 reranker, so the two Hub fetches do not stall each other. On WSL2 the
 launcher sets `VLLM_WSL2_ENABLE_PIN_MEMORY=1` so vLLM's default V2
-runner can use UVA. `find` and `--lexical-only` do not need a GPU.
+runner can use UVA. `--lexical-only` ranks without a GPU, but the Vault still indexes with
+the embedder, so the embedder sidecar must run for new writes to be indexed.
 
 Leave these two processes running (separate terminals):
 
@@ -248,7 +263,9 @@ bazel run //python/vllm:reranker   # 127.0.0.1:8081  Cohere /v1/rerank
 
 `cli_LLMs` defaults to those URLs (`Qwen/Qwen3-Embedding-0.6B` dim
 1024, `Qwen/Qwen3-Reranker-0.6B`). No GPU: pass `--lexical-only` on
-every command below (BM25 / RRF only; no vectors).
+every command below to rank by BM25 only (`vectorWeight` 0, no reranker).
+The driver still passes the embedder, so vectors are built only while the
+embedder sidecar runs.
 
 #### 1. Import and reindex
 
@@ -257,29 +274,30 @@ bazel run //python/cli:cli_LLMs -- import
 bazel run //python/cli:cli_LLMs -- reindex
 ```
 
-`import` `open`s `.vault-test-LLMs` if needed, `create-collection` from
-each `.collection.yaml`, then `add`s missing document files. Embedder
-flags go on `add` / `reindex` / `search`, so the background indexer of
-each command fills `.scheda/index/vector/` after its commit. `reindex` rebuilds
-lexical and vector indexes from the commits (use it after a change of
-embedder model, or if you imported without the embedder; an old Index
-format is rebuilt by itself).
-Stdout of `reindex` is `ReindexResult` YAML. The CLI default Projector
-is one text column `body` (the whole UTF-8 Record).
+`import` makes `.vault-test-LLMs` if needed, `create-collection`s from
+each `.collection.yaml`, then `create`s the missing Document files; the
+last step runs `index watch --until-settled` with the embedder flags, so
+that process indexes the writes and fills `.scheda/index/vector/`. `reindex`
+rebuilds the lexical and vector indexes from the commits (use it after a
+change of embedder model; an old Index format is rebuilt by itself). Stdout
+of `reindex` is the settled `IndexState` as YAML. The CLI default Projector
+is one text column `body` (the whole Document, when it is UTF-8 text).
 
 #### 2. `find`
 
-Structured `Filter` on Record `id` and the CLI column `body`. Not meaning.
-`term` is the whole field value. A word in the file is `phrase` / `regex`
-on `body`, or `search`. Other field names are `invalid`. Stdout is YAML:
-`total` then each Record, `---` between documents (`raw` only with
-`--include-raw`).
+A `Filter` on the `id` of a Document and the CLI column `body`. A query
+selects; it does not rank. `term` is the whole field value. A word in the
+file is `phrase` / `regex` on `body`, or a search. Other field names are
+`INVALID_ARGUMENT`. Stdout is YAML: `total` then each Document, `---`
+between documents (`raw` only with `--include-raw`). A leaf on `body` in a
+Vault-wide `find` names its `collection`; with `--collection NAME` it does
+not.
 
 ```bash
 bazel run //python/cli:cli_LLMs -- find
 bazel run //python/cli:cli_LLMs -- find --collection mammals
-bazel run //python/cli:cli_LLMs -- find --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
-bazel run //python/cli:cli_LLMs -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
+bazel run //python/cli:cli_LLMs -- find --collection mammals --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
+bazel run //python/cli:cli_LLMs -- find --filter '{"regex":{"field":"body","pattern":"bamboo","collection":"mammals"}}'
 bazel run //python/cli:cli_LLMs -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
 ```
 
@@ -287,10 +305,12 @@ bazel run //python/cli:cli_LLMs -- find --filter '{"term":{"field":"id","value":
 
 Hybrid BM25 + ANN, RRF, then the reranker. Hits are the top `k` after
 ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off (meaning
-only). `--no-reranker` keeps RRF order. `--topic` / bare `search` use
+only); `--lexical-only` sets `vectorWeight` `0` and turns the reranker off.
+`--no-reranker` keeps RRF order. `--topic` / bare `search` use
 `python/cli/testdata/animals/topics.yaml` (paraphrases; expected ids).
-Hits print as YAML (`---` between hits); `--include-raw` adds `Hit.raw`.
-Bare `search` prints one YAML document per topic.
+Hits print as YAML (`---` between hits), after `vectorLeg`, which says
+whether the vector leg ran; `--include-raw` adds each hit's `raw`. Bare
+`search` prints one YAML document per topic.
 
 ```bash
 bazel run //python/cli:cli_LLMs -- search --collection mammals --k 2 --text "seasonal migration"
@@ -332,20 +352,22 @@ bazel run //python/cli:cli_jina -- search --query '{
 }'
 ```
 
-`cli_jina` defaults to those Hub ids (dim 1024). `find` / `--lexical-only`
-do not need the sidecars.
+`cli_jina` defaults to those Hub ids (dim 1024). `--lexical-only` does not
+call the reranker, but the embedder sidecar must run for new writes to be
+indexed.
 
 ### Model2Vec
 
 > **Disclaimer:** Model2Vec is too weak for the paraphrases in this
 > walkthrough. Any Hub checkpoint in this family (static token lookup,
-> including `potion-multilingual-128M`) returns the **wrong** Records on
+> including `potion-multilingual-128M`) returns the **wrong** Documents on
 > vector-only `search`. This section exists so you can run the **same
 > commands as LLMs** and see the quality gap versus Qwen. For the
 > expected hits, use `//python/cli:cli_LLMs`.
 
-No GPU. `import` and `find` do not load Model2Vec (no Hub fetch, no
-`--model2vec-embedder`). On first `reindex`, `huggingface_hub`
+No GPU. `import` does not load Model2Vec (no Hub fetch, no
+`--model2vec-embedder`); `reindex`, `find`, and `search` do, and `find` and
+`search` use the cache as-is (no Hub). On first `reindex`, `huggingface_hub`
 (`hf-xet`) downloads `minishlab/potion-multilingual-128M` (multilingual,
 ~512 MiB) into
 `<workspace>/.cache/model2vec/potion-multilingual-128M` (`config.json`,
@@ -363,27 +385,30 @@ bazel run //python/cli:cli_model2vec -- import
 bazel run //python/cli:cli_model2vec -- reindex
 ```
 
-`import` `open`s `.vault-test-model2vec` if needed, `create-collection`
-from each `.collection.yaml`, then `add`s missing document files. It
+`import` makes `.vault-test-model2vec` if needed, `create-collection`s
+from each `.collection.yaml`, then `create`s the missing Document files. It
 does not load Model2Vec. `reindex` downloads the cache if needed, loads
-the embedder once, and fills `.scheda/index/vector/`. A later `reindex` rebuilds
-lexical and vector indexes after a change of embedder model. Stdout of
-`reindex` is `ReindexResult` YAML. The CLI default Projector is one text
-column `body` (the whole UTF-8 Record).
+the embedder once, and fills `.scheda/index/vector/`. A later `reindex`
+rebuilds the lexical and vector indexes after a change of embedder model.
+Stdout of `reindex` is the settled `IndexState` as YAML. The CLI default
+Projector is one text column `body` (the whole Document, when it is UTF-8
+text).
 
 #### 2. `find`
 
-Structured `Filter` on Record `id` and the CLI column `body`. Not meaning.
-`term` is the whole field value. A word in the file is `phrase` / `regex`
-on `body`, or `search`. Other field names are `invalid`. Stdout is YAML:
-`total` then each Record, `---` between documents (`raw` only with
-`--include-raw`).
+A `Filter` on the `id` of a Document and the CLI column `body`. A query
+selects; it does not rank. `term` is the whole field value. A word in the
+file is `phrase` / `regex` on `body`, or a search. Other field names are
+`INVALID_ARGUMENT`. Stdout is YAML: `total` then each Document, `---`
+between documents (`raw` only with `--include-raw`). A leaf on `body` in a
+Vault-wide `find` names its `collection`; with `--collection NAME` it does
+not.
 
 ```bash
 bazel run //python/cli:cli_model2vec -- find
 bazel run //python/cli:cli_model2vec -- find --collection mammals
-bazel run //python/cli:cli_model2vec -- find --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
-bazel run //python/cli:cli_model2vec -- find --filter '{"regex":{"field":"body","pattern":"bamboo"}}'
+bazel run //python/cli:cli_model2vec -- find --collection mammals --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
+bazel run //python/cli:cli_model2vec -- find --filter '{"regex":{"field":"body","pattern":"bamboo","collection":"mammals"}}'
 bazel run //python/cli:cli_model2vec -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
 ```
 
@@ -394,8 +419,8 @@ cache to embed the query (run `reindex` first). Hits are the top `k`
 after ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off
 (meaning only). `--topic` / bare `search` use
 `python/cli/testdata/animals/topics.yaml` (paraphrases; expected ids).
-Hits print as YAML (`---` between hits); `--include-raw` adds `Hit.raw`.
-Bare `search` prints one YAML document per topic.
+Hits print as YAML (`---` between hits), after `vectorLeg`; `--include-raw`
+adds each hit's `raw`. Bare `search` prints one YAML document per topic.
 
 ```bash
 bazel run //python/cli:cli_model2vec -- search --collection mammals --k 2 --text "seasonal migration"

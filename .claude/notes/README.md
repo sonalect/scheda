@@ -22,9 +22,10 @@ Project state, deferred work, and measurements that outlive one session
   done (P2 but for `ErrorReport`), the object API of 18 October 2026
   (D24, stages R1–R5 in place of P6 and P7; `api-objects.md`) is done,
   and P8 is done (19 October 2026: the CLI per D16, the Python driver,
-  `tests/consumer.rs`, `src/old` and `tests/old` deleted). Next: the merge
-  into `main`, with the owner's leave, and the docs pass (§5);
-  `p8-follow-ups.md`.
+  `tests/consumer.rs`, `src/old` and `tests/old` deleted), and so is the
+  docs pass (§5); the branch merged into `main` (fast-forward, 19 October
+  2026, not pushed). Next: the release `0.22.0` when the owner asks
+  (`.claude/skills/versioning/SKILL.md`), and `p8-follow-ups.md`.
 - Previous: `docs/19-follow-ups.md` (F1–F5 done, 5 October 2026; not
   yet released), `docs/18-review-fixes.md` (S1–S8) and
   `docs/17-background-index-and-tokio.md` (background Index, `tokio`
