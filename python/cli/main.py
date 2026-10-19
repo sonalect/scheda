@@ -1618,9 +1618,13 @@ class SchedaCli:
         return lines[-1] if lines else {}
 
     def reindex(self) -> dict[str, Any]:
-        """`index reindex`, which waits for the rebuild; then `index status`."""
+        """`index reindex`, which waits for the rebuild; then the settled state.
+
+        `index status` in a new process is the state before its indexer has
+        looked at the Index, so the state comes from a watch that settles.
+        """
         self._run("index", "reindex", expect_stdout=True)
-        return self._run_json("index", "status", embedder=False)
+        return self.settle_index()
 
     def create_collection(self, name: str, schema_json: str) -> None:
         """`create-collection NAME --schema JSON`."""

@@ -23,6 +23,10 @@ each is small.
   wait never ends early; the query then fails `INDEX_REBUILDING`. A
   process without an embedder flag does not index a collection with a
   `vector` column (the CLI Projector marks `body` `vector`).
+- **`index status` in a new process is empty.** A CLI process opens the
+  Vault and asks at once, before its indexer has looked: the state is
+  `{}`. Use `index watch --until-settled` (the Python driver does after
+  `reindex`); the docs pass says so in `14`.
 - **`ErrorReport.message` of a foreign fault.** `scheda::error_report`
   gives the message of a `scheda::Fault` or a `protocontract::Failure`;
   for a port fault of another type it falls back to the `Display` of the
