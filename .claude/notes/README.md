@@ -28,7 +28,10 @@ Project state, deferred work, and measurements that outlive one session
   L0 patch (done; `IndexState.head` became `stored_version`), the probe of
   the debug loop (done, numbers in 21 L1), 22 A2 + A3 + A4 in one commit
   (done 20 October 2026), then 21 L2–L7, L9,
-  L10 (with A5). The spike stays on the branch
+  L10 (with A5), all done 20 October 2026 (`1fdd6d8`, `0a7e3f9`,
+  `f51165e`, `a1aa7a6`; not pushed). What remains is the release, L10's
+  second box, for the owner's word: `0.22.0` was never released from
+  `main`, and `21` names `0.23.0`. The spike stays on the branch
   `lance-spike` (worktree `../scheda-lance`, `spikes/lance/`) and never
   reaches `lance-index` or `main`; its `kill` and `verify` commands are
   the models for L2's checks.
