@@ -12,8 +12,10 @@
 //! ```text
 //! .scheda/index.lock        flock, held for one round
 //! .scheda/index/format      the number of the layout of these files
-//! .scheda/index/commit      the state the Index reflects, written last
+//! .scheda/index/commit      the state the journal id maps reflect, written last
 //! .scheda/index/journal/    the id maps of the journals
+//! .scheda/index/current     the live generation of the Lance tables (`index`)
+//! .scheda/index/g-…/        one generation of the Lance tables (`index`)
 //! ```
 //!
 //! Every file is written whole (a temporary file, then a rename) and is
@@ -38,8 +40,9 @@ use crate::isolated;
 use crate::repo::{Delta, Repo, Snap, Views};
 
 /// The number of the layout of the files of the Index. An Index with another
-/// number is made again, not migrated.
-pub(crate) const FORMAT: u32 = 2;
+/// number (the Tantivy and USearch Index of `0.22` is 2) is removed whole
+/// and made again, not migrated.
+pub(crate) const FORMAT: u32 = 3;
 
 const FORMAT_FILE: &str = "format";
 const COMMIT_FILE: &str = "commit";
@@ -85,6 +88,22 @@ impl State {
             (None, Some(isolated)) => format!("-+{isolated}"),
             (None, None) => String::from("-"),
         }
+    }
+
+    /// The state a token names: what [`State::token`] made, or `None` for
+    /// text that is not a token.
+    #[cfg(feature = "index")]
+    pub(crate) fn of_token(token: &str) -> Option<State> {
+        let (main, isolated) = match token.split_once('+') {
+            Some((main, isolated)) => (main, Some(isolated)),
+            None => (token, None),
+        };
+        let main = parse_oid(main)?;
+        let isolated = match isolated {
+            None => None,
+            Some(word) => Some(Oid::from_str(word).ok()?),
+        };
+        Some(State { main, isolated })
     }
 
     /// The one line the state is stored as: `main {oid}`, then
@@ -227,10 +246,27 @@ impl Index {
         restrict_file_below(&self.scheda, path)
     }
 
-    /// Empties the Index for a rebuild: `commit` goes first, so an Index
-    /// that is half emptied or half built is never taken for a built one;
-    /// then every other file, whatever layout it is of; then `format` is
-    /// written again.
+    /// Empties the journal id maps for a rebuild of theirs: `commit` goes
+    /// first, so maps half emptied or half built are never taken for built
+    /// ones; then the maps. The generations of the Lance tables stay: a
+    /// rebuild of those is made beside the live one.
+    pub(crate) fn reset_maps(&self) -> Result<(), Error> {
+        match fs::remove_file(self.root.join(COMMIT_FILE)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(io(err)).context("remove the commit of the Index"),
+        }
+        match fs::remove_dir_all(self.journal_dir()) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(io(err)).context("remove the journal id maps"),
+        }
+    }
+
+    /// Empties the Index of another layout whole: `commit` goes first, so an
+    /// Index that is half emptied or half built is never taken for a built
+    /// one; then every other file, whatever layout it is of; then `format`
+    /// is written again.
     pub(crate) fn reset(&self) -> Result<(), Error> {
         match fs::remove_file(self.root.join(COMMIT_FILE)) {
             Ok(()) => {}
@@ -391,6 +427,7 @@ impl<'a> Round<'a> {
     }
 
     /// Whether the round builds the Index from nothing.
+    #[cfg(not(feature = "index"))]
     pub(crate) fn is_rebuild(&self) -> bool {
         matches!(self.changes, Changes::Everything)
     }
@@ -414,6 +451,7 @@ impl<'a> Round<'a> {
     }
 
     /// The counts so far.
+    #[cfg(not(feature = "index"))]
     pub(crate) fn counts(&self) -> Counts {
         self.counts
     }

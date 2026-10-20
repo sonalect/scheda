@@ -205,6 +205,17 @@ pub async fn all<T>(stream: impl Stream<Item = Result<T, Error>>) -> Result<Vec<
     Ok(items)
 }
 
+/// Every item of `stream`, failures included.
+#[cfg(feature = "index")]
+pub async fn items<T>(stream: impl Stream<Item = T>) -> Vec<T> {
+    let mut stream = Box::pin(stream);
+    let mut items = Vec::new();
+    while let Some(item) = next(&mut stream).await {
+        items.push(item);
+    }
+    items
+}
+
 /// The requests of a batch, as the stream a batch call takes.
 pub fn stream_of<T: Send + 'static>(
     items: Vec<T>,

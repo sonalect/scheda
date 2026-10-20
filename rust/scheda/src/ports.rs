@@ -1,41 +1,38 @@
 //! The ports of a Vault: the services the caller implements and Scheda
 //! calls.
 //!
-//! An [`Embedder`](EmbedderSync) turns texts into vectors, a
-//! [`Reranker`](RerankerSync) scores Documents against a query, and a
-//! [`Projector`](ProjectorSync) says what of a Document the Index holds. A
+//! An [`Embedder`](EmbedderAsync) turns texts into vectors, a
+//! [`Reranker`](RerankerAsync) scores Documents against a query, and a
+//! [`Projector`](ProjectorAsync) says what of a Document the Index holds. A
 //! caller gives each as a reference ([`EmbedderRef`], …) that holds its
-//! implementation in the form it has, blocking or async; Scheda takes the
-//! blocking form from it, so the caller wraps nothing.
+//! implementation in the form it has, blocking or async; Scheda calls it in
+//! its async form: a blocking implementation runs on the blocking pool of
+//! the runtime the port was given on, an async one is awaited. The caller
+//! wraps nothing.
 //!
-//! This version of Scheda has no Index to use a port, so it accepts none:
-//! a Vault opened with one, and a `Set*` call that gives one, are
-//! `UNIMPLEMENTED`; removing a port that is not there is nothing to do.
+//! Every call of a port runs as a task of its own, so a panic in the port
+//! fails the call with `PANICKED` and does not unwind into Scheda, and a
+//! call Scheda drops (a Vault that closes) stops the port's work at its
+//! next `await`.
 //!
-//! The rest of this module is what Scheda does with a port once it holds
-//! one. It installs a port (reads and validates the descriptor of an
-//! embedder and of a projector once) and calls it through one place each:
-//! the texts of an embedder and the Documents of a reranker travel as
-//! streams, one item at a time, moved and never cloned; each reply is
-//! checked (the length of a vector, the number of vectors and scores)
-//! before anything uses it; a failure of the port keeps its code and its
-//! retry flag and gains a stack frame.
-
-// No port is accepted, so nothing but the unit tests installs or calls one.
-// The expectation fails once the Index uses a port, which is the reminder to
-// drop it.
-#![cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "no port is accepted, so none is installed or called"
-    )
-)]
+//! A build without the feature `index` has no Index to use a port, so it
+//! accepts none: a Vault opened with one, and a `Set*` call that gives one,
+//! are `UNIMPLEMENTED`; removing a port that is not there is nothing to do.
+//!
+//! What Scheda does with a port once it holds one: it installs it (reads
+//! and validates the descriptor of an embedder and of a projector once) and
+//! calls it through one place each: the texts of an embedder and the
+//! Documents of a reranker travel as streams, one item at a time, moved and
+//! never cloned; each reply is checked (the length of a vector, the number
+//! of vectors and scores) before anything uses it; a failure of the port
+//! keeps its code and its retry flag and gains a stack frame.
 
 use std::collections::VecDeque;
 use std::fmt;
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::Arc;
+#[cfg(feature = "index")]
+use std::sync::{Mutex, PoisonError};
 
 use buffa_types::google::protobuf::Empty;
 use protocontract::BoxIter;
@@ -43,13 +40,20 @@ use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::projector_ref::ProjectorRef;
 use scheda_api::v1::reranker_ref::RerankerRef;
 use scheda_api::v1::score_item::Item;
+#[cfg(feature = "index")]
 use scheda_api::v1::{
-    CollectionKey, Document, DocumentScore, EmbedderDescriptor, EmbedderSync, IndexDoc,
-    IndexSchema, ProjectorDescriptor, ProjectorSync, Query, RawDocument, RerankerSync, ScoreItem,
-    Text, VaultErrorCode, Vector,
+    CollectionKey, DynEmbedderAsync, DynProjectorAsync, DynRerankerAsync, EmbedderAsync, IndexDoc,
+    IndexSchema, ProjectorAsync, ProjectorDescriptor, Query, RawDocument, RerankerAsync,
+};
+use scheda_api::v1::{
+    Document, DocumentScore, EmbedderDescriptor, EmbedderSync, RerankerSync, ScoreItem, Text,
+    VaultErrorCode, Vector,
 };
 
-use crate::error::{Context, Error, Fault};
+#[cfg(feature = "index")]
+use crate::error::Context;
+use crate::error::{Error, Fault};
+#[cfg(feature = "index")]
 use crate::stored;
 
 /// The ports a Vault is opened with: a reference for each port it has, none
@@ -65,131 +69,166 @@ pub(crate) struct Ports {
     pub(crate) reranker: Option<RerankerRef>,
 }
 
-/// The ports of one Vault, installed: each in the blocking form, the
-/// embedder and the projector with the descriptor they declared. Each may
-/// be replaced or removed at any time; a call in progress keeps the port it
+/// The ports of one Vault, installed: each in the async form, the embedder
+/// and the projector with the descriptor they declared. Each may be
+/// replaced or removed at any time; a call in progress keeps the port it
 /// started with.
 ///
 /// A slot holds a plain `Option<Arc<…>>` that no panic can leave half
 /// written, so a poisoned lock is read as a clean one.
 #[derive(Default)]
 pub(crate) struct Installed {
+    #[cfg(feature = "index")]
     embedder: Mutex<Option<Arc<EmbedderPort>>>,
+    #[cfg(feature = "index")]
     reranker: Mutex<Option<Arc<RerankerPort>>>,
+    #[cfg(feature = "index")]
     projector: Mutex<Option<Arc<ProjectorPort>>>,
 }
 
 impl fmt::Debug for Installed {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Installed")
-            .field("embedder", &self.embedder().is_some())
+        let mut out = f.debug_struct("Installed");
+        #[cfg(feature = "index")]
+        out.field("embedder", &self.embedder().is_some())
             .field("reranker", &self.reranker().is_some())
-            .field("projector", &self.projector().is_some())
-            .finish()
+            .field("projector", &self.projector().is_some());
+        out.finish()
     }
 }
 
 impl Installed {
-    /// Installs `ports`: none is accepted, so this is the empty set for
-    /// `Ports::default()` and a refusal otherwise.
+    /// Installs `ports`: each one's descriptor is read and checked.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` for a port.
-    pub(crate) fn new(ports: Ports) -> Result<Installed, Error> {
+    /// Those of [`Installed::set_projector`], [`Installed::set_embedder`],
+    /// and [`Installed::set_reranker`].
+    pub(crate) async fn new(ports: Ports) -> Result<Installed, Error> {
         let installed = Installed::default();
         if let Some(projector) = ports.projector {
-            installed.set_projector(Some(projector))?;
+            installed.set_projector(Some(projector)).await?;
         }
         if let Some(embedder) = ports.embedder {
-            installed.set_embedder(Some(embedder))?;
+            installed.set_embedder(Some(embedder)).await?;
         }
         if let Some(reranker) = ports.reranker {
-            installed.set_reranker(Some(reranker))?;
+            installed.set_reranker(Some(reranker)).await?;
         }
         Ok(installed)
     }
 
-    /// Removes the embedder when `embedder` is `None`.
+    /// Installs `embedder`, or removes the embedder for `None`.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` for an embedder.
-    pub(crate) fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
-        if embedder.is_some() {
-            return Err(refused("an embedder"));
+    /// `UNIMPLEMENTED` for an embedder in a build without `index`;
+    /// `INVALID_ARGUMENT` for a reference that holds no implementation, or
+    /// a descriptor that breaks its rules; the failure of the port.
+    pub(crate) async fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
+        #[cfg(feature = "index")]
+        {
+            let port = match embedder {
+                Some(port) => Some(Arc::new(install_embedder(&port).await?)),
+                None => None,
+            };
+            *slot(&self.embedder) = port;
+            Ok(())
         }
-        *slot(&self.embedder) = None;
-        Ok(())
+        #[cfg(not(feature = "index"))]
+        refuse(embedder.is_some(), "an embedder")
     }
 
-    /// Removes the reranker when `reranker` is `None`.
+    /// Installs `reranker`, or removes the reranker for `None`.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` for a reranker.
-    pub(crate) fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
-        if reranker.is_some() {
-            return Err(refused("a reranker"));
+    /// As [`Installed::set_embedder`].
+    pub(crate) async fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
+        #[cfg(feature = "index")]
+        {
+            let port = match reranker {
+                Some(port) => Some(Arc::new(RerankerPort {
+                    port: port.to_async_offload().map_err(unusable("reranker"))?,
+                })),
+                None => None,
+            };
+            *slot(&self.reranker) = port;
+            Ok(())
         }
-        *slot(&self.reranker) = None;
-        Ok(())
+        #[cfg(not(feature = "index"))]
+        refuse(reranker.is_some(), "a reranker")
     }
 
-    /// Removes the projector when `projector` is `None`.
+    /// Installs `projector`, or removes the projector for `None`.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` for a projector.
-    pub(crate) fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
-        if projector.is_some() {
-            return Err(refused("a Projector"));
+    /// As [`Installed::set_embedder`].
+    pub(crate) async fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
+        #[cfg(feature = "index")]
+        {
+            let port = match projector {
+                Some(port) => Some(Arc::new(install_projector(&port).await?)),
+                None => None,
+            };
+            *slot(&self.projector) = port;
+            Ok(())
         }
-        *slot(&self.projector) = None;
-        Ok(())
+        #[cfg(not(feature = "index"))]
+        refuse(projector.is_some(), "a Projector")
     }
 
     /// The embedder now installed, if any.
+    #[cfg(feature = "index")]
     pub(crate) fn embedder(&self) -> Option<Arc<EmbedderPort>> {
         slot(&self.embedder).clone()
     }
 
     /// The reranker now installed, if any.
+    #[cfg(feature = "index")]
     pub(crate) fn reranker(&self) -> Option<Arc<RerankerPort>> {
         slot(&self.reranker).clone()
     }
 
     /// The projector now installed, if any.
+    #[cfg(feature = "index")]
     pub(crate) fn projector(&self) -> Option<Arc<ProjectorPort>> {
         slot(&self.projector).clone()
     }
 }
 
+#[cfg(feature = "index")]
 fn slot<T>(slot: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
     slot.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// `UNIMPLEMENTED` for a port: this version of Scheda has no Index to use
-/// one.
-fn refused(what: &str) -> Error {
-    Fault::new(
-        VaultErrorCode::Unimplemented,
-        format!("{what} is not accepted by this version of Scheda: it has no Index"),
-    )
-    .into()
+/// `UNIMPLEMENTED` for a port, in a build that has no Index to use one;
+/// removing one is nothing to do.
+#[cfg(not(feature = "index"))]
+fn refuse(given: bool, what: &str) -> Result<(), Error> {
+    if given {
+        return Err(Fault::new(
+            VaultErrorCode::Unimplemented,
+            format!("{what} needs a build with the `index` feature: there is no Index without it"),
+        )
+        .into());
+    }
+    Ok(())
 }
 
-/// `INVALID_ARGUMENT` for a port reference whose blocking form cannot be
-/// taken: it holds no implementation (`UNBOUND`), or it holds an async one
-/// and no Tokio runtime is current (`NO_RUNTIME`). The caller gave it, so
-/// the mistake is the caller's; protocontract's error stays the source.
+/// `INVALID_ARGUMENT` for a port reference whose async form cannot be
+/// taken: it holds no implementation (`UNBOUND`), or it holds a blocking
+/// one and no tokio runtime is current (`NO_RUNTIME`). The caller gave it,
+/// so the mistake is the caller's; protocontract's error stays the source.
+#[cfg(feature = "index")]
 fn unusable(what: &str) -> impl FnOnce(Error) -> Error + '_ {
     move |error| {
         Fault::new(
             VaultErrorCode::InvalidArgument,
             format!(
                 "the {what} cannot be used: {error}; give a reference that holds an \
-                 implementation, and an async one from inside a Tokio runtime"
+                 implementation"
             ),
         )
         .with_source(error)
@@ -197,23 +236,8 @@ fn unusable(what: &str) -> impl FnOnce(Error) -> Error + '_ {
     }
 }
 
-/// The blocking form of an embedder: the implementation itself, or an async
-/// one behind `Blocking` on the Tokio runtime current now.
-fn embedder_sync(port: &EmbedderRef) -> Result<Arc<dyn EmbedderSync>, Error> {
-    port.to_sync().map_err(unusable("embedder"))
-}
-
-/// The blocking form of a reranker, as [`embedder_sync`].
-fn reranker_sync(port: &RerankerRef) -> Result<Arc<dyn RerankerSync>, Error> {
-    port.to_sync().map_err(unusable("reranker"))
-}
-
-/// The blocking form of a projector, as [`embedder_sync`].
-fn projector_sync(port: &ProjectorRef) -> Result<Arc<dyn ProjectorSync>, Error> {
-    port.to_sync().map_err(unusable("projector"))
-}
-
 /// `INVALID_ARGUMENT` for a message a port gave that breaks its rules.
+#[cfg(feature = "index")]
 fn invalid_reply(what: &str, fault: Fault) -> Fault {
     Fault::new(
         VaultErrorCode::InvalidArgument,
@@ -222,21 +246,83 @@ fn invalid_reply(what: &str, fault: Fault) -> Fault {
     .with_source(fault)
 }
 
-/// An installed embedder: the port in the blocking form, and the descriptor
-/// it declared when it was installed. Nothing asks the port to describe
-/// itself again.
+/// Runs `work` as a task of its own: a panic in it is `PANICKED`, and the
+/// task is aborted when the returned future is dropped.
+///
+/// # Errors
+///
+/// What `work` returns; `PANICKED` when it panicked; `NO_RUNTIME` outside a
+/// tokio runtime.
+#[cfg(feature = "index")]
+pub(crate) async fn task<T, F>(work: F) -> Result<T, Error>
+where
+    F: Future<Output = Result<T, Error>> + Send + 'static,
+    T: Send + 'static,
+{
+    let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
+        Error::new(
+            protocontract::RuntimeCode::NoRuntime,
+            "a port is called on a tokio runtime",
+        )
+    })?;
+    let mut handle = Abort(runtime.spawn(work));
+    match (&mut handle.0).await {
+        Ok(outcome) => outcome,
+        Err(error) if error.is_panic() => {
+            let payload = error.into_panic();
+            let message = payload
+                .downcast_ref::<&str>()
+                .copied()
+                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+                .unwrap_or("no message");
+            Err(Error::new(
+                protocontract::RuntimeCode::Panicked,
+                format!("a port panicked: {message}"),
+            ))
+        }
+        Err(error) => Err(Error::new(
+            protocontract::RuntimeCode::Cancelled,
+            format!("a call of a port was stopped: {error}"),
+        )),
+    }
+}
+
+/// A task aborted when it is dropped.
+#[cfg(feature = "index")]
+struct Abort<T>(tokio::task::JoinHandle<T>);
+
+#[cfg(feature = "index")]
+impl<T> Drop for Abort<T> {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+/// The next item of `stream`.
+#[cfg(feature = "index")]
+async fn next<S: protocontract::Stream>(stream: std::pin::Pin<&mut S>) -> Option<S::Item> {
+    let mut stream = stream;
+    std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await
+}
+
+/// An installed embedder: the port in the async form, and the descriptor it
+/// declared when it was installed. Nothing asks the port to describe itself
+/// again.
+#[cfg(feature = "index")]
 pub(crate) struct EmbedderPort {
-    sync: Arc<dyn EmbedderSync>,
+    port: DynEmbedderAsync,
     descriptor: EmbedderDescriptor,
     /// `descriptor.dimensions`, as a length.
     dimensions: usize,
 }
 
 /// Reads and validates the descriptor of `port` once.
-fn install_embedder(port: &EmbedderRef) -> Result<EmbedderPort, Error> {
-    let sync = embedder_sync(port)?;
-    let descriptor = sync
-        .describe(Empty::default())
+#[cfg(feature = "index")]
+async fn install_embedder(port: &EmbedderRef) -> Result<EmbedderPort, Error> {
+    let port = port.to_async_offload().map_err(unusable("embedder"))?;
+    let asked = port.clone();
+    let descriptor = task(async move { asked.describe(Empty::default()).await })
+        .await
         .context("Embedder::describe: ask the embedder")?;
     stored::validate(&descriptor)
         .map_err(|fault| invalid_reply("the descriptor of the embedder", fault))
@@ -244,7 +330,7 @@ fn install_embedder(port: &EmbedderRef) -> Result<EmbedderPort, Error> {
     let dimensions =
         usize::try_from(descriptor.dimensions.unwrap_or_default()).unwrap_or(usize::MAX);
     Ok(EmbedderPort {
-        sync,
+        port,
         descriptor,
         dimensions,
     })
@@ -256,6 +342,7 @@ fn install_embedder(port: &EmbedderRef) -> Result<EmbedderPort, Error> {
 /// Whatever the vectors are, they are right: the first `vectors.len()`
 /// texts have their vector, in order, each of the declared length. A caller
 /// that keeps them sends only the other texts the next time.
+#[cfg(feature = "index")]
 #[derive(Debug, Default)]
 pub(crate) struct Embedded {
     /// One vector per text, for the texts from the first on, in order.
@@ -264,6 +351,7 @@ pub(crate) struct Embedded {
     pub(crate) failure: Option<Error>,
 }
 
+#[cfg(feature = "index")]
 impl Embedded {
     /// All the vectors, or the failure when the call stopped short.
     ///
@@ -279,14 +367,15 @@ impl Embedded {
     }
 }
 
-/// Checks the vectors of one `Embed` call as they come, so a blocking read
-/// and an awaiting one share the checks.
+/// Checks the vectors of one `Embed` call as they come.
+#[cfg(feature = "index")]
 struct Gathering {
     dimensions: usize,
     expected: usize,
     out: Embedded,
 }
 
+#[cfg(feature = "index")]
 impl Gathering {
     fn new(dimensions: usize, expected: usize) -> Gathering {
         Gathering {
@@ -356,6 +445,7 @@ impl Gathering {
     }
 }
 
+#[cfg(feature = "index")]
 impl EmbedderPort {
     /// The model whose vectors the embedder gives.
     pub(crate) fn model_id(&self) -> &str {
@@ -374,31 +464,58 @@ impl EmbedderPort {
     /// have the declared length, and there must be exactly as many vectors
     /// as texts. When the reply fails or breaks that contract after `n`
     /// vectors, the result holds those `n` and the failure, which keeps the
-    /// code and the retry flag of the port.
-    pub(crate) fn embed(&self, texts: Vec<String>) -> Embedded {
+    /// code and the retry flag of the port. `stop` is looked at between two
+    /// vectors: once it says so, the call ends with `CANCELLED` and keeps
+    /// the vectors it has.
+    pub(crate) async fn embed(
+        &self,
+        texts: Vec<String>,
+        stop: impl Fn() -> bool + Send + 'static,
+    ) -> Embedded {
         let expected = texts.len();
-        let mut gathering = Gathering::new(self.dimensions, expected);
+        let dimensions = self.dimensions;
         if expected == 0 {
-            return gathering.finish();
+            return Gathering::new(dimensions, 0).finish();
         }
-        let input: BoxIter<'static, Result<Text, Error>> = Box::new(
-            texts
-                .into_iter()
-                .map(|text| Ok(Text::default().with_text(text))),
-        );
-        let reply = match self.sync.embed(input) {
-            Ok(reply) => reply,
-            Err(error) => {
-                gathering.fail(error);
-                return gathering.finish();
+        let port = self.port.clone();
+        let call = task(async move {
+            let mut gathering = Gathering::new(dimensions, expected);
+            let input = protocontract::IterStream::new(
+                texts
+                    .into_iter()
+                    .map(|text| Ok(Text::default().with_text(text)))
+                    .collect::<Vec<Result<Text, Error>>>()
+                    .into_iter(),
+            );
+            match port.embed(input).await {
+                Err(error) => {
+                    gathering.fail(error);
+                }
+                Ok(reply) => {
+                    let mut reply = std::pin::pin!(reply);
+                    while let Some(item) = next(reply.as_mut()).await {
+                        if !gathering.accept(item) {
+                            break;
+                        }
+                        if stop() && gathering.out.vectors.len() < expected {
+                            gathering.fail(Error::new(
+                                protocontract::RuntimeCode::Cancelled,
+                                "the Vault is closing",
+                            ));
+                            break;
+                        }
+                    }
+                }
             }
-        };
-        for item in reply {
-            if !gathering.accept(item) {
-                return gathering.finish();
-            }
+            Ok(gathering.finish())
+        });
+        match call.await {
+            Ok(embedded) => embedded,
+            Err(error) => Embedded {
+                vectors: Vec::new(),
+                failure: Some(error.context("Embedder::embed: ask the embedder")),
+            },
         }
-        gathering.finish()
     }
 
     /// The vector of a search text.
@@ -407,11 +524,11 @@ impl EmbedderPort {
     ///
     /// `INVALID_ARGUMENT` for an empty text and for a vector of the wrong
     /// length; the failure of the port otherwise.
-    pub(crate) fn embed_query(&self, text: String) -> Result<Vec<f32>, Error> {
+    pub(crate) async fn embed_query(&self, text: String) -> Result<Vec<f32>, Error> {
         let query = Self::query_of(text)?;
-        let vector = self
-            .sync
-            .embed_query(query)
+        let port = self.port.clone();
+        let vector = task(async move { port.embed_query(query).await })
+            .await
             .context("Embedder::embed_query: ask the embedder")?;
         self.checked(vector)
     }
@@ -441,11 +558,13 @@ impl EmbedderPort {
     }
 }
 
-/// An installed reranker, in the blocking form.
+/// An installed reranker, in the async form.
+#[cfg(feature = "index")]
 pub(crate) struct RerankerPort {
-    sync: Arc<dyn RerankerSync>,
+    port: DynRerankerAsync,
 }
 
+#[cfg(feature = "index")]
 impl RerankerPort {
     /// One score per Document in `documents`, in their order; higher is
     /// better.
@@ -458,87 +577,83 @@ impl RerankerPort {
     /// `INVALID_ARGUMENT` when the reranker gives more or fewer scores than
     /// Documents; the failure of the port otherwise, with its code and
     /// retry flag.
-    pub(crate) fn score(&self, query: String, documents: Vec<Document>) -> Result<Vec<f64>, Error> {
+    pub(crate) async fn score(
+        &self,
+        query: String,
+        documents: Vec<Document>,
+    ) -> Result<Vec<f64>, Error> {
         let expected = documents.len();
         if expected == 0 {
             return Ok(Vec::new());
         }
-        let reply = self
-            .sync
-            .score(Self::items(query, documents))
-            .context("Reranker::score: ask the reranker")?;
-        Self::gather(expected, reply)
-    }
-
-    /// The query, then the Documents, one by one, as the reranker takes
-    /// them.
-    fn items(
-        query: String,
-        documents: Vec<Document>,
-    ) -> BoxIter<'static, Result<ScoreItem, Error>> {
-        Box::new(
-            std::iter::once(Item::Query(query))
+        let port = self.port.clone();
+        task(async move {
+            let items: Vec<Result<ScoreItem, Error>> = std::iter::once(Item::Query(query))
                 .chain(documents.into_iter().map(Item::from))
                 .map(|item| {
                     Ok(ScoreItem {
                         item: Some(item),
                         ..ScoreItem::default()
                     })
-                }),
-        )
-    }
-
-    /// The scores of a reply, when there are as many as `expected`.
-    fn gather(
-        expected: usize,
-        reply: impl Iterator<Item = Result<DocumentScore, Error>>,
-    ) -> Result<Vec<f64>, Error> {
-        let mut scores = Vec::with_capacity(expected);
-        for item in reply {
-            let score = item.context("Reranker::score: read the scores")?;
-            if scores.len() == expected {
+                })
+                .collect();
+            let reply = port
+                .score(protocontract::IterStream::new(items.into_iter()))
+                .await
+                .context("Reranker::score: ask the reranker")?;
+            let mut reply = std::pin::pin!(reply);
+            let mut scores = Vec::with_capacity(expected);
+            while let Some(item) = next(reply.as_mut()).await {
+                let score: DocumentScore = item.context("Reranker::score: read the scores")?;
+                if scores.len() == expected {
+                    return Err(Error::from(Fault::new(
+                        VaultErrorCode::InvalidArgument,
+                        format!("the reranker gave more than the {expected} scores asked for"),
+                    ))
+                    .context("Reranker::score: count the scores"));
+                }
+                scores.push(score.score.unwrap_or_default());
+            }
+            if scores.len() != expected {
                 return Err(Error::from(Fault::new(
                     VaultErrorCode::InvalidArgument,
-                    format!("the reranker gave more than the {expected} scores asked for"),
+                    format!(
+                        "the reranker gave {} scores for {expected} Documents",
+                        scores.len()
+                    ),
                 ))
                 .context("Reranker::score: count the scores"));
             }
-            scores.push(score.score.unwrap_or_default());
-        }
-        if scores.len() != expected {
-            return Err(Error::from(Fault::new(
-                VaultErrorCode::InvalidArgument,
-                format!(
-                    "the reranker gave {} scores for {expected} Documents",
-                    scores.len()
-                ),
-            ))
-            .context("Reranker::score: count the scores"));
-        }
-        Ok(scores)
+            Ok(scores)
+        })
+        .await
     }
 }
 
-/// An installed projector: the port in the blocking form, and the
-/// descriptor it declared when it was installed.
+/// An installed projector: the port in the async form, and the descriptor
+/// it declared when it was installed.
+#[cfg(feature = "index")]
 pub(crate) struct ProjectorPort {
-    sync: Arc<dyn ProjectorSync>,
+    port: DynProjectorAsync,
     descriptor: ProjectorDescriptor,
 }
 
-/// Installs a projector: takes its blocking form, then reads and validates
-/// its descriptor, once.
-fn install_projector(port: &ProjectorRef) -> Result<ProjectorPort, Error> {
-    let sync = projector_sync(port)?;
-    let descriptor = sync
-        .describe(Empty::default())
+/// Installs a projector: takes its async form, then reads and validates its
+/// descriptor, once.
+#[cfg(feature = "index")]
+async fn install_projector(port: &ProjectorRef) -> Result<ProjectorPort, Error> {
+    let port = port.to_async_offload().map_err(unusable("projector"))?;
+    let asked = port.clone();
+    let descriptor = task(async move { asked.describe(Empty::default()).await })
+        .await
         .context("Projector::describe: ask the projector")?;
     stored::validate(&descriptor)
         .map_err(|fault| invalid_reply("the descriptor of the projector", fault))
         .context("Projector::describe: check the descriptor")?;
-    Ok(ProjectorPort { sync, descriptor })
+    Ok(ProjectorPort { port, descriptor })
 }
 
+#[cfg(feature = "index")]
 impl ProjectorPort {
     /// The projection the projector declared when it was installed.
     pub(crate) fn projection_id(&self) -> &str {
@@ -551,13 +666,16 @@ impl ProjectorPort {
     /// # Errors
     ///
     /// `INVALID_ARGUMENT` when the columns break the rules of an
-    /// `IndexSchema` (a name used twice, `id` or `collection` as a name, an
-    /// unset kind); the failure of the port otherwise.
-    pub(crate) fn columns(&self, collection: String) -> Result<Option<IndexSchema>, Error> {
-        let schema = self
-            .sync
-            .columns(CollectionKey::default().with_name(collection))
-            .context("Projector::columns: ask the projector")?;
+    /// `IndexSchema` (a name used twice, a reserved name, an unset kind);
+    /// the failure of the port otherwise.
+    pub(crate) async fn columns(&self, collection: String) -> Result<Option<IndexSchema>, Error> {
+        let port = self.port.clone();
+        let schema = task(async move {
+            port.columns(CollectionKey::default().with_name(collection))
+                .await
+        })
+        .await
+        .context("Projector::columns: ask the projector")?;
         stored::validate(&schema)
             .map_err(|fault| invalid_reply("the columns of the projector", fault))
             .context("Projector::columns: check the columns")?;
@@ -565,14 +683,14 @@ impl ProjectorPort {
     }
 
     /// The values of the columns for one Document, or `None` when the
-    /// projector gives none: the Document is indexed by identity only. `raw` is
-    /// moved into the call.
+    /// projector gives none: the Document is indexed by identity only.
+    /// `raw` is moved into the call.
     ///
     /// # Errors
     ///
     /// `INVALID_ARGUMENT` when a value breaks the rules of an `IndexValue`;
     /// the failure of the port otherwise.
-    pub(crate) fn project(
+    pub(crate) async fn project(
         &self,
         collection: String,
         id: String,
@@ -582,9 +700,9 @@ impl ProjectorPort {
             .with_collection(collection)
             .with_id(id)
             .with_raw(raw);
-        let values = self
-            .sync
-            .project(document)
+        let port = self.port.clone();
+        let values = task(async move { port.project(document).await })
+            .await
             .context("Projector::project: ask the projector")?;
         stored::validate(&values)
             .map_err(|fault| invalid_reply("the values of the projector", fault))
@@ -845,7 +963,7 @@ impl<X, Y> Iterator for Portions<X, Y> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "index"))]
 mod tests {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -855,6 +973,8 @@ mod tests {
         ColumnKind, EmbedderAsync, EmbedderErrorCode, IndexColumn, IndexValue, ProjectorErrorCode,
         RerankerErrorCode,
     };
+
+    use scheda_api::v1::ProjectorSync;
 
     use super::*;
 
@@ -957,37 +1077,39 @@ mod tests {
         }
     }
 
-    fn embedder(script: Script) -> EmbedderPort {
-        install_embedder(&EmbedderRef::from_sync(script)).unwrap()
+    async fn embedder(script: Script) -> EmbedderPort {
+        install_embedder(&EmbedderRef::from_sync(script))
+            .await
+            .unwrap()
     }
 
-    #[test]
-    fn vectors_come_back_in_the_order_of_the_texts() {
+    #[tokio::test]
+    async fn vectors_come_back_in_the_order_of_the_texts() {
         let texts = texts(20);
         let want = expected(&texts);
-        let embedded = embedder(Script::new()).embed(texts);
+        let embedded = embedder(Script::new()).await.embed(texts, || false).await;
         assert!(embedded.failure.is_none());
         assert_eq!(embedded.vectors, want);
     }
 
-    #[test]
-    fn no_texts_call_nothing() {
+    #[tokio::test]
+    async fn no_texts_call_nothing() {
         let script = Script::new();
         let seen = Arc::clone(&script.seen);
-        let embedded = embedder(script).embed(Vec::new());
+        let embedded = embedder(script).await.embed(Vec::new(), || false).await;
         assert!(embedded.vectors.is_empty() && embedded.failure.is_none());
         assert!(seen.lock().unwrap().is_empty());
     }
 
-    #[test]
-    fn a_failure_after_the_seventh_vector_returns_the_seven_and_the_error() {
+    #[tokio::test]
+    async fn a_failure_after_the_seventh_vector_returns_the_seven_and_the_error() {
         let texts = texts(20);
         let want = expected(&texts[..7]);
         let script = Script {
             fail_at: Some(7),
             ..Script::new()
         };
-        let embedded = embedder(script).embed(texts);
+        let embedded = embedder(script).await.embed(texts, || false).await;
         assert_eq!(embedded.vectors, want);
         let error = embedded.failure.expect("the port failed");
         assert!(error.is(EmbedderErrorCode::Unavailable));
@@ -995,29 +1117,31 @@ mod tests {
         assert!(!error.stack().is_empty(), "Scheda adds a frame");
         assert!(
             embedder(Script::new())
-                .embed(self::texts(1))
+                .await
+                .embed(self::texts(1), || false)
+                .await
                 .into_result()
                 .is_ok()
         );
     }
 
-    #[test]
-    fn a_vector_of_the_wrong_length_is_invalid_argument_and_keeps_the_ones_before_it() {
+    #[tokio::test]
+    async fn a_vector_of_the_wrong_length_is_invalid_argument_and_keeps_the_ones_before_it() {
         let texts = texts(10);
         let want = expected(&texts[..3]);
         let script = Script {
             short_at: Some(3),
             ..Script::new()
         };
-        let embedded = embedder(script).embed(texts);
+        let embedded = embedder(script).await.embed(texts, || false).await;
         assert_eq!(embedded.vectors, want);
         let error = embedded.failure.expect("the vector is short");
         assert!(error.is(VaultErrorCode::InvalidArgument));
         assert!(error.to_string().contains("vector 3"), "names the index");
     }
 
-    #[test]
-    fn more_or_fewer_vectors_than_texts_is_invalid_argument() {
+    #[tokio::test]
+    async fn more_or_fewer_vectors_than_texts_is_invalid_argument() {
         for (extra, missing) in [(true, false), (false, true)] {
             let texts = texts(5);
             let script = Script {
@@ -1025,44 +1149,56 @@ mod tests {
                 missing,
                 ..Script::new()
             };
-            let embedded = embedder(script).embed(texts);
+            let embedded = embedder(script).await.embed(texts, || false).await;
             assert_eq!(embedded.vectors.len(), if extra { 5 } else { 4 });
             let error = embedded.into_result().unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));
         }
     }
 
-    #[test]
-    fn the_texts_are_moved_to_the_embedder_and_never_cloned() {
+    #[tokio::test]
+    async fn the_texts_are_moved_to_the_embedder_and_never_cloned() {
         let texts = texts(12);
         let sent: Vec<usize> = texts.iter().map(|text| text.as_ptr() as usize).collect();
         let script = Script::new();
         let seen = Arc::clone(&script.seen);
-        embedder(script).embed(texts).into_result().unwrap();
+        embedder(script)
+            .await
+            .embed(texts, || false)
+            .await
+            .into_result()
+            .unwrap();
         assert_eq!(*seen.lock().unwrap(), sent);
     }
 
-    #[test]
-    fn a_query_vector_has_the_declared_length_and_the_query_is_not_empty() {
+    #[tokio::test]
+    async fn a_query_vector_has_the_declared_length_and_the_query_is_not_empty() {
         let error = embedder(Script {
             query_values: DIMS + 1,
             ..Script::new()
         })
+        .await
         .embed_query(String::from("what"))
+        .await
         .unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
         let error = embedder(Script::new())
+            .await
             .embed_query(String::new())
+            .await
             .unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let port = embedder(Script::new());
-        assert_eq!(port.embed_query(String::from("what")).unwrap().len(), DIMS);
+        let port = embedder(Script::new()).await;
+        assert_eq!(
+            port.embed_query(String::from("what")).await.unwrap().len(),
+            DIMS
+        );
         assert_eq!(port.model_id(), "model-a");
         assert_eq!(port.dimensions(), DIMS);
     }
 
-    #[test]
-    fn a_descriptor_that_breaks_its_rules_fails_the_install_after_one_describe() {
+    #[tokio::test]
+    async fn a_descriptor_that_breaks_its_rules_fails_the_install_after_one_describe() {
         for (model_id, dimensions) in [("model-a", 0), ("", 3)] {
             let script = Script {
                 model_id: model_id.to_owned(),
@@ -1071,6 +1207,7 @@ mod tests {
             };
             let describes = Arc::clone(&script.describes);
             let error = install_embedder(&EmbedderRef::from_sync(script))
+                .await
                 .err()
                 .unwrap();
             assert!(error.is(VaultErrorCode::InvalidArgument));
@@ -1078,19 +1215,19 @@ mod tests {
         }
     }
 
-    #[test]
-    fn describe_is_called_once_per_install_whatever_is_embedded_after() {
+    #[tokio::test]
+    async fn describe_is_called_once_per_install_whatever_is_embedded_after() {
         let script = Script::new();
         let describes = Arc::clone(&script.describes);
-        let port = embedder(script);
-        port.embed(texts(4)).into_result().unwrap();
-        port.embed_query(String::from("q")).unwrap();
-        port.embed(texts(2)).into_result().unwrap();
+        let port = embedder(script).await;
+        port.embed(texts(4), || false).await.into_result().unwrap();
+        port.embed_query(String::from("q")).await.unwrap();
+        port.embed(texts(2), || false).await.into_result().unwrap();
         assert_eq!(describes.load(Ordering::SeqCst), 1);
     }
 
-    #[test]
-    fn a_failure_of_describe_keeps_the_code_of_the_port() {
+    #[tokio::test]
+    async fn a_failure_of_describe_keeps_the_code_of_the_port() {
         struct Down;
         impl EmbedderSync for Down {
             fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
@@ -1107,13 +1244,14 @@ mod tests {
             }
         }
         let error = install_embedder(&EmbedderRef::from_sync(Down))
+            .await
             .err()
             .unwrap();
         assert!(error.is(EmbedderErrorCode::Refused));
     }
 
-    #[test]
-    fn an_embedder_a_reranker_or_a_projector_is_unimplemented() {
+    #[tokio::test]
+    async fn an_embedder_a_reranker_and_a_projector_are_installed_and_removed() {
         for ports in [
             Ports {
                 embedder: Some(EmbedderRef::from_sync(Script::new())),
@@ -1131,17 +1269,17 @@ mod tests {
                 ..Ports::default()
             },
         ] {
-            let error = Installed::new(ports).err().unwrap();
-            assert!(error.is(VaultErrorCode::Unimplemented));
+            Installed::new(ports).await.unwrap();
         }
         let installed = Installed::default();
-        let error = installed
+        installed
             .set_embedder(Some(EmbedderRef::from_sync(Script::new())))
-            .unwrap_err();
-        assert!(error.is(VaultErrorCode::Unimplemented));
-        installed.set_embedder(None).unwrap();
-        installed.set_reranker(None).unwrap();
-        installed.set_projector(None).unwrap();
+            .await
+            .unwrap();
+        assert!(installed.embedder().is_some());
+        installed.set_embedder(None).await.unwrap();
+        installed.set_reranker(None).await.unwrap();
+        installed.set_projector(None).await.unwrap();
         assert!(installed.embedder().is_none());
         assert!(installed.reranker().is_none());
         assert!(installed.projector().is_none());
@@ -1178,8 +1316,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn the_adapter_calls_its_function_with_portions_and_flushes_the_last_one() {
+    #[tokio::test]
+    async fn the_adapter_calls_its_function_with_portions_and_flushes_the_last_one() {
         let portions = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&portions);
         let adapter = FixedEmbedder::new(
@@ -1192,13 +1330,24 @@ mod tests {
             },
         );
         let texts = texts(25);
-        let port = install_embedder(&EmbedderRef::from_sync(adapter)).unwrap();
-        let by_hand = install_embedder(&EmbedderRef::from_sync(ByHand)).unwrap();
-        let got = port.embed(texts.clone()).into_result().unwrap();
+        let port = install_embedder(&EmbedderRef::from_sync(adapter))
+            .await
+            .unwrap();
+        let by_hand = install_embedder(&EmbedderRef::from_sync(ByHand))
+            .await
+            .unwrap();
+        let got = port
+            .embed(texts.clone(), || false)
+            .await
+            .into_result()
+            .unwrap();
         assert_eq!(*portions.lock().unwrap(), [10, 10, 5]);
-        assert_eq!(got, by_hand.embed(texts).into_result().unwrap());
         assert_eq!(
-            port.embed_query(String::from("q")).unwrap(),
+            got,
+            by_hand.embed(texts, || false).await.into_result().unwrap()
+        );
+        assert_eq!(
+            port.embed_query(String::from("q")).await.unwrap(),
             vector_for("q")
         );
         assert_eq!(
@@ -1208,8 +1357,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn the_adapter_fails_the_stream_when_its_function_miscounts_or_fails() {
+    #[tokio::test]
+    async fn the_adapter_fails_the_stream_when_its_function_miscounts_or_fails() {
         let count = FixedEmbedder::new(
             "model-a",
             DIMS as u32,
@@ -1223,8 +1372,10 @@ mod tests {
             },
         );
         let embedded = install_embedder(&EmbedderRef::from_sync(count))
+            .await
             .unwrap()
-            .embed(texts(6));
+            .embed(texts(6), || false)
+            .await;
         assert!(embedded.vectors.is_empty());
         let error = embedded.failure.unwrap();
         assert!(error.is(VaultErrorCode::InvalidArgument));
@@ -1245,8 +1396,10 @@ mod tests {
             },
         );
         let embedded = install_embedder(&EmbedderRef::from_sync(failing))
+            .await
             .unwrap()
-            .embed(texts(10));
+            .embed(texts(10), || false)
+            .await;
         assert_eq!(embedded.vectors.len(), 4, "the first portion is kept");
         let error = embedded.failure.unwrap();
         assert!(error.is(EmbedderErrorCode::Unavailable) && error.retryable());
@@ -1307,12 +1460,12 @@ mod tests {
     }
 
     fn reranker(judge: impl RerankerSync + 'static) -> Arc<RerankerPort> {
-        let sync = reranker_sync(&RerankerRef::from_sync(judge)).unwrap();
-        Arc::new(RerankerPort { sync })
+        let port = RerankerRef::from_sync(judge).to_async_offload().unwrap();
+        Arc::new(RerankerPort { port })
     }
 
-    #[test]
-    fn a_reranker_gets_the_query_first_and_scores_each_document_in_order() {
+    #[tokio::test]
+    async fn a_reranker_gets_the_query_first_and_scores_each_document_in_order() {
         let judge = Judge::default();
         let sent = Arc::clone(&judge.sent);
         let documents = vec![
@@ -1320,19 +1473,23 @@ mod tests {
             document("b", "123"),
             document("c", "12"),
         ];
-        let scores = reranker(judge).score(String::from("q"), documents).unwrap();
+        let scores = reranker(judge)
+            .score(String::from("q"), documents)
+            .await
+            .unwrap();
         assert_eq!(scores, [1.0, 3.0, 2.0]);
         assert_eq!(*sent.lock().unwrap(), ["q", "a", "b", "c"]);
     }
 
-    #[test]
-    fn a_reranker_that_miscounts_is_invalid_argument_and_a_refusal_keeps_its_code() {
+    #[tokio::test]
+    async fn a_reranker_that_miscounts_is_invalid_argument_and_a_refusal_keeps_its_code() {
         let documents = || vec![document("a", "1"), document("b", "2")];
         let error = reranker(Judge {
             drop_one: true,
             ..Judge::default()
         })
         .score(String::from("q"), documents())
+        .await
         .unwrap_err();
         assert!(error.is(VaultErrorCode::InvalidArgument));
         let error = reranker(Judge {
@@ -1340,17 +1497,19 @@ mod tests {
             ..Judge::default()
         })
         .score(String::from("q"), documents())
+        .await
         .unwrap_err();
         assert!(error.is(RerankerErrorCode::Refused));
         assert!(!error.retryable());
         let scores = reranker(Judge::default())
             .score(String::from("q"), Vec::new())
+            .await
             .unwrap();
         assert!(scores.is_empty());
     }
 
-    #[test]
-    fn the_reranker_adapter_scores_in_portions_and_in_order() {
+    #[tokio::test]
+    async fn the_reranker_adapter_scores_in_portions_and_in_order() {
         let portions = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&portions);
         let adapter = FixedReranker::new(
@@ -1368,6 +1527,7 @@ mod tests {
             .collect();
         let scores = reranker(adapter)
             .score(String::from("q"), documents)
+            .await
             .unwrap();
         assert_eq!(scores, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
         let log = portions.lock().unwrap();
@@ -1408,9 +1568,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_projector_describes_itself_once_and_a_descriptor_that_breaks_its_rules_is_refused() {
-        let port = projector(proj(Vec::new(), IndexDoc::default()));
+    #[tokio::test]
+    async fn a_projector_describes_itself_once_and_a_descriptor_that_breaks_its_rules_is_refused() {
+        let port = projector(proj(Vec::new(), IndexDoc::default())).await;
         assert_eq!(port.projection_id(), "proj@1");
 
         struct Blank;
@@ -1430,6 +1590,7 @@ mod tests {
         }
 
         let error = install_projector(&ProjectorRef::from_sync(Blank))
+            .await
             .err()
             .unwrap();
         assert!(error.is(VaultErrorCode::InvalidArgument));
@@ -1442,8 +1603,12 @@ mod tests {
             .with_scalar_index(true)
     }
 
-    fn projector(proj: Proj) -> Arc<ProjectorPort> {
-        Arc::new(install_projector(&ProjectorRef::from_sync(proj)).unwrap())
+    async fn projector(proj: Proj) -> Arc<ProjectorPort> {
+        Arc::new(
+            install_projector(&ProjectorRef::from_sync(proj))
+                .await
+                .unwrap(),
+        )
     }
 
     fn proj(columns: Vec<IndexColumn>, values: IndexDoc) -> Proj {
@@ -1470,38 +1635,44 @@ mod tests {
         doc
     }
 
-    #[test]
-    fn the_projector_gets_raw_moved_and_an_empty_result_leaves_the_document_out() {
+    #[tokio::test]
+    async fn the_projector_gets_raw_moved_and_an_empty_result_leaves_the_document_out() {
         let with_values = proj(vec![column("title")], one_value());
         let seen = Arc::clone(&with_values.raw_at);
-        let port = projector(with_values);
+        let port = projector(with_values).await;
         let raw = b"# a note".to_vec();
         let at = raw.as_ptr() as usize;
         let doc = port
             .project(String::from("notes"), String::from("a.md"), raw)
+            .await
             .unwrap();
         assert!(doc.is_some_and(|doc| doc.values.contains_key("title")));
         assert_eq!(*seen.lock().unwrap(), [at], "moved, not copied");
 
-        let empty = projector(proj(vec![column("title")], IndexDoc::default()));
+        let empty = projector(proj(vec![column("title")], IndexDoc::default())).await;
         let doc = empty
             .project(String::from("notes"), String::from("a.md"), Vec::new())
+            .await
             .unwrap();
         assert!(doc.is_none());
     }
 
-    #[test]
-    fn columns_are_checked_and_none_leaves_the_collection_out() {
+    #[tokio::test]
+    async fn columns_are_checked_and_none_leaves_the_collection_out() {
         let schema = projector(proj(
             vec![column("title"), column("body")],
             IndexDoc::default(),
         ))
+        .await
         .columns(String::from("notes"))
+        .await
         .unwrap()
         .unwrap();
         assert_eq!(schema.columns.len(), 2);
         let none = projector(proj(Vec::new(), IndexDoc::default()))
+            .await
             .columns(String::from("notes"))
+            .await
             .unwrap();
         assert!(none.is_none());
         for columns in [
@@ -1511,18 +1682,22 @@ mod tests {
             vec![column("")],
         ] {
             let error = projector(proj(columns, IndexDoc::default()))
+                .await
                 .columns(String::from("notes"))
+                .await
                 .unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));
         }
     }
 
-    #[test]
-    fn a_projector_failure_keeps_its_code() {
+    #[tokio::test]
+    async fn a_projector_failure_keeps_its_code() {
         let mut failing = proj(vec![column("title")], IndexDoc::default());
         failing.fail = true;
         let error = projector(failing)
+            .await
             .project(String::from("notes"), String::from("a.md"), Vec::new())
+            .await
             .unwrap_err();
         assert!(error.is(ProjectorErrorCode::Refused));
     }
@@ -1563,36 +1738,98 @@ mod tests {
         }
     }
 
-    #[test]
-    fn an_async_port_outside_a_runtime_is_invalid_argument() {
-        let error = install_embedder(&EmbedderRef::from_async(Waiting))
+    #[tokio::test]
+    async fn a_reference_without_an_implementation_is_invalid_argument() {
+        let error = install_embedder(&EmbedderRef::default())
+            .await
+            .err()
+            .unwrap();
+        assert!(error.is(VaultErrorCode::InvalidArgument));
+        let error = install_projector(&ProjectorRef::default())
+            .await
             .err()
             .unwrap();
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 
-    #[test]
-    fn a_reference_without_an_implementation_is_invalid_argument() {
-        let error = install_embedder(&EmbedderRef::default()).err().unwrap();
-        assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = install_projector(&ProjectorRef::default()).err().unwrap();
-        assert!(error.is(VaultErrorCode::InvalidArgument));
+    #[tokio::test]
+    async fn an_async_embedder_is_awaited_on_either_runtime() {
+        let port = install_embedder(&EmbedderRef::from_async(Waiting))
+            .await
+            .unwrap();
+        assert_eq!(port.model_id(), "model-async");
+        let texts = texts(9);
+        let want = expected(&texts);
+        assert_eq!(
+            port.embed(texts, || false).await.into_result().unwrap(),
+            want
+        );
+        assert_eq!(
+            port.embed_query(String::from("q")).await.unwrap(),
+            vector_for("q")
+        );
     }
 
-    mod async_port {
-        use super::*;
+    #[tokio::test]
+    async fn a_port_that_panics_fails_the_call_with_panicked() {
+        struct Boom;
 
-        #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-        async fn an_async_embedder_is_called_by_the_blocking_helpers_through_blocking() {
-            let port = install_embedder(&EmbedderRef::from_async(Waiting)).unwrap();
-            assert_eq!(port.model_id(), "model-async");
-            let texts = texts(9);
-            let want = expected(&texts);
-            assert_eq!(port.embed(texts).into_result().unwrap(), want);
-            assert_eq!(
-                port.embed_query(String::from("q")).unwrap(),
-                vector_for("q")
-            );
+        impl EmbedderSync for Boom {
+            fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
+                Ok(EmbedderDescriptor::default()
+                    .with_model_id("boom")
+                    .with_dimensions(3))
+            }
+
+            fn embed(
+                &self,
+                _texts: BoxIter<'static, Result<Text, Error>>,
+            ) -> Result<BoxIter<'static, Result<Vector, Error>>, Error> {
+                panic!("the model exploded")
+            }
+
+            fn embed_query(&self, _query: Query) -> Result<Vector, Error> {
+                panic!("the model exploded")
+            }
         }
+
+        let port = install_embedder(&EmbedderRef::from_sync(Boom))
+            .await
+            .unwrap();
+        let error = port.embed_query(String::from("q")).await.unwrap_err();
+        assert!(error.is(protocontract::RuntimeCode::Panicked), "{error}");
+        let embedded = port.embed(texts(2), || false).await;
+        assert!(embedded.vectors.is_empty());
+        let error = embedded.failure.unwrap();
+        assert!(error.is(protocontract::RuntimeCode::Panicked), "{error}");
+    }
+}
+
+#[cfg(all(test, not(feature = "index")))]
+mod thin_tests {
+    use scheda_api::v1::embedder_ref::EmbedderRef;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn a_build_without_the_index_takes_no_port_and_removing_one_is_nothing() {
+        let embedder = FixedEmbedder::new(
+            "m",
+            2,
+            NonZeroUsize::new(1).unwrap(),
+            |texts: Vec<String>| Ok(texts.iter().map(|_| vec![0.0, 0.0]).collect()),
+        );
+        let error = Installed::new(Ports {
+            embedder: Some(EmbedderRef::from_sync(embedder)),
+            ..Ports::default()
+        })
+        .await
+        .err()
+        .unwrap();
+        assert!(error.is(VaultErrorCode::Unimplemented));
+        let installed = Installed::default();
+        installed.set_embedder(None).await.unwrap();
+        installed.set_reranker(None).await.unwrap();
+        installed.set_projector(None).await.unwrap();
     }
 }

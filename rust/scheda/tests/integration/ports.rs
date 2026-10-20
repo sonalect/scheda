@@ -1,7 +1,8 @@
-//! The ports through the public handle: this version of Scheda has no Index
-//! to use one, so `open` and the `Set*` calls refuse each (`UNIMPLEMENTED`),
-//! and the fixed-portion adapters, called as the blocking traits they
-//! implement.
+//! The ports through the public handle: with the Index (`index`), `open`
+//! and the `Set*` calls install each, asking its descriptor once; a build
+//! without it has no Index to use one and refuses each
+//! (`UNIMPLEMENTED`). And the fixed-portion adapters, called as the blocking
+//! traits they implement.
 
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -100,10 +101,43 @@ fn scratch_vault(name: &str) -> (Scratch, std::path::PathBuf) {
 }
 
 #[test]
-fn an_embedder_or_a_reranker_is_unimplemented() {
+fn an_embedder_and_a_reranker_are_installed_with_the_index_and_refused_without() {
     both(|| async {
-        let (_scratch, path) = scratch_vault("no-embedder");
+        let (_scratch, path) = scratch_vault("embedder");
         let describes = Arc::new(AtomicUsize::new(0));
+        let reranker = || {
+            FixedReranker::new(NonZeroUsize::MIN, |_: &str, portion: Vec<Document>| {
+                Ok(vec![0.0; portion.len()])
+            })
+        };
+        if cfg!(feature = "index") {
+            let mut request = opening_with(&path, Counting::new(&describes));
+            request.reranker = RerankerRef::from_sync(reranker()).into();
+            let vault = Scheda
+                .open(request)
+                .await
+                .unwrap()
+                .to_async_inline()
+                .unwrap();
+            assert_eq!(
+                describes.load(Ordering::SeqCst),
+                1,
+                "asked once, when installed"
+            );
+            vault.remove_embedder(Empty::default()).await.unwrap();
+            vault
+                .set_embedder(embedder_ref(Counting::new(&describes)))
+                .await
+                .unwrap();
+            assert_eq!(describes.load(Ordering::SeqCst), 2);
+            vault.remove_reranker(Empty::default()).await.unwrap();
+            vault
+                .set_reranker(RerankerRef::from_sync(reranker()))
+                .await
+                .unwrap();
+            vault.close(Empty::default()).await.unwrap();
+            return;
+        }
         let before = snapshot(&path);
         let error = refused(opening_with(&path, Counting::new(&describes))).await;
         assert!(error.is(Code::Unimplemented));
@@ -113,12 +147,8 @@ fn an_embedder_or_a_reranker_is_unimplemented() {
             0,
             "nothing was asked of it"
         );
-
-        let reranker = FixedReranker::new(NonZeroUsize::MIN, |_: &str, portion: Vec<Document>| {
-            Ok(vec![0.0; portion.len()])
-        });
         let mut request = opening(&path, OpenOptions::default());
-        request.reranker = RerankerRef::from_sync(reranker).into();
+        request.reranker = RerankerRef::from_sync(reranker()).into();
         let error = refused(request).await;
         assert!(error.is(Code::Unimplemented));
 
@@ -133,7 +163,24 @@ fn an_embedder_or_a_reranker_is_unimplemented() {
 }
 
 #[test]
-fn a_projector_is_unimplemented() {
+fn an_embedder_whose_descriptor_breaks_its_rules_is_invalid_argument_and_writes_nothing() {
+    if !cfg!(feature = "index") {
+        return;
+    }
+    both(|| async {
+        let (_scratch, path) = scratch_vault("bad-embedder");
+        let describes = Arc::new(AtomicUsize::new(0));
+        let before = snapshot(&path);
+        let mut broken = Counting::new(&describes);
+        broken.dimensions = 0;
+        let error = refused(opening_with(&path, broken)).await;
+        assert!(error.is(Code::InvalidArgument), "{error}");
+        assert_eq!(snapshot(&path), before, "a refused port writes nothing");
+    });
+}
+
+#[test]
+fn a_projector_is_installed_with_the_index_and_refused_without() {
     both(|| async {
         use scheda::v1::projector_ref::ProjectorRef;
         use scheda::v1::{
@@ -157,6 +204,21 @@ fn a_projector_is_unimplemented() {
         let before = snapshot(&path);
         let mut request = opening(&path, OpenOptions::default());
         request.projector = ProjectorRef::from_sync(Empty0).into();
+        if cfg!(feature = "index") {
+            let vault = Scheda
+                .open(request)
+                .await
+                .unwrap()
+                .to_async_inline()
+                .unwrap();
+            vault.remove_projector(Empty::default()).await.unwrap();
+            vault
+                .set_projector(ProjectorRef::from_sync(Empty0))
+                .await
+                .unwrap();
+            vault.close(Empty::default()).await.unwrap();
+            return;
+        }
         let error = refused(request).await;
         assert!(error.is(Code::Unimplemented));
         assert_eq!(snapshot(&path), before, "a refused port writes nothing");

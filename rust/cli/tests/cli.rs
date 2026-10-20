@@ -1344,8 +1344,8 @@ fn port_flags_that_do_not_fit_together_are_invalid_argument() {
 }
 
 #[test]
-fn valid_port_flags_reach_the_library_which_answers_unimplemented() {
-    let scratch = Scratch::new("port-unimplemented");
+fn valid_port_flags_reach_the_library_which_accepts_them() {
+    let scratch = Scratch::new("port-accepted");
     let path = new_vault(&scratch);
     let url = "http://127.0.0.1:1/v1";
     for args in [
@@ -1362,13 +1362,9 @@ fn valid_port_flags_reach_the_library_which_answers_unimplemented() {
         let mut all = args.clone();
         all.push("info");
         let before = tree(&path);
-        let failed = run_on(&path, &all);
-        assert_eq!(
-            failed.code(),
-            "VAULT_ERROR_CODE_UNIMPLEMENTED",
-            "{args:?}: {}",
-            failed.stderr
-        );
+        // The ports call no model to open: the URL need not answer.
+        let info = run_on(&path, &all).json();
+        assert!(info["path"].is_string(), "{args:?}: {info}");
         assert_eq!(tree(&path), before);
     }
 }

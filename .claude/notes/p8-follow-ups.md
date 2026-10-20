@@ -13,7 +13,10 @@ each is small.
   Projector marks one `vector`. `tests/consumer.rs`
   (`a_vault_without_an_embedder_does_not_index_until_one_is_set`) accepts
   both answers. Fix: take the columns from the Projector when the
-  snapshot has none for the collection.
+  snapshot has none for the collection. **Done 20 October 2026 (`21`
+  L6):** the reason comes from the Projector's columns; tested in
+  `tests/integration/search.rs`
+  (`the_summary_names_why_the_vector_leg_did_not_run`).
 - **`index watch` and a closed stdout.** Without `--until-settled`, the
   CLI notices that its reader has gone only when it writes the next
   state, which comes with the next indexer round. `index watch | head -1`
@@ -25,7 +28,10 @@ each is small.
   docs pass, fails at once with `INVALID_ARGUMENT` ("not a find column")
   when the Index exists but holds no columns for the collection: a filter
   is checked against the columns of the Index, as the vector-leg reason
-  above. `14` lists both.
+  above. `14` lists both. **Library side done 20 October 2026 (`21` L5,
+  C4, C34):** a filter is checked against the Projector's columns, and a
+  Vault without an embedder reads the Index others keep; the CLI side
+  comes with L9.
 - **`index status` in a new process is empty.** A CLI process opens the
   Vault and asks at once, before its indexer has looked: the state is
   `{}`. Use `index watch --until-settled` (the Python driver does after

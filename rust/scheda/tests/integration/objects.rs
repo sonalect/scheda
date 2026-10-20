@@ -89,9 +89,10 @@ fn scheda_info_gives_the_version_and_the_features_of_the_build() {
             .iter()
             .filter_map(|feature| feature.as_known())
             .collect();
-        // The Index is listed once it exists, whether or not the build has the
-        // feature `index`.
-        assert!(!features.contains(&Feature::FEATURE_INDEX));
+        assert_eq!(
+            features.contains(&Feature::FEATURE_INDEX),
+            cfg!(feature = "index")
+        );
         assert_eq!(
             features.contains(&Feature::FEATURE_ENCRYPT),
             cfg!(feature = "encrypt")
@@ -342,64 +343,59 @@ impl EmbedderAsync for Remote {
 }
 
 #[test]
-fn a_port_is_unimplemented_whatever_its_reference_and_removing_one_is_nothing() {
+fn a_port_without_an_implementation_is_refused_and_removing_one_is_nothing() {
+    // With the Index a port that holds no implementation is the caller's
+    // mistake; without it no port is taken at all.
+    let refusal = if cfg!(feature = "index") {
+        Code::InvalidArgument
+    } else {
+        Code::Unimplemented
+    };
     both(|| async {
         let scratch = Scratch::new("objects-bad-port");
         let path = scratch.join("v");
-        for embedder in [EmbedderRef::default(), EmbedderRef::from_async(Remote)] {
-            let mut request = opening(&path, OpenOptions::default());
-            request.embedder = embedder.clone().into();
-            let error = open_with(request).await.err().unwrap();
-            assert!(error.is(Code::Unimplemented), "{error}");
-            assert!(!path.exists(), "a refused port writes nothing");
-        }
+        let mut request = opening(&path, OpenOptions::default());
+        request.embedder = EmbedderRef::default().into();
+        let error = open_with(request).await.err().unwrap();
+        assert!(error.is(refusal), "{error}");
+        assert!(!path.exists(), "a refused port writes nothing");
         let mut request = opening(&path, OpenOptions::default());
         request.projector = ProjectorRef::default().into();
-        assert!(
-            open_with(request)
-                .await
-                .err()
-                .unwrap()
-                .is(Code::Unimplemented)
-        );
+        assert!(open_with(request).await.err().unwrap().is(refusal));
         let mut request = opening(&path, OpenOptions::default());
         request.reranker = RerankerRef::default().into();
-        assert!(
-            open_with(request)
-                .await
-                .err()
-                .unwrap()
-                .is(Code::Unimplemented)
-        );
+        assert!(open_with(request).await.err().unwrap().is(refusal));
         assert!(!path.exists(), "a refused port writes nothing");
         // A Vault that exists: the refusal leaves every file as it was.
         built_vault(&path);
         let before = snapshot(&path);
         let mut request = opening(&path, OpenOptions::default());
         request.embedder = EmbedderRef::default().into();
-        assert!(
-            open_with(request)
-                .await
-                .err()
-                .unwrap()
-                .is(Code::Unimplemented)
-        );
+        assert!(open_with(request).await.err().unwrap().is(refusal));
         assert_eq!(snapshot(&path), before);
         let vault = open(&path, OpenOptions::default()).await.unwrap();
-        for embedder in [EmbedderRef::default(), EmbedderRef::from_async(Remote)] {
-            let error = vault.set_embedder(embedder).await.unwrap_err();
-            assert!(error.is(Code::Unimplemented), "{error}");
+        let error = vault
+            .set_embedder(EmbedderRef::default())
+            .await
+            .unwrap_err();
+        assert!(error.is(refusal), "{error}");
+        // An async port is taken as it is, with the Index.
+        let async_port = vault.set_embedder(EmbedderRef::from_async(Remote)).await;
+        if cfg!(feature = "index") {
+            async_port.unwrap();
+        } else {
+            assert!(async_port.unwrap_err().is(Code::Unimplemented));
         }
         let error = vault
             .set_projector(ProjectorRef::default())
             .await
             .unwrap_err();
-        assert!(error.is(Code::Unimplemented), "{error}");
+        assert!(error.is(refusal), "{error}");
         let error = vault
             .set_reranker(RerankerRef::default())
             .await
             .unwrap_err();
-        assert!(error.is(Code::Unimplemented), "{error}");
+        assert!(error.is(refusal), "{error}");
         vault.remove_embedder(Empty::default()).await.unwrap();
         vault.remove_projector(Empty::default()).await.unwrap();
         vault.remove_reranker(Empty::default()).await.unwrap();

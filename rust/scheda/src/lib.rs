@@ -23,8 +23,12 @@ mod crypto;
 mod document_calls;
 mod documents;
 mod error;
+#[cfg(feature = "index")]
+mod filter;
 mod fs;
 mod gate;
+#[cfg(feature = "index")]
+mod generation;
 mod git;
 mod id;
 mod idmap;
@@ -35,10 +39,18 @@ mod journal;
 mod marker;
 mod mirror;
 mod ports;
+#[cfg(feature = "index")]
+mod queries;
 mod reads;
 mod repo;
+#[cfg(feature = "index")]
+mod search;
 mod service;
+#[cfg(feature = "index")]
+mod store;
 mod stored;
+#[cfg(feature = "index")]
+mod tables;
 #[cfg(test)]
 mod testing;
 mod vault;

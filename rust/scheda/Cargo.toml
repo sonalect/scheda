@@ -10,8 +10,10 @@ readme = "../../README.md"
 documentation = "https://amsokol.github.io/scheda/scheda/"
 
 [features]
-# `index` declares the Lance dependencies of the Index of a Vault; it gates
-# no code yet. Needs `protoc` to build (see `.claude/rules/run-commands.md`).
+# `index` builds the Index of a Vault on Lance: its queries, counts, and
+# searches, and the ports (Projector, embedder, reranker). Without it those
+# calls are `UNIMPLEMENTED`. Needs `protoc` to build (see
+# `.claude/rules/run-commands.md`).
 default = ["index"]
 index = [
     "dep:lance",
@@ -40,7 +42,7 @@ scheda-blocking = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time"] }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]

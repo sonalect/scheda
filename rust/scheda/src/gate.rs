@@ -22,6 +22,9 @@ use crate::vault::Vault;
 pub(crate) struct Gate {
     state: Mutex<State>,
     idle: Notify,
+    /// Woken when the gate is shut: a call that waits for the Index ends
+    /// its wait at once.
+    shutting: Notify,
 }
 
 #[derive(Debug, Default)]
@@ -61,9 +64,25 @@ impl Gate {
         }
     }
 
+    /// Returns once the gate is shut: a call inside that waits for
+    /// something else selects on it.
+    #[cfg(feature = "index")]
+    pub(crate) async fn shutting(&self) {
+        loop {
+            let shutting = self.shutting.notified();
+            tokio::pin!(shutting);
+            shutting.as_mut().enable();
+            if self.state().shut {
+                return;
+            }
+            shutting.await;
+        }
+    }
+
     /// Refuses new calls, then waits until nothing is inside.
     pub(crate) async fn shut(&self) {
         self.state().shut = true;
+        self.shutting.notify_waiters();
         loop {
             let idle = self.idle.notified();
             tokio::pin!(idle);

@@ -441,7 +441,7 @@ D3, D15.
 
 - The contract of §8 is applied in `22` A1 (moved there by the owner,
   after L8), so `22` A3 makes the final contract async once.
-- [ ] `Collection.Query`, `Collection.Count`, `Vault.QueryDocuments`,
+- [x] `Collection.Query`, `Collection.Count`, `Vault.QueryDocuments`,
       `Vault.CountDocuments` on the datasets: the filter as a DataFusion
       expression, the order, `start_after`, `offset`, `limit`, the total;
       the keys of the page read at the start of the call (§8, C24).
@@ -458,10 +458,10 @@ D3, D15.
 
 ### L6. Search on Lance
 
-- [ ] The vector leg (IVF_PQ with refine, or an exact scan below 10 000
+- [x] The vector leg (IVF_PQ with refine, or an exact scan below 10 000
       rows), the lexical leg (BM25), RRF fusion with the request's
       weights, the prefilter (`filter`), the Reranker port, `like`.
-- [ ] The vector-leg reason decided from the Projector's columns, not
+- [x] The vector-leg reason decided from the Projector's columns, not
       from what the Index holds (`p8-follow-ups.md`).
 - *Check:* the `0.22` search tests that still apply, moved (token query,
   synonym query, hybrid fixture, prefilter, reranker swap, `like`).
@@ -476,10 +476,10 @@ D5.
 
 - Writes return the state token from `22` A1 (moved there with the
   contract).
-- [ ] `not_before` on queries, counts, and searches, with a deadline
+- [x] `not_before` on queries, counts, and searches, with a deadline
       (`OpenOptions`), the ancestry check, and the rewritten-history
       case.
-- [ ] A Vault that does not index reports that the Index is behind
+- [x] A Vault that does not index reports that the Index is behind
       `HEAD` (`index-risks.md` item 4), so a caller can tell.
 - *Check:* write, then search with the write's token, finds it without a
   sleep; a token from a commit a reset removed does not wait; the

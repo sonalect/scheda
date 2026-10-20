@@ -14,10 +14,12 @@ changes; they grow with each part of the move.
 
 ### Added
 
-- The feature `index` (Lance), on by default, declared with its
-  dependencies (`lance`, `lance-index`, `lance-linalg`, pinned `=13.0.0`,
-  no cloud object stores). Building it needs `protoc` (`PROTOC`, or on
-  `PATH`); `default-features = false` drops it. It holds no code yet.
+- The feature `index`, on by default: the Index on Lance (`lance`,
+  `lance-index`, `lance-linalg`, pinned `=13.0.0`, no cloud object
+  stores), its queries, counts, and searches, and the ports. Building it
+  needs `protoc` (`PROTOC`, or on `PATH`); `default-features = false`
+  drops it, and then `Vault.Index`, the queries, counts, and searches,
+  and every port are `UNIMPLEMENTED`.
 - `scheda::parse_command`: parses the Protobuf JSON of a request strictly
   (a key the message does not know is `INVALID_ARGUMENT` naming its path)
   and validates it, for a transport that takes requests as JSON.
@@ -69,18 +71,24 @@ changes; they grow with each part of the move.
   collection and of the Vault carry `version`. A write that stored
   nothing gives the token of the state it found; an empty batch reads it
   without taking the write lock. `VaultInfo.version` is the token of the
-  stored state now. The token is meant for `not_before`, which the Index
-  on Lance honours later in this release.
-- The contract of the Index on Lance is in place ahead of its code:
-  `Collection.Query` and `Vault.QueryDocuments` stream `QueryItem`, and
-  the queries and searches take the typed `Filter` of the new
-  `query.proto` (still `UNIMPLEMENTED`); `OpenOptions` takes
-  `index_wait_timeout_ms` and `filter_max_depth` (validated, no effect
-  yet); `IndexState` loses `model_mismatch` and gains `stored_version`
-  and `rebuild.cause`, with its fields numbered again; the new code
-  `DEADLINE_EXCEEDED` (retryable) is not raised yet. The enum `Feature`
-  is `FEATURE_INDEX` (1) and `FEATURE_ENCRYPT` (2); `Scheda.Info` lists
-  `FEATURE_INDEX` only once there is an Index.
+  stored state now. The token is meant for `not_before`.
+- The contract of the Index on Lance: `Collection.Query` and
+  `Vault.QueryDocuments` stream `QueryItem`, and the queries and searches
+  take the typed `Filter` of `query.proto`; `OpenOptions` takes
+  `index_wait_timeout_ms` (default 60 s) and `filter_max_depth` (default
+  32, at most 100); `IndexState` loses `model_mismatch` and gains
+  `stored_version` and `rebuild.cause`, with its fields numbered again;
+  the new code `DEADLINE_EXCEEDED` (retryable). The enum `Feature` is
+  `FEATURE_INDEX` (1) and `FEATURE_ENCRYPT` (2); `Scheda.Info` lists
+  `FEATURE_INDEX` in a build with the feature `index`.
+- `not_before` on a query, a count, or a search: the call waits until
+  the Index reflects a state that contains the token's (the `version` of
+  a write's reply, of `Vault.Info`, or of `IndexState`), so a caller
+  finds its own write without polling. Past `index_wait_timeout_ms` it
+  is `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait with
+  `FAILED_PRECONDITION`; a token whose commit is no longer in the history
+  of `HEAD` (a reset, a pull that rewrote it) does not wait; text that is
+  not a token is `INVALID_ARGUMENT`.
 - The API is a set of objects, each a service, passed as references.
   `scheda::Scheda` (the only public type besides the error, the
   fixed-portion adapters, and `parse_age_identity`) opens a Vault:
@@ -89,7 +97,7 @@ changes; they grow with each part of the move.
   gives the Vault (see the async bullet below).
   The Vault gives `GetCollection` → `CollectionRef` (the Documents of one
   collection), `Mirror` → `MirrorRef`, and `Index` → `IndexRef`
-  (`UNIMPLEMENTED` until the Index on Lance). `scheda::Vault`,
+  (`UNIMPLEMENTED` in a build without the feature `index`). `scheda::Vault`,
   `scheda::Ports`, and `scheda::Port` are gone; the structs behind the references are not
   public. A collection object names its collection and finds it again on
   each call: after `DeleteCollection` its calls are `NOT_FOUND`, and they
@@ -103,31 +111,49 @@ changes; they grow with each part of the move.
   bytes; the deleting version has no revision and no bytes); a journal is
   `UNIMPLEMENTED`. `Vault.Check` returns a `CheckReport` of every
   problem, and fails only when it cannot run.
-- Queries select (`find` feature): `Collection.Query` and
-  `Vault.QueryDocuments` stream the exact set of Documents a `Filter`
-  matches, without scores, in `id` order (a journal in append order; a
-  Vault query by collection first), lazily from one snapshot of the
-  Index, with `offset`, `limit`, and `start_after` (a condition on the
-  order, so a deep page costs what the first does). `Collection.Count`
-  and `Vault.CountDocuments` count the same in the Index, opening no
-  file. The Filter keeps the yes/no kinds only (`boost`, `const_score`,
-  `disjunction_max`, and `more_like_this` are gone); a leaf on a column
-  checks its value against the column's kind. A Vault query names the
-  collection of every column leaf; naming an encrypted collection, or one
-  with `exclude_lexical_index`, is `UNIMPLEMENTED`. An Index not built yet
-  is `INDEX_REBUILDING`; `INDEX_STALE` is per collection whose columns
-  changed, or for a Vault of another projection. `limit: 0` gives nothing.
-- Searches rank (`search` feature): `Collection.Search` and
-  `Vault.SearchDocuments` stream a `SearchSummary` first (which legs ran,
-  or why the vector leg did not), then the hits best first, each with its
-  lexical, vector, fused, and rerank scores. The subject is a `text` or
-  `like` (a Document: others like it; its vector leg uses the stored
-  vectors and calls no model). `k` has no upper limit; `offset` skips hits
-  without opening their files; the Documents are read as the stream
-  reaches them. `rerank_limit` reranks the first fused hits with the
-  Vault's reranker and is `INVALID_ARGUMENT` without one or below `k`.
-  Both weights 0 is `INVALID_ARGUMENT`. A collection with
-  `exclude_lexical_index` is searched by the vector leg only.
+- Queries select: `Collection.Query` and `Vault.QueryDocuments` stream a
+  `QuerySummary` with the total, then the Documents a `Filter` matches,
+  exactly and without scores, in a total order: the `order_by` keys (a
+  Document without a value last, in both directions), then the
+  collection, then `id` (a journal in append order). `offset`, `limit`,
+  and `start_after` page it; `start_after` is a condition on the order,
+  so a deep page costs what the first does, and in an `order_by` or a
+  journal order an id the Index no longer holds is `FAILED_PRECONDITION`
+  (start again). `Collection.Count` and `Vault.CountDocuments` count the
+  same, opening no file. A call reads one snapshot of the Index; the
+  Documents come from git at the state that snapshot reflects. Without
+  names, a Vault query or search covers every collection that is neither
+  isolated nor encrypted. A Vault query applies one filter to every
+  collection in scope: a column one
+  collection lacks has no value there, a column none declares is
+  `INVALID_ARGUMENT`. A filter names `id` and the Projector's columns,
+  each with a value of its kind; deeper than `filter_max_depth`, it is
+  `INVALID_ARGUMENT`. An encrypted collection, and one with
+  `exclude_lexical_index` when the query filters or orders, is
+  `UNIMPLEMENTED` when named and left out of a Vault query otherwise. A
+  collection the Index has not reached yet is empty. `limit: 0` gives
+  nothing.
+- Searches rank: `Collection.Search` and `Vault.SearchDocuments` stream a
+  `SearchSummary` first (whether the vector leg ran, or the first reason
+  it did not: not asked, no `vector` column the Projector marks in scope,
+  no embedder, no vector in the Index yet), then the hits best first,
+  each with its lexical, vector, fused, and rerank scores. The lexical
+  leg is BM25 over the `fts` columns, each collection by the statistics
+  of its own table; the vector leg is the cosine distance over the
+  `vector` columns, through the IVF_PQ index ranked again with the full
+  vectors, and by an exact scan of the rows no index covers yet, so a
+  write is found as soon as the Index holds it. The legs are fused by
+  Reciprocal Rank Fusion with the request's weights (0 turns a leg off;
+  both 0 is `INVALID_ARGUMENT`). The `filter` narrows both legs before
+  they rank. The subject is a `text` or `like` (a Document of any
+  collection: others like it, from its indexed text and stored vectors,
+  calling no model; never itself). `k` has no upper limit; `offset`
+  skips hits without opening their files; the Documents are read as the
+  stream reaches them. `rerank_limit` reranks the first fused hits with
+  the Vault's reranker and is `INVALID_ARGUMENT` without one or below
+  `k`. A collection with `exclude_lexical_index` is ranked by the vector
+  leg, one with `exclude_vector_index` by the lexical leg; one with both
+  is `UNIMPLEMENTED` when named and left out of a Vault search.
 - Scheda is async only, on the tokio runtime of its caller (either
   flavor, with the time and I/O drivers on: `Builder::enable_all`).
   `Scheda` implements `SchedaAsync` and no longer `SchedaSync`; the
@@ -265,7 +291,7 @@ changes; they grow with each part of the move.
   change `projection_id` whenever the same Document may project to other
   values. The reranker
   is the Vault's, not an argument of a search. A port in a build without
-  the feature that uses it is `UNIMPLEMENTED`.
+  the feature `index` is `UNIMPLEMENTED`.
 - The Index: one background indexer per handle, in every build, follows
   `HEAD`; the indexers of several handles and processes take turns, one
   round at a time, and only they write the Index. `Reindex` asks for a
@@ -275,34 +301,39 @@ changes; they grow with each part of the move.
   `Index.Watch` streams it, the state now first, replacing
   `wait_indexed`. A journal line is found at once after its write, before
   the indexer has seen it.
-- The lexical Index (`find`) is built by the indexer from the Projector's
-  columns, never from an encrypted collection. A Document the Projector
-  gives no values, or a collection without columns, is indexed by its
-  identity, so a query by `id` still finds it; only a Projector failure
-  leaves a Document out. Columns that change make the Index
-  `INDEX_STALE` until `Reindex`; an Index without a commit (none built
-  yet, or a rebuild running) is `INDEX_REBUILDING`; a damaged one is
-  `INDEX_BROKEN`. `IndexState.pending` counts files, not Documents.
-- Who indexes: a handle takes the indexer's rounds only when it has every
-  port the Index needs: a Projector in a build with `find`, and, when a
-  collection has a `vector` column, an embedder of the model the Index's
-  vectors were made with (any model while it has none). A handle without
-  them only reads: its `IndexState.role` is false, and its `Reindex` is
-  `FAILED_PRECONDITION`, naming the port it lacks. Give the ports at
-  `Scheda.Open` (or by `Vault.SetProjector`, …) in the processes that
-  should keep the Index: a Vault opened only by handles without them is
-  not indexed (queries are
-  `INDEX_REBUILDING`; a journal line is still found by a scan). An
-  embedder of another model sets `IndexState.model_mismatch` until a
-  `Reindex` from it makes the vectors again with its model.
-- The vector Index (`search`) is built by the indexer on USearch from the
-  texts of the `vector` columns, with one `Project` per Document per round
-  for both sides, into `.scheda/index/vector/`: one file `vectors`, written
-  whole, and its `state`. A failed `Embed` fails the round and keeps the
-  vectors that came back, so the next try sends only the texts without
-  one, and a text that did not change keeps its vector. A text the
-  embedder refuses (`REFUSED`) leaves its Document out of the vector
-  side; its file stays.
+- The Index is on Lance, under `.scheda/index/`: generations `g-…`, the
+  live one named by `current`, each a `commit` file (written last) and
+  one table per collection with the Projector's columns, a vector and the
+  digest of its text per `vector` column, and the files it was made from.
+  The indexer writes changed rows in place (no rebuild per change),
+  compacts small fragments, builds the indices (a B-tree per
+  `scalar_index` column, an inverted index per `fts` column, IVF_PQ per
+  `vector` column from 10 000 rows on), and prunes a table version an
+  hour after it was replaced. A round cut short is rolled back to the
+  committed versions by the next one. Never from an encrypted
+  collection. A Document the Projector gives no values is indexed by its
+  identity; only a failure of the Projector leaves it out. The `0.22`
+  files under `.scheda/index/` are removed by the first round.
+- `Index.Reindex` builds a new generation beside the live one, which
+  answers queries and searches until the switch, with the ports of the
+  Vault that asked; the old generation is removed an hour after it.
+  Only a `Reindex` changes the projection, the columns, or the embedder
+  model of the Index: a Vault whose Projector gives another projection or
+  other columns, or whose embedder is of another model or vector length,
+  finds the Index `INDEX_STALE` (in `IndexState.last_error` and on its
+  queries and searches) and does not index. An Index not built yet is
+  `INDEX_REBUILDING`; a damaged one is `INDEX_BROKEN` until `Reindex`.
+  `IndexState.pending` counts files, not Documents.
+- Who indexes: a handle with every port the Index needs (a Projector,
+  and an embedder when a collection has a `vector` column). A handle
+  without the embedder is not stale: it does not index
+  (`IndexState.last_error` is `FAILED_PRECONDITION` naming the port), its
+  `Reindex` is `FAILED_PRECONDITION`, and its queries and searches read
+  the Index other handles keep, the searches without the vector leg. A
+  text of a `vector` column is embedded once: a text whose digest the
+  Index holds keeps its vector, and the vectors of a failed round are
+  kept for the next try. A text the embedder refuses (`REFUSED`) leaves
+  the Document without that vector; a blank text has none.
 - Docs: `06` (IDX-1, IDX-2, IDX-5, IDX-9, QRY-4), `13`, `04`, `02`, and
   `07` describe the Index as the indexer now builds it: one `commit` for
   the whole Index and no generations; a rebuild empties the Index and
@@ -375,28 +406,19 @@ changes; they grow with each part of the move.
 
 - The features `find`, `search`, `simd`, and `openmp`, and with them
   Tantivy, USearch, `cxx`, `numkong`, and `sha1` (and the forks pinned for
-  them). A build that turns one of them on no longer resolves: drop it.
-  The Index comes back on Lance, under the feature `index` (on by
-  default), later in this release; the notes above on `find` and `search`
-  describe the Index it replaces.
-- Until then this version has no Index: `Vault.Index`, `Collection.Query`,
-  `Collection.Count`, `Collection.Search`, `Vault.QueryDocuments`,
-  `Vault.CountDocuments`, and `Vault.SearchDocuments` are `UNIMPLEMENTED`
-  in every build, and so is a Projector, an embedder, or a reranker given
-  to `Scheda.Open` or to `Vault.SetProjector`, `SetEmbedder`, or
-  `SetReranker`: open without ports. `FEATURE_FIND` and `FEATURE_SEARCH`
-  are gone from `Feature`. The journal id maps are still kept, so a
-  journal line is found by its `id`.
-- The `0.22` files under `.scheda/index/` (`lexical/`, `vector/`,
-  `columns`, `stale`) are no longer read or written; they stay on disk
-  until the Index on Lance removes them. `Vault.Check` no longer takes
-  `.scheda/index.lock` and checks the modes of every file under
-  `.scheda/`, those folders included.
+  them). A build that turns one of them on no longer resolves: use the
+  feature `index`. `FEATURE_FIND` and `FEATURE_SEARCH` are gone from
+  `Feature`, and `VECTOR_LEG_MODEL_MISMATCH` from `SearchSummary` (another
+  model is `INDEX_STALE`).
+- The `0.22` Index (`lexical/`, `vector/`, `columns`, `stale` under
+  `.scheda/index/`): the first round of the Index on Lance removes it and
+  builds the Index again. `Vault.Check` skips the Lance tables while a
+  round of the indexer holds `.scheda/index.lock`.
 - CLI: the subcommands `query`, `count`, `search`, `query-documents`,
   `count-documents`, `search-documents`, and `index`, and the flag
   `--no-wait`. The CLI no longer gives the Vault its Projector
   (`scheda-cli/whole-file@1`). The embedder and reranker flags stay and
-  reach the library, which answers `UNIMPLEMENTED`.
+  reach the library, which takes them as the Vault's ports.
 - The proto packages `api`, `api.v1`, and `api.collection.v1`, and their
   Rust paths `scheda_api::api::…`, among them `api.v1.Error` with its codes,
   `repeat`, and helper functions (`Error::invalid`, `Error::io_not_found`,

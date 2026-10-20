@@ -342,38 +342,6 @@ fn a_refused_open_keeps_its_code() {
 }
 
 #[test]
-fn the_calls_this_version_does_not_have_are_unimplemented() {
-    both(|| async {
-        let (_scratch, path) = fresh("runtime-unimplemented");
-        let vault = open(&path, options()).await.unwrap();
-        let notes = collection(&vault, "notes").await.unwrap();
-        let before = snapshot(&path);
-        let unimplemented = |error: Error| assert!(error.is(Code::Unimplemented), "{error}");
-        unimplemented(notes.query(Default::default()).await.err().unwrap());
-        unimplemented(notes.count(Default::default()).await.unwrap_err());
-        unimplemented(notes.search(Default::default()).await.err().unwrap());
-        unimplemented(
-            vault
-                .query_documents(Default::default())
-                .await
-                .err()
-                .unwrap(),
-        );
-        unimplemented(vault.count_documents(Default::default()).await.unwrap_err());
-        unimplemented(
-            vault
-                .search_documents(Default::default())
-                .await
-                .err()
-                .unwrap(),
-        );
-        unimplemented(vault.index(Empty::default()).await.err().unwrap());
-        assert_eq!(snapshot(&path), before, "a refused call writes nothing");
-        vault.close(Empty::default()).await.unwrap();
-    });
-}
-
-#[test]
 fn a_blocking_caller_wraps_the_vault_on_a_multi_thread_runtime_and_is_refused_on_a_current_thread_one()
  {
     let (_scratch, path) = fresh("runtime-blocking");
@@ -410,10 +378,7 @@ fn a_blocking_caller_wraps_the_vault_on_a_multi_thread_runtime_and_is_refused_on
             .unwrap();
         let vault = reference.to_sync().unwrap();
         let error = vault.info(Empty::default()).unwrap_err();
-        assert!(
-            error.is(protocontract::RuntimeCode::CannotBlock),
-            "{error}"
-        );
+        assert!(error.is(protocontract::RuntimeCode::CannotBlock), "{error}");
         reference
             .to_async_inline()
             .unwrap()
@@ -577,13 +542,7 @@ fn a_write_dropped_while_it_waits_for_the_lock_writes_nothing_and_takes_no_lock(
             .await
             .unwrap();
         assert_eq!(written.version.as_deref(), Some(head(&path).as_str()));
-        assert!(
-            notes
-                .get(id("a.md"))
-                .await
-                .unwrap_err()
-                .is(Code::NotFound)
-        );
+        assert!(notes.get(id("a.md")).await.unwrap_err().is(Code::NotFound));
         vault.close(Empty::default()).await.unwrap();
     });
 }
@@ -756,7 +715,10 @@ fn a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it() 
         std::fs::write(&go, b"").unwrap();
         let mirror = mirror(&vault).await.unwrap();
         mirror.push(Empty::default()).await.unwrap();
-        assert_eq!(rev_parse(&bare, &reference).as_deref(), Some(local.as_str()));
+        assert_eq!(
+            rev_parse(&bare, &reference).as_deref(),
+            Some(local.as_str())
+        );
         assert_eq!(
             notes.get(id("a.md")).await.unwrap().raw.as_deref(),
             Some(&b"kept"[..])

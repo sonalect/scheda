@@ -162,8 +162,14 @@ async fn hold_lock(path: &Path) -> File {
         .truncate(false)
         .open(path.join(".scheda/index.lock"))
         .unwrap();
-    file.lock().unwrap();
-    file
+    // Waited for off the runtime: a round holds the lock across its
+    // awaits, and needs the runtime to end.
+    tokio::task::spawn_blocking(move || {
+        file.lock().unwrap();
+        file
+    })
+    .await
+    .unwrap()
 }
 
 #[test]
@@ -179,7 +185,7 @@ fn a_write_is_indexed_and_the_map_lists_its_line() {
         assert_eq!(mapped(&path), ["one", "two"]);
         assert_eq!(
             std::fs::read_to_string(path.join(".scheda/index/format")).unwrap(),
-            "2\n"
+            "3\n"
         );
         assert_eq!(commits(&path), commits_before, "indexing commits nothing");
         assert_settled(&path, &[]);
@@ -187,12 +193,16 @@ fn a_write_is_indexed_and_the_map_lists_its_line() {
 }
 
 #[test]
-fn the_index_object_is_unimplemented_and_the_maps_are_still_kept() {
+fn the_index_object_needs_the_feature_and_the_maps_are_kept_either_way() {
     both(|| async {
         let scratch = Scratch::new("no-index-object");
         let (path, vault) = built(&scratch, "vault").await;
-        let error = vault.index(Empty::default()).await.err().unwrap();
-        assert!(error.is(Code::Unimplemented));
+        let object = vault.index(Empty::default()).await;
+        if cfg!(feature = "index") {
+            assert!(object.is_ok());
+        } else {
+            assert!(object.err().unwrap().is(Code::Unimplemented));
+        }
         line(&vault, "one").await;
         wait_indexed(&path).await;
         assert_eq!(mapped(&path), ["one"]);
@@ -356,8 +366,13 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
                 "missing" => std::fs::remove_file(index.join("format")).unwrap(),
                 _ => std::fs::remove_file(index.join("commit")).unwrap(),
             }
-            std::fs::create_dir_all(index.join("lexical-of-the-past")).unwrap();
-            std::fs::write(index.join("lexical-of-the-past/segment"), "x").unwrap();
+            // A folder of an earlier layout goes with an Index of another
+            // format; with the format right, only the maps are made again.
+            let reset = damage != "commit";
+            if reset {
+                std::fs::create_dir_all(index.join("lexical-of-the-past")).unwrap();
+                std::fs::write(index.join("lexical-of-the-past/segment"), "x").unwrap();
+            }
             std::fs::remove_file(map_file(&path)).unwrap();
             let reopened = opened(&path).await;
             // The commit is looked at last: the rebuild removes it before the
@@ -370,7 +385,7 @@ fn an_index_of_another_format_or_without_a_commit_is_rebuilt() {
             .await;
             assert_eq!(
                 std::fs::read_to_string(index.join("format")).unwrap(),
-                "2\n"
+                "3\n"
             );
             assert_eq!(mapped(&path), ["one"], "{damage}");
             reopened.close(Empty::default()).await.unwrap();

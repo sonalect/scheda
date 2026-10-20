@@ -26,7 +26,7 @@ use std::sync::Arc;
 use std::task::{Context as TaskContext, Poll};
 
 use buffa_types::google::protobuf::Empty;
-use protocontract::{Inline, IterStream, Stream};
+use protocontract::{Inline, Stream};
 use scheda_api::v1::collection_ref::CollectionRef;
 use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::index_ref::IndexRef;
@@ -40,14 +40,21 @@ use scheda_api::v1::{
     DocumentCreation, DocumentDeletion, DocumentHistoryEntry, DocumentId, DocumentOperation,
     DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert,
     DocumentWriteResult, Feature, MirrorAsync, MirrorInfo, MirrorSetting, QueryItem, SchedaAsync,
-    SchedaInfo, SearchItem, VaultAsync, VaultDocumentOperation, VaultErrorCode, VaultInfo,
-    VaultOpening, VaultQuery, VaultSearch,
+    SchedaInfo, SearchItem, VaultAsync, VaultDocumentOperation, VaultInfo, VaultOpening,
+    VaultQuery, VaultSearch,
 };
+#[cfg(feature = "index")]
+use scheda_api::v1::{IndexAsync, IndexState};
+
+#[cfg(feature = "index")]
+use crate::queries::{self, Page, Reading};
+#[cfg(feature = "index")]
+use crate::search::{self, Hits};
 use scheda_blocking::Blocking;
 
 use crate::collections::Writes as CollectionWrites;
 use crate::document_calls::Writes as DocumentWrites;
-use crate::error::{Context, Error, Fault};
+use crate::error::{Context, Error};
 use crate::gate::Pass;
 use crate::mirror;
 use crate::ports::Ports;
@@ -77,9 +84,10 @@ pub struct Scheda;
 
 impl SchedaAsync for Scheda {
     async fn info(&self, _empty: Empty) -> Result<SchedaInfo, Error> {
-        // The Index is not listed: this version of Scheda answers none of its
-        // calls, with or without the `index` feature.
         let mut features = Vec::new();
+        if cfg!(feature = "index") {
+            features.push(Feature::FEATURE_INDEX.into());
+        }
         if cfg!(feature = "encrypt") {
             features.push(Feature::FEATURE_ENCRYPT.into());
         }
@@ -110,17 +118,20 @@ async fn open(mut vault_opening: VaultOpening) -> Result<Arc<Vault>, Error> {
     Vault::open(PathBuf::from(path), options, ports).await
 }
 
-/// The failure of a call this version of Scheda does not have.
+/// The failure of a call that needs the Index, in a build without the
+/// feature `index`.
+#[cfg(not(feature = "index"))]
 fn unavailable(call: &str) -> Error {
-    Fault::new(
-        VaultErrorCode::Unimplemented,
-        format!("{call} is not available in this version of Scheda"),
+    crate::error::Fault::new(
+        scheda_api::v1::VaultErrorCode::Unimplemented,
+        format!("{call} needs the Index, and this Scheda is built without the feature index"),
     )
     .into()
 }
 
 /// The stream type of a call that always fails before it streams.
-type NoStream<T> = IterStream<std::iter::Empty<Result<T, Error>>>;
+#[cfg(not(feature = "index"))]
+type NoStream<T> = protocontract::IterStream<std::iter::Empty<Result<T, Error>>>;
 
 /// Documents written under the write lock: the checks that need no lock
 /// first, as one step, so a request that can never succeed fails at once
@@ -331,6 +342,13 @@ impl VaultAsync for VaultObject {
 
     async fn index(&self, _empty: Empty) -> Result<IndexRef, Error> {
         let _pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            Ok(IndexRef::from_async(IndexObject {
+                vault: Arc::clone(&self.vault),
+            }))
+        }
+        #[cfg(not(feature = "index"))]
         Err(unavailable("Vault.Index"))
     }
 
@@ -338,13 +356,14 @@ impl VaultAsync for VaultObject {
         let _pass = self.enter()?;
         self.vault
             .set_projector(Some(projector_ref))
+            .await
             .context("Vault.SetProjector")?;
         Ok(Empty::default())
     }
 
     async fn remove_projector(&self, _empty: Empty) -> Result<Empty, Error> {
         let _pass = self.enter()?;
-        self.vault.set_projector(None)?;
+        self.vault.set_projector(None).await?;
         Ok(Empty::default())
     }
 
@@ -352,13 +371,14 @@ impl VaultAsync for VaultObject {
         let _pass = self.enter()?;
         self.vault
             .set_embedder(Some(embedder_ref))
+            .await
             .context("Vault.SetEmbedder")?;
         Ok(Empty::default())
     }
 
     async fn remove_embedder(&self, _empty: Empty) -> Result<Empty, Error> {
         let _pass = self.enter()?;
-        self.vault.set_embedder(None)?;
+        self.vault.set_embedder(None).await?;
         Ok(Empty::default())
     }
 
@@ -366,13 +386,14 @@ impl VaultAsync for VaultObject {
         let _pass = self.enter()?;
         self.vault
             .set_reranker(Some(reranker_ref))
+            .await
             .context("Vault.SetReranker")?;
         Ok(Empty::default())
     }
 
     async fn remove_reranker(&self, _empty: Empty) -> Result<Empty, Error> {
         let _pass = self.enter()?;
-        self.vault.set_reranker(None)?;
+        self.vault.set_reranker(None).await?;
         Ok(Empty::default())
     }
 
@@ -455,23 +476,92 @@ impl VaultAsync for VaultObject {
 
     async fn query_documents(
         &self,
-        _vault_query: VaultQuery,
+        vault_query: VaultQuery,
     ) -> Result<impl Stream<Item = Result<QueryItem, Error>> + Send + use<>, Error> {
-        let _pass = self.enter()?;
-        Err::<NoStream<QueryItem>, _>(unavailable("Vault.QueryDocuments"))
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&vault_query)
+                .context("check the query")
+                .context("Vault.QueryDocuments")?;
+            queries::not_before(&pass, vault_query.not_before.as_deref())
+                .await
+                .context("Vault.QueryDocuments")?;
+            let reading = Reading::of(&pass).await.context("Vault.QueryDocuments")?;
+            let found = queries::find_in_vault(&pass, &reading, &vault_query, true)
+                .await
+                .context("Vault.QueryDocuments")?;
+            let page = Page::new(found, &reading, vault_query.include_raw.unwrap_or(false));
+            Ok(Steps::new(&self.vault, page, |cx, vault, page| {
+                page.next(cx, vault)
+            }))
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, vault_query);
+            Err::<NoStream<QueryItem>, _>(unavailable("Vault.QueryDocuments"))
+        }
     }
 
-    async fn count_documents(&self, _vault_query: VaultQuery) -> Result<Count, Error> {
-        let _pass = self.enter()?;
-        Err(unavailable("Vault.CountDocuments"))
+    async fn count_documents(&self, vault_query: VaultQuery) -> Result<Count, Error> {
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&vault_query)
+                .context("check the query")
+                .context("Vault.CountDocuments")?;
+            queries::not_before(&pass, vault_query.not_before.as_deref())
+                .await
+                .context("Vault.CountDocuments")?;
+            let reading = Reading::of(&pass).await.context("Vault.CountDocuments")?;
+            let found = queries::find_in_vault(&pass, &reading, &vault_query, false)
+                .await
+                .context("Vault.CountDocuments")?;
+            Ok(Count::default().with_count(found.total))
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, vault_query);
+            Err(unavailable("Vault.CountDocuments"))
+        }
     }
 
     async fn search_documents(
         &self,
-        _vault_search: VaultSearch,
+        vault_search: VaultSearch,
     ) -> Result<impl Stream<Item = Result<SearchItem, Error>> + Send + use<>, Error> {
-        let _pass = self.enter()?;
-        Err::<NoStream<SearchItem>, _>(unavailable("Vault.SearchDocuments"))
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&vault_search)
+                .context("check the search")
+                .context("Vault.SearchDocuments")?;
+            let not_before = vault_search
+                .search
+                .as_option()
+                .and_then(|search| search.not_before.as_deref());
+            queries::not_before(&pass, not_before)
+                .await
+                .context("Vault.SearchDocuments")?;
+            let reading = Reading::of(&pass).await.context("Vault.SearchDocuments")?;
+            let found = search::in_vault(&pass, &reading, &vault_search)
+                .await
+                .context("Vault.SearchDocuments")?;
+            let include_raw = vault_search
+                .search
+                .as_option()
+                .and_then(|search| search.include_raw)
+                .unwrap_or(false);
+            let hits = Hits::new(found, &reading, include_raw);
+            Ok(Steps::new(&self.vault, hits, |cx, vault, hits| {
+                hits.next(cx, vault)
+            }))
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, vault_search);
+            Err::<NoStream<SearchItem>, _>(unavailable("Vault.SearchDocuments"))
+        }
     }
 }
 
@@ -587,23 +677,180 @@ impl CollectionAsync for CollectionObject {
 
     async fn query(
         &self,
-        _document_query: DocumentQuery,
+        document_query: DocumentQuery,
     ) -> Result<impl Stream<Item = Result<QueryItem, Error>> + Send + use<>, Error> {
-        let _pass = self.enter()?;
-        Err::<NoStream<QueryItem>, _>(unavailable("Collection.Query"))
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&document_query)
+                .context("check the query")
+                .context("Collection.Query")?;
+            queries::not_before(&pass, document_query.not_before.as_deref())
+                .await
+                .context("Collection.Query")?;
+            let reading = Reading::of(&pass).await.context("Collection.Query")?;
+            let found =
+                queries::find_in_collection(&pass, &reading, &self.name, &document_query, true)
+                    .await
+                    .context("Collection.Query")?;
+            let page = Page::new(found, &reading, document_query.include_raw.unwrap_or(false));
+            Ok(Steps::new(&self.vault, page, |cx, vault, page| {
+                page.next(cx, vault)
+            }))
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, document_query);
+            Err::<NoStream<QueryItem>, _>(unavailable("Collection.Query"))
+        }
     }
 
-    async fn count(&self, _document_query: DocumentQuery) -> Result<Count, Error> {
-        let _pass = self.enter()?;
-        Err(unavailable("Collection.Count"))
+    async fn count(&self, document_query: DocumentQuery) -> Result<Count, Error> {
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&document_query)
+                .context("check the query")
+                .context("Collection.Count")?;
+            queries::not_before(&pass, document_query.not_before.as_deref())
+                .await
+                .context("Collection.Count")?;
+            let reading = Reading::of(&pass).await.context("Collection.Count")?;
+            let found =
+                queries::find_in_collection(&pass, &reading, &self.name, &document_query, false)
+                    .await
+                    .context("Collection.Count")?;
+            Ok(Count::default().with_count(found.total))
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, document_query);
+            Err(unavailable("Collection.Count"))
+        }
     }
 
     async fn search(
         &self,
-        _document_search: DocumentSearch,
+        document_search: DocumentSearch,
     ) -> Result<impl Stream<Item = Result<SearchItem, Error>> + Send + use<>, Error> {
-        let _pass = self.enter()?;
-        Err::<NoStream<SearchItem>, _>(unavailable("Collection.Search"))
+        let pass = self.enter()?;
+        #[cfg(feature = "index")]
+        {
+            stored::validate(&document_search)
+                .context("check the search")
+                .context("Collection.Search")?;
+            queries::not_before(&pass, document_search.not_before.as_deref())
+                .await
+                .context("Collection.Search")?;
+            let reading = Reading::of(&pass).await.context("Collection.Search")?;
+            let found = search::in_collection(&pass, &reading, &self.name, &document_search)
+                .await
+                .context("Collection.Search")?;
+            let hits = Hits::new(
+                found,
+                &reading,
+                document_search.include_raw.unwrap_or(false),
+            );
+            Ok(Steps::new(&self.vault, hits, |cx, vault, hits| {
+                hits.next(cx, vault)
+            }))
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            let _ = (pass, document_search);
+            Err::<NoStream<SearchItem>, _>(unavailable("Collection.Search"))
+        }
+    }
+}
+
+/// The object of the Index of an open Vault.
+#[cfg(feature = "index")]
+struct IndexObject {
+    vault: Arc<Vault>,
+}
+
+#[cfg(feature = "index")]
+impl IndexAsync for IndexObject {
+    async fn status(&self, _empty: Empty) -> Result<IndexState, Error> {
+        let _pass = Pass::enter(&self.vault)?;
+        Ok(self.vault.indexer().status())
+    }
+
+    async fn watch(
+        &self,
+        _empty: Empty,
+    ) -> Result<impl Stream<Item = Result<IndexState, Error>> + Send + use<>, Error> {
+        let _pass = Pass::enter(&self.vault)?;
+        Ok(Watching {
+            watch: Some(self.vault.indexer().watch()),
+            pending: None,
+        })
+    }
+
+    async fn reindex(&self, _empty: Empty) -> Result<Empty, Error> {
+        let pass = Pass::enter(&self.vault)?;
+        let root = crate::index::Index::new(self.vault.path())
+            .root()
+            .to_path_buf();
+        let (declarations, live) = pass
+            .step(move |cx, vault| {
+                let declarations = vault.declarations_now()?;
+                let live = match crate::generation::Layout::new(&root).current(cx)? {
+                    Some(generation) => generation.read_commit(cx)?,
+                    None => None,
+                };
+                Ok((declarations, live))
+            })
+            .await?;
+        let calls = crate::tables::Calls::of(self.vault.ports());
+        crate::tables::can_rebuild(&calls, &declarations, live.as_ref())
+            .await
+            .context("Index.Reindex")?;
+        self.vault.indexer().reindex()?;
+        Ok(Empty::default())
+    }
+}
+
+/// The stream of `Index.Watch`: the state now, then each change, until the
+/// indexer ends.
+#[cfg(feature = "index")]
+struct Watching {
+    watch: Option<crate::indexer::Watch>,
+    pending: Option<NextState>,
+}
+
+/// The wait for the next state of a watch, which gives the watch back.
+#[cfg(feature = "index")]
+type NextState = Pin<
+    Box<dyn Future<Output = (crate::indexer::Watch, Option<Result<IndexState, Error>>)> + Send>,
+>;
+
+#[cfg(feature = "index")]
+impl Stream for Watching {
+    type Item = Result<IndexState, Error>;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut TaskContext<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        if this.pending.is_none() {
+            let Some(mut watch) = this.watch.take() else {
+                return Poll::Ready(None);
+            };
+            this.pending = Some(Box::pin(async move {
+                let item = watch.next().await;
+                (watch, item)
+            }));
+        }
+        let Some(pending) = this.pending.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let Poll::Ready((watch, item)) = pending.as_mut().poll(cx) else {
+            return Poll::Pending;
+        };
+        this.pending = None;
+        if item.is_some() {
+            this.watch = Some(watch);
+        }
+        Poll::Ready(item)
     }
 }
 

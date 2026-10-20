@@ -25,6 +25,43 @@ pub(crate) async fn open(path: &Path, options: OpenOptions) -> Result<Arc<Vault>
     Vault::open(path.to_path_buf(), options, Ports::default()).await
 }
 
+/// Opens the Vault at `path` with `options` and `ports`.
+#[cfg(feature = "index")]
+pub(crate) async fn open_with(
+    path: &Path,
+    options: OpenOptions,
+    ports: Ports,
+) -> Result<Arc<Vault>, Error> {
+    Vault::open(path.to_path_buf(), options, ports).await
+}
+
+/// The state token of `HEAD` of the Vault now.
+#[cfg(feature = "index")]
+pub(crate) async fn head(vault: &Arc<Vault>) -> String {
+    step(vault, |cx, vault| Ok(vault.state_now(cx)?.token()))
+        .await
+        .unwrap_or_default()
+}
+
+/// Waits until the Index of `vault` reflects `HEAD`, or fails the test
+/// after 60 seconds.
+#[cfg(feature = "index")]
+pub(crate) async fn wait_indexed(vault: &Arc<Vault>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    loop {
+        let head = head(vault).await;
+        let state = vault.indexer().status();
+        if state.version.as_deref() == Some(head.as_str()) {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the Index did not reach {head}: {state:?}"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 /// Runs `step` on `vault` as a call of an object runs one: inside the gate,
 /// on the blocking pool.
 pub(crate) async fn step<T, F>(vault: &Arc<Vault>, step: F) -> Result<T, Error>

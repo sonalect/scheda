@@ -254,6 +254,43 @@ pub(crate) fn restrict_dir(path: &Path) -> Result<(), Error> {
     set_mode(path, 0o700)
 }
 
+/// Narrows every file and folder at and below `root` to the owner, as
+/// [`restrict_file`] and [`restrict_dir`] do: what a library wrote there
+/// with the process umask (Lance's datasets). A symlink is left as it is,
+/// and a path that is gone is nothing to do.
+///
+/// # Errors
+///
+/// `STORAGE` when a mode cannot be read or set.
+#[cfg(feature = "index")]
+pub(crate) fn restrict_tree(root: &Path) -> Result<(), Error> {
+    let meta = match fs::symlink_metadata(root) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(io(err)).context("look at a file of the Index"),
+    };
+    if meta.file_type().is_symlink() {
+        return Ok(());
+    }
+    if meta.is_dir() {
+        restrict_dir(root)?;
+        let entries = match fs::read_dir(root) {
+            Ok(entries) => entries,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(err) => return Err(io(err)).context("read a folder of the Index"),
+        };
+        for entry in entries {
+            let entry = entry.map_err(io).context("read a folder of the Index")?;
+            restrict_tree(&entry.path())?;
+        }
+        return Ok(());
+    }
+    if meta.is_file() {
+        restrict_file(root)?;
+    }
+    Ok(())
+}
+
 /// Owner-only mode on `file` and on every directory between `base` and it
 /// (`base` itself excluded). For a file this crate just wrote under a
 /// directory it may have just created: two or three `chmod` calls instead
@@ -281,7 +318,15 @@ pub(crate) fn check_scheda_owner_only(vault: &Path) -> Result<Vec<Problem>, Erro
     {
         let scheda = vault.join(".scheda");
         if scheda.exists() {
-            check_owner_only_tree(vault, &scheda, &mut problems)?;
+            // A round of the indexer writes the generations of the Index
+            // with the process umask and narrows their modes when it ends,
+            // so they are looked at only while no round runs; holding the
+            // lock keeps one from beginning meanwhile.
+            let index = crate::index::Index::new(vault);
+            let round = index.try_lock()?;
+            let skip_generations = round.is_none();
+            check_owner_only_tree(vault, &scheda, skip_generations, &mut problems)?;
+            drop(round);
         }
     }
     #[cfg(not(unix))]
@@ -313,9 +358,19 @@ fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
 fn check_owner_only_tree(
     vault: &Path,
     path: &Path,
+    skip_generations: bool,
     problems: &mut Vec<Problem>,
 ) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
+    if skip_generations
+        && path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("index"))
+        && path
+            .file_name()
+            .and_then(std::ffi::OsStr::to_str)
+            .is_some_and(|name| name.starts_with("g-"))
+    {
+        return Ok(());
+    }
     let meta = match fs::symlink_metadata(path) {
         Ok(meta) => meta,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -347,7 +402,7 @@ fn check_owner_only_tree(
         }
         paths.sort();
         for child in paths {
-            check_owner_only_tree(vault, &child, problems)?;
+            check_owner_only_tree(vault, &child, skip_generations, problems)?;
         }
         return Ok(());
     }

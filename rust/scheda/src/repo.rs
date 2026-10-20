@@ -367,6 +367,49 @@ impl Repos {
             nested: self.snapshot(Repo::Isolated)?,
         })
     }
+
+    /// The state of `repo` at `commit` (`None`: no commit), whatever `HEAD`
+    /// names now. `None` when the repository lacks that commit: the history
+    /// was rewritten and cleaned up.
+    #[cfg(feature = "index")]
+    pub(crate) fn snapshot_at(
+        &self,
+        repo: Repo,
+        commit: Option<Oid>,
+    ) -> Result<Option<Snap>, Fault> {
+        let lease = self.lease(repo)?;
+        let head = match (commit, &lease) {
+            (None, _) => None,
+            (Some(_), None) => return Ok(None),
+            (Some(id), Some(lease)) => match lease.find_commit(id) {
+                Ok(found) => Some((id, found.tree_id())),
+                Err(err) if err.code() == ErrorCode::NotFound => return Ok(None),
+                Err(err) => return Err(lib_fault(err)),
+            },
+        };
+        Ok(Some(Snap {
+            lease,
+            which: repo,
+            head,
+        }))
+    }
+
+    /// Both repositories at the commits `main` and `nested` name, as
+    /// [`Repos::snapshot_at`]; `None` when either commit is gone.
+    #[cfg(feature = "index")]
+    pub(crate) fn views_at(
+        &self,
+        main: Option<Oid>,
+        nested: Option<Oid>,
+    ) -> Result<Option<Views>, Fault> {
+        let Some(main) = self.snapshot_at(Repo::Main, main)? else {
+            return Ok(None);
+        };
+        let Some(nested) = self.snapshot_at(Repo::Isolated, nested)? else {
+            return Ok(None);
+        };
+        Ok(Some(Views { main, nested }))
+    }
 }
 
 /// Snapshots of both repositories of a Vault, taken together.

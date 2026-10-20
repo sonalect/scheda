@@ -178,7 +178,9 @@ impl Vault {
         options: OpenOptions,
         ports: Ports,
     ) -> Result<Arc<Vault>, Error> {
-        let ports = Installed::new(ports).context("Vault::open: install the ports")?;
+        let ports = Installed::new(ports)
+            .await
+            .context("Vault::open: install the ports")?;
         check_options(&options)?;
         let mode = options
             .mode
@@ -195,7 +197,12 @@ impl Vault {
         ));
         vault
             .indexer
-            .start(&vault.path, Arc::clone(&vault.repos), poll)
+            .start(
+                &vault.path,
+                Arc::clone(&vault.repos),
+                Arc::clone(&vault.ports),
+                poll,
+            )
             .context("Vault::open: start the indexer")?;
         Ok(vault)
     }
@@ -234,8 +241,8 @@ impl Vault {
     ///
     /// `UNIMPLEMENTED` for a Projector: this version of Scheda has no Index
     /// to use one.
-    pub(crate) fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
-        self.ports.set_projector(projector)
+    pub(crate) async fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
+        self.ports.set_projector(projector).await
     }
 
     /// Removes the embedder when `embedder` is `None`, which a Vault that
@@ -244,8 +251,8 @@ impl Vault {
     /// # Errors
     ///
     /// As [`Vault::set_projector`], for an embedder.
-    pub(crate) fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
-        self.ports.set_embedder(embedder)
+    pub(crate) async fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
+        self.ports.set_embedder(embedder).await
     }
 
     /// Removes the reranker when `reranker` is `None`, which a Vault that
@@ -254,8 +261,8 @@ impl Vault {
     /// # Errors
     ///
     /// As [`Vault::set_projector`], for a reranker.
-    pub(crate) fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
-        self.ports.set_reranker(reranker)
+    pub(crate) async fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
+        self.ports.set_reranker(reranker).await
     }
 
     /// The canonical path of the work tree.
@@ -365,15 +372,37 @@ impl Vault {
             .clone()
     }
 
+    /// How deep a `Filter` may be (`OpenOptions.filter_max_depth`), when
+    /// set.
+    #[cfg(feature = "index")]
+    pub(crate) fn filter_max_depth(&self) -> Option<u32> {
+        self.options.filter_max_depth
+    }
+
+    /// How long a call with `not_before` waits for the Index
+    /// (`OpenOptions.index_wait_timeout_ms`, 60 seconds when unset).
+    #[cfg(feature = "index")]
+    pub(crate) fn index_wait(&self) -> Duration {
+        Duration::from_millis(u64::from(
+            self.options.index_wait_timeout_ms.unwrap_or(60_000),
+        ))
+    }
+
     /// The age secret the handle was opened with, if any.
     pub(crate) fn encryption(&self) -> Option<&Encryption> {
         self.options.encryption.as_option()
     }
 
     /// The indexer of the Vault.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "index"))]
     pub(crate) fn indexer(&self) -> &Indexer {
         &self.indexer
+    }
+
+    /// The ports the Vault holds now.
+    #[cfg(feature = "index")]
+    pub(crate) fn ports(&self) -> &Installed {
+        &self.ports
     }
 
     /// The id maps of the journals.
@@ -1065,16 +1094,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_port_is_refused_and_removing_one_that_is_not_there_is_nothing_to_do() {
+    async fn removing_a_port_that_is_not_there_is_nothing_to_do() {
         let scratch = Scratch::vault("no-ports");
         let vault = open(&scratch.0, OpenOptions::default()).await.unwrap();
-        vault.set_embedder(None).unwrap();
-        vault.set_reranker(None).unwrap();
-        vault.set_projector(None).unwrap();
+        vault.set_embedder(None).await.unwrap();
+        vault.set_reranker(None).await.unwrap();
+        vault.set_projector(None).await.unwrap();
         let error = vault
             .set_embedder(Some(EmbedderRef::from_sync(AnyEmbedder)))
+            .await
             .unwrap_err();
-        assert!(error.is(VaultErrorCode::Unimplemented));
+        // Without the Index no port is taken; with it, this one's descriptor
+        // breaks its rules.
+        let code = if cfg!(feature = "index") {
+            VaultErrorCode::InvalidArgument
+        } else {
+            VaultErrorCode::Unimplemented
+        };
+        assert!(error.is(code), "{error}");
     }
 
     #[tokio::test]
@@ -1088,11 +1125,16 @@ mod tests {
         let error = Vault::open(missing.clone(), OpenOptions::default(), ports)
             .await
             .unwrap_err();
-        assert!(error.is(VaultErrorCode::Unimplemented));
+        let code = if cfg!(feature = "index") {
+            VaultErrorCode::InvalidArgument
+        } else {
+            VaultErrorCode::Unimplemented
+        };
+        assert!(error.is(code), "{error}");
         assert!(!missing.exists());
     }
 
-    /// An embedder, which this version of Scheda has no Index to use.
+    /// An embedder whose descriptor is empty, which breaks its rules.
     struct AnyEmbedder;
 
     impl scheda_api::v1::EmbedderSync for AnyEmbedder {

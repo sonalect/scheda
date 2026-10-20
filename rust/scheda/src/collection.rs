@@ -114,6 +114,28 @@ impl Declaration {
             .and_then(|schema| schema.encrypted)
             .unwrap_or(false)
     }
+
+    /// Whether the Index holds none of the Projector's columns of the
+    /// collection (`exclude_lexical_index`).
+    #[cfg(feature = "index")]
+    pub(crate) fn excludes_columns(&self) -> bool {
+        self.collection
+            .schema
+            .as_option()
+            .and_then(|schema| schema.exclude_lexical_index)
+            .unwrap_or(false)
+    }
+
+    /// Whether the Index holds no vector of the collection
+    /// (`exclude_vector_index`).
+    #[cfg(feature = "index")]
+    pub(crate) fn excludes_vectors(&self) -> bool {
+        self.collection
+            .schema
+            .as_option()
+            .and_then(|schema| schema.exclude_vector_index)
+            .unwrap_or(false)
+    }
 }
 
 /// The collection whose declaration file `path` (Vault-relative, POSIX) is:

@@ -27,14 +27,13 @@
 //! under `index.lock`. Between two rounds the task waits without a thread.
 
 use std::collections::VecDeque;
-use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use protocontract::RuntimeCode;
-#[cfg(test)]
+#[cfg(any(test, feature = "index"))]
 use scheda_api::v1::VaultErrorCode;
 use scheda_api::v1::{IndexState, Rebuild, rebuild};
 use scheda_blocking::{Blocking, blocking};
@@ -43,12 +42,21 @@ use tokio::sync::{Notify, watch};
 use tokio::task::JoinHandle;
 
 use crate::collection;
-#[cfg(test)]
+#[cfg(feature = "index")]
+use crate::collection::Declarations;
+#[cfg(any(test, feature = "index"))]
 use crate::error::Fault;
-use crate::error::{Context, Error, error_report};
+use crate::error::{Context as _, Error, error_report};
+#[cfg(feature = "index")]
+use crate::fs::restrict_tree;
+#[cfg(feature = "index")]
+use crate::generation::{self, Commit, Generation, Layout};
 use crate::idmap::JournalMaps;
 use crate::index::{Counts, Index, Round, Side, State};
+use crate::ports::Installed;
 use crate::repo::{Repo, Repos};
+#[cfg(feature = "index")]
+use crate::tables::{self, Cache, Calls, Plan, Work};
 
 /// How many past states a watcher that falls behind can still read one by
 /// one.
@@ -194,8 +202,11 @@ impl Indexer {
         &self,
         vault: &Path,
         repos: Arc<Repos>,
+        ports: Arc<Installed>,
         poll: Duration,
     ) -> Result<(), Error> {
+        #[cfg(not(feature = "index"))]
+        let _ = ports;
         let runtime = Handle::try_current().map_err(|_| {
             Error::new(
                 RuntimeCode::NoRuntime,
@@ -203,14 +214,16 @@ impl Indexer {
             )
         })?;
         let worker = Worker {
-            shared: Arc::clone(&self.shared),
-            repos,
-            #[cfg(test)]
-            vault: vault.to_path_buf(),
-            index: Index::new(vault),
-            sides: vec![Box::new(JournalMaps)],
-            rebuilding: false,
-            cause: None,
+            context: Context {
+                shared: Arc::clone(&self.shared),
+                repos,
+                index: Index::new(vault),
+                #[cfg(test)]
+                vault: vault.to_path_buf(),
+                #[cfg(feature = "index")]
+                ports,
+            },
+            kept: None,
         };
         let task = runtime.spawn(worker.run(poll));
         *self.task.lock().unwrap_or_else(PoisonError::into_inner) = Some(task);
@@ -222,7 +235,7 @@ impl Indexer {
     /// # Errors
     ///
     /// `ABORTED` when a rebuild was asked for and has not begun, or runs.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "index"))]
     pub(crate) fn reindex(&self) -> Result<(), Error> {
         {
             let mut inner = self.shared.lock();
@@ -240,7 +253,7 @@ impl Indexer {
     }
 
     /// The state of the Index now.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "index"))]
     pub(crate) fn status(&self) -> IndexState {
         self.shared.lock().state.clone()
     }
@@ -248,7 +261,7 @@ impl Indexer {
     /// A stream of the state now, then of each change. It holds no lock
     /// while it waits and ends only when the indexer does; a watcher that
     /// drops it is gone at once.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "index"))]
     pub(crate) fn watch(&self) -> Watch {
         Watch {
             shared: Arc::clone(&self.shared),
@@ -303,7 +316,7 @@ impl Drop for Indexer {
 }
 
 /// What a watcher finds when it looks at the shared state.
-#[cfg(test)]
+#[cfg(any(test, feature = "index"))]
 enum Read {
     /// The next item, and the cursor after it.
     Item(Box<IndexState>, u64),
@@ -313,7 +326,7 @@ enum Read {
     Wait,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "index"))]
 impl Inner {
     /// What the watcher whose cursor is `cursor` (`None` before the first
     /// item) is to do next.
@@ -336,7 +349,7 @@ impl Inner {
 }
 
 /// A stream of the states of the Index.
-#[cfg(test)]
+#[cfg(any(test, feature = "index"))]
 pub(crate) struct Watch {
     shared: Arc<Shared>,
     changed: watch::Receiver<u64>,
@@ -344,7 +357,7 @@ pub(crate) struct Watch {
     next: Option<u64>,
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "index"))]
 impl Watch {
     /// The next state, `None` once the indexer has ended.
     pub(crate) async fn next(&mut self) -> Option<Result<IndexState, Error>> {
@@ -377,61 +390,103 @@ enum Next {
     Idle,
 }
 
-/// What the part of a round under the lock did.
-enum Applied {
-    /// The Index was at this state already.
-    Current(State),
-    /// The Index was brought to this state.
-    Built {
-        head: State,
-        counts: Counts,
-        rebuilt: bool,
-    },
+/// What a round brought the Index to.
+struct Applied {
+    /// The state the Index reflects now.
+    state: State,
+    counts: Counts,
+    /// Why it was built again, when it was.
+    rebuilt: Option<rebuild::Cause>,
+}
+
+/// What a round keeps between two tries: the vectors the embedder gave.
+/// Nothing in a build without the Index.
+#[derive(Default)]
+struct Kept {
+    #[cfg(feature = "index")]
+    vectors: Cache,
+}
+
+/// What the look at the start of a round found.
+struct Look {
+    asked: bool,
+    /// The state the journal id maps reflect; `None` before they are built,
+    /// or when the files are of another layout.
+    maps: Option<State>,
+    /// The state `HEAD` names now.
+    head: State,
+    /// The live generation of the Lance tables and its commit.
+    #[cfg(feature = "index")]
+    live: Option<(Generation, Option<Commit>)>,
+}
+
+impl Look {
+    /// The state the Index reflects, as `IndexState.version` reports it.
+    fn version(&self) -> Option<State> {
+        #[cfg(feature = "index")]
+        {
+            self.live
+                .as_ref()
+                .and_then(|(_, commit)| commit.as_ref())
+                .and_then(Commit::state)
+        }
+        #[cfg(not(feature = "index"))]
+        {
+            self.maps
+        }
+    }
+
+    /// The live commit of the Lance tables.
+    #[cfg(feature = "index")]
+    fn commit(&self) -> Option<&Commit> {
+        self.live.as_ref().and_then(|(_, commit)| commit.as_ref())
+    }
+
+    /// Whether nothing is to be done: no rebuild asked, and every part at
+    /// `HEAD`.
+    fn current(&self) -> bool {
+        !self.asked && self.maps == Some(self.head) && self.version() == Some(self.head)
+    }
+}
+
+/// What a round works with: cheap to clone into the task the round runs
+/// as.
+#[derive(Clone)]
+struct Context {
+    shared: Arc<Shared>,
+    repos: Arc<Repos>,
+    index: Index,
+    #[cfg(test)]
+    vault: std::path::PathBuf,
+    #[cfg(feature = "index")]
+    ports: Arc<Installed>,
 }
 
 struct Worker {
-    shared: Arc<Shared>,
-    repos: Arc<Repos>,
-    #[cfg(test)]
-    vault: std::path::PathBuf,
-    index: Index,
-    sides: Vec<Box<dyn Side>>,
-    /// A rebuild has begun and has not ended.
-    rebuilding: bool,
-    /// Why the rebuild that runs, or ran last, began; `None` when neither
-    /// cause the status names fits.
-    cause: Option<rebuild::Cause>,
+    context: Context,
+    /// Taken by the task of a round, given back when it ends; lost with a
+    /// round that panicked.
+    kept: Option<Kept>,
 }
 
 impl Worker {
     async fn run(mut self, poll: Duration) {
-        let shared = Arc::clone(&self.shared);
+        let shared = Arc::clone(&self.context.shared);
         let longest = poll.saturating_mul(8);
         let mut backoff = poll;
         let mut pause = Duration::ZERO;
         loop {
             let go = if pause.is_zero() {
-                !self.shared.signal.stopped()
+                !shared.signal.stopped()
             } else {
-                self.shared.signal.wait(pause).await
+                shared.signal.wait(pause).await
             };
             if !go {
                 break;
             }
-            let outcome;
-            (self, outcome) = match blocking(move |cx| {
-                let outcome = catch_unwind(AssertUnwindSafe(|| self.round(cx)))
-                    .unwrap_or_else(|payload| Err(panicked(payload.as_ref())));
-                Ok((self, outcome))
-            })
-            .await
-            {
-                Ok(done) => done,
-                // The runtime shuts down: the step never ran.
-                Err(_) => {
-                    shared.close();
-                    return;
-                }
+            let Some(outcome) = self.round().await else {
+                // The runtime shuts down.
+                break;
             };
             match outcome {
                 Ok(Next::Again) => {
@@ -443,99 +498,366 @@ impl Worker {
                     pause = poll;
                 }
                 Err(error) => {
-                    if self.shared.signal.stopped() {
+                    if shared.signal.stopped() {
                         break;
                     }
-                    self.fail(&error);
+                    self.context.fail(&error);
                     pause = backoff;
                     backoff = backoff.saturating_mul(2).min(longest);
                 }
             }
         }
-        self.shared.close();
+        shared.close();
     }
 
+    /// One round, as a task of its own: a panic in it is a failure of the
+    /// round, and the indexer goes on. `None` when the runtime shuts down.
+    async fn round(&mut self) -> Option<Result<Next, Error>> {
+        let context = self.context.clone();
+        let mut kept = self.kept.take().unwrap_or_default();
+        let task = tokio::spawn(async move {
+            let outcome = context.round(&mut kept).await;
+            (kept, outcome)
+        });
+        match task.await {
+            Ok((kept, outcome)) => {
+                self.kept = Some(kept);
+                Some(outcome)
+            }
+            Err(error) if error.is_panic() => Some(Err(panicked(error.into_panic().as_ref()))),
+            Err(_) => None,
+        }
+    }
+}
+
+impl Context {
     /// One look at `HEAD` and, if the Index is behind, one round.
-    fn round(&mut self, _cx: &Blocking) -> Result<Next, Error> {
-        let asked = self.shared.lock().requested;
-        let committed = if self.index.has_format()? {
-            self.index.read_commit()?
-        } else {
-            None
+    async fn round(&self, kept: &mut Kept) -> Result<Next, Error> {
+        let look = {
+            let context = self.clone();
+            blocking(move |cx| context.look(cx)).await?
         };
-        let head = State::of(&self.repos.views().context("read HEAD")?);
-        if !asked && committed == Some(head) {
-            self.follow(committed, head);
+        if look.current() {
+            self.follow(look.version(), look.head);
             return Ok(Next::Idle);
         }
-        let Some(lock) = self.index.try_lock()? else {
+        #[cfg(feature = "index")]
+        let Some(plan) = self.plan(&look).await? else {
+            return Ok(Next::Idle);
+        };
+        let index = self.index.clone();
+        let Some(lock) = blocking(move |_cx| index.try_lock()).await? else {
             // Another indexer holds the lock; it will do the round.
+            let head = look.head;
             self.shared.adjust(|inner| {
                 inner.state.role = Some(false);
                 inner.state.stored_version = Some(head.token());
             });
             return Ok(Next::Idle);
         };
-        let applied = self.apply();
-        // The commit is written: the lock goes before anyone is told.
+        #[cfg(feature = "index")]
+        let applied = self.apply(&look, plan, &mut kept.vectors).await;
+        #[cfg(not(feature = "index"))]
+        let applied = {
+            let _ = kept;
+            self.apply(&look).await
+        };
+        // The commits are written: the lock goes before anyone is told.
         drop(lock);
-        match applied? {
-            Applied::Current(state) => {
-                self.follow(Some(state), state);
-                Ok(Next::Idle)
+        let applied = applied?;
+        let head = look.head;
+        self.shared.publish(|inner| {
+            inner.state.version = Some(applied.state.token());
+            inner.state.stored_version = Some(head.token());
+            inner.state.pending = Some(0);
+            inner.state.role = Some(false);
+            inner.state.last_error = buffa::MessageField::none();
+            if let Some(cause) = applied.rebuilt {
+                inner.running = false;
+                inner.state.rebuild =
+                    rebuild_of(rebuild::Stage::STAGE_DONE, applied.counts, Some(cause)).into();
             }
-            Applied::Built {
-                head,
-                counts,
-                rebuilt,
-            } => {
-                self.rebuilding = false;
-                let cause = self.cause;
-                self.shared.publish(|inner| {
-                    inner.state.version = Some(head.token());
-                    inner.state.stored_version = Some(head.token());
-                    inner.state.pending = Some(0);
-                    inner.state.role = Some(false);
-                    inner.state.last_error = buffa::MessageField::none();
-                    if rebuilt {
-                        inner.running = false;
-                        inner.state.rebuild =
-                            rebuild_of(rebuild::Stage::STAGE_DONE, counts, cause).into();
-                    }
-                });
-                Ok(Next::Again)
-            }
-        }
+        });
+        Ok(Next::Again)
     }
 
-    /// The round itself, with the lock held.
-    fn apply(&mut self) -> Result<Applied, Error> {
-        let committed = if self.index.has_format()? {
+    /// What the Index and `HEAD` are at now.
+    fn look(&self, _cx: &Blocking) -> Result<Look, Error> {
+        let asked = self.shared.lock().requested;
+        let format = self.index.has_format()?;
+        let maps = if format {
+            self.index.read_commit()?
+        } else {
+            None
+        };
+        let head = State::of(&self.repos.views().context("read HEAD")?);
+        #[cfg(feature = "index")]
+        let live = if format {
+            match Layout::new(self.index.root()).current(_cx)? {
+                Some(generation) => {
+                    let commit = generation.read_commit(_cx)?;
+                    Some((generation, commit))
+                }
+                None => None,
+            }
+        } else {
+            None
+        };
+        Ok(Look {
+            asked,
+            maps,
+            head,
+            #[cfg(feature = "index")]
+            live,
+        })
+    }
+
+    /// The plan of this Vault for the round, or `None` when it does not
+    /// index: the Index was built with other ports than this Vault's, or
+    /// the Vault lacks a port the Index needs. The status says which.
+    #[cfg(feature = "index")]
+    async fn plan(&self, look: &Look) -> Result<Option<Plan>, Error> {
+        let repos = Arc::clone(&self.repos);
+        let head = look.head;
+        let declarations = blocking(move |_cx| {
+            let Some(views) = repos.views_at(head.oid(Repo::Main), head.oid(Repo::Isolated))?
+            else {
+                return Err(Error::new(
+                    VaultErrorCode::Aborted,
+                    "the commit HEAD named is gone",
+                ));
+            };
+            collection::load(views.of(Repo::Main)).context("read the collections")
+        })
+        .await?;
+        let calls = Calls::of(&self.ports);
+        let plan = tables::plan(&calls, &declarations).await?;
+        let stale = match look.commit() {
+            Some(commit) if !look.asked => tables::stale(commit, &plan),
+            _ => None,
+        };
+        let error: Error = match (stale, &plan.lacking) {
+            (Some(reason), _) => Fault::new(VaultErrorCode::IndexStale, reason).into(),
+            (None, Some(what)) => Fault::new(
+                VaultErrorCode::FailedPrecondition,
+                format!("this Vault lacks {what}"),
+            )
+            .into(),
+            (None, None) => return Ok(Some(plan)),
+        };
+        let report = error_report(&error);
+        let version = look.version().map(State::token);
+        let stored = Some(head.token());
+        let differs = {
+            let inner = self.shared.lock();
+            inner.state.last_error.as_option() != Some(&report)
+                || inner.state.version != version
+                || inner.state.stored_version != stored
+        };
+        if differs {
+            self.shared.publish(|inner| {
+                inner.requested = false;
+                inner.state.version = version;
+                inner.state.stored_version = stored;
+                inner.state.role = Some(false);
+                inner.state.pending = None;
+                inner.state.last_error = report.into();
+            });
+        }
+        Ok(None)
+    }
+
+    /// The round itself, with `index.lock` held: the journal id maps, then
+    /// the Lance tables, each with its commit last.
+    #[cfg(feature = "index")]
+    async fn apply(&self, look: &Look, plan: Plan, cache: &mut Cache) -> Result<Applied, Error> {
+        let maps = {
+            let context = self.clone();
+            let asked = look.asked;
+            blocking(move |cx| context.maps(cx, asked)).await?
+        };
+        let layout = Layout::new(self.index.root());
+        let live = {
+            let layout = layout.clone();
+            blocking(move |cx| match layout.current(cx)? {
+                Some(generation) => {
+                    let commit = generation.read_commit(cx)?;
+                    Ok(Some((generation, commit)))
+                }
+                None => Ok(None),
+            })
+            .await?
+        };
+        let rebuild = look.asked || maps.reset || !matches!(live, Some((_, Some(_))));
+        let cause = if look.asked {
+            rebuild::Cause::CAUSE_REINDEX
+        } else {
+            rebuild::Cause::CAUSE_NEW
+        };
+        if rebuild {
+            self.shared.publish(|inner| {
+                inner.requested = false;
+                inner.running = true;
+                inner.state.role = Some(true);
+                inner.state.rebuild = rebuild_of(
+                    rebuild::Stage::STAGE_RUNNING,
+                    Counts::default(),
+                    Some(cause),
+                )
+                .into();
+            });
+        }
+        let (generation, commit) = match (&live, rebuild) {
+            (Some((generation, Some(commit))), false) => (generation.clone(), commit.clone()),
+            _ => {
+                let layout = layout.clone();
+                let generation = blocking(move |cx| layout.create(cx)).await?;
+                (generation, Commit::empty(plan.ports.clone()))
+            }
+        };
+        let shared = Arc::clone(&self.shared);
+        let stopped: Arc<dyn Fn() -> bool + Send + Sync> = {
+            let shared = Arc::clone(&self.shared);
+            Arc::new(move || shared.signal.stopped())
+        };
+        let mut last = Instant::now();
+        let mut tick = move |counts: Counts| -> Result<(), Error> {
+            if shared.signal.stopped() {
+                return Err(Error::new(
+                    RuntimeCode::Cancelled,
+                    "the indexer is stopping",
+                ));
+            }
+            if shared.lock().running && last.elapsed() >= PROGRESS_EVERY {
+                last = Instant::now();
+                shared.publish(|inner| {
+                    inner.state.rebuild =
+                        rebuild_of(rebuild::Stage::STAGE_RUNNING, counts, Some(cause)).into();
+                });
+            }
+            Ok(())
+        };
+        let mut work = Work {
+            repos: Arc::clone(&self.repos),
+            generation: generation.clone(),
+            commit,
+            plan: &plan,
+            calls: &Calls::of(&self.ports),
+            cache,
+            tick: &mut tick,
+            stopped,
+            counts: Counts::default(),
+        };
+        let mut to = maps.head;
+        let mut declarations = maps.declarations;
+        loop {
+            work.bring_to(to, &declarations).await?;
+            if !rebuild {
+                break;
+            }
+            // A rebuild catches up with the writes made while it ran, then
+            // switches.
+            let repos = Arc::clone(&self.repos);
+            let (now, now_declarations) = blocking(move |_cx| {
+                let views = repos.views().context("read HEAD")?;
+                let declarations =
+                    collection::load(views.of(Repo::Main)).context("read the collections")?;
+                Ok((State::of(&views), declarations))
+            })
+            .await?;
+            if now == to {
+                break;
+            }
+            to = now;
+            declarations = now_declarations;
+        }
+        // The tables read every file the maps read: their counts are the
+        // round's.
+        let counts = work.counts;
+        let mut commit = work.commit;
+        if rebuild {
+            commit.retired = live.as_ref().map(|(generation, _)| generation::Retired {
+                name: generation.name().to_owned(),
+                at: generation::now_millis(),
+            });
+        }
+        let root = self.index.root().to_path_buf();
+        let state = commit.state().unwrap_or(to);
+        blocking(move |cx| {
+            generation.sweep_tables(cx, &mut commit);
+            generation.write_commit(cx, &commit)?;
+            if rebuild {
+                layout.switch(cx, &generation)?;
+            }
+            layout.sweep(cx, Some(generation.name()), commit.retired.as_ref())?;
+            restrict_tree(&root)
+        })
+        .await?;
+        cache.clear();
+        Ok(Applied {
+            state,
+            counts,
+            rebuilt: rebuild.then_some(cause),
+        })
+    }
+
+    /// The round itself, with `index.lock` held: the journal id maps, with
+    /// their commit last.
+    #[cfg(not(feature = "index"))]
+    async fn apply(&self, look: &Look) -> Result<Applied, Error> {
+        let maps = {
+            let context = self.clone();
+            let asked = look.asked;
+            blocking(move |cx| context.maps(cx, asked)).await?
+        };
+        Ok(Applied {
+            state: maps.head,
+            counts: maps.counts,
+            rebuilt: maps.rebuilt,
+        })
+    }
+
+    /// The journal id maps brought to `HEAD`, under the lock: from nothing
+    /// when a rebuild was asked for or there are none of this layout.
+    fn maps(&self, _cx: &Blocking, asked: bool) -> Result<Maps, Error> {
+        let format = self.index.has_format()?;
+        let committed = if format {
             self.index.read_commit()?
         } else {
             None
         };
         let views = self.repos.views().context("read HEAD")?;
-        let asked = self.shared.lock().requested;
-        if !asked && committed.is_some() && committed == Some(State::of(&views)) {
-            return Ok(Applied::Current(State::of(&views)));
+        let head = State::of(&views);
+        let declarations =
+            collection::load(views.of(Repo::Main)).context("read the collections")?;
+        if !asked && committed == Some(head) {
+            return Ok(Maps {
+                head,
+                #[cfg(not(feature = "index"))]
+                counts: Counts::default(),
+                #[cfg(feature = "index")]
+                reset: false,
+                #[cfg(not(feature = "index"))]
+                rebuilt: None,
+                #[cfg(feature = "index")]
+                declarations,
+            });
         }
         #[cfg(test)]
         let _in_round = hooks::enter(&self.vault)?;
-        let declarations =
-            collection::load(views.of(Repo::Main)).context("read the collections")?;
-        let from = if asked { None } else { committed };
-        // Why a rebuild would run: `Reindex` asked, or there is no Index
-        // this version reads. A rebuild because the commit the Index
-        // reflects is gone from its repository has neither cause.
-        self.cause = if asked {
-            Some(rebuild::Cause::CAUSE_REINDEX)
-        } else if committed.is_none() {
-            Some(rebuild::Cause::CAUSE_NEW)
+        let cause = if asked {
+            rebuild::Cause::CAUSE_REINDEX
         } else {
-            None
+            rebuild::Cause::CAUSE_NEW
         };
-        let cause = self.cause;
+        if !format {
+            self.index.reset().context("empty the Index")?;
+        } else if asked {
+            self.index
+                .reset_maps()
+                .context("empty the journal id maps")?;
+        }
+        let from = if asked || !format { None } else { committed };
         let shared = Arc::clone(&self.shared);
         let mut last = Instant::now();
         let mut tick = |counts: &Counts| -> Result<(), Error> {
@@ -550,49 +872,65 @@ impl Worker {
                 let counts = *counts;
                 shared.publish(|inner| {
                     inner.state.rebuild =
-                        rebuild_of(rebuild::Stage::STAGE_RUNNING, counts, cause).into();
+                        rebuild_of(rebuild::Stage::STAGE_RUNNING, counts, Some(cause)).into();
                 });
             }
             Ok(())
         };
         let mut round = match Round::new(&self.index, &views, &declarations, from, &mut tick)? {
             Some(round) => round,
-            None => match Round::new(&self.index, &views, &declarations, None, &mut tick)? {
-                Some(round) => round,
-                None => unreachable!("a round from nothing always knows its difference"),
-            },
+            None => {
+                // The commit the maps reflect is gone from its repository:
+                // they are made again from nothing.
+                self.index
+                    .reset_maps()
+                    .context("empty the journal id maps")?;
+                match Round::new(&self.index, &views, &declarations, None, &mut tick)? {
+                    Some(round) => round,
+                    None => unreachable!("a round from nothing always knows its difference"),
+                }
+            }
         };
         let pending = round.pending();
-        let rebuilt = round.is_rebuild();
+        #[cfg(not(feature = "index"))]
+        let rebuilt = round.is_rebuild().then_some(cause);
         self.shared.adjust(|inner| {
             inner.state.role = Some(true);
             inner.state.pending = pending;
         });
-        if rebuilt {
-            self.index.reset().context("empty the Index")?;
-            self.rebuilding = true;
+        #[cfg(not(feature = "index"))]
+        if rebuilt.is_some() {
             self.shared.publish(|inner| {
                 inner.requested = false;
                 inner.running = true;
                 inner.state.version = None;
-                inner.state.rebuild =
-                    rebuild_of(rebuild::Stage::STAGE_RUNNING, Counts::default(), cause).into();
+                inner.state.rebuild = rebuild_of(
+                    rebuild::Stage::STAGE_RUNNING,
+                    Counts::default(),
+                    Some(cause),
+                )
+                .into();
             });
         }
         #[cfg(test)]
         hooks::at_work(&self.vault)?;
-        for side in &mut self.sides {
-            side.apply(&mut round)?;
-        }
-        let head = round.to();
+        JournalMaps.apply(&mut round)?;
+        #[cfg(not(feature = "index"))]
         let counts = round.counts();
         self.index
             .write_commit(head)
-            .context("record the state of the Index")?;
-        Ok(Applied::Built {
+            .context("record the state of the journal id maps")?;
+        drop(round);
+        Ok(Maps {
             head,
+            #[cfg(not(feature = "index"))]
             counts,
+            #[cfg(feature = "index")]
+            reset: !format,
+            #[cfg(not(feature = "index"))]
             rebuilt,
+            #[cfg(feature = "index")]
+            declarations,
         })
     }
 
@@ -624,21 +962,43 @@ impl Worker {
     }
 
     /// A round failed: the status says so.
-    fn fail(&mut self, error: &Error) {
+    fn fail(&self, error: &Error) {
         let report = error_report(error);
-        let rebuilding = std::mem::take(&mut self.rebuilding);
-        let cause = self.cause;
         self.shared.publish(|inner| {
+            let rebuilding = std::mem::take(&mut inner.running);
             inner.state.role = Some(false);
             inner.state.last_error = report.clone().into();
             if rebuilding {
-                inner.running = false;
+                let cause = inner
+                    .state
+                    .rebuild
+                    .as_option()
+                    .and_then(|rebuild| rebuild.cause)
+                    .and_then(|cause| cause.as_known());
                 let mut failed = rebuild_of(rebuild::Stage::STAGE_FAILED, Counts::default(), cause);
                 failed.error = report.into();
                 inner.state.rebuild = failed.into();
             }
         });
     }
+}
+
+/// What the journal id maps' part of a round did.
+struct Maps {
+    /// The state they reflect now.
+    head: State,
+    /// What they read: the round's counts without the tables.
+    #[cfg(not(feature = "index"))]
+    counts: Counts,
+    /// Whether the Index was of another layout and was emptied whole.
+    #[cfg(feature = "index")]
+    reset: bool,
+    /// Why they were made from nothing, when they were.
+    #[cfg(not(feature = "index"))]
+    rebuilt: Option<rebuild::Cause>,
+    /// The collections declared at `head`.
+    #[cfg(feature = "index")]
+    declarations: Declarations,
 }
 
 fn rebuild_of(stage: rebuild::Stage, counts: Counts, cause: Option<rebuild::Cause>) -> Rebuild {
@@ -980,7 +1340,7 @@ mod tests {
                 .and_then(|rebuild| rebuild.stage)
                 .and_then(|stage| stage.as_known()),
             Some(scheda_api::v1::rebuild::Stage::STAGE_DONE),
-            "the lock is held: the rebuild has not begun, the first build is the last"
+            "the lock is held: the rebuild has not begun, the first build is the last: {state:?}"
         );
         assert!(state.version.is_some());
         assert_eq!(
@@ -1002,7 +1362,16 @@ mod tests {
                 .and_then(|rebuild| rebuild.stage)
                 .and_then(|stage| stage.as_known());
             stages.push(stage);
-            if state.rebuild.as_option().is_some() && state.version.is_some() {
+            // The live Index answers while a rebuild runs (its version
+            // stays): the rebuild is over when its stage says so.
+            if matches!(
+                stage,
+                Some(
+                    scheda_api::v1::rebuild::Stage::STAGE_DONE
+                        | scheda_api::v1::rebuild::Stage::STAGE_FAILED
+                )
+            ) && stages.contains(&Some(scheda_api::v1::rebuild::Stage::STAGE_RUNNING))
+            {
                 break state;
             }
         };

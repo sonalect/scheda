@@ -180,7 +180,10 @@ mod tests {
         use std::pin::pin;
         use std::task::{Context, Poll, Waker};
         let mut future = pin!(future);
-        match future.as_mut().poll(&mut Context::from_waker(Waker::noop())) {
+        match future
+            .as_mut()
+            .poll(&mut Context::from_waker(Waker::noop()))
+        {
             Poll::Ready(outcome) => outcome,
             Poll::Pending => panic!("the call waited outside a runtime"),
         }
