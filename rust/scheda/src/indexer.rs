@@ -113,7 +113,8 @@ struct Inner {
     history: VecDeque<IndexState>,
     /// The number of the next item.
     next: u64,
-    /// A rebuild was asked for and has not begun.
+    /// A rebuild was asked for and no rebuild has served it yet: it stands
+    /// through the tries that fail.
     requested: bool,
     /// A rebuild is running.
     running: bool,
@@ -235,11 +236,12 @@ impl Indexer {
         Ok(())
     }
 
-    /// Asks for a rebuild and returns at once.
+    /// Asks for a rebuild and returns at once. The request stands until a
+    /// rebuild is done: a try that fails is followed by another.
     ///
     /// # Errors
     ///
-    /// `ABORTED` when a rebuild was asked for and has not begun, or runs.
+    /// `ABORTED` when a rebuild was asked for and is not done, or runs.
     #[cfg(any(test, feature = "index"))]
     pub(crate) fn reindex(&self) -> Result<(), Error> {
         {
@@ -570,7 +572,11 @@ impl Context {
         // The commits are written: the lock goes before anyone is told.
         drop(lock);
         let applied = applied?;
+        let served = look.asked;
         self.shared.publish(|inner| {
+            if served {
+                inner.requested = false;
+            }
             // The round read `HEAD` again for its work, after its look: the
             // state it brought the Index to is the newest stored state it
             // knows, so the Index is never shown ahead of it.
@@ -720,7 +726,6 @@ impl Context {
         };
         if rebuild {
             self.shared.publish(|inner| {
-                inner.requested = false;
                 inner.running = true;
                 inner.state.role = Some(true);
                 inner.state.rebuild = rebuild_of(
@@ -941,7 +946,6 @@ impl Context {
         #[cfg(not(feature = "index"))]
         if rebuilt.is_some() {
             self.shared.publish(|inner| {
-                inner.requested = false;
                 inner.running = true;
                 inner.state.version = None;
                 inner.state.rebuild = rebuild_of(

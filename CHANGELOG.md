@@ -317,7 +317,9 @@ changes; they grow with each part of the move.
   files under `.scheda/index/` are removed by the first round.
 - `Index.Reindex` builds a new generation beside the live one, which
   answers queries and searches until the switch, with the ports of the
-  Vault that asked; the old generation is removed an hour after it.
+  Vault that asked; the old generation is removed an hour after it. A
+  rebuild that fails is tried again after a pause until one is done;
+  meanwhile another `Reindex` of that Vault is `ABORTED`.
   Only a `Reindex` changes the projection, the columns, or the embedder
   model of the Index: a Vault whose Projector gives another projection or
   other columns, or whose embedder is of another model or vector length,

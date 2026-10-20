@@ -1180,8 +1180,8 @@ mod tests {
     use scheda_api::v1::rebuild::{Cause, Stage};
     use scheda_api::v1::{
         CollectionKey, ColumnKind, DocumentCreation, DocumentOperation, EmbedderErrorCode,
-        IndexColumn, IndexDoc, IndexSchema, IndexValue, OpenOptions, ProjectorDescriptor,
-        ProjectorSync, RawDocument,
+        IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue, OpenOptions,
+        ProjectorDescriptor, ProjectorSync, RawDocument, VaultErrorCode,
     };
     use scheda_blocking::blocking;
 
@@ -1827,6 +1827,100 @@ mod tests {
         let rows = rows(&vault, "notes").await;
         assert_eq!(rows.len(), 30);
         assert!(rows.values().all(|(_, _, vector)| *vector));
+        vault.close().await.unwrap();
+    }
+
+    /// The stage and cause of the rebuild `state` reports.
+    fn stage_of(state: &IndexState) -> (Option<Stage>, Option<Cause>) {
+        let rebuild = state.rebuild.as_option();
+        (
+            rebuild
+                .and_then(|rebuild| rebuild.stage)
+                .and_then(|stage| stage.as_known()),
+            rebuild
+                .and_then(|rebuild| rebuild.cause)
+                .and_then(|cause| cause.as_known()),
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rebuild_that_fails_is_tried_again_until_it_is_done() {
+        let scratch = Scratch::new("rebuild-again");
+        let broken = Arc::new(AtomicBool::new(false));
+        let embedder = {
+            let broken = Arc::clone(&broken);
+            FixedEmbedder::new(
+                "model-a",
+                4,
+                NonZeroUsize::MIN,
+                move |texts: Vec<String>| {
+                    if broken.load(Ordering::SeqCst) {
+                        return Err(Failure::new(EmbedderErrorCode::Unavailable, "down")
+                            .with_retryable(true)
+                            .into());
+                    }
+                    Ok(texts
+                        .iter()
+                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                        .collect())
+                },
+            )
+        };
+        let ports = Ports {
+            projector: Some(ProjectorRef::from_sync(Pipes {
+                projected: Arc::default(),
+            })),
+            embedder: Some(EmbedderRef::from_sync(embedder)),
+            reranker: None,
+        };
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&vault, "notes", notes(3, 0)).await.unwrap();
+        wait_indexed(&vault).await;
+
+        // A text the live generation lacks, while the embedder is down.
+        broken.store(true, Ordering::SeqCst);
+        batch(&vault, "notes", notes(1, 3)).await.unwrap();
+        let mut watch = vault.indexer().watch();
+        watch.next().await.unwrap().unwrap();
+        vault.indexer().reindex().unwrap();
+        loop {
+            let state = watch.next().await.unwrap().unwrap();
+            if stage_of(&state) == (Some(Stage::STAGE_FAILED), Some(Cause::CAUSE_REINDEX)) {
+                break;
+            }
+        }
+        // The request stands until a rebuild serves it.
+        let again = vault.indexer().reindex().unwrap_err();
+        assert!(again.is(VaultErrorCode::Aborted));
+        broken.store(false, Ordering::SeqCst);
+        let done = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let state = watch.next().await.unwrap().unwrap();
+                if stage_of(&state) == (Some(Stage::STAGE_DONE), Some(Cause::CAUSE_REINDEX)) {
+                    return state;
+                }
+            }
+        })
+        .await
+        .expect("the rebuild was tried again");
+        assert_eq!(done.rebuild.as_option().unwrap().documents_read, Some(4));
+        let rows = rows(&vault, "notes").await;
+        assert_eq!(rows.len(), 4);
+        assert!(rows.values().all(|(_, _, vector)| *vector));
+        // Served: a new request is taken.
+        vault.indexer().reindex().unwrap();
         vault.close().await.unwrap();
     }
 
