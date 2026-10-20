@@ -34,10 +34,34 @@ use git2::Oid;
 use crate::collection::{self, Declarations};
 use crate::error::{Context, Error, io};
 use crate::fs::{
-    Flock, atomic_write_private, create_dir_private, restrict_dir, restrict_file_below,
+    Flock, atomic_write_private, create_dir_private, remove_temporary, restrict_dir,
+    restrict_file_below,
 };
 use crate::isolated;
 use crate::repo::{Delta, Repo, Snap, Views};
+
+/// The folders directly in `dir` (none when it is missing); a link is not
+/// one.
+fn folders_in(dir: &Path) -> Result<Vec<PathBuf>, Error> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(io(err)).context("read a folder of the Index"),
+    };
+    let mut out = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(io).context("read a folder of the Index")?;
+        if entry
+            .file_type()
+            .map_err(io)
+            .context("read a folder of the Index")?
+            .is_dir()
+        {
+            out.push(entry.path());
+        }
+    }
+    Ok(out)
+}
 
 /// The number of the layout of the files of the Index. An Index with another
 /// number (the Tantivy and USearch Index of `0.22` is 2) is removed whole
@@ -195,6 +219,27 @@ impl Index {
             Err(TryLockError::WouldBlock) => Ok(None),
             Err(TryLockError::Error(err)) => Err(io(err)).context("take the index lock"),
         }
+    }
+
+    /// Removes the temporary files writes under the Index left when their
+    /// process died, in every folder a round writes a file of its own into:
+    /// the Index folder, the folders in it (its generations among them), and
+    /// each journal's id map folder; Lance names its own files. Only a round
+    /// writes under the Index, and it holds `index.lock`, as `_held` shows
+    /// the caller does: every such file is a leftover.
+    ///
+    /// # Errors
+    ///
+    /// `STORAGE` when a folder cannot be read or a file removed.
+    pub(crate) fn sweep_temporary(&self, _held: &Flock) -> Result<(), Error> {
+        remove_temporary(&self.root)?;
+        for dir in folders_in(&self.root)? {
+            remove_temporary(&dir)?;
+        }
+        for dir in folders_in(&self.journal_dir())? {
+            remove_temporary(&dir)?;
+        }
+        Ok(())
     }
 
     /// Whether the Index on disk has the layout this build reads.

@@ -29,6 +29,12 @@ changes; they grow with each part of the move.
 
 ### Fixed
 
+- A temporary file of a write (`.scheda.{n}.tmp`) was numbered per
+  process, so a temporary file another process, or one that died, left
+  under the same name failed the write and was removed by it. The name is
+  now `.scheda.{pid}.{n}.tmp`, a name already taken is passed over, and a
+  write removes only a temporary file it made. An indexer round removes
+  the ones a dead process left under `.scheda/index/`.
 - `Check` could report a file under `.scheda/index/` as not owner-only
   while the indexer was writing it: the files of the Index and the writer
   identity are now created owner-only, not narrowed after.

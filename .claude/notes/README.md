@@ -8,7 +8,7 @@ Project state, deferred work, and measurements that outlive one session
 | [flaky-tests.md](flaky-tests.md) | Races the tmpfs gate exposed, their fixes, how to reproduce |
 | [api-objects.md](api-objects.md) | The approved object API (Scheda, Vault, Collection, Mirror, Index; service references): thirteen decisions, what is open |
 | [p8-follow-ups.md](p8-follow-ups.md) | Small follow-ups found while building the CLI and the consumer test (P8): a vector-leg reason, CLI waits, the docs pass |
-| [index-risks.md](index-risks.md) | Audit of the indexer (19 October 2026): the six risks that the move to Lance left, and what was found while building it; probes of the old Index in `index-probes.patch` |
+| [index-risks.md](index-risks.md) | Audit of the indexer (19 October 2026): the six risks that the move to Lance left, the owner's decision on each (1–4 done, 5 and `like` deferred, 6 accepted), and what was found while building it; probes of the old Index in `index-probes.patch` |
 
 ## Pointers
 
@@ -29,7 +29,8 @@ Project state, deferred work, and measurements that outlive one session
   the debug loop (done, numbers in 21 L1), 22 A2 + A3 + A4 in one commit
   (done 20 October 2026), then 21 L2–L7, L9,
   L10 (with A5), all done 20 October 2026 (`1fdd6d8`, `0a7e3f9`,
-  `f51165e`, `a1aa7a6`; not pushed). What remains is the release, L10's
+  `f51165e`, `a1aa7a6`; not pushed), then index risks 1–4
+  (`index-risks.md`). What remains is the release, L10's
   second box, for the owner's word: `0.22.0` was never released from
   `main`, and `21` names `0.23.0`. The spike stays on the branch
   `lance-spike` (worktree `../scheda-lance`, `spikes/lance/`) and never

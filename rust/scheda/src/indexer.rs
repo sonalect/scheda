@@ -584,7 +584,17 @@ impl Context {
             return Ok(Next::Idle);
         };
         let index = self.index.clone();
-        let Some(lock) = blocking(move |_cx| index.try_lock()).await? else {
+        let Some(lock) = blocking(move |_cx| {
+            let Some(lock) = index.try_lock()? else {
+                return Ok(None);
+            };
+            // Only a round writes under the Index: with the lock held, a
+            // temporary file there is one a dead process left.
+            index.sweep_temporary(&lock)?;
+            Ok(Some(lock))
+        })
+        .await?
+        else {
             // Another indexer holds the lock; it will do the round.
             let head = look.head;
             self.shared.adjust(|inner| {
@@ -1559,6 +1569,50 @@ mod tests {
         assert_eq!(rebuild.segments_read, Some(1));
         // A new request is accepted after the rebuild.
         vault.indexer().reindex().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_round_removes_the_temporary_files_a_dead_writer_left_under_the_index() {
+        let scratch = Scratch::new("sweep");
+        let vault = scratch.open().await;
+        journal(&vault, "log").await;
+        line(&vault, "log", "one").await;
+        let path = scratch.canonical();
+        wait_until("the first build", || at_head(&vault, &path)).await;
+        let index = Index::new(&path);
+        #[cfg(feature = "index")]
+        let live = {
+            let root = index.root().to_path_buf();
+            scheda_blocking::blocking(move |cx| {
+                Ok(crate::generation::Layout::new(&root)
+                    .current(cx)?
+                    .map(|generation| generation.dir().to_path_buf()))
+            })
+            .await
+            .unwrap()
+        };
+        #[cfg(not(feature = "index"))]
+        let live: Option<PathBuf> = None;
+        let left: Vec<PathBuf> = [
+            index.root().to_path_buf(),
+            index.ids_file("log").parent().unwrap().to_path_buf(),
+        ]
+        .into_iter()
+        .chain(live)
+        .map(|dir| dir.join(".scheda.4194304.0.tmp"))
+        .collect();
+        for file in &left {
+            std::fs::write(file, b"left").unwrap();
+        }
+        let kept = index.root().join("notes.tmp");
+        std::fs::write(&kept, b"kept").unwrap();
+        line(&vault, "log", "two").await;
+        wait_until("the round", || at_head(&vault, &path)).await;
+        for file in &left {
+            assert!(!file.exists(), "{} is left", file.display());
+        }
+        assert!(kept.exists());
+        vault.close().await.unwrap();
     }
 
     #[tokio::test]

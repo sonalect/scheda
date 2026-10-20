@@ -87,7 +87,15 @@ the evidence, and a recommendation. The probes of the old Index are in
    the name; sweep `index/**/.scheda.*.tmp` at the start of a round, under
    the lock. **Decided by the owner, 20 October 2026: to do, as proposed**
    (`.scheda.{pid}.{n}.tmp`; the sweep only where nothing writes without
-   `index.lock` — check that before it lands).
+   `index.lock` — check that before it lands). **Done:** checked that only
+   a round, after `try_lock`, writes under `index/` (`indexer.rs` `maps` and
+   `apply`; `Check` only reads; `index.lock` is outside `index/`). The sweep
+   takes the held `Flock` and visits the folders Scheda writes its own files
+   into (`Index::sweep_temporary`). On the way: a write whose `create_new`
+   met a taken name removed that file and failed; it now takes the next
+   number and removes only its own temporary file (`fs.rs`:
+   `a_temporary_name_a_dead_process_left_is_passed_over_and_kept`;
+   `indexer.rs`: `a_round_removes_the_temporary_files_a_dead_writer_left_under_the_index`).
 
 5. **Low (unverified, Windows). Deleting a generation, or a file a reader
    holds open, may fail.** The old generation is removed an hour after the
@@ -156,7 +164,6 @@ hygiene.
 ## How to apply
 
 Every item is decided (20 October 2026). Items 1–4 of the first list are
-to do, as recorded at each: build each with its test under the usual
-gates, then mark it done here. Items 5 and the `like` item wait for their
-trigger; item 6 stays as it is. Delete this note once 1–4 are done and
-the deferred ones are moved to the work order that takes them.
+done (20 October 2026). Items 5 and the `like` item wait for their
+trigger; item 6 stays as it is. Delete this note once the deferred ones
+are moved to the work order that takes them.

@@ -4,7 +4,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda_api::v1::{Problem, VaultErrorCode};
@@ -12,7 +12,12 @@ use scheda_api::v1::{Problem, VaultErrorCode};
 use crate::check::problem;
 use crate::error::{Context, Error, Fault, io};
 
+/// Numbers the temporary files of this process.
 static NEXT_TMP: AtomicU64 = AtomicU64::new(0);
+
+/// The prefix and the suffix of a temporary file's name.
+const TMP_PREFIX: &str = ".scheda.";
+const TMP_SUFFIX: &str = ".tmp";
 
 /// An `flock` held on an open file. Dropping it unlocks before the file
 /// closes: a close alone leaves the lock held while a child process another
@@ -42,21 +47,18 @@ impl Drop for Flock {
 /// Writes `bytes` to `path` so that a reader sees the old file or the new
 /// one, never a part: a temporary file in the same directory, flushed to
 /// disk, then renamed over `path`. Missing parent directories are created.
-/// The temporary file is removed when the write fails.
+///
+/// The temporary file is `.scheda.{pid}.{n}.tmp`: no two writes of one
+/// process, nor of two processes alive at once, share a name, and a name a
+/// dead process left behind is passed over. It is removed when the write
+/// fails after making it.
 pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(io)
             .context("atomic_write: create directory")?;
     }
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".scheda.{n}.tmp"));
-    let written = write_tmp_then_rename(&tmp, path, bytes);
-    if written.is_err() {
-        let _ = fs::remove_file(&tmp);
-    }
-    written
+    write_tmp_then_rename(path, bytes, false)
 }
 
 /// [`atomic_write`] for a file under `{vault}/.scheda/`: the directories it
@@ -66,14 +68,40 @@ pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<(), Erro
     if let Some(dir) = path.parent() {
         create_dir_private(dir).context("atomic_write: create directory")?;
     }
-    let dir = path.parent().unwrap_or_else(|| Path::new("."));
-    let n = NEXT_TMP.fetch_add(1, Ordering::Relaxed);
-    let tmp = dir.join(format!(".scheda.{n}.tmp"));
-    let written = write_tmp_then_rename_with(&tmp, path, bytes, true);
-    if written.is_err() {
-        let _ = fs::remove_file(&tmp);
+    write_tmp_then_rename(path, bytes, true)
+}
+
+/// Removes the temporary files of [`atomic_write`] directly in `dir`: what
+/// writes left that their process did not live to rename. The caller makes
+/// sure no write into `dir` runs meanwhile. A missing `dir` has none.
+///
+/// # Errors
+///
+/// `STORAGE` when `dir` cannot be read or a file there removed.
+pub(crate) fn remove_temporary(dir: &Path) -> Result<(), Error> {
+    let entries = match fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(io(err)).context("read a folder for temporary files"),
+    };
+    for entry in entries {
+        let entry = entry
+            .map_err(io)
+            .context("read a folder for temporary files")?;
+        let name = entry.file_name();
+        let temporary = name
+            .to_str()
+            .is_some_and(|name| name.starts_with(TMP_PREFIX) && name.ends_with(TMP_SUFFIX));
+        if !temporary {
+            continue;
+        }
+        match fs::remove_file(entry.path()) {
+            Ok(()) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(io(err)).context("remove a temporary file"),
+        }
     }
-    written
+    Ok(())
 }
 
 /// Makes `dir` and its missing parents, each owner-only from the moment it
@@ -89,16 +117,10 @@ pub(crate) fn create_dir_private(dir: &Path) -> Result<(), Error> {
     builder.create(dir).map_err(io).map_err(Error::from)
 }
 
-fn write_tmp_then_rename(tmp: &Path, path: &Path, bytes: &[u8]) -> Result<(), Error> {
-    write_tmp_then_rename_with(tmp, path, bytes, false)
-}
-
-fn write_tmp_then_rename_with(
-    tmp: &Path,
-    path: &Path,
-    bytes: &[u8],
-    private: bool,
-) -> Result<(), Error> {
+/// Writes `bytes` to a new temporary file beside `path`, owner-only when
+/// `private`, and renames it over `path`.
+fn write_tmp_then_rename(path: &Path, bytes: &[u8], private: bool) -> Result<(), Error> {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -108,10 +130,43 @@ fn write_tmp_then_rename_with(
     }
     #[cfg(not(unix))]
     let _ = private;
-    let mut file = options
-        .open(tmp)
-        .map_err(io)
-        .context("atomic_write: create temporary file")?;
+    let (tmp, file) = create_temporary(dir, &options, &NEXT_TMP)?;
+    let written = fill_then_rename(file, &tmp, path, bytes);
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// A new temporary file in `dir`, opened with `options`: the first free
+/// name `.scheda.{pid}.{n}.tmp`, with `n` from `next`. A name is taken only
+/// by a file a dead process of the same pid left; the next number is free
+/// of it.
+fn create_temporary(
+    dir: &Path,
+    options: &OpenOptions,
+    next: &AtomicU64,
+) -> Result<(PathBuf, fs::File), Error> {
+    let pid = std::process::id();
+    loop {
+        let n = next.fetch_add(1, Ordering::Relaxed);
+        let tmp = dir.join(format!("{TMP_PREFIX}{pid}.{n}{TMP_SUFFIX}"));
+        match options.open(&tmp) {
+            Ok(file) => return Ok((tmp, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(err) => return Err(io(err)).context("atomic_write: create temporary file"),
+        }
+    }
+}
+
+/// Writes `bytes` into `file`, the temporary file at `tmp`, flushes it to
+/// disk, and renames it over `path`.
+fn fill_then_rename(
+    mut file: fs::File,
+    tmp: &Path,
+    path: &Path,
+    bytes: &[u8],
+) -> Result<(), Error> {
     file.write_all(bytes)
         .map_err(io)
         .context("atomic_write: write temporary file")?;
@@ -424,8 +479,8 @@ mod tests {
     use scheda_api::v1::VaultErrorCode;
 
     use super::{
-        Flock, atomic_write, check_scheda_owner_only, reject_symlinks, rel_posix, restrict_dir,
-        restrict_file, restrict_file_below,
+        Flock, atomic_write, check_scheda_owner_only, create_temporary, reject_symlinks, rel_posix,
+        remove_temporary, restrict_dir, restrict_file, restrict_file_below,
     };
 
     /// A scratch directory that is removed when the test ends.
@@ -500,6 +555,51 @@ mod tests {
             .map(|entry| entry.unwrap().file_name())
             .collect();
         assert_eq!(names, vec![std::ffi::OsString::from("b.txt")]);
+    }
+
+    #[test]
+    fn a_temporary_name_a_dead_process_left_is_passed_over_and_kept() {
+        let scratch = Scratch::new("tmp-taken");
+        let pid = std::process::id();
+        for n in 0..3 {
+            std::fs::write(scratch.0.join(format!(".scheda.{pid}.{n}.tmp")), b"left").unwrap();
+        }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        let next = std::sync::atomic::AtomicU64::new(0);
+        let (tmp, file) = create_temporary(&scratch.0, &options, &next).unwrap();
+        drop(file);
+        assert_eq!(
+            tmp.file_name().unwrap().to_str().unwrap(),
+            format!(".scheda.{pid}.3.tmp")
+        );
+        for n in 0..3 {
+            let left = scratch.0.join(format!(".scheda.{pid}.{n}.tmp"));
+            assert_eq!(std::fs::read(left).unwrap(), b"left");
+        }
+    }
+
+    #[test]
+    fn remove_temporary_removes_the_temporary_files_only() {
+        let scratch = Scratch::new("tmp-sweep");
+        for name in [".scheda.12.3.tmp", ".scheda.7.tmp"] {
+            std::fs::write(scratch.0.join(name), b"left").unwrap();
+        }
+        for name in [".scheda.yaml", "notes.tmp", "commit"] {
+            std::fs::write(scratch.0.join(name), b"kept").unwrap();
+        }
+        std::fs::create_dir(scratch.0.join(".scheda.9.tmp.d")).unwrap();
+        remove_temporary(&scratch.0).unwrap();
+        let mut names: Vec<_> = std::fs::read_dir(&scratch.0)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [".scheda.9.tmp.d", ".scheda.yaml", "commit", "notes.tmp"]
+        );
+        remove_temporary(&scratch.0.join("missing")).unwrap();
     }
 
     #[test]
