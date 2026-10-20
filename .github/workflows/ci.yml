@@ -1,11 +1,20 @@
 name: CI
 
-# Automatic CI is disabled. Restore push/pull_request to re-enable.
+# The full `bazel build //...` and `bazel test //...` on six platforms:
+# Linux, macOS, and Windows, each on amd64 and arm64.
+#
+# Automatic CI is disabled: a manual run (workflow_dispatch) on any branch.
+# Restore push/pull_request to re-enable.
+#
+# Bazel caches: only --disk_cache and --repository_cache (never the output
+# root, which holds a live server). A run may restore caches of its own ref
+# or of the default branch, so only a run on main saves them, and a run on
+# another branch starts from main's.
 on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -14,259 +23,212 @@ permissions:
 env:
   BAZELISK_VERSION: 1.29.0
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  linux:
-    name: Bazel (Linux)
-    runs-on: ubuntu-latest
-    container:
-      image: debian:13
-      # Individual host toolchains, not `/`: a full-root mount can change
-      # ownership of the runner disk.
-      volumes:
-        - /usr/local/lib/android:/mnt/drop/android
-        - /usr/share/dotnet:/mnt/drop/dotnet
-        - /opt/ghc:/mnt/drop/ghc
-        - /usr/local/.ghcup:/mnt/drop/ghcup
-        - /usr/share/swift:/mnt/drop/swift
-        - /usr/local/share/powershell:/mnt/drop/powershell
-        - /opt/hostedtoolcache:/mnt/drop/hostedtoolcache
-        - /usr/lib/jvm:/mnt/drop/jvm
-        - /opt/az:/mnt/drop/az
-        - /usr/share/miniconda:/mnt/drop/miniconda
-        - /usr/local/share/boost:/mnt/drop/boost
-        - /opt/microsoft:/mnt/drop/microsoft
-        - /usr/share/codeql:/mnt/drop/codeql
-        - /usr/local/graalvm:/mnt/drop/graalvm
-        - /usr/share/sbt:/mnt/drop/sbt
-        - /opt/pipx:/mnt/drop/pipx
-    timeout-minutes: 90
-    env:
-      BAZELISK_SHA256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
-      # Portable caches only. Do not persist output_user_root (~/.cache/bazel):
-      # it includes sandbox, execroot, and a live Bazel server.
-      BAZEL_DISK_CACHE: /github/home/.cache/bazel-disk
-      BAZEL_REPO_CACHE: /github/home/.cache/bazel-repo
-    steps:
-      - name: Install dependencies
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          set -euo pipefail
-          apt-get update
-          apt-get install -y --no-install-recommends \
-            binutils \
-            ca-certificates \
-            cmake \
-            curl \
-            g++ \
-            gcc \
-            git \
-            libc6-dev \
-            libssl-dev \
-            make \
-            patch \
-            pkg-config \
-            zlib1g-dev
-
-      - name: Install Bazelisk
-        run: |
-          set -euo pipefail
-          curl -fsSL -o /tmp/bazelisk \
-            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-linux-amd64"
-          echo "${BAZELISK_SHA256}  /tmp/bazelisk" | sha256sum -c
-          install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
-
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # ubuntu-latest guarantees 14 GB free. Restoring bazel-debian13-cas-*
-      # (several GiB compressed) extracts on top of that and fills the disk.
-      - name: Free host disk space
-        run: bash .github/scripts/free-host-disk.sh
-
-      - name: Cache Bazel
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ env.BAZEL_DISK_CACHE }}
-            ${{ env.BAZEL_REPO_CACHE }}
-          key: bazel-debian13-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
-          restore-keys: |
-            bazel-debian13-cas-
-
-      - name: Configure Bazel caches
-        run: |
-          set -euo pipefail
-          mkdir -p "${BAZEL_DISK_CACHE}" "${BAZEL_REPO_CACHE}"
-          {
-            echo "common --disk_cache=${BAZEL_DISK_CACHE}"
-            echo "common --repository_cache=${BAZEL_REPO_CACHE}"
-          } >> "${HOME}/.bazelrc"
-
-      - name: Build
-        run: bazel build //... --keep_going
-
-      - name: Test
-        run: bazel test //... --keep_going --test_output=all
-
-      # Stop the server so repository/disk caches are idle before actions/cache tars them.
-      # Unprivileged debian:13 containers often cannot reap the JVM after SIGKILL
-      # (Bazel exit 36). That must not fail the job, or the cache post step is skipped.
-      - name: Stop Bazel
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-          bazel shutdown
-          for pidfile in "${HOME}"/.cache/bazel/_bazel_*/server/server.pid; do
-            if [ -f "${pidfile}" ]; then
-              kill -9 "$(cat "${pidfile}")" 2>/dev/null || true
-            fi
-          done
-          exit 0
-
-  macos:
-    name: Bazel (macOS)
-    runs-on: macos-latest
-    timeout-minutes: 90
+  platform:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux-amd64
+            runner: ubuntu-26.04
+            bazelisk: bazelisk-linux-amd64
+            bazelisk_sha256: 5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992
+          - platform: linux-arm64
+            runner: ubuntu-26.04-arm
+            bazelisk: bazelisk-linux-arm64
+            bazelisk_sha256: e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010
+          - platform: macos-amd64
+            runner: macos-26-intel
+            bazelisk: bazelisk-darwin-amd64
+            bazelisk_sha256: 16c3d7aa15323a9fb69f56c7ec5733ed18bedb786680d0ba13bb12a3c8083007
+          - platform: macos-arm64
+            runner: macos-26
+            bazelisk: bazelisk-darwin-arm64
+            bazelisk_sha256: cee851f726789227d5561004e9904a52be45c3efb56f8b38b6993d6adbaa0409
+          - platform: windows-amd64
+            runner: windows-2025
+            bazelisk: bazelisk-windows-amd64.exe
+            bazelisk_sha256: 092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b
+            exe: .exe
+          - platform: windows-arm64
+            runner: windows-11-arm
+            bazelisk: bazelisk-windows-arm64.exe
+            bazelisk_sha256: 8bc42bd5d7857f18a21440b906469bb6c7cf91a7c72364d4b1e5ec56a76fe94f
+            exe: .exe
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install dependencies
-        run: |
-          set -euo pipefail
-          brew install cmake openssl pkg-config
-          prefix="$(brew --prefix openssl)"
-          echo "PKG_CONFIG_PATH=${prefix}/lib/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}" >> "${GITHUB_ENV}"
-          echo "OPENSSL_DIR=${prefix}" >> "${GITHUB_ENV}"
-
       - name: Install Bazelisk
         run: |
           set -euo pipefail
-          case "$(uname -m)" in
-            arm64)
-              artifact="bazelisk-darwin-arm64"
-              sha256="cee851f726789227d5561004e9904a52be45c3efb56f8b38b6993d6adbaa0409"
-              ;;
-            x86_64)
-              artifact="bazelisk-darwin-amd64"
-              sha256="16c3d7aa15323a9fb69f56c7ec5733ed18bedb786680d0ba13bb12a3c8083007"
-              ;;
-            *)
-              echo "unsupported macOS arch: $(uname -m)" >&2
-              exit 1
-              ;;
-          esac
-          curl -fsSL -o /tmp/bazelisk \
-            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/${artifact}"
-          echo "${sha256}  /tmp/bazelisk" | shasum -a 256 -c
-          sudo install -m 0755 /tmp/bazelisk /usr/local/bin/bazel
+          bin="${RUNNER_TEMP}/bin"
+          mkdir -p "${bin}"
+          curl -fsSL -o "${bin}/bazel${{ matrix.exe }}" \
+            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/${{ matrix.bazelisk }}"
+          # By OS, not by what is on PATH: macOS ships a BSD `sha256sum`
+          # that does not read a checksum list from stdin.
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            echo "${{ matrix.bazelisk_sha256 }}  ${bin}/bazel${{ matrix.exe }}" | shasum -a 256 -c
+          else
+            echo "${{ matrix.bazelisk_sha256 }}  ${bin}/bazel${{ matrix.exe }}" | sha256sum -c
+          fi
+          chmod +x "${bin}/bazel${{ matrix.exe }}"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            cygpath -w "${bin}" >> "${GITHUB_PATH}"
+          else
+            echo "${bin}" >> "${GITHUB_PATH}"
+          fi
 
-      # runner.temp is invalid in jobs.<id>.env (evaluated before a runner is
-      # assigned). It is valid in steps.with / $RUNNER_TEMP. Paths must stay
-      # outside the checkout: Bazel 9 refuses --repository_cache inside the repo.
-      - name: Cache Bazel
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ runner.temp }}/bazel-disk
-            ${{ runner.temp }}/bazel-repo
-          key: bazel-macos-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
-          restore-keys: |
-            bazel-macos-cas-
-
-      - name: Configure Bazel caches
+      # The Lance build and its caches need more than the free space of a
+      # Linux runner. The image's toolchains this job does not use take
+      # about as much.
+      - name: Free disk space
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          disk="${RUNNER_TEMP}/bazel-disk"
-          repo="${RUNNER_TEMP}/bazel-repo"
-          mkdir -p "${disk}" "${repo}"
+          df -h /
+          sudo rm -rf \
+            /opt/az \
+            /opt/ghc \
+            /opt/hostedtoolcache \
+            /opt/microsoft \
+            /opt/pipx \
+            /usr/lib/jvm \
+            /usr/local/.ghcup \
+            /usr/local/graalvm \
+            /usr/local/lib/android \
+            /usr/local/share/boost \
+            /usr/local/share/powershell \
+            /usr/share/codeql \
+            /usr/share/dotnet \
+            /usr/share/miniconda \
+            /usr/share/sbt \
+            /usr/share/swift
+          df -h /
+
+      # Bazel's C++ toolchain links Rust with lld when it finds one and
+      # falls back to gold, which rustc warns is deprecated and buggy.
+      # Ubuntu runners have gold and no lld.
+      - name: Install lld
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends lld
+          ld.lld --version
+
+      - name: Configure Bazel for Windows
+        if: runner.os == 'Windows'
+        run: |
+          set -euo pipefail
+          mkdir -p /c/b
+          # Git for Windows bash, for Bazel's shell actions and sh_test.
+          echo "BAZEL_SH=C:/Program Files/Git/bin/bash.exe" >> "${GITHUB_ENV}"
           {
-            echo "common --disk_cache=${disk}"
-            echo "common --repository_cache=${repo}"
-          } >> "${HOME}/.bazelrc"
-
-      # python/cli and python/vllm are `--deleted_packages` in `.bazelrc`
-      # (uv.lock is Linux-only; sdist of hf_xet / PyYAML has no `build`).
-      - name: Build
-        run: bazel build //... --keep_going
-
-      - name: Test
-        run: bazel test //... --keep_going --test_output=all
-
-      - name: Stop Bazel
-        if: always()
-        continue-on-error: true
-        run: |
-          set +e
-          bazel shutdown
-          exit 0
-
-  windows:
-    name: Bazel (Windows)
-    runs-on: windows-latest
-    timeout-minutes: 120
-    env:
-      # Git for Windows bash for native sh_test / run_shell (rules_rust).
-      # bazel_utils rules do not need it: they run through busybox-w32.
-      # Python packages are `--deleted_packages` in `.bazelrc` on Windows
-      # so `//...` does not load python/ BUILD files. uv host still runs
-      # via python.MODULE.bazel; patched to stub msvc instead of fail().
-      BAZEL_SH: C:/Program Files/Git/bin/bash.exe
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      # Git for Windows is on PATH; Scheda invokes the `git` executable.
-      - name: Install Bazelisk
-        shell: bash
-        run: |
-          set -euo pipefail
-          curl -fsSL -o "${RUNNER_TEMP}/bazelisk.exe" \
-            "https://github.com/bazelbuild/bazelisk/releases/download/v${BAZELISK_VERSION}/bazelisk-windows-amd64.exe"
-          echo "092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b  ${RUNNER_TEMP}/bazelisk.exe" | sha256sum -c
-          mkdir -p "${RUNNER_TEMP}/bin"
-          cp "${RUNNER_TEMP}/bazelisk.exe" "${RUNNER_TEMP}/bin/bazel.exe"
-          echo "$(cygpath -w "${RUNNER_TEMP}/bin")" >> "${GITHUB_PATH}"
-          echo "$(cygpath -w "/c/Program Files/Git/usr/bin")" >> "${GITHUB_PATH}"
-
-      - name: Cache Bazel
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ${{ runner.temp }}/bazel-disk
-            ${{ runner.temp }}/bazel-repo
-          key: bazel-windows-amd64-cas-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
-          restore-keys: |
-            bazel-windows-amd64-cas-
-
-      - name: Configure Bazel caches
-        shell: bash
-        run: |
-          set -euo pipefail
-          disk="$(cygpath -m "${RUNNER_TEMP}/bazel-disk")"
-          repo="$(cygpath -m "${RUNNER_TEMP}/bazel-repo")"
-          mkdir -p "${RUNNER_TEMP}/bazel-disk" "${RUNNER_TEMP}/bazel-repo" /c/b
-          {
-            # Short root: CARGO_MANIFEST_DIR repeats the bzlmod repo name and
-            # hits MAX_PATH (CreateProcess 267) under D:\a\_temp\bzl\...
+            # Short output root: CARGO_MANIFEST_DIR repeats the bzlmod
+            # repository name and hits MAX_PATH (CreateProcess 267) under
+            # the runner's work directory.
             echo "startup --output_user_root=C:/b"
             echo "startup --windows_enable_symlinks"
             echo "build --symlink_prefix=/"
+          } >> "${HOME}/.bazelrc"
+
+      - name: Configure Bazel caches
+        run: |
+          set -euo pipefail
+          # Outside the checkout: Bazel 9 refuses a repository cache inside
+          # the workspace.
+          disk="${RUNNER_TEMP}/bazel-disk"
+          repo="${RUNNER_TEMP}/bazel-repo"
+          mkdir -p "${disk}" "${repo}"
+          if [[ "${RUNNER_OS}" == "Windows" ]]; then
+            disk="$(cygpath -m "${disk}")"
+            repo="$(cygpath -m "${repo}")"
+          fi
+          {
             echo "common --disk_cache=${disk}"
             echo "common --repository_cache=${repo}"
           } >> "${HOME}/.bazelrc"
 
-      - name: Build
+      - name: Restore Bazel caches
+        id: bazel-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/bazel-disk
+            ${{ runner.temp }}/bazel-repo
+          key: bazel-${{ matrix.platform }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
+          restore-keys: |
+            bazel-${{ matrix.platform }}-
+
+      - name: Bazel build
+        # Git Bash on Windows rewrites an argument that starts with `//` and
+        # has no other `/` as a Windows switch (`//rust:lint` -> `/rust:lint`).
+        env:
+          MSYS_NO_PATHCONV: "1"
         run: bazel build //... --keep_going
 
-      - name: Test
-        run: bazel test //... --keep_going --test_output=all
+      # The tests are named as well as matched by //...: Bazel skips an
+      # incompatible target of a pattern silently, but fails on a named
+      # one, so a platform that cannot build them fails instead of passing
+      # with nothing run.
+      - name: Bazel test
+        env:
+          MSYS_NO_PATHCONV: "1"
+        run: |
+          set -euo pipefail
+          tests=(
+            //api:generate_test
+            //api:lint
+            //bazel:lint
+            //bazel:markdown
+            //rust:lint
+            //rust:rustfmt
+            //rust:vuln
+            //rust/api:contract_test
+            //rust/api:generated_v1_test
+            //rust/api:git_terms_test
+            //rust/api:version_field_test
+            //rust/blocking:blocking_doc_test
+            //rust/blocking:blocking_test
+            //rust/cli:agent_test
+            //rust/cli:cli_test
+            //rust/cli:http_test
+            //rust/scheda:integration_test
+            //rust/scheda:integration_thin_test
+            //rust/scheda:scheda_doc_test
+            //rust/scheda:scheda_test
+            //rust/scheda:scheda_thin_test
+          )
+          # `.bazelrc` deletes the Python packages on Windows.
+          if [[ "${RUNNER_OS}" != "Windows" ]]; then
+            tests+=(//python:lint //python:vuln)
+          fi
+          bazel test //... --keep_going --test_output=errors "${tests[@]}"
 
+      # Stopped before the caches are saved, so nothing writes them then.
       - name: Stop Bazel
         if: always()
         continue-on-error: true
-        run: |
-          bazel shutdown
-          exit 0
+        run: bazel shutdown || true
+
+      - name: Disk space
+        if: always()
+        run: df -h
+
+      - name: Save Bazel caches
+        if: github.ref == 'refs/heads/main' && steps.bazel-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ${{ runner.temp }}/bazel-disk
+            ${{ runner.temp }}/bazel-repo
+          key: bazel-${{ matrix.platform }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}

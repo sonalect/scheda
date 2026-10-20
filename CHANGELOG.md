@@ -17,6 +17,15 @@ API or on-disk format changes bump the minor.
   `cargo fmt --all` does; the generated crate is now tagged `norustfmt`,
   the spelling both the check and the formatter of `rules_rust` skip.
 
+### Changed
+
+- The GitHub Actions CI workflow runs `bazel build //...` and
+  `bazel test //...` on six platforms: Linux, macOS, and Windows, each on
+  amd64 and arm64 (before: Debian 13 in a container, macOS, and Windows,
+  amd64 only). It names every test, so a test a platform cannot build
+  fails the run instead of being skipped. It still starts by hand
+  (`workflow_dispatch`); only a run on `main` saves the Bazel caches.
+
 ## [0.24.0] - 2026-10-21
 
 ### Added
