@@ -21,7 +21,10 @@
 //! the lock go, then updates the status and wakes its watchers. A rebuild
 //! (`Reindex`, a missing `commit`, another `format`, a commit that is gone
 //! from its repository) is the same round from an empty Index: `commit` goes
-//! first and is written last.
+//! first and is written last. A `Reindex` records the live generation when
+//! it is asked for; a round that finds another one live, built with this
+//! handle's ports and columns (by another handle that was asked too), has
+//! it served and builds nothing.
 //!
 //! A round that fails changes no `commit` and fails no write: the status
 //! carries `last_error` and the round is tried again after a pause that
@@ -32,7 +35,7 @@
 //! under `index.lock`. Between two rounds the task waits without a thread.
 
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -116,6 +119,10 @@ struct Inner {
     /// A rebuild was asked for and no rebuild has served it yet: it stands
     /// through the tries that fail.
     requested: bool,
+    /// The live generation when the rebuild was asked for; `None` when
+    /// there was none.
+    #[cfg(feature = "index")]
+    requested_beside: Option<String>,
     /// A rebuild is running.
     running: bool,
     /// The indexer has ended: a watch ends too.
@@ -172,15 +179,18 @@ impl Shared {
 /// The indexer of one handle: its task and what it shares with the calls.
 #[derive(Debug)]
 pub(crate) struct Indexer {
+    /// The Vault it indexes.
+    vault: PathBuf,
     shared: Arc<Shared>,
     task: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl Indexer {
-    /// An indexer that is not running. `signal` is the one the write path
-    /// of the handle wakes.
-    pub(crate) fn new(signal: Arc<Signal>) -> Indexer {
+    /// An indexer of the Vault at `vault` that is not running. `signal` is
+    /// the one the write path of the handle wakes.
+    pub(crate) fn new(signal: Arc<Signal>, vault: &Path) -> Indexer {
         Indexer {
+            vault: vault.to_path_buf(),
             shared: Arc::new(Shared {
                 signal,
                 inner: Mutex::new(Inner {
@@ -188,6 +198,8 @@ impl Indexer {
                     history: VecDeque::new(),
                     next: 0,
                     requested: false,
+                    #[cfg(feature = "index")]
+                    requested_beside: None,
                     running: false,
                     closed: false,
                 }),
@@ -197,20 +209,19 @@ impl Indexer {
         }
     }
 
-    /// Starts the task for the Vault at `vault`, whose repositories `repos`
-    /// reads, on the runtime of the caller. It looks at `HEAD` every
-    /// `poll`.
+    /// Starts the task, whose repositories `repos` reads, on the runtime of
+    /// the caller. It looks at `HEAD` every `poll`.
     ///
     /// # Errors
     ///
     /// `NO_RUNTIME` outside a tokio runtime.
     pub(crate) fn start(
         &self,
-        vault: &Path,
         repos: Arc<Repos>,
         ports: Arc<Installed>,
         poll: Duration,
     ) -> Result<(), Error> {
+        let vault = self.vault.as_path();
         #[cfg(not(feature = "index"))]
         let _ = ports;
         let runtime = Handle::try_current().map_err(|_| {
@@ -237,13 +248,26 @@ impl Indexer {
     }
 
     /// Asks for a rebuild and returns at once. The request stands until a
-    /// rebuild is done: a try that fails is followed by another.
+    /// rebuild is done: a try that fails is followed by another. It records
+    /// the live generation now: another one, built since with this
+    /// handle's ports and columns, serves it.
     ///
     /// # Errors
     ///
-    /// `ABORTED` when a rebuild was asked for and is not done, or runs.
+    /// `ABORTED` when a rebuild was asked for and is not done, or runs;
+    /// `STORAGE` when the live generation cannot be read.
     #[cfg(any(test, feature = "index"))]
-    pub(crate) fn reindex(&self) -> Result<(), Error> {
+    pub(crate) async fn reindex(&self) -> Result<(), Error> {
+        #[cfg(feature = "index")]
+        let live = {
+            let layout = Layout::new(Index::new(&self.vault).root());
+            blocking(move |cx| {
+                Ok(layout
+                    .current(cx)?
+                    .map(|generation| generation.name().to_owned()))
+            })
+            .await?
+        };
         {
             let mut inner = self.shared.lock();
             if inner.requested || inner.running {
@@ -254,6 +278,10 @@ impl Indexer {
                 .into());
             }
             inner.requested = true;
+            #[cfg(feature = "index")]
+            {
+                inner.requested_beside = live;
+            }
         }
         self.shared.signal.moved();
         Ok(())
@@ -417,6 +445,9 @@ struct Kept {
 /// What the look at the start of a round found.
 struct Look {
     asked: bool,
+    /// The live generation when the rebuild was asked for.
+    #[cfg(feature = "index")]
+    asked_beside: Option<String>,
     /// The state the journal id maps reflect; `None` before they are built,
     /// or when the files are of another layout.
     maps: Option<State>,
@@ -596,6 +627,12 @@ impl Context {
 
     /// What the Index and `HEAD` are at now.
     fn look(&self, _cx: &Blocking) -> Result<Look, Error> {
+        #[cfg(feature = "index")]
+        let (asked, asked_beside) = {
+            let inner = self.shared.lock();
+            (inner.requested, inner.requested_beside.clone())
+        };
+        #[cfg(not(feature = "index"))]
         let asked = self.shared.lock().requested;
         let format = self.index.has_format()?;
         let maps = if format {
@@ -618,6 +655,8 @@ impl Context {
         };
         Ok(Look {
             asked,
+            #[cfg(feature = "index")]
+            asked_beside,
             maps,
             head,
             #[cfg(feature = "index")]
@@ -686,12 +725,46 @@ impl Context {
     async fn apply(&self, look: &Look, plan: Plan, cache: &mut Cache) -> Result<Applied, Error> {
         #[cfg(test)]
         hooks::after_look(&self.vault).await;
+        let layout = Layout::new(self.index.root());
+        let cause = if look.asked {
+            rebuild::Cause::CAUSE_REINDEX
+        } else {
+            rebuild::Cause::CAUSE_NEW
+        };
+        // A rebuild asked for is served already when another generation is
+        // live than when it was asked for, built with this Vault's ports and
+        // columns: one that another handle, asked too, built meanwhile.
+        let served = look.asked && {
+            let layout = layout.clone();
+            let live = blocking(move |cx| match layout.current(cx)? {
+                Some(generation) => Ok(generation
+                    .read_commit(cx)?
+                    .map(|commit| (generation.name().to_owned(), commit))),
+                None => Ok(None),
+            })
+            .await?;
+            live.is_some_and(|(name, commit)| {
+                look.asked_beside.as_deref() != Some(name.as_str())
+                    && commit.ports == plan.ports
+                    && tables::stale(&commit, &plan).is_none()
+            })
+        };
+        if served {
+            self.shared.publish(|inner| {
+                inner.running = true;
+                inner.state.rebuild = rebuild_of(
+                    rebuild::Stage::STAGE_RUNNING,
+                    Counts::default(),
+                    Some(cause),
+                )
+                .into();
+            });
+        }
+        let asked = look.asked && !served;
         let maps = {
             let context = self.clone();
-            let asked = look.asked;
             blocking(move |cx| context.maps(cx, asked)).await?
         };
-        let layout = Layout::new(self.index.root());
         let live = {
             let layout = layout.clone();
             blocking(move |cx| match layout.current(cx)? {
@@ -703,7 +776,7 @@ impl Context {
             })
             .await?
         };
-        let rebuild = look.asked || maps.reset || !matches!(live, Some((_, Some(_))));
+        let rebuild = asked || maps.reset || !matches!(live, Some((_, Some(_))));
         // The plan is of the collections declared where the round brings
         // the Index: made again when `HEAD` moved since the look.
         let calls = Calls::of(&self.ports);
@@ -718,11 +791,6 @@ impl Context {
                 tables::plan(&calls, Arc::clone(&maps.declarations)).await?,
                 live_commit,
             )?
-        };
-        let cause = if look.asked {
-            rebuild::Cause::CAUSE_REINDEX
-        } else {
-            rebuild::Cause::CAUSE_NEW
         };
         if rebuild {
             self.shared.publish(|inner| {
@@ -841,8 +909,9 @@ impl Context {
         cache.clear();
         Ok(Applied {
             state,
-            counts,
-            rebuilt: rebuild.then_some(cause),
+            // A request another handle served read nothing here.
+            counts: if rebuild { counts } else { Counts::default() },
+            rebuilt: (rebuild || served).then_some(cause),
         })
     }
 
@@ -1333,7 +1402,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_watcher_that_falls_far_behind_skips_to_the_oldest_item_kept() {
-        let indexer = Indexer::new(Arc::new(Signal::default()));
+        let indexer = Indexer::new(Arc::new(Signal::default()), Path::new("unused"));
         let mut watch = indexer.watch();
         assert!(watch.next().await.unwrap().unwrap().version.is_none());
         for n in 0..HISTORY + 10 {
@@ -1429,8 +1498,8 @@ mod tests {
         let held = Index::new(&path).try_lock().unwrap().unwrap();
         let mut watch = vault.indexer().watch();
         watch.next().await.unwrap().unwrap();
-        vault.indexer().reindex().unwrap();
-        let error = vault.indexer().reindex().unwrap_err();
+        vault.indexer().reindex().await.unwrap();
+        let error = vault.indexer().reindex().await.unwrap_err();
         assert!(error.is(VaultErrorCode::Aborted));
         tokio::time::sleep(Duration::from_millis(60)).await;
         let state = vault.indexer().status();
@@ -1489,7 +1558,7 @@ mod tests {
         assert_eq!(rebuild.documents_read, Some(1));
         assert_eq!(rebuild.segments_read, Some(1));
         // A new request is accepted after the rebuild.
-        vault.indexer().reindex().unwrap();
+        vault.indexer().reindex().await.unwrap();
     }
 
     #[tokio::test]

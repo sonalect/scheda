@@ -807,7 +807,7 @@ impl IndexAsync for IndexObject {
         crate::tables::can_rebuild(&calls, declarations, live.as_ref())
             .await
             .context("Index.Reindex")?;
-        self.vault.indexer().reindex()?;
+        self.vault.indexer().reindex().await?;
         Ok(Empty::default())
     }
 }

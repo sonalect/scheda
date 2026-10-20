@@ -1281,7 +1281,14 @@ mod tests {
     fn ports_of(model: &str) -> (Ports, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let projected = Arc::new(AtomicUsize::new(0));
         let embedded = Arc::new(AtomicUsize::new(0));
-        let count = Arc::clone(&embedded);
+        (counting(model, &projected, &embedded), projected, embedded)
+    }
+
+    /// The ports of the tests, with an embedder of `model`, counting their
+    /// `Project` calls into `projected` and the texts they embed into
+    /// `embedded`.
+    fn counting(model: &str, projected: &Arc<AtomicUsize>, embedded: &Arc<AtomicUsize>) -> Ports {
+        let count = Arc::clone(embedded);
         let embedder = FixedEmbedder::new(
             model,
             4,
@@ -1294,14 +1301,13 @@ mod tests {
                     .collect())
             },
         );
-        let ports = Ports {
+        Ports {
             projector: Some(ProjectorRef::from_sync(Pipes {
-                projected: Arc::clone(&projected),
+                projected: Arc::clone(projected),
             })),
             embedder: Some(EmbedderRef::from_sync(embedder)),
             reranker: None,
-        };
-        (ports, projected, embedded)
+        }
     }
 
     /// The rows of the table of `collection`, at the versions the live
@@ -1714,7 +1720,7 @@ mod tests {
         let mut watch = vault.indexer().watch();
         // The state now; each item after it is one the indexer published.
         watch.next().await.unwrap().unwrap();
-        vault.indexer().reindex().unwrap();
+        vault.indexer().reindex().await.unwrap();
         loop {
             let state = watch.next().await.unwrap().unwrap();
             let Some(rebuild) = state.rebuild.as_option() else {
@@ -1795,6 +1801,89 @@ mod tests {
         assert_eq!(rows.len(), 30);
         assert!(rows.values().all(|(_, _, vector)| *vector));
         vault.close().await.unwrap();
+    }
+
+    /// Two Vaults on one path ask for a rebuild at once: one builds it, and
+    /// the other's request is served by it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rebuild_asked_by_two_vaults_at_once_is_built_once_and_done_for_both() {
+        let scratch = Scratch::new("rebuild-twice");
+        let projected = Arc::new(AtomicUsize::new(0));
+        let embedded = Arc::new(AtomicUsize::new(0));
+        let options = OpenOptions::default().with_index_poll_ms(10);
+        let one = open_with(
+            &scratch.0,
+            options.clone(),
+            counting("model-a", &projected, &embedded),
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &one,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&one, "notes", notes(20, 0)).await.unwrap();
+        let two = open_with(
+            &scratch.0,
+            options,
+            counting("model-a", &projected, &embedded),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&one).await;
+        wait_indexed(&two).await;
+        assert_eq!(projected.load(Ordering::SeqCst), 20);
+        let (before, _) = live_table(&one, "notes").await;
+
+        // Both ask while the first round to take the lock waits after its
+        // look: both see the same live generation.
+        let path = one.path().to_path_buf();
+        crate::indexer::hooks::hold(&path);
+        let mut watches = [one.indexer().watch(), two.indexer().watch()];
+        for watch in &mut watches {
+            watch.next().await.unwrap().unwrap();
+        }
+        one.indexer().reindex().await.unwrap();
+        two.indexer().reindex().await.unwrap();
+        wait_until("a held round", || crate::indexer::hooks::waiting(&path)).await;
+        crate::indexer::hooks::release(&path);
+        for watch in &mut watches {
+            loop {
+                let state = watch.next().await.unwrap().unwrap();
+                let (stage, cause) = stage_of(&state);
+                assert_ne!(stage, Some(Stage::STAGE_FAILED), "{state:?}");
+                if (stage, cause) == (Some(Stage::STAGE_DONE), Some(Cause::CAUSE_REINDEX)) {
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            projected.load(Ordering::SeqCst),
+            40,
+            "one rebuild projected each Document once"
+        );
+        assert_eq!(embedded.load(Ordering::SeqCst), 20);
+        let (after, _) = live_table(&one, "notes").await;
+        assert_ne!(after, before);
+        let generations = std::fs::read_dir(after.parent().unwrap())
+            .unwrap()
+            .filter(|entry| {
+                entry
+                    .as_ref()
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("g-")
+            })
+            .count();
+        assert_eq!(generations, 2, "the live one and the one it replaced");
+        // A request after it is a new one: it builds again.
+        reindexed(&one).await;
+        assert_eq!(projected.load(Ordering::SeqCst), 60);
+        one.close().await.unwrap();
+        two.close().await.unwrap();
     }
 
     /// A rebuild is how a broken Index is repaired: the vectors of a live
@@ -1894,7 +1983,7 @@ mod tests {
         batch(&vault, "notes", notes(1, 3)).await.unwrap();
         let mut watch = vault.indexer().watch();
         watch.next().await.unwrap().unwrap();
-        vault.indexer().reindex().unwrap();
+        vault.indexer().reindex().await.unwrap();
         loop {
             let state = watch.next().await.unwrap().unwrap();
             if stage_of(&state) == (Some(Stage::STAGE_FAILED), Some(Cause::CAUSE_REINDEX)) {
@@ -1902,7 +1991,7 @@ mod tests {
             }
         }
         // The request stands until a rebuild serves it.
-        let again = vault.indexer().reindex().unwrap_err();
+        let again = vault.indexer().reindex().await.unwrap_err();
         assert!(again.is(VaultErrorCode::Aborted));
         broken.store(false, Ordering::SeqCst);
         let done = tokio::time::timeout(Duration::from_secs(30), async {
@@ -1920,7 +2009,7 @@ mod tests {
         assert_eq!(rows.len(), 4);
         assert!(rows.values().all(|(_, _, vector)| *vector));
         // Served: a new request is taken.
-        vault.indexer().reindex().unwrap();
+        vault.indexer().reindex().await.unwrap();
         vault.close().await.unwrap();
     }
 

@@ -197,12 +197,7 @@ impl Vault {
         ));
         vault
             .indexer
-            .start(
-                &vault.path,
-                Arc::clone(&vault.repos),
-                Arc::clone(&vault.ports),
-                poll,
-            )
+            .start(Arc::clone(&vault.repos), Arc::clone(&vault.ports), poll)
             .context("Vault::open: start the indexer")?;
         Ok(vault)
     }
@@ -986,7 +981,7 @@ fn complete(_cx: &Blocking, parts: Parts, options: OpenOptions) -> Result<Vault,
     let declarations = Arc::new(collection::load(&snap)?);
     prepare_scheda(&canonical)?;
     let writer = writer::load_or_create(&canonical, options.writer.as_deref())?;
-    let indexer = Indexer::new(committer.signal());
+    let indexer = Indexer::new(committer.signal(), &canonical);
     let id_maps = IdMaps::new(Index::new(&canonical));
     Ok(Vault {
         path: canonical,

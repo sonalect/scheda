@@ -70,6 +70,13 @@ the evidence, and a recommendation. The probes of the old Index are in
    status shows the asked rebuild done (running, then done) so a waiter
    ends as usual; otherwise it rebuilds. Test: two Vaults on one path ask
    at once; each text goes to the embedder once; both see it done.
+   **Done:** the indexer records `current` when asked; the round checks it
+   under the lock (`tables.rs`:
+   `a_rebuild_asked_by_two_vaults_at_once_is_built_once_and_done_for_both`,
+   which counts `Project` calls, since a same-model rebuild embeds nothing
+   since item 1). Found on the way and fixed first: a `Reindex` whose
+   rebuild failed was never tried again; the request now stands until a
+   rebuild is done (`a_rebuild_that_fails_is_tried_again_until_it_is_done`).
 
 4. **Low. Temp names can collide between processes.** `.scheda.{n}.tmp`
    counts from 0 in every process; a writer whose `create_new` fails
