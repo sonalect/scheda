@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.82, 20 October 2026.
+Document 14 of the Scheda package. Version 0.83, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -148,7 +148,7 @@ A structured request is its Protobuf JSON, in a flag or on stdin when the
 flag is absent: `--schema`, `--query`, `--search`. A Document's bytes come
 from `--file PATH` or stdin; with `--file`, stdin is not read (an open
 pipe nobody closes cannot block the command). A batch reads JSON Lines from
-stdin, lazily.
+stdin, the whole of it, and parses every line before the Vault is opened: a line that is not valid fails the command with nothing written.
 
 Every JSON is parsed strictly (`scheda::parse_command`): a key the message
 does not know is `INVALID_ARGUMENT` naming its path, and nothing is
@@ -349,7 +349,7 @@ bazel run //python/vllm:embedder
 bazel run //python/vllm:reranker
 ```
 
-Python is locked in `uv.lock` (`vllm==0.29.0`). Sidecars
+Python is locked in `uv.lock` (`vllm==0.32.0`). Sidecars
 `snapshot_download` the Qwen repo (tqdm on stderr) into
 `<workspace>/.cache/huggingface` (`HF_HOME`; an already-set `HF_HOME`
 wins) before `vllm serve`. `tags = ["manual"]` so `bazel build //...`

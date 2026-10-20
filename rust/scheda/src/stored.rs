@@ -359,7 +359,9 @@ fn put_back(tree: &mut Value, unknown: &Unknowns) {
 
 #[cfg(test)]
 mod tests {
-    use scheda_api::v1::{CollectionDeclaration, IndexSchema, VaultErrorCode, VaultMarker};
+    use scheda_api::v1::{
+        CollectionDeclaration, IndexSchema, OpenOptions, VaultErrorCode, VaultMarker,
+    };
 
     use super::{Format, Segment, Stored, Unknowns, encode, parse_command, path_string, read};
     use crate::error::Error;
@@ -623,6 +625,18 @@ schema:
         .unwrap_err();
         assert!(error.to_string().contains("extra"), "{error}");
         assert!(error.is(VaultErrorCode::InvalidArgument));
+    }
+
+    #[test]
+    fn a_stale_key_of_the_open_options_is_refused_not_dropped() {
+        // The key `encryption` once was `isolatedEncryption`: dropped, it
+        // would open a plaintext Vault without an error.
+        let stale = br#"{"isolatedEncryption": {"passphrase": "secret"}}"#;
+        let error = parse_command::<OpenOptions>(stale).unwrap_err();
+        assert!(error.to_string().contains("isolatedEncryption"), "{error}");
+        assert!(error.is(VaultErrorCode::InvalidArgument));
+        let current = br#"{"encryption": {"passphrase": "secret"}}"#;
+        assert!(parse_command::<OpenOptions>(current).is_ok());
     }
 
     #[test]

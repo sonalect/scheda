@@ -54,8 +54,9 @@ install; without an embedder, vector search is off and the rest still works.
 The library does not score Documents for a UI, does not call a language
 model, and does not know a profession.
 
-**Status: the 0.22 proto contract is built on the branch `proto-contract`**
-(`docs/20`): the API as protobuf services and objects, async only on the
+**Status: `main` holds the 0.22 proto contract (`docs/20`), the Index on
+Lance (`docs/21`), Scheda on tokio (`docs/22`), and the fixes of the full
+review (`docs/23`); the release `0.22.0` is pending.** What it holds: the API as protobuf services and objects, async only on the
 caller's tokio runtime (a blocking caller wraps an object with `to_sync()`
 inside a multi-thread runtime, `docs/22`); one commit per write call, which
 returns the state token of the Vault it made, and batches that are all or
@@ -90,15 +91,16 @@ The design is a numbered package in `docs/`, in English.
 | [09-isolation.md](docs/09-isolation.md)               | No network by default (**core**); isolated collections and age encryption (**later**, in this crate)                      |
 | [10-roadmap.md](docs/10-roadmap.md)                   | Phases (core / search / agent / later), acceptance, what `scheda` codes next, size targets, open questions, deferrals |
 | [11-core-plan.md](docs/11-core-plan.md)               | Rust work order: C0–C8 and C10 core (done), C9 hybrid search (done)                                                   |
-| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 in |
+| [12-agent-plan.md](docs/12-agent-plan.md)             | Rust work order: A0–A7 done, **agent** accepted; P0–P16 done                                      |
 | [15-online-reindex.md](docs/15-online-reindex.md)     | Rust work order (history): `reindex` without holding `write.lock` for the walk (R0–R8); its queue is replaced by `17` |
 | [16-opaque-records.md](docs/16-opaque-records.md)     | Rust work order (history): Documents as bytes, collection declaration without field Schema, Projector callback (F0–F19 done). |
 | [17-background-index-and-tokio.md](docs/17-background-index-and-tokio.md) | Rust work order: background Index that follows `HEAD` (B1–B10 done), opt-in `tokio` feature with an async API (T1–T4 done) |
 | [18-review-fixes.md](docs/18-review-fixes.md) | Rust work order: fixes from the 5 October 2026 full review (S1–S8) |
 | [19-follow-ups.md](docs/19-follow-ups.md) | Rust work order (history): declarations follow the work tree, search vector-leg signal, `index_version` repeat, sync and async `transaction` (F1–F5 done) |
 | [20-proto-contract.md](docs/20-proto-contract.md) | The 0.22 contract: decisions D1–D24, the layers P1–P8 and R1–R5, what is out of scope |
-| [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, a typed filter, a state token for freshness (D1–D18, L0–L10, the contract C1–C35) |
+| [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, a typed filter, a state token for freshness (D1–D18, L0–L10, the contract C1–C35); its release box is open |
 | [22-scheda-on-tokio.md](docs/22-scheda-on-tokio.md) | Rust work order: Scheda async only on the caller's tokio runtime, the blocking core behind a gate (D1–D12, A1–A5) |
+| [23-full-review.md](docs/23-full-review.md) | Rust work order: the full review before the release (R1–R23, D1–D9); stages S1–S5 done; the release `0.22.0` waits for the owner's word |
 
 ## Layout
 
@@ -121,9 +123,10 @@ crates refer to them with `workspace = true`.
 The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.2.0**).
 Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
-Target crates use the platform CRT (dynamic glibc on Linux). Git
-operations invoke the system **`git`** executable (`git` must be on
-`PATH`). Git is not behind a feature: `https://`, `http://`, `ssh://`,
+Target crates use the platform CRT (dynamic glibc on Linux). Only `clone`,
+`fetch`, and `push` invoke the system **`git`** executable (`git` must be on
+`PATH`); every other git operation, packing included, is libgit2 in
+process. Git is not behind a feature: `https://`, `http://`, `ssh://`,
 `git@`, and file remotes all work, and authentication, `~/.ssh/config`,
 and host-key checking match a plain `git` command. Features:
 `index` is on by default: the Index on Lance (the crates `lance`,

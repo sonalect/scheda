@@ -1,11 +1,11 @@
 # 23. Full review before the release
 
-Document 23 of the Scheda package. Version 0.2, 20 October 2026.
+Document 23 of the Scheda package. Version 0.3, 20 October 2026.
 
 Status: approved by the owner on 20 October 2026, decision by decision
 (§3). A full review of the repository (`full-review.md`) on `main` at
 `34e61d1`, before the first release of the protobuf contract and the
-Index on Lance. Items R1–R22 are the findings, most severe first inside
+Index on Lance. Items R1–R23 are the findings (R23 found while S4 was built), most severe first inside
 each group; D1–D9 are the owner's decisions. Every finding R1–R21 is
 fixed before the release `0.22.0` (D2); R22 stays a note. The work goes
 on the branch `full-review-fixes`, one commit per stage (§4).
@@ -562,9 +562,20 @@ projection), D9 (tokio 1.54.0).
 
 ### S5. Documents and the release
 
-- [ ] R13, R14, R15, R16 in one pass; the three missing tests of R16.
-- [ ] The version `0.22.0` (D1, `versioning`), the README row for this
-      document, `21` L10's box.
+- [x] R13, R14, R15, R16 in one pass; the three missing tests of R16
+      (`tests/search.rs`:
+      `the_plaintext_of_an_encrypted_collection_is_never_in_the_index_files`,
+      `a_column_without_fts_is_not_searched`,
+      `a_document_of_one_vault_never_appears_in_a_query_or_search_of_another`;
+      and, for checks that named no test,
+      `a_projector_that_refuses_a_document_leaves_it_out_and_the_round_goes_on`,
+      `tests/query.rs`:
+      `an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused`,
+      `stored::tests::a_stale_key_of_the_open_options_is_refused_not_dropped`).
+      The README row for this document is in; the rest of this box below
+      is the release.
+- [ ] The version `0.22.0` (D1, `versioning`), `21` L10's box: on the
+      owner's word.
 
 ---
 

@@ -1,7 +1,7 @@
 //! The checks of a Vault, layer by layer, and the one call that runs them
 //! all.
 //!
-//! A check collects instead of failing on the first problem (D15): each
+//! A check collects instead of failing on the first problem: each
 //! function returns the [`Problem`]s it found, and fails only when it cannot
 //! run (an I/O failure, git). The `Check` call that puts them in a
 //! `CheckReport` is built on [`run`], which reads the marker first and the

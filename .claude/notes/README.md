@@ -17,7 +17,11 @@ Project state, deferred work, and measurements that outlive one session
   stages S1–S5), approved by the owner the same day: every finding is
   fixed before the release `0.22.0`, tokio 1.54.0 taken inside its
   quarantine on his word. R1–R3 and R5 were reproduced by throwaway
-  probes (removed); the gate was green.
+  probes (removed); the gate was green. Done on the branch
+  `full-review-fixes` (20 October 2026): S1–S4 and S5's documents, a
+  commit per stage, plus R23 found on the way; not merged, not pushed.
+  What remains is the release `0.22.0` (`versioning`), and `21` L10's
+  box, on the owner's word.
 - Current work order: `docs/21-lance-index.md` — the Index on Lance in
   place of Tantivy and USearch, queries by a typed filter, a state
   token for freshness (approved by the owner 19 October 2026, D1–D18).

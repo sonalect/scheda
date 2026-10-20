@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.56, 19 October 2026.
+Document 10 of the Scheda package. Version 0.57, 20 October 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -29,9 +29,9 @@ The journal `id` map is **core** (IDX-5). After it exists, `Collection.Get` on a
 
 The collection declaration parses `isolated: true` (SCH-15). `Vault.ListCollections` lists those collections as isolated and has no field list (ISO-3). Queries and searches of the Vault skip them unless they are named. `Vault.GetCollection` and `Vault.CreateCollection` with `isolated` write and read `{vault}/.isolated/` (ISO-2, ISO-4, ISO-6).
 
-**Next in `scheda`.** The 0.22 contract (`20`) is built: the whole API is protobuf services in `api/scheda/v1`, reached through the objects `Scheda`, `Vault`, `Collection`, `Mirror`, and `Index`, with a sync and an async form. Consumer readiness P0–P16 (`12` §4) and opaque documents (`16`) came before it; age encryption (`12` P14) is a declaration key on any one collection behind the `encrypt` feature; the Index follows `HEAD` in a background thread (`17` Part B, `20` D23), so writes do not wait for it, queries are eventually consistent (`Index.Status`, `Index.Watch`), and a damaged or old Index rebuilds itself. The CLI is one subcommand per rpc (`14`). Extra language bindings stay deferred.
+**Next in `scheda`.** The 0.22 contract (`20`) is built: the whole API is protobuf services in `api/scheda/v1`, reached through the objects `Scheda`, `Vault`, `Collection`, `Mirror`, and `Index`, with a sync and an async form. Consumer readiness P0–P16 (`12` §4) and opaque documents (`16`) came before it; age encryption (`12` P14) is a declaration key on any one collection behind the `encrypt` feature; the Index follows `HEAD` in a background task (`17` Part B, `20` D23), so writes do not wait for it, queries are eventually consistent (`Index.Status`, `Index.Watch`), and a damaged or old Index rebuilds itself. The CLI is one subcommand per rpc (`14`). Extra language bindings stay deferred.
 
-**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in; its stages are not a phase, and their codes cross **core**, **search**, and **later**. Two things they decided still hold: the slug is the whole `id` rule, and `find` / `search` are opt-in crate features (`find`, `search`; no default features). The consumer's own move to 0.22 is its repository's work (the list above).
+**First consumer.** A first consumer is moving a primary layer of text files under git onto the crate. The P checklist in `12` §4 is in; its stages are not a phase, and their codes cross **core**, **search**, and **later**. Two things they decided still hold: the slug is the whole `id` rule, and the Index is a crate feature (`index`, on by default), so a consumer that wants none builds without it. The consumer's own move to 0.22 is its repository's work (the list above).
 
 **Deferred** (decided out of the 0.22 contract, `20` §6; none blocks a phase):
 
@@ -59,7 +59,7 @@ The collection declaration parses `isolated: true` (SCH-15). `Vault.ListCollecti
 - Perimeter: ISO-1 only
 - Size: OPS-1, OPS-3
 
-IDX-2 stays **core** for the Index format and for the calls that take `id`s from the Index (`Collection.Query`, `Collection.Search`); `Collection.Update` and `Collection.Delete` use the Document file. Reading a journal in order is not one of those calls: `Collection.GetMany` walks a collection's files without the Index. QRY-7 remains the order of a query when the Index is present. The crate has no default features. `find`, `search`, `simd`, and `encrypt` are opt-in; Bazel CI still links them. A crate without `find`, `search`, or `simd` is the same library with those legs off, not a second product: the calls that need them are `UNIMPLEMENTED`. `encrypt` degrades further and the contract says so: without it an encrypted collection cannot be read at all, so the handle refuses it with `UNIMPLEMENTED` and `Vault.Check` reports it, rather than returning ciphertext as a Document or reporting health it never verified (SCH-16, ISO-5). Phases grade a build with `find` and `search` on.
+IDX-2 stays **core** for the Index format and for the calls that take `id`s from the Index (`Collection.Query`, `Collection.Search`); `Collection.Update` and `Collection.Delete` use the Document file. Reading a journal in order is not one of those calls: `Collection.GetMany` walks a collection's files without the Index. QRY-7 remains the order of a query when the Index is present. The crate's default feature is `index`, the Index on Lance: queries, counts, searches, and the ports. `encrypt` is opt-in; Bazel CI links both. A crate without `index` is the same library with the Index off, not a second product: the calls that need it are `UNIMPLEMENTED`, and the journal `id` maps are still kept. `encrypt` degrades further and the contract says so: without it an encrypted collection cannot be read at all, so the handle refuses it with `UNIMPLEMENTED` and `Vault.Check` reports it, rather than returning ciphertext as a Document or reporting health it never verified (SCH-16, ISO-5). Phases grade a build with `index` on.
 
 **Out of core** (do not block **core** acceptance; a binding may leave them as stubs or `UNIMPLEMENTED` until **search** / **agent** / **later**, and writes must not depend on them): the Index and query rpcs, IDX-3, IDX-4, IDX-6–9, QRY-3–6, REL-1–3, SCH-9–11, SCH-15, AGT-1–5, ISO-2–11. In `scheda`, the **search** and **agent** codes in that list are implemented (C9, A7), not stubs. SCH-15 parse, ISO-3 listing, and the unencrypted isolated slice (ISO-2 nested git, IDX-4) are in (`12` P4), with ISO-4 and IDX-4 in their P15 form: one owner-only Index per Vault, ISO-10 retired. ISO-5, ISO-7–9, and ISO-11 are in with encryption (`12` P14). ISO-6 is rewritten (`20` D14): isolated collections never leave the machine.
 
@@ -92,7 +92,7 @@ Quality class is `06` §3–4: BM25 (or equivalent ranked FTS), in-process ANN (
 5. Token, synonym, and hybrid fixtures put expected ids in `k` with per-leg scores (QRY-3, IDX-6, IDX-7).
 6. Hybrid search on the OPS-1 fixture finishes in tens of milliseconds (OPS-2).
 
-**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is Tantivy BM25; ANN is in-process USearch HNSW; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt Index → `INDEX_BROKEN`; `Collection.Get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
+**Rust `scheda`:** **search** is accepted (`11` C9). Lexical ranking is BM25 over the full-text index of Lance; ANN is Lance's IVF_PQ index on cosine distance, with an exact scan below its size and for the rows no index covers yet; fusion is RRF. No embedder → vector leg off; writes still work (IDX-8). Corrupt Index → `INDEX_BROKEN`; `Collection.Get` still reads files (QRY-4). Crate names are this binding's choice (`§8`), not a requirement on other languages.
 
 ---
 
@@ -188,7 +188,7 @@ Already closed in this package (not open): SQL as caller API (no); merge on `ope
 
 Calendar dates or crate version numbers for each phase.
 
-Which FTS or vector crate a binding pins — `06` requires BM25-class lexical and HNSW-class ANN in-process; the crate names are a binding choice. `scheda` pins Tantivy and USearch. SQL is not the caller API.
+Which FTS or vector crate a binding pins — `06` requires BM25-class lexical and HNSW-class ANN in-process; the crate names are a binding choice. `scheda` uses Lance. SQL is not the caller API.
 
 Which age library a binding vendors — ISO-8.
 

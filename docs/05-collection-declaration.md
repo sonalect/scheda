@@ -1,6 +1,6 @@
 # 05. Collection declaration
 
-Document 5 of the Scheda package. Version 0.53, 20 October 2026.
+Document 5 of the Scheda package. Version 0.54, 20 October 2026.
 
 Normative rules for collection declarations as data in the Vault: where
 they live, discovery, kind, journal caps, singleton `id`, isolation,
@@ -181,7 +181,7 @@ Document contents (`03` MOD-13). A Document that `Project` rejects or
 omits stays out of the lexical and vector indexes; that is a `Projector`
 failure (`06`), not a Schema type check. *Check:* bytes that a later
 `Projector` would omit still return from `Get`; the write of those bytes
-succeeds (`lexical::tests`:
+succeeds (`tests/search.rs`:
 `a_projector_that_refuses_a_document_leaves_it_out_and_the_round_goes_on`:
 the Document is out of the Index and its file stays; `tests/documents.rs`:
 `any_bytes_round_trip_in_standard_and_singleton_collections`).
@@ -191,10 +191,12 @@ the Document is out of the Index and its file stays; `tests/documents.rs`:
 ## 4. Index exclusion
 
 **SCH-9. A collection may stay out of either Index.**
-`exclude_lexical_index: true` keeps every Document of that collection out
-of the Tantivy Index (`Query`, filters, BM25). A `Query` or `Count` that
-names it is `UNIMPLEMENTED`, not an empty hit list. The journal id map is a
-separate file and is still written, so keyed `Get` does not need Tantivy.
+`exclude_lexical_index: true` keeps the Projector's columns of every
+Document of that collection out of the Index: nothing of it is filtered,
+ordered, or searched by words. A `Query` or `Count` that names it and
+filters or orders is `UNIMPLEMENTED`, not an empty hit list; one that does
+neither lists or counts its Documents by id. The journal id map is a
+separate file and is still written, so keyed `Get` does not need the Index.
 `exclude_vector_index: true` keeps Documents out of the vector Index: the
 background indexer, the only caller of the embedder, never embeds that
 collection; `Search` then uses the lexical
@@ -204,17 +206,19 @@ SCH-16). Both flags are redundant on `encrypted` and allowed. A
 `journal` may set either flag. Default for each is `false`. Changing a flag is never `INDEX_STALE`: the next indexer round rebuilds the table of that collection to gain or lose its values and vectors, and counts, queries, and searches answer meanwhile and follow the declaration (`06` IDX-9). Per-field
 FTS / vector marks are not declaration keys; they belong on the
 `Projector` (`06` / `13`). *Check (**search**):* a `Query` that names a
-lexically excluded collection is `UNIMPLEMENTED` (`tests/query.rs`:
-`find::an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused`);
+lexically excluded collection and filters is `UNIMPLEMENTED`
+(`tests/query.rs`:
+`an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused`);
 a `Search` on a collection with only `exclude_vector_index` still returns
 lexical hits, one with only `exclude_lexical_index` is searched by the
 vector leg, and one with both legs left out is `UNIMPLEMENTED` when named
 (`tests/search.rs`:
-`search::a_collection_that_leaves_the_vector_index_out_is_searched_by_the_lexical_leg`,
-`search::a_collection_that_leaves_the_lexical_index_out_is_searched_by_the_vector_leg`,
-`search::a_collection_with_both_legs_left_out_is_unimplemented_when_named`); flipping a flag keeps the Index fresh and rebuilds the table (`tables::tests::flipping_an_exclusion_flag_rebuilds_the_table_and_leaves_the_index_fresh`);
-the marks decide what is indexed (`collection::tests`:
-`the_marks_are_read_and_decide_what_is_indexed`).
+`a_collection_a_leg_leaves_out_is_ranked_by_the_other_and_one_both_leave_out_is_unimplemented`); flipping a flag keeps the Index fresh and rebuilds the table (`tables::tests::flipping_an_exclusion_flag_rebuilds_the_table_and_leaves_the_index_fresh`);
+the marks are read from the declaration (`collection::tests::the_marks_are_read`),
+and a collection with `exclude_vector_index` is not embedded
+(`tests/search.rs`:
+`a_collection_a_leg_leaves_out_is_ranked_by_the_other_and_one_both_leave_out_is_unimplemented`
+counts the embedded texts).
 
 ---
 
@@ -269,7 +273,7 @@ succeeds and the Documents' place moves with it (`tests/collections.rs`:
 `the_kind_isolated_and_encrypted_change_only_while_the_collection_is_empty`).
 *Check:* a query with no collection named returns no isolated Documents
 while one naming that collection returns them (`tests/query.rs`:
-`find::an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused`);
+`an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused`);
 isolated collections are listed with the others
 (`tests/collections.rs`: `collections_are_listed_in_name_order_with_isolated_ones`).
 
@@ -291,8 +295,9 @@ without the `encrypt` feature refuses the collection with `UNIMPLEMENTED`
 instead of returning ciphertext as a Document. *Check:* an encrypted
 journal declaration is `INVALID_ARGUMENT` (`collection::tests`:
 `an_encrypted_journal_is_invalid_argument`); `Query` naming an encrypted
-collection is `UNIMPLEMENTED`, not empty (`tests/query.rs`:
-`find::an_encrypted_collection_named_is_unimplemented_and_skipped_when_not`);
+collection is `UNIMPLEMENTED`, not empty, and a call over the Vault leaves
+it out (`tests/search.rs`:
+`the_plaintext_of_an_encrypted_collection_is_never_in_the_index_files`);
 the key added to a non-empty collection is `FAILED_PRECONDITION` and
 stores nothing (`tests/collections.rs`:
 `the_kind_isolated_and_encrypted_change_only_while_the_collection_is_empty`);
@@ -346,7 +351,7 @@ generation 2 load (`collection::tests`: `the_fixtures_of_generation_two_load`).
 | `schema.journal.daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
 | `schema.isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Documents under `{vault}/.isolated/{name}/`. Listed as isolated (ISO-3). |
 | `schema.encrypted` | no | Boolean. Default `false`. `true` marks SCH-16: Document files are age v1 armor and I/O needs the Vault secret. Independent of `isolated`. `true` on `journal` is `INVALID_ARGUMENT`. Listed as encrypted (ISO-3). |
-| `schema.excludeLexicalIndex` (`exclude_lexical_index`) | no | Boolean. Default `false`. `true` marks SCH-9: no Document of this collection is written to the Tantivy Index. A `Query` that names it is `UNIMPLEMENTED`. |
+| `schema.excludeLexicalIndex` (`exclude_lexical_index`) | no | Boolean. Default `false`. `true` marks SCH-9: none of the Projector's columns of this collection is written to the Index. A `Query` that names it and filters or orders is `UNIMPLEMENTED`. |
 | `schema.excludeVectorIndex` (`exclude_vector_index`) | no | Boolean. Default `false`. `true` marks SCH-9: no Document of this collection is embedded or stored in the vector Index. |
 | `schema.document` | — | Retired kind key (before generation 2; the kind is `standard`). It names no kind this Scheda knows: a file whose only arm is `document` is `INVALID_ARGUMENT` (`collection::tests`: `the_old_kind_key_names_no_kind_and_is_invalid_argument`). |
 | `version`, `kind`, `declaration`, `fields`, `layout`, `body`, `id` | — | Retired keys of earlier generations. Unknown now: read past and kept, never acted on (SCH-3, SCH-13). |

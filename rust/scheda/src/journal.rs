@@ -3,8 +3,8 @@
 //!
 //! A line is `{id}: {payload}\n` on bytes. The id is a slug; the payload is
 //! any bytes except `\n` and `\r`, because those are what end a line. That
-//! is the one rule the form sets, and none is made about the content
-//! (D20). A segment is named `{seq}-{writer}.jsonl`, or, in a collection
+//! is the one rule the form sets, and none is made about the content.
+//! A segment is named `{seq}-{writer}.jsonl`, or, in a collection
 //! that rotates daily, `{date}-{writer}.jsonl` and
 //! `{date}-{seq}-{writer}.jsonl`; the writer in the name keeps two clones of
 //! one Vault from appending to the same file.
@@ -740,7 +740,7 @@ fn civil_from_unix_days(days: u64) -> (i64, u32, u32) {
 /// - a line that is not `{id}: {payload}` (`INVALID_ARGUMENT`);
 /// - an id that two lines of one journal share (`ALREADY_EXISTS`).
 ///
-/// The payload is never checked: it is bytes (D20). The call fails only
+/// The payload is never checked: it is bytes. The call fails only
 /// when it cannot run (an I/O failure).
 pub(crate) fn check_journals(
     views: &Views,

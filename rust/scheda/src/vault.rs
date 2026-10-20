@@ -56,8 +56,10 @@ static NEXT_STAGING: AtomicU64 = AtomicU64::new(0);
 ///
 /// An open Vault runs one task, its indexer, that keeps the Index in
 /// `.scheda/index/` at the state of `HEAD`: the maps from the id of a
-/// journal line to its segment. The task ends with [`Vault::close`], or
-/// after its current round when the Vault is dropped.
+/// journal line to its segment and, in a build with the feature `index`,
+/// the tables of Lance that queries, counts, and searches read. The task
+/// ends with [`Vault::close`], or after its current round when the Vault
+/// is dropped.
 #[derive(Debug)]
 pub(crate) struct Vault {
     path: PathBuf,
@@ -110,8 +112,9 @@ impl Vault {
     /// `options` is checked first (`INVALID_ARGUMENT`); `options.encryption`
     /// in a build without the `encrypt` feature is `UNIMPLEMENTED`. The
     /// `ports` are looked at before the path is, so a refusal of a port
-    /// writes nothing: this version of Scheda has no Index to use an
-    /// embedder, a reranker, or a Projector, and any of them is
+    /// writes nothing: a port that breaks its rules is `INVALID_ARGUMENT`,
+    /// and in a build without the feature `index`, which has no Index to
+    /// use an embedder, a reranker, or a Projector, any of them is
     /// `UNIMPLEMENTED`. Then `options.mode` decides what the path may be
     /// (unset is `OPEN_MODE_OPEN_OR_CREATE`):
     ///

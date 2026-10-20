@@ -1,6 +1,6 @@
 # 12. Agent development plan
 
-Document 12 of the Scheda package. Version 0.80, 15 September 2026.
+Document 12 of the Scheda package. Version 0.81, 20 October 2026.
 
 Work order for the Rust binding of **agent** (`10` §4, `08`). It does not
 add product rules. Codes and *Check:* lines in `03`–`09` stay normative.
@@ -1529,21 +1529,12 @@ environment.
       the thin fixture above. A per-collection report means a return type
       `check` does not have; it is its own stage and is not written yet,
       so nothing here should be read as promising one.
-- [ ] `OpenOptions.encryption` replaces `isolated_encryption` at field 3.
-      The rename is done. **Rejecting** the old key has nowhere to live
-      yet, which is a different thing from unimplemented: nothing in this
-      repository parses `OpenOptions` from JSON. The CLI builds the
-      struct from flags (`rust/cli/src/main.rs`), and the JSON it does
-      parse is `Schema`, `FindQuery`, `SearchQuery`, and the Record
-      envelopes. So there is no parser in which `isolatedEncryption`
-      could be caught, and adding one purely to reject a key would be
-      inventing the surface to guard it. The requirement moves to
-      whoever first parses `OpenOptions` from JSON — a binding, or the
-      CLI once it takes the secret from a file or the environment: that
-      parser must reject an unknown key rather than drop it, because a
-      dropped secret key means a plaintext Vault and no error. *Check,
-      at that point:* JSON with the old key fails at `open`, and no
-      Vault directory is created.
+- [x] `OpenOptions.encryption` replaces `isolated_encryption` at field 3.
+      A request in Protobuf JSON is parsed strictly (`07` LIB-34), so the
+      old key is refused and never dropped: a dropped secret key would
+      mean a plaintext Vault and no error. The parse comes before `open`,
+      so no Vault directory is made. *Check:*
+      `stored::tests::a_stale_key_of_the_open_options_is_refused_not_dropped`.
 - [x] The secret never reaches disk: not in a Record, not in the Schema,
       not in either git tree, not in an Index (ISO-7). *Check:*
       `identity_add_get_round_trip` greps the Vault tree for

@@ -54,7 +54,7 @@ mod on_lance {
     use std::time::{Duration, Instant};
 
     use buffa_types::google::protobuf::Empty;
-    use protocontract::BoxIter;
+    use protocontract::{BoxIter, Failure};
     use scheda::v1::document_operation::Operation;
     use scheda::v1::embedder_ref::EmbedderRef;
     use scheda::v1::projector_ref::ProjectorRef;
@@ -65,11 +65,12 @@ mod on_lance {
     use scheda::v1::search_summary::VectorLeg;
     use scheda::v1::{
         CollectionAsync, CollectionDeclaration, CollectionKey, ColumnKind, Document,
-        DocumentCreation, DocumentDeletion, DocumentOperation, DocumentQuery, DocumentUpsert,
-        DynCollectionAsync, DynIndexAsync, DynVaultAsync, EmbedderDescriptor, EmbedderSync,
-        IndexAsync, IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue, OpenOptions,
-        ProjectorDescriptor, ProjectorSync, Query, RawDocument, SchedaAsync, SearchHit, SearchItem,
-        Text, VaultAsync, VaultErrorCode as Code, Vector, index_value,
+        DocumentCreation, DocumentDeletion, DocumentId, DocumentOperation, DocumentQuery,
+        DocumentUpsert, DynCollectionAsync, DynIndexAsync, DynVaultAsync, EmbedderDescriptor,
+        EmbedderSync, IndexAsync, IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue,
+        OpenOptions, ProjectorDescriptor, ProjectorErrorCode, ProjectorSync, Query, RawDocument,
+        SchedaAsync, SearchHit, SearchItem, Text, VaultAsync, VaultErrorCode as Code, Vector,
+        index_value,
     };
     use scheda::{Error, FixedReranker, Scheda};
     use serde_json::{Value, json};
@@ -78,6 +79,9 @@ mod on_lance {
     use crate::common::{Scratch, both, collection, items, next, opening, snapshot, stream_of};
 
     const DEADLINE: Duration = Duration::from_secs(120);
+
+    /// The title of a Document the test Projector refuses.
+    const REFUSED_TITLE: &str = "refused-by-the-projector";
 
     fn column(name: &str, kind: ColumnKind) -> IndexColumn {
         IndexColumn::default().with_name(name).with_kind(kind)
@@ -121,6 +125,9 @@ mod on_lance {
             }
             let json: Value =
                 serde_json::from_slice(&document.raw.unwrap_or_default()).unwrap_or_default();
+            if json.get("title").and_then(Value::as_str) == Some(REFUSED_TITLE) {
+                return Err(Failure::new(ProjectorErrorCode::Refused, "a refused title").into());
+            }
             let mut doc = IndexDoc::default();
             for name in ["title", "body", "topic", "kind"] {
                 if let Some(text) = json.get(name).and_then(Value::as_str) {
@@ -2471,6 +2478,195 @@ mod on_lance {
             tokio::time::sleep(Duration::from_millis(300)).await;
             assert_eq!(calls.columned.load(Ordering::SeqCst), 3 * COLLECTIONS);
             vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    fn holds(bytes: &[u8], marker: &str) -> bool {
+        bytes
+            .windows(marker.len())
+            .any(|window| window == marker.as_bytes())
+    }
+
+    #[cfg(feature = "encrypt")]
+    #[test]
+    fn the_plaintext_of_an_encrypted_collection_is_never_in_the_index_files() {
+        // An age identity made for these tests alone.
+        const IDENTITY: &str =
+            "AGE-SECRET-KEY-1RN2D82PZQK97437LWJVQJK4Q6EQVHLQ9A8Z0QTAXZ424HV8XZZPS5Q9860";
+        const SEALED: &str = "zzsealedmarkerzz";
+        const PLAIN: &str = "zzplainmarkerzz";
+        both(|| async {
+            let scratch = Scratch::new("search-encrypted-plaintext");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            let calls = Arc::new(Calls::default());
+            let options: OpenOptions = serde_json::from_value(json!({
+                "encryption": {"identity": IDENTITY},
+                "indexPollMs": 10,
+                "writeTimeoutMs": 60000
+            }))
+            .unwrap();
+            let vault = open_polled(&path, &HYBRID, &calls, options).await;
+            wait_indexed(&vault).await;
+            let fx = Fixture {
+                _scratch: scratch,
+                path: path.clone(),
+                vault,
+                calls,
+            };
+            fx.declare("sealed", json!({"encrypted": true})).await;
+            fx.put_unwaited(
+                "sealed",
+                "s1",
+                &json!({"title": SEALED, "body": SEALED, "topic": SEALED}),
+            )
+            .await;
+            // The Projector would project this Document if the Index held
+            // its collection. The plain one is indexed, and the Index is
+            // caught up with both writes.
+            fx.put(
+                "notes",
+                "n1",
+                &json!({"title": PLAIN, "body": PLAIN, "topic": PLAIN}),
+            )
+            .await;
+
+            let files = files_below(&path.join(".scheda/index"));
+            assert!(!files.is_empty(), "the Index has files");
+            // The control: the scan reads what the Index holds.
+            assert!(
+                files.iter().any(|(_, bytes)| holds(bytes, PLAIN)),
+                "the plain marker is in some Index file"
+            );
+            for (file, bytes) in &files {
+                assert!(
+                    !holds(bytes, SEALED),
+                    "the plaintext of an encrypted Document is in {}",
+                    file.display()
+                );
+            }
+
+            // A call that names the collection is refused, not answered.
+            let sealed = fx.collection("sealed").await;
+            let error = sealed.count(DocumentQuery::default()).await.unwrap_err();
+            assert!(error.is(Code::Unimplemented), "{error}");
+            let error = sealed.query(DocumentQuery::default()).await.err().unwrap();
+            assert!(error.is(Code::Unimplemented), "{error}");
+            let error = refused(&sealed, json!({"text": SEALED})).await;
+            assert!(error.is(Code::Unimplemented), "{error}");
+            let error = fx
+                .vault
+                .search_documents(vault_search(json!(["sealed"]), json!({"text": SEALED})))
+                .await
+                .err()
+                .unwrap();
+            assert!(error.is(Code::Unimplemented), "{error}");
+            // A call over the Vault leaves the collection out.
+            let found = run_vault(&fx.vault, json!([]), json!({"text": PLAIN, "k": 10})).await;
+            assert_eq!(keys(&found), [key("notes", "n1")]);
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_projector_that_refuses_a_document_leaves_it_out_and_the_round_goes_on() {
+        both(|| async {
+            let fx = Fixture::new("search-projector-refuses").await;
+            let notes = fx.collection("notes").await;
+            fx.put("notes", "before", &json!({"title": "lemurbefore"}))
+                .await;
+            fx.put("notes", "refused", &json!({"title": REFUSED_TITLE}))
+                .await;
+            fx.put("notes", "after", &json!({"title": "lemurafter"}))
+                .await;
+            // The round passed the refused Document: the one after it is
+            // indexed, and the refused one is in no answer.
+            assert_eq!(listed(&notes).await, ["after", "before"]);
+            assert_eq!(count(&notes).await, 2);
+            let found = run(&notes, json!({"text": "lemurafter", "k": 10})).await;
+            assert!(ids(&found).contains(&"after".to_owned()));
+            assert!(!ids(&found).contains(&"refused".to_owned()));
+            // The file is stored whatever the Projector says.
+            let stored = notes
+                .get(DocumentId::default().with_id("refused"))
+                .await
+                .unwrap();
+            assert!(stored.raw.is_some());
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_column_without_fts_is_not_searched() {
+        both(|| async {
+            // `title` and `body` are `fts`; `topic` is a text column that is
+            // not, and with no vectors no embedder reads it either.
+            let ports = Ports {
+                projection: "docs@1",
+                vectors: false,
+                model: None,
+            };
+            let fx = Fixture::with("search-fts-columns", &ports).await;
+            fx.put(
+                "notes",
+                "in-title",
+                &json!({"title": "lemurwordtitle", "topic": "plain"}),
+            )
+            .await;
+            fx.put(
+                "notes",
+                "in-topic",
+                &json!({"title": "other", "topic": "lemurwordtopic"}),
+            )
+            .await;
+            let notes = fx.collection("notes").await;
+            let found = run(&notes, json!({"text": "lemurwordtitle"})).await;
+            assert_eq!(ids(&found), ["in-title"]);
+            let found = run(&notes, json!({"text": "lemurwordtopic"})).await;
+            assert!(
+                ids(&found).is_empty(),
+                "a word only in a column without fts finds nothing: {:?}",
+                ids(&found)
+            );
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_document_of_one_vault_never_appears_in_a_query_or_search_of_another() {
+        both(|| async {
+            let one = Fixture::new("search-vault-one").await;
+            let two = Fixture::new("search-vault-two").await;
+            for (fx, id, word) in [
+                (&one, "only-one", "okapione"),
+                (&two, "only-two", "okapitwo"),
+            ] {
+                fx.put(
+                    "notes",
+                    id,
+                    &json!({"title": word, "body": "shared okapi words"}),
+                )
+                .await;
+            }
+            for (fx, own, other_word) in [
+                (&one, "only-one", "okapitwo"),
+                (&two, "only-two", "okapione"),
+            ] {
+                let notes = fx.collection("notes").await;
+                assert_eq!(listed(&notes).await, [own]);
+                assert_eq!(count(&notes).await, 1);
+                // The word both Vaults share finds the Vault's own only.
+                let found = run(&notes, json!({"text": "shared", "k": 10})).await;
+                assert_eq!(ids(&found), [own]);
+                let found =
+                    run_vault(&fx.vault, json!([]), json!({"text": "shared", "k": 10})).await;
+                assert_eq!(keys(&found), [key("notes", own)]);
+                // The word of the other Vault finds nothing.
+                let found = run(&notes, json!({"text": other_word, "k": 10})).await;
+                assert!(ids(&found).iter().all(|id| id == own), "{:?}", ids(&found));
+            }
+            one.vault.close(Empty::default()).await.unwrap();
+            two.vault.close(Empty::default()).await.unwrap();
         });
     }
 }

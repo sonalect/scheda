@@ -9,10 +9,16 @@
 //! async code takes the blocking form (`to_sync`) inside a multi-thread
 //! runtime.
 //!
-//! This version of Scheda has no Index to query or search: `Vault.Index`,
-//! the queries, the counts, and the searches answer `UNIMPLEMENTED`, and so
-//! does a port (an embedder, a reranker, a Projector) given at open or to a
-//! `Set*` call.
+//! A build with the feature `index` (the default) keeps an Index of the
+//! Vault on Lance in `.scheda/index/`: queries, counts, and searches over
+//! the Documents, `Vault.Index`, and the ports (a Projector, an embedder, a
+//! reranker) that tell what the Index holds. An indexer task of each open
+//! Vault keeps the Index at the state of `HEAD`. A build without the
+//! feature has no Index: `Vault.Index`, the queries, the counts, the
+//! searches, and every port, given at open or to a `Set*` call, answer
+//! `UNIMPLEMENTED`; it keeps the id maps of the journals only, so a line of
+//! a journal is still found by its id. The feature `encrypt` adds encrypted
+//! collections; the Index holds none of them.
 
 mod check;
 mod collection;

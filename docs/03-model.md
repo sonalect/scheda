@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.27, 20 October 2026.
+Document 3 of the Scheda package. Version 0.28, 20 October 2026.
 
 Normative data model: collection kinds, Document identity, and paths. Terms
 are in `02`. File bytes, git, and locks are in `04`. The collection
@@ -233,10 +233,11 @@ repaired. *Check:* `Update` / `Upsert` / `Delete` → `UNIMPLEMENTED`
 corruption → `Check` reports it, and valid lines before the damage remain
 readable as specified in `04` (`journal::tests`:
 `a_torn_tail_or_a_broken_line_ends_the_walk_with_the_segment_path`,
-`lines_split_into_complete_lines_and_a_torn_tail`). *Check:* a Vault
-opened only by handles without ports has no Index; `Get` still finds the
-line by scanning envelopes (`tests/index.rs`:
-`a_vault_opened_only_without_ports_finds_its_lines_without_an_index`).
+`lines_split_into_complete_lines_and_a_torn_tail`). *Check:* a
+Vault opened by handles without ports keeps the journal id maps; `Get`
+finds a line before the indexer ran, through the map, and by scanning the envelopes when the map is gone (`tests/index.rs`:
+`a_line_is_found_before_the_indexer_ran_after_it_and_without_its_map`,
+`the_index_object_needs_the_feature_and_the_maps_are_kept_either_way`).
 
 **MOD-17. `singleton`.** Replace is the whole file (the declared `id`
 path). No content schema is applied. `Delete` removes that file; a later

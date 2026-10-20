@@ -1,7 +1,7 @@
 //! Document files: the file of one Document of a `standard` or `singleton`
 //! collection, isolated ones included.
 //!
-//! A Document is bytes (D20). The bytes of a file are the bytes of the
+//! A Document is bytes. The bytes of a file are the bytes of the
 //! Document, or, in an encrypted collection, their age armor. Nothing here
 //! asks whether they are text, and nothing scans them for conflict markers.
 //!
@@ -595,8 +595,8 @@ impl WalkState {
 /// - in an encrypted collection, a file that will not open with the secret
 ///   of the handle (`CRYPTO`).
 ///
-/// The content is never checked, beyond decryption: a Document is bytes
-/// (D20). The call fails only when it cannot run: an I/O failure, or an
+/// The content is never checked, beyond decryption: a Document is bytes.
+/// The call fails only when it cannot run: an I/O failure, or an
 /// encrypted collection when the handle has no secret (`CRYPTO`) or the
 /// build has no `encrypt` feature (`UNIMPLEMENTED`), because then its files
 /// cannot be opened to be checked.

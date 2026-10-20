@@ -1,8 +1,8 @@
 //! The objects of the contract: `Scheda` opens a Vault and gives a
 //! reference to it; the Vault gives its collections and its mirror the same
 //! way. `Vault.Close` ends every object of the Vault, and a Vault whose
-//! references are all dropped ends by itself. This version of Scheda has no
-//! Index to use a port, and refuses one.
+//! references are all dropped ends by itself. A build without the feature
+//! `index` has no Index to use a port, and refuses one.
 
 use std::fs::File;
 use std::path::Path;

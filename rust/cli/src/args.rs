@@ -197,7 +197,7 @@ pub(crate) enum Command {
         #[arg(long, value_name = "JSON")]
         schema: Option<String>,
     },
-    /// Delete a collection and its Documents.
+    /// Delete a collection that holds no Documents (one that does is refused).
     DeleteCollection {
         /// The collection name.
         name: String,

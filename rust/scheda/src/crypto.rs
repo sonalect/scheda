@@ -1,7 +1,7 @@
 //! Age v1 ASCII armor: seal any bytes, open them again. The only module
 //! that names `age`.
 //!
-//! A Document is bytes (D20), so the plaintext is not asked to be text. The
+//! A Document is bytes, so the plaintext is not asked to be text. The
 //! armor is PEM, `\n` only, with no byte order mark. A failure here is
 //! `CRYPTO`, and its message carries neither the plaintext nor the secret
 //! nor key material.

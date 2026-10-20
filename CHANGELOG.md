@@ -8,596 +8,406 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
-The breaking `0.22.0` is under way on the branch `proto-contract`: the
-whole API becomes protobuf services. The notes below say what a caller
-changes; they grow with each part of the move.
+This release is breaking. The whole API is protobuf services in one
+package, `scheda.v1`, passed as references; Scheda is async, on the tokio
+runtime of its caller; the Index is on Lance in place of Tantivy and
+USearch; and the Vault format is generation 2. To move from `0.21.0`:
+
+- Change the calls to the new objects (`Scheda.open` returns a `VaultRef`,
+  which gives collections, the mirror, and the Index), the errors to
+  `VaultErrorCode`, and the features to `index` and `encrypt`. Open under
+  a tokio runtime, or call `to_sync()` inside a multi-thread one.
+- Move each Vault to generation 2 by hand (no code does it): set the
+  marker `.scheda.yaml` to `version: 2`, drop `version` from every
+  collection file, rename the key `document` to `standard`, and commit.
+  Until then `open` fails with `GENERATION`.
+- Leave `.scheda/index/` alone. The first round of the new indexer removes
+  the files of the old Index (`lexical/`, `vector/`, `columns`, `stale`)
+  and builds the Index on Lance again. The CLI indexes only with an
+  embedder flag.
+- Rewrite the CLI calls: the subcommands are the calls of the contract
+  (see `Changed` and `Removed`).
 
 ### Added
 
 - The feature `index`, on by default: the Index on Lance (`lance`,
   `lance-index`, `lance-linalg`, pinned `=13.0.0`, no cloud object
-  stores), its queries, counts, and searches, and the ports. Building it
-  needs `protoc` (`PROTOC`, or on `PATH`); `default-features = false`
-  drops it, and then `Vault.Index`, the queries, counts, and searches,
-  and every port are `UNIMPLEMENTED`.
-- `scheda::parse_command`: parses the Protobuf JSON of a request strictly
-  (a key the message does not know is `INVALID_ARGUMENT` naming its path)
-  and validates it, for a transport that takes requests as JSON.
-- `scheda::error_report`: a failure written out as `v1::ErrorReport`
-  (the name of its code, the message, the retry flag, the stack, the
-  path), the form the CLI prints on stderr.
-
-### Fixed
-
-- A failure of `git` is classified by a signal of its own where it has
-  one, and by the text of its `stderr` only for a refused login or
-  certificate (`UNAUTHENTICATED`) and a network that cannot be reached or
-  does not answer (`UNAVAILABLE`), for which `git` has no other. A push
-  is told by `git push --porcelain`: only a reference the mirror rejected
-  because it holds writes the Vault lacks (`fetch first`,
-  `non-fast-forward`) is `MIRROR_AHEAD`; a rejection for another reason
-  (a hook that declined, a protected branch) was `MIRROR_AHEAD` too and is
-  now `REPLICATION` naming the mirror's reason. A lock error of `git` on
-  the command line is `REPLICATION`, not `ABORTED`, and a push whose local
-  remote-tracking reference could not be locked by another push no longer
-  matters (the status of the pushed reference is read). A SHA-256 or
-  reftable repository is `UNIMPLEMENTED` by its configuration
-  (`extensions.objectformat`, `extensions.refstorage`), not by the text of
-  the git library.
-- A Document file in the work tree gets its mode from the umask of the
-  process, as a file `git` writes does: a file is made `0666`, or `0777`
-  for an executable one, and the umask takes its bits. Before, every file
-  was set to `0644` (`0755`) whatever the umask, so a person whose umask
-  is `077` got world-readable Documents. Files of an isolated collection
-  and everything under `.scheda/` stay owner-only. Where a file is a
-  different mode from before, git sees no change: it records only the
-  executable bit.
-- `Mirror.Pull` (and `Sync`, and the pull of `open` with `auto_sync`)
-  moved `HEAD` to a commit of the mirror without looking at it, so a
-  mirror written by another generation, one with no `.scheda.yaml`, or one
-  with a collection file that does not load left a Vault whose every call
-  then failed. The pull now reads the marker and the collection files of
-  the commit it would move to (the mirror's, or the join) first, and
-  refuses with `GENERATION`, `NOT_A_VAULT`, or `INVALID_ARGUMENT` naming
-  the file, with `HEAD`, the work tree, and git's index as they were. At
-  `open` the refusal is kept as the Vault's sync failure.
-- `Vault.Check` failed as a whole when one collection file did not load,
-  and never read the marker. It now reads the marker of the commit `HEAD`
-  names first: another generation, a broken marker, or none is the one
-  problem reported (`GENERATION`, `INVALID_ARGUMENT`, or `NOT_A_VAULT`,
-  path `.scheda.yaml`). A collection file that does not load is a problem
-  with its path, and the other collections are still checked.
-- An append to a journal read and parsed every segment of the journal on
-  each call, only to check that the id is new, so it cost the whole
-  journal. It now checks the id through the journal's id map (the segment
-  the map names, read and confirmed), the segments changed since the
-  map's state, and the ids the call has appended; the cost no longer
-  grows with the number of segments. A journal with no map, or one whose
-  map is wrong about the id, is scanned whole, as before.
-- Setting or removing a port (`SetProjector`, `SetEmbedder`, `SetReranker`
-  and their `Remove` calls) did not wake the indexer, so a Vault that
-  lacked its embedder, or whose last round failed, used the new port only
-  after `index_poll_ms`, or after the pause of a failed round (up to eight
-  times it). The indexer now looks at once, and a wake ends the pause of a
-  failed round.
-- The Projector was asked for the columns of every collection at every
-  look of the indexer that found the Index not current (every
-  `index_poll_ms` for a Vault that was stale or lacked a port) and at every
-  query, count, and search. It is now asked once per collection, per
-  installed Projector and per state of `HEAD` the declarations were read
-  from, and the indexer and the queries share the answers. A failed answer
-  is not kept.
-- A query or a search page with `include_raw` over a journal read the
-  whole segment of every line it gave and copied every line of it to
-  return one (a page of 100 lines of an 8 MiB segment parsed about 800 MB),
-  and so did the rerank of a search for each of `rerank_limit` hits. A
-  page now takes one snapshot per repository and reads the segment once,
-  keeping the bytes of the last segment it read, and a journal line is
-  found without copying the others. What a page returns is the same.
-- A search with `k`, `offset`, or `rerank_limit` near `4294967295` asked
-  Lance for that many hits from each leg, and Lance allocated for the
-  number: the process aborted (34 GB for the vector leg of a table of
-  12 000 rows). Each leg now asks for no more hits than its table holds, so
-  such a search answers with the hits there are. A query `limit` or
-  `offset` at its maximum already answered correctly; a test now holds it.
-- A temporary file of a write (`.scheda.{n}.tmp`) was numbered per
-  process, so a temporary file another process, or one that died, left
-  under the same name failed the write and was removed by it. The name is
-  now `.scheda.{pid}.{n}.tmp`, a name already taken is passed over, and a
-  write removes only a temporary file it made. An indexer round removes
-  the ones a dead process left under `.scheda/index/`.
-- `Check` could report a file under `.scheda/index/` as not owner-only
-  while the indexer was writing it: the files of the Index and the writer
-  identity are now created owner-only, not narrowed after.
-
-- `find` / `search` in one handle or process could fail with `index_missing`,
-  or with `index_version` and `repeat: forbidden`, while another started an
-  Index generation or indexed a new collection: the `format` file and the
-  projector dump were read half-written. Both are now written whole, and
-  `format` last.
-- A journal line another handle appended while `reindex` (or the background
-  rebuild) built a new generation was missing from the new `id` map, so `get`
-  answered `not_found` for a committed Record until the indexer caught up.
-  The lines are now carried into the new generation, and a handle still on
-  the replaced one repeats its `id` map changes on the live one.
-- CLI: an HTTP embedder or reranker request interrupted by a signal (`EINTR`)
-  is sent again, up to three times, instead of failing the command.
-- The first isolated collection in a Vault whose Index already held Records
-  made the background indexer rebuild the whole Index generation under
-  `reindex.lock`, so a `reindex` called meanwhile failed with `locked`. The
-  collection is now indexed in place.
-- Lock files (`reindex.lock`, the indexer's role locks, the journal
-  `ids.lock`) were released by closing the descriptor alone. While another
-  thread was starting `git`, the lock stayed held for a moment, so a handle
-  could miss the indexer role and, with a long `index_poll_ms`, not index
-  until its next poll. They are now unlocked before they close.
-- Changing `exclude_lexical_index` or `exclude_vector_index` of a
-  collection the Index holds made the Vault `INDEX_STALE`: the indexer
-  stopped, and queries and searches failed until a `Reindex`. The Index
-  now records what the Projector declared for each collection, before the
-  exclusions, and only another projection, other Projector columns, or
-  another embedder make it stale. The next round rebuilds that collection's
-  table to gain or lose its value columns and vectors; until it has,
-  counts, queries, and searches answer and follow the declaration.
-- A refusal of the embedder (`EMBEDDER_ERROR_CODE_REFUSED`) was charged to
-  the first text left without a vector. An embedder that batches refuses a
-  whole portion for one text, so an innocent text lost its vector and each
-  further try failed the same way. Scheda now confirms a refusal on the
-  text alone: it sends the text alone, and splits the texts after it by
-  halves until the culprit is found, so only that text keeps no vector.
-- `Vault.Close`: an indexer task the runtime cancelled is `CANCELLED`, not
-  `PANICKED`. A write whose swap of `HEAD` failed and whose note could not
-  be emptied either keeps the swap's error (`ABORTED`) as its code, with
-  the emptying failure as a frame of its stack.
-- The repository and documentation links of the crate and of this file
-  name `sonalect/scheda`, where the repository lives.
-- A query, count, or search with `not_before` on an Index built with other
-  ports than this Vault's (another projection, other Projector columns,
-  another embedder) waited out `index_wait_timeout_ms` and ended
-  `DEADLINE_EXCEEDED`, which is retryable, so a caller retried for good and
-  never learned the reason. It now fails `INDEX_STALE` at once, as a call
-  without `not_before` does. A rebuild this handle asked for
-  (`Index.Reindex`) or runs is still waited for. A `Reindex` asked while an
-  indexer round that had found the Index stale was ending was dropped; it
-  now stands for the next round.
-
-### Changed
-
-- The default `segment_max_bytes` of a journal is 1 MiB, not 8 MiB. Every
-  append rewrites its open segment as a new git object, so the cap bounds
-  that cost. A declaration that sets the cap keeps it; a journal without
-  one now closes its segments sooner (an open segment over 1 MiB is closed
-  by the next append, which opens a new one). Closed segments are never
-  rewritten, and Documents and ids do not change.
-- A round of the indexer compacted the tables of the Index every time it
-  wrote, so the partly full last fragment was written again at each round
-  until it was full: with 1 024-dimension vectors one Document written to
-  a table with 4 000 unindexed rows wrote 4.2 MB. A table is now compacted
-  only when 8 fragments of fewer than 16 384 rows have piled up, or when a
-  fragment has more than half of its rows deleted (it was a tenth). The
-  same Document writes about 20 KB on average (measured over 30 rounds),
-  and the ten rounds that built a table of 10 000 such rows wrote 71 MB of
-  data files, not 224 MB. A read opens at most 7 more small fragments than
-  before. Answers do not change.
-- `Mirror.Pull` (and `Sync`, and the pull of `open` with `auto_sync`) no
-  longer holds the write lock while it fetches. It fetches the mirror's
-  branches into references of Scheda's own (`refs/scheda/mirror/*`,
-  `git fetch --prune`) and takes the write lock only for the join, so a
-  slow or stalled network no longer holds up the writers of any handle or
-  process, nor fails them `ABORTED` past `write_timeout_ms`. The fetches
-  of one Vault take turns on a lock file of their own,
-  `.scheda/fetch.lock` (owner-only, created on first use; a Vault without
-  it works), which a write never takes: a pull that finds another pull's
-  fetch running waits for it up to `write_timeout_ms` and then is
-  `ABORTED`, retryable. `FETCH_HEAD` is no longer written, and an empty
-  mirror, or one that deleted the branch, is nothing to pull by the
-  references the fetch wrote, not by the text of `git`. What a caller
-  sees of `Pull` is otherwise unchanged.
-- The loose objects of a repository are packed, in process (the pack
-  builder of the git library, no `git` process, under the write lock),
-  after a write that leaves more than about 1024 of them, or 8 MiB of
-  them after a write that stored a blob of 64 KiB or more. Every append to
-  a journal stores its whole open segment as a new object, and nothing
-  packed them: 1000 appends of 200-byte lines to one journal left a
-  segment of 209 KB and `.git/objects` of 68.5 MB (80.5 MB on disk) in
-  4008 loose files, and the last 100 appends took 6 times as long as
-  the first 100. Now the same 1000 appends leave
-  about 7 MB at their worst (the loose objects waiting for the next
-  packing are most of it; 1 MB just after one) in 8 packs, each version of
-  the segment a delta of a line, and the write that packs takes about
-  0.25 s where the others take 2 to 10 ms. Packs are merged, the four
-  smallest at a time, when there are 16; a merge of 1 MiB segments can
-  take about 2 s. A pack is complete before the loose objects it holds are
-  removed, so a reader never misses an object; `.keep` packs and a
-  multi-pack index are left alone. The nested repository of isolated
-  collections is packed the same way.
-- The library contract is protobuf services in one package, `scheda.v1`
-  (`api/scheda/v1/`). The messages and the traits of the services are
-  generated by `protoc-gen-protocontract-buffa` into `scheda::v1`, with
-  the `Offload` and `Blocking` bridges.
-- tokio is a required dependency of `scheda` and `scheda-api`; the
-  feature `tokio` is gone (a build that names it no longer resolves: drop
-  it). The async form of the objects and both bridges are in every build.
-- A write answers with the state token of the Vault it made:
-  `Collection.Create`, `Update`, `Upsert`, and `Delete` return
-  `DocumentWriteResult { document, version }` (`document` unset after
-  `Delete`, which returned `Empty`), and the batch results of a
-  collection and of the Vault carry `version`. A write that stored
-  nothing gives the token of the state it found; an empty batch reads it
-  without taking the write lock. `VaultInfo.version` is the token of the
-  stored state now. The token is meant for `not_before`.
-- The contract of the Index on Lance: `Collection.Query` and
-  `Vault.QueryDocuments` stream `QueryItem`, and the queries and searches
-  take the typed `Filter` of `query.proto`; `OpenOptions` takes
-  `index_wait_timeout_ms` (default 60 s) and `filter_max_depth` (default
-  32, at most 100); `IndexState` loses `model_mismatch` and gains
-  `stored_version` and `rebuild.cause`, with its fields numbered again;
-  the new code `DEADLINE_EXCEEDED` (retryable). The enum `Feature` is
-  `FEATURE_INDEX` (1) and `FEATURE_ENCRYPT` (2); `Scheda.Info` lists
-  `FEATURE_INDEX` in a build with the feature `index`.
-- `not_before` on a query, a count, or a search: the call waits until
-  the Index reflects a state that contains the token's (the `version` of
-  a write's reply, of `Vault.Info`, or of `IndexState`), so a caller
-  finds its own write without polling. Past `index_wait_timeout_ms` it
-  is `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait with
-  `FAILED_PRECONDITION`; a token whose commit is no longer in the history
-  of `HEAD` (a reset, a pull that rewrote it) does not wait; text that is
-  not a token is `INVALID_ARGUMENT`.
-- The API is a set of objects, each a service, passed as references.
-  `scheda::Scheda` (the only public type besides the error, the
-  fixed-portion adapters, and `parse_age_identity`) opens a Vault:
-  `Scheda.open(VaultOpening { path, options, projector, embedder,
-  reranker })` returns a `VaultRef`, and `vault_ref.to_async_inline()?`
-  gives the Vault (see the async bullet below).
-  The Vault gives `GetCollection` → `CollectionRef` (the Documents of one
-  collection), `Mirror` → `MirrorRef`, and `Index` → `IndexRef`
-  (`UNIMPLEMENTED` in a build without the feature `index`). `scheda::Vault`,
-  `scheda::Ports`, and `scheda::Port` are gone; the structs behind the references are not
-  public. A collection object names its collection and finds it again on
-  each call: after `DeleteCollection` its calls are `NOT_FOUND`, and they
-  work again once the name is declared again.
-- Reads of many: `Collection.GetMany` streams the Documents of given ids
-  (in their order, the absent skipped) or of the whole collection page by
-  page (`listing { limit, start_after }`: `id` order, a journal in append
-  order), lazily and on one commit: without `include_raw` it reads no
-  file and gives keys and revisions. `Collection.History` streams the
-  versions of a Document newest first (revision, time, author, note,
-  bytes; the deleting version has no revision and no bytes); a journal is
-  `UNIMPLEMENTED`. `Vault.Check` returns a `CheckReport` of every
-  problem, and fails only when it cannot run.
+  stores), its queries, counts, searches, and the ports. Building it needs
+  `protoc` (`PROTOC`, or on `PATH`); `default-features = false` drops it,
+  and then `Vault.Index`, the queries, counts, searches, and every port are
+  `UNIMPLEMENTED`. `Scheda.Info` lists `FEATURE_INDEX` in a build with it.
+- The Index is under `.scheda/index/`: generations `g-…`, the live one
+  named by `current`, each a `commit` file (written last) and one table
+  per collection with the Projector's columns, a vector and the digest of
+  its text per `vector` column, and the files it was made from. The
+  indexer writes changed rows in place, compacts small fragments, builds
+  the indices (a B-tree per `scalar_index` column, an inverted index per
+  `fts` column, IVF_PQ per `vector` column from 10 000 rows on), and
+  prunes a table version an hour after it was replaced. A round cut short
+  is rolled back to the committed versions by the next one. Nothing is
+  indexed from an encrypted collection. A Document the Projector gives no
+  values is indexed by its identity; only a failure of the Projector
+  leaves it out.
+- One background indexer per handle follows `HEAD`; the indexers of
+  several handles and processes take turns, one round at a time, and only
+  they write the Index. `Index.Reindex` builds a new generation beside the
+  live one, which answers until the switch, with the ports of the Vault
+  that asked, and returns at once; the old generation is removed an hour
+  after. A failed rebuild is tried again after a pause; meanwhile another
+  `Reindex` of that Vault is `ABORTED`, and one that another Vault on the
+  path served with the same ports and columns is done without a second
+  rebuild. `Index.Status` gives an `IndexState` (one `version`, one
+  `pending` count of files, one `role`, `stored_version`, `rebuild.cause`)
+  and `Index.Watch` streams it, the state now first, replacing
+  `wait_indexed`. A journal line is found at once after its write.
+  An Index not built yet is `INDEX_REBUILDING`; a damaged one is
+  `INDEX_BROKEN` until `Reindex`. Only a `Reindex` changes the projection,
+  the columns, or the embedder model: a Vault whose ports differ from the
+  Index's finds it `INDEX_STALE` (in `IndexState.last_error` and on its
+  queries and searches) and does not index.
+- Who indexes: a handle with every port the Index needs (a Projector, and
+  an embedder when a collection has a `vector` column). A handle without
+  the embedder does not index (`IndexState.last_error` is
+  `FAILED_PRECONDITION` naming the port), its `Reindex` is
+  `FAILED_PRECONDITION`, and its queries and searches read the Index other
+  handles keep, the searches without the vector leg. A text of a `vector`
+  column is embedded once: a text whose digest the Index holds keeps its
+  vector, a failed round's vectors and Projector answers are kept for the
+  next try, and a rebuild with the same embedder model and vector length
+  takes the vectors the live generation holds. A text the embedder
+  refuses (`REFUSED`) is confirmed alone (sent alone, then the texts after
+  it split by halves) and only it keeps no vector; a blank text has none.
+  Changing `exclude_lexical_index` or `exclude_vector_index` of a
+  collection does not make the Index stale: the next round rebuilds that
+  collection's table.
 - Queries select: `Collection.Query` and `Vault.QueryDocuments` stream a
-  `QuerySummary` with the total, then the Documents a `Filter` matches,
-  exactly and without scores, in a total order: the `order_by` keys (a
-  Document without a value last, in both directions), then the
+  `QuerySummary` with the total, then the Documents a typed `Filter`
+  matches, exactly and without scores, in a total order: the `order_by`
+  keys (a Document without a value last, in both directions), then the
   collection, then `id` (a journal in append order). `offset`, `limit`,
-  and `start_after` page it; `start_after` is a condition on the order,
-  so a deep page costs what the first does, and in an `order_by` or a
-  journal order an id the Index no longer holds is `FAILED_PRECONDITION`
-  (start again). `Collection.Count` and `Vault.CountDocuments` count the
-  same, opening no file. A call reads one snapshot of the Index; the
-  Documents come from git at the state that snapshot reflects. Without
-  names, a Vault query or search covers every collection that is neither
-  isolated nor encrypted. A Vault query applies one filter to every
-  collection in scope: a column one
+  and `start_after` page it; `start_after` is a condition on the order, so
+  a deep page costs what the first does, and in an `order_by` or a journal
+  order an id the Index no longer holds is `FAILED_PRECONDITION` (start
+  again). `Collection.Count` and `Vault.CountDocuments` count the same,
+  opening no file. A call reads one snapshot of the Index; the Documents
+  come from git at the state it reflects. Without names, a Vault query or
+  search covers every collection that is neither isolated nor encrypted,
+  and reads up to four collections at once (on 8 collections of 2000 to
+  5000 Documents, debug build: a query 2.4 times and a search 2.5 times
+  faster than one after another, the same results and scores). A Vault
+  query applies one filter to every collection in scope: a column one
   collection lacks has no value there, a column none declares is
-  `INVALID_ARGUMENT`. A filter names `id` and the Projector's columns,
-  each with a value of its kind; deeper than `filter_max_depth`, it is
-  `INVALID_ARGUMENT`. An encrypted collection, and one with
+  `INVALID_ARGUMENT`. A filter names `id` and the Projector's columns, each
+  with a value of its kind; deeper than `filter_max_depth` (default 32, at
+  most 100) it is `INVALID_ARGUMENT`. An encrypted collection, and one with
   `exclude_lexical_index` when the query filters or orders, is
   `UNIMPLEMENTED` when named and left out of a Vault query otherwise. A
   collection the Index has not reached yet is empty. `limit: 0` gives
-  nothing.
+  nothing. With `include_raw`, a page reads a journal segment once.
 - Searches rank: `Collection.Search` and `Vault.SearchDocuments` stream a
-  `SearchSummary` first (whether the vector leg ran, or the first reason
-  it did not: not asked, no `vector` column the Projector marks in scope,
-  no embedder, no vector in the Index yet), then the hits best first,
-  each with its lexical, vector, fused, and rerank scores. The lexical
-  leg is BM25 over the `fts` columns, each collection by the statistics
-  of its own table; the vector leg is the cosine distance over the
-  `vector` columns, through the IVF_PQ index ranked again with the full
-  vectors, and by an exact scan of the rows no index covers yet, so a
-  write is found as soon as the Index holds it. The legs are fused by
-  Reciprocal Rank Fusion with the request's weights (0 turns a leg off;
-  both 0 is `INVALID_ARGUMENT`). The `filter` narrows both legs before
-  they rank. The subject is a `text` or `like` (a Document of any
-  collection: others like it, from its indexed text and stored vectors,
-  calling no model; never itself). `k` has no upper limit; `offset`
-  skips hits without opening their files; the Documents are read as the
-  stream reaches them. `rerank_limit` reranks the first fused hits with
-  the Vault's reranker and is `INVALID_ARGUMENT` without one or below
+  `SearchSummary` first (whether the vector leg ran, or the first reason it
+  did not: not asked, no `vector` column in scope, no embedder, no vector
+  in the Index yet), then the hits best first, each with its lexical,
+  vector, fused, and rerank scores. The lexical leg is BM25 over the `fts`
+  columns, each collection by the statistics of its own table; the vector
+  leg is the cosine distance over the `vector` columns, through IVF_PQ
+  ranked again with the full vectors, and by an exact scan of the rows no
+  index covers yet, so a write is found as soon as the Index holds it. The
+  legs are fused by Reciprocal Rank Fusion with the request's weights (0
+  turns a leg off; both 0 is `INVALID_ARGUMENT`). The `filter` narrows both
+  legs before they rank. The subject is a `text` or a `like` (a Document of
+  any collection: others like it, from its indexed text and stored
+  vectors, calling no model; never itself). `k` has no upper limit (each
+  leg asks for no more hits than its table holds); `offset` skips hits
+  without opening their files. `rerank_limit` reranks the first fused hits
+  with the Vault's reranker and is `INVALID_ARGUMENT` without one or below
   `k`. A collection with `exclude_lexical_index` is ranked by the vector
-  leg, one with `exclude_vector_index` by the lexical leg; one with both
-  is `UNIMPLEMENTED` when named and left out of a Vault search.
-- Scheda is async only, on the tokio runtime of its caller (either
-  flavor, with the time and I/O drivers on: `Builder::enable_all`).
-  `Scheda` implements `SchedaAsync` and no longer `SchedaSync`; the
-  objects behind every reference are async (`VaultAsync`,
-  `CollectionAsync`, `MirrorAsync`): take them with `to_async_inline()`.
-  A caller without async code builds a multi-thread runtime and takes
-  `to_sync()` inside it (protocontract's `Blocking`); on a current-thread
-  runtime that form fails with `CANNOT_BLOCK` instead of hanging.
-  `to_async_offload()` of a Scheda reference is no longer needed.
-- No call holds a thread while it waits: a write waits for its turn
-  (first come, first served) and for `commit.lock` with an `await`;
-  `git clone`, `fetch`, and `push` run as child processes that are
-  awaited; `open` waits for another `open` of the same new path the same
-  way. The work itself runs on the blocking pool of the runtime, one
-  step at a time (one commit, one Document read).
+  leg, one with `exclude_vector_index` by the lexical leg; one with both is
+  `UNIMPLEMENTED` when named and left out of a Vault search.
+- `not_before` on a query, a count, or a search: the call waits until the
+  Index reflects a state that contains the token's, so a caller finds its
+  own write without polling. The token is the `version` of a write's
+  reply, of `Vault.Info`, or of `IndexState`. Past `index_wait_timeout_ms`
+  (default 60 s) the call is `DEADLINE_EXCEEDED` (retryable);
+  `Vault.Close` ends the wait with `FAILED_PRECONDITION`; a token whose
+  commit is no longer in the history of `HEAD` does not wait; text that is
+  not a token is `INVALID_ARGUMENT`. An Index built with other ports than
+  this Vault's is `INDEX_STALE` at once, not waited for; a rebuild this
+  handle asked for is waited for.
+- Reads of many: `Collection.GetMany` streams the Documents of given ids
+  (in their order, the absent skipped) or of the whole collection page by
+  page (`listing { limit, start_after }`: `id` order, a journal in append
+  order), lazily and on one commit; without `include_raw` it reads no file
+  and gives keys and revisions. `Collection.History` streams the versions
+  of a Document newest first (revision, time, author, note, bytes; the
+  deleting version has no revision and no bytes); a journal is
+  `UNIMPLEMENTED`. Both read one Document per item, nothing ahead of the
+  reader.
+- Documents are read by `Collection.Get` and written by
+  `Collection.Create` (in a journal: an append), `Update`, `Upsert`,
+  `Delete`, and `Batch`, and across collections by `Vault.BatchDocuments`
+  (`VaultDocumentOperation { collection, operation }`). A batch is one
+  atomic step: an error writes nothing and names the operation by its
+  index. The requests carry the `id` and the bytes
+  (`DocumentCreation { id, raw, keep_existing, note }`, `DocumentId`, …);
+  `Document` is output only. Each write needs a `note`, shown in the
+  Document's history. The calls are strict (`ALREADY_EXISTS`,
+  `NOT_FOUND`); `keep_existing` and `ignore_missing` make a repeat
+  harmless; `revision` writes only over the revision the caller read
+  (`FAILED_PRECONDITION` otherwise). A reply is the Document as stored,
+  with its new `revision` (opaque, changes with the stored bytes). One
+  batch writes the isolated collections or the others, never both
+  (`INVALID_ARGUMENT`). A Document is any bytes: text, an image, protobuf
+  wire; the UTF-8 rule and the `not_utf8` code are gone, an encrypted
+  collection seals any bytes, and a journal payload holds any bytes except
+  `\n` and `\r`.
+- A write answers with the state token of the Vault it made:
+  `Collection.Create`, `Update`, `Upsert`, and `Delete` return
+  `DocumentWriteResult { document, version }` (`document` unset after
+  `Delete`), and the batch results carry `version`. A write that stored
+  nothing gives the token of the state it found; an empty batch reads it
+  without the write lock. `VaultInfo.version` is the token of the stored
+  state.
+- Several handles and processes write to one Vault by taking turns on a
+  short write lock instead of failing with `locked`: a write is one commit,
+  made before any file of the Vault changes, so no reader sees a change
+  that is not committed. A write that cannot take the lock within
+  `OpenOptions.write_timeout_ms` (default 60 s) fails with `ABORTED` and
+  writes nothing; a write cut short by a crash is finished by the next
+  `open` or write, which touches only that write's files.
+- The API works on the commit `HEAD` names, not on the files of the work
+  tree: a read never sees a change a person has not committed, and a write
+  never commits one. A write still updates the files for people, but
+  leaves a file a person changed as it is.
+- Collections, on `Vault`: `CreateCollection` refuses a declared name
+  (`ALREADY_EXISTS`) instead of replacing it; `UpdateCollection` changes a
+  declared one (`NOT_FOUND` otherwise), its kind, `isolated`, and
+  `encrypted` only while it holds no Documents (`FAILED_PRECONDITION`), and
+  keeps the keys of the file this version does not know;
+  `DeleteCollection` removes an empty collection; `BatchCollections`
+  declares, changes, and deletes several in one step. A collection object
+  names its collection and finds it again on each call: after
+  `DeleteCollection` its calls are `NOT_FOUND`, and they work again once
+  the name is declared again. The data message `Collection` is
+  `CollectionDeclaration` (the file on disk is unchanged).
+- `Vault.Check` returns a `CheckReport` of every problem and fails only
+  when it cannot run. It reads the marker of the commit `HEAD` names first
+  (another generation, a broken marker, or none is the one problem
+  reported, path `.scheda.yaml`); a collection file that does not load is a
+  problem with its path, and the other collections are still checked. An
+  unfinished merge is found from git's own state and reported as
+  `UNRESOLVED_CONFLICT` with its path, so a binary file that holds
+  `<<<<<<<` lines passes. It skips the Lance tables while a round of the
+  indexer holds `.scheda/index.lock`.
+- The mirror: `open` of a missing path or an empty folder with
+  `OpenOptions.mirror` clones it; `Mirror.Push`, `Pull`, and `Sync` take no
+  argument and work with the mirror only; `Mirror.Set` and `Remove` set and
+  detach it without touching the network. `Pull` joins histories that both
+  moved, Document by Document: a Document changed on both sides
+  differently is `MIRROR_CONFLICT` and nothing changes. A mirror that
+  holds nothing yet is nothing to pull, so `Sync` against it pushes. With
+  `auto_sync`, a failed pull at `open` or push after a write fails
+  neither: the write is stored, and `Mirror.Info` shows the failure in
+  `last_auto_sync_error`, with the URL and `auto_sync`.
+- `Mirror.Pull` fetches the mirror's branches into references of Scheda's
+  own (`refs/scheda/mirror/*`, `git fetch --prune`; `FETCH_HEAD` is no
+  longer written) and takes the write lock only for the join. The fetches
+  of one Vault take turns on `.scheda/fetch.lock` (owner-only, created on
+  first use); a pull that finds another pull's fetch running waits up to
+  `write_timeout_ms` and then is `ABORTED`, retryable.
+- Ports: the caller's `Embedder`, `Reranker`, and `Projector` are given as
+  references (`EmbedderRef::from_sync(x)`, `from_async(x)`, …) in
+  `VaultOpening`, and change at any time: `Vault.SetEmbedder`,
+  `SetReranker`, `SetProjector`, and a `Remove…` for each; setting or
+  removing one wakes the indexer. A reference that holds no
+  implementation is `INVALID_ARGUMENT`; a port in a build without `index`
+  is `UNIMPLEMENTED`. The Vault calls a port in its async form (a blocking
+  port runs on the blocking pool, an async one is awaited, a panic in
+  either is `PANICKED`). The traits are the generated contract
+  (`EmbedderSync`, …): the embedder and the reranker take their items as a
+  stream and form their own portions, `FixedEmbedder` and `FixedReranker`
+  turn a portion function into one, and the descriptors of the embedder
+  and of the Projector (`Projector.Describe`, new: a `projection_id`) are
+  read once per install and validated. The Projector is asked once per
+  collection, per installed Projector, and per state of `HEAD`, and the
+  indexer and the queries share the answers. The Index records the
+  projection it was built with; change `projection_id` whenever the same
+  Document may project to other values. The reranker is the Vault's, not
+  an argument of a search.
+- Async only, on the tokio runtime of the caller (either flavor, with the
+  time and I/O drivers on: `Builder::enable_all`). `Scheda` implements
+  `SchedaAsync`, not `SchedaSync`; the objects behind every reference are
+  async (`VaultAsync`, `CollectionAsync`, `MirrorAsync`): take them with
+  `to_async_inline()`. A caller without async code builds a multi-thread
+  runtime and takes `to_sync()` inside it (protocontract's `Blocking`); on
+  a current-thread runtime that form fails with `CANNOT_BLOCK` instead of
+  hanging. tokio is a required dependency of `scheda` and `scheda-api`; the
+  feature `tokio` is gone (drop it from the feature list). No call holds a
+  thread while it waits: a write waits for its turn (first come, first
+  served) and for `commit.lock` with an `await`; `git clone`, `fetch`, and
+  `push` run as child processes that are awaited; `open` waits for another
+  `open` of the same new path the same way. The work itself runs on the
+  blocking pool, one step at a time (one commit, one Document read).
 - A call whose future is dropped stops at its next `await`: dropped while
   it waits for the write lock, a write stores nothing and takes no lock;
   dropped during its commit, the commit completes and is stored; dropped
   during the push of `auto_sync`, the `git` process is killed, the commit
   stays local, and the next push carries it.
-- `Collection.GetMany` and `Collection.History` read one Document per
-  item, nothing ahead of the reader.
-- The indexer of an open Vault is a task on the runtime that opened it,
-  not a thread. `Vault.Close` waits for it, and for the work of calls
-  that were dropped midway, and returns with every lock let go; a Vault
-  dropped without `Close` tells its indexer to stop and does not wait.
-- CLI: `scheda` runs on a multi-thread runtime; a batch reads its
-  operations from stdin whole before it opens the Vault. Flags, JSON, and
-  exit codes do not change.
 - `Vault.Close` replaces `Vault::close(self)`: every call through the
   Vault, its collections, its mirror, and its Index then fails with
-  `FAILED_PRECONDITION`; it returns once the calls that run have ended,
-  the indexer has stopped, and no lock is held. A second `Close` does
-  nothing. An open stream does not hold it up: its next item is
-  `FAILED_PRECONDITION`. A Vault whose references (its objects' and
-  streams' included) are all dropped closes by itself.
+  `FAILED_PRECONDITION`; it returns once the calls that run have ended, the
+  indexer has stopped, and no lock is held. A second `Close` does nothing.
+  An open stream does not hold it up: its next item is
+  `FAILED_PRECONDITION`. A Vault whose references are all dropped closes by
+  itself. The indexer is a task on the runtime that opened the Vault, not
+  a thread; a Vault dropped without `Close` tells it to stop and does not
+  wait.
+- `Scheda.Open`: `OpenOptions.mode` (`OPEN_MODE_OPEN_OR_CREATE`, the
+  default; `OPEN_MODE_OPEN_EXISTING`; and `OPEN_MODE_CREATE_NEW`, which
+  refuses anything already at the path) replaces `existing_only`.
+  `OpenOptions.signing` names a key to sign commits with; it is not built
+  yet and `open` fails with `UNIMPLEMENTED` when it is set. Scheda's
+  commits are not signed, and git's `commit.gpgSign` is not read.
 - Errors: `scheda::Error` is `protocontract::Error`, and its codes are
   `scheda::v1::VaultErrorCode`, named after the gRPC canonical codes where
   Scheda means the same (`NOT_FOUND`, `ALREADY_EXISTS`, `UNAVAILABLE`, …)
   and Scheda's own otherwise (`NOT_A_VAULT`, `GENERATION`, `CRYPTO`,
-  `MIRROR_AHEAD`, `INDEX_REBUILDING`, `STORAGE`, `REPLICATION`, …). Branch
-  with `error.is(VaultErrorCode::NotFound)` or `error.code_as()`;
+  `MIRROR_AHEAD`, `INDEX_REBUILDING`, `STORAGE`, `REPLICATION`, …), plus
+  `DEADLINE_EXCEEDED` (retryable). Branch with
+  `error.is(VaultErrorCode::NotFound)` or `error.code_as()`;
   `error.retryable()` replaces `repeat`; the cause is
   `std::error::Error::source` (an I/O failure keeps its `ErrorKind`), and
   the file a failure is about is on `scheda::Fault`
   (`error.downcast_ref::<scheda::Fault>()`). The 39 `io_*` and 14 `git_*`
   codes fold into `STORAGE`, `UNAVAILABLE`, `UNAUTHENTICATED`,
   `MIRROR_AHEAD`, `MIRROR_CONFLICT`, `ABORTED`, and `REPLICATION`.
-- The Vault format is generation 2. The marker `.scheda.yaml` holds
-  `version: 2`; `open` reads it before any other file, and a Vault of
-  another generation fails with `GENERATION`. A collection file has no
-  `version`, and the kind `document` is named `standard`
-  (`schema: {standard: {}}`). No code moves a Vault of generation 1: drop
-  `version` from every collection file, rename the key `document` to
-  `standard`, set the marker to `version: 2`, and commit.
+- `scheda::parse_command` parses the Protobuf JSON of a request strictly
+  (a key the message does not know is `INVALID_ARGUMENT` naming its path)
+  and validates it, for a transport that takes requests as JSON.
+  `scheda::error_report` writes a failure as `v1::ErrorReport` (the name of
+  its code, the message, the retry flag, the stack, the path), the form the
+  CLI prints on stderr.
 - A stored file (the marker, a collection file) with a key this version
   does not know is read past instead of refused, and a rewrite keeps the
   key, so a later version can add a field without a new generation.
   Protobuf JSON a caller sends is still refused when it has a key the
   version does not know.
-- `Scheda.Open`: `OpenOptions.mode`
-  (`OPEN_MODE_OPEN_OR_CREATE`, the default; `OPEN_MODE_OPEN_EXISTING`;
-  and the new `OPEN_MODE_CREATE_NEW`, which refuses anything already at
-  the path) replaces `existing_only`.
-- Several handles and processes write to one Vault by taking turns on a
-  short write lock instead of failing with `locked`: a write is one
-  commit, made before any file of the Vault changes, so no reader sees a
-  change that is not committed. A write that cannot take the lock within
-  `OpenOptions.write_timeout_ms` (default 60 s) fails with `ABORTED` and
-  writes nothing; a write cut short by a crash is finished by the next
-  `open` or write, which touches only that write's files.
-- Collections, on `Vault`: the data message `Collection` is
-  `CollectionDeclaration` (the file on disk is unchanged).
-  `CreateCollection` refuses a declared name
-  (`ALREADY_EXISTS`) instead of replacing it; `UpdateCollection` changes a
-  declared one (`NOT_FOUND` otherwise), its kind, `isolated`, and
-  `encrypted` only while it holds no Documents (`FAILED_PRECONDITION`),
-  and keeps the keys of the file this version does not know;
-  `DeleteCollection` removes an empty collection; `BatchCollections`
-  declares, changes, and deletes several in one step.
-- Documents are read by `Collection.Get` and written by
-  `Collection.Create` (in a journal: an append), `Update`, `Upsert`,
-  `Delete`, and `Batch`, and across collections by `Vault.BatchDocuments`
-  (`VaultDocumentOperation { collection, operation }`); a batch is one
-  atomic step: an error writes nothing and names the operation by its
-  index. The requests of a collection carry the `id` and the bytes
-  (`DocumentCreation { id, raw, keep_existing, note }`, `DocumentId`, …);
-  `Document` is output only. Each write needs a `note`, shown in
-  the Document's history. The calls are strict (`ALREADY_EXISTS`,
-  `NOT_FOUND`); `keep_existing` and `ignore_missing` make a repeat
-  harmless; `revision` writes only over the revision the caller read
-  (`FAILED_PRECONDITION` otherwise). A reply is the Document as stored,
-  with its new `revision`. One batch writes the isolated collections or
-  the others, never both (`INVALID_ARGUMENT`).
-- The API works on the commit `HEAD` names, not on the files of the work
-  tree: a read never sees a change a person has not committed, and a write
-  never commits one. A write still updates the files for people, but
-  leaves a file a person changed as it is. `Document.revision` is an
-  opaque id that changes with the stored bytes.
-- `OpenOptions.signing` names a key to sign commits with. It is not built
-  yet: set, `open` fails with `UNIMPLEMENTED`. Scheda's commits are not
-  signed, and git's `commit.gpgSign` is not read.
+
+### Changed
+
+- The API is a set of objects, each a service, passed as references. The
+  library contract is protobuf in one package, `scheda.v1`
+  (`api/scheda/v1/`); the messages and the traits are generated by
+  `protoc-gen-protocontract-buffa` into `scheda::v1`, with the `Offload`
+  and `Blocking` bridges. `scheda::Scheda` (the only public type besides
+  the error, the fixed-portion adapters, and `parse_age_identity`) opens a
+  Vault: `Scheda.open(VaultOpening { path, options, projector, embedder,
+  reranker })` returns a `VaultRef`, and `vault_ref.to_async_inline()?`
+  gives the Vault. The Vault gives `GetCollection` → `CollectionRef`,
+  `Mirror` → `MirrorRef`, and `Index` → `IndexRef`. `scheda::Vault`,
+  `scheda::Ports`, and `scheda::Port` are gone, and the structs behind the
+  references are not public. `to_async_offload()` of a Scheda reference is
+  no longer needed.
+- The Vault format is generation 2. The marker `.scheda.yaml` holds
+  `version: 2`; `open` reads it before any other file, and a Vault of
+  another generation fails with `GENERATION` (see the steps above). A
+  collection file has no `version`, and the kind `document` is named
+  `standard` (`schema: {standard: {}}`).
 - Scheda works on git through the `git2` library in process: a read or a
   write without a mirror starts no `git` process. A repository with
   SHA-256 objects or reftable refs, which the library cannot read, fails
-  `open` with `UNIMPLEMENTED`.
-- The mirror: `open` of a missing path or an empty folder with
-  `OpenOptions.mirror` clones it; `Pull`, `Push`, and `Sync` take no
-  argument and work with the mirror only (`Mirror.Push`, `Mirror.Pull`,
-  `Mirror.Sync`), and isolated collections never
-  leave the machine (`push_isolated`, `pull_isolated`, `sync_isolated`
-  are gone). `Pull` joins histories that both moved, Document by Document:
-  a Document changed on both sides differently is `MIRROR_CONFLICT` and
-  nothing changes. A mirror that holds nothing yet is nothing to pull, so
-  `Sync` against it pushes. `Mirror.Set` and `Mirror.Remove` set and
-  detach the mirror without touching the network. With `auto_sync`, a
-  failed pull at `open` or push after a write fails neither: the write is
-  stored, and `Mirror.Info` shows the failure in `last_auto_sync_error`,
-  with the URL and `auto_sync`.
-- Ports: the caller's `Embedder`, `Reranker`, and `Projector` are given
-  as references (`EmbedderRef::from_sync(x)`, `from_async(x)`, …) in
-  `VaultOpening`, and change at any time: `Vault.SetEmbedder`,
-  `SetReranker`, `SetProjector`, and a `Remove…` for each; the indexer
-  takes the new set into its next round. A reference that holds no
-  implementation is `INVALID_ARGUMENT`. The Vault calls a port in its async
-  form: a blocking port runs on the blocking pool, an async one is awaited,
-  and a panic in either is `Panicked`. The traits are the generated contract
-  (`EmbedderSync`, …): the embedder and the reranker take their items as
-  a stream and form their own portions, `FixedEmbedder` and
-  `FixedReranker` turn a portion function into one, and the descriptors
-  of the embedder and of the Projector (`Projector.Describe`, new: a
-  `projection_id`) are read once per install and validated. The Index
-  records the projection it was built with: a Vault whose Projector names
-  another one finds the Index `INDEX_STALE` (in `IndexState.last_error`)
-  and does not index until its own `Index.Reindex` rebuilds the Index;
-  change `projection_id` whenever the same Document may project to other
-  values. The reranker
-  is the Vault's, not an argument of a search. A port in a build without
-  the feature `index` is `UNIMPLEMENTED`.
-- The Index: one background indexer per handle, in every build, follows
-  `HEAD`; the indexers of several handles and processes take turns, one
-  round at a time, and only they write the Index. `Reindex` asks for a
-  rebuild and returns at once (`Index.Reindex`); a second one meanwhile
-  is `ABORTED`. `Index.Status` gives an `IndexState` with one `version`,
-  one `pending` count, and one `role` (the per-side fields are gone), and
-  `Index.Watch` streams it, the state now first, replacing
-  `wait_indexed`. A journal line is found at once after its write, before
-  the indexer has seen it.
-- The Index is on Lance, under `.scheda/index/`: generations `g-…`, the
-  live one named by `current`, each a `commit` file (written last) and
-  one table per collection with the Projector's columns, a vector and the
-  digest of its text per `vector` column, and the files it was made from.
-  The indexer writes changed rows in place (no rebuild per change),
-  compacts small fragments, builds the indices (a B-tree per
-  `scalar_index` column, an inverted index per `fts` column, IVF_PQ per
-  `vector` column from 10 000 rows on), and prunes a table version an
-  hour after it was replaced. A round cut short is rolled back to the
-  committed versions by the next one. Never from an encrypted
-  collection. A Document the Projector gives no values is indexed by its
-  identity; only a failure of the Projector leaves it out. The `0.22`
-  files under `.scheda/index/` are removed by the first round.
-- `Index.Reindex` builds a new generation beside the live one, which
-  answers queries and searches until the switch, with the ports of the
-  Vault that asked; the old generation is removed an hour after it. A
-  rebuild that fails is tried again after a pause until one is done;
-  meanwhile another `Reindex` of that Vault is `ABORTED`. A `Reindex`
-  that another Vault on the path, asked too, has served meanwhile with
-  the same ports and columns is done without a second rebuild.
-  Only a `Reindex` changes the projection, the columns, or the embedder
-  model of the Index: a Vault whose Projector gives another projection or
-  other columns, or whose embedder is of another model or vector length,
-  finds the Index `INDEX_STALE` (in `IndexState.last_error` and on its
-  queries and searches) and does not index. An Index not built yet is
-  `INDEX_REBUILDING`; a damaged one is `INDEX_BROKEN` until `Reindex`.
-  `IndexState.pending` counts files, not Documents.
-- Who indexes: a handle with every port the Index needs (a Projector,
-  and an embedder when a collection has a `vector` column). A handle
-  without the embedder is not stale: it does not index
-  (`IndexState.last_error` is `FAILED_PRECONDITION` naming the port), its
-  `Reindex` is `FAILED_PRECONDITION`, and its queries and searches read
-  the Index other handles keep, the searches without the vector leg. A
-  text of a `vector` column is embedded once: a text whose digest the
-  Index holds keeps its vector, and the vectors and the Projector's
-  answers of a failed round are kept for the next try, so an embedder
-  outage does not project the changed Documents again on every try. A rebuild with the embedder model and vector
-  length of the live generation takes the vectors it holds for the same
-  text of the same Document; only another model embeds every text again. A text the embedder refuses (`REFUSED`) leaves
-  the Document without that vector; a blank text has none.
-- Docs: `06`, `13`, `07`, `14`, `02`, and README describe the Index on Lance
-  and the async-only API as built: generations with one `commit` each and
-  a table of rows and a table of files per collection; queries by the typed
-  filter with `order_by`, the summary `total`, and `not_before`; searches
-  with a prefilter and per-collection BM25; the live Index frozen and
-  answering during a rebuild that only `Index.Reindex` starts; `INDEX_STALE`
-  for other ports; `Vault.Close`, dropped calls, and `to_sync()` on a
-  multi-thread runtime (`CANNOT_BLOCK` on a current-thread one); and the
-  CLI with `notBefore`, `--index-wait-timeout-ms`, `--filter-max-depth`, and
-  the replies of writes. The glossary gains Index generation, state token,
-  `not_before`, and Filter. `20` D11 is marked superseded by `22`.
-- Docs: `01`–`10`, `13`, `14`, and README describe the 0.22 contract: the
-  objects and their calls, Documents as bytes, the write model (one
-  commit per write or batch, writers taking turns), one mirror, the ports,
-  the codes of `VaultErrorCode`, and the CLI as built. `07` keeps what
-  spans calls; each call's contract is its comment in
-  `api/scheda/v1/*.proto`.
-- A Document is any bytes: text, an image, protobuf wire. The UTF-8 rule
-  and the `not_utf8` code are gone, and an encrypted collection seals any
-  bytes. A journal payload holds any bytes except `\n` and `\r`.
-- A check no longer reads `<<<<<<<` lines in files as a conflict: an
-  unfinished merge is found from git's own state and reported as
-  `UNRESOLVED_CONFLICT` with its path, so a binary file that happens to
-  hold such lines passes.
-- Dependencies updated to the newest versions at least 2 days old:
-  `serde_json` 1.0.154, `sha2` 0.11.1, `tokio` 1.53.3 (with compatible
-  transitive crate updates), `rules_python` 2.4.2, `bazel_utils` 0.4.0,
-  Buf CLI v1.74.0, `protoc-gen-protovalidate-buffa` v0.10.4 (generated
-  code unchanged), and patch and minor updates in the Python sidecar lock
-  (`uv.lock`). No API or format change.
-- `tokio` 1.54.0 (from 1.53.3), taken two days inside the quarantine of
-  freshly published versions on the owner's word, after a check: it was
-  published to crates.io by Alice Ryhl (`Darksonn`), an owner of the
-  crate, 44 seconds after the GitHub release `tokio-1.54.0`, and the
-  package matches that tag's commit (`66d34e45`) file for file. It keeps
-  the order of waiters on a `Mutex` whose task ran out of its cooperative
-  budget, which the writes of a Vault rely on to take their turns in the
-  order they came, and fixes a `spawn_blocking` hang. No API change.
-- The Python sidecars and the CLI test driver use vllm 0.32.0 (it fixes
-  PYSEC-2026-4319, a denial of service in vLLM's penalty handler) and
-  huggingface-hub 2.2.0, with transformers 5.19.0, in `uv.lock`.
-- `tantivy` 0.27.0 (from 0.26.2), with its crates (`frostem` in place of
-  `rust-stemmers`, `zstd` 0.14). Its index format is unchanged, so an
-  Index built before opens as it is, with no rebuild. No API change.
-- `protocontract` 0.4.1 and `protoc-gen-protocontract-buffa` v0.4.1 (from
-  `bazel_utils` 0.4.2): references to a service; the docs of the generated
-  reference modules link their types, so `cargo doc` of `scheda-api` passes
-  with warnings denied.
+  `open` with `UNIMPLEMENTED`, told by its configuration
+  (`extensions.objectformat`, `extensions.refstorage`).
+- The default `segment_max_bytes` of a journal is 1 MiB, not 8 MiB. Every
+  append rewrites its open segment as a new git object, so the cap bounds
+  that cost. A declaration that sets the cap keeps it; a journal without
+  one closes its segments sooner (an open segment over 1 MiB is closed by
+  the next append, which opens a new one). Closed segments are never
+  rewritten, and Documents and ids do not change.
+- The loose objects of a repository are packed, in process (the pack
+  builder of the git library, no `git` process, under the write lock),
+  after a write that leaves more than about 1024 of them, or 8 MiB of them
+  after a write that stored a blob of 64 KiB or more, and the nested
+  repository of isolated collections is packed the same way. Measured:
+  1000 appends of 200-byte lines to one journal left `.git/objects` of
+  68.5 MB (80.5 MB on disk) in 4008 loose files, and the last 100 appends
+  took 6 times as long as the first 100; now they leave about 7 MB at
+  their worst (1 MB just after a packing) in 8 packs, each version of the
+  segment a delta of a line, and the write that packs takes about 0.25 s
+  where the others take 2 to 10 ms. Packs are merged, the four smallest at
+  a time, when there are 16 (a merge of 1 MiB segments can take about
+  2 s). A pack is complete before the loose objects it holds are removed,
+  so a reader never misses an object; `.keep` packs and a multi-pack index
+  are left alone.
+- A round of the indexer compacts a table only when 8 fragments of fewer
+  than 16 384 rows have piled up, or when a fragment has more than half of
+  its rows deleted, so the partly full last fragment is not written again
+  at each round. With 1 024-dimension vectors one Document written to a
+  table with 4 000 unindexed rows writes about 20 KB on average (30
+  rounds), and the ten rounds that built a table of 10 000 such rows wrote
+  71 MB of data files, not 224 MB. A read opens at most 7 more small
+  fragments. Answers do not change.
+- Temporary files of a write are `.scheda.{pid}.{n}.tmp` (see `Fixed`).
 - The CLI is the contract on the command line: each subcommand is one
   call, named after it in kebab case (`info`, `list-collections`,
   `create-collection NAME --schema JSON`, `batch-documents`,
   `query-documents --query JSON`, `search-documents --search JSON`,
   `collection NAME get|get-many|history|create|update|upsert|delete|batch|
   query|count|search`, `mirror info|set|remove|push|pull|sync`, `index
-  status|watch|reindex`, `scheda-info`). stdout is the Protobuf JSON of
-  the reply, one line, and a stream is JSON Lines; `collection … get`
-  prints the Document as JSON (`raw` in base64) instead of its bytes.
-  stderr is an `ErrorReport` (`"code": "VAULT_ERROR_CODE_NOT_FOUND"`, …).
-  A request is its Protobuf JSON (`--schema`, `--query`, `--search`, or
-  stdin), parsed strictly; a batch reads JSON Lines from stdin and writes
-  all or nothing; each write takes `--note`. The open options are global
-  flags (`--mode`, `--mirror`, `--auto-sync`, `--author-name` and
-  `--author-email`, `--writer`, `--write-timeout-ms`,
+  status|watch|reindex`, `scheda-info`). `scheda` runs on a multi-thread
+  runtime, and a batch reads its operations from stdin whole before it
+  opens the Vault. stdout is the Protobuf JSON of the reply, one line, and
+  a stream is JSON Lines; `collection … get` prints the Document as JSON
+  (`raw` in base64) instead of its bytes. stderr is an `ErrorReport`
+  (`"code": "VAULT_ERROR_CODE_NOT_FOUND"`, …). A request is its Protobuf
+  JSON (`--schema`, `--query`, `--search`, or stdin), parsed strictly; a
+  batch reads JSON Lines from stdin and writes all or nothing; each write
+  takes `--note`, required (it replaces `--message`, which defaulted). The
+  open options are global flags (`--mode`, `--mirror`, `--auto-sync`,
+  `--author-name` and `--author-email`, `--writer`, `--write-timeout-ms`,
   `--index-wait-timeout-ms`, `--filter-max-depth`), and so are the
   reranker flags, now a port of the Vault used by a search with
   `rerankLimit`. A process indexes only with an embedder flag (the
-  whole-file Projector marks `body` `vector` and gives it a scalar
-  index), unless a collection sets `excludeVectorIndex`. A query, count,
-  or search answers once the Index has reached the state of the Vault at
-  open (its `notBefore`, unless the request sets one), and fails with
-  `DEADLINE_EXCEEDED` past `--index-wait-timeout-ms` (60 s) instead of
-  answering without the latest write; `index reindex` waits for the
-  rebuild to end; `--no-wait` skips both. `query` and `query-documents`
-  print the summary first (`{"summary": {"total": "N"}}`), then one
-  `{"document": …}` per line. A write prints its `DocumentWriteResult`
+  whole-file Projector marks `body` `vector`), unless a collection sets
+  `excludeVectorIndex`. A query, count, or search answers once the Index
+  has reached the state of the Vault at open (its `notBefore`, unless the
+  request sets one), and fails with `DEADLINE_EXCEEDED` past
+  `--index-wait-timeout-ms` (60 s); `index reindex` waits for the rebuild
+  to end; `--no-wait` skips both. `query` and `query-documents` print the
+  summary first (`{"summary": {"total": "N"}}`), then one `{"document": …}`
+  per line. A write prints its `DocumentWriteResult`
   (`{"document": …, "version": …}`), a batch its result with `version`.
   `index watch --until-settled` replaces `wait-indexed` and stops once
-  `version` equals `storedVersion` and no rebuild runs, or on
-  `lastError`. An HTTP embedder or reranker failure carries the port's
-  code: `UNAVAILABLE` (retryable for a transport failure, 408, 429, and
-  5xx; not for 401 and 403) or `REFUSED`.
-- The CLI test driver (`python/cli`) speaks the new subcommands and
-  matches `VAULT_ERROR_CODE_NOT_FOUND`; it passes the embedder on every
-  call that should index, and `--lexical-only` ranks by the lexical leg
-  only (`vectorWeight: 0`). `find --filter` takes the typed filter
-  (default: none), and its total is the summary of the query, not a
-  second call.
-- Rust toolchain and `rust-version` (MSRV) raised from 1.99.0 to 1.99.1:
-  build Scheda with Rust 1.99.1 or newer.
-- The test gate checks behaviour only: the OPS-1 / OPS-2 timing bands are
-  a benchmark, not a gate check.
-- The projection of the command line's Projector is now
-  `scheda-cli/whole-file@2`: its `body` column no longer has a scalar index
-  (a B-tree over the full text of every Document, about the size of the
-  texts again); a filter on `body` scans. An Index built by an earlier
-  `scheda` is `INDEX_STALE` for this one until one `scheda index reindex`,
-  which the failure's message now says.
-- `Vault.QueryDocuments`, `Vault.CountDocuments`, and `Vault.SearchDocuments`
-  read up to four collections at once, not one after another. On 8
-  collections of 2000 to 5000 Documents (multi-thread runtime, debug build)
-  a query took 2.4 times less and a search 2.5 times less; the results, their
-  order, and their scores are the same.
+  `version` equals `storedVersion` and no rebuild runs, or on `lastError`.
+  An HTTP embedder or reranker failure carries the port's code:
+  `UNAVAILABLE` (retryable for a transport failure, 408, 429, and 5xx; not
+  for 401 and 403) or `REFUSED`.
+- The command line's Projector has the projection
+  `scheda-cli/whole-file@2`, recorded with the Index: one text column
+  `body`, `fts` and `vector`, as in `0.21.0`, with no scalar index (a
+  filter on `body` scans). An Index built with another projection is
+  `INDEX_STALE` for the CLI until one `scheda index reindex`, which the
+  failure's message says.
+- Dependencies, each the newest version at least 2 days old: `serde_json`
+  1.0.154, `sha2` 0.11.1, `protocontract` 0.4.1 and
+  `protoc-gen-protocontract-buffa` v0.4.1 (references to a service; the
+  docs of the generated reference modules link their types), `rules_python`
+  2.4.2, `bazel_utils` 0.4.0, Buf CLI v1.74.0,
+  `protoc-gen-protovalidate-buffa` v0.10.4 (generated code unchanged), and
+  patch and minor updates in the Python sidecar lock (`uv.lock`). The
+  Python sidecars and the CLI test driver use vllm 0.32.0 (it fixes
+  PYSEC-2026-4319, a denial of service in vLLM's penalty handler) and
+  huggingface-hub 2.2.0 with transformers 5.19.0. No API or format change.
+- `tokio` 1.54.0, taken two days inside the quarantine of freshly
+  published versions on the owner's word, after a check: it was published
+  to crates.io by Alice Ryhl (`Darksonn`), an owner of the crate, 44
+  seconds after the GitHub release `tokio-1.54.0`, and the package matches
+  that tag's commit (`66d34e45`) file for file. It keeps the order of
+  waiters on a `Mutex` whose task ran out of its cooperative budget, which
+  the writes of a Vault rely on to take their turns in the order they
+  came, and fixes a `spawn_blocking` hang. No API change.
+- Rust toolchain and `rust-version` (MSRV) are 1.99.1 (from 1.99.0): build
+  Scheda with Rust 1.99.1 or newer.
 
 ### Removed
 
@@ -605,29 +415,65 @@ changes; they grow with each part of the move.
   Tantivy, USearch, `cxx`, `numkong`, and `sha1` (and the forks pinned for
   them). A build that turns one of them on no longer resolves: use the
   feature `index`. `FEATURE_FIND` and `FEATURE_SEARCH` are gone from
-  `Feature`, and `VECTOR_LEG_MODEL_MISMATCH` from `SearchSummary` (another
-  model is `INDEX_STALE`).
-- The `0.22` Index (`lexical/`, `vector/`, `columns`, `stale` under
-  `.scheda/index/`): the first round of the Index on Lance removes it and
-  builds the Index again. `Vault.Check` skips the Lance tables while a
-  round of the indexer holds `.scheda/index.lock`.
+  `Feature` (now `FEATURE_INDEX` (1) and `FEATURE_ENCRYPT` (2)), and
+  `VECTOR_LEG_MODEL_MISMATCH` from `SearchSummary` (another model is
+  `INDEX_STALE`). The files of the old Index under `.scheda/index/`
+  (`lexical/`, `vector/`, `columns`, `stale`) are removed by the first
+  round of the Index on Lance.
 - The proto packages `api`, `api.v1`, and `api.collection.v1`, and their
-  Rust paths `scheda_api::api::…`, among them `api.v1.Error` with its codes,
-  `repeat`, and helper functions (`Error::invalid`, `Error::io_not_found`,
-  …): a failure is built as `scheda::Fault::new(code, message)`.
+  Rust paths `scheda_api::api::…`, among them `api.v1.Error` with its
+  codes, `repeat`, and helper functions (`Error::invalid`,
+  `Error::io_not_found`, …): a failure is built as
+  `scheda::Fault::new(code, message)`.
 - `Collection::version`, `Vault::versions`, and the `version` key of a
   collection file.
 - Transactions and the old write calls: `begin`, `commit`, `discard`,
   `transaction`, `add`, `replace`, `remove`, and `create_collection`.
+- `push_isolated`, `pull_isolated`, and `sync_isolated`: isolated
+  collections never leave the machine. `IndexState` loses its per-side
+  fields and `model_mismatch` (its fields are numbered again).
 - CLI subcommands without a call of their own: `open` (any subcommand
   opens; `--mode create-new` makes a Vault), `reindex`, `index-status`,
   and `wait-indexed` (now under `index`), `find` and `search` (now
-  `query-documents` and `search-documents`, and `collection NAME query`
-  and `search`), `push-isolated`, `pull-isolated`, and `sync-isolated`
-  (isolated collections never leave the machine), and `collection NAME
-  schema`, `add`, `replace`, `remove`, `documents`, and `ids` (now
-  `describe`, `create`, `update`, `delete`, and `get-many`). The CLI no
-  longer defaults a commit message: `--message` is `--note`, required.
+  `query-documents` and `search-documents`, and `collection NAME query` and
+  `search`), `push-isolated`, `pull-isolated`, and `sync-isolated`, and
+  `collection NAME schema`, `add`, `replace`, `remove`, `documents`, and
+  `ids` (now `describe`, `create`, `update`, `delete`, and `get-many`).
+
+### Fixed
+
+Defects of `0.21.0` that a caller could meet:
+
+- `Pull` (and `Sync`, and the pull of `open` with `auto_sync`) held the
+  write lock while it fetched, so a slow or stalled network held up the
+  writers of any handle or process and failed them past
+  `write_timeout_ms`. It now takes the lock only for the join (see
+  `Added`).
+- `Pull` moved `HEAD` to a commit of the mirror without looking at it, so
+  a mirror written by another generation, one with no `.scheda.yaml`, or
+  one with a collection file that does not load left a Vault whose every
+  call then failed. It now reads the marker and the collection files of
+  the commit it would move to first, and refuses with `GENERATION`,
+  `NOT_A_VAULT`, or `INVALID_ARGUMENT` naming the file, with `HEAD`, the
+  work tree, and git's index as they were. At `open` the refusal is kept
+  as the Vault's sync failure.
+- A push the mirror rejected for a reason other than holding writes the
+  Vault lacks (a hook that declined, a protected branch) was reported as
+  not a fast-forward, the code that is `MIRROR_AHEAD` now, as if the
+  mirror held writes the Vault had not pulled. It is `REPLICATION` naming
+  the mirror's reason; only `fetch first` and `non-fast-forward` are
+  `MIRROR_AHEAD`. Failures of `git` are classified by a signal of their
+  own where there is one, and by the text of `stderr` only for a refused
+  login or certificate (`UNAUTHENTICATED`) and a network that cannot be
+  reached or does not answer (`UNAVAILABLE`).
+- A temporary file of a write (`.scheda.{n}.tmp`) was numbered per
+  process, so one another process, or one that died, left under the same
+  name failed the write and was removed by it. The name is now
+  `.scheda.{pid}.{n}.tmp`, a name already taken is passed over, and a
+  write removes only a temporary file it made.
+- CLI: an HTTP embedder or reranker request interrupted by a signal
+  (`EINTR`) is sent again, up to three times, instead of failing the
+  command.
 
 ## [0.21.0] - 2026-10-12
 

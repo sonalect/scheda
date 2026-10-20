@@ -734,4 +734,68 @@ mod on_lance {
             vault.close(Empty::default()).await.unwrap();
         });
     }
+
+    #[test]
+    fn an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused() {
+        both(|| async {
+            let scratch = Scratch::new("query-isolated-named");
+            let (_path, vault, _notes) = fixture(&scratch).await;
+            for (name, schema) in [
+                (
+                    "secret",
+                    serde_json::json!({"standard": {}, "isolated": true}),
+                ),
+                (
+                    "bare",
+                    serde_json::json!({"standard": {}, "excludeLexicalIndex": true}),
+                ),
+            ] {
+                let declaration: CollectionDeclaration =
+                    serde_json::from_value(serde_json::json!({"name": name, "schema": schema}))
+                        .unwrap();
+                vault.create_collection(declaration).await.unwrap();
+            }
+            collection(&vault, "secret")
+                .await
+                .unwrap()
+                .upsert(upsert(
+                    "s.md",
+                    serde_json::json!({"n": 7, "title": "hidden"}),
+                ))
+                .await
+                .unwrap();
+            wait_indexed(&vault).await;
+            let everywhere = serde_json::json!({"orderBy": [{"column": "n"}]});
+            let collections = |request: serde_json::Value| async {
+                let stream = vault.query_documents(vault_query(request)).await?;
+                let mut names = std::collections::BTreeSet::new();
+                for item in items(stream).await {
+                    if let Some(Item::Document(document)) = item?.item {
+                        names.insert(document.collection.unwrap());
+                    }
+                }
+                Ok::<_, Error>(names)
+            };
+            // No name: every collection that is not isolated.
+            let found = collections(everywhere.clone()).await.unwrap();
+            assert_eq!(found, set(&["notes"]));
+            // Named: the isolated one is read.
+            let named = serde_json::json!({
+                "collections": {"names": ["secret"]},
+                "orderBy": [{"column": "n"}]
+            });
+            assert_eq!(collections(named).await.unwrap(), set(&["secret"]));
+            // A collection that leaves its columns out of the Index is
+            // refused when named and asked for a filter.
+            let filtered = serde_json::json!({
+                "collections": {"names": ["bare"]},
+                "filter": {"exists": {"column": "n"}}
+            });
+            let error = collections(filtered).await.unwrap_err();
+            assert!(
+                error.is(scheda::v1::VaultErrorCode::Unimplemented),
+                "{error}"
+            );
+        });
+    }
 }

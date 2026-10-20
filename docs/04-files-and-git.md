@@ -1,6 +1,6 @@
 # 04. Files and git
 
-Document 4 of the Scheda package. Version 0.45, 20 October 2026.
+Document 4 of the Scheda package. Version 0.46, 20 October 2026.
 
 Normative rules for bytes on disk, the git working tree, the write lock, the one commit of each write, the mirror, `Mirror.Push` / `Pull` / `Sync`, and how `Scheda.Open` creates or clones a Vault. Terms are in `02`. Collection kinds and identity are in `03`. Isolation and “no network by default” are restated here where they touch git; the rest is `09`. Codes: `STO`, `GIT`. Phase **core** unless marked otherwise.
 
@@ -32,12 +32,12 @@ relied on; Vaults on those shares are outside **core**. *Check:* a dropped `floc
 `Index.Reindex` takes no write lock and no lock of its own: it asks this
 Vault's indexer for a rebuild and returns. The rebuild is an indexer round
 under `index.lock` (`06` IDX-9), so writes, pulls, and syncs in every
-handle go on while it runs; queries and searches are `INDEX_REBUILDING`
-meanwhile. A second `Reindex` of the same Vault while one is asked for or
-runs is `ABORTED`. A build without `find` has no Index object; its
-Vaults keep the journal `id` maps. *Check:* `Reindex` returns before the
-rebuild and a second one is `ABORTED` (`tests/index.rs`:
-`reindex_returns_before_the_rebuild_a_second_is_aborted_and_the_maps_match`);
+handle go on while it runs; queries and searches keep answering from the
+live Index until the switch (`06` QRY-4). A second `Reindex` of the same
+Vault while one is asked for or runs is `ABORTED`. A build without `index`
+has no Index object; its Vaults keep the journal `id` maps. *Check:*
+`Reindex` returns before the rebuild and a second one is `ABORTED`
+(`indexer::tests::a_rebuild_waits_for_the_lock_and_a_second_request_is_aborted`);
 the rounds of two Vaults on one path never overlap
 (`indexer::tests::the_rounds_of_two_handles_of_one_vault_never_overlap`).
 
@@ -55,7 +55,7 @@ Every write of a Document carries a `note`, required and non-empty (`INVALID_ARG
 
 The git author and the git committer are one identity, in the main repository and in `{vault}/.isolated/`. `OpenOptions.author` (`Author`) may set a required `name` and `email`. Unset: the local git config, then `Scheda <scheda@invalid>`. Characters git cannot carry in a name (`<`, `>`, a newline) and an address that is not an email are `INVALID_ARGUMENT` at `Scheda.Open`, not at the first commit. Commits are not signed: `OpenOptions.signing` set is `UNIMPLEMENTED` at `Scheda.Open`, and git's `commit.gpgSign` is not read (`20` §6).
 
-**The work tree.** The files in the work tree are a person's view of the Vault: equal to `HEAD`, or a change a person has not committed. Scheda writes the files of a write itself, after its commit (a file is made `0666`, or `0777` for an executable, so the umask of the process decides its mode as it does for git's own files; the files of an isolated collection and everything under `.scheda/` are owner-only; symlink checks; not libgit2's checkout). *Check:* with umask `077` a written file is `0600` and an executable one `0700` (`commit::tests`: `the_umask_decides_the_modes_of_the_files_a_write_puts_in_the_tree`, run in a child process because the umask is the process's)., and a file a person changed and did not commit is left as it is: the write lands in `HEAD`, and git shows the person's file as changed against it. No call reads the files, so a person's uncommitted edit is never seen by a read and never committed by a write, and a commit a person makes by hand is read at once. `Vault.Check` lists the files a person changed. Who owns untracked files the human created in the Vault is the caller's problem; Scheda does not auto-add them.
+**The work tree.** The files in the work tree are a person's view of the Vault: equal to `HEAD`, or a change a person has not committed. Scheda writes the files of a write itself, after its commit (a file is made `0666`, or `0777` for an executable, so the umask of the process decides its mode as it does for git's own files; the files of an isolated collection and everything under `.scheda/` are owner-only; symlink checks; not libgit2's checkout), and a file a person changed and did not commit is left as it is: the write lands in `HEAD`, and git shows the person's file as changed against it. No call reads the files, so a person's uncommitted edit is never seen by a read and never committed by a write, and a commit a person makes by hand is read at once. `Vault.Check` lists the files a person changed. Who owns untracked files the human created in the Vault is the caller's problem; Scheda does not auto-add them. *Check:* with umask `077` a written file is `0600` and an executable one `0700` (`commit::tests`: `the_umask_decides_the_modes_of_the_files_a_write_puts_in_the_tree`, run in a child process because the umask is the process's).
 
 The CLI sends the same calls; `batch-documents` and `batch-collections` read a batch of operations from stdin (`14`).
 
@@ -65,7 +65,7 @@ The CLI sends the same calls; `batch-documents` and `batch-collections` read a b
 
 **GIT-4. Conflicts are git's, shown to a person.** Scheda does not merge the bytes of a Document, line by line. Where two histories meet, `Mirror.Pull` joins them Document by Document (GIT-11), and a Document changed differently on both sides is `MIRROR_CONFLICT` with nothing changed. An unfinished merge a person left with git by hand is found from git's own unmerged entries, not from `<<<<<<<` lines in a file: `Vault.Check` reports it as `UNRESOLVED_CONFLICT`. A binary file or any bytes that happen to look like a marker are content, not a conflict; `Get` returns the bytes as they are, and a journal line with such text in its payload stays readable. Two closed journal segments that never overlapped do not conflict. Each clone appends only to journal segments named with its writer identity (`OpenOptions.writer`, kept in `{vault}/.scheda/writer`, gitignored), so two clones do not manufacture an add/add conflict on a segment path. A caller who writes the same Document `id` on two clones still has a duplicate after the join; that choice is theirs. Older writerless names (`00000001.jsonl`) are read and never appended to. *Check:* a binary file that holds marker lines passes `Check`, and a real unmerged path is reported (`check::tests`: `a_binary_file_with_marker_lines_passes_and_a_real_unmerged_path_is_reported`); both sides changing one Document differently is `MIRROR_CONFLICT` and changes nothing (`tests/mirror.rs`: `both_sides_changing_one_document_differently_is_mirror_conflict_and_changes_nothing`); two clones that wrote different Documents join in one commit with both parents (`both_sides_changing_different_documents_join_in_one_commit_with_both_parents`).
 
-**GIT-5. Several Vaults per process.** `Scheda.Open` on distinct roots is allowed; two `Open`s of one path are two Vaults on it, as in two processes. Queries and searches do not cross roots. *Check:* a Document in Vault A never appears in a query or search on Vault B.
+**GIT-5. Several Vaults per process.** `Scheda.Open` on distinct roots is allowed; two `Open`s of one path are two Vaults on it, as in two processes. Queries and searches do not cross roots. *Check:* a Document in Vault A never appears in a query or search on Vault B (`tests/search.rs`: `a_document_of_one_vault_never_appears_in_a_query_or_search_of_another`).
 
 **GIT-6. No Git LFS.** Collection files stay ordinary git blobs. Segment size caps (MOD-10, default in `05`) exist so hosts that reject large files (~100 MiB) and slow `git diff` are not hit. *Check:* the default cap is below 50 MiB and a larger one is refused (`collection::tests`: `journal_limits_are_checked_and_the_default_cap_is_filled_in`); the library never configures `filter.lfs`.
 
