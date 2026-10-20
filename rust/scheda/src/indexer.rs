@@ -739,6 +739,21 @@ impl Context {
                 (generation, Commit::empty(plan.ports.clone()))
             }
         };
+        // A rebuild with the embedder model and vector length of the live
+        // generation takes the vectors it holds instead of embedding their
+        // texts again.
+        let earlier = match (&live, rebuild) {
+            (Some((live, Some(commit))), true)
+                if commit.ports.embedder.is_some()
+                    && commit.ports.embedder == plan.ports.embedder =>
+            {
+                Some(tables::Earlier {
+                    dir: live.dir().to_path_buf(),
+                    commit: commit.clone(),
+                })
+            }
+            _ => None,
+        };
         let shared = Arc::clone(&self.shared);
         let stopped: Arc<dyn Fn() -> bool + Send + Sync> = {
             let shared = Arc::clone(&self.shared);
@@ -765,6 +780,7 @@ impl Context {
             repos: Arc::clone(&self.repos),
             generation: generation.clone(),
             commit,
+            earlier,
             plan,
             calls: &calls,
             cache,

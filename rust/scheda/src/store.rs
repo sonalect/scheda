@@ -450,6 +450,95 @@ fn one_of(column: &str, values: &[String]) -> Expr {
     )
 }
 
+/// The embeddings of some rows, by id and then by `vector` column.
+pub(crate) type Embeddings = HashMap<String, BTreeMap<String, Embedding>>;
+
+/// The embeddings `rows`, a rows dataset of `shape`, holds for the rows
+/// `ids`.
+async fn embeddings(rows: &Dataset, shape: &Shape, ids: &[String]) -> Result<Embeddings, Error> {
+    let mut out = Embeddings::new();
+    let columns = &shape.vectors;
+    if ids.is_empty() || columns.is_empty() || shape.dimensions.is_none() {
+        return Ok(out);
+    }
+    let mut projection = vec![String::from("id")];
+    for name in columns {
+        projection.push(vector_name(name));
+        projection.push(digest_name(name));
+    }
+    let mut scanner = rows.scan();
+    scanner
+        .project(&projection)
+        .map_err(lance_fault)?
+        .filter_expr(one_of("id", ids));
+    let batch = scanner
+        .try_into_batch()
+        .await
+        .map_err(lance_fault)
+        .context("read the stored vectors")?;
+    let id = strings(&batch, "id")?;
+    for name in columns {
+        let digests = strings(&batch, &digest_name(name))?;
+        let vectors = batch
+            .column_by_name(&vector_name(name))
+            .and_then(|array| array.as_any().downcast_ref::<FixedSizeListArray>())
+            .ok_or_else(|| broken("a vector column of the Index is not a vector"))?;
+        for n in 0..batch.num_rows() {
+            if digests.is_null(n) || vectors.is_null(n) {
+                continue;
+            }
+            let values = vectors.value(n);
+            let Some(values) = values.as_any().downcast_ref::<Float32Array>() else {
+                return Err(broken("a vector of the Index is not of floats").into());
+            };
+            out.entry(id.value(n).to_owned()).or_default().insert(
+                name.clone(),
+                Embedding {
+                    vector: values.values().to_vec(),
+                    digest: digests.value(n).to_owned(),
+                },
+            );
+        }
+    }
+    Ok(out)
+}
+
+/// The vectors one collection's table of another generation holds, open
+/// only to read, at the version that generation's `commit` names.
+pub(crate) struct Vectors {
+    shape: Shape,
+    rows: Dataset,
+}
+
+impl Vectors {
+    /// The table `name` of the generation at `dir`, of `shape`, at
+    /// `versions`.
+    ///
+    /// # Errors
+    ///
+    /// `INDEX_BROKEN` or `STORAGE` when Lance cannot open it.
+    pub(crate) async fn open(
+        dir: &Path,
+        name: &str,
+        shape: Shape,
+        versions: Versions,
+    ) -> Result<Vectors, Error> {
+        let rows = open_at(&dir.join(format!("{name}.lance")), Some(versions.rows))
+            .await
+            .context("open the rows of a collection")?;
+        Ok(Vectors { shape, rows })
+    }
+
+    /// The embeddings the table holds for the rows `ids`.
+    ///
+    /// # Errors
+    ///
+    /// `INDEX_BROKEN` or `STORAGE` when Lance fails.
+    pub(crate) async fn embeddings(&self, ids: &[String]) -> Result<Embeddings, Error> {
+        embeddings(&self.rows, &self.shape, ids).await
+    }
+}
+
 /// One collection's table, open for a round of the indexer.
 pub(crate) struct Table {
     shape: Shape,
@@ -640,55 +729,8 @@ impl Table {
     /// # Errors
     ///
     /// `INDEX_BROKEN` or `STORAGE` when Lance fails.
-    pub(crate) async fn embeddings(
-        &self,
-        ids: &[String],
-    ) -> Result<HashMap<String, BTreeMap<String, Embedding>>, Error> {
-        let mut out: HashMap<String, BTreeMap<String, Embedding>> = HashMap::new();
-        let columns: Vec<String> = self.shape.vectors.clone();
-        if ids.is_empty() || columns.is_empty() || self.shape.dimensions.is_none() {
-            return Ok(out);
-        }
-        let mut projection = vec![String::from("id")];
-        for name in &columns {
-            projection.push(vector_name(name));
-            projection.push(digest_name(name));
-        }
-        let mut scanner = self.rows.scan();
-        scanner
-            .project(&projection)
-            .map_err(lance_fault)?
-            .filter_expr(one_of("id", ids));
-        let batch = scanner
-            .try_into_batch()
-            .await
-            .map_err(lance_fault)
-            .context("read the stored vectors")?;
-        let id = strings(&batch, "id")?;
-        for name in &columns {
-            let digests = strings(&batch, &digest_name(name))?;
-            let vectors = batch
-                .column_by_name(&vector_name(name))
-                .and_then(|array| array.as_any().downcast_ref::<FixedSizeListArray>())
-                .ok_or_else(|| broken("a vector column of the Index is not a vector"))?;
-            for n in 0..batch.num_rows() {
-                if digests.is_null(n) || vectors.is_null(n) {
-                    continue;
-                }
-                let values = vectors.value(n);
-                let Some(values) = values.as_any().downcast_ref::<Float32Array>() else {
-                    return Err(broken("a vector of the Index is not of floats").into());
-                };
-                out.entry(id.value(n).to_owned()).or_default().insert(
-                    name.clone(),
-                    Embedding {
-                        vector: values.values().to_vec(),
-                        digest: digests.value(n).to_owned(),
-                    },
-                );
-            }
-        }
-        Ok(out)
+    pub(crate) async fn embeddings(&self, ids: &[String]) -> Result<Embeddings, Error> {
+        embeddings(&self.rows, &self.shape, ids).await
     }
 
     /// Keeps the table cheap to read after a round that wrote to it:

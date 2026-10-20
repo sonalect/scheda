@@ -333,7 +333,9 @@ changes; they grow with each part of the move.
   the Index other handles keep, the searches without the vector leg. A
   text of a `vector` column is embedded once: a text whose digest the
   Index holds keeps its vector, and the vectors of a failed round are
-  kept for the next try. A text the embedder refuses (`REFUSED`) leaves
+  kept for the next try. A rebuild with the embedder model and vector
+  length of the live generation takes the vectors it holds for the same
+  text of the same Document; only another model embeds every text again. A text the embedder refuses (`REFUSED`) leaves
   the Document without that vector; a blank text has none.
 - Docs: `06`, `13`, `07`, `14`, `02`, and README describe the Index on Lance
   and the async-only API as built: generations with one `commit` each and

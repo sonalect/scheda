@@ -26,7 +26,13 @@ the evidence, and a recommendation. The probes of the old Index are in
    vector length are the same as the live generation's, seed the digest
    cache of the round with the live generation's vectors before the
    rebuild; measure first at the anchor consumer's size. **Decided by the
-   owner, 20 October 2026: to do.**
+   owner, 20 October 2026: to do. Done:** a rebuild with the model and
+   vector length of the live generation reads, batch by batch, the vectors
+   the live generation holds for the same Documents and takes those of the
+   same text digest (`tables.rs`:
+   `a_rebuild_with_the_same_model_embeds_no_text_again_one_with_another_embeds_each`);
+   a live generation that cannot be read gives none, so a broken Index is
+   still repaired (`a_rebuild_beside_a_generation_whose_vectors_cannot_be_read_embeds_them_again`).
 
 2. **Medium. An embedder outage multiplies the Projector work.** While the
    embedder fails, each try of the round projects the changed Documents

@@ -206,7 +206,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`Mirror.Sync`** — `Pull`, then `Push`. Against a mirror that holds nothing yet it pushes. Independent of `auto_sync`.
 
-**`reindex`** (`Index.Reindex`) — ask the indexer to build a new Index generation from the commits at `HEAD` with this Vault's ports, and return at once; the live Index keeps answering queries and searches, frozen at its state, until the switch, and the writes made meanwhile appear at the switch. Every text is embedded again. The only way the projection, the columns, or the embedder model of the Index change, and the way to repair an `INDEX_BROKEN` one.
+**`reindex`** (`Index.Reindex`) — ask the indexer to build a new Index generation from the commits at `HEAD` with this Vault's ports, and return at once; the live Index keeps answering queries and searches, frozen at its state, until the switch, and the writes made meanwhile appear at the switch. With the embedder model of the live Index, only a text it holds no vector of for that Document is embedded; with another model, every text. The only way the projection, the columns, or the embedder model of the Index change, and the way to repair an `INDEX_BROKEN` one.
 
 **`Vault.Check`** — validate the Vault file by file and return a report of every problem (code, path, message): collection declarations, journal lines, duplicate ids, an unfinished merge (from git's own state), the gitignore of isolated collections, owner-only modes, and files a person changed and did not commit. Does not type-check Document contents. The call fails only when it cannot run.
 

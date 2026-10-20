@@ -19,9 +19,11 @@
 //!
 //! **The embedder** gets the texts of the `vector` columns whose digest
 //! (the git blob id of the text) differs from the one the table holds for
-//! that Document, so an unchanged text keeps its vector. The vectors it
-//! gives are kept in memory until the round succeeds, so a round tried again
-//! after a failure sends only the texts still without one. A text it
+//! that Document, so an unchanged text keeps its vector. A rebuild with the
+//! model and vector length of the live generation takes, likewise, the
+//! vector the live generation holds for that Document's text. The vectors
+//! it gives are kept in memory until the round succeeds, so a round tried
+//! again after a failure sends only the texts still without one. A text it
 //! refuses keeps no vector.
 //!
 //! **A journal segment** that grew by appending (its old bytes are a
@@ -29,6 +31,7 @@
 //! is indexed again whole.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use git2::{ObjectType, Oid};
@@ -45,7 +48,7 @@ use crate::id::require_document_id;
 use crate::index::{Counts, State};
 use crate::ports::{EmbedderPort, Installed, ProjectorPort};
 use crate::repo::{NodeKind, Repo, Repos, Snap};
-use crate::store::{Column, Embedding, Kind, Row, Shape, Table};
+use crate::store::{Column, Embedding, Embeddings, Kind, Row, Shape, Table, Vectors};
 use crate::{isolated, journal};
 
 /// How many files a round reads, projects, and writes at a time.
@@ -262,11 +265,23 @@ impl Cache {
     }
 }
 
+/// The live generation a rebuild replaces, when its vectors were made by
+/// the model and vector length the rebuild embeds with: a text whose
+/// digest it holds for the same Document is not embedded again.
+pub(crate) struct Earlier {
+    /// Its folder.
+    pub(crate) dir: PathBuf,
+    /// Its `commit`.
+    pub(crate) commit: Commit,
+}
+
 /// What a round of the Lance side works with.
 pub(crate) struct Work<'a> {
     pub(crate) repos: Arc<Repos>,
     pub(crate) generation: Generation,
     pub(crate) commit: Commit,
+    /// The generation a rebuild replaces, as a source of vectors.
+    pub(crate) earlier: Option<Earlier>,
     /// The plan of the state the next [`Work::bring_to`] brings the tables
     /// to.
     pub(crate) plan: Plan,
@@ -426,7 +441,9 @@ impl Work<'_> {
                 Table::open(self.generation.dir(), &table_name, shape.clone(), committed)
                     .await
                     .with_context(|| format!("open the table of {name}"))?;
-            self.apply(&mut table, decl, to, scope).await?;
+            let earlier = self.earlier_vectors(name).await;
+            self.apply(&mut table, earlier.as_ref(), decl, to, scope)
+                .await?;
             table
                 .maintain(self.commit.rounds + 1)
                 .await
@@ -443,6 +460,25 @@ impl Work<'_> {
         self.commit.state = to.line();
         self.commit.rounds += 1;
         Ok(())
+    }
+
+    /// The vectors the earlier generation holds for `collection`. `None`
+    /// when it holds none, or cannot be read: a rebuild is also how a
+    /// broken Index is repaired, so its texts then go to the embedder.
+    async fn earlier_vectors(&self, collection: &str) -> Option<Vectors> {
+        let earlier = self.earlier.as_ref()?;
+        let table = earlier.commit.tables.get(collection)?;
+        if table.shape.vectors.is_empty() {
+            return None;
+        }
+        Vectors::open(
+            &earlier.dir,
+            &table.name,
+            table.shape.clone(),
+            table.versions,
+        )
+        .await
+        .ok()
     }
 
     /// The files that differ between the states `from` and `to`; `None`
@@ -473,10 +509,12 @@ impl Work<'_> {
         .await
     }
 
-    /// Brings `table`, the table of `decl`, to the state `to`.
+    /// Brings `table`, the table of `decl`, to the state `to`; `earlier`
+    /// holds the vectors of the generation a rebuild replaces.
     async fn apply(
         &mut self,
         table: &mut Table,
+        earlier: Option<&Vectors>,
         decl: &Declaration,
         to: State,
         scope: Scope,
@@ -499,7 +537,7 @@ impl Work<'_> {
                 let decl = decl.clone();
                 blocking(move |cx| read(cx, &repos, &decl, chunk)).await?
             };
-            self.write(table, decl, reads).await?;
+            self.write(table, earlier, decl, reads).await?;
         }
         Ok(())
     }
@@ -508,6 +546,7 @@ impl Work<'_> {
     async fn write(
         &mut self,
         table: &mut Table,
+        earlier: Option<&Vectors>,
         decl: &Declaration,
         reads: Vec<Read>,
     ) -> Result<(), Error> {
@@ -561,7 +600,7 @@ impl Work<'_> {
                 Read::SegmentGone { path } => gone_files.push(path),
             }
         }
-        let (rows, left_out) = self.rows(table, decl, sources).await?;
+        let (rows, left_out) = self.rows(table, earlier, decl, sources).await?;
         counts.documents_skipped += u64::try_from(left_out.len()).unwrap_or(u64::MAX);
         gone_ids.extend(left_out);
         let mut by_file = gone_files.clone();
@@ -582,6 +621,7 @@ impl Work<'_> {
     async fn rows(
         &mut self,
         table: &Table,
+        earlier: Option<&Vectors>,
         decl: &Declaration,
         sources: Vec<Source>,
     ) -> Result<(Vec<Row>, Vec<String>), Error> {
@@ -628,49 +668,64 @@ impl Work<'_> {
             rows.push(row);
         }
         if !texts.is_empty() {
-            self.embed(table, &mut rows, texts).await?;
+            self.embed(table, earlier, &mut rows, texts).await?;
         }
         Ok((rows, left_out))
     }
 
     /// Gives `rows` the embeddings of `texts` (row, column, text): the one
-    /// the table holds for the same text, else the one the cache holds,
-    /// else a new one from the embedder.
+    /// the table, or else `earlier`, holds for the same text of the same
+    /// Document, else the one the cache holds, else a new one from the
+    /// embedder.
     async fn embed(
         &mut self,
         table: &Table,
+        earlier: Option<&Vectors>,
         rows: &mut [Row],
         texts: Vec<(usize, String, String)>,
     ) -> Result<(), Error> {
-        let ids: Vec<String> = texts
-            .iter()
-            .map(|(row, _, _)| rows[*row].id.clone())
-            .collect::<HashSet<_>>()
+        let texts: Vec<Text> = texts
             .into_iter()
+            .map(|(row, column, text)| Text {
+                id: rows[row].id.clone(),
+                row,
+                column,
+                digest: digest_of(&text),
+                text,
+            })
             .collect();
-        let stored = table.embeddings(&ids).await?;
-        let mut wanted: Vec<(usize, String, String)> = Vec::new();
-        for (row, column, text) in texts {
-            let digest = digest_of(&text);
-            let kept = stored
-                .get(&rows[row].id)
-                .and_then(|columns| columns.get(&column))
-                .filter(|embedding| embedding.digest == digest)
-                .map(|embedding| embedding.vector.clone());
-            if let Some(vector) = kept {
-                self.cache.vectors.insert(digest.clone(), vector);
+        let all: Vec<&Text> = texts.iter().collect();
+        let stored = table.embeddings(&ids_of(&all)).await?;
+        self.keep(&stored, &all);
+        if let Some(earlier) = earlier {
+            let missing: Vec<&Text> = texts
+                .iter()
+                .filter(|text| {
+                    !self.cache.vectors.contains_key(&text.digest)
+                        && !self.cache.refused.contains(&text.digest)
+                })
+                .collect();
+            if !missing.is_empty() {
+                // Read only as a source of vectors already made: one that
+                // cannot be read leaves its texts to the embedder.
+                if let Ok(stored) = earlier.embeddings(&ids_of(&missing)).await {
+                    self.keep(&stored, &missing);
+                }
             }
-            if self.cache.refused.contains(&digest) {
+        }
+        let mut wanted: Vec<(String, String)> = Vec::new();
+        for text in texts {
+            if self.cache.refused.contains(&text.digest) {
                 continue;
             }
-            if !self.cache.vectors.contains_key(&digest) {
-                wanted.push((row, column.clone(), text));
+            if !self.cache.vectors.contains_key(&text.digest) {
+                wanted.push((text.digest.clone(), text.text));
             }
-            rows[row].embeddings.insert(
-                column,
+            rows[text.row].embeddings.insert(
+                text.column,
                 Embedding {
                     vector: Vec::new(),
-                    digest,
+                    digest: text.digest,
                 },
             );
         }
@@ -689,10 +744,27 @@ impl Work<'_> {
         Ok(())
     }
 
-    /// Asks the embedder for the vectors of `wanted` the cache lacks, once
-    /// per distinct text, and keeps them in the cache. A text it refuses is
-    /// remembered and keeps no vector.
-    async fn embed_wanted(&mut self, wanted: Vec<(usize, String, String)>) -> Result<(), Error> {
+    /// Puts in the cache the vectors `stored` holds for `texts`: the one of
+    /// the same Document whose text has the same digest.
+    fn keep(&mut self, stored: &Embeddings, texts: &[&Text]) {
+        for text in texts {
+            let kept = stored.get(&text.id).and_then(|columns| {
+                columns
+                    .values()
+                    .find(|embedding| embedding.digest == text.digest)
+            });
+            if let Some(embedding) = kept {
+                self.cache
+                    .vectors
+                    .insert(text.digest.clone(), embedding.vector.clone());
+            }
+        }
+    }
+
+    /// Asks the embedder for the vectors of `wanted` (digest, text) the
+    /// cache lacks, once per distinct text, and keeps them in the cache. A
+    /// text it refuses is remembered and keeps no vector.
+    async fn embed_wanted(&mut self, wanted: Vec<(String, String)>) -> Result<(), Error> {
         let Some(embedder) = self.calls.embedder.clone() else {
             return Err(Fault::new(
                 VaultErrorCode::FailedPrecondition,
@@ -703,10 +775,7 @@ impl Work<'_> {
         let mut seen = HashSet::new();
         let mut texts: Vec<(String, String)> = wanted
             .into_iter()
-            .filter_map(|(_, _, text)| {
-                let digest = digest_of(&text);
-                seen.insert(digest.clone()).then_some((digest, text))
-            })
+            .filter(|(digest, _)| seen.insert(digest.clone()))
             .collect();
         while !texts.is_empty() {
             let (digests, batch): (Vec<String>, Vec<String>) = texts.drain(..).unzip();
@@ -727,6 +796,27 @@ impl Work<'_> {
         }
         Ok(())
     }
+}
+
+/// A text of a `vector` column to embed.
+struct Text {
+    /// The Document's id.
+    id: String,
+    /// Its row among those a batch writes.
+    row: usize,
+    column: String,
+    digest: String,
+    text: String,
+}
+
+/// The distinct Document ids of `texts`.
+fn ids_of(texts: &[&Text]) -> Vec<String> {
+    texts
+        .iter()
+        .map(|text| text.id.clone())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 /// The failure of a state whose commit left its repository while a round
@@ -1033,6 +1123,7 @@ mod tests {
     use scheda_api::v1::document_operation::Operation;
     use scheda_api::v1::embedder_ref::EmbedderRef;
     use scheda_api::v1::projector_ref::ProjectorRef;
+    use scheda_api::v1::rebuild::{Cause, Stage};
     use scheda_api::v1::{
         CollectionKey, ColumnKind, DocumentCreation, DocumentOperation, EmbedderErrorCode,
         IndexColumn, IndexDoc, IndexSchema, IndexValue, OpenOptions, ProjectorDescriptor,
@@ -1129,11 +1220,16 @@ mod tests {
     /// The ports of the tests, and the count of `Project` calls and of
     /// embedded texts.
     fn ports() -> (Ports, Arc<AtomicUsize>, Arc<AtomicUsize>) {
+        ports_of("model-a")
+    }
+
+    /// The ports of the tests, with an embedder of `model`.
+    fn ports_of(model: &str) -> (Ports, Arc<AtomicUsize>, Arc<AtomicUsize>) {
         let projected = Arc::new(AtomicUsize::new(0));
         let embedded = Arc::new(AtomicUsize::new(0));
         let count = Arc::clone(&embedded);
         let embedder = FixedEmbedder::new(
-            "model-a",
+            model,
             4,
             NonZeroUsize::new(8).unwrap(),
             move |texts: Vec<String>| {
@@ -1507,6 +1603,127 @@ mod tests {
         );
         let rows = rows(&vault, "notes").await;
         assert_eq!(rows.len(), 11);
+        assert!(rows.values().all(|(_, _, vector)| *vector));
+        vault.close().await.unwrap();
+    }
+
+    /// Asks `vault` for a rebuild and waits until it is done.
+    async fn reindexed(vault: &Arc<Vault>) {
+        let mut watch = vault.indexer().watch();
+        // The state now; each item after it is one the indexer published.
+        watch.next().await.unwrap().unwrap();
+        vault.indexer().reindex().unwrap();
+        loop {
+            let state = watch.next().await.unwrap().unwrap();
+            let Some(rebuild) = state.rebuild.as_option() else {
+                continue;
+            };
+            let stage = rebuild.stage.and_then(|stage| stage.as_known());
+            let cause = rebuild.cause.and_then(|cause| cause.as_known());
+            assert_ne!(stage, Some(Stage::STAGE_FAILED), "{state:?}");
+            if stage == Some(Stage::STAGE_DONE) && cause == Some(Cause::CAUSE_REINDEX) {
+                return;
+            }
+        }
+    }
+
+    /// The live generation's folder and the table name of `collection`.
+    async fn live_table(vault: &Arc<Vault>, collection: &str) -> (PathBuf, String) {
+        let root = Index::new(vault.path()).root().to_path_buf();
+        let collection = collection.to_owned();
+        blocking(move |cx| {
+            let generation = Layout::new(&root).current(cx)?.unwrap();
+            let commit = generation.read_commit(cx)?.unwrap();
+            Ok((
+                generation.dir().to_path_buf(),
+                commit.tables.get(&collection).unwrap().name.clone(),
+            ))
+        })
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rebuild_with_the_same_model_embeds_no_text_again_one_with_another_embeds_each() {
+        let scratch = Scratch::new("rebuild-vectors");
+        let (ports, _, embedded) = ports();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&vault, "notes", notes(30, 0)).await.unwrap();
+        wait_indexed(&vault).await;
+        assert_eq!(embedded.load(Ordering::SeqCst), 30);
+        let (before, _) = live_table(&vault, "notes").await;
+
+        reindexed(&vault).await;
+        let (after, _) = live_table(&vault, "notes").await;
+        assert_ne!(after, before, "the rebuild made a new generation");
+        assert_eq!(
+            embedded.load(Ordering::SeqCst),
+            30,
+            "the rebuild took the vectors of the live generation"
+        );
+        let kept = rows(&vault, "notes").await;
+        assert_eq!(kept.len(), 30);
+        assert!(kept.values().all(|(_, _, vector)| *vector));
+        vault.close().await.unwrap();
+
+        // Another model: the rebuild embeds every text with it.
+        let (ports, _, embedded) = ports_of("model-b");
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        reindexed(&vault).await;
+        assert_eq!(embedded.load(Ordering::SeqCst), 30);
+        let rows = rows(&vault, "notes").await;
+        assert_eq!(rows.len(), 30);
+        assert!(rows.values().all(|(_, _, vector)| *vector));
+        vault.close().await.unwrap();
+    }
+
+    /// A rebuild is how a broken Index is repaired: the vectors of a live
+    /// generation that cannot be read are made again.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rebuild_beside_a_generation_whose_vectors_cannot_be_read_embeds_them_again() {
+        let scratch = Scratch::new("rebuild-broken");
+        let (ports, _, embedded) = ports();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&vault, "notes", notes(30, 0)).await.unwrap();
+        wait_indexed(&vault).await;
+        assert_eq!(embedded.load(Ordering::SeqCst), 30);
+        let (dir, table) = live_table(&vault, "notes").await;
+        std::fs::remove_dir_all(dir.join(format!("{table}.lance")).join("data")).unwrap();
+
+        reindexed(&vault).await;
+        assert_eq!(embedded.load(Ordering::SeqCst), 60);
+        let rows = rows(&vault, "notes").await;
+        assert_eq!(rows.len(), 30);
         assert!(rows.values().all(|(_, _, vector)| *vector));
         vault.close().await.unwrap();
     }
