@@ -185,6 +185,7 @@ mod tests {
                 std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
             let dir = base.join(format!("scheda-check-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_when_the_test_ends(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             git()
                 .arg("init")
@@ -245,12 +246,6 @@ mod tests {
         async fn open(&self) -> Arc<Vault> {
             // `open` makes `.scheda/` owner-only.
             open(&self.0, OpenOptions::default()).await.unwrap()
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 

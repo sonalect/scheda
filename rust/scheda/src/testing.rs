@@ -2,7 +2,8 @@
 //! through the same path the objects take (the gate, the blocking steps, the
 //! write lock), so a test sees what a caller sees.
 
-use std::path::Path;
+use std::cell::RefCell;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use protocontract::BoxIter;
@@ -19,6 +20,38 @@ use crate::gate::Pass;
 use crate::ports::Ports;
 use crate::service;
 use crate::vault::Vault;
+
+thread_local! {
+    /// The scratch folders of the test this thread runs.
+    static LATER: Later = const { Later(RefCell::new(Vec::new())) };
+}
+
+/// Folders removed when the thread that holds them ends.
+struct Later(RefCell<Vec<PathBuf>>);
+
+impl Drop for Later {
+    fn drop(&mut self) {
+        for dir in self.0.get_mut().drain(..) {
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+}
+
+/// Removes the scratch folder `dir` when the thread of the test ends,
+/// whether the test passed or failed.
+///
+/// A Vault dropped without `Close` lets its indexer finish the round it is
+/// in, on the blocking pool of its runtime, and that round writes under
+/// `.scheda/index/`. Removed when the test's last value goes, the folder
+/// races the round: a file the round adds stops the removal, and the rest
+/// of the folder stays. The thread of a test ends after the runtime the
+/// test built was dropped, and dropping a runtime waits for its blocking
+/// steps, so the folder goes after the last round. The test harness runs
+/// each test on a thread of its own and joins it before it reports it.
+pub(crate) fn remove_when_the_test_ends(dir: &Path) {
+    let dir = dir.to_path_buf();
+    LATER.with(|later| later.0.borrow_mut().push(dir));
+}
 
 /// Opens the Vault at `path` with `options` and no port.
 pub(crate) async fn open(path: &Path, options: OpenOptions) -> Result<Arc<Vault>, Error> {

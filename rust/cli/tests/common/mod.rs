@@ -3,6 +3,7 @@
 //! written again as a library port, and a Vault opened by the library on
 //! the same folder.
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -21,7 +22,27 @@ use tokio::runtime::Runtime;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// A scratch directory that is removed when it is dropped.
+thread_local! {
+    /// The scratch directories of the test this thread runs.
+    static LATER: Later = const { Later(RefCell::new(Vec::new())) };
+}
+
+/// Directories removed when the thread that holds them ends.
+struct Later(RefCell<Vec<PathBuf>>);
+
+impl Drop for Later {
+    fn drop(&mut self) {
+        for root in self.0.get_mut().drain(..) {
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}
+
+/// A scratch directory, removed when the thread of the test that made it
+/// ends, whether the test passed or failed: after every child process the
+/// test ran was waited for, and after the Vaults the test opened with the
+/// library were closed ([`Opened`]). The test harness runs each test on a
+/// thread of its own and joins it before it reports it.
 pub struct Scratch {
     root: PathBuf,
 }
@@ -34,6 +55,7 @@ impl Scratch {
         let root = base.join(format!("scheda-cli-{name}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        LATER.with(|later| later.0.borrow_mut().push(root.clone()));
         Scratch { root }
     }
 
@@ -53,12 +75,6 @@ impl Scratch {
         let path = self.path(rel);
         std::fs::write(&path, bytes).unwrap();
         path.display().to_string()
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 
@@ -292,14 +308,38 @@ pub fn runtime() -> &'static Runtime {
     })
 }
 
+/// A Vault the library opened, closed when it is dropped, whether the test
+/// passed or failed. The runtime of the library side outlives every test: a
+/// Vault that is only dropped lets its indexer finish its round there, in
+/// the folder the test removes.
+pub struct Opened(Arc<dyn VaultSync>);
+
+impl std::ops::Deref for Opened {
+    type Target = Arc<dyn VaultSync>;
+
+    fn deref(&self) -> &Arc<dyn VaultSync> {
+        &self.0
+    }
+}
+
+impl Drop for Opened {
+    fn drop(&mut self) {
+        // A Vault the test closed already: a second `Close` is nothing.
+        let _ = self.0.close(Empty::default());
+    }
+}
+
+/// The Vault `request` opens, in the blocking form.
+pub fn open(request: VaultOpening) -> Opened {
+    let reference = runtime().block_on(Scheda.open(request)).unwrap();
+    let _inside = runtime().enter();
+    Opened(reference.to_sync().unwrap())
+}
+
 /// A Vault opened by the library on `path`, with the Projector of the
 /// command line and no other port.
-pub fn library(path: &Path) -> Arc<dyn VaultSync> {
-    let reference = runtime()
-        .block_on(Scheda.open(opening(path, "library")))
-        .unwrap();
-    let _inside = runtime().enter();
-    reference.to_sync().unwrap()
+pub fn library(path: &Path) -> Opened {
+    open(opening(path, "library"))
 }
 
 /// The collection `name` of `vault`.

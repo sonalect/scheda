@@ -1218,6 +1218,7 @@ mod tests {
                 std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
             let dir = base.join(format!("scheda-docs-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_when_the_test_ends(&dir);
             Scratch(dir)
         }
 
@@ -1250,12 +1251,6 @@ mod tests {
 
         fn lock(&self) -> Vec<u8> {
             std::fs::read(self.0.join(".scheda/commit.lock")).unwrap()
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 

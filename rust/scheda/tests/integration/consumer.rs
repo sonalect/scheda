@@ -194,15 +194,36 @@ fn request(path: &Path, with_embedder: bool, options: OpenOptions) -> VaultOpeni
     request
 }
 
+/// A Vault the consumer opened, closed when it is dropped, whether the test
+/// passed or failed. The consumer's runtime outlives every test: a Vault
+/// that is only dropped lets its indexer finish its round there, in the
+/// folder the test removes.
+struct Opened(Arc<dyn VaultSync>);
+
+impl std::ops::Deref for Opened {
+    type Target = Arc<dyn VaultSync>;
+
+    fn deref(&self) -> &Arc<dyn VaultSync> {
+        &self.0
+    }
+}
+
+impl Drop for Opened {
+    fn drop(&mut self) {
+        // A Vault the test closed already: a second `Close` is nothing.
+        let _ = self.0.close(Empty::default());
+    }
+}
+
 /// Opens with `request`, in the blocking form.
-fn open_request(request: VaultOpening) -> Result<Arc<dyn VaultSync>, Error> {
+fn open_request(request: VaultOpening) -> Result<Opened, Error> {
     let handle = handle();
     let reference = handle.block_on(Scheda.open(request))?;
     let _inside = handle.enter();
-    reference.to_sync()
+    reference.to_sync().map(Opened)
 }
 
-fn open_vault(path: &Path, with_embedder: bool) -> Arc<dyn VaultSync> {
+fn open_vault(path: &Path, with_embedder: bool) -> Opened {
     open_request(request(path, with_embedder, options())).unwrap()
 }
 
@@ -456,7 +477,7 @@ fn cause(state: &IndexState) -> Option<Cause> {
 struct Fixture {
     scratch: Scratch,
     path: PathBuf,
-    vault: Arc<dyn VaultSync>,
+    vault: Opened,
 }
 
 impl Fixture {

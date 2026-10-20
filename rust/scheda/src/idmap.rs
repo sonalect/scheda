@@ -658,6 +658,7 @@ mod tests {
                 std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
             let dir = base.join(format!("scheda-idmap-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_when_the_test_ends(&dir);
             Scratch(dir)
         }
 
@@ -769,12 +770,6 @@ mod tests {
         list_segments(&snap, declarations.get("log").unwrap())
             .unwrap()
             .len()
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
     }
 
     fn head(path: &Path) -> State {

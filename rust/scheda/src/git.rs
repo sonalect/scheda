@@ -14,7 +14,8 @@
 //!
 //! A command is awaited, not waited for on a thread: a push holds no thread
 //! for its seconds on the network. A call that is dropped while its command
-//! runs kills the command.
+//! runs kills the command and every process the command started
+//! ([`Running`]).
 
 use std::ffi::{OsStr, OsString};
 use std::io;
@@ -24,6 +25,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 
 use scheda_api::v1::VaultErrorCode;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use crate::error::{Error, Fault, git_fault, io as io_fault, redact_remote_text};
 
@@ -205,13 +207,15 @@ impl GitCmd {
 
     /// Runs the command and returns its output whatever the exit status
     /// was. Only a command that could not start is an error. Dropping the
-    /// future kills the command.
+    /// future kills the command and every process it started.
     pub(crate) async fn output(self) -> Result<GitOutput, Error> {
         #[cfg(test)]
         count(self.dir.as_deref());
-        let mut cmd = tokio::process::Command::from(self.command());
-        cmd.kill_on_drop(true);
-        match cmd.output().await {
+        let out = match Running::spawn(self.command()) {
+            Ok(running) => running.output().await,
+            Err(err) => Err(err),
+        };
+        match out {
             Ok(out) => Ok(GitOutput::from(out)),
             Err(err) => Err(spawn_fault(err).into()),
         }
@@ -251,6 +255,274 @@ impl GitCmd {
             Ok(out)
         } else {
             Err(out.failure().into())
+        }
+    }
+}
+
+/// A git command that runs, together with every process it starts.
+///
+/// For a mirror reached by `file://`, git runs the mirror's side on this
+/// machine (`git-receive-pack` and its hooks, `git-upload-pack`); for one
+/// reached by SSH, it runs `ssh`. Killing only `git` would leave those
+/// running. So on Unix the command leads a session of its own: everything
+/// it starts is in one process group (but for a process that makes a
+/// session of its own on purpose, as the master connection of `ssh`'s
+/// `ControlPersist` does), and no process of it can read the terminal of
+/// the caller, so a prompt of `ssh` fails at once instead of stopping the
+/// command. On Windows the command starts suspended, joins a
+/// job object, and only then runs, so everything it starts is in the job.
+///
+/// Dropped before the command was waited for (the call was dropped, or a
+/// timeout of the caller ended it), it kills the group, or the job: nothing
+/// the command started outlives the call. The group is killed while the
+/// command is not yet reaped, so its number is still the command's own. A
+/// command that ended by itself is left as it is: git waits for what it
+/// started, and a helper it leaves running on purpose stays.
+///
+/// The caller's own signals do not reach the command: Ctrl-C at a terminal
+/// ends the calling program, not git. A program that wants git gone on such
+/// a signal catches it and drops its calls.
+struct Running {
+    child: tokio::process::Child,
+    tree: tree::Tree,
+}
+
+impl Running {
+    fn spawn(cmd: Command) -> io::Result<Running> {
+        let mut cmd = tokio::process::Command::from(cmd);
+        cmd.kill_on_drop(true);
+        let tree = tree::Tree::prepare(&mut cmd)?;
+        let running = Running {
+            child: cmd.spawn()?,
+            tree,
+        };
+        running.tree.adopt(&running.child)?;
+        Ok(running)
+    }
+
+    /// Reads `stdout` and `stderr` to their end, then waits for the
+    /// command. The command is reaped only after its pipes closed, so a drop
+    /// before that finds it unreaped, even when a process it started holds
+    /// a pipe after it exited.
+    async fn output(mut self) -> io::Result<std::process::Output> {
+        let stdout = read_all(self.child.stdout.take());
+        let stderr = read_all(self.child.stderr.take());
+        let (stdout, stderr) = tokio::try_join!(stdout, stderr)?;
+        let status = self.child.wait().await?;
+        Ok(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.tree.kill(&self.child);
+    }
+}
+
+async fn read_all(pipe: Option<impl AsyncRead + Unpin>) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    if let Some(mut pipe) = pipe {
+        pipe.read_to_end(&mut bytes).await?;
+    }
+    Ok(bytes)
+}
+
+/// The session of a command on Unix.
+#[cfg(unix)]
+mod tree {
+    use std::ffi::c_int;
+    use std::io;
+
+    use tokio::process::{Child, Command};
+
+    // `pid_t` is `int` on every Unix the crate builds for.
+    unsafe extern "C" {
+        fn setsid() -> c_int;
+        fn kill(pid: c_int, signal: c_int) -> c_int;
+    }
+
+    /// `SIGKILL`: 9 on every Unix.
+    const SIGKILL: c_int = 9;
+
+    /// Nothing to hold: the session is the command's own.
+    pub(super) struct Tree;
+
+    impl Tree {
+        /// Makes the command lead a new session when it starts.
+        pub(super) fn prepare(cmd: &mut Command) -> io::Result<Tree> {
+            // SAFETY: the closure runs in the child between `fork` and
+            // `exec`. It makes one async-signal-safe system call and
+            // allocates nothing; `last_os_error` only reads `errno`.
+            unsafe {
+                cmd.pre_exec(|| {
+                    if setsid() == -1 {
+                        Err(io::Error::last_os_error())
+                    } else {
+                        Ok(())
+                    }
+                });
+            }
+            Ok(Tree)
+        }
+
+        /// Nothing to do once it runs: the session began before `exec`.
+        pub(super) fn adopt(&self, _child: &Child) -> io::Result<()> {
+            Ok(())
+        }
+
+        /// Kills every process of the group `child` leads, unless `child`
+        /// was reaped: a reaped command's number may name another group.
+        pub(super) fn kill(&self, child: &Child) {
+            let Some(pid) = child.id().and_then(|pid| c_int::try_from(pid).ok()) else {
+                return;
+            };
+            // SAFETY: a plain system call. `-pid` names the process group
+            // whose id is `pid`: the session the command leads, which its
+            // number keeps until it is reaped. A group already empty is
+            // `ESRCH`, which is what this wants.
+            unsafe {
+                kill(-pid, SIGKILL);
+            }
+        }
+    }
+}
+
+/// The job object of a command on Windows.
+#[cfg(windows)]
+mod tree {
+    use std::ffi::c_void;
+    use std::io;
+    use std::os::windows::io::{
+        AsRawHandle, HandleOrInvalid, HandleOrNull, OwnedHandle, RawHandle,
+    };
+
+    use tokio::process::{Child, Command};
+
+    const CREATE_SUSPENDED: u32 = 0x0000_0004;
+    const TH32CS_SNAPTHREAD: u32 = 0x0000_0004;
+    const THREAD_SUSPEND_RESUME: u32 = 0x0002;
+
+    /// `THREADENTRY32`.
+    #[repr(C)]
+    struct ThreadEntry {
+        size: u32,
+        usage: u32,
+        thread_id: u32,
+        owner_process_id: u32,
+        base_priority: i32,
+        delta_priority: i32,
+        flags: u32,
+    }
+
+    unsafe extern "system" {
+        fn CreateJobObjectW(attributes: *const c_void, name: *const u16) -> RawHandle;
+        fn AssignProcessToJobObject(job: RawHandle, process: RawHandle) -> i32;
+        fn TerminateJobObject(job: RawHandle, exit_code: u32) -> i32;
+        fn CreateToolhelp32Snapshot(flags: u32, process_id: u32) -> RawHandle;
+        fn Thread32First(snapshot: RawHandle, entry: *mut ThreadEntry) -> i32;
+        fn Thread32Next(snapshot: RawHandle, entry: *mut ThreadEntry) -> i32;
+        fn OpenThread(access: u32, inherit: i32, thread_id: u32) -> RawHandle;
+        fn ResumeThread(thread: RawHandle) -> u32;
+    }
+
+    /// The job the command and everything it starts belong to.
+    pub(super) struct Tree {
+        job: OwnedHandle,
+    }
+
+    impl Tree {
+        /// A new job, and the command set to start suspended.
+        pub(super) fn prepare(cmd: &mut Command) -> io::Result<Tree> {
+            // SAFETY: no security attributes and no name: a new job that
+            // only this handle reaches, owned by nothing else.
+            let job = unsafe {
+                HandleOrNull::from_raw_handle(CreateJobObjectW(std::ptr::null(), std::ptr::null()))
+            };
+            let job = OwnedHandle::try_from(job).map_err(|_| io::Error::last_os_error())?;
+            cmd.creation_flags(CREATE_SUSPENDED);
+            Ok(Tree { job })
+        }
+
+        /// Puts the suspended command in the job, then lets it run: it
+        /// starts nothing before it is in the job.
+        pub(super) fn adopt(&self, child: &Child) -> io::Result<()> {
+            let (Some(process), Some(id)) = (child.raw_handle(), child.id()) else {
+                return Err(io::Error::other("git ended before it started"));
+            };
+            // SAFETY: both handles are open: the job is held by `self`,
+            // the process by `child`.
+            if unsafe { AssignProcessToJobObject(self.job.as_raw_handle(), process) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            resume(id)
+        }
+
+        /// Ends every process of the job, unless the command was waited
+        /// for already.
+        pub(super) fn kill(&self, child: &Child) {
+            if child.id().is_some() {
+                // SAFETY: the job handle is open, held by `self`.
+                unsafe {
+                    TerminateJobObject(self.job.as_raw_handle(), 1);
+                }
+            }
+        }
+    }
+
+    /// Resumes the threads of the suspended process `id`: its main thread,
+    /// the only one it has.
+    fn resume(id: u32) -> io::Result<()> {
+        // SAFETY: a snapshot of the threads of the system, owned by nothing
+        // else; no pointer.
+        let snapshot = unsafe {
+            HandleOrInvalid::from_raw_handle(CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0))
+        };
+        let snapshot = OwnedHandle::try_from(snapshot).map_err(|_| io::Error::last_os_error())?;
+        let mut entry = ThreadEntry {
+            size: size_of::<ThreadEntry>() as u32,
+            usage: 0,
+            thread_id: 0,
+            owner_process_id: 0,
+            base_priority: 0,
+            delta_priority: 0,
+            flags: 0,
+        };
+        let mut resumed = false;
+        // SAFETY: the snapshot is open and `entry` is a `THREADENTRY32`
+        // whose size field is set.
+        let mut more = unsafe { Thread32First(snapshot.as_raw_handle(), &mut entry) } != 0;
+        while more {
+            if entry.owner_process_id == id {
+                // SAFETY: opens the thread by its id, a handle owned by
+                // nothing else; no pointer.
+                let thread = unsafe {
+                    HandleOrNull::from_raw_handle(OpenThread(
+                        THREAD_SUSPEND_RESUME,
+                        0,
+                        entry.thread_id,
+                    ))
+                };
+                let thread =
+                    OwnedHandle::try_from(thread).map_err(|_| io::Error::last_os_error())?;
+                // SAFETY: the thread handle is open.
+                if unsafe { ResumeThread(thread.as_raw_handle()) } == u32::MAX {
+                    return Err(io::Error::last_os_error());
+                }
+                resumed = true;
+            }
+            // SAFETY: as for `Thread32First`.
+            more = unsafe { Thread32Next(snapshot.as_raw_handle(), &mut entry) } != 0;
+        }
+        if resumed {
+            Ok(())
+        } else {
+            Err(io::Error::other(
+                "the thread of the new git process was not found",
+            ))
         }
     }
 }

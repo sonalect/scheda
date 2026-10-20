@@ -44,7 +44,7 @@ scheda-blocking = { workspace = true }
 serde = { workspace = true }
 serde_ignored = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time"] }
+tokio = { workspace = true, features = ["io-util", "macros", "process", "rt", "sync", "time"] }
 yaml_serde = { workspace = true }
 
 [dev-dependencies]

@@ -647,37 +647,176 @@ fn a_request_that_can_never_succeed_fails_at_once_while_the_write_lock_is_held()
     });
 }
 
-/// A mirror whose `pre-receive` hook says it started, then holds every push
-/// until the file `go` appears, then refuses it.
-#[cfg(unix)]
-fn stalling_mirror(scratch: &Scratch) -> (PathBuf, PathBuf, PathBuf) {
-    use std::os::unix::fs::PermissionsExt;
-
+/// A mirror whose `pre-receive` hook writes its process id, the one the
+/// operating system gave it, to `started`, then holds every push. It gives
+/// up after two minutes, so a test that fails leaves it behind for no
+/// longer than that.
+fn stalling_mirror(scratch: &Scratch) -> (PathBuf, PathBuf) {
     let mirror = scratch.join("mirror.git");
     std::fs::create_dir_all(&mirror).unwrap();
     git(&mirror, &["init", "--quiet", "--bare"]);
     let started = scratch.join("started");
-    let go = scratch.join("go");
+    let writing = scratch.join("started.tmp");
+    // Git for Windows runs a hook with an `sh` of its own, whose `$$` is
+    // not the process id of Windows.
+    let pid = if cfg!(windows) {
+        "$(cat /proc/$$/winpid)"
+    } else {
+        "$$"
+    };
     let hook = mirror.join("hooks/pre-receive");
     std::fs::write(
         &hook,
         format!(
-            "#!/bin/sh\ntouch '{}'\nwhile [ ! -f '{}' ]; do sleep 0.05; done\nexit 1\n",
-            started.display(),
-            go.display()
+            "#!/bin/sh\necho {pid} > '{writing}'\nmv '{writing}' '{started}'\ni=0\nwhile [ $i -lt 2400 ]; do sleep 0.05; i=$((i + 1)); done\nexit 1\n",
+            writing = sh_path(&writing),
+            started = sh_path(&started),
         ),
     )
     .unwrap();
-    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-    (mirror, started, go)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    (mirror, started)
 }
 
+/// `path` as the `sh` of a hook takes it: with forward slashes on Windows.
+fn sh_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
+/// The processes of a push, seen from outside through the hook of the
+/// mirror: whether any of them is still there.
 #[cfg(unix)]
+mod processes {
+    use std::ffi::c_int;
+
+    unsafe extern "C" {
+        fn getpgid(pid: c_int) -> c_int;
+        #[cfg(not(target_os = "linux"))]
+        fn kill(pid: c_int, signal: c_int) -> c_int;
+    }
+
+    /// The process group of a push: git, and what git runs for the mirror's
+    /// side of a `file://` push (`sh`, `git-receive-pack`, the hook).
+    pub struct Push {
+        group: c_int,
+    }
+
+    impl Push {
+        /// The push whose hook has the process id `hook`. Its group must be
+        /// its own: the group of this process never empties.
+        pub fn of(hook: u32) -> Push {
+            let group = group_of(c_int::try_from(hook).unwrap());
+            assert_ne!(
+                group,
+                group_of(0),
+                "the push runs in a process group of its own"
+            );
+            Push { group }
+        }
+
+        /// Whether a process of the push has not ended yet.
+        pub fn runs(&self) -> bool {
+            group_has_members(self.group)
+        }
+    }
+
+    /// The process group of `pid`; 0 is this process.
+    fn group_of(pid: c_int) -> c_int {
+        // SAFETY: a plain system call.
+        let group = unsafe { getpgid(pid) };
+        assert!(group > 0, "{}", std::io::Error::last_os_error());
+        group
+    }
+
+    /// Whether a process of the group `group` has not ended yet. A zombie
+    /// has ended: who reaps it, and when, is up to its parent.
+    #[cfg(target_os = "linux")]
+    fn group_has_members(group: c_int) -> bool {
+        std::fs::read_dir("/proc").unwrap().any(|entry| {
+            let Ok(entry) = entry else { return false };
+            let Ok(stat) = std::fs::read_to_string(entry.path().join("stat")) else {
+                return false;
+            };
+            // `pid (comm) state ppid pgrp …`; `comm` may hold spaces.
+            let Some((_, fields)) = stat.rsplit_once(')') else {
+                return false;
+            };
+            let mut fields = fields.split_whitespace();
+            let state = fields.next();
+            let pgrp = fields.nth(1).and_then(|pgrp| pgrp.parse::<c_int>().ok());
+            pgrp == Some(group) && state != Some("Z")
+        })
+    }
+
+    /// Whether a process of the group `group` is there: signal 0 checks and
+    /// sends nothing. `launchd` reaps an orphan at once.
+    #[cfg(not(target_os = "linux"))]
+    fn group_has_members(group: c_int) -> bool {
+        // `ESRCH`, 3 on every Unix: no process in the group.
+        const ESRCH: i32 = 3;
+        // SAFETY: a plain system call; signal 0 sends nothing.
+        let sent = unsafe { kill(-group, 0) };
+        sent == 0 || std::io::Error::last_os_error().raw_os_error() != Some(ESRCH)
+    }
+}
+
+/// The processes of a push, seen from outside through the hook of the
+/// mirror: whether the hook is still there.
+#[cfg(windows)]
+mod processes {
+    use std::os::windows::io::{AsRawHandle, HandleOrNull, OwnedHandle, RawHandle};
+
+    const SYNCHRONIZE: u32 = 0x0010_0000;
+    const WAIT_OBJECT_0: u32 = 0x0000_0000;
+    const WAIT_TIMEOUT: u32 = 0x0000_0102;
+
+    unsafe extern "system" {
+        fn OpenProcess(access: u32, inherit: i32, process_id: u32) -> RawHandle;
+        fn WaitForSingleObject(handle: RawHandle, milliseconds: u32) -> u32;
+    }
+
+    /// The hook of a push: the last process git starts for the mirror's
+    /// side of a `file://` push (git, `git-receive-pack`, the `sh` of the
+    /// hook). Killing git alone leaves it running; it ends with the job of
+    /// the push. The handle names this process even after its id is given
+    /// to another.
+    pub struct Push {
+        hook: OwnedHandle,
+    }
+
+    impl Push {
+        /// The push whose hook has the process id `hook`.
+        pub fn of(hook: u32) -> Push {
+            // SAFETY: opens the process by its id, to wait for it; the
+            // handle is owned by nothing else.
+            let handle =
+                unsafe { HandleOrNull::from_raw_handle(OpenProcess(SYNCHRONIZE, 0, hook)) };
+            let hook = OwnedHandle::try_from(handle)
+                .unwrap_or_else(|_| panic!("open the hook: {}", std::io::Error::last_os_error()));
+            Push { hook }
+        }
+
+        /// Whether the hook has not ended yet.
+        pub fn runs(&self) -> bool {
+            // SAFETY: the handle is open; a wait of 0 ms only looks.
+            match unsafe { WaitForSingleObject(self.hook.as_raw_handle(), 0) } {
+                WAIT_OBJECT_0 => false,
+                WAIT_TIMEOUT => true,
+                _ => panic!("wait for the hook: {}", std::io::Error::last_os_error()),
+            }
+        }
+    }
+}
+
 #[test]
 fn a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it() {
     both(|| async {
         let (scratch, path) = fresh("runtime-dropped-push");
-        let (bare, started, go) = stalling_mirror(&scratch);
+        let (bare, started) = stalling_mirror(&scratch);
         let url = format!("file://{}", bare.display());
         git(&path, &["remote", "add", "origin", &url]);
         let vault = open(&path, options().with_auto_sync(true).with_mirror(url))
@@ -698,8 +837,16 @@ fn a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it() 
             }
         })
         .await;
+        let hook = std::fs::read_to_string(&started).unwrap();
+        let push = processes::Push::of(hook.trim().parse().unwrap());
         writing.abort();
         assert!(writing.await.unwrap_err().is_cancelled());
+        within("every process of the dropped push to end", async {
+            while push.runs() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
         let local = head(&path);
         assert_ne!(local, before, "the write is stored");
         let branch = command(&path, &["symbolic-ref", "--short", "HEAD"])
@@ -713,10 +860,8 @@ fn a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it() 
             "the mirror did not take it"
         );
 
-        // The stalled push on the mirror's side gives up; the next push
-        // carries the commit.
+        // Without the hook, the next push carries the commit.
         std::fs::remove_file(bare.join("hooks/pre-receive")).unwrap();
-        std::fs::write(&go, b"").unwrap();
         let mirror = mirror(&vault).await.unwrap();
         mirror.push(Empty::default()).await.unwrap();
         assert_eq!(

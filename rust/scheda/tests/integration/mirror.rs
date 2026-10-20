@@ -930,8 +930,10 @@ fn auto_sync_pulls_at_open() {
 
 /// Makes `remote.origin.uploadpack` of the repository at `path` a script
 /// that creates the file `started`, waits until the file `go` exists (it
-/// polls the file itself), then runs the real `git upload-pack`: a fetch
-/// that stays on the network for as long as the test wants.
+/// polls the file itself, for a minute at most, so a test that fails leaves
+/// it behind for no longer than that), then runs the real `git
+/// upload-pack`: a fetch that stays on the network for as long as the test
+/// wants.
 #[cfg(unix)]
 fn hold_fetches(scratch: &Scratch, path: &Path) -> (PathBuf, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
@@ -942,7 +944,7 @@ fn hold_fetches(scratch: &Scratch, path: &Path) -> (PathBuf, PathBuf) {
     std::fs::write(
         &script,
         format!(
-            "#!/bin/sh\n: > '{}'\nwhile [ ! -e '{}' ]; do sleep 0.02; done\nexec git upload-pack \"$@\"\n",
+            "#!/bin/sh\n: > '{}'\ni=0\nwhile [ ! -e '{}' ] && [ $i -lt 3000 ]; do sleep 0.02; i=$((i + 1)); done\nexec git upload-pack \"$@\"\n",
             started.display(),
             go.display()
         ),

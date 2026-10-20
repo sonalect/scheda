@@ -4,6 +4,7 @@
 //! opening of a Vault by the library, and the two runtimes every test runs
 //! on.
 
+use std::cell::RefCell;
 use std::future::{Future, poll_fn};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
@@ -20,7 +21,35 @@ use tokio::runtime::Builder;
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// A scratch directory that is removed when it is dropped.
+thread_local! {
+    /// The scratch directories of the test this thread runs.
+    static LATER: Later = const { Later(RefCell::new(Vec::new())) };
+}
+
+/// Directories removed when the thread that holds them ends.
+struct Later(RefCell<Vec<PathBuf>>);
+
+impl Drop for Later {
+    fn drop(&mut self) {
+        for root in self.0.get_mut().drain(..) {
+            let _ = std::fs::remove_dir_all(&root);
+        }
+    }
+}
+
+/// A scratch directory, removed when the thread of the test that made it
+/// ends, whether the test passed or failed.
+///
+/// A Vault dropped without `Close` lets its indexer finish the round it is
+/// in, on the blocking pool of its runtime, and that round writes under
+/// `.scheda/index/`. Removed when the test's last value goes, the directory
+/// races the round: a file the round adds stops the removal, and the rest
+/// of the directory stays. The thread of a test ends after the runtimes the
+/// test built ([`both`]) were dropped, and dropping a runtime waits for its
+/// blocking steps, so the directory goes after the last round. The test
+/// harness runs each test on a thread of its own and joins it before it
+/// reports it. A runtime that outlives the test (a `static` one) is not
+/// waited for: a test on one closes its Vaults.
 pub struct Scratch {
     root: PathBuf,
 }
@@ -33,18 +62,13 @@ impl Scratch {
         let root = base.join(format!("scheda-{name}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
+        LATER.with(|later| later.0.borrow_mut().push(root.clone()));
         Scratch { root }
     }
 
     /// A path below the directory.
     pub fn join(&self, rel: &str) -> PathBuf {
         self.root.join(rel)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 

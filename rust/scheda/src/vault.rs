@@ -1073,6 +1073,7 @@ mod tests {
                 std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
             let dir = base.join(format!("scheda-vault-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_when_the_test_ends(&dir);
             std::fs::create_dir_all(dir.join("notes")).unwrap();
             std::fs::write(dir.join(".scheda.yaml"), "version: 3\nfuture: 1\n").unwrap();
             std::fs::write(
@@ -1082,12 +1083,6 @@ mod tests {
             .unwrap();
             crate::repo::fixture::commit_all(&dir);
             Scratch(dir)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
         }
     }
 

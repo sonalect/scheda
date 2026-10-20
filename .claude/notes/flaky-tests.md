@@ -43,6 +43,24 @@ uncached gates in a row green):
   Not fixed in `0.22`: work order 21 replaces it with the write's token
   (L7) and rewrites the search tests (L6).
 
+- Leftovers, not failures (20 October 2026): a day of runs left about
+  2,150 scratch folders in `/tmp` and 98 processes. A Vault dropped without
+  `Close` lets its indexer finish its round on the blocking pool; the round
+  wrote under `.scheda/index/` while `Scratch` removed the folder, and
+  `remove_dir_all` stopped at the first `ENOTEMPTY`. Scratch folders now go
+  when the test's thread ends (after its runtime, whose drop waits for
+  blocking steps); tests on a `static` runtime (`consumer.rs`, the CLI
+  tests) close their Vaults on drop. The processes were the mirror's side
+  of the dropped `auto_sync` push (`sh`, `git-receive-pack`, the stalling
+  hook), which killing `git` alone left running: the library now kills the
+  command's process group. Check after a run:
+  `pgrep -af '[g]it-receive-pack'`, `pgrep -af 'hooks/[p]re-receive'`.
+  Not yet proven on Windows: the job object of `git.rs` (`tree` for
+  Windows) and the Windows branch of
+  `runtime::a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it`
+  (the hook writes `/proc/$$/winpid`) were only type-checked for
+  `x86_64-pc-windows-msvc`; the first Windows CI run is their proof.
+
 **Why:** a rare red gate wastes a run and hides real failures.
 
 **How to apply:** to reproduce, loop

@@ -39,6 +39,14 @@ setting, and the Vault format moves to generation 3. To move from `0.22.1`
   `excludeLexicalIndex` or `excludeVectorIndex`.
 - The Vault format is generation 3: `VaultMarker.version` is `3`, and a
   Vault of generation 2 is `GENERATION`.
+- On Unix, `git clone`, `fetch`, and `push` run in a session of their own,
+  without the caller's terminal. `ssh` can no longer ask at that terminal
+  (a key's passphrase, an unknown host key): it fails at once, and the call
+  fails with the code of that failure, as it did before in a program with
+  no terminal. A signal of the terminal (Ctrl-C) no longer reaches `git`:
+  a program that wants a running push or fetch ended on such a signal
+  catches it and drops the call, which kills `git` (Scheda installs no
+  signal handler, and `Vault.Close` waits for the call).
 
 ### Removed
 
@@ -51,6 +59,13 @@ setting, and the Vault format moves to generation 3. To move from `0.22.1`
 
 ### Fixed
 
+- A call dropped while `git` runs (`clone`, `fetch`, `push`, and the push
+  of `auto_sync`) kills every process `git` started, not `git` alone. For a
+  mirror reached by `file://`, `git` runs the mirror's side on the same
+  machine (`sh`, `git-receive-pack` or `git-upload-pack`, and the mirror's
+  hooks), and for one reached by SSH it runs `ssh`; those kept running after
+  the drop, and never ended while a hook of the mirror waited. On Unix the
+  process group of the command is killed; on Windows its job object.
 - An `OpenOptions.mode` the contract does not define is `INVALID_ARGUMENT`.
   It was taken as `OPEN_MODE_OPEN_OR_CREATE`, so `open` could create a
   Vault the caller did not ask for.

@@ -2560,6 +2560,7 @@ mod on_lance {
         });
     }
 
+    #[cfg(feature = "encrypt")]
     fn holds(bytes: &[u8], marker: &str) -> bool {
         bytes
             .windows(marker.len())

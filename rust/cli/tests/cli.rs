@@ -1670,11 +1670,7 @@ fn an_index_of_another_projection_is_stale_and_one_reindex_mends_it() {
             .with_writer("library")
             .with_index_poll_ms(10)
             .into();
-        let reference = common::runtime().block_on(Scheda.open(request)).unwrap();
-        let vault = {
-            let _inside = common::runtime().enter();
-            reference.to_sync().unwrap()
-        };
+        let vault = common::open(request);
         let declaration = format!(r#"{{"name":"{NOTES}","schema":{PLAIN}}}"#);
         vault
             .create_collection(parse_command(declaration.as_bytes()).unwrap())
@@ -2038,11 +2034,7 @@ fn the_http_ports_write_vectors_and_search_like_the_library_with_the_same_ports(
     let mut request = opening(&path, "library");
     request.embedder = twin_embedder(&stub.base).into();
     request.reranker = twin_reranker(&stub.base).into();
-    let reference = common::runtime().block_on(Scheda.open(request)).unwrap();
-    let vault = {
-        let _inside = common::runtime().enter();
-        reference.to_sync().unwrap()
-    };
+    let vault = common::open(request);
     settle(&vault);
     let lib = json_lines(
         collection(&vault, "tc_vec")
