@@ -2,7 +2,15 @@
 //! trees, commits, the index, the branch) goes through the library in
 //! `repo`, in process; what stays here is running `git` for `clone`, `fetch`,
 //! `pull`, and `push`, which need the person's SSH configuration, agent, and
-//! credential helpers, and mapping what it prints on `stderr` to a failure.
+//! credential helpers, and mapping their failure to a code.
+//!
+//! The command line has a signal of its own for most of what can go wrong, and
+//! that signal is the one read: a push is told by `git push --porcelain`
+//! (git's documented machine format: one status line per reference), a fetch
+//! that finds no branch is a fetch that writes no reference. Only a refusal
+//! of the credentials and a failure of the network have no signal but the
+//! text on `stderr`, which is read for those two (git runs with `LC_ALL=C`);
+//! every other failure is `REPLICATION`.
 //!
 //! A command is awaited, not waited for on a thread: a push holds no thread
 //! for its seconds on the network. A call that is dropped while its command
@@ -17,11 +25,10 @@ use std::process::{Command, ExitStatus, Stdio};
 
 use scheda_api::v1::VaultErrorCode;
 
-use crate::error::{Error, Fault, git_fault, io as io_fault};
+use crate::error::{Error, Fault, git_fault, io as io_fault, redact_remote_text};
 
 /// What a finished git command left behind.
 pub(crate) struct GitOutput {
-    #[cfg(test)]
     stdout: Vec<u8>,
     stderr: String,
     status: ExitStatus,
@@ -33,7 +40,9 @@ impl GitOutput {
         self.status.success()
     }
 
-    /// The failure of a command that did not exit 0, from its `stderr`.
+    /// The failure of a command that did not exit 0: `UNAUTHENTICATED` or
+    /// `UNAVAILABLE` when `stderr` tells the credentials or the network
+    /// failed, `REPLICATION` otherwise.
     pub(crate) fn failure(&self) -> Fault {
         if self.stderr.trim().is_empty() {
             let message = match self.status.code() {
@@ -44,14 +53,6 @@ impl GitOutput {
         } else {
             git_fault(&self.stderr)
         }
-    }
-
-    /// Whether `stderr` says the mirror has no such branch: an empty mirror,
-    /// or one without the branch asked for.
-    pub(crate) fn missing_ref(&self) -> bool {
-        self.stderr
-            .to_ascii_lowercase()
-            .contains("couldn't find remote ref")
     }
 
     /// `stdout` as UTF-8 text.
@@ -78,7 +79,6 @@ impl GitOutput {
 impl From<std::process::Output> for GitOutput {
     fn from(out: std::process::Output) -> Self {
         Self {
-            #[cfg(test)]
             stdout: out.stdout,
             stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
             status: out.status,
@@ -269,42 +269,93 @@ pub(crate) async fn clone(url: &str, path: &Path) -> Result<(), Error> {
     Ok(())
 }
 
-/// `git fetch -- origin what` in the work tree at `dir`: the commit of
-/// `what` (a branch name, or `HEAD`) lands in `FETCH_HEAD`. `false` when the
-/// mirror has no such branch (an empty mirror); every other failure is the
-/// classified one.
-pub(crate) async fn fetch(dir: &Path, what: &str) -> Result<bool, Error> {
-    let out = git()
+/// The namespace of Scheda's own references for the mirror's branches: a
+/// fetch writes `refs/scheda/mirror/<branch>` for each branch the mirror
+/// holds, so it touches neither the Vault's branches nor `FETCH_HEAD`.
+pub(crate) const MIRROR_REFS: &str = "refs/scheda/mirror/";
+
+/// `git fetch --prune --no-tags --no-write-fetch-head --refmap= -- origin
+/// +refs/heads/*:refs/scheda/mirror/*` in the work tree at `dir`: every
+/// branch of the mirror lands in a reference of Scheda's own, and a branch
+/// the mirror deleted loses its reference. A mirror with no branch is a
+/// fetch that succeeds and writes nothing.
+///
+/// `--refmap=` keeps git from also updating the remote-tracking references
+/// the configuration names: a lock on one of them, held by a `git push`,
+/// would fail the fetch. The fetch changes no branch, no `HEAD`, and no file
+/// of the work tree, so it needs no write lock; two fetches of one
+/// repository must not run at once (the caller serialises them).
+pub(crate) async fn fetch(dir: &Path) -> Result<(), Error> {
+    git()
         .current_dir(dir)
         .arg("fetch")
+        .arg("--prune")
+        .arg("--no-tags")
+        .arg("--no-write-fetch-head")
+        .arg("--refmap=")
         .arg("--")
         .arg("origin")
-        .arg(what)
+        .arg(format!("+refs/heads/*:{MIRROR_REFS}*"))
+        .succeed()
+        .await?;
+    Ok(())
+}
+
+/// `git push --porcelain -- origin refs/heads/b:refs/heads/b` in the work
+/// tree at `dir`, for the branch `b`. The status of the reference in the
+/// porcelain output is the truth: a mirror that holds writes the Vault
+/// lacks refuses it (`MIRROR_AHEAD`), a mirror that refuses it for another
+/// reason is `REPLICATION` naming the reason. A push that never reached a
+/// reference is told by its `stderr` as any command is (credentials,
+/// network), else `REPLICATION`.
+///
+/// Git also updates the remote-tracking reference `refs/remotes/origin/b`
+/// after a push, and when it cannot lock that reference (another push is
+/// updating it) it prints an error, ignores it, and exits 0 with the
+/// reference's status unchanged; so only the porcelain status is read.
+pub(crate) async fn push(dir: &Path, branch: &str) -> Result<(), Error> {
+    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
+    let out = git()
+        .current_dir(dir)
+        .arg("push")
+        .arg("--porcelain")
+        .arg("--")
+        .arg("origin")
+        .arg(refspec)
         .output()
         .await?;
+    if let Some(refused) = refusal(&String::from_utf8_lossy(&out.stdout)) {
+        return Err(refused.into());
+    }
     if out.success() {
-        Ok(true)
-    } else if out.missing_ref() {
-        Ok(false)
+        Ok(())
     } else {
         Err(out.failure().into())
     }
 }
 
-/// `git push -- origin refs/heads/b:refs/heads/b` in the work tree at
-/// `dir`, for the branch `b`. A mirror that holds writes the Vault lacks
-/// refuses it: `MIRROR_AHEAD`.
-pub(crate) async fn push(dir: &Path, branch: &str) -> Result<(), Error> {
-    let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    git()
-        .current_dir(dir)
-        .arg("push")
-        .arg("--")
-        .arg("origin")
-        .arg(refspec)
-        .succeed()
-        .await?;
-    Ok(())
+/// The failure a `git push --porcelain` reports for a reference it
+/// rejected: a line `!<TAB><from>:<to><TAB><summary> (<reason>)`. `None`
+/// when no reference was rejected (none was tried, or all went through).
+fn refusal(porcelain: &str) -> Option<Fault> {
+    let line = porcelain.lines().find(|line| line.starts_with("!\t"))?;
+    let summary = line.splitn(3, '\t').nth(2).unwrap_or_default();
+    let behind = summary.starts_with("[rejected]")
+        && (summary.ends_with("(fetch first)") || summary.ends_with("(non-fast-forward)"));
+    if behind {
+        Some(Fault::new(
+            VaultErrorCode::MirrorAhead,
+            "the mirror holds writes the Vault has not pulled; pull, then push again",
+        ))
+    } else {
+        Some(Fault::new(
+            VaultErrorCode::Replication,
+            format!(
+                "the mirror refused the push: {}",
+                redact_remote_text(summary)
+            ),
+        ))
+    }
 }
 
 /// Runs `cmd` with `input` on its standard input. The input is written from
@@ -378,7 +429,7 @@ pub(crate) fn isolate_test_git_env() {
 mod tests {
     use scheda_api::v1::VaultErrorCode;
 
-    use super::{git, isolate_test_git_env, spawned_in};
+    use super::{git, isolate_test_git_env, refusal, spawned_in};
 
     #[test]
     fn a_command_runs_with_input_and_counts_as_a_process() {
@@ -404,6 +455,42 @@ mod tests {
         isolate_test_git_env();
         let error = git().arg("no-such-command").run().map(|_| ()).unwrap_err();
         assert!(error.is(VaultErrorCode::Replication));
+    }
+
+    #[test]
+    fn a_rejected_reference_is_told_by_its_porcelain_status() {
+        let ahead =
+            "To ../m.git\n!\trefs/heads/main:refs/heads/main\t[rejected] (fetch first)\nDone\n";
+        assert_eq!(
+            refusal(ahead).unwrap().vault_code(),
+            VaultErrorCode::MirrorAhead
+        );
+        let diverged =
+            "To m\n!\trefs/heads/main:refs/heads/main\t[rejected] (non-fast-forward)\nDone\n";
+        assert_eq!(
+            refusal(diverged).unwrap().vault_code(),
+            VaultErrorCode::MirrorAhead
+        );
+        let hook = "To m\n!\trefs/heads/main:refs/heads/main\t[remote rejected] (pre-receive hook declined)\nDone\n";
+        let fault = refusal(hook).unwrap();
+        assert_eq!(fault.vault_code(), VaultErrorCode::Replication);
+        assert!(fault.message().contains("pre-receive hook declined"));
+        let stale = "To m\n!\trefs/heads/main:refs/heads/main\t[rejected] (stale info)\nDone\n";
+        assert_eq!(
+            refusal(stale).unwrap().vault_code(),
+            VaultErrorCode::Replication
+        );
+    }
+
+    #[test]
+    fn a_push_that_rejected_nothing_has_no_refusal() {
+        assert!(
+            refusal("To m\n \trefs/heads/main:refs/heads/main\t35d7096..00e8795\nDone\n").is_none()
+        );
+        assert!(
+            refusal("To m\n*\trefs/heads/main:refs/heads/main\t[new branch]\nDone\n").is_none()
+        );
+        assert!(refusal("").is_none());
     }
 
     #[test]

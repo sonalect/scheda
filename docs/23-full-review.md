@@ -500,10 +500,31 @@ projection), D9 (tokio 1.54.0).
 
 ### S3. Mirror and files
 
-- [ ] R7 and R8 (D4, D5), with the exception written into
-      `no-workarounds.md`.
-- [ ] R9. The umask decides the modes.
-- [ ] D3: packing of the loose objects, after its measurement.
+- [x] R7 and R8 (D4, D5), with the exception written into
+      `no-workarounds.md`. A pull fetches into `refs/scheda/mirror/*`
+      under `.scheda/fetch.lock` and takes the write lock for the join
+      only; a push is read from `--porcelain`; the repository format from
+      its configuration (`tests/mirror.rs`:
+      `a_write_of_another_handle_is_not_held_up_by_a_fetch_waiting_on_the_network`,
+      `two_pulls_at_once_from_two_handles_both_succeed`,
+      `a_pull_after_the_mirror_deleted_the_branch_is_nothing_to_pull_and_forgets_it`,
+      `a_lock_on_a_remote_tracking_reference_fails_neither_a_pull_nor_a_push`,
+      `a_pull_from_an_empty_mirror_is_nothing_to_pull`; the porcelain
+      parser in `git::tests`;
+      `repo::tests::a_repository_the_library_cannot_read_is_unimplemented`,
+      a linked work tree included).
+- [x] R9. The umask decides the modes
+      (`commit::tests::the_umask_decides_the_modes_of_the_files_a_write_puts_in_the_tree`,
+      run in a child process under `umask 077`).
+- [x] D3: packing of the loose objects, after its measurement. 1000
+      appends of 200-byte lines: `.git/objects` 68.5 MB in 4008 loose
+      files before, about 7 MB at the worst in 8 packs after; the write
+      that packs takes about 0.25 s (`pack::tests`:
+      `many_appends_leave_few_loose_objects_and_a_small_database`,
+      `a_merge_takes_the_smallest_packs_and_loses_no_object`,
+      `a_pack_a_keep_file_protects_is_not_merged`; `tests/pack.rs`:
+      `four_hundred_appends_to_one_journal_are_packed_and_stay_readable`,
+      `the_nested_repository_of_an_isolated_collection_is_packed_too`).
 
 ### S4. Dependencies and cleanup
 

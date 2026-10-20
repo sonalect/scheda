@@ -38,6 +38,7 @@ mod isolated;
 mod journal;
 mod marker;
 mod mirror;
+mod pack;
 mod ports;
 #[cfg(feature = "index")]
 mod queries;

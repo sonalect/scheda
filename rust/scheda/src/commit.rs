@@ -55,6 +55,7 @@ use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
 use crate::index::State;
 use crate::indexer::Signal;
 use crate::isolated;
+use crate::pack;
 pub(crate) use crate::repo::Repo;
 use crate::repo::{NodeKind, Repos, Snap};
 
@@ -254,27 +255,25 @@ impl Committer {
         let turn = tokio::time::timeout_at(deadline, Arc::clone(&self.turn).lock_owned())
             .await
             .map_err(|_| lock_busy())?;
-        let root = self.root.clone();
-        let file = blocking(move |cx| open_lock_file(cx, &root)).await?;
-        let mut pause = FIRST_POLL;
-        loop {
-            // A try never waits: `flock` without blocking returns at once.
-            match file.try_lock() {
-                Ok(()) => break,
-                Err(FileLockError::WouldBlock) => {}
-                Err(FileLockError::Error(err)) => {
-                    return Err(io(err)).context("take the write lock");
-                }
-            }
-            if Instant::now() >= deadline {
-                return Err(lock_busy());
-            }
-            tokio::time::sleep(grow(&mut pause)).await;
-        }
-        Ok(Held {
-            _turn: turn,
-            flock: Flock::held(file),
-        })
+        let flock = flock_until(&self.root, LOCK_FILE, deadline, lock_busy).await?;
+        Ok(Held { _turn: turn, flock })
+    }
+
+    /// Waits for the fetch lock, `flock` on `{vault}/.scheda/fetch.lock`,
+    /// tried the way [`Committer::acquire`] tries the write lock, until the
+    /// write timeout runs out. The pulls of every handle and process of the
+    /// Vault take it one at a time for the `git fetch` they run, so two
+    /// fetches never update the same reference; a write never takes it, and
+    /// so is never held up by the network. The lock is let go when the
+    /// returned value is dropped.
+    ///
+    /// # Errors
+    ///
+    /// `ABORTED` (retryable) when another pull's fetch holds the lock past
+    /// the timeout. `STORAGE` when the lock file cannot be opened.
+    pub(crate) async fn acquire_fetch(&self) -> Result<Flock, Error> {
+        let deadline = Instant::now() + self.timeout;
+        flock_until(&self.root, FETCH_LOCK_FILE, deadline, fetch_busy).await
     }
 
     /// The write lock for a turn and a file lock already taken: recovers
@@ -291,16 +290,6 @@ impl Committer {
             held,
         })
     }
-
-    /// The write lock again, for a lock a step of the same call adopted
-    /// and let go of with [`WriteLock::release`]: nothing to recover, since
-    /// the lock was held all along.
-    pub(crate) fn resume(&self, _cx: &Blocking, held: Held) -> WriteLock<'_> {
-        WriteLock {
-            committer: self,
-            held,
-        }
-    }
 }
 
 /// The turn and the file lock of a write: it owns everything it holds, so
@@ -313,11 +302,49 @@ pub(crate) struct Held {
     flock: Flock,
 }
 
+/// Takes `flock` on `{vault}/.scheda/{name}`, tried without blocking with a
+/// pause between two tries (1 ms, doubling up to 25 ms), until `deadline`.
+/// `busy` makes the failure of a lock that stayed taken until then.
+async fn flock_until(
+    root: &Path,
+    name: &'static str,
+    deadline: Instant,
+    busy: fn() -> Error,
+) -> Result<Flock, Error> {
+    let root = root.to_path_buf();
+    let file = blocking(move |cx| open_lock_file(cx, &root, name)).await?;
+    let mut pause = FIRST_POLL;
+    loop {
+        // A try never waits: `flock` without blocking returns at once.
+        match file.try_lock() {
+            Ok(()) => return Ok(Flock::held(file)),
+            Err(FileLockError::WouldBlock) => {}
+            Err(FileLockError::Error(err)) => {
+                return Err(io(err)).context("take the lock");
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err(busy());
+        }
+        tokio::time::sleep(grow(&mut pause)).await;
+    }
+}
+
 /// The `ABORTED` failure of a lock that stayed taken until the deadline.
 fn lock_busy() -> Error {
     Fault::new(
         VaultErrorCode::Aborted,
         "another write holds the write lock; try again",
+    )
+    .into()
+}
+
+/// The `ABORTED` failure of a fetch lock that stayed taken until the
+/// deadline.
+fn fetch_busy() -> Error {
+    Fault::new(
+        VaultErrorCode::Aborted,
+        "another pull is fetching from the mirror; try again",
     )
     .into()
 }
@@ -330,13 +357,21 @@ fn grow(pause: &mut Duration) -> Duration {
     now
 }
 
+/// The name of the write lock's file under `.scheda/`.
+const LOCK_FILE: &str = "commit.lock";
+
+/// The name of the fetch lock's file under `.scheda/`.
+const FETCH_LOCK_FILE: &str = "fetch.lock";
+
 /// `{vault}/.scheda/commit.lock`.
 fn lock_path(root: &Path) -> PathBuf {
-    root.join(".scheda").join("commit.lock")
+    root.join(".scheda").join(LOCK_FILE)
 }
 
-fn open_lock_file(_cx: &Blocking, root: &Path) -> Result<File, Error> {
-    let path = lock_path(root);
+/// Opens `{vault}/.scheda/{name}`, owner-only, creating it and `.scheda/`
+/// on first use.
+fn open_lock_file(_cx: &Blocking, root: &Path, name: &str) -> Result<File, Error> {
+    let path = root.join(".scheda").join(name);
     if let Some(dir) = path.parent()
         && !dir.is_dir()
     {
@@ -378,12 +413,6 @@ pub(crate) struct WriteLock<'a> {
 }
 
 impl WriteLock<'_> {
-    /// The lock, kept for a later step of the same call: a pull waits for
-    /// the network between two steps with the lock in hand.
-    pub(crate) fn release(self) -> Held {
-        self.held
-    }
-
     /// The Vault the lock is for.
     pub(crate) fn root(&self) -> &Path {
         &self.committer.root
@@ -494,6 +523,14 @@ impl WriteLock<'_> {
         if settle(vault, snap, &plan, Mode::Write)? {
             empty_list(self.held.flock.file())?;
         }
+        let stored = changes
+            .iter()
+            .map(|change| match change {
+                Change::Put { bytes, .. } => bytes.len() as u64,
+                Change::Remove { .. } => 0,
+            })
+            .sum();
+        pack_loose(git, stored);
         Ok(Some(new))
     }
 
@@ -599,8 +636,17 @@ impl WriteLock<'_> {
         if settle(vault, snap, &plan, Mode::Write)? {
             empty_list(self.held.flock.file())?;
         }
+        pack_loose(git, 0);
         Ok(())
     }
+}
+
+/// Packs the loose objects of `git` when there are too many. The commit is
+/// stored by now, and packing only changes how the objects are kept, so a
+/// failure here is not the write's: the objects stay loose and the next
+/// write tries again. `stored` is the bytes of blobs the write stored.
+fn pack_loose(git: &Repository, stored: u64) {
+    let _ = pack::pack_if_due(git, &pack::Limits::DEFAULT, stored);
 }
 
 /// Whether a path of a tree that came from a mirror may be written into the
@@ -1020,8 +1066,8 @@ fn apply(
                     &loaded
                 }
             };
-            atomic_write(target, bytes).context("write a file")?;
-            set_mode(target, want.mode)?;
+            atomic_write(target, bytes, want.mode == FileMode::Executable)
+                .context("write a file")?;
             // A file of the nested repository, and the folders above it, are
             // for the owner alone.
             isolated::restrict_record(vault, &vault.join(item.rel))?;
@@ -1089,23 +1135,6 @@ fn stamp(entry: &mut IndexEntry, meta: &fs::Metadata) {
         entry.ctime = entry.mtime;
     }
     entry.file_size = u32::try_from(meta.len()).unwrap_or(u32::MAX);
-}
-
-#[cfg(unix)]
-fn set_mode(path: &Path, mode: FileMode) -> Result<(), Error> {
-    use std::os::unix::fs::PermissionsExt;
-    let bits = match mode {
-        FileMode::Regular => 0o644,
-        FileMode::Executable => 0o755,
-    };
-    fs::set_permissions(path, fs::Permissions::from_mode(bits))
-        .map_err(io)
-        .context("set the mode of a file")
-}
-
-#[cfg(not(unix))]
-fn set_mode(_path: &Path, _mode: FileMode) -> Result<(), Error> {
-    Ok(())
 }
 
 /// Removes the file at `rel` below `root` and the directories it leaves
@@ -1684,6 +1713,66 @@ mod tests {
         assert!(scratch.0.join("notes/.collection.yaml").is_file());
         let raw = scratch.out(&["cat-file", "commit", "HEAD"]);
         assert!(!raw.contains("gpgsig"), "{raw}");
+        assert_eq!(scratch.status(), "");
+    }
+
+    /// The umask is process-wide, so the check runs in a child process that
+    /// this test starts through `sh` with the umask set: the shared test
+    /// process, where other tests create files, keeps its own.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_umask_decides_the_modes_of_the_files_a_write_puts_in_the_tree() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CHILD: &str = "SCHEDA_TEST_UMASK_CHILD";
+        let name =
+            "commit::tests::the_umask_decides_the_modes_of_the_files_a_write_puts_in_the_tree";
+        if std::env::var_os(CHILD).is_none() {
+            let exe = std::env::current_exe().unwrap();
+            let status = std::process::Command::new("sh")
+                .args(["-c", "umask 077 && exec \"$0\" \"$@\""])
+                .arg(exe)
+                .args(["--exact", name, "--nocapture", "--test-threads=1"])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            let report = String::from_utf8_lossy(&status.stdout);
+            assert!(status.status.success(), "the child with umask 077 failed");
+            // A name that matches no test would also exit 0.
+            assert!(
+                report.contains("1 passed"),
+                "the child ran no test: {report}"
+            );
+            return;
+        }
+        let scratch = Scratch::new("umask");
+        let vault = scratch.open().await;
+        locked(&vault, |lock| {
+            let snap = lock.snapshot(Repo::Main)?;
+            lock.commit_in(
+                &snap,
+                "two files",
+                &[
+                    Change::Put {
+                        path: "a/run.sh".to_owned(),
+                        bytes: b"#!/bin/sh\n".to_vec(),
+                        mode: FileMode::Executable,
+                    },
+                    Change::put("a/plain.txt", b"x".to_vec()),
+                ],
+            )
+        })
+        .await
+        .unwrap();
+        let mode = |rel: &str| {
+            std::fs::metadata(scratch.0.join(rel))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777
+        };
+        assert_eq!(mode("a/plain.txt"), 0o600);
+        assert_eq!(mode("a/run.sh"), 0o700);
         assert_eq!(scratch.status(), "");
     }
 

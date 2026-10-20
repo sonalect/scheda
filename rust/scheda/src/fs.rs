@@ -52,13 +52,18 @@ impl Drop for Flock {
 /// process, nor of two processes alive at once, share a name, and a name a
 /// dead process left behind is passed over. It is removed when the write
 /// fails after making it.
-pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), Error> {
+///
+/// The file is made with mode `0666`, or `0777` when `executable`, so the
+/// process umask decides what is left, as it does for a file git writes. No
+/// library code reads or sets the umask.
+pub(crate) fn atomic_write(path: &Path, bytes: &[u8], executable: bool) -> Result<(), Error> {
     if let Some(dir) = path.parent() {
         fs::create_dir_all(dir)
             .map_err(io)
             .context("atomic_write: create directory")?;
     }
-    write_tmp_then_rename(path, bytes, false)
+    let mode = if executable { 0o777 } else { 0o666 };
+    write_tmp_then_rename(path, bytes, mode)
 }
 
 /// [`atomic_write`] for a file under `{vault}/.scheda/`: the directories it
@@ -68,7 +73,7 @@ pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> Result<(), Erro
     if let Some(dir) = path.parent() {
         create_dir_private(dir).context("atomic_write: create directory")?;
     }
-    write_tmp_then_rename(path, bytes, true)
+    write_tmp_then_rename(path, bytes, 0o600)
 }
 
 /// Removes the temporary files of [`atomic_write`] directly in `dir`: what
@@ -117,19 +122,19 @@ pub(crate) fn create_dir_private(dir: &Path) -> Result<(), Error> {
     builder.create(dir).map_err(io).map_err(Error::from)
 }
 
-/// Writes `bytes` to a new temporary file beside `path`, owner-only when
-/// `private`, and renames it over `path`.
-fn write_tmp_then_rename(path: &Path, bytes: &[u8], private: bool) -> Result<(), Error> {
+/// Writes `bytes` to a new temporary file beside `path`, created with Unix
+/// `mode` (the umask applies to it), and renames it over `path`.
+fn write_tmp_then_rename(path: &Path, bytes: &[u8], mode: u32) -> Result<(), Error> {
     let dir = path.parent().unwrap_or_else(|| Path::new("."));
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    if private {
+    {
         use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+        options.mode(mode);
     }
     #[cfg(not(unix))]
-    let _ = private;
+    let _ = mode;
     let (tmp, file) = create_temporary(dir, &options, &NEXT_TMP)?;
     let written = fill_then_rename(file, &tmp, path, bytes);
     if written.is_err() {
@@ -547,8 +552,8 @@ mod tests {
     fn atomic_write_creates_parents_and_replaces_without_leftovers() {
         let scratch = Scratch::new("atomic");
         let path = scratch.0.join("a").join("b.txt");
-        atomic_write(&path, b"one").unwrap();
-        atomic_write(&path, b"two").unwrap();
+        atomic_write(&path, b"one", false).unwrap();
+        atomic_write(&path, b"two", false).unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"two");
         let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
             .unwrap()
@@ -607,7 +612,7 @@ mod tests {
         let scratch = Scratch::new("atomic-fail");
         let file = scratch.0.join("f");
         std::fs::write(&file, b"x").unwrap();
-        let error = atomic_write(&file.join("child"), b"y").unwrap_err();
+        let error = atomic_write(&file.join("child"), b"y", false).unwrap_err();
         assert!(error.is(VaultErrorCode::Storage));
     }
 

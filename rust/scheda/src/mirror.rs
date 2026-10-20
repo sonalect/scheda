@@ -7,9 +7,16 @@
 //! process: the remote's configuration, reading the fetched commit, the
 //! join, and the move of the branch.
 //!
-//! A pull takes the write lock like a write, since it moves `HEAD` and the
-//! work tree, and holds it while `git fetch` runs. What it does with the
-//! fetched commit depends on the history:
+//! A pull has two parts. It first fetches every branch of the mirror into
+//! references of Scheda's own (`refs/scheda/mirror/*`), without the write
+//! lock: the network can be slow, and no writer of any handle or process
+//! waits for it. The fetches of one Vault take turns on a lock file of their
+//! own, `.scheda/fetch.lock`, so two pulls never update the same reference;
+//! a write never takes it. It then takes the write lock like a write, since
+//! it moves `HEAD` and the work tree, and joins the commit the reference of
+//! the branch `HEAD` names holds (no such reference, a mirror without that
+//! branch: nothing to pull). What it does with that commit depends on the
+//! history:
 //!
 //! - the Vault already holds it: nothing changes;
 //! - the Vault's `HEAD` is an ancestor of it: `HEAD` moves forward to it;
@@ -144,34 +151,33 @@ impl Vault {
         Ok(short_name(&reference).to_owned())
     }
 
-    /// The first step of a pull, under the write lock `held`: what to fetch
-    /// (the branch `HEAD` names, or `HEAD` of the mirror for a branch with
-    /// no commit yet). The lock comes back, for the fetch and the join.
-    fn pull_branch(&self, cx: &Blocking, held: Held) -> Result<(Held, String), Error> {
-        let lock = self.lock(cx, held)?;
-        let snap = lock.snapshot(Repo::Main)?;
+    /// The first step of a pull, before the network: the Vault has a
+    /// mirror.
+    fn pull_check(&self, _cx: &Blocking) -> Result<(), Error> {
+        let snap = self.repos().snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
         if repo::origin_of(git)?.is_none() {
             return Err(no_mirror().into());
         }
-        let reference = branch_of(git)?;
-        let wanted = if snap.commit().is_some() {
-            short_name(&reference).to_owned()
-        } else {
-            String::from("HEAD")
-        };
-        Ok((lock.release(), wanted))
+        Ok(())
     }
 
-    /// The last step of a pull, under the write lock `held` taken for its
-    /// first: the commit `git fetch` left in `FETCH_HEAD`, joined to the
-    /// Vault's history.
+    /// The last step of a pull, under the write lock `held`: the commit the
+    /// reference of the mirror's branch holds, joined to the Vault's
+    /// history. The branch is the one `HEAD` names, read under the lock; a
+    /// branch with no commit yet takes the mirror's branch of the same name
+    /// (a Vault always has the marker commit, so this only happens in a
+    /// repository Scheda did not make). No such reference: nothing to pull.
     fn pull_join(&self, cx: &Blocking, held: Held) -> Result<(), Error> {
-        let lock = self.committer().resume(cx, held);
+        let lock = self.lock(cx, held)?;
         let snap = lock.snapshot(Repo::Main)?;
         let git = snap.repository().ok_or_else(repository_missing)?;
-        let Some(theirs) = fetched_commit(git)? else {
-            return Ok(());
+        let reference = branch_of(git)?;
+        let mirrored = format!("{}{}", git::MIRROR_REFS, short_name(&reference));
+        let theirs = match git.refname_to_id(&mirrored) {
+            Ok(id) => id,
+            Err(err) if err.code() == ErrorCode::NotFound => return Ok(()),
+            Err(err) => return Err(lib_fault(err).into()),
         };
         let theirs_commit = git.find_commit(theirs).map_err(lib_fault)?;
         let Some(ours) = snap.commit() else {
@@ -295,12 +301,15 @@ pub(crate) async fn push(pass: &Pass) -> Result<Empty, Error> {
     Ok(Empty::default())
 }
 
-/// Brings the writes of the mirror into the Vault. Takes the write lock.
+/// Brings the writes of the mirror into the Vault.
 ///
-/// Fetches the branch `HEAD` names with `git fetch -- origin <branch>`
-/// (`HEAD` of the mirror for a branch with no commit yet); a mirror without
-/// that branch, an empty mirror, is nothing to pull. Then, in process: a
-/// commit the Vault holds already changes nothing; a mirror that only adds
+/// Fetches the branches of the mirror into references of Scheda's own
+/// (`git fetch --prune`, see `git::fetch`) without the write lock, holding
+/// only the fetch lock, which other pulls share and writes never take. Then
+/// takes the write lock and reads the reference of the branch `HEAD` names
+/// (for a branch with no commit yet, the branch of that name too); a mirror
+/// without that branch, an empty mirror or one that deleted it, is nothing
+/// to pull. In process: a commit the Vault holds already changes nothing; a mirror that only adds
 /// to the Vault's history moves `HEAD` forward; histories that both moved
 /// are joined path by path in one commit with both parents (`join the
 /// mirror's writes`). The work tree follows `HEAD` as after a write; a file
@@ -318,8 +327,8 @@ pub(crate) async fn push(pass: &Pass) -> Result<Empty, Error> {
 /// has no marker, `INVALID_ARGUMENT` (naming `.scheda.yaml`, or the
 /// collection file) when the marker or a collection file does not load; in
 /// each of these, the Vault, its work tree, and git's index are as they
-/// were. `ABORTED` (retryable) when the write lock is not free within
-/// `write_timeout_ms` or `HEAD` moved under the pull; the codes of [`push`]
+/// were. `ABORTED` (retryable) when the fetch lock or the write lock is not
+/// free within `write_timeout_ms` or `HEAD` moved under the pull; the codes of [`push`]
 /// for the network.
 pub(crate) async fn pull(pass: &Pass) -> Result<Empty, Error> {
     pull_now(pass).await.context("pull from the mirror")?;
@@ -386,16 +395,17 @@ async fn push_now(pass: &Pass) -> Result<(), Error> {
 }
 
 async fn pull_now(pass: &Pass) -> Result<(), Error> {
-    let held = acquire(pass).await?;
-    let (held, wanted) = pass
-        .step(move |cx, vault| vault.pull_branch(cx, held))
-        .await?;
-    if !git::fetch(pass.vault().path(), &wanted)
-        .await
-        .context("fetch")?
+    pass.step(|cx, vault| vault.pull_check(cx)).await?;
     {
-        return Ok(());
+        let _fetching = pass
+            .vault()
+            .committer()
+            .acquire_fetch()
+            .await
+            .context("take the fetch lock")?;
+        git::fetch(pass.vault().path()).await.context("fetch")?;
     }
+    let held = acquire(pass).await?;
     pass.step(move |cx, vault| vault.pull_join(cx, held)).await
 }
 
@@ -409,22 +419,6 @@ fn repository_missing() -> Fault {
 /// The branch name of a full reference name.
 fn short_name(reference: &str) -> &str {
     reference.strip_prefix("refs/heads/").unwrap_or(reference)
-}
-
-/// The commit `git fetch` left in `FETCH_HEAD`, if it left one.
-fn fetched_commit(git: &Repository) -> Result<Option<Oid>, Error> {
-    let mut found = None;
-    let read = git.fetchhead_foreach(|_, _, oid, merge| {
-        if merge && found.is_none() {
-            found = Some(*oid);
-        }
-        true
-    });
-    match read {
-        Ok(()) => Ok(found),
-        Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
-        Err(err) => Err(lib_fault(err).into()),
-    }
 }
 
 /// The tree of the join of `ours` and `theirs`: the tree of `ours` with what

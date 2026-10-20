@@ -226,7 +226,12 @@ fn foreign_message(error: &Error) -> String {
     }
 }
 
-/// The class of a failed git command, read from its `stderr`.
+/// The class of a failed git command, read from its `stderr`. Only a
+/// refusal of the credentials and a failure of the network are read from
+/// there: the git command line has no other signal for them. Everything
+/// else git reports has a signal of its own (the status of a reference in
+/// `git push --porcelain`, the references a fetch wrote, a repository's
+/// configuration) and is classified by it where the command is run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum GitFailure {
     /// The mirror refused the credentials.
@@ -237,28 +242,14 @@ pub(crate) enum GitFailure {
     Timeout,
     /// The mirror's host, or the network to it, cannot be reached.
     HostUnreachable,
-    /// The mirror holds writes this Vault has not pulled.
-    NotFastForward,
-    /// A merge stopped on conflicts.
-    MergeConflict,
-    /// Git reports a conflict outside a merge.
-    Conflict,
-    /// Another git process holds a lock file.
-    Locked,
-    /// Local changes would be overwritten.
-    Dirty,
-    /// The branch has no commit yet.
-    UnbornBranch,
-    /// The repository, remote, or path is not there.
-    NotFound,
     /// Any other failure.
     Other,
 }
 
 impl GitFailure {
     /// Classifies the `stderr` of a git command. Patterns are matched on
-    /// lower-cased text (Scheda runs git with `LC_ALL=C`); a more specific
-    /// class wins over [`GitFailure::Other`].
+    /// lower-cased text (Scheda runs git with `LC_ALL=C`); a text no
+    /// pattern knows is [`GitFailure::Other`].
     #[must_use]
     pub(crate) fn classify(stderr: &str) -> GitFailure {
         let text = stderr.to_ascii_lowercase();
@@ -272,29 +263,8 @@ impl GitFailure {
         if matches_timeout(hay) {
             return GitFailure::Timeout;
         }
-        if matches_nff(hay) {
-            return GitFailure::NotFastForward;
-        }
-        if matches_dirty(hay) {
-            return GitFailure::Dirty;
-        }
-        if matches_unborn(hay) {
-            return GitFailure::UnbornBranch;
-        }
-        if matches_locked(hay) {
-            return GitFailure::Locked;
-        }
-        if hay.contains("merge conflict") || hay.contains("fix conflicts") {
-            return GitFailure::MergeConflict;
-        }
-        if hay.contains("conflict") {
-            return GitFailure::Conflict;
-        }
         if matches_host_unreachable(hay) {
             return GitFailure::HostUnreachable;
-        }
-        if matches_not_found(hay) {
-            return GitFailure::NotFound;
         }
         GitFailure::Other
     }
@@ -305,13 +275,7 @@ impl GitFailure {
         match self {
             GitFailure::Auth | GitFailure::Certificate => VaultErrorCode::Unauthenticated,
             GitFailure::Timeout | GitFailure::HostUnreachable => VaultErrorCode::Unavailable,
-            GitFailure::NotFastForward => VaultErrorCode::MirrorAhead,
-            GitFailure::MergeConflict | GitFailure::Conflict => VaultErrorCode::MirrorConflict,
-            GitFailure::Locked => VaultErrorCode::Aborted,
-            GitFailure::Dirty
-            | GitFailure::UnbornBranch
-            | GitFailure::NotFound
-            | GitFailure::Other => VaultErrorCode::Replication,
+            GitFailure::Other => VaultErrorCode::Replication,
         }
     }
 }
@@ -386,35 +350,6 @@ fn matches_timeout(hay: &str) -> bool {
         || hay.contains("couldn't connect to server")
 }
 
-fn matches_nff(hay: &str) -> bool {
-    hay.contains("non-fast-forward")
-        || hay.contains("not possible to fast-forward")
-        || hay.contains("not a fast-forward")
-        || hay.contains("updates were rejected because the remote contains work")
-        || (hay.contains("failed to push some refs") && hay.contains("rejected"))
-}
-
-fn matches_dirty(hay: &str) -> bool {
-    hay.contains("your local changes")
-        || hay.contains("please commit your changes or stash")
-        || hay.contains("not uptodate")
-        || hay.contains("uncommitted changes")
-        || hay.contains("would be overwritten by")
-}
-
-fn matches_unborn(hay: &str) -> bool {
-    hay.contains("does not have any commits yet")
-        || hay.contains("needed a single revision")
-        || hay.contains("unknown revision or path not in the working tree")
-        || hay.contains("ambiguous argument 'head'")
-}
-
-fn matches_locked(hay: &str) -> bool {
-    hay.contains("index.lock")
-        || (hay.contains("unable to create") && hay.contains(".lock"))
-        || hay.contains("unable to lock")
-}
-
 fn matches_host_unreachable(hay: &str) -> bool {
     hay.contains("network is unreachable")
         || hay.contains("network unreachable")
@@ -427,18 +362,6 @@ fn matches_host_unreachable(hay: &str) -> bool {
         || hay.contains("nodename nor servname")
         || hay.contains("no route to host")
         || hay.contains("host is unreachable")
-}
-
-fn matches_not_found(hay: &str) -> bool {
-    hay.contains("not a git repository")
-        || hay.contains("repository not found")
-        || (hay.contains("repository '") && hay.contains("' not found"))
-        || (hay.contains("pathspec") && hay.contains("did not match"))
-        || hay.contains("no such remote")
-        || hay.contains("couldn't find remote ref")
-        || hay.contains("could not find remote")
-        || hay.contains("no such file or directory")
-        || hay.contains("cannot change to")
 }
 
 /// Drop userinfo, path, and query from remote URLs in a foreign error string.
@@ -782,65 +705,33 @@ mod tests {
                 "ssh: connect to host github.com port 22: Connection refused",
                 GitFailure::HostUnreachable,
             ),
+            // Not credentials or the network: no class of its own, whatever
+            // the text says.
             (
                 "fatal: not a git repository (or any of the parent directories): .git",
-                GitFailure::NotFound,
+                GitFailure::Other,
             ),
             (
                 "fatal: repository 'https://github.com/foo/bar.git' not found",
-                GitFailure::NotFound,
+                GitFailure::Other,
             ),
-            (
-                "fatal: pathspec 'notes/missing.md' did not match any files",
-                GitFailure::NotFound,
-            ),
-            ("error: No such remote 'origin'", GitFailure::NotFound),
             (
                 "! [rejected]        main -> main (non-fast-forward)\nerror: failed to push some refs to 'https://github.com/org/repo.git'",
-                GitFailure::NotFastForward,
-            ),
-            (
-                "fatal: Not possible to fast-forward, aborting.",
-                GitFailure::NotFastForward,
-            ),
-            (
-                "fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.",
-                GitFailure::UnbornBranch,
-            ),
-            (
-                "fatal: your current branch 'main' does not have any commits yet",
-                GitFailure::UnbornBranch,
-            ),
-            ("fatal: Needed a single revision", GitFailure::UnbornBranch),
-            (
-                "error: Your local changes to the following files would be overwritten by merge:",
-                GitFailure::Dirty,
-            ),
-            (
-                "error: Entry 'notes/a.md' not uptodate. Cannot merge.",
-                GitFailure::Dirty,
+                GitFailure::Other,
             ),
             (
                 "fatal: Unable to create '/tmp/vault/.git/index.lock': File exists.",
-                GitFailure::Locked,
+                GitFailure::Other,
             ),
-            ("fatal: remote origin already exists.", GitFailure::Other),
             (
-                "fatal: this operation must be run in a work tree",
+                "error: Your local changes to the following files would be overwritten by merge:",
                 GitFailure::Other,
             ),
             (
                 "CONFLICT (content): Merge conflict in notes/a.md",
-                GitFailure::MergeConflict,
+                GitFailure::Other,
             ),
-            (
-                "error: could not apply 1a2b3c4... Fix conflicts and run git rebase --continue",
-                GitFailure::MergeConflict,
-            ),
-            (
-                "CONFLICT (modify/delete): a.md deleted in HEAD",
-                GitFailure::Conflict,
-            ),
+            ("fatal: remote origin already exists.", GitFailure::Other),
         ];
         for (stderr, want) in cases {
             assert_eq!(GitFailure::classify(stderr), *want, "{stderr}");
@@ -860,13 +751,6 @@ mod tests {
             (GitFailure::Certificate, C::Unauthenticated, false),
             (GitFailure::Timeout, C::Unavailable, true),
             (GitFailure::HostUnreachable, C::Unavailable, true),
-            (GitFailure::NotFastForward, C::MirrorAhead, false),
-            (GitFailure::MergeConflict, C::MirrorConflict, false),
-            (GitFailure::Conflict, C::MirrorConflict, false),
-            (GitFailure::Locked, C::Aborted, true),
-            (GitFailure::Dirty, C::Replication, false),
-            (GitFailure::UnbornBranch, C::Replication, false),
-            (GitFailure::NotFound, C::Replication, false),
             (GitFailure::Other, C::Replication, false),
         ];
         for (failure, code, retryable) in rows {

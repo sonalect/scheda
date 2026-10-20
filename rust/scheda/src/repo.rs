@@ -19,8 +19,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use git2::{
-    DiffOptions, ErrorClass, ErrorCode, FileMode, Oid, Repository, RepositoryInitOptions,
-    StatusOptions,
+    DiffOptions, ErrorCode, FileMode, Oid, Repository, RepositoryInitOptions, StatusOptions,
 };
 use scheda_api::v1::VaultErrorCode;
 
@@ -99,23 +98,56 @@ pub(crate) fn init_library() -> Result<(), Fault> {
     Ok(())
 }
 
-/// `UNIMPLEMENTED` for the failure the library reports when a repository
-/// uses a format it cannot read (SHA-256 objects, reftable refs), the
-/// failure itself otherwise.
-fn open_fault(err: git2::Error) -> Fault {
-    let message = err.message().to_ascii_lowercase();
-    let unsupported = err.class() == ErrorClass::Repository
-        && (message.contains("unsupported extension") || message.contains("unknown object format"));
-    if unsupported {
-        Fault::new(
+/// The failure of a repository the library would not open. The repository's
+/// own configuration is read for the two extensions this build cannot read,
+/// `extensions.objectformat` other than `sha1` (SHA-256 objects) and
+/// `extensions.refstorage` other than `files` (reftable references); with
+/// either the failure is `UNIMPLEMENTED`. Any other failure is the
+/// library's. `root` is the work tree or git directory that was opened;
+/// with `search_above`, the folders above it were searched too.
+fn open_fault(root: &Path, search_above: bool, err: git2::Error) -> Fault {
+    match unsupported_format(root, search_above) {
+        Some(format) => Fault::new(
             VaultErrorCode::Unimplemented,
-            "the git repository uses a format this build cannot read (SHA-256 objects or \
-             reftable references); use a repository of SHA-1 objects and files for references",
+            format!(
+                "the git repository uses {format}, which this build cannot read; use a \
+                 repository of SHA-1 objects and files for references"
+            ),
         )
-        .with_source(err)
-    } else {
-        lib_fault(err)
+        .with_source(err),
+        None => lib_fault(err),
     }
+}
+
+/// What the configuration of the repository at `root` asks for that this
+/// build cannot read, if it does. A repository or a configuration that
+/// cannot be found or read says nothing here.
+fn unsupported_format(root: &Path, search_above: bool) -> Option<&'static str> {
+    let ceiling: Vec<&Path> = match root.parent() {
+        Some(parent) if !search_above => vec![parent],
+        _ => Vec::new(),
+    };
+    let git_dir = Repository::discover_path(root, ceiling).ok()?;
+    // A linked work tree keeps the repository's configuration in the
+    // common directory its `commondir` file names.
+    let common = match std::fs::read_to_string(git_dir.join("commondir")) {
+        Ok(named) => git_dir.join(named.trim()),
+        Err(_) => git_dir,
+    };
+    let config = git2::Config::open(&common.join("config")).ok()?;
+    if config
+        .get_string("extensions.objectformat")
+        .is_ok_and(|format| !format.trim().eq_ignore_ascii_case("sha1"))
+    {
+        return Some("a SHA-256 object format");
+    }
+    if config
+        .get_string("extensions.refstorage")
+        .is_ok_and(|storage| !storage.trim().eq_ignore_ascii_case("files"))
+    {
+        return Some("reftable reference storage");
+    }
+    None
 }
 
 /// Opens the repository whose work tree or git directory is `root`, without
@@ -125,7 +157,7 @@ fn open_at(root: &Path) -> Result<Option<Repository>, Fault> {
     match Repository::open(root) {
         Ok(repo) => Ok(Some(repo)),
         Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
-        Err(err) => Err(open_fault(err)),
+        Err(err) => Err(open_fault(root, false, err)),
     }
 }
 
@@ -142,7 +174,7 @@ pub(crate) fn is_work_tree(dir: &Path) -> Result<bool, Fault> {
         Ok(repo) => repo,
         Err(err) => {
             let owner = err.code() == ErrorCode::Owner;
-            let fault = open_fault(err);
+            let fault = open_fault(dir, false, err);
             return if owner || fault.vault_code() == VaultErrorCode::Unimplemented {
                 Err(fault)
             } else {
@@ -169,7 +201,7 @@ pub(crate) fn require_work_tree(dir: &Path) -> Result<(), Fault> {
     init_library()?;
     // The folders above are searched too, to tell "inside a work tree" from
     // "no work tree at all".
-    let repo = Repository::discover(dir).map_err(open_fault)?;
+    let repo = Repository::discover(dir).map_err(|err| open_fault(dir, true, err))?;
     if repo.is_bare() {
         return Err(Fault::new(
             VaultErrorCode::FailedPrecondition,
@@ -190,7 +222,7 @@ pub(crate) fn require_work_tree(dir: &Path) -> Result<(), Fault> {
 /// `None`.
 pub(crate) fn origin_url(dir: &Path) -> Result<Option<String>, Fault> {
     require_work_tree(dir)?;
-    let repo = Repository::open(dir).map_err(open_fault)?;
+    let repo = Repository::open(dir).map_err(|err| open_fault(dir, false, err))?;
     origin_of(&repo)
 }
 
@@ -209,7 +241,7 @@ pub(crate) fn origin_of(repo: &Repository) -> Result<Option<String>, Fault> {
 /// command line.
 pub(crate) fn enable_long_paths_at(dir: &Path) -> Result<(), Fault> {
     init_library()?;
-    let repo = Repository::open(dir).map_err(open_fault)?;
+    let repo = Repository::open(dir).map_err(|err| open_fault(dir, false, err))?;
     enable_long_paths(&repo)
 }
 
@@ -1074,6 +1106,26 @@ mod tests {
             }
             let error = is_work_tree(&scratch.0).unwrap_err();
             assert_eq!(error.vault_code(), VaultErrorCode::Unimplemented, "{name}");
+            // A linked work tree of it: the format is in the common
+            // directory's configuration.
+            assert!(scratch.git(&[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.test",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "--message",
+                "first",
+            ]));
+            assert!(scratch.git(&["worktree", "add", "--quiet", "linked"]));
+            let error = is_work_tree(&scratch.0.join("linked")).unwrap_err();
+            assert_eq!(
+                error.vault_code(),
+                VaultErrorCode::Unimplemented,
+                "{name}, linked"
+            );
         }
     }
 

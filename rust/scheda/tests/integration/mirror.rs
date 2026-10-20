@@ -4,7 +4,6 @@
 //! `file://` URLs; nothing here touches a network.
 
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use buffa_types::google::protobuf::Empty;
@@ -516,6 +515,8 @@ fn a_pull_from_an_empty_mirror_is_nothing_to_pull() {
         let before = head(&path);
         pull(&vault).await.unwrap();
         assert_eq!(head(&path), before);
+        // The fetch wrote no reference: there was no branch to write.
+        assert_eq!(git_out(&path, &["for-each-ref", "refs/scheda/mirror"]), "");
         assert_settled(&path, &[]);
     });
 }
@@ -927,51 +928,170 @@ fn auto_sync_pulls_at_open() {
     });
 }
 
+/// Makes `remote.origin.uploadpack` of the repository at `path` a script
+/// that creates the file `started`, waits until the file `go` exists (it
+/// polls the file itself), then runs the real `git upload-pack`: a fetch
+/// that stays on the network for as long as the test wants.
+#[cfg(unix)]
+fn hold_fetches(scratch: &Scratch, path: &Path) -> (PathBuf, PathBuf) {
+    use std::os::unix::fs::PermissionsExt;
+
+    let started = scratch.join("fetch-started");
+    let go = scratch.join("fetch-go");
+    let script = scratch.join("held-upload-pack.sh");
+    std::fs::write(
+        &script,
+        format!(
+            "#!/bin/sh\n: > '{}'\nwhile [ ! -e '{}' ]; do sleep 0.02; done\nexec git upload-pack \"$@\"\n",
+            started.display(),
+            go.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let configured = command(
+        path,
+        &[
+            "config",
+            "remote.origin.uploadpack",
+            script.to_str().unwrap(),
+        ],
+    )
+    .status()
+    .unwrap();
+    assert!(configured.success());
+    (started, go)
+}
+
+/// Waits until `file` exists, for at most twenty seconds.
+#[cfg(unix)]
+async fn appears(file: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !file.exists() {
+        assert!(
+            Instant::now() < deadline,
+            "{} never appeared",
+            file.display()
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
 #[cfg(unix)]
 #[test]
-fn a_pull_holds_the_write_lock_and_a_write_of_another_handle_waits_for_it() {
+fn a_write_of_another_handle_is_not_held_up_by_a_fetch_waiting_on_the_network() {
     both(|| async {
-        use std::os::unix::fs::PermissionsExt;
-
-        let scratch = Scratch::new("pull-lock");
+        let scratch = Scratch::new("pull-no-lock");
         let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
         let (path, a) = clone_of(&scratch, "a", &mirror).await;
         let (_, b) = clone_of(&scratch, "b", &mirror).await;
         put(&b, "from-b.md", "b").await;
         mirror_of(&b).await.push(Empty::default()).await.unwrap();
-        // The fetch takes a second: the mirror's upload-pack is slow.
-        let slow = scratch.join("slow-upload-pack.sh");
-        std::fs::write(&slow, "#!/bin/sh\nsleep 1\nexec git upload-pack \"$@\"\n").unwrap();
-        std::fs::set_permissions(&slow, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let configured = command(
-            &path,
-            &["config", "remote.origin.uploadpack", slow.to_str().unwrap()],
-        )
-        .status()
-        .unwrap();
-        assert!(configured.success());
+        let (started, go) = hold_fetches(&scratch, &path);
         let other = open(&path, OpenOptions::default()).await.unwrap();
-        let ends: Arc<Mutex<Vec<(&str, Instant)>>> = Arc::new(Mutex::new(Vec::new()));
-        let started = Instant::now();
         let pulling = {
             let a = a.clone();
-            let ends = Arc::clone(&ends);
-            tokio::spawn(async move {
-                pull(&a).await.unwrap();
-                ends.lock().unwrap().push(("pull", Instant::now()));
-            })
+            tokio::spawn(async move { pull(&a).await })
         };
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        // The fetch is running, with the lock held.
-        put(&other, "from-other.md", "other").await;
-        ends.lock().unwrap().push(("write", Instant::now()));
-        pulling.await.unwrap();
-        let ends = std::mem::take(&mut *ends.lock().unwrap());
-        assert_eq!(ends.first().map(|end| end.0), Some("pull"), "{ends:?}");
-        assert!(ends[0].1 - started >= Duration::from_millis(900));
+        appears(&started).await;
+        // The fetch is on the network and will not end until `go` exists:
+        // a write of another handle still completes.
+        tokio::time::timeout(
+            Duration::from_secs(20),
+            put(&other, "from-other.md", "other"),
+        )
+        .await
+        .unwrap();
+        assert!(!go.exists());
+        assert!(!pulling.is_finished());
+        std::fs::write(&go, b"").unwrap();
+        tokio::time::timeout(Duration::from_secs(20), pulling)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        for handle in [&a, &other] {
+            assert_eq!(read(handle, "from-b.md").await, "b");
+            assert_eq!(read(handle, "from-other.md").await, "other");
+        }
+        assert_settled(&path, &[]);
+    });
+}
+
+#[cfg(unix)]
+#[test]
+fn two_pulls_at_once_from_two_handles_both_succeed() {
+    both(|| async {
+        let scratch = Scratch::new("pull-twice");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        let (_, b) = clone_of(&scratch, "b", &mirror).await;
+        put(&b, "from-b.md", "b").await;
+        mirror_of(&b).await.push(Empty::default()).await.unwrap();
+        let (started, go) = hold_fetches(&scratch, &path);
+        let other = open(&path, OpenOptions::default()).await.unwrap();
+        let first = {
+            let a = a.clone();
+            tokio::spawn(async move { pull(&a).await })
+        };
+        appears(&started).await;
+        // The second pull waits for the fetch lock of the first.
+        let second = {
+            let other = other.clone();
+            tokio::spawn(async move { pull(&other).await })
+        };
+        std::fs::write(&go, b"").unwrap();
+        for pulling in [first, second] {
+            tokio::time::timeout(Duration::from_secs(20), pulling)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
         assert_eq!(read(&other, "from-b.md").await, "b");
-        assert_eq!(read(&other, "from-other.md").await, "other");
-        assert_eq!(read(&a, "from-other.md").await, "other");
+        assert_eq!(head(&path), mirror_head(&mirror));
+        assert_settled(&path, &[]);
+    });
+}
+
+#[test]
+fn a_pull_after_the_mirror_deleted_the_branch_is_nothing_to_pull_and_forgets_it() {
+    both(|| async {
+        let scratch = Scratch::new("pull-deleted");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        pull(&a).await.unwrap();
+        assert!(!git_out(&path, &["for-each-ref", "refs/scheda/mirror"]).is_empty());
+        git(&mirror, &["update-ref", "-d", "refs/heads/main"]);
+        put(&a, "local.md", "local").await;
+        let before = head(&path);
+        pull(&a).await.unwrap();
+        assert_eq!(head(&path), before);
+        assert_eq!(git_out(&path, &["for-each-ref", "refs/scheda/mirror"]), "");
+        assert_eq!(read(&a, "local.md").await, "local");
+        assert_settled(&path, &[]);
+    });
+}
+
+#[test]
+fn a_lock_on_a_remote_tracking_reference_fails_neither_a_pull_nor_a_push() {
+    both(|| async {
+        let scratch = Scratch::new("tracking-lock");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        let (_, b) = clone_of(&scratch, "b", &mirror).await;
+        put(&b, "from-b.md", "b").await;
+        mirror_of(&b).await.push(Empty::default()).await.unwrap();
+        // Another git process holds the lock of the reference `git push`
+        // and `git fetch` would update after their work.
+        let lock = path.join(".git/refs/remotes/origin/main.lock");
+        std::fs::write(&lock, b"").unwrap();
+        pull(&a).await.unwrap();
+        assert_eq!(read(&a, "from-b.md").await, "b");
+        put(&a, "from-a.md", "a").await;
+        mirror_of(&a).await.push(Empty::default()).await.unwrap();
+        assert_eq!(mirror_head(&mirror), head(&path));
+        std::fs::remove_file(&lock).unwrap();
         assert_settled(&path, &[]);
     });
 }

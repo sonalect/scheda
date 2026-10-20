@@ -12,6 +12,7 @@ mod index;
 mod mirror;
 mod objects;
 mod open;
+mod pack;
 mod ports;
 mod query;
 mod reads;
