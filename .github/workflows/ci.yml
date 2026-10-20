@@ -113,6 +113,14 @@ jobs:
             /usr/share/sbt \
             /usr/share/swift
           df -h /
+          # The image points these at the Android SDK and NDK removed
+          # above. rules_android, which protobuf depends on, reads
+          # ANDROID_HOME and fails on an SDK that is not there; an empty
+          # value is no SDK.
+          for var in ANDROID_HOME ANDROID_SDK_ROOT ANDROID_NDK ANDROID_NDK_HOME \
+            ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT; do
+            echo "${var}=" >> "${GITHUB_ENV}"
+          done
 
       # Bazel's C++ toolchain links Rust with lld when it finds one and
       # falls back to gold, which rustc warns is deprecated and buggy.

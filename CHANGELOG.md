@@ -26,6 +26,15 @@ API or on-disk format changes bump the minor.
   fails the run instead of being skipped. It still starts by hand
   (`workflow_dispatch`); only a run on `main` saves the Bazel caches.
 
+### Fixed
+
+- The Rust targets build with Bazel on macOS x86_64 and Windows arm64.
+  The crate hub `scheda_cargo` took the default platform list of
+  `rules_rust`, which has neither, so every crate was incompatible there
+  and `bazel test //...` skipped every Rust target without a word. The hub
+  now lists the six hosts: Linux, macOS, and Windows, each on x86_64 and
+  arm64.
+
 ## [0.24.0] - 2026-10-21
 
 ### Added

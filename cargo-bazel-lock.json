@@ -1,15 +1,20 @@
 {
-  "checksum": "8b3102fe9c9c8bd15eb32a9046e58d3468cf72eae5d80d36e9db0c046c21baa7",
+  "checksum": "7cd506ac0cfb211a144da48f4c64af2b8eb5bce2412d9c6f90045690e9ff2aa6",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
     ],
     "aarch64-linux-android": [],
     "aarch64-pc-windows-gnullvm": [],
+    "aarch64-pc-windows-msvc": [
+      "aarch64-pc-windows-msvc"
+    ],
     "aarch64-unknown-linux-gnu": [
       "aarch64-unknown-linux-gnu"
     ],
-    "cfg(all(all(target_arch = \"aarch64\", target_endian = \"little\"), target_os = \"windows\"))": [],
+    "cfg(all(all(target_arch = \"aarch64\", target_endian = \"little\"), target_os = \"windows\"))": [
+      "aarch64-pc-windows-msvc"
+    ],
     "cfg(all(all(target_arch = \"aarch64\", target_endian = \"little\"), target_vendor = \"apple\", any(target_os = \"ios\", target_os = \"macos\", target_os = \"tvos\", target_os = \"visionos\", target_os = \"watchos\")))": [
       "aarch64-apple-darwin"
     ],
@@ -22,25 +27,24 @@
     "cfg(all(any(target_os = \"linux\", target_os = \"android\"), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))))": [],
     "cfg(all(any(target_os = \"linux\", target_os = \"android\"), not(any(all(target_os = \"linux\", target_env = \"\"), getrandom_backend = \"custom\", getrandom_backend = \"linux_raw\", getrandom_backend = \"rdrand\", getrandom_backend = \"rndr\"))))": [
       "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(all(not(curve25519_dalek_backend = \"fiat\"), not(curve25519_dalek_backend = \"serial\"), target_arch = \"x86_64\"))": [
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(all(not(rustix_use_libc), not(miri), target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\"))))": [
       "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(all(not(windows), any(rustix_use_libc, miri, not(all(target_os = \"linux\", any(target_endian = \"little\", any(target_arch = \"s390x\", target_arch = \"powerpc\")), any(target_arch = \"arm\", all(target_arch = \"aarch64\", target_pointer_width = \"64\"), target_arch = \"riscv64\", all(rustix_use_experimental_asm, target_arch = \"powerpc\"), all(rustix_use_experimental_asm, target_arch = \"powerpc64\"), all(rustix_use_experimental_asm, target_arch = \"s390x\"), all(rustix_use_experimental_asm, target_arch = \"mips\"), all(rustix_use_experimental_asm, target_arch = \"mips32r6\"), all(rustix_use_experimental_asm, target_arch = \"mips64\"), all(rustix_use_experimental_asm, target_arch = \"mips64r6\"), target_arch = \"x86\", all(target_arch = \"x86_64\", target_pointer_width = \"64\")))))))": [
       "aarch64-apple-darwin",
-      "wasm32-unknown-unknown",
-      "wasm32-wasip1"
+      "x86_64-apple-darwin"
     ],
-    "cfg(all(target_arch = \"aarch64\", target_env = \"msvc\", not(windows_raw_dylib)))": [],
+    "cfg(all(target_arch = \"aarch64\", target_env = \"msvc\", not(windows_raw_dylib)))": [
+      "aarch64-pc-windows-msvc"
+    ],
     "cfg(all(target_arch = \"aarch64\", target_os = \"android\"))": [],
     "cfg(all(target_arch = \"aarch64\", target_os = \"linux\"))": [
       "aarch64-unknown-linux-gnu"
@@ -49,174 +53,157 @@
       "aarch64-apple-darwin"
     ],
     "cfg(all(target_arch = \"loongarch64\", target_os = \"linux\"))": [],
-    "cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))": [
-      "wasm32-unknown-unknown"
-    ],
+    "cfg(all(target_arch = \"wasm32\", target_os = \"unknown\"))": [],
     "cfg(all(target_arch = \"wasm32\", target_os = \"wasi\", target_env = \"p2\"))": [],
     "cfg(all(target_arch = \"x86\", target_env = \"gnu\", not(target_abi = \"llvm\"), not(windows_raw_dylib)))": [],
     "cfg(all(target_arch = \"x86\", target_env = \"msvc\", not(windows_raw_dylib)))": [],
     "cfg(all(target_arch = \"x86_64\", target_env = \"gnu\", not(target_abi = \"llvm\"), not(windows_raw_dylib)))": [
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
-    "cfg(all(target_family = \"wasm\", target_os = \"unknown\"))": [
-      "wasm32-unknown-unknown"
-    ],
+    "cfg(all(target_family = \"wasm\", target_os = \"unknown\"))": [],
     "cfg(all(target_os = \"emscripten\", wasm_bindgen_unstable_tokio))": [],
     "cfg(all(target_os = \"uefi\", getrandom_backend = \"efi_rng\"))": [],
     "cfg(all(unix, not(target_os = \"macos\")))": [
       "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(any())": [],
     "cfg(any(target_arch = \"aarch64\", target_arch = \"x86_64\", target_arch = \"x86\"))": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(any(target_arch = \"x86\", target_arch = \"x86_64\"))": [
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(any(target_arch = \"x86_64\", target_arch = \"x86\"))": [
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(any(target_arch = \"x86_64\", target_arch = \"x86\", target_arch = \"aarch64\", all(target_arch = \"wasm32\", target_feature = \"simd128\")))": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(any(target_os = \"dragonfly\", target_os = \"freebsd\", target_os = \"hurd\", target_os = \"illumos\", target_os = \"cygwin\", all(target_os = \"horizon\", target_arch = \"arm\")))": [],
     "cfg(any(target_os = \"haiku\", target_os = \"redox\", target_os = \"nto\", target_os = \"aix\"))": [],
     "cfg(any(target_os = \"ios\", target_os = \"visionos\", target_os = \"watchos\", target_os = \"tvos\"))": [],
     "cfg(any(target_os = \"macos\", target_os = \"openbsd\", target_os = \"vita\", target_os = \"emscripten\"))": [
-      "aarch64-apple-darwin"
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin"
     ],
     "cfg(any(unix, target_os = \"hermit\", target_os = \"wasi\"))": [
       "aarch64-apple-darwin",
       "aarch64-unknown-linux-gnu",
-      "wasm32-wasip1",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(any(unix, target_os = \"wasi\"))": [
       "aarch64-apple-darwin",
       "aarch64-unknown-linux-gnu",
-      "wasm32-wasip1",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(curve25519_dalek_backend = \"fiat\")": [],
     "cfg(loom)": [],
     "cfg(not(all(target_arch = \"arm\", target_os = \"none\")))": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu",
-      "wasm32-unknown-unknown",
-      "wasm32-wasip1",
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(not(all(target_family = \"wasm\", target_os = \"unknown\")))": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu",
-      "wasm32-wasip1",
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(not(target_arch = \"wasm32\"))": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu",
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(not(target_has_atomic = \"ptr\"))": [],
     "cfg(not(windows))": [
       "aarch64-apple-darwin",
       "aarch64-unknown-linux-gnu",
-      "wasm32-unknown-unknown",
-      "wasm32-wasip1",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(target_arch = \"aarch64\")": [
       "aarch64-apple-darwin",
+      "aarch64-pc-windows-msvc",
       "aarch64-unknown-linux-gnu"
     ],
     "cfg(target_arch = \"spirv\")": [],
-    "cfg(target_arch = \"wasm32\")": [
-      "wasm32-unknown-unknown",
-      "wasm32-wasip1"
-    ],
+    "cfg(target_arch = \"wasm32\")": [],
     "cfg(target_arch = \"x86_64\")": [
+      "x86_64-apple-darwin",
       "x86_64-pc-windows-msvc",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
-    "cfg(target_family = \"wasm\")": [
-      "wasm32-unknown-unknown",
-      "wasm32-wasip1"
-    ],
+    "cfg(target_family = \"wasm\")": [],
     "cfg(target_os = \"android\")": [],
     "cfg(target_os = \"haiku\")": [],
     "cfg(target_os = \"hermit\")": [],
     "cfg(target_os = \"linux\")": [
       "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(target_os = \"macos\")": [
-      "aarch64-apple-darwin"
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin"
     ],
     "cfg(target_os = \"netbsd\")": [],
     "cfg(target_os = \"redox\")": [],
     "cfg(target_os = \"solaris\")": [],
     "cfg(target_os = \"vxworks\")": [],
-    "cfg(target_os = \"wasi\")": [
-      "wasm32-wasip1"
-    ],
+    "cfg(target_os = \"wasi\")": [],
     "cfg(target_os = \"windows\")": [
+      "aarch64-pc-windows-msvc",
       "x86_64-pc-windows-msvc"
     ],
     "cfg(target_vendor = \"apple\")": [
-      "aarch64-apple-darwin"
+      "aarch64-apple-darwin",
+      "x86_64-apple-darwin"
     ],
     "cfg(unix)": [
       "aarch64-apple-darwin",
       "aarch64-unknown-linux-gnu",
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-apple-darwin",
+      "x86_64-unknown-linux-gnu"
     ],
     "cfg(windows)": [
+      "aarch64-pc-windows-msvc",
       "x86_64-pc-windows-msvc"
     ],
     "i686-pc-windows-gnullvm": [],
-    "wasm32-unknown-unknown": [
-      "wasm32-unknown-unknown"
-    ],
-    "wasm32-wasip1": [
-      "wasm32-wasip1"
+    "wasm32-unknown-unknown": [],
+    "x86_64-apple-darwin": [
+      "x86_64-apple-darwin"
     ],
     "x86_64-pc-windows-gnullvm": [],
     "x86_64-pc-windows-msvc": [
       "x86_64-pc-windows-msvc"
     ],
     "x86_64-unknown-linux-gnu": [
-      "x86_64-unknown-linux-gnu",
-      "x86_64-unknown-nixos-gnu"
-    ],
-    "x86_64-unknown-nixos-gnu": [
-      "x86_64-unknown-nixos-gnu"
+      "x86_64-unknown-linux-gnu"
     ]
   },
   "crates": {
@@ -621,25 +608,13 @@
         ]
       },
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "default",
-            "getrandom",
-            "runtime-rng",
-            "serde",
-            "std"
-          ],
-          "selects": {
-            "wasm32-unknown-unknown": [
-              "compile-time-rng",
-              "const-random"
-            ],
-            "wasm32-wasip1": [
-              "compile-time-rng",
-              "const-random"
-            ]
-          }
-        },
+        "crate_features": [
+          "default",
+          "getrandom",
+          "runtime-rng",
+          "serde",
+          "std"
+        ],
         "deps": {
           "common": [
             {
@@ -664,18 +639,6 @@
               {
                 "id": "once_cell 1.21.4",
                 "target": "once_cell"
-              }
-            ],
-            "wasm32-unknown-unknown": [
-              {
-                "id": "const-random 0.1.18",
-                "target": "const_random"
-              }
-            ],
-            "wasm32-wasip1": [
-              {
-                "id": "const-random 0.1.18",
-                "target": "const_random"
               }
             ]
           }
@@ -858,6 +821,12 @@
             }
           ],
           "selects": {
+            "aarch64-pc-windows-msvc": [
+              {
+                "id": "anstyle-wincon 3.0.11",
+                "target": "anstyle_wincon"
+              }
+            ],
             "x86_64-pc-windows-msvc": [
               {
                 "id": "anstyle-wincon 3.0.11",
@@ -2580,34 +2549,12 @@
     },
     "base64 0.23.1": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "alloc",
-            "std"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default",
-              "simd-unsafe"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default",
-              "simd-unsafe"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "default",
-              "simd-unsafe"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default",
-              "simd-unsafe"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default",
-              "simd-unsafe"
-            ]
-          }
-        },
+        "crate_features": [
+          "alloc",
+          "default",
+          "simd-unsafe",
+          "std"
+        ],
         "edition": "2021"
       },
       "library_target_name": "base64",
@@ -2881,13 +2828,10 @@
             "aarch64-unknown-linux-gnu": [
               "std"
             ],
-            "wasm32-wasip1": [
+            "x86_64-apple-darwin": [
               "std"
             ],
             "x86_64-unknown-linux-gnu": [
-              "std"
-            ],
-            "x86_64-unknown-nixos-gnu": [
               "std"
             ]
           }
@@ -3599,13 +3543,13 @@
                 "target": "libc"
               }
             ],
-            "x86_64-unknown-linux-gnu": [
+            "x86_64-apple-darwin": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
-            "x86_64-unknown-nixos-gnu": [
+            "x86_64-unknown-linux-gnu": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
@@ -3888,7 +3832,19 @@
                 "target": "iana_time_zone"
               }
             ],
+            "aarch64-pc-windows-msvc": [
+              {
+                "id": "windows-link 0.2.1",
+                "target": "windows_link"
+              }
+            ],
             "aarch64-unknown-linux-gnu": [
+              {
+                "id": "iana-time-zone 0.1.65",
+                "target": "iana_time_zone"
+              }
+            ],
+            "x86_64-apple-darwin": [
               {
                 "id": "iana-time-zone 0.1.65",
                 "target": "iana_time_zone"
@@ -3901,12 +3857,6 @@
               }
             ],
             "x86_64-unknown-linux-gnu": [
-              {
-                "id": "iana-time-zone 0.1.65",
-                "target": "iana_time_zone"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
               {
                 "id": "iana-time-zone 0.1.65",
                 "target": "iana_time_zone"
@@ -9573,25 +9523,10 @@
     },
     "errno 0.3.14": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "std"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default"
-            ]
-          }
-        },
+        "crate_features": [
+          "default",
+          "std"
+        ],
         "deps": {
           "common": [],
           "selects": {
@@ -9733,46 +9668,16 @@
           "parking",
           "std"
         ],
-        "deps": {
-          "common": [
-            {
-              "id": "pin-project-lite 0.2.17",
-              "target": "pin_project_lite"
-            }
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              {
-                "id": "parking 2.2.1",
-                "target": "parking"
-              }
-            ],
-            "aarch64-unknown-linux-gnu": [
-              {
-                "id": "parking 2.2.1",
-                "target": "parking"
-              }
-            ],
-            "x86_64-pc-windows-msvc": [
-              {
-                "id": "parking 2.2.1",
-                "target": "parking"
-              }
-            ],
-            "x86_64-unknown-linux-gnu": [
-              {
-                "id": "parking 2.2.1",
-                "target": "parking"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "parking 2.2.1",
-                "target": "parking"
-              }
-            ]
+        "deps": [
+          {
+            "id": "parking 2.2.1",
+            "target": "parking"
+          },
+          {
+            "id": "pin-project-lite 0.2.17",
+            "target": "pin_project_lite"
           }
-        },
+        ],
         "edition": "2021"
       },
       "library_target_name": "event_listener",
@@ -10811,34 +10716,13 @@
     },
     "futures-channel 0.3.34": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "alloc",
-            "futures-sink",
-            "sink",
-            "std"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default"
-            ],
-            "wasm32-unknown-unknown": [
-              "default"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "default"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default"
-            ]
-          }
-        },
+        "crate_features": [
+          "alloc",
+          "default",
+          "futures-sink",
+          "sink",
+          "std"
+        ],
         "deps": [
           {
             "id": "futures-core 0.3.34",
@@ -11326,23 +11210,9 @@
     },
     "getrandom 0.2.17": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "std"
-          ],
-          "selects": {
-            "wasm32-unknown-unknown": [
-              "js",
-              "js-sys",
-              "wasm-bindgen"
-            ],
-            "wasm32-wasip1": [
-              "js",
-              "js-sys",
-              "wasm-bindgen"
-            ]
-          }
-        },
+        "crate_features": [
+          "std"
+        ],
         "deps": {
           "common": [
             {
@@ -11361,16 +11231,6 @@
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
-              }
-            ],
-            "wasm32-unknown-unknown": [
-              {
-                "id": "js-sys 0.3.106",
-                "target": "js_sys"
-              },
-              {
-                "id": "wasm-bindgen 0.2.129",
-                "target": "wasm_bindgen"
               }
             ]
           }
@@ -12494,31 +12354,10 @@
     "httparse 1.10.1": {
       "build_script_attrs": {},
       "common_attrs": {
-        "crate_features": {
-          "common": [],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default",
-              "std"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default",
-              "std"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "default",
-              "std"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default",
-              "std"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default",
-              "std"
-            ]
-          }
-        },
+        "crate_features": [
+          "default",
+          "std"
+        ],
         "edition": "2018",
         "extra_deps": [
           ":build_script_build"
@@ -13017,116 +12856,64 @@
     },
     "i18n-embed 0.16.0": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "arc-swap",
-            "default",
-            "fluent",
-            "fluent-syntax",
-            "fluent-system",
-            "i18n-embed-impl",
-            "parking_lot",
-            "rust-embed"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "filesystem-assets",
-              "walkdir"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "filesystem-assets",
-              "walkdir"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "filesystem-assets",
-              "walkdir"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "filesystem-assets",
-              "walkdir"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "filesystem-assets",
-              "walkdir"
-            ]
+        "crate_features": [
+          "arc-swap",
+          "default",
+          "filesystem-assets",
+          "fluent",
+          "fluent-syntax",
+          "fluent-system",
+          "i18n-embed-impl",
+          "parking_lot",
+          "rust-embed",
+          "walkdir"
+        ],
+        "deps": [
+          {
+            "id": "arc-swap 1.9.2",
+            "target": "arc_swap"
+          },
+          {
+            "id": "fluent 0.17.0",
+            "target": "fluent"
+          },
+          {
+            "id": "fluent-langneg 0.13.1",
+            "target": "fluent_langneg"
+          },
+          {
+            "id": "fluent-syntax 0.12.0",
+            "target": "fluent_syntax"
+          },
+          {
+            "id": "intl-memoizer 0.5.3",
+            "target": "intl_memoizer"
+          },
+          {
+            "id": "log 0.4.34",
+            "target": "log"
+          },
+          {
+            "id": "parking_lot 0.12.5",
+            "target": "parking_lot"
+          },
+          {
+            "id": "rust-embed 8.13.0",
+            "target": "rust_embed"
+          },
+          {
+            "id": "thiserror 1.0.69",
+            "target": "thiserror"
+          },
+          {
+            "id": "unic-langid 0.9.6",
+            "target": "unic_langid"
+          },
+          {
+            "id": "walkdir 2.5.0",
+            "target": "walkdir"
           }
-        },
-        "deps": {
-          "common": [
-            {
-              "id": "arc-swap 1.9.2",
-              "target": "arc_swap"
-            },
-            {
-              "id": "fluent 0.17.0",
-              "target": "fluent"
-            },
-            {
-              "id": "fluent-langneg 0.13.1",
-              "target": "fluent_langneg"
-            },
-            {
-              "id": "fluent-syntax 0.12.0",
-              "target": "fluent_syntax"
-            },
-            {
-              "id": "intl-memoizer 0.5.3",
-              "target": "intl_memoizer"
-            },
-            {
-              "id": "log 0.4.34",
-              "target": "log"
-            },
-            {
-              "id": "parking_lot 0.12.5",
-              "target": "parking_lot"
-            },
-            {
-              "id": "rust-embed 8.13.0",
-              "target": "rust_embed"
-            },
-            {
-              "id": "thiserror 1.0.69",
-              "target": "thiserror"
-            },
-            {
-              "id": "unic-langid 0.9.6",
-              "target": "unic_langid"
-            }
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              {
-                "id": "walkdir 2.5.0",
-                "target": "walkdir"
-              }
-            ],
-            "aarch64-unknown-linux-gnu": [
-              {
-                "id": "walkdir 2.5.0",
-                "target": "walkdir"
-              }
-            ],
-            "x86_64-pc-windows-msvc": [
-              {
-                "id": "walkdir 2.5.0",
-                "target": "walkdir"
-              }
-            ],
-            "x86_64-unknown-linux-gnu": [
-              {
-                "id": "walkdir 2.5.0",
-                "target": "walkdir"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "walkdir 2.5.0",
-                "target": "walkdir"
-              }
-            ]
-          }
-        },
+        ],
         "edition": "2018",
         "proc_macro_deps": [
           {
@@ -14640,6 +14427,16 @@
             }
           ],
           "selects": {
+            "aarch64-pc-windows-msvc": [
+              {
+                "id": "jiff-tzdb-platform 0.1.3",
+                "target": "jiff_tzdb_platform"
+              },
+              {
+                "id": "windows-link 0.2.1",
+                "target": "windows_link"
+              }
+            ],
             "cfg(not(target_has_atomic = \"ptr\"))": [
               {
                 "id": "portable-atomic 1.15.0",
@@ -14648,18 +14445,6 @@
               {
                 "id": "portable-atomic-util 0.2.8",
                 "target": "portable_atomic_util"
-              }
-            ],
-            "wasm32-unknown-unknown": [
-              {
-                "id": "jiff-tzdb-platform 0.1.3",
-                "target": "jiff_tzdb_platform"
-              }
-            ],
-            "wasm32-wasip1": [
-              {
-                "id": "jiff-tzdb-platform 0.1.3",
-                "target": "jiff_tzdb_platform"
               }
             ],
             "x86_64-pc-windows-msvc": [
@@ -14714,30 +14499,12 @@
     },
     "jiff-core 0.1.1": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "alloc",
-            "std",
-            "tz-fat"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "default"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default"
-            ]
-          }
-        },
+        "crate_features": [
+          "alloc",
+          "default",
+          "std",
+          "tz-fat"
+        ],
         "edition": "2021"
       },
       "library_target_name": "jiff_core",
@@ -14925,19 +14692,10 @@
     },
     "js-sys 0.3.106": {
       "common_attrs": {
-        "crate_features": [
-          "default",
-          "std",
-          "unsafe-eval"
-        ],
         "deps": [
           {
             "id": "cfg-if 1.0.5",
             "target": "cfg_if"
-          },
-          {
-            "id": "futures-util 0.3.34",
-            "target": "futures_util"
           },
           {
             "id": "wasm-bindgen 0.2.129",
@@ -17649,10 +17407,10 @@
             "aarch64-unknown-linux-gnu": [
               "extra_traits"
             ],
-            "x86_64-unknown-linux-gnu": [
+            "x86_64-apple-darwin": [
               "extra_traits"
             ],
-            "x86_64-unknown-nixos-gnu": [
+            "x86_64-unknown-linux-gnu": [
               "extra_traits"
             ]
           }
@@ -18688,31 +18446,10 @@
         ]
       },
       "common_attrs": {
-        "crate_features": {
-          "common": [],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default",
-              "rev-mappings"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default",
-              "rev-mappings"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "default",
-              "rev-mappings"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default",
-              "rev-mappings"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default",
-              "rev-mappings"
-            ]
-          }
-        },
+        "crate_features": [
+          "default",
+          "rev-mappings"
+        ],
         "deps": [
           {
             "id": "mime 0.3.17",
@@ -20019,6 +19756,12 @@
                 "target": "nix"
               }
             ],
+            "aarch64-pc-windows-msvc": [
+              {
+                "id": "windows-sys 0.61.2",
+                "target": "windows_sys"
+              }
+            ],
             "aarch64-unknown-linux-gnu": [
               {
                 "id": "nix 0.31.3",
@@ -20039,6 +19782,12 @@
                 "target": "web_time"
               }
             ],
+            "x86_64-apple-darwin": [
+              {
+                "id": "nix 0.31.3",
+                "target": "nix"
+              }
+            ],
             "x86_64-pc-windows-msvc": [
               {
                 "id": "windows-sys 0.61.2",
@@ -20046,12 +19795,6 @@
               }
             ],
             "x86_64-unknown-linux-gnu": [
-              {
-                "id": "nix 0.31.3",
-                "target": "nix"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
               {
                 "id": "nix 0.31.3",
                 "target": "nix"
@@ -22391,13 +22134,13 @@
                 "target": "libc"
               }
             ],
-            "x86_64-unknown-linux-gnu": [
+            "x86_64-apple-darwin": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
-            "x86_64-unknown-nixos-gnu": [
+            "x86_64-unknown-linux-gnu": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
@@ -23308,6 +23051,10 @@
               "target": "bytes"
             },
             {
+              "id": "encoding_rs 0.8.42",
+              "target": "encoding_rs"
+            },
+            {
               "id": "futures-core 0.3.34",
               "target": "futures_core"
             },
@@ -23316,12 +23063,36 @@
               "target": "futures_util"
             },
             {
+              "id": "h2 0.4.20",
+              "target": "h2"
+            },
+            {
               "id": "http 1.5.0",
               "target": "http"
             },
             {
+              "id": "hyper-rustls 0.27.10",
+              "target": "hyper_rustls"
+            },
+            {
+              "id": "mime 0.3.17",
+              "target": "mime"
+            },
+            {
               "id": "mime_guess 2.0.5",
               "target": "mime_guess"
+            },
+            {
+              "id": "rustls 0.23.46",
+              "target": "rustls"
+            },
+            {
+              "id": "rustls-native-certs 0.8.5",
+              "target": "rustls_native_certs"
+            },
+            {
+              "id": "rustls-pki-types 1.15.1",
+              "target": "rustls_pki_types"
             },
             {
               "id": "serde 1.0.229",
@@ -23340,87 +23111,19 @@
               "target": "sync_wrapper"
             },
             {
+              "id": "tokio-rustls 0.26.6",
+              "target": "tokio_rustls"
+            },
+            {
+              "id": "tokio-util 0.7.20",
+              "target": "tokio_util"
+            },
+            {
               "id": "url 2.5.8",
               "target": "url"
             }
           ],
           "selects": {
-            "aarch64-apple-darwin": [
-              {
-                "id": "encoding_rs 0.8.42",
-                "target": "encoding_rs"
-              },
-              {
-                "id": "h2 0.4.20",
-                "target": "h2"
-              },
-              {
-                "id": "hyper-rustls 0.27.10",
-                "target": "hyper_rustls"
-              },
-              {
-                "id": "mime 0.3.17",
-                "target": "mime"
-              },
-              {
-                "id": "rustls 0.23.46",
-                "target": "rustls"
-              },
-              {
-                "id": "rustls-native-certs 0.8.5",
-                "target": "rustls_native_certs"
-              },
-              {
-                "id": "rustls-pki-types 1.15.1",
-                "target": "rustls_pki_types"
-              },
-              {
-                "id": "tokio-rustls 0.26.6",
-                "target": "tokio_rustls"
-              },
-              {
-                "id": "tokio-util 0.7.20",
-                "target": "tokio_util"
-              }
-            ],
-            "aarch64-unknown-linux-gnu": [
-              {
-                "id": "encoding_rs 0.8.42",
-                "target": "encoding_rs"
-              },
-              {
-                "id": "h2 0.4.20",
-                "target": "h2"
-              },
-              {
-                "id": "hyper-rustls 0.27.10",
-                "target": "hyper_rustls"
-              },
-              {
-                "id": "mime 0.3.17",
-                "target": "mime"
-              },
-              {
-                "id": "rustls 0.23.46",
-                "target": "rustls"
-              },
-              {
-                "id": "rustls-native-certs 0.8.5",
-                "target": "rustls_native_certs"
-              },
-              {
-                "id": "rustls-pki-types 1.15.1",
-                "target": "rustls_pki_types"
-              },
-              {
-                "id": "tokio-rustls 0.26.6",
-                "target": "tokio_rustls"
-              },
-              {
-                "id": "tokio-util 0.7.20",
-                "target": "tokio_util"
-              }
-            ],
             "cfg(not(target_arch = \"wasm32\"))": [
               {
                 "id": "http-body 1.1.0",
@@ -23483,132 +23186,6 @@
               {
                 "id": "web-sys 0.3.106",
                 "target": "web_sys"
-              }
-            ],
-            "wasm32-unknown-unknown": [
-              {
-                "id": "wasm-streams 0.4.2",
-                "target": "wasm_streams"
-              }
-            ],
-            "wasm32-wasip1": [
-              {
-                "id": "wasm-streams 0.4.2",
-                "target": "wasm_streams"
-              }
-            ],
-            "x86_64-pc-windows-msvc": [
-              {
-                "id": "encoding_rs 0.8.42",
-                "target": "encoding_rs"
-              },
-              {
-                "id": "h2 0.4.20",
-                "target": "h2"
-              },
-              {
-                "id": "hyper-rustls 0.27.10",
-                "target": "hyper_rustls"
-              },
-              {
-                "id": "mime 0.3.17",
-                "target": "mime"
-              },
-              {
-                "id": "rustls 0.23.46",
-                "target": "rustls"
-              },
-              {
-                "id": "rustls-native-certs 0.8.5",
-                "target": "rustls_native_certs"
-              },
-              {
-                "id": "rustls-pki-types 1.15.1",
-                "target": "rustls_pki_types"
-              },
-              {
-                "id": "tokio-rustls 0.26.6",
-                "target": "tokio_rustls"
-              },
-              {
-                "id": "tokio-util 0.7.20",
-                "target": "tokio_util"
-              }
-            ],
-            "x86_64-unknown-linux-gnu": [
-              {
-                "id": "encoding_rs 0.8.42",
-                "target": "encoding_rs"
-              },
-              {
-                "id": "h2 0.4.20",
-                "target": "h2"
-              },
-              {
-                "id": "hyper-rustls 0.27.10",
-                "target": "hyper_rustls"
-              },
-              {
-                "id": "mime 0.3.17",
-                "target": "mime"
-              },
-              {
-                "id": "rustls 0.23.46",
-                "target": "rustls"
-              },
-              {
-                "id": "rustls-native-certs 0.8.5",
-                "target": "rustls_native_certs"
-              },
-              {
-                "id": "rustls-pki-types 1.15.1",
-                "target": "rustls_pki_types"
-              },
-              {
-                "id": "tokio-rustls 0.26.6",
-                "target": "tokio_rustls"
-              },
-              {
-                "id": "tokio-util 0.7.20",
-                "target": "tokio_util"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "encoding_rs 0.8.42",
-                "target": "encoding_rs"
-              },
-              {
-                "id": "h2 0.4.20",
-                "target": "h2"
-              },
-              {
-                "id": "hyper-rustls 0.27.10",
-                "target": "hyper_rustls"
-              },
-              {
-                "id": "mime 0.3.17",
-                "target": "mime"
-              },
-              {
-                "id": "rustls 0.23.46",
-                "target": "rustls"
-              },
-              {
-                "id": "rustls-native-certs 0.8.5",
-                "target": "rustls_native_certs"
-              },
-              {
-                "id": "rustls-pki-types 1.15.1",
-                "target": "rustls_pki_types"
-              },
-              {
-                "id": "tokio-rustls 0.26.6",
-                "target": "tokio_rustls"
-              },
-              {
-                "id": "tokio-util 0.7.20",
-                "target": "tokio_util"
               }
             ]
           }
@@ -24037,7 +23614,7 @@
                 "target": "windows_sys"
               }
             ],
-            "wasm32-wasip1": [
+            "x86_64-apple-darwin": [
               {
                 "alias": "libc_errno",
                 "id": "errno 0.3.14",
@@ -25983,33 +25560,11 @@
     },
     "simdutf8 0.1.5": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "std"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "aarch64_neon",
-              "public_imp"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "aarch64_neon",
-              "public_imp"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "aarch64_neon",
-              "public_imp"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "aarch64_neon",
-              "public_imp"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "aarch64_neon",
-              "public_imp"
-            ]
-          }
-        },
+        "crate_features": [
+          "aarch64_neon",
+          "public_imp",
+          "std"
+        ],
         "edition": "2018"
       },
       "library_target_name": "simdutf8",
@@ -26072,28 +25627,10 @@
     },
     "slab 0.4.12": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "std"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "default"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "default"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "default"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "default"
-            ]
-          }
-        },
+        "crate_features": [
+          "default",
+          "std"
+        ],
         "edition": "2018"
       },
       "library_target_name": "slab",
@@ -26122,29 +25659,11 @@
     },
     "smallvec 1.16.3": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "const_generics",
-            "union"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "const_new"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "const_new"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "const_new"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "const_new"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "const_new"
-            ]
-          }
-        },
+        "crate_features": [
+          "const_generics",
+          "const_new",
+          "union"
+        ],
         "edition": "2018"
       },
       "library_target_name": "smallvec",
@@ -26977,23 +26496,15 @@
               "target": "fastrand"
             },
             {
+              "id": "getrandom 0.4.3",
+              "target": "getrandom"
+            },
+            {
               "id": "once_cell 1.21.4",
               "target": "once_cell"
             }
           ],
           "selects": {
-            "aarch64-apple-darwin": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "aarch64-unknown-linux-gnu": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
             "cfg(any(unix, target_os = \"wasi\"))": [
               {
                 "id": "rustix 1.1.5",
@@ -27004,30 +26515,6 @@
               {
                 "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
-              }
-            ],
-            "wasm32-wasip1": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "x86_64-pc-windows-msvc": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "x86_64-unknown-linux-gnu": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
               }
             ]
           }
@@ -27704,35 +27191,22 @@
             "libc",
             "macros",
             "mio",
+            "net",
             "process",
             "rt",
             "rt-multi-thread",
             "signal-hook-registry",
+            "socket2",
             "sync",
             "time",
             "tokio-macros"
           ],
           "selects": {
-            "aarch64-apple-darwin": [
-              "net",
-              "socket2"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "net",
-              "socket2"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "net",
-              "socket2",
+            "aarch64-pc-windows-msvc": [
               "windows-sys"
             ],
-            "x86_64-unknown-linux-gnu": [
-              "net",
-              "socket2"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "net",
-              "socket2"
+            "x86_64-pc-windows-msvc": [
+              "windows-sys"
             ]
           }
         },
@@ -27749,6 +27223,10 @@
             {
               "id": "pin-project-lite 0.2.17",
               "target": "pin_project_lite"
+            },
+            {
+              "id": "socket2 0.6.5",
+              "target": "socket2"
             }
           ],
           "selects": {
@@ -27760,10 +27238,12 @@
               {
                 "id": "signal-hook-registry 1.4.8",
                 "target": "signal_hook_registry"
-              },
+              }
+            ],
+            "aarch64-pc-windows-msvc": [
               {
-                "id": "socket2 0.6.5",
-                "target": "socket2"
+                "id": "windows-sys 0.61.2",
+                "target": "windows_sys"
               }
             ],
             "aarch64-unknown-linux-gnu": [
@@ -27774,23 +27254,19 @@
               {
                 "id": "signal-hook-registry 1.4.8",
                 "target": "signal_hook_registry"
-              },
-              {
-                "id": "socket2 0.6.5",
-                "target": "socket2"
               }
             ],
-            "wasm32-wasip1": [
+            "x86_64-apple-darwin": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
+              },
+              {
+                "id": "signal-hook-registry 1.4.8",
+                "target": "signal_hook_registry"
               }
             ],
             "x86_64-pc-windows-msvc": [
-              {
-                "id": "socket2 0.6.5",
-                "target": "socket2"
-              },
               {
                 "id": "windows-sys 0.61.2",
                 "target": "windows_sys"
@@ -27804,24 +27280,6 @@
               {
                 "id": "signal-hook-registry 1.4.8",
                 "target": "signal_hook_registry"
-              },
-              {
-                "id": "socket2 0.6.5",
-                "target": "socket2"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "libc 0.2.190",
-                "target": "libc"
-              },
-              {
-                "id": "signal-hook-registry 1.4.8",
-                "target": "signal_hook_registry"
-              },
-              {
-                "id": "socket2 0.6.5",
-                "target": "socket2"
               }
             ]
           }
@@ -27997,38 +27455,12 @@
     },
     "tokio-util 0.7.20": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "default"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "codec",
-              "io",
-              "libc"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "codec",
-              "io",
-              "libc"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "codec",
-              "io",
-              "libc"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "codec",
-              "io",
-              "libc"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "codec",
-              "io",
-              "libc"
-            ]
-          }
-        },
+        "crate_features": [
+          "codec",
+          "default",
+          "io",
+          "libc"
+        ],
         "deps": {
           "common": [
             {
@@ -28065,13 +27497,13 @@
                 "target": "libc"
               }
             ],
-            "x86_64-unknown-linux-gnu": [
+            "x86_64-apple-darwin": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
               }
             ],
-            "x86_64-unknown-nixos-gnu": [
+            "x86_64-unknown-linux-gnu": [
               {
                 "id": "libc 0.2.190",
                 "target": "libc"
@@ -28760,28 +28192,10 @@
     },
     "unic-langid 0.9.6": {
       "common_attrs": {
-        "crate_features": {
-          "common": [
-            "default"
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "serde"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "serde"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "serde"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "serde"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "serde"
-            ]
-          }
-        },
+        "crate_features": [
+          "default",
+          "serde"
+        ],
         "deps": [
           {
             "id": "unic-langid-impl 0.9.6",
@@ -28817,66 +28231,19 @@
     },
     "unic-langid-impl 0.9.6": {
       "common_attrs": {
-        "crate_features": {
-          "common": [],
-          "selects": {
-            "aarch64-apple-darwin": [
-              "serde"
-            ],
-            "aarch64-unknown-linux-gnu": [
-              "serde"
-            ],
-            "x86_64-pc-windows-msvc": [
-              "serde"
-            ],
-            "x86_64-unknown-linux-gnu": [
-              "serde"
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              "serde"
-            ]
+        "crate_features": [
+          "serde"
+        ],
+        "deps": [
+          {
+            "id": "serde 1.0.229",
+            "target": "serde"
+          },
+          {
+            "id": "tinystr 0.8.4",
+            "target": "tinystr"
           }
-        },
-        "deps": {
-          "common": [
-            {
-              "id": "tinystr 0.8.4",
-              "target": "tinystr"
-            }
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              {
-                "id": "serde 1.0.229",
-                "target": "serde"
-              }
-            ],
-            "aarch64-unknown-linux-gnu": [
-              {
-                "id": "serde 1.0.229",
-                "target": "serde"
-              }
-            ],
-            "x86_64-pc-windows-msvc": [
-              {
-                "id": "serde 1.0.229",
-                "target": "serde"
-              }
-            ],
-            "x86_64-unknown-linux-gnu": [
-              {
-                "id": "serde 1.0.229",
-                "target": "serde"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "serde 1.0.229",
-                "target": "serde"
-              }
-            ]
-          }
-        },
+        ],
         "edition": "2021"
       },
       "library_target_name": "unic_langid_impl",
@@ -29512,58 +28879,16 @@
           "std",
           "v4"
         ],
-        "deps": {
-          "common": [
-            {
-              "id": "serde_core 1.0.229",
-              "target": "serde_core"
-            }
-          ],
-          "selects": {
-            "aarch64-apple-darwin": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "aarch64-unknown-linux-gnu": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "wasm32-unknown-unknown": [
-              {
-                "id": "wasm-bindgen 0.2.129",
-                "target": "wasm_bindgen"
-              }
-            ],
-            "wasm32-wasip1": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "x86_64-pc-windows-msvc": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "x86_64-unknown-linux-gnu": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ],
-            "x86_64-unknown-nixos-gnu": [
-              {
-                "id": "getrandom 0.4.3",
-                "target": "getrandom"
-              }
-            ]
+        "deps": [
+          {
+            "id": "getrandom 0.4.3",
+            "target": "getrandom"
+          },
+          {
+            "id": "serde_core 1.0.229",
+            "target": "serde_core"
           }
-        },
+        ],
         "edition": "2021"
       },
       "library_target_name": "uuid",
@@ -29767,10 +29092,6 @@
     },
     "wasi 0.11.1+wasi-snapshot-preview1": {
       "common_attrs": {
-        "crate_features": [
-          "default",
-          "std"
-        ],
         "edition": "2018"
       },
       "library_target_name": "wasi",
@@ -29850,10 +29171,6 @@
         ]
       },
       "common_attrs": {
-        "crate_features": [
-          "default",
-          "std"
-        ],
         "deps": [
           {
             "id": "cfg-if 1.0.5",
@@ -29912,10 +29229,6 @@
     },
     "wasm-bindgen-futures 0.4.79": {
       "common_attrs": {
-        "crate_features": [
-          "default",
-          "std"
-        ],
         "deps": {
           "common": [
             {
@@ -30153,48 +29466,6 @@
     },
     "web-sys 0.3.106": {
       "common_attrs": {
-        "crate_features": [
-          "AbortController",
-          "AbortSignal",
-          "Blob",
-          "BlobPropertyBag",
-          "EventTarget",
-          "File",
-          "FormData",
-          "Headers",
-          "QueuingStrategy",
-          "ReadableByteStreamController",
-          "ReadableStream",
-          "ReadableStreamByobReader",
-          "ReadableStreamByobRequest",
-          "ReadableStreamDefaultController",
-          "ReadableStreamDefaultReader",
-          "ReadableStreamGetReaderOptions",
-          "ReadableStreamReadResult",
-          "ReadableStreamReaderMode",
-          "ReadableStreamType",
-          "ReadableWritablePair",
-          "Request",
-          "RequestCache",
-          "RequestCredentials",
-          "RequestInit",
-          "RequestMode",
-          "Response",
-          "ServiceWorkerGlobalScope",
-          "StreamPipeOptions",
-          "TransformStream",
-          "TransformStreamDefaultController",
-          "Transformer",
-          "UnderlyingSink",
-          "UnderlyingSource",
-          "Window",
-          "WorkerGlobalScope",
-          "WritableStream",
-          "WritableStreamDefaultController",
-          "WritableStreamDefaultWriter",
-          "default",
-          "std"
-        ],
         "deps": [
           {
             "id": "js-sys 0.3.106",
@@ -30591,6 +29862,13 @@
     },
     "windows-sys 0.52.0": {
       "common_attrs": {
+        "crate_features": [
+          "Win32",
+          "Win32_Foundation",
+          "Win32_System",
+          "Win32_System_Threading",
+          "default"
+        ],
         "deps": [
           {
             "id": "windows-targets 0.52.6",
