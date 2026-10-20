@@ -1,5 +1,5 @@
 load("@bazel_utils_rust//:rust.bzl", "cargo_audit_test")
-load("@rules_rust//rust:defs.bzl", "rust_clippy_test")
+load("@rules_rust//rust:defs.bzl", "rust_clippy_test", "rustfmt_test")
 
 rust_clippy_test(
     name = "lint",
@@ -23,6 +23,39 @@ rust_clippy_test(
         "//rust/scheda:scheda_thin",
         "//rust/scheda:scheda_thin_test",
     ],
+)
+
+# The format of the handwritten Rust, as `cargo fmt --all --check` sees it:
+# a file rustfmt would change fails the test. The generated crate
+# (`//rust/api:generated_v1`, tagged `norustfmt`) and its test are left out.
+# `bazel run //rust:format`, or `cargo fmt --all`, formats them.
+rustfmt_test(
+    name = "rustfmt",
+    size = "small",
+    targets = [
+        "//rust/cli:agent_test",
+        "//rust/cli:cli_test",
+        "//rust/cli:http_test",
+        "//rust/cli:scheda",
+        "//rust/api:contract_test",
+        "//rust/api:git_terms_test",
+        "//rust/api:version_field_test",
+        "//rust/blocking",
+        "//rust/blocking:blocking_test",
+        "//rust/scheda:integration_test",
+        "//rust/scheda:integration_thin_test",
+        "//rust/scheda:scheda",
+        "//rust/scheda:scheda_test",
+        "//rust/scheda:scheda_thin",
+        "//rust/scheda:scheda_thin_test",
+    ],
+)
+
+# Formats every Rust target of the workspace in place, but those tagged
+# `norustfmt`.
+alias(
+    name = "format",
+    actual = "@rules_rust//:rustfmt",
 )
 
 cargo_audit_test(

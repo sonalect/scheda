@@ -8,6 +8,15 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `bazel test //rust:rustfmt`, part of `bazel test //...`: a handwritten
+  Rust file that rustfmt would change fails it, as a BUILD file
+  buildifier would change fails `//bazel:lint`. The generated proto code
+  is left out. `bazel run //rust:format` formats the Rust in place, as
+  `cargo fmt --all` does; the generated crate is now tagged `norustfmt`,
+  the spelling both the check and the formatter of `rules_rust` skip.
+
 ## [0.24.0] - 2026-10-21
 
 ### Added

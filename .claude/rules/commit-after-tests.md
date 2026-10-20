@@ -2,7 +2,7 @@
 
 Never create a git commit until `bazel test //...` has exited 0 on **this
 working tree** in this session. `cargo test` alone is not enough: CI runs
-Bazel (`//bazel:lint`, `//bazel:markdown`, generate checks, Python, the
+Bazel (`//bazel:lint`, `//bazel:markdown`, `//rust:rustfmt`, generate checks, Python, the
 rest).
 
 Follow `run-commands.md`: repo root (`MODULE.bazel`), unsandboxed. After

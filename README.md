@@ -189,6 +189,7 @@ Lint (`bazel test` never rewrites files; format is `bazel run` only):
 ```bash
 bazel test //api:lint           # Protobuf (buf)
 bazel test //rust:lint          # clippy
+bazel test //rust:rustfmt       # rustfmt --check (generated code left out)
 bazel test //python:lint        # ruff
 bazel test //bazel:lint         # Starlark (buildifier)
 bazel test //bazel:markdown     # markdownlint-cli2
@@ -196,6 +197,7 @@ bazel test //rust:vuln          # cargo-audit (needs network)
 bazel test //python:vuln        # uv audit (needs network)
 
 bazel run //api:format         # buf format
+bazel run //rust:format         # rustfmt (as cargo fmt --all)
 bazel run //python:format       # ruff format
 bazel run //bazel:format        # buildifier -mode=fix
 ```

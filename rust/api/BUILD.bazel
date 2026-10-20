@@ -16,12 +16,13 @@ _API_DEPS = [
 ]
 
 # The generated trees are rustfmt::skip from lib.rs. The rustfmt aspect lists
-# every globbed file, so without this tag it reformats them.
+# every globbed file, so without this tag `//rust:rustfmt` checks them and
+# `//rust:format` reformats them. `norustfmt` is the spelling both honour.
 rust_library(
     name = "generated_v1",
     srcs = ["lib.rs"] + glob(["gen/**/*.rs"]),
     crate_name = "scheda_api",
-    tags = ["no_rustfmt"],
+    tags = ["norustfmt"],
     visibility = ["//visibility:public"],
     deps = _API_DEPS,
 )

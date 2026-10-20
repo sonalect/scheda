@@ -30,8 +30,10 @@ impl contains the new rule. Optional check: `bazel test //api:generate_test`.
   USearch.
 - `bazel test //... --keep_going --test_output=errors`: the gate before a
   commit (`commit-after-tests.md`). It also runs `//bazel:lint`
-  (buildifier) and `//bazel:markdown` (markdownlint over every `*.md`,
-  `.claude/` included). `bazel run //bazel:format` fixes BUILD formatting.
+  (buildifier), `//bazel:markdown` (markdownlint over every `*.md`,
+  `.claude/` included), and `//rust:rustfmt` (a handwritten `.rs` file
+  rustfmt would change fails it). `bazel run //bazel:format` fixes BUILD
+  formatting; `cargo fmt --all` or `bazel run //rust:format` fixes Rust.
 
 ## protoc
 
