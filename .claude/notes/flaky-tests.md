@@ -61,12 +61,40 @@ uncached gates in a row green):
   (the hook writes `/proc/$$/winpid`) were only type-checked for
   `x86_64-pc-windows-msvc`; the first Windows CI run is their proof.
 
+- A hang and a size flake of the cargo unit tests (20 October 2026, after
+  `0.23.0`; 12 runs in a row clean after the fixes):
+  - `reads::tests::the_first_document_of_a_big_collection_reads_one_blob_and_a_dropped_stream_no_more`
+    hung about 1 run in 4, and a gate ran until its 19-minute timeout. The
+    test commits 100 000 files in one folder; when the indexer's poll saw
+    that commit before the test ended, its round looked up each changed
+    file by path, which reads and hashes (SHA-1, collision-detecting) the
+    4 MB folder tree again for every file, about 400 GB in all; libgit2
+    caches no tree over 4 KB. The listing is one blocking step, and the
+    test runtime's drop waits for it. A library defect, not only a test
+    one: any commit that changes many files in one big folder made the
+    round quadratic. The blob now comes from the tree comparison
+    (`Delta::file`; `repo::tests::a_delta_names_the_file_a_lookup_finds_in_the_later_commit`).
+  - A run killed midway leaves its scratch: four of these 200 000-file
+    folders filled the inodes of the `/tmp` tmpfs (97 % of 1 048 576), and
+    then every test that writes failed with `StorageFull`. Check
+    `df -i /tmp` after a killed run.
+  - `pack::tests::many_appends_leave_few_loose_objects_and_a_small_database`
+    failed about 1 run in 6 (4.16 MB against a bound of 4.01 MB): the
+    test's commits took the clock, so their ids, the fan-out folders the
+    estimate of loose objects samples, and the moments it packs differed
+    per run. The test commits at a fixed time; the result is the same on
+    every run.
+
 **Why:** a rare red gate wastes a run and hides real failures.
 
 **How to apply:** to reproduce, loop
 `bazel test //... --nocache_test_results` and copy
 `.bazel/testlogs/<pkg>/<target>/test.log` of a failed target at once, or
 run the cargo unit-test binary eight at a time with `TEST_TMPDIR` on
-`/dev/shm`. A test that asserts the indexer has *not* acted yet must pause
+`/dev/shm`. A hang shows as libtest's `has been running for over 60
+seconds` line (keep it in the filter). `ptrace_scope` is 1 and `perf` is
+closed, but `gdb` may trace a binary it starts:
+`gdb -batch -ex run -ex "thread apply all bt 40" --args <test binary>`,
+then `kill -INT` the binary once the line shows. A test that asserts the indexer has *not* acted yet must pause
 it (`Indexer::pause`). The CLI `EINTR` source was never identified (no
 signal handler in this repo).

@@ -1145,28 +1145,29 @@ fn list(
         }
         Scope::Deltas(deltas) => {
             for delta in deltas {
+                // Taken from the comparison of the trees: a lookup by path
+                // reads every folder on the way again, for each file.
+                let file = delta.file();
                 let path = delta.path;
                 if journal {
                     if !is_segment(decl, &path) {
                         continue;
                     }
-                    match blob_at(&snap, &path)? {
-                        Some(blob) if !delta.deleted => items.push(Item::Segment {
+                    match file? {
+                        Some(blob) => items.push(Item::Segment {
                             old: old_of(&path),
                             path,
                             blob,
                         }),
-                        _ => items.push(Item::SegmentGone { path }),
+                        None => items.push(Item::SegmentGone { path }),
                     }
                 } else {
                     let Some(id) = document_id(decl, &path) else {
                         continue;
                     };
-                    match blob_at(&snap, &path)? {
-                        Some(blob) if !delta.deleted => {
-                            items.push(Item::Document { id, path, blob });
-                        }
-                        _ => items.push(Item::DocumentGone { id }),
+                    match file? {
+                        Some(blob) => items.push(Item::Document { id, path, blob }),
+                        None => items.push(Item::DocumentGone { id }),
                     }
                 }
             }

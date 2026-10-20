@@ -8,6 +8,56 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Added
+
+- `FixedEmbedder::with_query` and `FixedEmbedderAsync::with_query`: an
+  optional query function, for a model that embeds a search text otherwise
+  than a stored one (an instruction before the text, another task type).
+  The blocking form takes `Fn(String) -> Result<Vec<f32>, Error>`, the
+  async form a function that returns a future of that. When given,
+  `EmbedQuery` calls it with the text instead of the portion function; a
+  vector of another length than the declared dimensions is
+  `INVALID_ARGUMENT`, and its failure is the failure of `EmbedQuery`.
+  `Embed` still goes to the portion function. Without it, `EmbedQuery` is
+  a portion of one, as before; `new` is unchanged.
+
+### Fixed
+
+- `Index.Status` and `Index.Watch` show a port mismatch as soon as the
+  ports change. Before, a Vault whose Index was at `HEAD` and that was
+  given an embedder of another model or a Projector of another
+  `projection_id` (`Vault.SetEmbedder`, `SetProjector`, or the ports of
+  `VaultOpening`) failed its searches with `INDEX_STALE` while
+  `IndexState.last_error` stayed unset until a write moved `HEAD`; the
+  same for an embedder removed while a `vector` column needs one. Now the
+  round such a change wakes compares the ports with the Index, with no
+  write: `last_error` is `INDEX_STALE` with the reason a search gives, or
+  `FAILED_PRECONDITION` naming the port the Vault lacks, `Index.Watch`
+  emits that state, and setting the Index's port again clears it. A
+  caller can read the state to decide whether to call `Index.Reindex`,
+  with no probe search. For the same reason a Vault of other ports lost
+  its `INDEX_STALE` from the state once another Vault brought the Index
+  to `HEAD`; it now keeps it. A look with no port changed and the same
+  live Index compares nothing, so an idle look costs what it did. Once
+  `Index.Reindex` is asked for, a refusal found by a look made before the
+  request is not published, and `scheda index reindex` reads past an
+  `INDEX_STALE` that comes before its rebuild starts instead of failing.
+- An indexer round over a commit that changes many files in one folder is
+  linear in the files it changes. It looked each changed file up by path,
+  which read and hashed the folder's tree once per file: for 100 000 new
+  files in one collection folder, about 400 GB hashed, and `Vault.Close`,
+  or a runtime dropped meanwhile, waited for that step. The blob of each
+  file now comes from the tree comparison itself.
+- TLS trust of the emSign intermediates whose keys were compromised:
+  `rustls-webpki` 0.103.16 rejects certificate paths through them
+  (RUSTSEC-2026-0382), `webpki-roots` 1.0.10 drops the emSign roots
+  (RUSTSEC-2026-0381), and in the Python sidecar lock (`uv.lock`) `certifi`
+  2026.10.19 drops them too (GHSA-6q48-6c7w-9gw2). All three were taken
+  inside the quarantine of freshly published versions on the owner's word,
+  after a check: each was published by the project's own maintainers or
+  its GitHub release workflow, matches its tag upstream, and changes only
+  what its advisory names.
+
 ## [0.23.0] - 2026-10-20
 
 This release is breaking: the two Index flags of a collection become one

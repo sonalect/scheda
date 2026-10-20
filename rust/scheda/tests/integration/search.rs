@@ -876,6 +876,77 @@ mod on_lance {
     }
 
     #[test]
+    fn an_async_fixed_embedder_with_a_query_function_embeds_the_search_text_with_it() {
+        both(|| async {
+            let scratch = Scratch::new("search-query-function");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            let calls = Arc::new(Calls::default());
+            let mut request = opening(&path, options());
+            request.projector = ProjectorRef::from_sync(Docs {
+                projection: "docs@1",
+                vectors: true,
+                calls: Arc::clone(&calls),
+            })
+            .into();
+            let stored = Arc::new(Mutex::new(Vec::new()));
+            let searched = Arc::new(Mutex::new(Vec::new()));
+            let (texts, queries) = (Arc::clone(&stored), Arc::clone(&searched));
+            request.embedder = EmbedderRef::from_async(
+                FixedEmbedderAsync::new(
+                    "topics@1",
+                    4,
+                    NonZeroUsize::new(2).unwrap(),
+                    move |portion: Vec<String>| {
+                        texts.lock().unwrap().extend(portion.iter().cloned());
+                        async move { Ok(portion.iter().map(|text| topic_vector(text)).collect()) }
+                    },
+                )
+                // A model that reads every search text as one about dogs.
+                .with_query(move |text: String| {
+                    queries.lock().unwrap().push(text);
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        Ok(topic_vector("dog puppy canine"))
+                    }
+                }),
+            )
+            .into();
+            let vault = Scheda
+                .open(request)
+                .await
+                .unwrap()
+                .to_async_inline()
+                .unwrap();
+            let fx = Fixture {
+                _scratch: scratch,
+                path,
+                vault,
+                calls,
+            };
+            wait_indexed(&fx.vault).await;
+            fx.corpus().await;
+            let notes = fx.collection("notes").await;
+
+            // The vectors alone rank: the vector of the query function finds
+            // the dog, where one of the text itself would find a cat.
+            let found = run(
+                &notes,
+                json!({"text": "feline", "k": 1, "lexical_weight": 0}),
+            )
+            .await;
+            assert_eq!(summary(&found), VectorLeg::VECTOR_LEG_RAN);
+            assert_eq!(ids(&found), ["dog1"]);
+            assert_eq!(*searched.lock().unwrap(), ["feline"]);
+            assert!(
+                !stored.lock().unwrap().iter().any(|text| text == "feline"),
+                "the portion function is not given the search text"
+            );
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
     fn a_reranker_orders_the_first_hits_and_sees_the_query_first() {
         both(|| async {
             let fx = Fixture::new("search-rerank").await;
@@ -2246,6 +2317,195 @@ mod on_lance {
         });
     }
 
+    /// Waits, for a few seconds, for an item of `watch` that passes `done`.
+    async fn watched<S>(watch: &mut S, done: impl Fn(&IndexState) -> bool) -> IndexState
+    where
+        S: protocontract::Stream<Item = Result<IndexState, Error>> + Unpin,
+    {
+        let wait = async {
+            loop {
+                let state = next(watch).await.unwrap().unwrap();
+                if done(&state) {
+                    return state;
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(10), wait)
+            .await
+            .expect("no item of the watch passed")
+    }
+
+    /// `state`, an item of a watch, is of the round a port change woke:
+    /// `last_error` has `code`, the Index and `HEAD` stay at `head`, and
+    /// `Status` says the same.
+    async fn shown(
+        index: &DynIndexAsync,
+        head: &Option<String>,
+        state: IndexState,
+        code: Option<&str>,
+    ) -> IndexState {
+        assert_eq!(error_code(&state), code, "{state:?}");
+        assert_eq!(&state.version, head);
+        assert_eq!(&state.stored_version, head);
+        let status = index.status(Empty::default()).await.unwrap();
+        assert_eq!(error_code(&status), code, "{status:?}");
+        state
+    }
+
+    /// The failure of a search of `notes` for `kitten`, if it fails.
+    async fn search_failure(notes: &DynCollectionAsync) -> Option<Error> {
+        match notes.search(search_of(json!({"text": "kitten"}))).await {
+            Ok(stream) => items(stream).await.into_iter().find_map(Result::err),
+            Err(error) => Some(error),
+        }
+    }
+
+    #[test]
+    fn a_port_set_or_removed_shows_in_the_index_state_without_a_write() {
+        both(|| async {
+            let scratch = Scratch::new("search-ports-changed");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            let calls = Arc::new(Calls::default());
+            // An hour between two looks at `HEAD`: only a write, or a port
+            // set or removed, wakes the indexer.
+            let vault = open_polled(
+                &path,
+                &HYBRID,
+                &calls,
+                options().with_index_poll_ms(3_600_000),
+            )
+            .await;
+            let fx = Fixture {
+                _scratch: scratch,
+                path,
+                vault,
+                calls,
+            };
+            fx.corpus().await;
+            let index = index_of(&fx.vault).await;
+            let head = fx.vault.info(Empty::default()).await.unwrap().version;
+            let live = current(&fx.path);
+            let projected = fx.calls.projected.load(Ordering::SeqCst);
+            let embedded = fx.calls.embedded.load(Ordering::SeqCst);
+            let notes = fx.collection("notes").await;
+            let mut watch = Box::pin(index.watch(Empty::default()).await.unwrap());
+            let now = next(&mut watch).await.unwrap().unwrap();
+            assert_eq!(now.version, head);
+            assert!(!now.last_error.is_set(), "{now:?}");
+
+            let stale = Some("VAULT_ERROR_CODE_INDEX_STALE");
+            let embedder = |model| {
+                EmbedderRef::from_sync(Topics {
+                    model,
+                    calls: Arc::clone(&fx.calls),
+                })
+            };
+            let projector = |projection| {
+                ProjectorRef::from_sync(Docs {
+                    projection,
+                    vectors: true,
+                    calls: Arc::clone(&fx.calls),
+                })
+            };
+
+            // An embedder of another model: stale, for the reason a search
+            // gives; the embedder of the Index again: fresh.
+            fx.vault.set_embedder(embedder("topics@2")).await.unwrap();
+            let state = watched(&mut watch, |state| error_code(state) == stale).await;
+            let state = shown(&index, &head, state, stale).await;
+            let error = search_failure(&notes).await.unwrap();
+            assert!(error.is(Code::IndexStale), "{error}");
+            assert_eq!(
+                state.last_error.as_option().unwrap().message,
+                scheda::error_report(&error).message
+            );
+            fx.vault.set_embedder(embedder("topics@1")).await.unwrap();
+            let state = watched(&mut watch, |state| !state.last_error.is_set()).await;
+            shown(&index, &head, state, None).await;
+            assert!(search_failure(&notes).await.is_none());
+
+            // A Projector of another projection, the same way.
+            fx.vault.set_projector(projector("docs@2")).await.unwrap();
+            let state = watched(&mut watch, |state| error_code(state) == stale).await;
+            let state = shown(&index, &head, state, stale).await;
+            let error = search_failure(&notes).await.unwrap();
+            assert!(error.is(Code::IndexStale), "{error}");
+            assert_eq!(
+                state.last_error.as_option().unwrap().message,
+                scheda::error_report(&error).message
+            );
+            fx.vault.set_projector(projector("docs@1")).await.unwrap();
+            let state = watched(&mut watch, |state| !state.last_error.is_set()).await;
+            shown(&index, &head, state, None).await;
+
+            // No embedder for the `vector` column: the port it lacks is
+            // named; its searches still answer, without the vector leg.
+            fx.vault.remove_embedder(Empty::default()).await.unwrap();
+            let lacking = Some("VAULT_ERROR_CODE_FAILED_PRECONDITION");
+            let state = watched(&mut watch, |state| error_code(state) == lacking).await;
+            let state = shown(&index, &head, state, lacking).await;
+            let message = state.last_error.as_option().unwrap().message.clone();
+            assert!(
+                message.as_deref().unwrap_or("").contains("an embedder"),
+                "{message:?}"
+            );
+            assert!(search_failure(&notes).await.is_none());
+            fx.vault.set_embedder(embedder("topics@1")).await.unwrap();
+            let state = watched(&mut watch, |state| !state.last_error.is_set()).await;
+            shown(&index, &head, state, None).await;
+
+            // Nothing was built meanwhile, and the Vault indexes again.
+            assert_eq!(current(&fx.path), live);
+            assert_eq!(fx.calls.projected.load(Ordering::SeqCst), projected);
+            assert_eq!(fx.calls.embedded.load(Ordering::SeqCst), embedded);
+            fx.put("notes", "after", &json!({"title": "after"})).await;
+            assert_eq!(count(&notes).await, 5);
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_vault_of_other_ports_stays_stale_once_another_vault_brings_the_index_to_head() {
+        both(|| async {
+            let fx = Fixture::new("search-stale-beside").await;
+            fx.corpus().await;
+            let other = open_with(
+                &fx.path,
+                &Ports {
+                    projection: "docs@2",
+                    ..HYBRID
+                },
+                &Arc::new(Calls::default()),
+            )
+            .await;
+            let index = index_of(&other).await;
+            let head = collection(&other, "notes")
+                .await
+                .unwrap()
+                .upsert(
+                    DocumentUpsert::default()
+                        .with_id("other")
+                        .with_raw(json!({"title": "other"}).to_string().into_bytes())
+                        .with_note("test"),
+                )
+                .await
+                .unwrap()
+                .version;
+            // The Vault of the Index's ports indexes the write; the other one
+            // sees the Index at `HEAD`, and still stale for it.
+            wait_indexed(&fx.vault).await;
+            let state = soon(&index, |state| state.version == head).await;
+            assert_eq!(
+                error_code(&state),
+                Some("VAULT_ERROR_CODE_INDEX_STALE"),
+                "{state:?}"
+            );
+            other.close(Empty::default()).await.unwrap();
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
     /// A Vault indexed by `HYBRID`, closed, and opened again by another
     /// projection with a long `index_wait_timeout_ms`; a write of it moved
     /// `HEAD` past the Index. The Vault, and the token of the write.
@@ -2506,8 +2766,20 @@ mod on_lance {
             };
             let vault = open_with(&fx.path, &other, &calls).await;
             let index = index_of(&vault).await;
-            // A Vault whose `HEAD` the Index reflects is current and plans
-            // nothing; a write moves it.
+            // A Vault whose `HEAD` the Index reflects compares its ports
+            // with the Index once, at its first look, and finds it stale.
+            let head = vault.info(Empty::default()).await.unwrap().version;
+            soon(&index, |state| {
+                state.stored_version == head
+                    && error_code(state) == Some("VAULT_ERROR_CODE_INDEX_STALE")
+            })
+            .await;
+            // A margin: an ask that must not come has no sign to wait for. A
+            // slow runner makes this check weaker, and never fails it.
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert_eq!(calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+
+            // A write moves `HEAD`: asked again, once.
             let notes = collection(&vault, "notes").await.unwrap();
             let write = |id: &'static str| {
                 DocumentUpsert::default()
@@ -2521,26 +2793,27 @@ mod on_lance {
                     && error_code(state) == Some("VAULT_ERROR_CODE_INDEX_STALE")
             })
             .await;
+            columned_at_least(&calls, 2 * COLLECTIONS).await;
             // A margin: an ask that must not come has no sign to wait for. A
             // slow runner makes this check weaker, and never fails it.
             tokio::time::sleep(Duration::from_millis(300)).await;
-            assert_eq!(calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+            assert_eq!(calls.columned.load(Ordering::SeqCst), 2 * COLLECTIONS);
 
             // Queries of the stale Vault fail and ask nothing either.
             for _ in 0..10 {
                 let error = notes.count(DocumentQuery::default()).await.unwrap_err();
                 assert!(error.is(Code::IndexStale), "{error}");
             }
-            assert_eq!(calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+            assert_eq!(calls.columned.load(Ordering::SeqCst), 2 * COLLECTIONS);
 
             // A write moves `HEAD`: asked again, once.
             let head = notes.upsert(write("moved")).await.unwrap().version;
             soon(&index, |state| state.stored_version == head).await;
-            columned_at_least(&calls, 2 * COLLECTIONS).await;
+            columned_at_least(&calls, 3 * COLLECTIONS).await;
             // A margin: an ask that must not come has no sign to wait for. A
             // slow runner makes this check weaker, and never fails it.
             tokio::time::sleep(Duration::from_millis(300)).await;
-            assert_eq!(calls.columned.load(Ordering::SeqCst), 2 * COLLECTIONS);
+            assert_eq!(calls.columned.load(Ordering::SeqCst), 3 * COLLECTIONS);
 
             // A new Projector, the same projection, is asked again.
             vault
@@ -2551,11 +2824,11 @@ mod on_lance {
                 }))
                 .await
                 .unwrap();
-            columned_at_least(&calls, 3 * COLLECTIONS).await;
+            columned_at_least(&calls, 4 * COLLECTIONS).await;
             // A margin: an ask that must not come has no sign to wait for. A
             // slow runner makes this check weaker, and never fails it.
             tokio::time::sleep(Duration::from_millis(300)).await;
-            assert_eq!(calls.columned.load(Ordering::SeqCst), 3 * COLLECTIONS);
+            assert_eq!(calls.columned.load(Ordering::SeqCst), 4 * COLLECTIONS);
             vault.close(Empty::default()).await.unwrap();
         });
     }

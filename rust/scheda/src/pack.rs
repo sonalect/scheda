@@ -426,7 +426,10 @@ mod tests {
         let mut root = repo.treebuilder(None).unwrap();
         root.insert("log", folder, 0o040_000).unwrap();
         let tree = repo.find_tree(root.write().unwrap()).unwrap();
-        let who = Signature::now("Test", "test@example.test").unwrap();
+        // A fixed time: the ids of the commits, and so the folders the
+        // estimate of the loose objects samples, are the same on every run.
+        let when = git2::Time::new(1_700_000_000, 0);
+        let who = Signature::new("Test", "test@example.test", &when).unwrap();
         let parent = repo.head().ok().and_then(|head| head.peel_to_commit().ok());
         let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
         repo.commit(Some("HEAD"), &who, &who, "append", &tree, &parents)

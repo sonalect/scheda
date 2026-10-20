@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.85, 20 October 2026.
+Document 14 of the Scheda package. Version 0.86, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -170,7 +170,9 @@ state, and past `--index-wait-timeout-ms` (60 s) fails with
 `DEADLINE_EXCEEDED` (retryable) instead of answering without the latest
 write. `--no-wait` sends no `notBefore`: the call answers from the Index as
 it is. `index reindex` waits for the rebuild it started to end; a failed
-rebuild is its failure. `--no-wait` skips that wait too.
+rebuild is its failure, and so is a `lastError` before the rebuild starts,
+but for `INDEX_STALE`, which the rebuild ends. `--no-wait` skips that wait
+too.
 
 *Check:* `rust/cli/tests/cli.rs`: `no_wait_queries_the_index_as_it_is_and_waiting_sees_the_write`,
 `index_watch_until_settled_and_reindex_end`. A query prints the summary

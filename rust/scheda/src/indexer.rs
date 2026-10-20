@@ -12,8 +12,12 @@
 //! Projector or embedder is of other ports than the Index was built with
 //! finds it stale, and one that lacks the embedder a `vector` column needs
 //! does not index; the status says which, and such a handle still reads
-//! the Index others keep. A build without the feature `index` keeps the
-//! journal id maps only, in every handle.
+//! the Index others keep. The ports are compared with the Index at the
+//! first look and whenever a port was set or removed or the live generation
+//! changed since, `HEAD` moved or not, so the status names a mismatch in
+//! the round a port change wakes; a look that finds none of these compares
+//! nothing. A build without the feature `index` keeps the journal id maps
+//! only, in every handle.
 //!
 //! A round takes `flock` on `index.lock` without waiting (another indexer
 //! holds it: the round is skipped and looked at again later), reads `HEAD`
@@ -37,13 +41,15 @@
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use protocontract::RuntimeCode;
 #[cfg(any(test, feature = "index"))]
 use scheda_api::v1::VaultErrorCode;
+#[cfg(feature = "index")]
+use scheda_api::v1::ErrorReport;
 use scheda_api::v1::{IndexState, Rebuild, rebuild};
 use scheda_blocking::{Blocking, blocking};
 use tokio::runtime::Handle;
@@ -78,6 +84,8 @@ const PROGRESS_EVERY: Duration = Duration::from_millis(100);
 #[derive(Debug, Default)]
 pub(crate) struct Signal {
     stop: AtomicBool,
+    /// How many times a port of the Vault was set or removed.
+    ports: AtomicU64,
     wake: Notify,
 }
 
@@ -89,10 +97,19 @@ impl Signal {
         self.wake.notify_one();
     }
 
-    /// A port of the Vault was set or removed: look now, with it. Counts as
-    /// [`Signal::moved`] does.
+    /// A port of the Vault was set or removed: look now, with it, and
+    /// compare the ports with the Index again even when `HEAD` stands.
+    /// Called once the port is in place. Counts as [`Signal::moved`] does.
     pub(crate) fn ports_changed(&self) {
+        self.ports.fetch_add(1, Ordering::Release);
         self.wake.notify_one();
+    }
+
+    /// How many times a port was set or removed. A port is in place before
+    /// this moves, so ports read after it are at least as new as the count.
+    #[cfg(feature = "index")]
+    fn ports(&self) -> u64 {
+        self.ports.load(Ordering::Acquire)
     }
 
     fn stop(&self) {
@@ -155,8 +172,20 @@ impl Shared {
 
     /// Changes the state and makes it the next item for the watchers.
     fn publish(&self, edit: impl FnOnce(&mut Inner)) {
+        self.publish_if(|inner| {
+            edit(inner);
+            true
+        });
+    }
+
+    /// As [`Shared::publish`], when `edit`, which sees the state and may
+    /// change it, returns `true`; nothing is published when it returns
+    /// `false`, and it then leaves the state as it was.
+    fn publish_if(&self, edit: impl FnOnce(&mut Inner) -> bool) {
         let mut inner = self.lock();
-        edit(&mut inner);
+        if !edit(&mut inner) {
+            return;
+        }
         let state = inner.state.clone();
         inner.history.push_back(state);
         if inner.history.len() > HISTORY {
@@ -456,11 +485,28 @@ struct Applied {
 }
 
 /// What a round keeps between two tries: the vectors the embedder gave
-/// and the Projector's answers. Nothing in a build without the Index.
+/// and the Projector's answers, and the last comparison of the ports with
+/// an Index at `HEAD`. Nothing in a build without the Index.
 #[derive(Default)]
 struct Kept {
     #[cfg(feature = "index")]
     cache: Cache,
+    #[cfg(feature = "index")]
+    compared: Option<Compared>,
+}
+
+/// What a comparison of this Vault's ports with an Index at `HEAD` was made
+/// with, and what it found. It stands while no port is set or removed and
+/// the live generation keeps its `commit`, which names the state whose
+/// declarations and Projector columns were compared.
+#[cfg(feature = "index")]
+struct Compared {
+    /// [`Signal::ports`], read before the ports were.
+    ports: u64,
+    generation: String,
+    commit: Commit,
+    /// Why this Vault does not index that Index; `None` when it does.
+    refused: Option<ErrorReport>,
 }
 
 /// What the look at the start of a round found.
@@ -597,6 +643,13 @@ impl Context {
             blocking(move |cx| context.look(cx)).await?
         };
         if look.current() {
+            // An Index at `HEAD` may be of other ports than this Vault's: a
+            // port set or removed since, others given at open, or another
+            // Vault that moved the Index.
+            #[cfg(feature = "index")]
+            if !self.agrees(&look, kept).await? {
+                return Ok(Next::Idle);
+            }
             self.follow(look.version(), look.head);
             return Ok(Next::Idle);
         }
@@ -700,6 +753,70 @@ impl Context {
     /// the Vault lacks a port the Index needs. The status says which.
     #[cfg(feature = "index")]
     async fn plan(&self, look: &Look) -> Result<Option<Plan>, Error> {
+        match self.verdict(look).await? {
+            Ok(plan) => Ok(Some(plan)),
+            Err(report) => {
+                self.refuse(look, &report);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Whether this Vault indexes the Index that `look` found at `HEAD`;
+    /// when it does not, the status says why, as [`Context::plan`] has it.
+    /// The ports are compared with the Index again only when a port was
+    /// set or removed, or the live generation or its `commit` changed,
+    /// since the last comparison: a look that finds neither reads nothing
+    /// more and asks the Projector nothing.
+    #[cfg(feature = "index")]
+    async fn agrees(&self, look: &Look, kept: &mut Kept) -> Result<bool, Error> {
+        let Some((generation, Some(commit))) = &look.live else {
+            // No Index to compare with: a round builds one.
+            return Ok(true);
+        };
+        // Read before the verdict reads the ports: a port set meanwhile
+        // moves the count past this one, so the next look compares again.
+        let ports = self.shared.signal.ports();
+        let again = kept.compared.as_ref().is_none_or(|last| {
+            last.ports != ports || last.generation != generation.name() || last.commit != *commit
+        });
+        if again {
+            let refused = self.verdict(look).await?.err();
+            kept.compared = Some(Compared {
+                ports,
+                generation: generation.name().to_owned(),
+                commit: commit.clone(),
+                refused,
+            });
+        }
+        let agrees = match kept
+            .compared
+            .as_ref()
+            .and_then(|compared| compared.refused.as_ref())
+        {
+            Some(report) => {
+                self.refuse(look, report);
+                false
+            }
+            None => true,
+        };
+        #[cfg(test)]
+        hooks::count_look(&self.vault);
+        Ok(agrees)
+    }
+
+    /// The plan of this Vault for the round, or the report of why it does
+    /// not index: `INDEX_STALE` when the Index was built with other ports
+    /// than this Vault's, `FAILED_PRECONDITION` naming the port the Vault
+    /// lacks.
+    ///
+    /// # Errors
+    ///
+    /// The failure of git, of the Index, or of the Projector.
+    #[cfg(feature = "index")]
+    async fn verdict(&self, look: &Look) -> Result<Result<Plan, ErrorReport>, Error> {
+        #[cfg(test)]
+        hooks::count_verdict(&self.vault);
         let repos = Arc::clone(&self.repos);
         let head = look.head;
         let main = head.oid(Repo::Main);
@@ -727,33 +844,43 @@ impl Context {
                 format!("this Vault lacks {what}"),
             )
             .into(),
-            (None, None) => return Ok(Some(plan)),
+            (None, None) => return Ok(Ok(plan)),
         };
-        let report = error_report(&error);
+        Ok(Err(error_report(&error)))
+    }
+
+    /// This Vault does not index the Index `look` found, for the reason
+    /// `report` gives: the status says so, unless it does already, or a
+    /// rebuild was asked for since the look: the round that request wakes
+    /// says what it finds, and a watcher that asked is not told a refusal
+    /// the rebuild is there to end.
+    #[cfg(feature = "index")]
+    fn refuse(&self, look: &Look, report: &ErrorReport) {
         let version = look.version().map(State::token);
-        let stored = Some(head.token());
-        let differs = {
-            let inner = self.shared.lock();
-            inner.state.last_error.as_option() != Some(&report)
-                || inner.state.version != version
-                || inner.state.stored_version != stored
-        };
-        if differs {
-            let asked = look.asked;
-            self.shared.publish(|inner| {
-                // Only a request this look saw is over: one asked since, by
-                // `reindex`, stands for the next round.
-                if asked {
-                    inner.requested = false;
-                }
-                inner.state.version = version;
-                inner.state.stored_version = stored;
-                inner.state.role = Some(false);
-                inner.state.pending = None;
-                inner.state.last_error = report.into();
-            });
-        }
-        Ok(None)
+        let stored = Some(look.head.token());
+        let asked = look.asked;
+        self.shared.publish_if(|inner| {
+            if !asked && inner.requested {
+                return false;
+            }
+            if inner.state.last_error.as_option() == Some(report)
+                && inner.state.version == version
+                && inner.state.stored_version == stored
+            {
+                return false;
+            }
+            // Only a request this look saw is over: one asked since, by
+            // `reindex`, stands for the next round.
+            if asked {
+                inner.requested = false;
+            }
+            inner.state.version = version;
+            inner.state.stored_version = stored;
+            inner.state.role = Some(false);
+            inner.state.pending = None;
+            inner.state.last_error = report.clone().into();
+            true
+        });
     }
 
     /// The round itself, with `index.lock` held: the journal id maps, then
@@ -1228,6 +1355,10 @@ pub(crate) mod hooks {
         held: bool,
         #[cfg(feature = "index")]
         waiting: bool,
+        #[cfg(feature = "index")]
+        verdicts: usize,
+        #[cfg(feature = "index")]
+        looks: usize,
     }
 
     static HOOKS: Mutex<Option<HashMap<PathBuf, Hook>>> = Mutex::new(None);
@@ -1275,6 +1406,32 @@ pub(crate) mod hooks {
     #[cfg(feature = "index")]
     pub(crate) fn waiting(vault: &Path) -> bool {
         with(vault, |hook| hook.waiting)
+    }
+
+    /// How many times the indexer on `vault` compared its ports with the
+    /// Index.
+    #[cfg(feature = "index")]
+    pub(crate) fn verdicts(vault: &Path) -> usize {
+        with(vault, |hook| hook.verdicts)
+    }
+
+    /// The indexer on `vault` compares its ports with the Index.
+    #[cfg(feature = "index")]
+    pub(crate) fn count_verdict(vault: &Path) {
+        with(vault, |hook| hook.verdicts += 1);
+    }
+
+    /// How many looks of the indexer on `vault` at an Index at `HEAD` are
+    /// done, the status set to what each found.
+    #[cfg(feature = "index")]
+    pub(crate) fn looks(vault: &Path) -> usize {
+        with(vault, |hook| hook.looks)
+    }
+
+    /// A look of the indexer on `vault` at an Index at `HEAD` is done.
+    #[cfg(feature = "index")]
+    pub(crate) fn count_look(vault: &Path) {
+        with(vault, |hook| hook.looks += 1);
     }
 
     /// Where a held round waits: after its look and its plan, before it
@@ -1666,6 +1823,115 @@ mod tests {
             assert!(!file.exists(), "{} is left", file.display());
         }
         assert!(kept.exists());
+        vault.close().await.unwrap();
+    }
+
+    /// A Projector of the projection it is given, with no columns.
+    #[cfg(feature = "index")]
+    struct Bare(&'static str);
+
+    #[cfg(feature = "index")]
+    impl scheda_api::v1::ProjectorSync for Bare {
+        fn describe(
+            &self,
+            _empty: buffa_types::google::protobuf::Empty,
+        ) -> Result<scheda_api::v1::ProjectorDescriptor, crate::error::Error> {
+            Ok(scheda_api::v1::ProjectorDescriptor::default().with_projection_id(self.0))
+        }
+
+        fn columns(
+            &self,
+            _collection: scheda_api::v1::CollectionKey,
+        ) -> Result<scheda_api::v1::IndexSchema, crate::error::Error> {
+            Ok(scheda_api::v1::IndexSchema::default())
+        }
+
+        fn project(
+            &self,
+            _document: scheda_api::v1::RawDocument,
+        ) -> Result<scheda_api::v1::IndexDoc, crate::error::Error> {
+            Ok(scheda_api::v1::IndexDoc::default())
+        }
+    }
+
+    /// Waits until a whole look of the indexer on `path` at its Index at
+    /// `HEAD` began after this call, so it saw the ports set and the state
+    /// stored before it, and the status says what it found. The look under
+    /// way when this is called may have begun before.
+    #[cfg(feature = "index")]
+    async fn looked_since(path: &Path) {
+        let from = hooks::looks(path);
+        wait_until("a look begun since", || hooks::looks(path) >= from + 2).await;
+    }
+
+    /// Lets the indexer on `path` look many times with nothing changed,
+    /// and checks that no look compared the ports with the Index.
+    #[cfg(feature = "index")]
+    async fn idle(path: &Path) {
+        let verdicts = hooks::verdicts(path);
+        // Twenty looks or so. A slow runner makes this check weaker, and
+        // never fails it.
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert_eq!(
+            hooks::verdicts(path),
+            verdicts,
+            "an idle look compared the ports"
+        );
+    }
+
+    #[cfg(feature = "index")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_ports_are_compared_with_an_index_at_head_after_a_port_change_and_not_at_an_idle_look()
+     {
+        use scheda_api::v1::projector_ref::ProjectorRef;
+
+        let scratch = Scratch::new("compared");
+        let projector = |projection| Some(ProjectorRef::from_sync(Bare(projection)));
+        let vault = crate::testing::open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            crate::ports::Ports {
+                projector: projector("bare@1"),
+                ..crate::ports::Ports::default()
+            },
+        )
+        .await
+        .unwrap();
+        journal(&vault, "log").await;
+        line(&vault, "log", "one").await;
+        let path = scratch.canonical();
+        wait_until("the first build", || at_head(&vault, &path)).await;
+        looked_since(&path).await;
+        idle(&path).await;
+        let code = |vault: &Vault| {
+            vault
+                .indexer()
+                .status()
+                .last_error
+                .as_option()
+                .and_then(|report| report.code.clone())
+        };
+
+        // Stale: said once, and not compared again while nothing changes.
+        vault.set_projector(projector("bare@2")).await.unwrap();
+        looked_since(&path).await;
+        assert_eq!(code(&vault).as_deref(), Some("VAULT_ERROR_CODE_INDEX_STALE"));
+        idle(&path).await;
+
+        // Fresh again, the same way.
+        vault.set_projector(projector("bare@1")).await.unwrap();
+        looked_since(&path).await;
+        assert_eq!(code(&vault), None);
+        assert!(at_head(&vault, &path));
+        idle(&path).await;
+
+        // The same port set again is compared again.
+        let verdicts = hooks::verdicts(&path);
+        vault.set_projector(projector("bare@1")).await.unwrap();
+        looked_since(&path).await;
+        assert!(hooks::verdicts(&path) > verdicts);
+        assert_eq!(code(&vault), None);
+        idle(&path).await;
         vault.close().await.unwrap();
     }
 

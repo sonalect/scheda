@@ -1,5 +1,5 @@
 {
-  "checksum": "153fd07a645527a48b6a9551ab72788fb8ba4877f294f227247cdfb8d8b77d2c",
+  "checksum": "53e3f5ab87aa376d256ee4e5d995d0b127d59f346df5ab83992089ba8194f42a",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -24122,7 +24122,7 @@
             "target": "rustls_pki_types"
           },
           {
-            "id": "rustls-webpki 0.103.15",
+            "id": "rustls-webpki 0.103.16",
             "target": "webpki"
           },
           {
@@ -24270,7 +24270,7 @@
       ],
       "version": "1.15.1"
     },
-    "rustls-webpki 0.103.15": {
+    "rustls-webpki 0.103.16": {
       "common_attrs": {
         "crate_features": [
           "alloc",
@@ -24304,8 +24304,8 @@
       "package_url": "https://github.com/rustls/webpki",
       "repository": {
         "Http": {
-          "sha256": "f3c3cf1d8b1e7d4927e2d154c3fcb02979afb9939629c62cd9048d4f07b60ac2",
-          "url": "https://static.crates.io/crates/rustls-webpki/0.103.15/download"
+          "sha256": "4443b1b6d39d7c663139942cc4558262562d2c84123bb6282ef177009ca8b281",
+          "url": "https://static.crates.io/crates/rustls-webpki/0.103.16/download"
         }
       },
       "targets": [
@@ -24316,7 +24316,7 @@
           }
         }
       ],
-      "version": "0.103.15"
+      "version": "0.103.16"
     },
     "rustversion 1.0.23": {
       "build_script_attrs": {},
@@ -29263,7 +29263,7 @@
             "target": "utf8_zero"
           },
           {
-            "id": "webpki-roots 1.0.9",
+            "id": "webpki-roots 1.0.10",
             "target": "webpki_roots"
           }
         ],
@@ -30288,7 +30288,7 @@
       ],
       "version": "1.1.0"
     },
-    "webpki-roots 1.0.9": {
+    "webpki-roots 1.0.10": {
       "common_attrs": {
         "deps": [
           {
@@ -30309,8 +30309,8 @@
       "package_url": "https://github.com/rustls/webpki-roots",
       "repository": {
         "Http": {
-          "sha256": "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a",
-          "url": "https://static.crates.io/crates/webpki-roots/1.0.9/download"
+          "sha256": "1c1c8e20c8a38fc7d65abfe74eb7280e4aa667e8eec8bc84996d2874810748d9",
+          "url": "https://static.crates.io/crates/webpki-roots/1.0.10/download"
         }
       },
       "targets": [
@@ -30321,7 +30321,7 @@
           }
         }
       ],
-      "version": "1.0.9"
+      "version": "1.0.10"
     },
     "winapi-util 0.1.11": {
       "common_attrs": {

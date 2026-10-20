@@ -9,14 +9,14 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use buffa_types::google::protobuf::Empty;
-use protocontract::{BoxIter, IterStream};
+use protocontract::{BoxIter, Failure, IterStream};
 use scheda::v1::embedder_ref::EmbedderRef;
 use scheda::v1::reranker_ref::RerankerRef;
 use scheda::v1::score_item::Item;
 use scheda::v1::{
-    Document, DocumentScore, EmbedderAsync, EmbedderDescriptor, EmbedderSync, OpenOptions, Query,
-    RerankerAsync, RerankerSync, SchedaAsync, ScoreItem, Text, VaultAsync, VaultErrorCode as Code,
-    VaultOpening, Vector,
+    Document, DocumentScore, EmbedderAsync, EmbedderDescriptor, EmbedderErrorCode, EmbedderSync,
+    OpenOptions, Query, RerankerAsync, RerankerSync, SchedaAsync, ScoreItem, Text, VaultAsync,
+    VaultErrorCode as Code, VaultOpening, Vector,
 };
 use scheda::{Error, FixedEmbedder, FixedEmbedderAsync, FixedReranker, FixedRerankerAsync, Scheda};
 
@@ -404,6 +404,158 @@ fn the_async_embedding_adapter_portions_as_the_blocking_one_and_awaits_its_funct
             .unwrap();
         assert_eq!(query.values, vector_for("query"));
         assert_eq!(*portions.lock().unwrap(), [10, 10, 5, 1]);
+    });
+}
+
+/// The portion function of the query tests: it logs the length of each
+/// portion.
+fn logged(
+    log: &Arc<Mutex<Vec<usize>>>,
+) -> impl Fn(Vec<String>) -> Result<Vec<Vec<f32>>, Error> + Send + Sync + use<> {
+    let log = Arc::clone(log);
+    move |portion: Vec<String>| {
+        log.lock().unwrap().push(portion.len());
+        Ok(portion.iter().map(|text| vector_for(text)).collect())
+    }
+}
+
+/// A failure of a query function.
+fn down() -> Error {
+    Failure::new(EmbedderErrorCode::Unavailable, "down").into()
+}
+
+#[test]
+fn the_embedding_adapter_answers_a_query_with_its_query_function_when_given_one() {
+    both(|| async {
+        let portions = Arc::new(Mutex::new(Vec::new()));
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let asked = Arc::clone(&queries);
+        let adapter = FixedEmbedder::new(
+            "model-a",
+            DIMS,
+            NonZeroUsize::new(10).unwrap(),
+            logged(&portions),
+        )
+        .with_query(move |text: String| {
+            let values = vector_for(&format!("search: {text}"));
+            asked.lock().unwrap().push(text);
+            Ok(values)
+        });
+        let descriptor = adapter.describe(Empty::default()).unwrap();
+        assert_eq!(descriptor.model_id.as_deref(), Some("model-a"));
+        assert_eq!(descriptor.dimensions, Some(DIMS));
+
+        let query = adapter
+            .embed_query(Query::default().with_text("query"))
+            .unwrap();
+        assert_eq!(query.values, vector_for("search: query"));
+        assert_eq!(*queries.lock().unwrap(), ["query"]);
+        assert!(
+            portions.lock().unwrap().is_empty(),
+            "the portion function is not asked"
+        );
+        // The texts of `Embed` still go to the portion function.
+        let input: BoxIter<'static, Result<Text, Error>> = Box::new(
+            texts(3)
+                .into_iter()
+                .map(|text| Ok(Text::default().with_text(text))),
+        );
+        let got: Vec<Vector> = adapter
+            .embed(input)
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(got.len(), 3);
+        assert_eq!(*portions.lock().unwrap(), [3]);
+        assert_eq!(*queries.lock().unwrap(), ["query"]);
+
+        // A vector of another length than the declared one, and a failure.
+        let short = FixedEmbedder::new("model-a", DIMS, NonZeroUsize::MIN, logged(&portions))
+            .with_query(|_text: String| Ok(vec![1.0]));
+        let error = short
+            .embed_query(Query::default().with_text("query"))
+            .unwrap_err();
+        assert!(error.is(Code::InvalidArgument), "{error}");
+        let failing = FixedEmbedder::new("model-a", DIMS, NonZeroUsize::MIN, logged(&portions))
+            .with_query(|_text: String| Err(down()));
+        let error = failing
+            .embed_query(Query::default().with_text("query"))
+            .unwrap_err();
+        assert!(error.is(EmbedderErrorCode::Unavailable), "{error}");
+        assert_eq!(*portions.lock().unwrap(), [3]);
+    });
+}
+
+#[test]
+fn the_async_embedding_adapter_answers_a_query_by_awaiting_its_query_function_when_given_one() {
+    both(|| async {
+        let portions = Arc::new(Mutex::new(Vec::new()));
+        let queries = Arc::new(Mutex::new(Vec::new()));
+        let asked = Arc::clone(&queries);
+        let portion = |log: &Arc<Mutex<Vec<usize>>>| {
+            let embed = logged(log);
+            move |texts: Vec<String>| {
+                let vectors = embed(texts);
+                async move { vectors }
+            }
+        };
+        let adapter = FixedEmbedderAsync::new(
+            "model-a",
+            DIMS,
+            NonZeroUsize::new(10).unwrap(),
+            portion(&portions),
+        )
+        .with_query(move |text: String| {
+            let asked = Arc::clone(&asked);
+            async move {
+                tokio::task::yield_now().await;
+                let values = vector_for(&format!("search: {text}"));
+                asked.lock().unwrap().push(text);
+                Ok(values)
+            }
+        });
+        let query = adapter
+            .embed_query(Query::default().with_text("query"))
+            .await
+            .unwrap();
+        assert_eq!(query.values, vector_for("search: query"));
+        assert_eq!(*queries.lock().unwrap(), ["query"]);
+        assert!(
+            portions.lock().unwrap().is_empty(),
+            "the portion function is not asked"
+        );
+        // The texts of `Embed` still go to the portion function.
+        let input = texts(3)
+            .into_iter()
+            .map(|text| Ok(Text::default().with_text(text)))
+            .collect::<Vec<Result<Text, Error>>>();
+        let got = all(adapter
+            .embed(IterStream::new(input.into_iter()))
+            .await
+            .unwrap())
+        .await
+        .unwrap();
+        assert_eq!(got.len(), 3);
+        assert_eq!(*portions.lock().unwrap(), [3]);
+        assert_eq!(*queries.lock().unwrap(), ["query"]);
+
+        // A vector of another length than the declared one, and a failure.
+        let short = FixedEmbedderAsync::new("model-a", DIMS, NonZeroUsize::MIN, portion(&portions))
+            .with_query(|_text: String| async { Ok(vec![1.0]) });
+        let error = short
+            .embed_query(Query::default().with_text("query"))
+            .await
+            .unwrap_err();
+        assert!(error.is(Code::InvalidArgument), "{error}");
+        let failing =
+            FixedEmbedderAsync::new("model-a", DIMS, NonZeroUsize::MIN, portion(&portions))
+                .with_query(|_text: String| async { Err(down()) });
+        let error = failing
+            .embed_query(Query::default().with_text("query"))
+            .await
+            .unwrap_err();
+        assert!(error.is(EmbedderErrorCode::Unavailable), "{error}");
+        assert_eq!(*portions.lock().unwrap(), [3]);
     });
 }
 

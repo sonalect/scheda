@@ -582,7 +582,11 @@ pub(crate) struct Node {
 
 impl Node {
     fn of(entry: &git2::TreeEntry<'_>) -> Node {
-        let mode = entry.filemode_raw();
+        Node::of_mode(entry.id(), entry.filemode_raw())
+    }
+
+    /// The entry of the object `id` with the git file mode `mode`.
+    fn of_mode(id: Oid, mode: i32) -> Node {
         let kind = if mode == i32::from(FileMode::Tree) {
             NodeKind::Dir
         } else if mode == i32::from(FileMode::Link) {
@@ -596,7 +600,7 @@ impl Node {
             NodeKind::Other
         };
         Node {
-            id: entry.id(),
+            id,
             kind,
             executable: mode == i32::from(FileMode::BlobExecutable),
         }
@@ -617,9 +621,44 @@ pub(crate) struct Child {
 pub(crate) struct Delta {
     /// The Vault-relative path, POSIX.
     pub(crate) path: String,
-    /// Whether the later commit lacks the file. A file that is new or
-    /// changed is not deleted.
-    pub(crate) deleted: bool,
+    /// The entry at `path` in the later commit, as the comparison of the
+    /// two trees gave it; `None` when the later commit lacks the file.
+    pub(crate) node: Option<Node>,
+}
+
+impl Delta {
+    /// The blob of the regular file at `path` in the later commit, as
+    /// [`Snap::lookup`] finds it in that commit, with no tree read: `None`
+    /// when the commit lacks the file or holds something else there.
+    ///
+    /// # Errors
+    ///
+    /// `INVALID_ARGUMENT` when it is a symbolic link.
+    #[cfg(feature = "index")]
+    pub(crate) fn file(&self) -> Result<Option<Oid>, Fault> {
+        match self.node {
+            Some(Node {
+                kind: NodeKind::Link,
+                ..
+            }) => Err(symlink(self.path.clone())),
+            Some(Node {
+                kind: NodeKind::File,
+                id,
+                ..
+            }) => Ok(Some(id)),
+            _ => Ok(None),
+        }
+    }
+}
+
+/// The failure of a path that is, or goes through, the symbolic link
+/// `link`, a Vault-relative path.
+fn symlink(link: String) -> Fault {
+    Fault::new(
+        VaultErrorCode::InvalidArgument,
+        format!("{link} is a symlink"),
+    )
+    .with_path(link)
 }
 
 /// One commit, as a history walk reads it.
@@ -757,12 +796,7 @@ impl Snap {
                 None => return Ok(None),
             };
             if node.kind == NodeKind::Link {
-                let link = self.outer(&parts[..=at].join("/"));
-                return Err(Fault::new(
-                    VaultErrorCode::InvalidArgument,
-                    format!("{link} is a symlink"),
-                )
-                .with_path(link));
+                return Err(symlink(self.outer(&parts[..=at].join("/"))));
             }
             if at + 1 == parts.len() {
                 return Ok(Some(node));
@@ -839,7 +873,7 @@ impl Snap {
             };
             out.push(Delta {
                 path: self.outer(path),
-                deleted,
+                node: (!deleted).then(|| Node::of_mode(file.id(), i32::from(file.mode()))),
             });
         }
         Ok(Some(out))
@@ -1020,6 +1054,10 @@ mod tests {
         Repo, Repos, changed_paths, fixture, index_has_prefix, init_repository, is_work_tree,
         origin_url, require_work_tree, unmerged_paths,
     };
+    #[cfg(all(unix, feature = "index"))]
+    use super::NodeKind;
+    #[cfg(all(unix, feature = "index"))]
+    use crate::error::Error;
     use crate::git::{git, isolate_test_git_env};
 
     /// A scratch directory that is removed when the test ends.
@@ -1255,5 +1293,51 @@ mod tests {
         let nested = repos.snapshot(Repo::Isolated).unwrap();
         assert!(nested.commit().is_none());
         assert!(nested.read(".isolated/x").unwrap().is_none());
+    }
+
+    #[cfg(all(unix, feature = "index"))]
+    #[test]
+    fn a_delta_names_the_file_a_lookup_finds_in_the_later_commit() {
+        let scratch = Scratch::new("deltas");
+        scratch.write("notes/kept.md", b"kept");
+        scratch.write("notes/changed.md", b"one");
+        scratch.write("notes/gone.md", b"gone");
+        fixture::commit_all(&scratch.0);
+        let repos = Repos::new(&scratch.0);
+        let old = repos.snapshot(Repo::Main).unwrap().commit();
+        scratch.write("notes/changed.md", b"two");
+        scratch.write("notes/new.md", b"new");
+        std::fs::remove_file(scratch.0.join("notes/gone.md")).unwrap();
+        std::os::unix::fs::symlink("kept.md", scratch.0.join("notes/link.md")).unwrap();
+        fixture::commit_all(&scratch.0);
+        let snap = repos.snapshot(Repo::Main).unwrap();
+        let deltas = snap.changed_since(old, None).unwrap().unwrap();
+        let paths: Vec<&str> = deltas.iter().map(|delta| delta.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "notes/changed.md",
+                "notes/gone.md",
+                "notes/link.md",
+                "notes/new.md"
+            ]
+        );
+        for delta in &deltas {
+            let found = snap.lookup(&delta.path).map(|node| {
+                node.filter(|node| node.kind == NodeKind::File)
+                    .map(|node| node.id)
+            });
+            match (delta.file(), found) {
+                (Ok(file), Ok(found)) => assert_eq!(file, found, "{}", delta.path),
+                (Err(file), Err(found)) => {
+                    assert_eq!(delta.path, "notes/link.md");
+                    assert_eq!(file.path(), found.path());
+                    assert_eq!(file.message(), found.message());
+                    assert!(Error::from(file).is(VaultErrorCode::InvalidArgument));
+                }
+                (file, found) => panic!("{}: {file:?} and {found:?}", delta.path),
+            }
+        }
+        assert_eq!(deltas[1].file().unwrap(), None, "a deleted file");
     }
 }

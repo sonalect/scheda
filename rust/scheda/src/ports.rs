@@ -756,7 +756,8 @@ impl ProjectorPort {
 /// that needs no more than "these texts, those vectors": it reads the texts
 /// one by one, calls the function with portions of at most the size given,
 /// calls it with the last partial portion when the texts end, and sends the
-/// vectors back in order. `EmbedQuery` is a portion of one.
+/// vectors back in order. `EmbedQuery` is a portion of one, or a call of
+/// the query function given by [`FixedEmbedder::with_query`].
 ///
 /// The function must return one vector per text of its portion, in order;
 /// a count that does not match fails the stream with `INVALID_ARGUMENT`.
@@ -767,7 +768,14 @@ pub struct FixedEmbedder<F> {
     dimensions: u32,
     portion: NonZeroUsize,
     embed: Arc<F>,
+    query: Option<Box<QueryFn>>,
 }
+
+/// The query function of a [`FixedEmbedder`].
+type QueryFn = dyn Fn(String) -> Result<Vec<f32>, Error> + Send + Sync;
+
+/// The query function of a [`FixedEmbedderAsync`].
+type QueryFnAsync = dyn Fn(String) -> BoxFuture<'static, Result<Vec<f32>, Error>> + Send + Sync;
 
 impl<F> FixedEmbedder<F>
 where
@@ -790,6 +798,25 @@ where
             dimensions,
             portion,
             embed: Arc::new(embed),
+            query: None,
+        }
+    }
+
+    /// The same embedder, answering `EmbedQuery` with `query` instead of a
+    /// portion of one: for a model that embeds a search text otherwise than
+    /// a stored one (an instruction before the text, another task type).
+    /// `query` gets the text of the query; the vector it returns must have
+    /// `dimensions` values, else `EmbedQuery` fails with
+    /// `INVALID_ARGUMENT`. A failure of `query` is the failure of
+    /// `EmbedQuery`. The texts of `Embed` still go to the portion function.
+    #[must_use]
+    pub fn with_query<Q>(self, query: Q) -> FixedEmbedder<F>
+    where
+        Q: Fn(String) -> Result<Vec<f32>, Error> + Send + Sync + 'static,
+    {
+        FixedEmbedder {
+            query: Some(Box::new(query)),
+            ..self
         }
     }
 }
@@ -815,7 +842,11 @@ where
     }
 
     fn embed_query(&self, query: Query) -> Result<Vector, Error> {
-        query_vector((self.embed)(vec![query.text.unwrap_or_default()])?)
+        let text = query.text.unwrap_or_default();
+        match &self.query {
+            Some(query) => queried(query(text)?, self.dimensions),
+            None => query_vector((self.embed)(vec![text])?),
+        }
     }
 }
 
@@ -828,7 +859,9 @@ where
 /// [`FixedEmbedder`] does: it reads the texts one by one, calls the function
 /// with portions of at most the size given, calls it with the last partial
 /// portion when the texts end, and sends the vectors back in order.
-/// `EmbedQuery` is a portion of one. One portion is in flight at a time.
+/// `EmbedQuery` is a portion of one, or a call of the query function given
+/// by [`FixedEmbedderAsync::with_query`]. One portion is in flight at a
+/// time.
 ///
 /// The future must give one vector per text of its portion, in order; a
 /// count that does not match fails the stream with `INVALID_ARGUMENT`. A
@@ -843,6 +876,7 @@ pub struct FixedEmbedderAsync<F> {
     dimensions: u32,
     portion: NonZeroUsize,
     embed: Arc<F>,
+    query: Option<Box<QueryFnAsync>>,
 }
 
 impl<F, Fut> FixedEmbedderAsync<F>
@@ -867,6 +901,30 @@ where
             dimensions,
             portion,
             embed: Arc::new(embed),
+            query: None,
+        }
+    }
+
+    /// The same embedder, answering `EmbedQuery` by awaiting the future of
+    /// `query` instead of a portion of one: for a model that embeds a
+    /// search text otherwise than a stored one (an instruction before the
+    /// text, another task type). `query` gets the text of the query; the
+    /// vector its future gives must have `dimensions` values, else
+    /// `EmbedQuery` fails with `INVALID_ARGUMENT`. A failure of the future
+    /// is the failure of `EmbedQuery`. The texts of `Embed` still go to the
+    /// portion function.
+    #[must_use]
+    pub fn with_query<Q, QFut>(self, query: Q) -> FixedEmbedderAsync<F>
+    where
+        Q: Fn(String) -> QFut + Send + Sync + 'static,
+        QFut: Future<Output = Result<Vec<f32>, Error>> + Send + 'static,
+    {
+        let query = move |text| -> BoxFuture<'static, Result<Vec<f32>, Error>> {
+            Box::pin(query(text))
+        };
+        FixedEmbedderAsync {
+            query: Some(Box::new(query)),
+            ..self
         }
     }
 }
@@ -900,7 +958,11 @@ where
     }
 
     async fn embed_query(&self, query: Query) -> Result<Vector, Error> {
-        query_vector((self.embed)(vec![query.text.unwrap_or_default()]).await?)
+        let text = query.text.unwrap_or_default();
+        match &self.query {
+            Some(query) => queried(query(text).await?, self.dimensions),
+            None => query_vector((self.embed)(vec![text]).await?),
+        }
     }
 }
 
@@ -940,6 +1002,25 @@ fn query_vector(mut vectors: Vec<Vec<f32>>) -> Result<Vector, Error> {
         )
         .into()),
     }
+}
+
+/// The vector a query function gave, when it has the `dimensions` the
+/// embedder declares.
+fn queried(values: Vec<f32>, dimensions: u32) -> Result<Vector, Error> {
+    if u32::try_from(values.len()).ok() != Some(dimensions) {
+        return Err(Fault::new(
+            VaultErrorCode::InvalidArgument,
+            format!(
+                "the query function gave a vector of {} values, and the embedder declares {dimensions}",
+                values.len()
+            ),
+        )
+        .into());
+    }
+    Ok(Vector {
+        values,
+        ..Vector::default()
+    })
 }
 
 /// A reranker made of one function over a query and a portion of

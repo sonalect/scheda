@@ -5,7 +5,7 @@ use std::future::poll_fn;
 use std::pin::pin;
 
 use buffa_types::google::protobuf::Empty;
-use protocontract::{IterStream, Stream};
+use protocontract::{ErrorCode, IterStream, Stream};
 use scheda::v1::rebuild::{Cause, Stage};
 use scheda::v1::{
     CollectionAsync, CollectionKey, DynCollectionAsync, DynIndexAsync, DynMirrorAsync,
@@ -266,7 +266,12 @@ async fn reindex(index: &DynIndexAsync, wait: bool) -> Result<(), Failed> {
             }
             _ => {}
         }
-        if !running && let Some(error) = state.last_error.as_option() {
+        // `INDEX_STALE` is what the rebuild ends: a round that looked
+        // before the request found it.
+        if !running
+            && let Some(error) = state.last_error.as_option()
+            && error.code.as_deref() != Some(ErrorCode::name(VaultErrorCode::IndexStale))
+        {
             return Err(Failed::Report(Box::new(error.clone())));
         }
     }

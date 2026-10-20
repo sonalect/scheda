@@ -6,7 +6,11 @@ requires-python = ">=3.14,<3.15"
 license = "Apache-2.0"
 # Extra pins: the newest versions at least 2 days old (2026-10-19), but
 # vllm 0.32.0, taken a day early on the owner's word (it fixes
-# PYSEC-2026-4319; its files match the GitHub release). huggingface-hub 2.x
+# PYSEC-2026-4319; its files match the GitHub release). certifi 2026.10.19
+# (in the lock only) taken a day early on the owner's word (20 October
+# 2026): it drops the emSign roots (GHSA-6q48-6c7w-9gw2), and its files
+# carry the GitHub publishing attestation of certifi/python-certifi.
+# huggingface-hub 2.x
 # needs vLLM 0.32.0 or later (its transformers allows <3.0). Do not use
 # [tool.uv] constraint-dependencies — that writes [manifest] constraints and
 # aspect_rules_py fails to parse the lock.
