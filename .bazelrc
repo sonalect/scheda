@@ -9,6 +9,12 @@ build --symlink_prefix=.bazel/
 # which fail()s on Windows (`Unsupported platform windows`).
 common:linux --@pypi//venv=scheda
 common:macos --@pypi//venv=scheda
+# The Python version of `python.defaults` in `python.MODULE.bazel`; keep the
+# two equal. A `py_binary` of aspect_rules_py sets this flag on itself and
+# everything below it, so while it is unset everywhere else, the Rust CLI in
+# the `data` of `//python/cli` builds a second time, in a `-ST-` directory.
+common:linux --@aspect_rules_py//py:python_version=3.14
+common:macos --@aspect_rules_py//py:python_version=3.14
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles
 # Nothing in the build compiles protoc or the protobuf C++ library: a target

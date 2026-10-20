@@ -1,6 +1,8 @@
 """Python toolchain and uv.lock hub for the CLI driver and vLLM sidecars."""
 
 python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+
+# `.bazelrc` sets `@aspect_rules_py//py:python_version` to the same version.
 python.defaults(python_version = "3.14")
 python.toolchain(python_version = "3.14")
 

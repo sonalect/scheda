@@ -66,6 +66,12 @@ setting, and the Vault format moves to generation 3. To move from `0.22.1`
   `@protobuf//:protoc` or a C++ compile of module `protobuf` now fails
   (`bazel/no_protobuf_source.bzl`). Cargo is unchanged: `PROTOC`, or
   `protoc` on `PATH`.
+- The Bazel build compiles the Rust graph once, not twice. The Python
+  version transition of aspect_rules_py's `py_binary` put the Rust CLI that
+  `//python/cli` runs, and every crate under it, in a second configuration
+  (about 830 of 1,680 Rust actions); `.bazelrc` now sets
+  `@aspect_rules_py//py:python_version` to the version the transition
+  writes.
 
 ## [0.22.1] - 2026-10-20
 
