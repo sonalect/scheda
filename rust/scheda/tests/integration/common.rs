@@ -8,8 +8,9 @@ use std::cell::RefCell;
 use std::future::{Future, poll_fn};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use protocontract::{IterStream, Stream};
 use scheda::v1::{
@@ -210,6 +211,51 @@ pub async fn write_waits_for_the_lock(path: &Path, held: usize) {
     {
         let _ = (lock, held);
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+}
+
+/// How long a test waits for a child process it started to end.
+pub const CHILD_DEADLINE: Duration = Duration::from_secs(300);
+
+/// A child process of a test: killed and reaped when dropped, so a test
+/// that fails or panics before the child ends never leaves it running.
+pub struct Child(std::process::Child);
+
+impl Child {
+    /// Starts `command`.
+    pub fn spawn(command: &mut Command) -> Child {
+        Child(command.spawn().unwrap())
+    }
+
+    /// Waits for the child to end, without holding a thread of the
+    /// runtime. Past [`CHILD_DEADLINE`] the test fails, and the child is
+    /// killed: a child that hangs fails the test instead of hanging it.
+    pub async fn finish(&mut self) -> ExitStatus {
+        let deadline = Instant::now() + CHILD_DEADLINE;
+        loop {
+            if let Some(status) = self.0.try_wait().unwrap() {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "the child process did not end within {CHILD_DEADLINE:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    /// Kills the child, unless it has ended, and reaps it.
+    pub fn kill(&mut self) {
+        if matches!(self.0.try_wait(), Ok(None)) {
+            let _ = self.0.kill();
+        }
+        let _ = self.0.wait();
+    }
+}
+
+impl Drop for Child {
+    fn drop(&mut self) {
+        self.kill();
     }
 }
 

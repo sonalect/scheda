@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.86, 20 October 2026.
+Document 14 of the Scheda package. Version 0.87, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -296,7 +296,9 @@ network. The mirror never carries `.isolated/` (ISO-6).
 `IndexState` is `version` (the state the Index reflects), `storedVersion`
 (the stored state the indexer last saw), `pending`, `role`, `rebuild`
 (`stage`, `cause`, `documentsRead`, `documentsSkipped`, `segmentsRead`),
-and `lastError`; unset fields are left out. `index watch --until-settled`
+`lastError`, and `portChange` (the last port change of this Vault the
+state reflects; `0` for the ports given at open); unset fields are left
+out. `index watch --until-settled`
 stops at the first state in which `version` equals `storedVersion` and no
 rebuild runs, or at the first with a `lastError`. `index reindex` builds a
 new generation beside the live one, which answers meanwhile.

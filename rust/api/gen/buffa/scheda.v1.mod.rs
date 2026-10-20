@@ -140,6 +140,7 @@ pub mod __buffa {
         reg.register_json_any(super::index_value::__TEXT_LIST_JSON_ANY);
         reg.register_json_any(super::__VAULT_REF_JSON_ANY);
         reg.register_json_any(super::__VAULT_INFO_JSON_ANY);
+        reg.register_json_any(super::__PORT_CHANGE_JSON_ANY);
         reg.register_json_any(super::__VAULT_DOCUMENT_OPERATION_JSON_ANY);
         reg.register_json_any(super::__CHECK_REPORT_JSON_ANY);
         reg.register_json_any(super::__PROBLEM_JSON_ANY);
@@ -427,6 +428,10 @@ pub use self::__buffa::view::VaultRefOwnedView;
 pub use self::__buffa::view::VaultInfoView;
 #[doc(inline)]
 pub use self::__buffa::view::VaultInfoOwnedView;
+#[doc(inline)]
+pub use self::__buffa::view::PortChangeView;
+#[doc(inline)]
+pub use self::__buffa::view::PortChangeOwnedView;
 #[doc(inline)]
 pub use self::__buffa::view::VaultDocumentOperationView;
 #[doc(inline)]

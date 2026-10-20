@@ -30,7 +30,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 
 use common::{
-    Run, Scratch, Setup, collection, command, library, names, on, opening, run, run_on,
+    Run, Scratch, Setup, collection, command, finish, library, names, on, opening, run, run_on,
     run_on_with, source, whole_file_as,
 };
 
@@ -645,9 +645,10 @@ fn file_does_not_read_an_open_stdin_pipe() {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let mut child = cmd.spawn().unwrap();
-    // Held open and never written: a command that reads it would hang.
+    // Held open and never written: a command that reads it would hang, and
+    // fail the test once the wait is over.
     let _stdin = child.stdin.take();
-    let out = child.wait_with_output().unwrap();
+    let out = finish(child);
     assert!(
         out.status.success(),
         "{}",
@@ -1189,7 +1190,7 @@ fn a_reader_that_closes_stdout_ends_the_command_quietly() {
     stdout.read_line(&mut first).unwrap();
     assert!(first.starts_with("{\"collection\""), "{first}");
     drop(stdout);
-    let out = child.wait_with_output().unwrap();
+    let out = finish(child);
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -1218,7 +1219,7 @@ fn another_stdout_failure_is_storage() {
                 .unwrap(),
         )
         .stderr(Stdio::piped());
-    let out = cmd.output().unwrap();
+    let out = finish(cmd.spawn().unwrap());
     assert_eq!(out.status.code(), Some(1));
     let report: Value = serde_json::from_slice(&out.stderr).unwrap();
     assert_eq!(report["code"], "VAULT_ERROR_CODE_STORAGE", "{report}");

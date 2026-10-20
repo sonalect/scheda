@@ -22,7 +22,7 @@ use scheda::{Error, Fault};
 use serde_json::{Value, json};
 
 use crate::common::{
-    Scratch, both, command, git, open, snapshot, vault as built_vault, work_tree, write,
+    Child, Scratch, both, command, git, open, snapshot, vault as built_vault, work_tree, write,
 };
 use crate::probe::{assert_settled, commits, git_out};
 
@@ -1899,7 +1899,7 @@ fn sixty_six_document_writes_from_three_processes_are_each_stored_whole() {
         let exe = std::env::current_exe().unwrap();
         let mut children = Vec::new();
         for index in 0..3 {
-            children.push(
+            children.push(Child::spawn(
                 Command::new(&exe)
                     .args([
                         "--exact",
@@ -1907,20 +1907,12 @@ fn sixty_six_document_writes_from_three_processes_are_each_stored_whole() {
                         "--test-threads=1",
                     ])
                     .env(CHILD_VAULT, &path)
-                    .env(CHILD_INDEX, index.to_string())
-                    .spawn()
-                    .unwrap(),
-            );
+                    .env(CHILD_INDEX, index.to_string()),
+            ));
         }
         let mut statuses = Vec::new();
         for child in &mut children {
-            let status = loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    break status;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            };
-            statuses.push(status);
+            statuses.push(child.finish().await);
         }
         assert!(
             statuses.iter().all(|status| status.success()),

@@ -277,6 +277,20 @@ pub struct IndexStateView<'a> {
     ///
     /// Field 6: `stored_version`
     pub stored_version: ::core::option::Option<&'a str>,
+    /// The last port change of this Vault this state reflects, by its
+    /// `PortChange.number`: the round or the look that made this state
+    /// began after that change, with the ports the Vault held then or later
+    /// ones, and `last_error` is what it found for them. `0` for the ports
+    /// given at `Open`; unset until a state reflects them. It moves when a
+    /// round or a look ends, never while one runs: a change made
+    /// during a round, a rebuild included, is reflected once that round has
+    /// ended and the next look has compared the ports. A look that compares
+    /// and finds nothing else new still makes an item, with this number
+    /// moved; a look that finds no port changed compares nothing and makes
+    /// none. Set in every Vault, whether it indexes or not.
+    ///
+    /// Field 7: `port_change`
+    pub port_change: ::core::option::Option<u64>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
@@ -379,6 +393,13 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
                 )?;
                 view.stored_version = Some(::buffa::types::borrow_str(&mut cur)?);
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                view.port_change = Some(::buffa::types::decode_uint64(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -423,6 +444,7 @@ impl<'a> ::buffa::MessageView<'a> for IndexStateView<'a> {
                 None => ::buffa::MessageField::none(),
             },
             stored_version: self.stored_version.map(|s| s.to_string()),
+            port_change: self.port_change,
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -462,6 +484,9 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         if let Some(ref v) = self.stored_version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(v) = self.port_change {
+            size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -500,6 +525,9 @@ impl<'a> ::buffa::ViewEncode<'a> for IndexStateView<'a> {
         }
         if let Some(ref v) = self.stored_version {
             ::buffa::types::put_string_field(6u32, v, buf);
+        }
+        if let Some(v) = self.port_change {
+            ::buffa::types::put_uint64_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -543,6 +571,10 @@ impl<'__a> ::serde::Serialize for IndexStateView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.stored_version {
             __map.serialize_entry("storedVersion", __v)?;
+        }
+        if let ::core::option::Option::Some(__v) = self.port_change {
+            __map
+                .serialize_entry("portChange", &::buffa::json_helpers::ProtoJson(&__v))?;
         }
         __map.end()
     }
@@ -701,6 +733,23 @@ impl IndexStateOwnedView {
     #[must_use]
     pub fn stored_version(&self) -> ::core::option::Option<&'_ str> {
         self.0.reborrow().stored_version
+    }
+    /// The last port change of this Vault this state reflects, by its
+    /// `PortChange.number`: the round or the look that made this state
+    /// began after that change, with the ports the Vault held then or later
+    /// ones, and `last_error` is what it found for them. `0` for the ports
+    /// given at `Open`; unset until a state reflects them. It moves when a
+    /// round or a look ends, never while one runs: a change made
+    /// during a round, a rebuild included, is reflected once that round has
+    /// ended and the next look has compared the ports. A look that compares
+    /// and finds nothing else new still makes an item, with this number
+    /// moved; a look that finds no port changed compares nothing and makes
+    /// none. Set in every Vault, whether it indexes or not.
+    ///
+    /// Field 7: `port_change`
+    #[must_use]
+    pub fn port_change(&self) -> ::core::option::Option<u64> {
+        self.0.reborrow().port_change
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<IndexStateView<'static>>>

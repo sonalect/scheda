@@ -21,7 +21,7 @@ use scheda::v1::{
     VaultAsync, VaultErrorCode as Code,
 };
 
-use crate::common::{Scratch, both, git, open, snapshot, vault as built_vault, write};
+use crate::common::{Child, Scratch, both, git, open, snapshot, vault as built_vault, write};
 use crate::probe::{assert_settled, commits, git_out};
 
 const DEADLINE: Duration = Duration::from_secs(30);
@@ -481,16 +481,16 @@ fn handles_of_three_processes_take_turns_and_end_at_one_version() {
         let mut children: Vec<_> = ["x", "y"]
             .into_iter()
             .map(|name| {
-                Command::new(&exe)
-                    .args([
-                        "--exact",
-                        "index::handles_of_three_processes_take_turns_and_end_at_one_version",
-                        "--test-threads=1",
-                    ])
-                    .env(CHILD_VAULT, &path)
-                    .env(CHILD_NAME, name)
-                    .spawn()
-                    .unwrap()
+                Child::spawn(
+                    Command::new(&exe)
+                        .args([
+                            "--exact",
+                            "index::handles_of_three_processes_take_turns_and_end_at_one_version",
+                            "--test-threads=1",
+                        ])
+                        .env(CHILD_VAULT, &path)
+                        .env(CHILD_NAME, name),
+                )
             })
             .collect();
         for n in 0..PER_HANDLE {
@@ -506,13 +506,7 @@ fn handles_of_three_processes_take_turns_and_end_at_one_version() {
         std::fs::write(path.join(".scheda/go"), "").unwrap();
         let mut statuses = Vec::new();
         for child in &mut children {
-            let status = loop {
-                if let Some(status) = child.try_wait().unwrap() {
-                    break status;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            };
-            statuses.push(status);
+            statuses.push(child.finish().await);
         }
         assert!(
             statuses.iter().all(|status| status.success()),
@@ -577,15 +571,17 @@ fn close_and_drop_end_the_indexer_task() {
     }
     both(|| async {
         let scratch = Scratch::new("threads");
-        let status = Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "index::close_and_drop_end_the_indexer_task",
-                "--test-threads=1",
-            ])
-            .env(TASKS_CHILD, scratch.join("vaults"))
-            .status()
-            .unwrap();
+        let status = Child::spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "index::close_and_drop_end_the_indexer_task",
+                    "--test-threads=1",
+                ])
+                .env(TASKS_CHILD, scratch.join("vaults")),
+        )
+        .finish()
+        .await;
         assert!(status.success());
     });
 }

@@ -68,15 +68,17 @@ pub(crate) mod on_lance {
         DocumentCreation, DocumentDeletion, DocumentId, DocumentOperation, DocumentQuery,
         DocumentUpsert, DynCollectionAsync, DynIndexAsync, DynVaultAsync, EmbedderDescriptor,
         EmbedderSync, IndexAsync, IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue,
-        OpenOptions, ProjectorDescriptor, ProjectorErrorCode, ProjectorSync, Query, RawDocument,
-        SchedaAsync, SearchHit, SearchItem, Text, VaultAsync, VaultErrorCode as Code, Vector,
-        index_value,
+        OpenOptions, PortChange, ProjectorDescriptor, ProjectorErrorCode, ProjectorSync, Query,
+        RawDocument, SchedaAsync, SearchHit, SearchItem, Text, VaultAsync, VaultErrorCode as Code,
+        Vector, index_value,
     };
     use scheda::{Error, FixedEmbedderAsync, FixedReranker, FixedRerankerAsync, Scheda};
     use serde_json::{Value, json};
 
     use super::{search_of, vault_search};
-    use crate::common::{Scratch, both, collection, items, next, opening, snapshot, stream_of};
+    use crate::common::{
+        Child, Scratch, both, collection, items, next, opening, snapshot, stream_of,
+    };
 
     const DEADLINE: Duration = Duration::from_secs(120);
 
@@ -177,6 +179,25 @@ pub(crate) mod on_lance {
     impl Calls {
         fn queries(&self) -> Vec<String> {
             self.queries.lock().unwrap().clone()
+        }
+
+        /// Holds every `Project` call until the guard is dropped, by the
+        /// test or by its panic. A held call blocks a thread of the
+        /// blocking pool, and dropping a runtime waits for those threads:
+        /// a test that failed while it held one, and never let it go, would
+        /// hang instead of failing.
+        fn hold(&self) -> Hold<'_> {
+            self.held.store(true, Ordering::SeqCst);
+            Hold(self)
+        }
+    }
+
+    /// [`Calls::hold`], until dropped.
+    struct Hold<'a>(&'a Calls);
+
+    impl Drop for Hold<'_> {
+        fn drop(&mut self) {
+            self.0.held.store(false, Ordering::SeqCst);
         }
     }
 
@@ -1739,15 +1760,16 @@ pub(crate) mod on_lance {
     }
 
     /// Starts this test binary again as the child of the test `name`, with
-    /// `variable` naming the Vault at `path`.
-    fn spawn_child(name: &str, variable: &str, path: &Path) -> std::process::Child {
-        std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", name, "--test-threads=1", "--quiet"])
-            .env(variable, path)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
-            .unwrap()
+    /// `variable` naming the Vault at `path`. It runs until it is killed,
+    /// by the test or, when the test fails first, by the guard's drop.
+    fn spawn_child(name: &str, variable: &str, path: &Path) -> Child {
+        Child::spawn(
+            std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", name, "--test-threads=1", "--quiet"])
+                .env(variable, path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
     }
 
     const KILLED_WHILE_INDEXING: &str = "SCHEDA_TEST_KILLED_WHILE_INDEXING";
@@ -1825,19 +1847,19 @@ pub(crate) mod on_lance {
             // Held after one portion of 256 rows and after two; then
             // killed at a moment of a steady stream of writes.
             for after in [300_usize, 530, 0] {
-                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-                    .args([
-                        "--exact",
-                        "search::on_lance::a_process_killed_while_it_indexes_leaves_an_index_that_opens_counts_and_searches",
-                        "--test-threads=1",
-                        "--quiet",
-                    ])
-                    .env(KILLED_WHILE_INDEXING, &path)
-                    .env(KILLED_AFTER, after.to_string())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn()
-                    .unwrap();
+                let mut child = Child::spawn(
+                    std::process::Command::new(std::env::current_exe().unwrap())
+                        .args([
+                            "--exact",
+                            "search::on_lance::a_process_killed_while_it_indexes_leaves_an_index_that_opens_counts_and_searches",
+                            "--test-threads=1",
+                            "--quiet",
+                        ])
+                        .env(KILLED_WHILE_INDEXING, &path)
+                        .env(KILLED_AFTER, after.to_string())
+                        .stdout(std::process::Stdio::null())
+                        .stderr(std::process::Stdio::null()),
+                );
                 let deadline = Instant::now() + DEADLINE;
                 let ready = if after > 0 {
                     path.join(".scheda/held")
@@ -1853,8 +1875,7 @@ pub(crate) mod on_lance {
                     // length of this pause decides nothing the test claims.
                     tokio::time::sleep(Duration::from_millis(400)).await;
                 }
-                child.kill().unwrap();
-                child.wait().unwrap();
+                child.kill();
                 let _ = std::fs::remove_file(path.join(".scheda/held"));
 
                 let calls = Arc::new(Calls::default());
@@ -2004,7 +2025,7 @@ pub(crate) mod on_lance {
             let live = current(&fx.path);
 
             // The Projector holds the rebuild at its first Document.
-            fx.calls.held.store(true, Ordering::SeqCst);
+            let hold = fx.calls.hold();
             let projected = fx.calls.projected.load(Ordering::SeqCst);
             index.reindex(Empty::default()).await.unwrap();
             let deadline = Instant::now() + DEADLINE;
@@ -2030,7 +2051,7 @@ pub(crate) mod on_lance {
             assert_eq!(current(&fx.path), live);
             assert_eq!(count(&notes).await, 4);
 
-            fx.calls.held.store(false, Ordering::SeqCst);
+            drop(hold);
             let head = fx.vault.info(Empty::default()).await.unwrap().version;
             let state = wait_state(&index, |state| reindexed(state, &head)).await;
             assert_ne!(current(&fx.path), live, "switched");
@@ -2095,8 +2116,7 @@ pub(crate) mod on_lance {
                 assert!(Instant::now() < deadline, "the child started no rebuild");
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
-            child.kill().unwrap();
-            child.wait().unwrap();
+            child.kill();
 
             let vault = open_with(&fx.path, &HYBRID, &fx.calls).await;
             let notes = collection(&vault, "notes").await.unwrap();
@@ -2461,6 +2481,300 @@ pub(crate) mod on_lance {
             assert_eq!(fx.calls.embedded.load(Ordering::SeqCst), embedded);
             fx.put("notes", "after", &json!({"title": "after"})).await;
             assert_eq!(count(&notes).await, 5);
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    /// The state of `index` that reflects the port change `change`, found
+    /// by its number alone: on a watch begun after the change when
+    /// `by_watch`, else by reading `Status` until it reaches the number;
+    /// within a few seconds, since the poll takes an hour. `Status` says the
+    /// same then.
+    async fn reflected(index: &DynIndexAsync, change: &PortChange, by_watch: bool) -> IndexState {
+        let number = change.number;
+        assert!(number.is_some(), "{change:?}");
+        let reached = |state: &IndexState| state.port_change >= number;
+        let state = if by_watch {
+            let mut watch = Box::pin(index.watch(Empty::default()).await.unwrap());
+            watched(&mut watch, reached).await
+        } else {
+            soon(index, reached).await
+        };
+        let status = index.status(Empty::default()).await.unwrap();
+        assert_eq!(status, state);
+        state
+    }
+
+    #[test]
+    fn a_port_change_gives_a_number_the_index_state_reaches_with_its_verdict() {
+        both(|| async {
+            let scratch = Scratch::new("search-port-change");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            let calls = Arc::new(Calls::default());
+            // An hour between two looks at `HEAD`, and no write: only a port
+            // set or removed wakes the indexer.
+            let vault = open_polled(
+                &path,
+                &HYBRID,
+                &calls,
+                options().with_index_poll_ms(3_600_000),
+            )
+            .await;
+            let fx = Fixture {
+                _scratch: scratch,
+                path,
+                vault,
+                calls,
+            };
+            fx.corpus().await;
+            let index = index_of(&fx.vault).await;
+            let head = fx.vault.info(Empty::default()).await.unwrap().version;
+            let live = current(&fx.path);
+            let projected = fx.calls.projected.load(Ordering::SeqCst);
+            let embedded = fx.calls.embedded.load(Ordering::SeqCst);
+            let fresh = index.status(Empty::default()).await.unwrap();
+            // The ports given at open are change 0.
+            assert_eq!(fresh.port_change, Some(0), "{fresh:?}");
+            assert_eq!(fresh.version, head);
+            assert!(!fresh.last_error.is_set(), "{fresh:?}");
+
+            let stale = Some("VAULT_ERROR_CODE_INDEX_STALE");
+            let lacking = Some("VAULT_ERROR_CODE_FAILED_PRECONDITION");
+            let embedder = |model| {
+                EmbedderRef::from_sync(Topics {
+                    model,
+                    calls: Arc::clone(&fx.calls),
+                })
+            };
+            let projector = |projection| {
+                ProjectorRef::from_sync(Docs {
+                    projection,
+                    vectors: true,
+                    calls: Arc::clone(&fx.calls),
+                })
+            };
+            let mut number = 0;
+            // The state that reflects `change`, the next number, and its
+            // verdict `code`; nothing else in the state moved.
+            let mut verdict = async |change: PortChange, by_watch: bool, code: Option<&str>| {
+                number += 1;
+                assert_eq!(change.number, Some(number));
+                let state = reflected(&index, &change, by_watch).await;
+                assert_eq!(state.port_change, Some(number), "{state:?}");
+                assert_eq!(error_code(&state), code, "{state:?}");
+                assert_eq!(state.version, head);
+                assert_eq!(state.stored_version, head);
+                state
+            };
+            for round in 0..200 {
+                let by_watch = round % 2 == 0;
+
+                // An embedder of another model, then the Index's again.
+                let change = fx.vault.set_embedder(embedder("topics@2")).await.unwrap();
+                verdict(change, by_watch, stale).await;
+                let change = fx.vault.set_embedder(embedder("topics@1")).await.unwrap();
+                verdict(change, by_watch, None).await;
+
+                // The Index's embedder set again: the wait ends, and the
+                // number is all that moved.
+                let change = fx.vault.set_embedder(embedder("topics@1")).await.unwrap();
+                let state = verdict(change, by_watch, None).await;
+                assert_eq!(
+                    IndexState {
+                        port_change: fresh.port_change,
+                        ..state
+                    },
+                    fresh
+                );
+
+                // A Projector of another projection, then the Index's again.
+                let change = fx.vault.set_projector(projector("docs@2")).await.unwrap();
+                verdict(change, by_watch, stale).await;
+                let change = fx.vault.set_projector(projector("docs@1")).await.unwrap();
+                verdict(change, by_watch, None).await;
+
+                // No embedder for the `vector` column, then the Index's.
+                let change = fx.vault.remove_embedder(Empty::default()).await.unwrap();
+                verdict(change, by_watch, lacking).await;
+                let change = fx.vault.set_embedder(embedder("topics@1")).await.unwrap();
+                verdict(change, by_watch, None).await;
+            }
+
+            // Nothing was built meanwhile, and the Vault indexes again.
+            assert_eq!(current(&fx.path), live);
+            assert_eq!(fx.calls.projected.load(Ordering::SeqCst), projected);
+            assert_eq!(fx.calls.embedded.load(Ordering::SeqCst), embedded);
+            fx.put("notes", "after", &json!({"title": "after"})).await;
+            let notes = fx.collection("notes").await;
+            assert_eq!(count(&notes).await, 5);
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_vault_beside_the_one_that_indexes_reaches_the_number_of_its_port_change_with_its_verdict()
+    {
+        both(|| async {
+            let scratch = Scratch::new("search-port-change-beside");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            // An hour between two looks at `HEAD`, for both Vaults: only a
+            // write or a port change wakes one, and only its own.
+            let polled = || options().with_index_poll_ms(3_600_000);
+            let calls = Arc::new(Calls::default());
+            let vault = open_polled(&path, &HYBRID, &calls, polled()).await;
+            let fx = Fixture {
+                _scratch: scratch,
+                path,
+                vault,
+                calls,
+            };
+            fx.corpus().await;
+            let embedder = |model, calls: &Arc<Calls>| {
+                EmbedderRef::from_sync(Topics {
+                    model,
+                    calls: Arc::clone(calls),
+                })
+            };
+
+            // A, which indexes, has port changes of its own before B opens.
+            let indexer = index_of(&fx.vault).await;
+            for number in 1..=2 {
+                let change = fx
+                    .vault
+                    .set_embedder(embedder("topics@1", &fx.calls))
+                    .await
+                    .unwrap();
+                assert_eq!(change.number, Some(number));
+                let state = reflected(&indexer, &change, true).await;
+                assert!(!state.last_error.is_set(), "{state:?}");
+            }
+            let own = Some(2);
+
+            // B, on the same path, with ports and calls of its own.
+            let beside_calls = Arc::new(Calls::default());
+            let beside = open_polled(&fx.path, &HYBRID, &beside_calls, polled()).await;
+            let index = index_of(&beside).await;
+            let head = fx.vault.info(Empty::default()).await.unwrap().version;
+            let first = soon(&index, |state| state.port_change.is_some()).await;
+            assert_eq!(first.port_change, Some(0), "{first:?}");
+            assert_eq!(first.version, head);
+            assert!(!first.last_error.is_set(), "{first:?}");
+
+            let stale = Some("VAULT_ERROR_CODE_INDEX_STALE");
+            let lacking = Some("VAULT_ERROR_CODE_FAILED_PRECONDITION");
+            let mut number = 0;
+            let mut by_watch = false;
+            // B's state that reflects `change`, by the next number of B's
+            // own, with the verdict `code`; B never takes the role.
+            let mut verdict = async |change: PortChange, code: Option<&str>| {
+                number += 1;
+                by_watch = !by_watch;
+                assert_eq!(change.number, Some(number), "B's numbers are its own");
+                let state = reflected(&index, &change, by_watch).await;
+                assert_eq!(state.port_change, Some(number), "{state:?}");
+                assert_eq!(error_code(&state), code, "{state:?}");
+                assert_ne!(state.role, Some(true), "{state:?}");
+                state
+            };
+
+            // The Index at `HEAD`, A idle: B's looks find it current.
+            for _ in 0..200 {
+                let change = beside
+                    .set_embedder(embedder("topics@2", &beside_calls))
+                    .await
+                    .unwrap();
+                let state = verdict(change, stale).await;
+                assert_eq!((&state.version, &state.stored_version), (&head, &head));
+                let change = beside
+                    .set_embedder(embedder("topics@1", &beside_calls))
+                    .await
+                    .unwrap();
+                let state = verdict(change, None).await;
+                assert_eq!((&state.version, &state.stored_version), (&head, &head));
+                let change = beside.remove_embedder(Empty::default()).await.unwrap();
+                let state = verdict(change, lacking).await;
+                assert_eq!((&state.version, &state.stored_version), (&head, &head));
+                let change = beside
+                    .set_embedder(embedder("topics@1", &beside_calls))
+                    .await
+                    .unwrap();
+                let state = verdict(change, None).await;
+                assert_eq!((&state.version, &state.stored_version), (&head, &head));
+            }
+            assert_eq!(
+                indexer.status(Empty::default()).await.unwrap().port_change,
+                own
+            );
+
+            // The Index behind `HEAD`, A in a round with `index.lock` held:
+            // B learns each verdict while A's round still runs.
+            for round in 0..50 {
+                let before = indexer.status(Empty::default()).await.unwrap().version;
+                let projected = fx.calls.projected.load(Ordering::SeqCst);
+                let hold = fx.calls.hold();
+                let moved = Some(
+                    fx.put_unwaited("notes", &format!("held{round}"), &json!({"title": "held"}))
+                        .await,
+                );
+                let deadline = Instant::now() + DEADLINE;
+                while fx.calls.projected.load(Ordering::SeqCst) == projected {
+                    assert!(Instant::now() < deadline, "A's round did not start");
+                    tokio::time::sleep(Duration::from_millis(1)).await;
+                }
+                // The last change is the misfit in even rounds, the fit in
+                // odd ones.
+                let models = if round % 2 == 0 {
+                    [("topics@1", None), ("topics@2", stale)]
+                } else {
+                    [("topics@2", stale), ("topics@1", None)]
+                };
+                let mut last = None;
+                for (model, code) in models {
+                    let change = beside
+                        .set_embedder(embedder(model, &beside_calls))
+                        .await
+                        .unwrap();
+                    let state = verdict(change, code).await;
+                    assert_eq!(
+                        state.version, before,
+                        "the Index is where A's round found it"
+                    );
+                    assert_eq!(state.stored_version, moved);
+                    let held = indexer.status(Empty::default()).await.unwrap();
+                    assert_eq!(held.version, before, "A's round is still held: {held:?}");
+                    assert_eq!(held.role, Some(true), "{held:?}");
+                    last = Some(state);
+                }
+                let last = last.unwrap();
+
+                // A's round ends: B keeps the verdict of its last change.
+                drop(hold);
+                wait_indexed(&fx.vault).await;
+                let done = indexer.status(Empty::default()).await.unwrap();
+                assert_eq!(done.version, moved);
+                assert_eq!(done.port_change, own, "B's calls do not move A's number");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                assert_eq!(index.status(Empty::default()).await.unwrap(), last);
+
+                // B's ports fit the Index at its new `HEAD` again.
+                let change = beside
+                    .set_embedder(embedder("topics@1", &beside_calls))
+                    .await
+                    .unwrap();
+                let state = verdict(change, None).await;
+                assert_eq!((&state.version, &state.stored_version), (&moved, &moved));
+            }
+
+            // B indexed nothing, and A's number never moved.
+            assert_eq!(beside_calls.projected.load(Ordering::SeqCst), 0);
+            assert_eq!(beside_calls.embedded.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                indexer.status(Empty::default()).await.unwrap().port_change,
+                own
+            );
+            beside.close(Empty::default()).await.unwrap();
             fx.vault.close(Empty::default()).await.unwrap();
         });
     }

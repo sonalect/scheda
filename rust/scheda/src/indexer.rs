@@ -16,8 +16,13 @@
 //! first look and whenever a port was set or removed or the live generation
 //! changed since, `HEAD` moved or not, so the status names a mismatch in
 //! the round a port change wakes; a look that finds none of these compares
-//! nothing. A build without the feature `index` keeps the journal id maps
-//! only, in every handle.
+//! nothing. A round takes the ports once, after reading how many port
+//! changes were made, and keeps them to its end: a port set while it runs
+//! is the next round's. Every state a round or a look ends with carries that
+//! count as `IndexState.port_change`, whatever it found, so the caller of a
+//! port change waits for the verdict by the number the change returned. A
+//! build without the feature `index` keeps the journal id maps only, in
+//! every handle.
 //!
 //! A round takes `flock` on `index.lock` without waiting (another indexer
 //! holds it: the round is skipped and looked at again later), reads `HEAD`
@@ -46,10 +51,10 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use protocontract::RuntimeCode;
-#[cfg(any(test, feature = "index"))]
-use scheda_api::v1::VaultErrorCode;
 #[cfg(feature = "index")]
 use scheda_api::v1::ErrorReport;
+#[cfg(any(test, feature = "index"))]
+use scheda_api::v1::VaultErrorCode;
 use scheda_api::v1::{IndexState, Rebuild, rebuild};
 use scheda_blocking::{Blocking, blocking};
 use tokio::runtime::Handle;
@@ -100,14 +105,16 @@ impl Signal {
     /// A port of the Vault was set or removed: look now, with it, and
     /// compare the ports with the Index again even when `HEAD` stands.
     /// Called once the port is in place. Counts as [`Signal::moved`] does.
-    pub(crate) fn ports_changed(&self) {
-        self.ports.fetch_add(1, Ordering::Release);
+    /// Returns the number of this change, `IndexState.port_change` of the
+    /// states that reflect it.
+    pub(crate) fn ports_changed(&self) -> u64 {
+        let number = self.ports.fetch_add(1, Ordering::Release) + 1;
         self.wake.notify_one();
+        number
     }
 
     /// How many times a port was set or removed. A port is in place before
     /// this moves, so ports read after it are at least as new as the count.
-    #[cfg(feature = "index")]
     fn ports(&self) -> u64 {
         self.ports.load(Ordering::Acquire)
     }
@@ -589,7 +596,10 @@ impl Worker {
             if !go {
                 break;
             }
-            let Some(outcome) = self.round().await else {
+            // Read before the round reads the ports: every state the round
+            // ends with reflects this change, or a later one.
+            let changes = shared.signal.ports();
+            let Some(outcome) = self.round(changes).await else {
                 // The runtime shuts down.
                 break;
             };
@@ -606,7 +616,7 @@ impl Worker {
                     if shared.signal.stopped() {
                         break;
                     }
-                    self.context.fail(&error);
+                    self.context.fail(&error, changes);
                     pause = backoff;
                     backoff = backoff.saturating_mul(2).min(longest);
                 }
@@ -617,11 +627,12 @@ impl Worker {
 
     /// One round, as a task of its own: a panic in it is a failure of the
     /// round, and the indexer goes on. `None` when the runtime shuts down.
-    async fn round(&mut self) -> Option<Result<Next, Error>> {
+    /// `changes` is the port change the states it ends with reflect.
+    async fn round(&mut self, changes: u64) -> Option<Result<Next, Error>> {
         let context = self.context.clone();
         let mut kept = self.kept.take().unwrap_or_default();
         let task = tokio::spawn(async move {
-            let outcome = context.round(&mut kept).await;
+            let outcome = context.round(&mut kept, changes).await;
             (kept, outcome)
         });
         match task.await {
@@ -636,8 +647,14 @@ impl Worker {
 }
 
 impl Context {
-    /// One look at `HEAD` and, if the Index is behind, one round.
-    async fn round(&self, kept: &mut Kept) -> Result<Next, Error> {
+    /// One look at `HEAD` and, if the Index is behind, one round. Every
+    /// state it ends with, whatever it found, says it reflects the port
+    /// change `changes`, read before the round read the ports.
+    async fn round(&self, kept: &mut Kept, changes: u64) -> Result<Next, Error> {
+        // The ports of the whole round, taken once: a port set while it runs
+        // is the next round's, never part of this one's work.
+        #[cfg(feature = "index")]
+        let calls = Calls::of(&self.ports);
         let look = {
             let context = self.clone();
             blocking(move |cx| context.look(cx)).await?
@@ -647,14 +664,14 @@ impl Context {
             // port set or removed since, others given at open, or another
             // Vault that moved the Index.
             #[cfg(feature = "index")]
-            if !self.agrees(&look, kept).await? {
+            if !self.agrees(&look, kept, &calls, changes).await? {
                 return Ok(Next::Idle);
             }
-            self.follow(look.version(), look.head);
+            self.follow(look.version(), look.head, changes);
             return Ok(Next::Idle);
         }
         #[cfg(feature = "index")]
-        let Some(plan) = self.plan(&look).await? else {
+        let Some(plan) = self.plan(&look, &calls, changes).await? else {
             return Ok(Next::Idle);
         };
         let index = self.index.clone();
@@ -669,16 +686,13 @@ impl Context {
         })
         .await?
         else {
-            // Another indexer holds the lock; it will do the round.
-            let head = look.head;
-            self.shared.adjust(|inner| {
-                inner.state.role = Some(false);
-                inner.state.stored_version = Some(head.token());
-            });
+            // Another indexer holds the lock; it will do the round. This
+            // Vault's ports fit the Index: an earlier failure is over.
+            self.leave_to_other(look.head, changes);
             return Ok(Next::Idle);
         };
         #[cfg(feature = "index")]
-        let applied = self.apply(&look, plan, &mut kept.cache).await;
+        let applied = self.apply(&look, plan, &calls, &mut kept.cache).await;
         #[cfg(not(feature = "index"))]
         let applied = {
             let _ = kept;
@@ -700,6 +714,7 @@ impl Context {
             inner.state.pending = Some(0);
             inner.state.role = Some(false);
             inner.state.last_error = buffa::MessageField::none();
+            inner.state.port_change = Some(changes);
             if let Some(cause) = applied.rebuilt {
                 inner.running = false;
                 inner.state.rebuild =
@@ -752,11 +767,11 @@ impl Context {
     /// index: the Index was built with other ports than this Vault's, or
     /// the Vault lacks a port the Index needs. The status says which.
     #[cfg(feature = "index")]
-    async fn plan(&self, look: &Look) -> Result<Option<Plan>, Error> {
-        match self.verdict(look).await? {
+    async fn plan(&self, look: &Look, calls: &Calls, changes: u64) -> Result<Option<Plan>, Error> {
+        match self.verdict(look, calls).await? {
             Ok(plan) => Ok(Some(plan)),
             Err(report) => {
-                self.refuse(look, &report);
+                self.refuse(look, &report, changes);
                 Ok(None)
             }
         }
@@ -769,21 +784,27 @@ impl Context {
     /// since the last comparison: a look that finds neither reads nothing
     /// more and asks the Projector nothing.
     #[cfg(feature = "index")]
-    async fn agrees(&self, look: &Look, kept: &mut Kept) -> Result<bool, Error> {
+    async fn agrees(
+        &self,
+        look: &Look,
+        kept: &mut Kept,
+        calls: &Calls,
+        changes: u64,
+    ) -> Result<bool, Error> {
         let Some((generation, Some(commit))) = &look.live else {
             // No Index to compare with: a round builds one.
             return Ok(true);
         };
-        // Read before the verdict reads the ports: a port set meanwhile
-        // moves the count past this one, so the next look compares again.
-        let ports = self.shared.signal.ports();
+        // `changes` was read before the round took its ports: a port set
+        // meanwhile moves the count past it, so the next look compares
+        // again.
         let again = kept.compared.as_ref().is_none_or(|last| {
-            last.ports != ports || last.generation != generation.name() || last.commit != *commit
+            last.ports != changes || last.generation != generation.name() || last.commit != *commit
         });
         if again {
-            let refused = self.verdict(look).await?.err();
+            let refused = self.verdict(look, calls).await?.err();
             kept.compared = Some(Compared {
-                ports,
+                ports: changes,
                 generation: generation.name().to_owned(),
                 commit: commit.clone(),
                 refused,
@@ -795,7 +816,7 @@ impl Context {
             .and_then(|compared| compared.refused.as_ref())
         {
             Some(report) => {
-                self.refuse(look, report);
+                self.refuse(look, report, changes);
                 false
             }
             None => true,
@@ -805,16 +826,20 @@ impl Context {
         Ok(agrees)
     }
 
-    /// The plan of this Vault for the round, or the report of why it does
-    /// not index: `INDEX_STALE` when the Index was built with other ports
-    /// than this Vault's, `FAILED_PRECONDITION` naming the port the Vault
-    /// lacks.
+    /// The plan of this Vault, with the ports `calls`, for the round, or
+    /// the report of why it does not index: `INDEX_STALE` when the Index was
+    /// built with other ports than these, `FAILED_PRECONDITION` naming the
+    /// port the Vault lacks.
     ///
     /// # Errors
     ///
     /// The failure of git, of the Index, or of the Projector.
     #[cfg(feature = "index")]
-    async fn verdict(&self, look: &Look) -> Result<Result<Plan, ErrorReport>, Error> {
+    async fn verdict(
+        &self,
+        look: &Look,
+        calls: &Calls,
+    ) -> Result<Result<Plan, ErrorReport>, Error> {
         #[cfg(test)]
         hooks::count_verdict(&self.vault);
         let repos = Arc::clone(&self.repos);
@@ -831,8 +856,7 @@ impl Context {
             collection::load(views.of(Repo::Main)).context("read the collections")
         })
         .await?;
-        let calls = Calls::of(&self.ports);
-        let plan = tables::plan(&calls, main, Arc::new(declarations)).await?;
+        let plan = tables::plan(calls, main, Arc::new(declarations)).await?;
         let stale = match look.commit() {
             Some(commit) if !look.asked => tables::stale(commit, &plan),
             _ => None,
@@ -850,12 +874,13 @@ impl Context {
     }
 
     /// This Vault does not index the Index `look` found, for the reason
-    /// `report` gives: the status says so, unless it does already, or a
-    /// rebuild was asked for since the look: the round that request wakes
-    /// says what it finds, and a watcher that asked is not told a refusal
-    /// the rebuild is there to end.
+    /// `report` gives, with the ports of the port change `changes`: the
+    /// status says so, unless it does already, or a rebuild was asked for
+    /// since the look: the round that request wakes says what it finds, and
+    /// a watcher that asked is not told a refusal the rebuild is there to
+    /// end.
     #[cfg(feature = "index")]
-    fn refuse(&self, look: &Look, report: &ErrorReport) {
+    fn refuse(&self, look: &Look, report: &ErrorReport, changes: u64) {
         let version = look.version().map(State::token);
         let stored = Some(look.head.token());
         let asked = look.asked;
@@ -866,6 +891,7 @@ impl Context {
             if inner.state.last_error.as_option() == Some(report)
                 && inner.state.version == version
                 && inner.state.stored_version == stored
+                && inner.state.port_change == Some(changes)
             {
                 return false;
             }
@@ -879,14 +905,22 @@ impl Context {
             inner.state.role = Some(false);
             inner.state.pending = None;
             inner.state.last_error = report.clone().into();
+            inner.state.port_change = Some(changes);
             true
         });
     }
 
     /// The round itself, with `index.lock` held: the journal id maps, then
-    /// the Lance tables, each with its commit last.
+    /// the Lance tables, each with its commit last. Every Document is
+    /// projected and embedded with `calls`, the ports `plan` was made with.
     #[cfg(feature = "index")]
-    async fn apply(&self, look: &Look, plan: Plan, cache: &mut Cache) -> Result<Applied, Error> {
+    async fn apply(
+        &self,
+        look: &Look,
+        plan: Plan,
+        calls: &Calls,
+        cache: &mut Cache,
+    ) -> Result<Applied, Error> {
         #[cfg(test)]
         hooks::after_look(&self.vault).await;
         let layout = Layout::new(self.index.root());
@@ -942,8 +976,8 @@ impl Context {
         };
         let rebuild = asked || maps.reset || !matches!(live, Some((_, Some(_))));
         // The plan is of the collections declared where the round brings
-        // the Index: made again when `HEAD` moved since the look.
-        let calls = Calls::of(&self.ports);
+        // the Index: made again, with the same ports, when `HEAD` moved
+        // since the look.
         let plan = if maps.head == look.head {
             plan
         } else {
@@ -953,7 +987,7 @@ impl Context {
             };
             usable(
                 tables::plan(
-                    &calls,
+                    calls,
                     maps.head.oid(Repo::Main),
                     Arc::clone(&maps.declarations),
                 )
@@ -1024,7 +1058,7 @@ impl Context {
             commit,
             earlier,
             plan,
-            calls: &calls,
+            calls,
             cache,
             tick: &mut tick,
             stopped,
@@ -1047,7 +1081,7 @@ impl Context {
             if again.head != to {
                 work.plan = usable(
                     tables::plan(
-                        &calls,
+                        calls,
                         again.head.oid(Repo::Main),
                         Arc::clone(&again.declarations),
                     )
@@ -1224,8 +1258,9 @@ impl Context {
     /// Nothing is to be done by this handle: the Index is at `committed`
     /// (or not built), and either it is at `head`, the state of `HEAD` now,
     /// or another handle has to bring it there. Another indexer may have
-    /// moved it, and an earlier failure is over.
-    fn follow(&self, committed: Option<State>, head: State) {
+    /// moved it, and an earlier failure is over. A look made after the port
+    /// change `changes` found it so.
+    fn follow(&self, committed: Option<State>, head: State, changes: u64) {
         let token = committed.map(State::token);
         let head = Some(head.token());
         let pending = committed.map(|_| 0);
@@ -1236,6 +1271,7 @@ impl Context {
                 || inner.state.last_error.is_set()
                 || inner.state.role != Some(false)
                 || inner.state.pending != pending
+                || inner.state.port_change != Some(changes)
         };
         if differs {
             self.shared.publish(|inner| {
@@ -1244,17 +1280,42 @@ impl Context {
                 inner.state.pending = pending;
                 inner.state.role = Some(false);
                 inner.state.last_error = buffa::MessageField::none();
+                inner.state.port_change = Some(changes);
             });
         }
     }
 
-    /// A round failed: the status says so.
-    fn fail(&self, error: &Error) {
+    /// The Index is behind `head`, this handle's ports of the port change
+    /// `changes` fit it, and another indexer holds the lock: that one
+    /// brings it there. The status says so, as an item when it tells a
+    /// watcher something new: a failure is over, or the port change moved.
+    fn leave_to_other(&self, head: State, changes: u64) {
+        let edit = |inner: &mut Inner| {
+            inner.state.role = Some(false);
+            inner.state.stored_version = Some(head.token());
+            inner.state.last_error = buffa::MessageField::none();
+            inner.state.port_change = Some(changes);
+        };
+        let news = {
+            let inner = self.shared.lock();
+            inner.state.last_error.is_set() || inner.state.port_change != Some(changes)
+        };
+        if news {
+            self.shared.publish(edit);
+        } else {
+            self.shared.adjust(edit);
+        }
+    }
+
+    /// A round that began after the port change `changes` failed: the
+    /// status says so.
+    fn fail(&self, error: &Error, changes: u64) {
         let report = error_report(error);
         self.shared.publish(|inner| {
             let rebuilding = std::mem::take(&mut inner.running);
             inner.state.role = Some(false);
             inner.state.last_error = report.clone().into();
+            inner.state.port_change = Some(changes);
             if rebuilding {
                 let cause = inner
                     .state
@@ -1915,7 +1976,10 @@ mod tests {
         // Stale: said once, and not compared again while nothing changes.
         vault.set_projector(projector("bare@2")).await.unwrap();
         looked_since(&path).await;
-        assert_eq!(code(&vault).as_deref(), Some("VAULT_ERROR_CODE_INDEX_STALE"));
+        assert_eq!(
+            code(&vault).as_deref(),
+            Some("VAULT_ERROR_CODE_INDEX_STALE")
+        );
         idle(&path).await;
 
         // Fresh again, the same way.
@@ -1932,6 +1996,230 @@ mod tests {
         assert!(hooks::verdicts(&path) > verdicts);
         assert_eq!(code(&vault), None);
         idle(&path).await;
+        vault.close().await.unwrap();
+    }
+
+    /// A Projector of the projection it is given, with one text column,
+    /// that counts the Documents it projects.
+    #[cfg(feature = "index")]
+    struct Counted(&'static str, Arc<std::sync::atomic::AtomicUsize>);
+
+    #[cfg(feature = "index")]
+    impl scheda_api::v1::ProjectorSync for Counted {
+        fn describe(
+            &self,
+            _empty: buffa_types::google::protobuf::Empty,
+        ) -> Result<scheda_api::v1::ProjectorDescriptor, crate::error::Error> {
+            Ok(scheda_api::v1::ProjectorDescriptor::default().with_projection_id(self.0))
+        }
+
+        fn columns(
+            &self,
+            _collection: scheda_api::v1::CollectionKey,
+        ) -> Result<scheda_api::v1::IndexSchema, crate::error::Error> {
+            let title = scheda_api::v1::IndexColumn::default()
+                .with_name("title")
+                .with_kind(scheda_api::v1::ColumnKind::COLUMN_KIND_TEXT);
+            Ok(scheda_api::v1::IndexSchema {
+                columns: vec![title],
+                ..scheda_api::v1::IndexSchema::default()
+            })
+        }
+
+        fn project(
+            &self,
+            _document: scheda_api::v1::RawDocument,
+        ) -> Result<scheda_api::v1::IndexDoc, crate::error::Error> {
+            self.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(scheda_api::v1::IndexDoc::default())
+        }
+    }
+
+    /// A Projector of `bare@1` that cannot answer for columns now.
+    #[cfg(feature = "index")]
+    struct Down;
+
+    #[cfg(feature = "index")]
+    impl scheda_api::v1::ProjectorSync for Down {
+        fn describe(
+            &self,
+            _empty: buffa_types::google::protobuf::Empty,
+        ) -> Result<scheda_api::v1::ProjectorDescriptor, crate::error::Error> {
+            Ok(scheda_api::v1::ProjectorDescriptor::default().with_projection_id("bare@1"))
+        }
+
+        fn columns(
+            &self,
+            _collection: scheda_api::v1::CollectionKey,
+        ) -> Result<scheda_api::v1::IndexSchema, crate::error::Error> {
+            Err(protocontract::Failure::new(
+                scheda_api::v1::ProjectorErrorCode::PROJECTOR_ERROR_CODE_UNAVAILABLE,
+                "down",
+            )
+            .into())
+        }
+
+        fn project(
+            &self,
+            _document: scheda_api::v1::RawDocument,
+        ) -> Result<scheda_api::v1::IndexDoc, crate::error::Error> {
+            Ok(scheda_api::v1::IndexDoc::default())
+        }
+    }
+
+    /// The code of the failure the state `state` reports.
+    #[cfg(feature = "index")]
+    fn error_code(state: &IndexState) -> Option<String> {
+        state
+            .last_error
+            .as_option()
+            .and_then(|report| report.code.clone())
+    }
+
+    /// The first state of the indexer of `vault` that reflects the port
+    /// change `number`, on a watch begun now; within 20 seconds.
+    #[cfg(feature = "index")]
+    async fn reflecting(vault: &Vault, number: u64) -> IndexState {
+        let mut watch = vault.indexer().watch();
+        let wait = async {
+            loop {
+                let state = watch.next().await.unwrap().unwrap();
+                if state.port_change >= Some(number) {
+                    return state;
+                }
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(20), wait)
+            .await
+            .expect("no state reflects the port change")
+    }
+
+    #[cfg(feature = "index")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_port_set_during_a_round_is_reflected_after_it_and_never_used_by_it() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use scheda_api::v1::projector_ref::ProjectorRef;
+
+        let scratch = Scratch::new("set-in-round");
+        let (first, second) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let projector = |projection, count: &Arc<AtomicUsize>| {
+            Some(ProjectorRef::from_sync(Counted(
+                projection,
+                Arc::clone(count),
+            )))
+        };
+        let vault = crate::testing::open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            crate::ports::Ports {
+                projector: projector("counted@1", &first),
+                ..crate::ports::Ports::default()
+            },
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        let path = scratch.canonical();
+        wait_until("the first build", || at_head(&vault, &path)).await;
+        assert_eq!(vault.indexer().status().port_change, Some(0));
+
+        // A round held after its look, its plan made with `counted@1`.
+        hooks::hold(&path);
+        create(
+            &vault,
+            "notes",
+            DocumentCreation {
+                id: Some("one".to_owned()),
+                raw: Some(b"{}".to_vec()),
+                note: Some("test".to_owned()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        wait_until("a held round", || hooks::waiting(&path)).await;
+        let number = vault
+            .set_projector(projector("counted@2", &second))
+            .await
+            .unwrap();
+        assert_eq!(number, 1);
+        // The round under way does not reflect the change, however long it
+        // runs.
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let state = vault.indexer().status();
+        assert!(state.port_change < Some(number), "{state:?}");
+        hooks::release(&path);
+
+        // It ends with its own ports; the look after it compares the new
+        // one.
+        let state = reflecting(&vault, number).await;
+        assert_eq!(state.version.as_deref(), Some(head(&path).as_str()));
+        assert_eq!(
+            error_code(&state).as_deref(),
+            Some("VAULT_ERROR_CODE_INDEX_STALE"),
+            "{state:?}"
+        );
+        assert_eq!(
+            first.load(Ordering::SeqCst),
+            1,
+            "projected by its plan's port"
+        );
+        assert_eq!(
+            second.load(Ordering::SeqCst),
+            0,
+            "the new port projected nothing"
+        );
+        vault.close().await.unwrap();
+    }
+
+    #[cfg(feature = "index")]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_round_that_fails_after_a_port_change_reflects_it_with_its_failure() {
+        use scheda_api::v1::projector_ref::ProjectorRef;
+
+        let scratch = Scratch::new("change-fails");
+        let vault = crate::testing::open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            crate::ports::Ports {
+                projector: Some(ProjectorRef::from_sync(Bare("bare@1"))),
+                ..crate::ports::Ports::default()
+            },
+        )
+        .await
+        .unwrap();
+        journal(&vault, "log").await;
+        line(&vault, "log", "one").await;
+        let path = scratch.canonical();
+        wait_until("the first build", || at_head(&vault, &path)).await;
+
+        // The comparison cannot be made: the state says why, and the wait
+        // for the change ends.
+        let number = vault
+            .set_projector(Some(ProjectorRef::from_sync(Down)))
+            .await
+            .unwrap();
+        let state = reflecting(&vault, number).await;
+        assert_eq!(
+            error_code(&state).as_deref(),
+            Some("PROJECTOR_ERROR_CODE_UNAVAILABLE"),
+            "{state:?}"
+        );
+
+        // The Index's Projector again: no failure.
+        let number = vault
+            .set_projector(Some(ProjectorRef::from_sync(Bare("bare@1"))))
+            .await
+            .unwrap();
+        let state = reflecting(&vault, number).await;
+        assert_eq!(error_code(&state), None, "{state:?}");
+        assert!(at_head(&vault, &path));
         vault.close().await.unwrap();
     }
 

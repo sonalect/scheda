@@ -235,7 +235,9 @@ impl Vault {
     /// Installs `projector`, or removes the Projector when it is `None`,
     /// which a Vault that has none takes as nothing to do. The indexer is
     /// woken: its next round is with the new port, not after the poll or
-    /// the pause of a failed round.
+    /// the pause of a failed round. Returns the number of this port change,
+    /// which `IndexState.port_change` reaches once the indexer has compared
+    /// the ports with the Index.
     ///
     /// # Errors
     ///
@@ -244,36 +246,36 @@ impl Vault {
     /// its rules, and the failure of the Projector's `describe`. In a build
     /// without it, `UNIMPLEMENTED` for a Projector: there is no Index to use
     /// one.
-    pub(crate) async fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
+    pub(crate) async fn set_projector(
+        &self,
+        projector: Option<ProjectorRef>,
+    ) -> Result<u64, Error> {
         self.ports.set_projector(projector).await?;
-        self.committer.signal().ports_changed();
-        Ok(())
+        Ok(self.committer.signal().ports_changed())
     }
 
     /// Installs `embedder`, or removes the embedder when it is `None`,
     /// which a Vault that has none takes as nothing to do. The indexer is
-    /// woken, as by [`Vault::set_projector`].
+    /// woken, and the number returned, as by [`Vault::set_projector`].
     ///
     /// # Errors
     ///
     /// As [`Vault::set_projector`], for an embedder.
-    pub(crate) async fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
+    pub(crate) async fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<u64, Error> {
         self.ports.set_embedder(embedder).await?;
-        self.committer.signal().ports_changed();
-        Ok(())
+        Ok(self.committer.signal().ports_changed())
     }
 
     /// Installs `reranker`, or removes the reranker when it is `None`,
     /// which a Vault that has none takes as nothing to do. The indexer is
-    /// woken, as by [`Vault::set_projector`].
+    /// woken, and the number returned, as by [`Vault::set_projector`].
     ///
     /// # Errors
     ///
     /// As [`Vault::set_projector`], for a reranker.
-    pub(crate) async fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
+    pub(crate) async fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<u64, Error> {
         self.ports.set_reranker(reranker).await?;
-        self.committer.signal().ports_changed();
-        Ok(())
+        Ok(self.committer.signal().ports_changed())
     }
 
     /// The canonical path of the work tree.

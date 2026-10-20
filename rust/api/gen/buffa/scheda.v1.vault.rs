@@ -354,6 +354,156 @@ pub const __VAULT_INFO_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa:
     from_json: ::buffa::type_registry::any_from_json::<VaultInfo>,
     is_wkt: false,
 };
+/// The answer of a port call of the Vault: `SetProjector`,
+/// `RemoveProjector`, `SetEmbedder`, `RemoveEmbedder`, `SetReranker`, and
+/// `RemoveReranker`. Output only.
+#[derive(Clone, PartialEq, Default)]
+#[derive(::serde::Serialize, ::serde::Deserialize)]
+#[serde(default)]
+pub struct PortChange {
+    /// The number of this port change of this Vault: the first call after
+    /// `Open` is 1, and each call one more, whether it changed a port or
+    /// found nothing to remove. Numbers are of one open Vault, and mean
+    /// nothing to another. Once `IndexState.port_change` is at least this
+    /// number, the indexer has compared the ports this Vault held at this
+    /// change, or later ones, with the Index, and `IndexState.last_error`
+    /// says what it found: `INDEX_STALE` or `FAILED_PRECONDITION` when they
+    /// do not fit the Index, the failure of the round when it failed, unset
+    /// when they fit. A caller that watches `Index.Watch`, or reads
+    /// `Index.Status`, until then gets the verdict for the ports it set with
+    /// no search, and without knowing the verdict in advance.
+    ///
+    /// Field 1: `number`
+    #[serde(
+        rename = "number",
+        with = "::buffa::json_helpers::opt_uint64",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub number: ::core::option::Option<u64>,
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub __buffa_unknown_fields: ::buffa::UnknownFields,
+}
+impl ::core::fmt::Debug for PortChange {
+    fn fmt(&self, f: &mut ::core::fmt::Formatter<'_>) -> ::core::fmt::Result {
+        f.debug_struct("PortChange").field("number", &self.number).finish()
+    }
+}
+impl PortChange {
+    /// Protobuf type URL for this message, for use with `Any::pack` and
+    /// `Any::unpack_if`.
+    ///
+    /// Format: `type.googleapis.com/<fully.qualified.TypeName>`
+    pub const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.PortChange";
+}
+impl PortChange {
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::number`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_number(mut self, value: u64) -> Self {
+        self.number = Some(value);
+        self
+    }
+}
+::buffa::impl_default_instance!(PortChange);
+impl ::buffa::MessageName for PortChange {
+    const PACKAGE: &'static str = "scheda.v1";
+    const NAME: &'static str = "PortChange";
+    const FULL_NAME: &'static str = "scheda.v1.PortChange";
+    const TYPE_URL: &'static str = "type.googleapis.com/scheda.v1.PortChange";
+}
+impl ::buffa::Message for PortChange {
+    /// Returns the total encoded size in bytes.
+    ///
+    /// Accumulates in `u64` (which cannot overflow for in-memory
+    /// data) and saturates to `u32` at return, so a message whose
+    /// encoded size exceeds the 2 GiB protobuf limit yields a value
+    /// above [`::buffa::MAX_MESSAGE_BYTES`] that the encode entry
+    /// points reject, never a silently wrapped size.
+    #[allow(clippy::let_and_return)]
+    fn compute_size(&self, _cache: &mut ::buffa::SizeCache) -> u32 {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        let mut size = 0u64;
+        if let Some(v) = self.number {
+            size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
+        }
+        size += self.__buffa_unknown_fields.encoded_len() as u64;
+        ::buffa::saturate_size(size)
+    }
+    fn write_to(
+        &self,
+        _cache: &mut ::buffa::SizeCache,
+        buf: &mut impl ::buffa::EncodeSink,
+    ) {
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        if let Some(v) = self.number {
+            ::buffa::types::put_uint64_field(1u32, v, buf);
+        }
+        self.__buffa_unknown_fields.write_to(buf);
+    }
+    fn merge_field(
+        &mut self,
+        tag: ::buffa::encoding::Tag,
+        buf: &mut impl ::buffa::bytes::Buf,
+        ctx: ::buffa::DecodeContext<'_>,
+    ) -> ::core::result::Result<(), ::buffa::DecodeError> {
+        #[allow(unused_imports)]
+        use ::buffa::bytes::Buf as _;
+        #[allow(unused_imports)]
+        use ::buffa::Enumeration as _;
+        match tag.field_number() {
+            1u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.number = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint64(buf)?,
+                );
+            }
+            _ => {
+                self.__buffa_unknown_fields
+                    .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
+            }
+        }
+        ::core::result::Result::Ok(())
+    }
+    fn clear(&mut self) {
+        self.number = ::core::option::Option::None;
+        self.__buffa_unknown_fields.clear();
+    }
+}
+impl ::buffa::ExtensionSet for PortChange {
+    const PROTO_FQN: &'static str = "scheda.v1.PortChange";
+    fn unknown_fields(&self) -> &::buffa::UnknownFields {
+        &self.__buffa_unknown_fields
+    }
+    fn unknown_fields_mut(&mut self) -> &mut ::buffa::UnknownFields {
+        &mut self.__buffa_unknown_fields
+    }
+}
+impl ::buffa::json_helpers::ProtoElemJson for PortChange {
+    fn serialize_proto_json<S: ::serde::Serializer>(
+        v: &Self,
+        s: S,
+    ) -> ::core::result::Result<S::Ok, S::Error> {
+        ::serde::Serialize::serialize(v, s)
+    }
+    fn deserialize_proto_json<'de, D: ::serde::Deserializer<'de>>(
+        d: D,
+    ) -> ::core::result::Result<Self, D::Error> {
+        <Self as ::serde::Deserialize>::deserialize(d)
+    }
+}
+#[doc(hidden)]
+pub const __PORT_CHANGE_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::type_registry::JsonAnyEntry {
+    type_url: "type.googleapis.com/scheda.v1.PortChange",
+    to_json: ::buffa::type_registry::any_to_json::<PortChange>,
+    from_json: ::buffa::type_registry::any_from_json::<PortChange>,
+    is_wkt: false,
+};
 /// One item of `Vault.BatchDocuments`: a Document write in one collection.
 #[derive(Clone, PartialEq, Default)]
 #[derive(::serde::Serialize, ::serde::Deserialize)]

@@ -68,29 +68,32 @@ service Vault {
 
   // Ports. A port is the Vault's until it is removed or replaced, and may
   // change at any time: the indexer takes the new set into its next round
-  // (who indexes depends on the ports a Vault holds). A port of a feature
-  // this build lacks, `UNIMPLEMENTED`; an async port outside a tokio
-  // runtime, `INVALID_ARGUMENT`.
+  // (who indexes depends on the ports a Vault holds). Each call returns
+  // once the port is in place, with the number of its port change: the
+  // Index state reflects the change once its `port_change` has reached
+  // that number (`PortChange`). A port of a feature this build lacks,
+  // `UNIMPLEMENTED`; an async port outside a tokio runtime,
+  // `INVALID_ARGUMENT`.
 
   // Gives the Vault this Projector, in place of the one it had. Its
   // `Describe` is read here, once.
-  rpc SetProjector(ProjectorRef) returns (google.protobuf.Empty);
+  rpc SetProjector(ProjectorRef) returns (PortChange);
 
-  // Takes the Projector away. Without one, nothing to do.
-  rpc RemoveProjector(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Takes the Projector away. Without one, nothing to do but the number.
+  rpc RemoveProjector(google.protobuf.Empty) returns (PortChange);
 
   // Gives the Vault this embedder, in place of the one it had. Its
   // `Describe` is read here, once.
-  rpc SetEmbedder(EmbedderRef) returns (google.protobuf.Empty);
+  rpc SetEmbedder(EmbedderRef) returns (PortChange);
 
-  // Takes the embedder away. Without one, nothing to do.
-  rpc RemoveEmbedder(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Takes the embedder away. Without one, nothing to do but the number.
+  rpc RemoveEmbedder(google.protobuf.Empty) returns (PortChange);
 
   // Gives the Vault this reranker, in place of the one it had.
-  rpc SetReranker(RerankerRef) returns (google.protobuf.Empty);
+  rpc SetReranker(RerankerRef) returns (PortChange);
 
-  // Takes the reranker away. Without one, nothing to do.
-  rpc RemoveReranker(google.protobuf.Empty) returns (google.protobuf.Empty);
+  // Takes the reranker away. Without one, nothing to do but the number.
+  rpc RemoveReranker(google.protobuf.Empty) returns (PortChange);
 
   // Collections: the set of them and their declarations.
 
@@ -166,6 +169,24 @@ message VaultInfo {
   // `not_before`, it makes a query see every write stored on this path
   // before this call, by any Vault, process, or `git` command.
   string version = 4;
+}
+
+// The answer of a port call of the Vault: `SetProjector`,
+// `RemoveProjector`, `SetEmbedder`, `RemoveEmbedder`, `SetReranker`, and
+// `RemoveReranker`. Output only.
+message PortChange {
+  // The number of this port change of this Vault: the first call after
+  // `Open` is 1, and each call one more, whether it changed a port or
+  // found nothing to remove. Numbers are of one open Vault, and mean
+  // nothing to another. Once `IndexState.port_change` is at least this
+  // number, the indexer has compared the ports this Vault held at this
+  // change, or later ones, with the Index, and `IndexState.last_error`
+  // says what it found: `INDEX_STALE` or `FAILED_PRECONDITION` when they
+  // do not fit the Index, the failure of the round when it failed, unset
+  // when they fit. A caller that watches `Index.Watch`, or reads
+  // `Index.Status`, until then gets the verdict for the ports it set with
+  // no search, and without knowing the verdict in advance.
+  uint64 number = 1;
 }
 
 // One item of `Vault.BatchDocuments`: a Document write in one collection.

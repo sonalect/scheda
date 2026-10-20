@@ -176,6 +176,26 @@ pub struct IndexState {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub stored_version: ::core::option::Option<::buffa::alloc::string::String>,
+    /// The last port change of this Vault this state reflects, by its
+    /// `PortChange.number`: the round or the look that made this state
+    /// began after that change, with the ports the Vault held then or later
+    /// ones, and `last_error` is what it found for them. `0` for the ports
+    /// given at `Open`; unset until a state reflects them. It moves when a
+    /// round or a look ends, never while one runs: a change made
+    /// during a round, a rebuild included, is reflected once that round has
+    /// ended and the next look has compared the ports. A look that compares
+    /// and finds nothing else new still makes an item, with this number
+    /// moved; a look that finds no port changed compares nothing and makes
+    /// none. Set in every Vault, whether it indexes or not.
+    ///
+    /// Field 7: `port_change`
+    #[serde(
+        rename = "portChange",
+        alias = "port_change",
+        with = "::buffa::json_helpers::opt_uint64",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub port_change: ::core::option::Option<u64>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -189,6 +209,7 @@ impl ::core::fmt::Debug for IndexState {
             .field("rebuild", &self.rebuild)
             .field("last_error", &self.last_error)
             .field("stored_version", &self.stored_version)
+            .field("port_change", &self.port_change)
             .finish()
     }
 }
@@ -232,6 +253,13 @@ impl IndexState {
         value: impl Into<::buffa::alloc::string::String>,
     ) -> Self {
         self.stored_version = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::port_change`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_port_change(mut self, value: u64) -> Self {
+        self.port_change = Some(value);
         self
     }
 }
@@ -283,6 +311,9 @@ impl ::buffa::Message for IndexState {
         if let Some(ref v) = self.stored_version {
             size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
         }
+        if let Some(v) = self.port_change {
+            size += 1u64 + ::buffa::types::uint64_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -320,6 +351,9 @@ impl ::buffa::Message for IndexState {
         }
         if let Some(ref v) = self.stored_version {
             ::buffa::types::put_string_field(6u32, v, buf);
+        }
+        if let Some(v) = self.port_change {
+            ::buffa::types::put_uint64_field(7u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -396,6 +430,15 @@ impl ::buffa::Message for IndexState {
                     buf,
                 )?;
             }
+            7u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::Varint,
+                )?;
+                self.port_change = ::core::option::Option::Some(
+                    ::buffa::types::decode_uint64(buf)?,
+                );
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -410,6 +453,7 @@ impl ::buffa::Message for IndexState {
         self.rebuild = ::buffa::MessageField::none();
         self.last_error = ::buffa::MessageField::none();
         self.stored_version = ::core::option::Option::None;
+        self.port_change = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

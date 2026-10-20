@@ -1763,16 +1763,41 @@ mod tests {
         let name =
             "commit::tests::the_umask_decides_the_modes_of_the_files_a_write_puts_in_the_tree";
         if std::env::var_os(CHILD).is_none() {
+            use std::io::Read;
+            use std::time::{Duration, Instant};
+
             let exe = std::env::current_exe().unwrap();
-            let status = std::process::Command::new("sh")
+            // `sh` execs the test binary: the child is the test itself.
+            let mut child = std::process::Command::new("sh")
                 .args(["-c", "umask 077 && exec \"$0\" \"$@\""])
                 .arg(exe)
                 .args(["--exact", name, "--nocapture", "--test-threads=1"])
                 .env(CHILD, "1")
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null())
+                .spawn()
                 .unwrap();
-            let report = String::from_utf8_lossy(&status.stdout);
-            assert!(status.status.success(), "the child with umask 077 failed");
+            let mut stdout = child.stdout.take().unwrap();
+            let reader = std::thread::spawn(move || {
+                let mut bytes = Vec::new();
+                let _ = stdout.read_to_end(&mut bytes);
+                bytes
+            });
+            // A child that hangs fails the test instead of hanging it.
+            let deadline = Instant::now() + Duration::from_secs(300);
+            let status = loop {
+                if let Some(status) = child.try_wait().unwrap() {
+                    break status;
+                }
+                if Instant::now() >= deadline {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    panic!("the child with umask 077 did not end in time");
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            };
+            let report = String::from_utf8_lossy(&reader.join().unwrap()).into_owned();
+            assert!(status.success(), "the child with umask 077 failed");
             // A name that matches no test would also exit 0.
             assert!(
                 report.contains("1 passed"),

@@ -83,15 +83,15 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         &self,
         projector_ref: crate::traits::projector_ref::ProjectorRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     >;
-    /// Takes the Projector away. Without one, nothing to do.
+    /// Takes the Projector away. Without one, nothing to do but the number.
     fn remove_projector(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     >;
     /// Gives the Vault this embedder, in place of the one it had. Its
@@ -100,15 +100,15 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         &self,
         embedder_ref: crate::traits::embedder_ref::EmbedderRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     >;
-    /// Takes the embedder away. Without one, nothing to do.
+    /// Takes the embedder away. Without one, nothing to do but the number.
     fn remove_embedder(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     >;
     /// Gives the Vault this reranker, in place of the one it had.
@@ -116,15 +116,15 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         &self,
         reranker_ref: crate::traits::reranker_ref::RerankerRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     >;
-    /// Takes the reranker away. Without one, nothing to do.
+    /// Takes the reranker away. Without one, nothing to do but the number.
     fn remove_reranker(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     >;
     /// Every declared collection, isolated ones included, in name order.
@@ -342,17 +342,17 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
         projector_ref: crate::traits::projector_ref::ProjectorRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// Takes the Projector away. Without one, nothing to do.
+    /// Takes the Projector away. Without one, nothing to do but the number.
     fn remove_projector(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
@@ -363,17 +363,17 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
         embedder_ref: crate::traits::embedder_ref::EmbedderRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// Takes the embedder away. Without one, nothing to do.
+    /// Takes the embedder away. Without one, nothing to do but the number.
     fn remove_embedder(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
@@ -383,17 +383,17 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
         reranker_ref: crate::traits::reranker_ref::RerankerRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
-    /// Takes the reranker away. Without one, nothing to do.
+    /// Takes the reranker away. Without one, nothing to do but the number.
     fn remove_reranker(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send;
@@ -631,7 +631,7 @@ impl VaultAsync for DynVaultAsync {
         projector_ref: crate::traits::projector_ref::ProjectorRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -642,7 +642,7 @@ impl VaultAsync for DynVaultAsync {
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -653,7 +653,7 @@ impl VaultAsync for DynVaultAsync {
         embedder_ref: crate::traits::embedder_ref::EmbedderRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -664,7 +664,7 @@ impl VaultAsync for DynVaultAsync {
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -675,7 +675,7 @@ impl VaultAsync for DynVaultAsync {
         reranker_ref: crate::traits::reranker_ref::RerankerRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -686,7 +686,7 @@ impl VaultAsync for DynVaultAsync {
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -890,7 +890,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         >;
@@ -900,7 +900,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         >;
@@ -910,7 +910,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         >;
@@ -920,7 +920,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         >;
@@ -930,7 +930,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         >;
@@ -940,7 +940,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         >;
@@ -1136,7 +1136,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         > {
@@ -1150,7 +1150,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         > {
@@ -1164,7 +1164,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         > {
@@ -1178,7 +1178,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         > {
@@ -1192,7 +1192,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         > {
@@ -1206,7 +1206,7 @@ mod __dyn_vault_async {
         ) -> ::protocontract::BoxFuture<
             '_,
             ::core::result::Result<
-                ::buffa_types::google::protobuf::Empty,
+                crate::proto::scheda::v1::PortChange,
                 ::protocontract::Error,
             >,
         > {
@@ -1458,7 +1458,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
         &self,
         projector_ref: crate::traits::projector_ref::ProjectorRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         <T as VaultSync>::set_projector(Self::get_ref(self), projector_ref)
@@ -1467,7 +1467,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         <T as VaultSync>::remove_projector(Self::get_ref(self), empty)
@@ -1476,7 +1476,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
         &self,
         embedder_ref: crate::traits::embedder_ref::EmbedderRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         <T as VaultSync>::set_embedder(Self::get_ref(self), embedder_ref)
@@ -1485,7 +1485,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         <T as VaultSync>::remove_embedder(Self::get_ref(self), empty)
@@ -1494,7 +1494,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
         &self,
         reranker_ref: crate::traits::reranker_ref::RerankerRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         <T as VaultSync>::set_reranker(Self::get_ref(self), reranker_ref)
@@ -1503,7 +1503,7 @@ impl<T: VaultSync> VaultAsync for ::protocontract::Inline<T> {
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         <T as VaultSync>::remove_reranker(Self::get_ref(self), empty)
@@ -1690,7 +1690,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         projector_ref: crate::traits::projector_ref::ProjectorRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1704,7 +1704,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1718,7 +1718,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         embedder_ref: crate::traits::embedder_ref::EmbedderRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1732,7 +1732,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1746,7 +1746,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         reranker_ref: crate::traits::reranker_ref::RerankerRef,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1760,7 +1760,7 @@ impl<T: VaultSync + 'static> VaultAsync for ::protocontract::Offload<T> {
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> impl ::core::future::Future<
         Output = ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         >,
     > + ::core::marker::Send {
@@ -1997,7 +1997,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         &self,
         projector_ref: crate::traits::projector_ref::ProjectorRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -2009,7 +2009,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -2021,7 +2021,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         &self,
         embedder_ref: crate::traits::embedder_ref::EmbedderRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -2033,7 +2033,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -2045,7 +2045,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         &self,
         reranker_ref: crate::traits::reranker_ref::RerankerRef,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -2057,7 +2057,7 @@ impl<T: VaultAsync + 'static> VaultSync for ::protocontract::Blocking<T> {
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
     ) -> ::core::result::Result<
-        ::buffa_types::google::protobuf::Empty,
+        crate::proto::scheda::v1::PortChange,
         ::protocontract::Error,
     > {
         Self::block_on(
@@ -2432,7 +2432,7 @@ pub mod vault_ref {
             &self,
             projector_ref: crate::traits::projector_ref::ProjectorRef,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         > {
             self.0.set_projector(projector_ref)
@@ -2441,7 +2441,7 @@ pub mod vault_ref {
             &self,
             empty: ::buffa_types::google::protobuf::Empty,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         > {
             self.0.remove_projector(empty)
@@ -2450,7 +2450,7 @@ pub mod vault_ref {
             &self,
             embedder_ref: crate::traits::embedder_ref::EmbedderRef,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         > {
             self.0.set_embedder(embedder_ref)
@@ -2459,7 +2459,7 @@ pub mod vault_ref {
             &self,
             empty: ::buffa_types::google::protobuf::Empty,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         > {
             self.0.remove_embedder(empty)
@@ -2468,7 +2468,7 @@ pub mod vault_ref {
             &self,
             reranker_ref: crate::traits::reranker_ref::RerankerRef,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         > {
             self.0.set_reranker(reranker_ref)
@@ -2477,7 +2477,7 @@ pub mod vault_ref {
             &self,
             empty: ::buffa_types::google::protobuf::Empty,
         ) -> ::core::result::Result<
-            ::buffa_types::google::protobuf::Empty,
+            crate::proto::scheda::v1::PortChange,
             ::protocontract::Error,
         > {
             self.0.remove_reranker(empty)

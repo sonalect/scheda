@@ -4,10 +4,13 @@
 //! the same folder.
 
 use std::cell::RefCell;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use buffa_types::google::protobuf::Empty;
 use scheda::v1::projector_ref::ProjectorRef;
@@ -187,16 +190,67 @@ pub fn run_with(args: &[&str], setup: &Setup) -> Run {
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
     let mut child = cmd.spawn().expect("spawn scheda");
-    if let (Some(bytes), Some(mut stdin)) = (setup.stdin, child.stdin.take()) {
-        use std::io::Write;
-        let _ = stdin.write_all(bytes);
+    // Written on a thread of its own: a child that does not read its input
+    // would block the write once the pipe is full, and the wait with it.
+    let writer = match (setup.stdin, child.stdin.take()) {
+        (Some(bytes), Some(mut stdin)) => {
+            let bytes = bytes.to_vec();
+            Some(std::thread::spawn(move || {
+                let _ = stdin.write_all(&bytes);
+            }))
+        }
+        _ => None,
+    };
+    let out = finish(child);
+    if let Some(writer) = writer {
+        let _ = writer.join();
     }
-    let out = child.wait_with_output().expect("wait for scheda");
     Run {
         status: out.status.code().unwrap_or(-1),
         stdout: String::from_utf8(out.stdout).expect("stdout is UTF-8"),
         stderr: String::from_utf8(out.stderr).expect("stderr is UTF-8"),
     }
+}
+
+/// How long a test waits for a run of the command line to end.
+const DEADLINE: Duration = Duration::from_secs(300);
+
+/// What `child` wrote to the pipes it was given and how it ended, as
+/// `Child::wait_with_output` gives them, waited for at most [`DEADLINE`]:
+/// past it the child is killed and the test fails, so a run that hangs
+/// fails the test instead of hanging it.
+pub fn finish(mut child: Child) -> Output {
+    let stdout = child.stdout.take().map(drain);
+    let stderr = child.stderr.take().map(drain);
+    let deadline = Instant::now() + DEADLINE;
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("wait for scheda") {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("scheda did not end within {DEADLINE:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let read = |pipe: Option<JoinHandle<Vec<u8>>>| {
+        pipe.map_or_else(Vec::new, |pipe| pipe.join().expect("read a pipe of scheda"))
+    };
+    Output {
+        status,
+        stdout: read(stdout),
+        stderr: read(stderr),
+    }
+}
+
+/// Reads `pipe` to its end on a thread of its own.
+fn drain(mut pipe: impl Read + Send + 'static) -> JoinHandle<Vec<u8>> {
+    std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = pipe.read_to_end(&mut bytes);
+        bytes
+    })
 }
 
 /// The global flags every run on the Vault at `vault` carries: its path and

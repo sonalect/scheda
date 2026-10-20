@@ -40,9 +40,9 @@ use scheda_api::v1::{
     CollectionKey, CollectionOperation, Collections, Count, Document, DocumentBatchResult,
     DocumentCreation, DocumentDeletion, DocumentHistoryEntry, DocumentId, DocumentOperation,
     DocumentQuery, DocumentSearch, DocumentSelection, DocumentUpdate, DocumentUpsert,
-    DocumentWriteResult, Feature, MirrorAsync, MirrorInfo, MirrorSetting, QueryItem, SchedaAsync,
-    SchedaInfo, SearchItem, VaultAsync, VaultDocumentOperation, VaultInfo, VaultOpening,
-    VaultQuery, VaultSearch,
+    DocumentWriteResult, Feature, MirrorAsync, MirrorInfo, MirrorSetting, PortChange, QueryItem,
+    SchedaAsync, SchedaInfo, SearchItem, VaultAsync, VaultDocumentOperation, VaultInfo,
+    VaultOpening, VaultQuery, VaultSearch,
 };
 #[cfg(feature = "index")]
 use scheda_api::v1::{IndexAsync, IndexState};
@@ -353,49 +353,52 @@ impl VaultAsync for VaultObject {
         Err(unavailable("Vault.Index"))
     }
 
-    async fn set_projector(&self, projector_ref: ProjectorRef) -> Result<Empty, Error> {
+    async fn set_projector(&self, projector_ref: ProjectorRef) -> Result<PortChange, Error> {
         let _pass = self.enter()?;
-        self.vault
+        let number = self
+            .vault
             .set_projector(Some(projector_ref))
             .await
             .context("Vault.SetProjector")?;
-        Ok(Empty::default())
+        Ok(PortChange::default().with_number(number))
     }
 
-    async fn remove_projector(&self, _empty: Empty) -> Result<Empty, Error> {
+    async fn remove_projector(&self, _empty: Empty) -> Result<PortChange, Error> {
         let _pass = self.enter()?;
-        self.vault.set_projector(None).await?;
-        Ok(Empty::default())
+        let number = self.vault.set_projector(None).await?;
+        Ok(PortChange::default().with_number(number))
     }
 
-    async fn set_embedder(&self, embedder_ref: EmbedderRef) -> Result<Empty, Error> {
+    async fn set_embedder(&self, embedder_ref: EmbedderRef) -> Result<PortChange, Error> {
         let _pass = self.enter()?;
-        self.vault
+        let number = self
+            .vault
             .set_embedder(Some(embedder_ref))
             .await
             .context("Vault.SetEmbedder")?;
-        Ok(Empty::default())
+        Ok(PortChange::default().with_number(number))
     }
 
-    async fn remove_embedder(&self, _empty: Empty) -> Result<Empty, Error> {
+    async fn remove_embedder(&self, _empty: Empty) -> Result<PortChange, Error> {
         let _pass = self.enter()?;
-        self.vault.set_embedder(None).await?;
-        Ok(Empty::default())
+        let number = self.vault.set_embedder(None).await?;
+        Ok(PortChange::default().with_number(number))
     }
 
-    async fn set_reranker(&self, reranker_ref: RerankerRef) -> Result<Empty, Error> {
+    async fn set_reranker(&self, reranker_ref: RerankerRef) -> Result<PortChange, Error> {
         let _pass = self.enter()?;
-        self.vault
+        let number = self
+            .vault
             .set_reranker(Some(reranker_ref))
             .await
             .context("Vault.SetReranker")?;
-        Ok(Empty::default())
+        Ok(PortChange::default().with_number(number))
     }
 
-    async fn remove_reranker(&self, _empty: Empty) -> Result<Empty, Error> {
+    async fn remove_reranker(&self, _empty: Empty) -> Result<PortChange, Error> {
         let _pass = self.enter()?;
-        self.vault.set_reranker(None).await?;
-        Ok(Empty::default())
+        let number = self.vault.set_reranker(None).await?;
+        Ok(PortChange::default().with_number(number))
     }
 
     async fn list_collections(&self, empty: Empty) -> Result<Collections, Error> {

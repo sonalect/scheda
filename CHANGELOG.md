@@ -50,6 +50,20 @@ API or on-disk format changes bump the minor.
   `INVALID_ARGUMENT`, and its failure is the failure of `EmbedQuery`.
   `Embed` still goes to the portion function. Without it, `EmbedQuery` is
   a portion of one, as before; `new` is unchanged.
+- `IndexState.port_change` (`portChange` in Protobuf JSON, and in the
+  output of `scheda index status` and `index watch`): the last port change
+  of this Vault the state reflects, `0` for the ports given at open, unset
+  until a state reflects them. With the number a port call now returns (see
+  Changed), a caller learns the verdict for the ports it set without
+  knowing it in advance and without a probe search: it watches
+  `Index.Watch`, or reads `Index.Status`, until `port_change` is at least
+  that number, then reads `last_error` (`INDEX_STALE`,
+  `FAILED_PRECONDITION` naming the port the Vault lacks, the failure of
+  the round, or unset when the ports fit). A look that compares and finds
+  nothing else new still emits an item with the number moved; an idle look
+  still compares nothing. The number never moves while a round runs: a
+  port set during a round, a rebuild included, is reflected once that
+  round has ended and the next look has compared.
 
 ### Changed
 
@@ -58,9 +72,30 @@ API or on-disk format changes bump the minor.
   written agreement with the copyright holder (`LICENSE`). The crates
   declare `license = "UNLICENSED"`, the Python project
   `LicenseRef-Proprietary`.
+- `Vault.SetProjector`, `RemoveProjector`, `SetEmbedder`,
+  `RemoveEmbedder`, `SetReranker`, and `RemoveReranker` return
+  `PortChange` instead of `google.protobuf.Empty`: its `number` is the
+  number of this port change of this open Vault, 1 for the first call
+  after open and one more for each after, whether the call changed a port
+  or found nothing to remove. In Rust the methods of `VaultAsync` and
+  `VaultSync` return `Result<PortChange, Error>`: a caller that ignored
+  the `Empty` compiles as before when it ignores the reply; an
+  implementation of the trait returns `PortChange`. A caller that probed
+  with a search after a port change to learn whether the Index is stale
+  waits for `IndexState.port_change` to reach `number` instead (see
+  Added).
 
 ### Fixed
 
+- A port set or removed while an indexer round ran was used by the rest of
+  that round: the round was planned with the ports it found at its start,
+  then projected and embedded the Documents with the new ones, and wrote
+  the old ports into the Index's record. A Projector of another projection
+  or an embedder of another model set at the wrong moment left Documents
+  projected or vectors embedded by it in an Index that named the ports it
+  replaced, so the Index was not found stale and answered with them. A
+  round now takes the ports once and keeps them to its end; the port set
+  meanwhile is the next round's, which compares it with the Index first.
 - Pillow, which the Python sidecar lock (`uv.lock`) takes in through vLLM,
   `mistral-common`, and `torchvision`, is 13.0.0 instead of 12.3.0: the
   older one has nine advisories (GHSA-65qm-jvmh-6pqg and eight more: out of

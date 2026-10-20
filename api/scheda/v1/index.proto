@@ -86,6 +86,18 @@ message IndexState {
   // made. The Index is behind while `version` differs from `stored_version`.
   // Set in every Vault, whether it indexes or not.
   string stored_version = 6;
+  // The last port change of this Vault this state reflects, by its
+  // `PortChange.number`: the round or the look that made this state
+  // began after that change, with the ports the Vault held then or later
+  // ones, and `last_error` is what it found for them. `0` for the ports
+  // given at `Open`; unset until a state reflects them. It moves when a
+  // round or a look ends, never while one runs: a change made
+  // during a round, a rebuild included, is reflected once that round has
+  // ended and the next look has compared the ports. A look that compares
+  // and finds nothing else new still makes an item, with this number
+  // moved; a look that finds no port changed compares nothing and makes
+  // none. Set in every Vault, whether it indexes or not.
+  uint64 port_change = 7;
 }
 
 // A rebuild of the Index: a new Index made from the stored Documents,
