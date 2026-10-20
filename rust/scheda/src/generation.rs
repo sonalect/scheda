@@ -4,7 +4,7 @@
 //! ```text
 //! .scheda/index/current              the name of the live generation
 //! .scheda/index/g-{…}/commit         what the generation holds, written last
-//! .scheda/index/g-{…}/t{n}.lance     the tables of its collections
+//! .scheda/index/g-{…}/t{n}.…         the tables of its collections
 //! ```
 //!
 //! A generation is built from nothing (the first build, `Index.Reindex`)
@@ -88,9 +88,11 @@ pub(crate) struct Table {
     pub(crate) versions: Versions,
 }
 
-/// A generation that was replaced, and when.
+/// A generation, or a table, that was replaced, and when.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 pub(crate) struct Retired {
+    /// The name of a generation; of a table (`t{n}`); or of the texts
+    /// dataset of one column of a table, which the table no longer has.
     pub(crate) name: String,
     /// When it was replaced, in milliseconds since the epoch.
     pub(crate) at: u64,
@@ -111,8 +113,9 @@ pub(crate) struct Commit {
     pub(crate) rounds: u64,
     /// The generation this one replaced, until it is removed.
     pub(crate) retired: Option<Retired>,
-    /// The tables whose collection went, until their folders are removed,
-    /// an hour later: a reader of an older `commit` may still read them.
+    /// The tables whose collection went, and the texts datasets of
+    /// columns a table lost, until their folders are removed, an hour
+    /// later: a reader of an older `commit` may still read them.
     pub(crate) dropped: Vec<Retired>,
 }
 
@@ -321,24 +324,41 @@ impl Generation {
         }
     }
 
-    /// Removes the folders of the tables `commit` dropped more than an hour
-    /// ago, and forgets those it removed. Under `index.lock`; `commit` is
-    /// written after.
+    /// Removes the folders of the tables and texts datasets `commit`
+    /// dropped more than an hour ago, and forgets those it removed: every
+    /// folder whose name begins with the dropped name and a dot (`t3.`
+    /// covers `t3.lance`, `t3.files.lance`, and `t3.texts.{column}.lance`,
+    /// never `t30.lance`). Under `index.lock`; `commit` is written after.
     pub(crate) fn sweep_tables(&self, _cx: &Blocking, commit: &mut Commit) {
         let lifetime = u64::try_from(VERSION_LIFETIME.as_millis()).unwrap_or(u64::MAX);
         let now = now_millis();
+        let due = commit
+            .dropped
+            .iter()
+            .any(|table| now.saturating_sub(table.at) >= lifetime);
+        if !due {
+            return;
+        }
+        // A folder that cannot be listed now is listed at the next round.
+        let Ok(entries) = fs::read_dir(&self.dir) else {
+            return;
+        };
+        let names: Vec<String> = entries
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .collect();
         commit.dropped.retain(|table| {
             if now.saturating_sub(table.at) < lifetime {
                 return true;
             }
             // A table that cannot be removed now (a reader holds a file of
             // it open) stays listed, and the next round tries again.
-            let removed =
-                [".lance", ".files.lance"].iter().all(|suffix| {
-                    match fs::remove_dir_all(self.dir.join(format!("{}{suffix}", table.name))) {
-                        Ok(()) => true,
-                        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
-                    }
+            let prefix = format!("{}.", table.name);
+            let removed = names
+                .iter()
+                .filter(|name| name.starts_with(&prefix))
+                .all(|name| match fs::remove_dir_all(self.dir.join(name)) {
+                    Ok(()) => true,
+                    Err(err) => err.kind() == std::io::ErrorKind::NotFound,
                 });
             !removed
         });
@@ -366,7 +386,9 @@ impl Generation {
 
 #[cfg(test)]
 mod tests {
-    use super::valid_name;
+    use std::path::PathBuf;
+
+    use super::{Commit, Layout, Ports, Retired, now_millis, valid_name};
 
     #[test]
     fn only_names_of_generations_are_generations() {
@@ -375,5 +397,61 @@ mod tests {
         assert!(!valid_name("journal"));
         assert!(!valid_name("g-../x"));
         assert!(!valid_name("current"));
+    }
+
+    #[tokio::test]
+    async fn a_dropped_table_takes_every_folder_of_its_name_and_no_other() {
+        let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let root = base.join(format!("scheda-generation-sweep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        crate::testing::remove_when_the_test_ends(&root);
+        let generation = Layout::new(&root).generation("g-1");
+        for name in [
+            "t3.lance",
+            "t3.files.lance",
+            "t3.texts.tags.lance",
+            "t30.lance",
+            "t4.lance",
+            "t4.texts.tags.lance",
+            "t4.texts.tags_2.lance",
+        ] {
+            std::fs::create_dir_all(generation.dir().join(name).join("data")).unwrap();
+        }
+        let mut commit = Commit::empty(Ports::default());
+        commit.dropped = vec![
+            Retired {
+                name: String::from("t3"),
+                at: 0,
+            },
+            Retired {
+                name: String::from("t4.texts.tags"),
+                at: 0,
+            },
+            Retired {
+                name: String::from("t30"),
+                at: now_millis(),
+            },
+        ];
+        let commit = {
+            let generation = generation.clone();
+            scheda_blocking::blocking(move |cx| {
+                generation.sweep_tables(cx, &mut commit);
+                Ok::<_, crate::error::Error>(commit)
+            })
+            .await
+            .unwrap()
+        };
+        let mut left: Vec<String> = std::fs::read_dir(generation.dir())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+            .collect();
+        left.sort();
+        assert_eq!(left, ["t30.lance", "t4.lance", "t4.texts.tags_2.lance"]);
+        let kept: Vec<&str> = commit
+            .dropped
+            .iter()
+            .map(|table| table.name.as_str())
+            .collect();
+        assert_eq!(kept, ["t30"], "the hour of t30 is not over");
     }
 }

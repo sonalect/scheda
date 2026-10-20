@@ -20,15 +20,17 @@
 //! out of the Index; its file stays. A retryable failure of the Projector
 //! fails the round instead, which is tried again.
 //!
-//! **The embedder** gets the texts of the `vector` columns whose digest
-//! (the git blob id of the text) differs from the one the table holds for
-//! that Document, so an unchanged text keeps its vector. A rebuild with the
-//! model and vector length of the live generation takes, likewise, the
-//! vector the live generation holds for that Document's text. The vectors
-//! it gives are kept in memory until the round succeeds, so a round tried
-//! again after a failure sends only the texts still without one. A text it
-//! refuses keeps no vector, and only that text: a refusal of a portion is
-//! split until the text that causes it is found.
+//! **The embedder** gets the texts of the `vector` columns (the text of a
+//! `text` column, each text of a `text list` one) whose digest (the git
+//! blob id of the text) the table holds for none of that Document's texts,
+//! so a text that did not change keeps its vector wherever it moved in its
+//! list. A rebuild with the model and vector length of the live generation
+//! takes, likewise, the vector the live generation holds for that
+//! Document's text. The vectors it gives are kept in memory until the round
+//! succeeds, so a round tried again after a failure sends only the texts
+//! still without one. A text it refuses keeps no vector, and only that
+//! text: a refusal of a portion is split until the text that causes it is
+//! found. A blank text (only whitespace) has no vector.
 //!
 //! **A declaration's `index_scope`** decides what a table holds, not
 //! whether the Index is fresh: the Index records what the Projector
@@ -59,7 +61,7 @@ use crate::id::require_document_id;
 use crate::index::{Counts, State};
 use crate::ports::{EmbedderPort, Installed, ProjectorPort};
 use crate::repo::{NodeKind, Repo, Repos, Snap};
-use crate::store::{Column, Embedding, Embeddings, Kind, Row, Shape, Table, Vectors};
+use crate::store::{Column, Embedding, Embeddings, Kind, Row, Shape, Table, Vectors, texts_name};
 use crate::{isolated, journal};
 
 /// How many files a round reads, projects, and writes at a time.
@@ -514,13 +516,18 @@ impl Work<'_> {
             };
             let (table_name, committed) = match (&known, &scope) {
                 (Some(table), Scope::Whole) => (table.name.clone(), None),
-                (Some(table), _) => (table.name.clone(), Some(table.versions)),
+                (Some(table), _) => (table.name.clone(), Some(table.versions.clone())),
                 (None, _) => (self.commit.new_table(), None),
             };
-            let mut table =
-                Table::open(self.generation.dir(), &table_name, shape.clone(), committed)
-                    .await
-                    .with_context(|| format!("open the table of {name}"))?;
+            self.keep_texts_of(known.as_ref(), &table_name, &shape);
+            let mut table = Table::open(
+                self.generation.dir(),
+                &table_name,
+                shape.clone(),
+                committed.as_ref(),
+            )
+            .await
+            .with_context(|| format!("open the table of {name}"))?;
             let earlier = self.earlier_vectors(name).await;
             self.apply(&mut table, earlier.as_ref(), decl, to, scope)
                 .await?;
@@ -543,6 +550,33 @@ impl Work<'_> {
         Ok(())
     }
 
+    /// Brings the list of dropped texts datasets in step with the table
+    /// `name` of `shape`, which was `known`: the texts dataset of a `text
+    /// list` vector column the table no longer has is dropped (a reader of
+    /// an older `commit` may still read it for an hour), and one it has is
+    /// not, though an earlier shape of the table dropped it.
+    fn keep_texts_of(&mut self, known: Option<&generation::Table>, name: &str, shape: &Shape) {
+        let kept: HashSet<String> = shape
+            .list_vectors()
+            .map(|column| texts_name(name, column))
+            .collect();
+        self.commit
+            .dropped
+            .retain(|dropped| !kept.contains(&dropped.name));
+        let Some(known) = known else {
+            return;
+        };
+        for column in known.versions.texts.keys() {
+            let texts = texts_name(name, column);
+            if !kept.contains(&texts) {
+                self.commit.dropped.push(Retired {
+                    name: texts,
+                    at: generation::now_millis(),
+                });
+            }
+        }
+    }
+
     /// The vectors the earlier generation holds for `collection`. `None`
     /// when it holds none, or cannot be read: a rebuild is also how a
     /// broken Index is repaired, so its texts then go to the embedder.
@@ -556,7 +590,7 @@ impl Work<'_> {
             &earlier.dir,
             &table.name,
             table.shape.clone(),
-            table.versions,
+            &table.versions,
         )
         .await
         .ok()
@@ -713,7 +747,7 @@ impl Work<'_> {
         let projects = !shape.columns.is_empty() || !shape.vectors.is_empty();
         let mut rows = Vec::with_capacity(sources.len());
         let mut left_out = Vec::new();
-        let mut texts: Vec<(usize, String, String)> = Vec::new();
+        let mut texts: Vec<(usize, Wanted)> = Vec::new();
         for source in sources {
             let mut row = Row {
                 id: source.id,
@@ -751,8 +785,8 @@ impl Work<'_> {
                 match projected {
                     Some((values, vector_texts)) => {
                         row.values = values;
-                        for (column, text) in vector_texts {
-                            texts.push((rows.len(), column, text));
+                        for wanted in vector_texts {
+                            texts.push((rows.len(), wanted));
                         }
                     }
                     None => {
@@ -769,25 +803,26 @@ impl Work<'_> {
         Ok((rows, left_out))
     }
 
-    /// Gives `rows` the embeddings of `texts` (row, column, text): the one
-    /// the table, or else `earlier`, holds for the same text of the same
-    /// Document, else the one the cache holds, else a new one from the
-    /// embedder.
+    /// Gives `rows` the embeddings of `texts` (a row, and a text of one
+    /// of its `vector` columns): the one the table, or else `earlier`,
+    /// holds for the same text of the same Document, else the one the
+    /// cache holds, else a new one from the embedder.
     async fn embed(
         &mut self,
         table: &Table,
         earlier: Option<&Vectors>,
         rows: &mut [Row],
-        texts: Vec<(usize, String, String)>,
+        texts: Vec<(usize, Wanted)>,
     ) -> Result<(), Error> {
         let texts: Vec<Text> = texts
             .into_iter()
-            .map(|(row, column, text)| Text {
+            .map(|(row, wanted)| Text {
                 id: rows[row].id.clone(),
                 row,
-                column,
-                digest: digest_of(&text),
-                text,
+                column: wanted.column,
+                position: wanted.position,
+                digest: digest_of(&wanted.text),
+                text: wanted.text,
             })
             .collect();
         let all: Vec<&Text> = texts.iter().collect();
@@ -817,36 +852,43 @@ impl Work<'_> {
             if !self.cache.vectors.contains_key(&text.digest) {
                 wanted.push((text.digest.clone(), text.text));
             }
-            rows[text.row].embeddings.insert(
-                text.column,
-                Embedding {
+            rows[text.row]
+                .embeddings
+                .entry(text.column)
+                .or_default()
+                .push(Embedding {
+                    position: text.position,
                     vector: Vec::new(),
                     digest: text.digest,
-                },
-            );
+                });
         }
         self.embed_wanted(wanted).await?;
         for row in rows.iter_mut() {
-            row.embeddings.retain(
-                |_, embedding| match self.cache.vectors.get(&embedding.digest) {
-                    Some(vector) => {
-                        embedding.vector = vector.clone();
-                        true
+            for embeddings in row.embeddings.values_mut() {
+                embeddings.retain_mut(|embedding| {
+                    match self.cache.vectors.get(&embedding.digest) {
+                        Some(vector) => {
+                            embedding.vector.clone_from(vector);
+                            true
+                        }
+                        None => false,
                     }
-                    None => false,
-                },
-            );
+                });
+            }
+            row.embeddings
+                .retain(|_, embeddings| !embeddings.is_empty());
         }
         Ok(())
     }
 
     /// Puts in the cache the vectors `stored` holds for `texts`: the one of
-    /// the same Document whose text has the same digest.
+    /// the same Document whose text has the same digest, of any of its
+    /// `vector` columns and places.
     fn keep(&mut self, stored: &Embeddings, texts: &[&Text]) {
         for text in texts {
-            let kept = stored.get(&text.id).and_then(|columns| {
-                columns
-                    .values()
+            let kept = stored.get(&text.id).and_then(|embeddings| {
+                embeddings
+                    .iter()
                     .find(|embedding| embedding.digest == text.digest)
             });
             if let Some(embedding) = kept {
@@ -968,7 +1010,18 @@ struct Text {
     /// Its row among those a batch writes.
     row: usize,
     column: String,
+    /// Its place in the column's `text list`; 0 in a `text` column.
+    position: u32,
     digest: String,
+    text: String,
+}
+
+/// A text of a `vector` column a Document gives: the column, the place of
+/// the text in it, and the text.
+struct Wanted {
+    column: String,
+    /// The place in the column's `text list`; 0 in a `text` column.
+    position: u32,
     text: String,
 }
 
@@ -1000,11 +1053,12 @@ fn digest_of(bytes: impl AsRef<[u8]>) -> String {
 }
 
 /// What a Document gives a table: the value of each column, by name, and
-/// the text of each `vector` column, with that column.
-type Projected = (BTreeMap<String, Value>, Vec<(String, String)>);
+/// the texts of its `vector` columns to embed.
+type Projected = (BTreeMap<String, Value>, Vec<Wanted>);
 
 /// The values of `values` for the columns of `shape`, and the texts of its
-/// `vector` columns; `None` when a value is of another kind than its
+/// `vector` columns that are not blank, each with its place in its column
+/// (0 in a `text` column); `None` when a value is of another kind than its
 /// column's, which leaves the Document out. A key no column declares is
 /// ignored, and a value that is not finite is left out.
 fn values_of(shape: &Shape, values: Option<&IndexDoc>) -> Option<Projected> {
@@ -1038,12 +1092,26 @@ fn values_of(shape: &Shape, values: Option<&IndexDoc>) -> Option<Projected> {
         out.insert(column.name.clone(), value);
     }
     for column in &shape.vectors {
-        match values.get(column).and_then(|value| value.value.as_ref()) {
-            Some(Value::Text(text)) if !text.trim().is_empty() => {
-                texts.push((column.clone(), text.clone()))
-            }
-            Some(Value::Text(_)) | None => {}
+        let is_list = shape.is_list(column);
+        let found: Vec<&String> = match values.get(column).and_then(|value| value.value.as_ref()) {
+            Some(Value::Text(text)) if !is_list => vec![text],
+            Some(Value::TextList(list)) if is_list => list.texts.iter().collect(),
+            None => Vec::new(),
             Some(_) => return None,
+        };
+        for (position, text) in found.into_iter().enumerate() {
+            if text.trim().is_empty() {
+                continue;
+            }
+            // A message of at most 2 GiB holds fewer than 2^32 texts.
+            let Ok(position) = u32::try_from(position) else {
+                break;
+            };
+            texts.push(Wanted {
+                column: column.clone(),
+                position,
+                text: text.clone(),
+            });
         }
     }
     Some((out, texts))
@@ -1286,6 +1354,7 @@ mod tests {
     use protocontract::Failure;
     use scheda_api::v1::document_operation::Operation;
     use scheda_api::v1::embedder_ref::EmbedderRef;
+    use scheda_api::v1::index_value::TextList;
     use scheda_api::v1::projector_ref::ProjectorRef;
     use scheda_api::v1::rebuild::{Cause, Stage};
     use scheda_api::v1::{
@@ -1299,6 +1368,7 @@ mod tests {
     use crate::generation::Layout;
     use crate::index::Index;
     use crate::ports::{FixedEmbedder, Ports};
+    use crate::store::texts_name;
     use crate::testing::{
         batch, create, create_collection, open_with, upsert, upsert_of, wait_indexed,
     };
@@ -2455,5 +2525,288 @@ mod tests {
         // The whole round would take 40 portions.
         assert!(took < PORTION * 4, "close took {took:?}");
         assert!(asked.load(Ordering::SeqCst) < 10);
+    }
+
+    /// A Projector of Documents of lines: the first is `title` (fts), each
+    /// other a text of `phrasings`, a `text list` vector column.
+    struct Lines;
+
+    impl ProjectorSync for Lines {
+        fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
+            Ok(ProjectorDescriptor::default().with_projection_id("lines@1"))
+        }
+
+        fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
+            Ok(IndexSchema {
+                columns: vec![
+                    column("title", ColumnKind::COLUMN_KIND_TEXT).with_fts(true),
+                    column("phrasings", ColumnKind::COLUMN_KIND_TEXT_LIST).with_vector(true),
+                ],
+                ..IndexSchema::default()
+            })
+        }
+
+        fn project(&self, document: RawDocument) -> Result<IndexDoc, Error> {
+            let text = String::from_utf8(document.raw.unwrap_or_default()).unwrap_or_default();
+            let mut lines = text.split('\n').map(str::to_owned);
+            let title = lines.next().unwrap_or_default();
+            let phrasings = TextList {
+                texts: lines.collect(),
+                ..TextList::default()
+            };
+            let value = |value: Value| IndexValue {
+                value: Some(value),
+                ..IndexValue::default()
+            };
+            Ok(IndexDoc {
+                values: [
+                    (String::from("title"), value(Value::Text(title))),
+                    (
+                        String::from("phrasings"),
+                        value(Value::TextList(Box::new(phrasings))),
+                    ),
+                ]
+                .into_iter()
+                .collect(),
+                ..IndexDoc::default()
+            })
+        }
+    }
+
+    /// The ports of [`Lines`], with an embedder that refuses a text with
+    /// `bad` in it and counts each text it embeds.
+    fn lines_ports(embedded: &Arc<Mutex<HashMap<String, usize>>>) -> Ports {
+        let embedded = Arc::clone(embedded);
+        let embedder = FixedEmbedder::new(
+            "model-a",
+            4,
+            NonZeroUsize::MIN,
+            move |texts: Vec<String>| {
+                if texts.iter().any(|text| text.contains("bad")) {
+                    return Err(Failure::new(EmbedderErrorCode::Refused, "a bad text").into());
+                }
+                let mut done = embedded.lock().unwrap();
+                for text in &texts {
+                    *done.entry(text.clone()).or_default() += 1;
+                }
+                Ok(texts
+                    .iter()
+                    .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                    .collect())
+            },
+        );
+        Ports {
+            projector: Some(ProjectorRef::from_sync(Lines)),
+            embedder: Some(EmbedderRef::from_sync(embedder)),
+            reranker: None,
+        }
+    }
+
+    /// The live commit of `vault`.
+    async fn live(vault: &Arc<Vault>) -> (PathBuf, crate::generation::Commit) {
+        let root = Index::new(vault.path()).root().to_path_buf();
+        blocking(move |cx| {
+            let generation = Layout::new(&root).current(cx)?.unwrap();
+            let commit = generation.read_commit(cx)?.unwrap();
+            Ok((generation.dir().to_path_buf(), commit))
+        })
+        .await
+        .unwrap()
+    }
+
+    /// The texts the texts dataset of `column` of `collection` holds at the
+    /// live commit, by Document: each place and the length of its text
+    /// (the first value of its vector).
+    async fn texts_of(
+        vault: &Arc<Vault>,
+        collection: &str,
+        column: &str,
+    ) -> BTreeMap<String, Vec<(u32, f32)>> {
+        let (dir, commit) = live(vault).await;
+        let table = commit.tables.get(collection).unwrap();
+        let version = *table.versions.texts.get(column).unwrap();
+        let path = crate::store::texts_path(&dir, &table.name, column);
+        let dataset = Dataset::open(path.to_str().unwrap())
+            .await
+            .unwrap()
+            .checkout_version(version)
+            .await
+            .unwrap();
+        let batch = dataset.scan().try_into_batch().await.unwrap();
+        let ids = batch
+            .column_by_name("id")
+            .unwrap()
+            .as_any()
+            .downcast_ref::<StringArray>()
+            .unwrap()
+            .clone();
+        let positions = crate::store::positions_in(&batch).unwrap().clone();
+        let vectors = crate::store::vectors_in(&batch, "vector").unwrap().clone();
+        let mut out: BTreeMap<String, Vec<(u32, f32)>> = BTreeMap::new();
+        for n in 0..batch.num_rows() {
+            let vector = crate::store::vector_at(&vectors, n).unwrap();
+            out.entry(ids.value(n).to_owned())
+                .or_default()
+                .push((positions.value(n), vector[0]));
+        }
+        for texts in out.values_mut() {
+            texts.sort_by_key(|(position, _)| *position);
+        }
+        out
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn each_text_of_a_list_has_its_vector_and_only_a_new_text_is_embedded() {
+        let scratch = Scratch::new("text-list");
+        let embedded: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            lines_ports(&embedded),
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        let put = |id: &'static str, raw: &'static str| {
+            let vault = Arc::clone(&vault);
+            async move {
+                upsert(&vault, "notes", upsert_of(id, raw.as_bytes()))
+                    .await
+                    .unwrap();
+                wait_indexed(&vault).await;
+            }
+        };
+        let count = |text: &str| embedded.lock().unwrap().get(text).copied().unwrap_or(0);
+        let total = || embedded.lock().unwrap().values().sum::<usize>();
+
+        // A blank text and a refused one have no vector; the others do,
+        // at their places.
+        put("a.md", "A\none\n   \nthree!\nbad four").await;
+        put("b.md", "B\nfive").await;
+        let texts = texts_of(&vault, "notes", "phrasings").await;
+        assert_eq!(texts.get("a.md"), Some(&vec![(0, 3.0), (2, 6.0)]));
+        assert_eq!(texts.get("b.md"), Some(&vec![(0, 4.0)]));
+        assert_eq!((count("one"), count("three!"), count("five")), (1, 1, 1));
+        let rows_held = held(&vault, "notes").await.0;
+        assert!(
+            !rows_held.iter().any(|name| name.starts_with("_vector_")),
+            "the vectors of a list are not in the rows: {rows_held:?}"
+        );
+
+        // Moved, added, edited, and removed texts: only a new text is
+        // embedded, and each text keeps its vector at its new place.
+        let before = total();
+        put("a.md", "A\nthree!\none").await;
+        assert_eq!(total(), before, "moved texts keep their vectors");
+        assert_eq!(
+            texts_of(&vault, "notes", "phrasings").await.get("a.md"),
+            Some(&vec![(0, 6.0), (1, 3.0)])
+        );
+        put("a.md", "A\nthree!\none\nseven").await;
+        assert_eq!((total(), count("seven")), (before + 1, 1));
+        put("a.md", "A\nthree!\neight\nseven").await;
+        assert_eq!((total(), count("eight")), (before + 2, 1));
+        put("a.md", "A\nseven").await;
+        assert_eq!(total(), before + 2);
+        assert_eq!(
+            texts_of(&vault, "notes", "phrasings").await.get("a.md"),
+            Some(&vec![(0, 5.0)])
+        );
+
+        // A rebuild with the same model embeds nothing; a deleted
+        // Document takes its texts with it.
+        reindexed(&vault).await;
+        assert_eq!(total(), before + 2, "the rebuild took the stored vectors");
+        crate::testing::delete(
+            &vault,
+            "notes",
+            scheda_api::v1::DocumentDeletion::default()
+                .with_id("b.md")
+                .with_note("test"),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&vault).await;
+        let texts = texts_of(&vault, "notes", "phrasings").await;
+        assert_eq!(texts.keys().collect::<Vec<_>>(), ["a.md"]);
+        assert!(embedded.lock().unwrap().values().all(|times| *times == 1));
+        vault.close().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_table_that_loses_its_list_vectors_drops_their_texts_and_one_that_gets_them_back_keeps_them()
+     {
+        let scratch = Scratch::new("text-list-scopes");
+        let embedded: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            lines_ports(&embedded),
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        upsert(&vault, "notes", upsert_of("a.md", b"A\none\ntwo"))
+            .await
+            .unwrap();
+        wait_indexed(&vault).await;
+        let (_, commit) = live(&vault).await;
+        let name = commit.tables.get("notes").unwrap().name.clone();
+        let texts = texts_name(&name, "phrasings");
+
+        crate::testing::update_collection(
+            &vault,
+            serde_json::json!({
+                "name": "notes",
+                "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_NO_VECTORS"}
+            }),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&vault).await;
+        let (_, commit) = live(&vault).await;
+        assert!(
+            commit
+                .tables
+                .get("notes")
+                .unwrap()
+                .versions
+                .texts
+                .is_empty()
+        );
+        assert!(
+            commit.dropped.iter().any(|dropped| dropped.name == texts),
+            "{:?}",
+            commit.dropped
+        );
+
+        crate::testing::update_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&vault).await;
+        let (_, commit) = live(&vault).await;
+        assert!(
+            !commit.dropped.iter().any(|dropped| dropped.name == texts),
+            "a texts dataset the table has again is not removed: {:?}",
+            commit.dropped
+        );
+        assert_eq!(
+            texts_of(&vault, "notes", "phrasings").await.get("a.md"),
+            Some(&vec![(0, 3.0), (1, 3.0)])
+        );
+        vault.close().await.unwrap();
     }
 }

@@ -1,20 +1,36 @@
-//! The tables of the Index on Lance: one pair of Lance datasets per
-//! indexed collection, inside a generation of the Index.
+//! The tables of the Index on Lance: the Lance datasets of each indexed
+//! collection, inside a generation of the Index.
 //!
 //! ```text
-//! .scheda/index/{generation}/commit             what the generation holds, written last
-//! .scheda/index/{generation}/t{n}.lance         the rows of one collection
-//! .scheda/index/{generation}/t{n}.files.lance   the files those rows came from
+//! .scheda/index/{generation}/commit                     what the generation holds, written last
+//! .scheda/index/{generation}/t{n}.lance                 the rows of one collection
+//! .scheda/index/{generation}/t{n}.files.lance           the files those rows came from
+//! .scheda/index/{generation}/t{n}.texts.{column}.lance  the vectors of a `text list` column
 //! ```
+//!
+//! Every dataset of a table is named `t{n}.…`, so the folders of a table
+//! are those whose name begins with `t{n}.`.
 //!
 //! **Rows.** One row per Document, or per journal line: `id`, `file` (the
 //! Vault-relative path of the Document, or of the journal segment of a
 //! line), `order` (the place in a listing: the `id`, or for a journal line
 //! the segment's place in append order and the line's), then the columns
 //! the Projector declares for the collection, typed, and for each `vector`
-//! column `_vector_{name}` (its embedding) and `_digest_{name}` (the git
-//! blob id of the text that was embedded, so an unchanged text keeps its
-//! vector). A caller's column never starts with `_`.
+//! column of kind `text` `_vector_{name}` (its embedding) and
+//! `_digest_{name}` (the git blob id of the text that was embedded, so an
+//! unchanged text keeps its vector). A caller's column never starts with
+//! `_`.
+//!
+//! **Texts.** A `vector` column of kind `text list` has a vector for each
+//! text of the list. The rows hold the list as its value; the vectors are
+//! held beside them, in a dataset of the column with one row per text that
+//! has a vector: `id` and `file` (as the rows'), `position` (the place of
+//! the text in the list, from 0), `digest`, and `vector`. A text without a
+//! vector (blank, or refused by the embedder) has no row there. The
+//! dataset is indexed as the rows are, a B-tree on `id` and, from
+//! [`VECTOR_INDEX_ROWS`] texts on, an IVF_PQ index of its own, so the
+//! vector leg looks up the nearest texts the way it looks up the nearest
+//! rows of a `text` column.
 //!
 //! **Files.** One row per file the rows came from: `path` and `blob`, the
 //! git blob id of the file as indexed. A round that cannot know what
@@ -39,14 +55,16 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lance::Dataset;
 use lance::dataset::cleanup::CleanupPolicy;
 use lance::dataset::optimize::{CompactionOptions, compact_files};
-use lance::dataset::{MergeInsertBuilder, WhenMatched, WhenNotMatched, WriteMode, WriteParams};
+use lance::dataset::{
+    InsertBuilder, MergeInsertBuilder, WhenMatched, WhenNotMatched, WriteMode, WriteParams,
+};
 use lance::deps::arrow_array::builder::{
     BooleanBuilder, FixedSizeListBuilder, Float32Builder, Float64Builder, Int64Builder,
-    ListBuilder, StringBuilder,
+    ListBuilder, StringBuilder, UInt32Builder,
 };
 use lance::deps::arrow_array::{
     Array, ArrayRef, FixedSizeListArray, Float32Array, RecordBatch, RecordBatchIterator,
-    StringArray,
+    StringArray, UInt32Array,
 };
 use lance::deps::arrow_schema::{DataType, Field, Schema, SchemaRef};
 use lance::deps::datafusion::prelude::{Expr, col, lit};
@@ -106,6 +124,12 @@ pub(crate) const VERSION_LIFETIME: Duration = Duration::from_secs(3_600);
 /// The prefix of the columns the Index keeps for itself beside a caller's.
 const VECTOR_PREFIX: &str = "_vector_";
 const DIGEST_PREFIX: &str = "_digest_";
+
+/// The columns of a texts dataset beside `id` and `file`: the place of the
+/// text in its list, the digest of the text, and its vector.
+pub(crate) const POSITION: &str = "position";
+const DIGEST: &str = "digest";
+pub(crate) const VECTOR: &str = "vector";
 
 /// The failure of Lance on the Index: the storage below it (`STORAGE`), or
 /// an Index that is not what it should be (`INDEX_BROKEN`).
@@ -191,9 +215,30 @@ pub(crate) struct Shape {
 }
 
 impl Shape {
-    /// The names of the `vector` columns, in order.
-    pub(crate) fn vector_columns(&self) -> impl Iterator<Item = &str> {
-        self.vectors.iter().map(String::as_str)
+    /// Whether the `vector` column `name` is a `text list`: its vectors
+    /// are held in a texts dataset, not in the rows.
+    pub(crate) fn is_list(&self, name: &str) -> bool {
+        self.columns
+            .iter()
+            .any(|column| column.name == name && column.kind == Kind::TextList)
+    }
+
+    /// The names of the `vector` columns whose vector the rows hold (those
+    /// of kind `text`), in order.
+    fn row_vectors(&self) -> impl Iterator<Item = &str> {
+        self.vectors
+            .iter()
+            .map(String::as_str)
+            .filter(|name| !self.is_list(name))
+    }
+
+    /// The names of the `vector` columns that have a texts dataset (those
+    /// of kind `text list`), in order; none without a vector length.
+    pub(crate) fn list_vectors(&self) -> impl Iterator<Item = &str> {
+        self.vectors
+            .iter()
+            .map(String::as_str)
+            .filter(|name| self.dimensions.is_some() && self.is_list(name))
     }
 
     fn rows_schema(&self) -> SchemaRef {
@@ -206,13 +251,10 @@ impl Shape {
             fields.push(Field::new(&column.name, column.data_type(), true));
         }
         if let Some(dimensions) = self.dimensions {
-            for column in self.vector_columns() {
+            for column in self.row_vectors() {
                 fields.push(Field::new(
                     vector_name(column),
-                    DataType::FixedSizeList(
-                        Arc::new(Field::new("item", DataType::Float32, true)),
-                        i32::try_from(dimensions).unwrap_or(i32::MAX),
-                    ),
+                    vector_type(dimensions),
                     true,
                 ));
                 fields.push(Field::new(digest_name(column), DataType::Utf8, true));
@@ -220,6 +262,31 @@ impl Shape {
         }
         Arc::new(Schema::new(fields))
     }
+
+    /// The schema of a texts dataset: one row per text with a vector.
+    fn texts_schema(dimensions: u32) -> SchemaRef {
+        Arc::new(Schema::new(vec![
+            Field::new("id", DataType::Utf8, false),
+            Field::new("file", DataType::Utf8, false),
+            Field::new(POSITION, DataType::UInt32, false),
+            Field::new(DIGEST, DataType::Utf8, false),
+            Field::new(VECTOR, vector_type(dimensions), false),
+        ]))
+    }
+}
+
+/// The type of a vector of `dimensions` values.
+fn vector_type(dimensions: u32) -> DataType {
+    DataType::FixedSizeList(
+        Arc::new(Field::new("item", DataType::Float32, true)),
+        i32::try_from(dimensions).unwrap_or(i32::MAX),
+    )
+}
+
+/// The name of the texts dataset of the `text list` vector column `column`
+/// of the table `table` (`t{n}`), without `.lance`.
+pub(crate) fn texts_name(table: &str, column: &str) -> String {
+    format!("{table}.texts.{column}")
 }
 
 /// The name of the vector column of the `vector` column `name`.
@@ -239,10 +306,13 @@ fn files_schema() -> SchemaRef {
     ]))
 }
 
-/// The embedding of one `vector` column of a row, with the digest of the
-/// text it came from.
+/// The embedding of one text of a `vector` column of a row, with the
+/// digest of the text it came from.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Embedding {
+    /// The place of the text in its column's `text list`; 0 in a `text`
+    /// column.
+    pub(crate) position: u32,
     pub(crate) vector: Vec<f32>,
     pub(crate) digest: String,
 }
@@ -256,9 +326,10 @@ pub(crate) struct Row {
     /// The value of each column of the shape, by name; a column left out
     /// has no value.
     pub(crate) values: BTreeMap<String, Value>,
-    /// The embedding of each `vector` column, by name; a column left out
-    /// has none (no text, or not embedded).
-    pub(crate) embeddings: BTreeMap<String, Embedding>,
+    /// The embeddings of each `vector` column, by name, in the order of
+    /// its texts: one for each text that has one (a `text` column has one
+    /// text). A column left out has none (no text, or none embedded).
+    pub(crate) embeddings: BTreeMap<String, Vec<Embedding>>,
 }
 
 /// The rows as one batch of the shape's schema. A value of another kind
@@ -281,11 +352,11 @@ fn rows_batch(shape: &Shape, rows: &[Row]) -> Result<RecordBatch, Fault> {
     }
     if let Some(dimensions) = shape.dimensions {
         let length = i32::try_from(dimensions).unwrap_or(i32::MAX);
-        for column in shape.vector_columns() {
+        for column in shape.row_vectors() {
             let mut vectors = FixedSizeListBuilder::new(Float32Builder::new(), length);
             let mut digests = StringBuilder::new();
             for row in rows {
-                match row.embeddings.get(column) {
+                match row.embeddings.get(column).and_then(|texts| texts.first()) {
                     Some(embedding) if embedding.vector.len() == dimensions as usize => {
                         vectors.values().append_slice(&embedding.vector);
                         vectors.append(true);
@@ -308,6 +379,46 @@ fn rows_batch(shape: &Shape, rows: &[Row]) -> Result<RecordBatch, Fault> {
         Fault::new(
             VaultErrorCode::IndexBroken,
             "cannot make the rows of the Index",
+        )
+        .with_source(err)
+    })
+}
+
+/// The texts of the `text list` vector column `column` of `rows`, as one
+/// batch of a texts dataset: a row for each text with a vector of
+/// `dimensions` values.
+fn texts_batch(column: &str, dimensions: u32, rows: &[Row]) -> Result<RecordBatch, Fault> {
+    let length = i32::try_from(dimensions).unwrap_or(i32::MAX);
+    let mut ids = StringBuilder::new();
+    let mut files = StringBuilder::new();
+    let mut positions = UInt32Builder::new();
+    let mut digests = StringBuilder::new();
+    let mut vectors = FixedSizeListBuilder::new(Float32Builder::new(), length);
+    for row in rows {
+        let texts = row.embeddings.get(column).map_or(&[][..], Vec::as_slice);
+        for text in texts {
+            if text.vector.len() != dimensions as usize {
+                continue;
+            }
+            ids.append_value(&row.id);
+            files.append_value(&row.file);
+            positions.append_value(text.position);
+            digests.append_value(&text.digest);
+            vectors.values().append_slice(&text.vector);
+            vectors.append(true);
+        }
+    }
+    let arrays: Vec<ArrayRef> = vec![
+        Arc::new(ids.finish()),
+        Arc::new(files.finish()),
+        Arc::new(positions.finish()),
+        Arc::new(digests.finish()),
+        Arc::new(vectors.finish()),
+    ];
+    RecordBatch::try_new(Shape::texts_schema(dimensions), arrays).map_err(|err| {
+        Fault::new(
+            VaultErrorCode::IndexBroken,
+            "cannot make the texts of the Index",
         )
         .with_source(err)
     })
@@ -398,12 +509,15 @@ fn files_batch(files: &[(String, String)]) -> Result<RecordBatch, Fault> {
     })
 }
 
-/// The versions of a table's two datasets that a generation's `commit`
-/// names.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// The versions of a table's datasets that a generation's `commit` names.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Versions {
     pub(crate) rows: u64,
     pub(crate) files: u64,
+    /// The version of the texts dataset of each `text list` vector column,
+    /// by its name; none in a table without one.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) texts: BTreeMap<String, u64>,
 }
 
 /// The URI of a dataset at `path`, as Lance takes a local one.
@@ -471,64 +585,125 @@ fn one_of(column: &str, values: &[String]) -> Expr {
     )
 }
 
-/// The embeddings of some rows, by id and then by `vector` column.
-pub(crate) type Embeddings = HashMap<String, BTreeMap<String, Embedding>>;
+/// The embeddings of some rows, by id: each embedding a row has, of every
+/// `vector` column.
+pub(crate) type Embeddings = HashMap<String, Vec<Embedding>>;
 
-/// The embeddings `rows`, a rows dataset of `shape`, holds for the rows
-/// `ids`.
-async fn embeddings(rows: &Dataset, shape: &Shape, ids: &[String]) -> Result<Embeddings, Error> {
+/// The embeddings `rows`, a rows dataset of `shape`, and `texts`, its texts
+/// datasets, hold for the rows `ids`.
+async fn embeddings(
+    rows: &Dataset,
+    texts: &BTreeMap<String, Arc<Dataset>>,
+    shape: &Shape,
+    ids: &[String],
+) -> Result<Embeddings, Error> {
     let mut out = Embeddings::new();
-    let columns = &shape.vectors;
-    if ids.is_empty() || columns.is_empty() || shape.dimensions.is_none() {
+    if ids.is_empty() || shape.dimensions.is_none() {
         return Ok(out);
     }
-    let mut projection = vec![String::from("id")];
-    for name in columns {
-        projection.push(vector_name(name));
-        projection.push(digest_name(name));
-    }
-    let mut scanner = rows.scan();
-    scanner
-        .project(&projection)
-        .map_err(lance_fault)?
-        .filter_expr(one_of("id", ids));
-    let batch = scanner
-        .try_into_batch()
-        .await
-        .map_err(lance_fault)
-        .context("read the stored vectors")?;
-    let id = strings(&batch, "id")?;
-    for name in columns {
-        let digests = strings(&batch, &digest_name(name))?;
-        let vectors = batch
-            .column_by_name(&vector_name(name))
-            .and_then(|array| array.as_any().downcast_ref::<FixedSizeListArray>())
-            .ok_or_else(|| broken("a vector column of the Index is not a vector"))?;
-        for n in 0..batch.num_rows() {
-            if digests.is_null(n) || vectors.is_null(n) {
-                continue;
+    let columns: Vec<&str> = shape.row_vectors().collect();
+    if !columns.is_empty() {
+        let mut projection = vec![String::from("id")];
+        for name in &columns {
+            projection.push(vector_name(name));
+            projection.push(digest_name(name));
+        }
+        let mut scanner = rows.scan();
+        scanner
+            .project(&projection)
+            .map_err(lance_fault)?
+            .filter_expr(one_of("id", ids));
+        let batch = scanner
+            .try_into_batch()
+            .await
+            .map_err(lance_fault)
+            .context("read the stored vectors")?;
+        let id = strings(&batch, "id")?;
+        for name in &columns {
+            let digests = strings(&batch, &digest_name(name))?;
+            let vectors = vectors_in(&batch, &vector_name(name))?;
+            for n in 0..batch.num_rows() {
+                if digests.is_null(n) || vectors.is_null(n) {
+                    continue;
+                }
+                out.entry(id.value(n).to_owned())
+                    .or_default()
+                    .push(Embedding {
+                        position: 0,
+                        vector: vector_at(vectors, n)?,
+                        digest: digests.value(n).to_owned(),
+                    });
             }
-            let values = vectors.value(n);
-            let Some(values) = values.as_any().downcast_ref::<Float32Array>() else {
-                return Err(broken("a vector of the Index is not of floats").into());
-            };
-            out.entry(id.value(n).to_owned()).or_default().insert(
-                name.clone(),
-                Embedding {
-                    vector: values.values().to_vec(),
+        }
+    }
+    for dataset in texts.values() {
+        let mut scanner = dataset.scan();
+        scanner
+            .project(&["id", POSITION, DIGEST, VECTOR])
+            .map_err(lance_fault)?
+            .filter_expr(one_of("id", ids));
+        let batch = scanner
+            .try_into_batch()
+            .await
+            .map_err(lance_fault)
+            .context("read the stored vectors of the texts")?;
+        let id = strings(&batch, "id")?;
+        let positions = positions_in(&batch)?;
+        let digests = strings(&batch, DIGEST)?;
+        let vectors = vectors_in(&batch, VECTOR)?;
+        for n in 0..batch.num_rows() {
+            out.entry(id.value(n).to_owned())
+                .or_default()
+                .push(Embedding {
+                    position: positions.value(n),
+                    vector: vector_at(vectors, n)?,
                     digest: digests.value(n).to_owned(),
-                },
-            );
+                });
         }
     }
     Ok(out)
 }
 
+/// The vector column `name` of `batch`.
+pub(crate) fn vectors_in<'a>(
+    batch: &'a RecordBatch,
+    name: &str,
+) -> Result<&'a FixedSizeListArray, Fault> {
+    batch
+        .column_by_name(name)
+        .and_then(|array| array.as_any().downcast_ref::<FixedSizeListArray>())
+        .ok_or_else(|| broken("a vector column of the Index is not a vector"))
+}
+
+/// The `position` column of a batch of a texts dataset.
+pub(crate) fn positions_in(batch: &RecordBatch) -> Result<&UInt32Array, Fault> {
+    batch
+        .column_by_name(POSITION)
+        .and_then(|array| array.as_any().downcast_ref::<UInt32Array>())
+        .ok_or_else(|| broken("the positions of the texts of the Index are missing"))
+}
+
+/// The vector at row `n` of `vectors`.
+pub(crate) fn vector_at(vectors: &FixedSizeListArray, n: usize) -> Result<Vec<f32>, Fault> {
+    let values = vectors.value(n);
+    let Some(values) = values.as_any().downcast_ref::<Float32Array>() else {
+        return Err(broken("a vector of the Index is not of floats"));
+    };
+    Ok(values.values().to_vec())
+}
+
+/// The folder of the texts dataset of the `text list` vector column
+/// `column` of the table `table` of the generation at `dir`.
+pub(crate) fn texts_path(dir: &Path, table: &str, column: &str) -> std::path::PathBuf {
+    dir.join(format!("{}.lance", texts_name(table, column)))
+}
+
 /// The vectors one collection's table of another generation holds, open
-/// only to read, at the version that generation's `commit` names.
+/// only to read, at the versions that generation's `commit` names.
 pub(crate) struct Vectors {
     shape: Shape,
     rows: Dataset,
+    texts: BTreeMap<String, Arc<Dataset>>,
 }
 
 impl Vectors {
@@ -542,12 +717,22 @@ impl Vectors {
         dir: &Path,
         name: &str,
         shape: Shape,
-        versions: Versions,
+        versions: &Versions,
     ) -> Result<Vectors, Error> {
         let rows = open_at(&dir.join(format!("{name}.lance")), Some(versions.rows))
             .await
             .context("open the rows of a collection")?;
-        Ok(Vectors { shape, rows })
+        let mut texts = BTreeMap::new();
+        for column in shape.list_vectors() {
+            let Some(version) = versions.texts.get(column) else {
+                continue;
+            };
+            let dataset = open_at(&texts_path(dir, name, column), Some(*version))
+                .await
+                .context("open the texts of a collection")?;
+            texts.insert(column.to_owned(), Arc::new(dataset));
+        }
+        Ok(Vectors { shape, rows, texts })
     }
 
     /// The embeddings the table holds for the rows `ids`.
@@ -556,7 +741,7 @@ impl Vectors {
     ///
     /// `INDEX_BROKEN` or `STORAGE` when Lance fails.
     pub(crate) async fn embeddings(&self, ids: &[String]) -> Result<Embeddings, Error> {
-        embeddings(&self.rows, &self.shape, ids).await
+        embeddings(&self.rows, &self.texts, &self.shape, ids).await
     }
 }
 
@@ -565,14 +750,16 @@ pub(crate) struct Table {
     shape: Shape,
     rows: Arc<Dataset>,
     files: Arc<Dataset>,
+    /// The texts dataset of each `text list` vector column, by name.
+    texts: BTreeMap<String, Arc<Dataset>>,
     /// Whether this round wrote to it.
     written: bool,
 }
 
 impl Table {
-    /// The table `name` (its folder name, `t{n}`) of the generation at
-    /// `dir`, of `shape`, at the versions `committed` names (a new, empty
-    /// table without them).
+    /// The table `name` (the prefix of its folder names, `t{n}`) of the
+    /// generation at `dir`, of `shape`, at the versions `committed` names
+    /// (a new, empty dataset for each one it does not name).
     ///
     /// # Errors
     ///
@@ -581,7 +768,7 @@ impl Table {
         dir: &Path,
         name: &str,
         shape: Shape,
-        committed: Option<Versions>,
+        committed: Option<&Versions>,
     ) -> Result<Table, Error> {
         let rows = for_round(
             &dir.join(format!("{name}.lance")),
@@ -597,11 +784,28 @@ impl Table {
         )
         .await
         .context("open the files of a collection")?;
+        let mut texts = BTreeMap::new();
+        let mut fresh = committed.is_none();
+        if let Some(dimensions) = shape.dimensions {
+            for column in shape.list_vectors() {
+                let version = committed.and_then(|versions| versions.texts.get(column).copied());
+                fresh |= version.is_none();
+                let dataset = for_round(
+                    &texts_path(dir, name, column),
+                    Shape::texts_schema(dimensions),
+                    version,
+                )
+                .await
+                .context("open the texts of a collection")?;
+                texts.insert(column.to_owned(), Arc::new(dataset));
+            }
+        }
         Ok(Table {
             shape,
             rows: Arc::new(rows),
             files: Arc::new(files),
-            written: committed.is_none(),
+            texts,
+            written: fresh,
         })
     }
 
@@ -615,11 +819,16 @@ impl Table {
         Versions {
             rows: self.rows.version().version,
             files: self.files.version().version,
+            texts: self
+                .texts
+                .iter()
+                .map(|(column, dataset)| (column.clone(), dataset.version().version))
+                .collect(),
         }
     }
 
     /// Writes `rows` whole: a row whose `id` the table holds is replaced,
-    /// another is added.
+    /// another is added; so are the texts of each row.
     ///
     /// # Errors
     ///
@@ -643,11 +852,27 @@ impl Table {
             .context("upsert rows")?;
         self.rows = dataset;
         self.written = true;
+        if let Some(dimensions) = self.shape.dimensions
+            && !self.texts.is_empty()
+        {
+            let ids: Vec<String> = rows.iter().map(|row| row.id.clone()).collect();
+            for (column, dataset) in &mut self.texts {
+                *dataset = delete_where(dataset, one_of("id", &ids))
+                    .await
+                    .context("replace the texts of rows")?;
+                let batch = texts_batch(column, dimensions, rows)?;
+                if batch.num_rows() > 0 {
+                    *dataset = append(dataset, batch)
+                        .await
+                        .context("add the texts of rows")?;
+                }
+            }
+        }
         Ok(())
     }
 
     /// Deletes the rows whose `column` (`id` or `file`) is one of
-    /// `values`.
+    /// `values`, and their texts.
     ///
     /// # Errors
     ///
@@ -660,15 +885,14 @@ impl Table {
         if values.is_empty() {
             return Ok(());
         }
-        let deleted = lance::dataset::DeleteBuilder::from_expr(
-            Arc::clone(&self.rows),
-            one_of(column, values),
-        )
-        .execute()
-        .await
-        .map_err(lance_fault)
-        .context("delete rows")?;
-        self.rows = deleted.new_dataset;
+        self.rows = delete_where(&self.rows, one_of(column, values))
+            .await
+            .context("delete rows")?;
+        for dataset in self.texts.values_mut() {
+            *dataset = delete_where(dataset, one_of(column, values))
+                .await
+                .context("delete the texts of rows")?;
+        }
         self.written = true;
         Ok(())
     }
@@ -710,15 +934,9 @@ impl Table {
         if paths.is_empty() {
             return Ok(());
         }
-        let deleted = lance::dataset::DeleteBuilder::from_expr(
-            Arc::clone(&self.files),
-            one_of("path", paths),
-        )
-        .execute()
-        .await
-        .map_err(lance_fault)
-        .context("forget files")?;
-        self.files = deleted.new_dataset;
+        self.files = delete_where(&self.files, one_of("path", paths))
+            .await
+            .context("forget files")?;
         self.written = true;
         Ok(())
     }
@@ -743,27 +961,25 @@ impl Table {
             .collect())
     }
 
-    /// The embeddings the table holds for the rows `ids`, by id and then by
-    /// `vector` column, so a text whose digest did not change keeps its
-    /// vector.
+    /// The embeddings the table holds for the rows `ids`, by id, so a text
+    /// whose digest did not change keeps its vector.
     ///
     /// # Errors
     ///
     /// `INDEX_BROKEN` or `STORAGE` when Lance fails.
     pub(crate) async fn embeddings(&self, ids: &[String]) -> Result<Embeddings, Error> {
-        embeddings(&self.rows, &self.shape, ids).await
+        embeddings(&self.rows, &self.texts, &self.shape, ids).await
     }
 
-    /// Keeps the table cheap to read after a round that wrote to it:
-    /// compaction of the small fragments once [`SMALL_FRAGMENTS`] of them
-    /// have piled up (or one has most of its rows deleted); the indices
-    /// on `id`, the
-    /// `scalar_index` and `fts` columns, and, from
-    /// [`VECTOR_INDEX_ROWS`] rows on, the `vector` columns; the indices
-    /// brought over new rows when many are unindexed or every
-    /// [`ROUNDS_PER_INDEX_UPDATE`] rounds; and the versions replaced more
-    /// than [`VERSION_LIFETIME`] ago pruned. `round` counts the rounds of
-    /// the generation.
+    /// Keeps the table cheap to read after a round that wrote to it, its
+    /// texts datasets included: compaction of the small fragments once
+    /// [`SMALL_FRAGMENTS`] of them have piled up (or one has most of its
+    /// rows deleted); the indices on `id`, the `scalar_index` and `fts`
+    /// columns, and, from [`VECTOR_INDEX_ROWS`] rows (texts) on, the
+    /// vectors; the indices brought over new rows when many are unindexed
+    /// or every [`ROUNDS_PER_INDEX_UPDATE`] rounds; and the versions
+    /// replaced more than [`VERSION_LIFETIME`] ago pruned. `round` counts
+    /// the rounds of the generation.
     ///
     /// # Errors
     ///
@@ -772,12 +988,12 @@ impl Table {
         if !self.written {
             return Ok(());
         }
-        let mut rows = Dataset::clone(&self.rows);
         let options = CompactionOptions {
             target_rows_per_fragment: TARGET_ROWS_PER_FRAGMENT,
             materialize_deletions_threshold: MATERIALIZE_DELETIONS,
             ..CompactionOptions::default()
         };
+        let mut rows = Dataset::clone(&self.rows);
         if wants_compaction(&rows) {
             compact_files(&mut rows, options.clone(), None)
                 .await
@@ -786,91 +1002,132 @@ impl Table {
         }
         let mut files = Dataset::clone(&self.files);
         if wants_compaction(&files) {
-            compact_files(&mut files, options, None)
+            compact_files(&mut files, options.clone(), None)
                 .await
                 .map_err(lance_fault)
                 .context("compact the files")?;
         }
-        let created = self.create_indices(&mut rows).await?;
-        let total = rows.count_rows(None).await.map_err(lance_fault)?;
-        if total > 0 && !created {
-            let unindexed = unindexed_rows(&rows).await?;
-            if unindexed > UNINDEXED_ROWS || round.is_multiple_of(ROUNDS_PER_INDEX_UPDATE) {
-                let options = OptimizeOptions::merge(VECTOR_INDEX_DELTAS);
-                rows.optimize_indices(&options)
-                    .await
-                    .map_err(lance_fault)
-                    .context("bring the indices over new rows")?;
+        let mut scalar: Vec<(String, IndexType)> = vec![(String::from("id"), IndexType::BTree)];
+        for column in &self.shape.columns {
+            if column.scalar_index && column.kind != Kind::TextList {
+                scalar.push((column.name.clone(), IndexType::BTree));
+            }
+            if column.fts {
+                scalar.push((column.name.clone(), IndexType::Inverted));
             }
         }
+        let vectors: Vec<String> = self.shape.row_vectors().map(vector_name).collect();
+        keep_indexed(&mut rows, &scalar, &vectors, self.shape.dimensions, round).await?;
         prune(&rows).await.context("prune the rows")?;
         prune(&files).await.context("prune the files")?;
         self.rows = Arc::new(rows);
         self.files = Arc::new(files);
+        let scalar = [(String::from("id"), IndexType::BTree)];
+        let vectors = [String::from(VECTOR)];
+        for dataset in self.texts.values_mut() {
+            let mut texts = Dataset::clone(dataset);
+            if wants_compaction(&texts) {
+                compact_files(&mut texts, options.clone(), None)
+                    .await
+                    .map_err(lance_fault)
+                    .context("compact the texts")?;
+            }
+            keep_indexed(&mut texts, &scalar, &vectors, self.shape.dimensions, round).await?;
+            prune(&texts).await.context("prune the texts")?;
+            *dataset = Arc::new(texts);
+        }
         Ok(())
     }
+}
 
-    /// Creates the indices the table lacks; whether it created one.
-    async fn create_indices(&self, rows: &mut Dataset) -> Result<bool, Error> {
-        let total = rows.count_rows(None).await.map_err(lance_fault)?;
-        if total == 0 {
-            return Ok(false);
+/// `dataset` without the rows `filter` matches.
+async fn delete_where(dataset: &Arc<Dataset>, filter: Expr) -> Result<Arc<Dataset>, Error> {
+    let deleted = lance::dataset::DeleteBuilder::from_expr(Arc::clone(dataset), filter)
+        .execute()
+        .await
+        .map_err(lance_fault)?;
+    Ok(deleted.new_dataset)
+}
+
+/// `dataset` with the rows of `batch` added.
+async fn append(dataset: &Arc<Dataset>, batch: RecordBatch) -> Result<Arc<Dataset>, Error> {
+    let params = WriteParams {
+        mode: WriteMode::Append,
+        ..WriteParams::default()
+    };
+    let appended = InsertBuilder::new(Arc::clone(dataset))
+        .with_params(&params)
+        .execute(vec![batch])
+        .await
+        .map_err(lance_fault)?;
+    Ok(Arc::new(appended))
+}
+
+/// Makes the indices `dataset` lacks: each of `scalar` (a column and the
+/// kind of its index), and, once it holds [`VECTOR_INDEX_ROWS`] rows and
+/// vectors of `dimensions` values, an IVF_PQ index on each of `vectors`.
+/// When it made none, it brings the indices over the rows they do not
+/// cover once more than [`UNINDEXED_ROWS`] are left out, or every
+/// [`ROUNDS_PER_INDEX_UPDATE`] rounds.
+async fn keep_indexed(
+    dataset: &mut Dataset,
+    scalar: &[(String, IndexType)],
+    vectors: &[String],
+    dimensions: Option<u32>,
+    round: u64,
+) -> Result<(), Error> {
+    let total = dataset.count_rows(None).await.map_err(lance_fault)?;
+    if total == 0 {
+        return Ok(());
+    }
+    let existing: Vec<String> = dataset
+        .load_indices()
+        .await
+        .map_err(lance_fault)?
+        .iter()
+        .map(|index| index.name.clone())
+        .collect();
+    let mut created = false;
+    let params = ScalarIndexParams::default();
+    for (column, kind) in scalar {
+        let name = index_name(column, *kind);
+        if existing.contains(&name) {
+            continue;
         }
-        let existing: Vec<String> = rows
-            .load_indices()
-            .await
-            .map_err(lance_fault)?
-            .iter()
-            .map(|index| index.name.clone())
-            .collect();
-        let mut created = false;
-        let scalar = ScalarIndexParams::default();
-        let mut wanted: Vec<(String, IndexType)> = vec![(String::from("id"), IndexType::BTree)];
-        for column in &self.shape.columns {
-            if column.scalar_index && column.kind != Kind::TextList {
-                wanted.push((column.name.clone(), IndexType::BTree));
+        match kind {
+            IndexType::Inverted => {
+                let params = InvertedIndexParams::default().stem(false);
+                dataset
+                    .create_index(&[column.as_str()], *kind, Some(name), &params, true)
+                    .await
             }
-            if column.fts {
-                wanted.push((column.name.clone(), IndexType::Inverted));
+            _ => {
+                dataset
+                    .create_index(&[column.as_str()], *kind, Some(name), &params, true)
+                    .await
             }
         }
-        for (column, kind) in wanted {
-            let name = index_name(&column, kind);
+        .map_err(lance_fault)
+        .context("make an index of a column")?;
+        created = true;
+    }
+    if total >= VECTOR_INDEX_ROWS
+        && let Some(dimensions) = dimensions
+    {
+        for target in vectors {
+            let name = index_name(target, IndexType::Vector);
             if existing.contains(&name) {
                 continue;
             }
-            match kind {
-                IndexType::Inverted => {
-                    let params = InvertedIndexParams::default().stem(false);
-                    rows.create_index(&[column.as_str()], kind, Some(name), &params, true)
-                        .await
-                }
-                _ => {
-                    rows.create_index(&[column.as_str()], kind, Some(name), &scalar, true)
-                        .await
-                }
-            }
-            .map_err(lance_fault)
-            .context("make an index of a column")?;
-            created = true;
-        }
-        if total >= VECTOR_INDEX_ROWS
-            && let Some(dimensions) = self.shape.dimensions
-        {
-            for column in self.shape.vector_columns() {
-                let target = vector_name(column);
-                let name = index_name(&target, IndexType::Vector);
-                if existing.contains(&name) {
-                    continue;
-                }
-                let params = VectorIndexParams::ivf_pq(
-                    partitions(total),
-                    8,
-                    sub_vectors(dimensions),
-                    DistanceType::Cosine,
-                    50,
-                );
-                rows.create_index(
+            let params = VectorIndexParams::ivf_pq(
+                partitions(total),
+                8,
+                sub_vectors(dimensions),
+                DistanceType::Cosine,
+                50,
+            );
+            dataset
+                .create_index(
                     &[target.as_str()],
                     IndexType::Vector,
                     Some(name),
@@ -880,11 +1137,21 @@ impl Table {
                 .await
                 .map_err(lance_fault)
                 .context("make the vector index")?;
-                created = true;
-            }
+            created = true;
         }
-        Ok(created)
     }
+    if !created {
+        let unindexed = unindexed_rows(dataset).await?;
+        if unindexed > UNINDEXED_ROWS || round.is_multiple_of(ROUNDS_PER_INDEX_UPDATE) {
+            let options = OptimizeOptions::merge(VECTOR_INDEX_DELTAS);
+            dataset
+                .optimize_indices(&options)
+                .await
+                .map_err(lance_fault)
+                .context("bring the indices over new rows")?;
+        }
+    }
+    Ok(())
 }
 
 /// The name Scheda gives the index of `column` of `kind`.
@@ -1097,10 +1364,11 @@ mod tests {
                     ]),
                     embeddings: BTreeMap::from([(
                         String::from("topic"),
-                        Embedding {
+                        vec![Embedding {
+                            position: 0,
                             vector: vector_of(n, DIMENSIONS),
                             digest: format!("d{n}"),
-                        },
+                        }],
                     )]),
                 }
             })
@@ -1214,7 +1482,7 @@ mod tests {
         assert!(read.values().all(|titles| titles == &["one"]));
 
         // The next round starts from the commit and ends as the whole one.
-        let mut again = Table::open(&scratch.0, "t0", texts(), Some(committed))
+        let mut again = Table::open(&scratch.0, "t0", texts(), Some(&committed))
             .await
             .unwrap();
         assert_eq!(titles_of(&again.rows).await, read);

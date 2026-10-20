@@ -297,8 +297,10 @@ message DocumentSearch {
       string: {min_len: 1}
     }];
     // A Document, of any collection: others like it. The lexical leg takes
-    // its indexed text; the vector leg takes its stored vector and calls no
-    // model.
+    // its indexed text; the vector leg takes its stored vectors, one per
+    // text of each `vector` column, and calls no model. A Document's
+    // vector distance is then that of its closest pair: the smallest
+    // distance between one text of `like` and one of its own.
     DocumentKey like = 2;
   }
   // Rank only the Documents this matches; both legs apply it before they
@@ -396,18 +398,32 @@ message SearchSummary {
 
 // One hit of a search.
 message SearchHit {
+  // The text of a hit that gave its `vector_score`.
+  message VectorMatch {
+    // The `vector` column that holds it.
+    string column = 1;
+    // Its place in the column's `text list`, from 0; 0 in a `text`
+    // column.
+    uint32 position = 2;
+  }
+
   // The Document; `raw` only with `include_raw`.
   Document document = 1;
   // The score of the lexical leg, when that leg found it: BM25 over the
   // `fts` columns.
   double lexical_score = 2;
   // The score of the vector leg, when that leg found it: `1 / (1 + d)`,
-  // with `d` the cosine distance of its closest vector, so 1 for the same
-  // direction.
+  // with `d` the cosine distance of its text closest to the query (for
+  // `like`, of its closest pair), so 1 for the same direction. A Document
+  // is ranked once, however many texts it has.
   double vector_score = 3;
   // The fused score (Reciprocal Rank Fusion of the legs that ran).
   double score = 4;
   // The reranker's score, when the search reranked; the order of the hits
   // is then this one.
   double rerank_score = 5;
+  // Which of its texts gave `vector_score`, when the vector leg found it.
+  // Of two texts at the same distance, the first: in the order of the
+  // Projector's columns, then of the list.
+  VectorMatch vector_match = 6;
 }

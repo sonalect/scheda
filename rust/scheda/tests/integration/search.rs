@@ -45,7 +45,7 @@ fn without_the_index_the_two_calls_are_unimplemented() {
 }
 
 #[cfg(feature = "index")]
-mod on_lance {
+pub(crate) mod on_lance {
     use std::collections::{BTreeMap, BTreeSet};
     use std::num::NonZeroUsize;
     use std::path::{Path, PathBuf};
@@ -1420,7 +1420,7 @@ mod on_lance {
 
     /// The vector of a point of the recall fixture: a unit vector near the
     /// centre of its cluster, from a hash of its text.
-    fn point(text: &str, dimensions: usize) -> Vec<f32> {
+    pub(crate) fn point(text: &str, dimensions: usize) -> Vec<f32> {
         let cluster: u64 = text
             .split('-')
             .next()
@@ -1450,10 +1450,10 @@ mod on_lance {
         vector
     }
 
-    const POINT_DIMENSIONS: usize = 64;
+    pub(crate) const POINT_DIMENSIONS: usize = 64;
 
     /// An embedder of the points of the recall fixture.
-    struct Points;
+    pub(crate) struct Points;
 
     impl EmbedderSync for Points {
         fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
@@ -1482,7 +1482,7 @@ mod on_lance {
         }
     }
 
-    fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
+    pub(crate) fn cosine_distance(a: &[f32], b: &[f32]) -> f32 {
         1.0 - a.iter().zip(b).map(|(x, y)| x * y).sum::<f32>()
     }
 

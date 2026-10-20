@@ -199,8 +199,8 @@ enum ColumnKind {
 message IndexColumn {
   option (buf.validate.message).cel = {
     id: "index_column.vector_text"
-    message: "a vector column must be text: one vector per Document"
-    expression: "!this.vector || this.kind == 1"
+    message: "a vector column must be text or text list"
+    expression: "!this.vector || this.kind == 1 || this.kind == 5"
   };
   option (buf.validate.message).cel = {
     id: "index_column.fts_text"
@@ -246,7 +246,10 @@ message IndexColumn {
   // The lexical leg of a search reads it (BM25). A `text` or a `text
   // list`.
   bool fts = 4;
-  // The vector leg embeds it: one vector per Document. A `text` only.
+  // The vector leg embeds it: each text its own vector, a blank one
+  // (only whitespace) none. A `text` or a `text list`; a `text` is a list
+  // of one. A search ranks a Document once, by its text closest to the
+  // query.
   bool vector = 5;
 }
 

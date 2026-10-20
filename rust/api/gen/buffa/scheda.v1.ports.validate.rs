@@ -1478,11 +1478,15 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
         }
         if self.kind.is_some() {}
         {
-            if !(((!(self.vector.unwrap_or(false)))
+            if !((((!(self.vector.unwrap_or(false)))
                 || ((self
                     .kind
                     .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
-                    == (1i64 as i64))))
+                    == (1i64 as i64)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (5i64 as i64))))
             {
                 violations
                     .push(::protovalidate_buffa::Violation {
@@ -1492,7 +1496,7 @@ impl ::protovalidate_buffa::Validate for IndexColumn {
                             "index_column.vector_text",
                         ),
                         message: ::std::borrow::Cow::Borrowed(
-                            "a vector column must be text: one vector per Document",
+                            "a vector column must be text or text list",
                         ),
                         for_key: false,
                     });
@@ -1781,11 +1785,15 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
         }
         if self.kind.is_some() {}
         {
-            if !(((!(self.vector.unwrap_or(false)))
+            if !((((!(self.vector.unwrap_or(false)))
                 || ((self
                     .kind
                     .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
-                    == (1i64 as i64))))
+                    == (1i64 as i64)))
+                || ((self
+                    .kind
+                    .map_or(0i64, ::protovalidate_buffa::cel::CelScalar::cel_int))
+                    == (5i64 as i64))))
             {
                 violations
                     .push(::protovalidate_buffa::Violation {
@@ -1795,7 +1803,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::IndexColumnView<'_> {
                             "index_column.vector_text",
                         ),
                         message: ::std::borrow::Cow::Borrowed(
-                            "a vector column must be text: one vector per Document",
+                            "a vector column must be text or text list",
                         ),
                         for_key: false,
                     });

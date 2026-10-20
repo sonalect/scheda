@@ -2881,7 +2881,10 @@ pub struct IndexColumnView<'a> {
     ///
     /// Field 4: `fts`
     pub fts: ::core::option::Option<bool>,
-    /// The vector leg embeds it: one vector per Document. A `text` only.
+    /// The vector leg embeds it: each text its own vector, a blank one
+    /// (only whitespace) none. A `text` or a `text list`; a `text` is a list
+    /// of one. A search ranks a Document once, by its text closest to the
+    /// query.
     ///
     /// Field 5: `vector`
     pub vector: ::core::option::Option<bool>,
@@ -3193,7 +3196,10 @@ impl IndexColumnOwnedView {
     pub fn fts(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().fts
     }
-    /// The vector leg embeds it: one vector per Document. A `text` only.
+    /// The vector leg embeds it: each text its own vector, a blank one
+    /// (only whitespace) none. A `text` or a `text list`; a `text` is a list
+    /// of one. A search ranks a Document once, by its text closest to the
+    /// query.
     ///
     /// Field 5: `vector`
     #[must_use]

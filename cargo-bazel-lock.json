@@ -1,5 +1,5 @@
 {
-  "checksum": "53e3f5ab87aa376d256ee4e5d995d0b127d59f346df5ab83992089ba8194f42a",
+  "checksum": "4be8cf22e51b641282feaa0576b6635e895ca3ea4166b470c679d1d66aef3658",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -24617,10 +24617,7 @@
         "edition": "2024"
       },
       "library_target_name": "scheda",
-      "license": "Apache-2.0",
-      "license_ids": [
-        "Apache-2.0"
-      ],
+      "license": "UNLICENSED",
       "name": "scheda",
       "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
@@ -24665,10 +24662,7 @@
         "edition": "2024"
       },
       "library_target_name": "scheda_api",
-      "license": "Apache-2.0",
-      "license_ids": [
-        "Apache-2.0"
-      ],
+      "license": "UNLICENSED",
       "name": "scheda-api",
       "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
@@ -24697,10 +24691,7 @@
         "edition": "2024"
       },
       "library_target_name": "scheda_blocking",
-      "license": "Apache-2.0",
-      "license_ids": [
-        "Apache-2.0"
-      ],
+      "license": "UNLICENSED",
       "name": "scheda-blocking",
       "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
@@ -24764,10 +24755,7 @@
         ],
         "edition": "2024"
       },
-      "license": "Apache-2.0",
-      "license_ids": [
-        "Apache-2.0"
-      ],
+      "license": "UNLICENSED",
       "name": "scheda-cli",
       "package_url": "https://github.com/sonalect/scheda",
       "repository": null,

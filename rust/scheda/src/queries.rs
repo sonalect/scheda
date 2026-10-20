@@ -41,7 +41,7 @@ use crate::index::{Index, State};
 use crate::journal::SegmentMemo;
 use crate::ports::task;
 use crate::repo::{Repo, Snap};
-use crate::store::{Column, Kind, lance_fault};
+use crate::store::{Column, Kind, lance_fault, texts_path};
 use crate::tables::{self, Calls, Plan};
 use crate::vault::Vault;
 
@@ -217,45 +217,81 @@ impl Reading {
 
     /// The table of `collection` in the snapshot, when the Index holds one.
     pub(crate) fn table(&self, collection: &str) -> Option<Table> {
+        let dir = self.generation.dir();
         self.commit.tables.get(collection).map(|table| Table {
-            path: self.generation.dir().join(format!("{}.lance", table.name)),
+            path: dir.join(format!("{}.lance", table.name)),
             version: table.versions.rows,
             columns: table.shape.columns.clone(),
+            texts: table
+                .versions
+                .texts
+                .iter()
+                .map(|(column, version)| {
+                    (
+                        column.clone(),
+                        (texts_path(dir, &table.name, column), *version),
+                    )
+                })
+                .collect(),
         })
     }
 }
 
-/// A table to read: its rows dataset at the version a commit names.
+/// A table to read: its rows dataset, and the texts dataset of each `text
+/// list` vector column, at the versions a commit names.
 #[derive(Clone, Debug)]
 pub(crate) struct Table {
     path: std::path::PathBuf,
     version: u64,
     columns: Vec<Column>,
+    texts: BTreeMap<String, (std::path::PathBuf, u64)>,
 }
 
 impl Table {
     /// The rows dataset at its version.
     pub(crate) async fn open(&self) -> Result<Dataset, Error> {
-        let uri = self.path.to_str().ok_or_else(|| {
-            Error::from(Fault::new(
-                VaultErrorCode::Storage,
-                "the path of the Index is not valid UTF-8",
-            ))
-        })?;
-        let latest = Dataset::open(uri).await.map_err(lance_fault)?;
-        if latest.version().version == self.version {
-            return Ok(latest);
-        }
-        Ok(latest
-            .checkout_version(self.version)
-            .await
-            .map_err(lance_fault)?)
+        open_at(&self.path, self.version).await
     }
 
     /// The columns its rows hold.
     pub(crate) fn columns(&self) -> &[Column] {
         &self.columns
     }
+
+    /// Whether the `vector` column `name` is a `text list`, whose vectors
+    /// a texts dataset holds.
+    pub(crate) fn is_list(&self, name: &str) -> bool {
+        self.columns
+            .iter()
+            .any(|column| column.name == name && column.kind == Kind::TextList)
+    }
+
+    /// The texts dataset of the `text list` vector column `name` at its
+    /// version; `None` when the table has none (no text embedded yet).
+    pub(crate) async fn open_texts(&self, name: &str) -> Result<Option<Dataset>, Error> {
+        match self.texts.get(name) {
+            Some((path, version)) => Ok(Some(open_at(path, *version).await?)),
+            None => Ok(None),
+        }
+    }
+}
+
+/// The dataset at `path` at `version`.
+async fn open_at(path: &std::path::Path, version: u64) -> Result<Dataset, Error> {
+    let uri = path.to_str().ok_or_else(|| {
+        Error::from(Fault::new(
+            VaultErrorCode::Storage,
+            "the path of the Index is not valid UTF-8",
+        ))
+    })?;
+    let latest = Dataset::open(uri).await.map_err(lance_fault)?;
+    if latest.version().version == version {
+        return Ok(latest);
+    }
+    Ok(latest
+        .checkout_version(version)
+        .await
+        .map_err(lance_fault)?)
 }
 
 /// One key of an order: the column, and whether largest first.

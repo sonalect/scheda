@@ -10,6 +10,36 @@ API or on-disk format changes bump the minor.
 
 ### Added
 
+- A `vector` column may be a `text list` (`IndexColumn.vector` on
+  `COLUMN_KIND_TEXT_LIST`): a Document found by any of several texts (a
+  note by each of its phrasings, a product by each of its descriptions)
+  gives them in one column, and each text that is not blank gets its own
+  vector. Before, such a column was `INVALID_ARGUMENT`, and a caller split
+  each record into one Document per text, searched them, and grouped,
+  filtered, and reranked the hits itself. The vector leg ranks a Document
+  once, by its text closest to the query: its `vector_score` is
+  `1 / (1 + d)` of that text, and `k`, `offset`, the fusion with the
+  lexical leg, `filter` (applied before the ranking), `rerank_limit` (the
+  reranker gets each Document once, with its `raw`), and the
+  `SearchSummary` count Documents, as for a `text` column. A `text` column
+  keeps its meaning and its storage: it is a list of one, and gives the
+  same hits and scores. The texts of a list are held in a Lance table of
+  their own beside the Documents' rows, with their own IVF_PQ index from
+  10 000 texts. The indexer embeds a text once: moving texts within a list
+  embeds nothing, adding or editing one embeds only that text, a text the
+  embedder refuses keeps no vector while the others of the Document keep
+  theirs, and a `Reindex` with the same model embeds nothing. Turning a
+  column from `text` into `text list` or back is a change of columns: the
+  Index is `INDEX_STALE` until `Index.Reindex`. An Index built by an
+  earlier version is read as it is: nothing is rebuilt or embedded again.
+- `SearchHit.vector_match` (`vectorMatch` in Protobuf JSON): which text of
+  the hit gave its `vector_score`, as its `vector` column and its place in
+  the column's `text list` (0 in a `text` column); of two texts at the same
+  distance, the first in the order of the columns, then of the list. Set
+  whenever the vector leg found the hit.
+- `like` on a Document with several texts: the vector leg takes the vector
+  of each of its texts, and ranks the others by their closest pair, the
+  smallest distance between one of its texts and one of theirs.
 - `FixedEmbedder::with_query` and `FixedEmbedderAsync::with_query`: an
   optional query function, for a model that embeds a search text otherwise
   than a stored one (an instruction before the text, another task type).
@@ -21,8 +51,22 @@ API or on-disk format changes bump the minor.
   `Embed` still goes to the portion function. Without it, `EmbedQuery` is
   a portion of one, as before; `new` is unchanged.
 
+### Changed
+
+- The license is proprietary instead of Apache-2.0: all rights reserved,
+  and no use, copy, modification, or distribution without a separate
+  written agreement with the copyright holder (`LICENSE`). The crates
+  declare `license = "UNLICENSED"`, the Python project
+  `LicenseRef-Proprietary`.
+
 ### Fixed
 
+- Pillow, which the Python sidecar lock (`uv.lock`) takes in through vLLM,
+  `mistral-common`, and `torchvision`, is 13.0.0 instead of 12.3.0: the
+  older one has nine advisories (GHSA-65qm-jvmh-6pqg and eight more: out of
+  bounds reads and writes in the TIFF, JPEG, and morphology decoders, a
+  decompression bomb past its limit, unbounded recursion in a PDF page
+  tree), all fixed in 13.0.0, published 16 October 2026.
 - `Index.Status` and `Index.Watch` show a port mismatch as soon as the
   ports change. Before, a Vault whose Index was at `HEAD` and that was
   given an embedder of another model or a Projector of another

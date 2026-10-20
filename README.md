@@ -5,6 +5,8 @@ document store: records are ordinary text files in a git working tree,
 not a database file. It is not a wiki, a second brain, a daemon, or a
 hosted product.
 
+**License: proprietary.** All rights reserved. See [LICENSE](LICENSE).
+
 **What it is.** Documents live as ordinary files in a **Vault** — a git
 working tree a person can open in an editor and in `git` without this
 library. A Document is bytes: Scheda does not know their format. Collections
@@ -457,4 +459,4 @@ See [CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
-Apache-2.0. See [LICENSE](LICENSE).
+Proprietary. All rights reserved. See [LICENSE](LICENSE).

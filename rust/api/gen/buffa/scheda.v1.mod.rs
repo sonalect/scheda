@@ -100,6 +100,7 @@ pub mod __buffa {
         reg.register_json_any(super::__SEARCH_ITEM_JSON_ANY);
         reg.register_json_any(super::__SEARCH_SUMMARY_JSON_ANY);
         reg.register_json_any(super::__SEARCH_HIT_JSON_ANY);
+        reg.register_json_any(super::search_hit::__VECTOR_MATCH_JSON_ANY);
         reg.register_json_any(super::__COLLECTION_REF_JSON_ANY);
         reg.register_json_any(super::__COLLECTION_DECLARATION_JSON_ANY);
         reg.register_json_any(super::__SCHEMA_JSON_ANY);

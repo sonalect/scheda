@@ -2366,7 +2366,10 @@ pub struct IndexColumn {
     /// Field 4: `fts`
     #[serde(rename = "fts", skip_serializing_if = "::core::option::Option::is_none")]
     pub fts: ::core::option::Option<bool>,
-    /// The vector leg embeds it: one vector per Document. A `text` only.
+    /// The vector leg embeds it: each text its own vector, a blank one
+    /// (only whitespace) none. A `text` or a `text list`; a `text` is a list
+    /// of one. A search ranks a Document once, by its text closest to the
+    /// query.
     ///
     /// Field 5: `vector`
     #[serde(rename = "vector", skip_serializing_if = "::core::option::Option::is_none")]

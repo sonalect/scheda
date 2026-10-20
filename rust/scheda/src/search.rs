@@ -11,12 +11,19 @@
 //! words of the text; for `like` the words of the `fts` columns of that
 //! Document, as the Index holds them. The vector leg embeds the text
 //! (`Embedder.EmbedQuery`), or takes the stored vectors of the Document
-//! (`like`: no model is called), and asks each `vector` column for the
-//! nearest vectors by cosine distance: through its IVF_PQ index, the
-//! candidates ranked again with the full vectors, and by an exact scan of
-//! the rows no index covers yet (a table too small for an index, and the
-//! rows written since). A Document with several vectors counts once, by its
-//! nearest. The Document `like` names is never a hit of its own search.
+//! (`like`: every vector of each of its texts; no model is called), and
+//! asks each `vector` column for the nearest vectors by cosine distance:
+//! through its IVF_PQ index, the candidates ranked again with the full
+//! vectors, and by an exact scan of the rows no index covers yet (a table
+//! too small for an index, and the rows written since). A `text` column
+//! holds its vector in the rows. A `text list` column holds one vector per
+//! text in a texts dataset of its own, indexed the same way; its leg asks
+//! there for the nearest texts, and, while those belong to fewer Documents
+//! than it wants, asks again for as many as the texts per Document found
+//! need (at least twice as many), up to every text the dataset holds; a
+//! filter admits there the texts of the Documents it matches in the rows. A Document counts once, by its closest text (for
+//! `like`, its closest pair of texts), and the hit names that text. The
+//! Document `like` names is never a hit of its own search.
 //!
 //! **Fusion.** Reciprocal Rank Fusion of the legs that ran: a hit at rank
 //! `r` (from 0) of a leg of weight `w` adds `w / (60 + r + 1)`. A leg of
@@ -37,12 +44,16 @@
 //! reaches them, at the state the Index reflects, and a hit whose file that
 //! state lacks is skipped.
 
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::hash_map::Entry;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use futures_util::{StreamExt, stream};
 use lance::Dataset;
+use lance::dataset::ROW_ID;
+use lance::dataset::scanner::{RowAddrMask, RowAddrTreeMap};
 use lance::deps::arrow_array::{
-    Array, FixedSizeListArray, Float32Array, ListArray, RecordBatch, StringArray,
+    Array, FixedSizeListArray, Float32Array, ListArray, RecordBatch, StringArray, UInt64Array,
 };
 use lance::deps::datafusion::prelude::{Expr, col, lit};
 use lance_index::scalar::FullTextSearchQuery;
@@ -50,6 +61,7 @@ use lance_index::scalar::inverted::SCORE_COL;
 use lance_index::vector::DIST_COL;
 use lance_linalg::distance::DistanceType;
 use scheda_api::v1::document_search::Subject;
+use scheda_api::v1::search_hit::VectorMatch;
 use scheda_api::v1::search_item::Item;
 use scheda_api::v1::search_summary::VectorLeg;
 use scheda_api::v1::{
@@ -65,7 +77,9 @@ use crate::gate::Pass;
 use crate::index::State;
 use crate::ports::task;
 use crate::queries::{self, Reader, Reading, Table};
-use crate::store::{Column, digest_name, lance_fault, vector_name};
+use crate::store::{
+    self, Column, POSITION, VECTOR, digest_name, lance_fault, positions_in, vector_name,
+};
 use crate::vault::Vault;
 
 /// How many hits `k` has when the request leaves it out.
@@ -93,17 +107,31 @@ struct Ranked {
     id: String,
     lexical: Option<f64>,
     vector: Option<f64>,
+    /// The text that gave `vector`.
+    matched: Option<Matched>,
     fused: f64,
     rerank: Option<f64>,
 }
 
 /// One hit of a leg: its key and its leg score (BM25, or the cosine
-/// distance).
+/// distance), and for the vector leg the text that gave the distance.
 #[derive(Clone, Debug)]
 struct Candidate {
     collection: String,
     id: String,
     score: f64,
+    matched: Option<Matched>,
+}
+
+/// The text of a Document that gave its vector distance: the place of its
+/// column among the collection's `vector` columns, its place in the
+/// column (0 in a `text` column), and the column. Ordered so that of two
+/// texts at the same distance the first in those orders wins.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+struct Matched {
+    order: usize,
+    position: u32,
+    column: String,
 }
 
 /// What a search found: the summary of its legs, and the ranking cut by
@@ -324,23 +352,32 @@ async fn run(
         .collect()
         .await;
     let mut lexical = Vec::new();
-    let mut nearest: HashMap<(String, String), f64> = HashMap::new();
+    // Each Document once, by its closest text.
+    let mut nearest: HashMap<(String, String), (f64, Option<Matched>)> = HashMap::new();
     for leg in legs {
         let (of_text, of_vectors) = leg?;
         lexical.extend(of_text);
         for candidate in of_vectors {
-            let distance = nearest
-                .entry((candidate.collection, candidate.id))
-                .or_insert(f64::INFINITY);
-            *distance = distance.min(candidate.score);
+            let found = (candidate.score, candidate.matched);
+            match nearest.entry((candidate.collection, candidate.id)) {
+                Entry::Vacant(entry) => {
+                    entry.insert(found);
+                }
+                Entry::Occupied(mut entry) => {
+                    if closer(&found, entry.get()) {
+                        entry.insert(found);
+                    }
+                }
+            }
         }
     }
     let mut vector: Vec<Candidate> = nearest
         .into_iter()
-        .map(|((collection, id), score)| Candidate {
+        .map(|((collection, id), (score, matched))| Candidate {
             collection,
             id,
             score,
+            matched,
         })
         .collect();
     let itself = like
@@ -404,6 +441,12 @@ async fn run(
     })
 }
 
+/// Whether the distance and text `a` come before `b`: a smaller distance,
+/// or the same one and a text first in the order of [`Matched`].
+fn closer(a: &(f64, Option<Matched>), b: &(f64, Option<Matched>)) -> bool {
+    a.0.total_cmp(&b.0).then_with(|| a.1.cmp(&b.1)) == std::cmp::Ordering::Less
+}
+
 /// The lexical candidates, and the vector candidates, of one collection.
 type Legs = (Vec<Candidate>, Vec<Candidate>);
 
@@ -441,14 +484,46 @@ async fn table_legs(
     }
     let mut vector = Vec::new();
     if !vector_queries.is_empty() {
-        for column in &reading.vectors(decl.name()) {
+        // The Documents the filter admits, read once for the texts
+        // datasets of the collection.
+        let mut admitted: Option<Arc<HashSet<String>>> = None;
+        for (order, column) in reading.vectors(decl.name()).into_iter().enumerate() {
+            if !table.is_list(&column) {
+                vector.extend(
+                    vector_leg_on(
+                        dataset.clone(),
+                        decl.name().to_owned(),
+                        Matched {
+                            order,
+                            position: 0,
+                            column,
+                        },
+                        vector_queries.to_vec(),
+                        prefilter.clone(),
+                        reach,
+                    )
+                    .await?,
+                );
+                continue;
+            }
+            let opened = table.clone();
+            let name = column.clone();
+            let Some(texts) = task(async move { opened.open_texts(&name).await }).await? else {
+                continue;
+            };
+            if ask.filter.is_some() && admitted.is_none() {
+                admitted = Some(Arc::new(
+                    ids_admitted(dataset.clone(), prefilter.clone()).await?,
+                ));
+            }
             vector.extend(
-                vector_leg_on(
-                    dataset.clone(),
+                texts_leg(
+                    texts,
                     decl.name().to_owned(),
-                    vector_name(column),
+                    order,
+                    column,
                     vector_queries.to_vec(),
-                    prefilter.clone(),
+                    admitted.clone(),
                     reach,
                 )
                 .await?,
@@ -476,6 +551,7 @@ fn fuse(ask: &Ask<'_>, lexical: &[Candidate], vector: &[Candidate]) -> Vec<Ranke
     for (rank, candidate) in vector.iter().enumerate() {
         let hit = ranked(&mut fused, candidate);
         hit.vector = Some(1.0 / (1.0 + candidate.score));
+        hit.matched.clone_from(&candidate.matched);
         hit.fused += ask.vector_weight / (RRF_K + rank as f64 + 1.0);
     }
     let mut hits: Vec<Ranked> = fused.into_values().collect();
@@ -500,6 +576,7 @@ fn ranked<'a>(
             id: candidate.id.clone(),
             lexical: None,
             vector: None,
+            matched: None,
             fused: 0.0,
             rerank: None,
         })
@@ -527,14 +604,31 @@ async fn vector_leg(
     if !has_embedder {
         return Ok(VectorLeg::VECTOR_LEG_NO_EMBEDDER);
     }
-    for (decl, _, dataset) in tables {
+    for (decl, table, dataset) in tables {
         for column in &reading.vectors(decl.name()) {
-            if holds_vector(dataset.clone(), digest_name(column)).await? {
+            let held = if table.is_list(column) {
+                holds_text(table.clone(), column.clone()).await?
+            } else {
+                holds_vector(dataset.clone(), digest_name(column)).await?
+            };
+            if held {
                 return Ok(VectorLeg::VECTOR_LEG_RAN);
             }
         }
     }
     Ok(VectorLeg::VECTOR_LEG_NO_VECTORS)
+}
+
+/// Whether the texts dataset of the `text list` vector column `column` of
+/// `table` holds a text, which it does only with its vector.
+async fn holds_text(table: Table, column: String) -> Result<bool, Error> {
+    task(async move {
+        match table.open_texts(&column).await? {
+            Some(texts) => Ok(texts.count_rows(None).await.map_err(lance_fault)? > 0),
+            None => Ok(false),
+        }
+    })
+    .await
 }
 
 /// Whether a row of `dataset` has a vector: a digest in the column
@@ -569,11 +663,11 @@ async fn like_of(reading: &Reading, key: &DocumentKey) -> Result<Like, Error> {
         return Err(not_held(&collection, &id));
     };
     let fts = reading.fts_columns(&collection);
-    let vectors: Vec<String> = reading
+    let (lists, rows): (Vec<String>, Vec<String>) = reading
         .vectors(&collection)
-        .iter()
-        .map(|column| vector_name(column))
-        .collect();
+        .into_iter()
+        .partition(|column| table.is_list(column));
+    let vectors: Vec<String> = rows.iter().map(|column| vector_name(column)).collect();
     task(async move {
         let dataset = table.open().await?;
         let mut wanted = vec![String::from("id")];
@@ -589,10 +683,25 @@ async fn like_of(reading: &Reading, key: &DocumentKey) -> Result<Like, Error> {
             return Err(not_held(&collection, &id));
         }
         let words: Vec<String> = fts.iter().flat_map(|name| texts_at(&batch, name)).collect();
-        let stored = vectors
+        let mut stored: Vec<Vec<f32>> = vectors
             .iter()
             .filter_map(|name| vector_at(&batch, name))
             .collect();
+        for column in &lists {
+            let Some(texts) = table.open_texts(column).await? else {
+                continue;
+            };
+            let mut scanner = texts.scan();
+            scanner
+                .project(&[VECTOR])
+                .map_err(lance_fault)?
+                .filter_expr(col("id").eq(lit(id.clone())));
+            let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
+            let held = store::vectors_in(&batch, VECTOR)?;
+            for n in 0..batch.num_rows() {
+                stored.push(store::vector_at(held, n)?);
+            }
+        }
         Ok(Like {
             collection,
             id,
@@ -680,18 +789,20 @@ async fn lexical_leg(
     .await
 }
 
-/// The vector leg on one vector column of one table: for each of the
-/// `queries`, up to `limit` rows that `prefilter` admits, nearest it by
-/// cosine distance. A row without a vector there is never one.
+/// The vector leg on one `text` vector column of one table, `matched`
+/// (its vector is in the rows): for each of the `queries`, up to `limit`
+/// rows that `prefilter` admits, nearest it by cosine distance. A row
+/// without a vector there is never one.
 async fn vector_leg_on(
     dataset: Dataset,
     collection: String,
-    column: String,
+    matched: Matched,
     queries: Vec<Vec<f32>>,
     prefilter: Expr,
     limit: usize,
 ) -> Result<Vec<Candidate>, Error> {
     task(async move {
+        let column = vector_name(&matched.column);
         let mut found = Vec::new();
         for query in queries {
             let query = Float32Array::from(query);
@@ -706,36 +817,204 @@ async fn vector_leg_on(
                 .prefilter(true)
                 .filter_expr(prefilter.clone());
             let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
-            found.extend(candidates(&batch, &collection, DIST_COL)?);
+            found.extend(
+                candidates(&batch, &collection, DIST_COL)?
+                    .into_iter()
+                    .map(|candidate| Candidate {
+                        matched: Some(matched.clone()),
+                        ..candidate
+                    }),
+            );
         }
         Ok(found)
     })
     .await
 }
 
+/// The ids of the rows of `dataset` that `prefilter` admits.
+async fn ids_admitted(dataset: Dataset, prefilter: Expr) -> Result<HashSet<String>, Error> {
+    task(async move {
+        let mut scanner = dataset.scan();
+        scanner
+            .project(&["id"])
+            .map_err(lance_fault)?
+            .filter_expr(prefilter);
+        let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
+        let ids = string_column(&batch, "id")?;
+        Ok((0..batch.num_rows())
+            .map(|n| ids.value(n).to_owned())
+            .collect())
+    })
+    .await
+}
+
+/// The vector leg on the texts dataset `texts` of the `text list` vector
+/// column `column`, the `order`-th `vector` column of its collection: for
+/// each of the `queries`, up to `limit` Documents nearest it by their
+/// closest text, among the Documents `admitted` names (all when unset).
+async fn texts_leg(
+    texts: Dataset,
+    collection: String,
+    order: usize,
+    column: String,
+    queries: Vec<Vec<f32>>,
+    admitted: Option<Arc<HashSet<String>>>,
+    limit: usize,
+) -> Result<Vec<Candidate>, Error> {
+    task(async move {
+        let total = texts.count_rows(None).await.map_err(lance_fault)?;
+        if total == 0 {
+            return Ok(Vec::new());
+        }
+        let mask = match admitted {
+            Some(admitted) => {
+                let rows = rows_of(&texts, &admitted).await?;
+                if rows.is_empty() {
+                    return Ok(Vec::new());
+                }
+                Some(RowAddrMask::from_allowed(RowAddrTreeMap::from_iter(rows)))
+            }
+            None => None,
+        };
+        let mut found = Vec::new();
+        for query in queries {
+            let nearest = nearest_documents(&texts, &query, mask.as_ref(), limit, total).await?;
+            found.extend(
+                nearest
+                    .into_iter()
+                    .map(|(id, (distance, position))| Candidate {
+                        collection: collection.clone(),
+                        id,
+                        score: distance,
+                        matched: Some(Matched {
+                            order,
+                            position,
+                            column: column.clone(),
+                        }),
+                    }),
+            );
+        }
+        Ok(found)
+    })
+    .await
+}
+
+/// The rows of the texts dataset `texts` (their `_rowid`) whose Document
+/// is one of `admitted`.
+async fn rows_of(texts: &Dataset, admitted: &HashSet<String>) -> Result<Vec<u64>, Error> {
+    let mut scanner = texts.scan();
+    scanner.project(&["id"]).map_err(lance_fault)?.with_row_id();
+    let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
+    let ids = string_column(&batch, "id")?;
+    let rows = batch
+        .column_by_name(ROW_ID)
+        .and_then(|array| array.as_any().downcast_ref::<UInt64Array>())
+        .ok_or_else(|| gave_no("row id"))?;
+    Ok((0..batch.num_rows())
+        .filter(|n| admitted.contains(ids.value(*n)))
+        .map(|n| rows.value(n))
+        .collect())
+}
+
+/// The Documents of the texts dataset `texts`, of `total` texts, nearest
+/// `query` by their closest text, among the texts `mask` admits (all when
+/// unset): at least `limit` of them when that many have a text there, each
+/// with the distance and the place of its closest text.
+///
+/// A Document has several texts, so the `limit` nearest texts may belong
+/// to fewer Documents. The texts asked for start at `limit`; while they
+/// are all found and belong to fewer than `limit` Documents, the next ask
+/// is as many more as the texts per Document found so far need to reach
+/// `limit`, and at least twice as many, up to `total`. A Document whose
+/// closest text is among the texts found has its closest distance there,
+/// and one without a text among them is no closer than the last text
+/// found.
+async fn nearest_documents(
+    texts: &Dataset,
+    query: &[f32],
+    mask: Option<&RowAddrMask>,
+    limit: usize,
+    total: usize,
+) -> Result<HashMap<String, (f64, u32)>, Error> {
+    let query = Float32Array::from(query.to_vec());
+    let mut asked = limit.min(total).max(1);
+    loop {
+        let mut scanner = texts.scan();
+        scanner
+            .nearest(VECTOR, &query, asked)
+            .map_err(lance_fault)?
+            .distance_metric(DistanceType::Cosine)
+            .refine(REFINE)
+            .project(&["id", POSITION])
+            .map_err(lance_fault)?
+            .prefilter(true);
+        if let Some(mask) = mask {
+            scanner.with_row_addr_prefilter(mask.clone());
+        }
+        let batch = scanner.try_into_batch().await.map_err(lance_fault)?;
+        let ids = string_column(&batch, "id")?;
+        let positions = positions_in(&batch)?;
+        let distances = batch
+            .column_by_name(DIST_COL)
+            .and_then(|array| array.as_any().downcast_ref::<Float32Array>())
+            .ok_or_else(|| gave_no("score"))?;
+        let mut nearest: HashMap<String, (f64, u32)> = HashMap::new();
+        for n in (0..batch.num_rows()).filter(|n| !distances.is_null(*n)) {
+            let found = (f64::from(distances.value(n)), positions.value(n));
+            match nearest.entry(ids.value(n).to_owned()) {
+                Entry::Vacant(entry) => {
+                    entry.insert(found);
+                }
+                Entry::Occupied(mut entry) => {
+                    let (distance, position) = *entry.get();
+                    if found.0.total_cmp(&distance).then(found.1.cmp(&position))
+                        == std::cmp::Ordering::Less
+                    {
+                        entry.insert(found);
+                    }
+                }
+            }
+        }
+        if nearest.len() >= limit || batch.num_rows() < asked || asked >= total {
+            return Ok(nearest);
+        }
+        let needed = asked.saturating_mul(limit).div_ceil(nearest.len().max(1));
+        asked = needed.max(asked.saturating_mul(2)).min(total);
+    }
+}
+
+/// The string column `name` of a batch a search read.
+fn string_column<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a StringArray, Error> {
+    batch
+        .column_by_name(name)
+        .and_then(|array| array.as_any().downcast_ref::<StringArray>())
+        .ok_or_else(|| gave_no(name))
+}
+
+/// The failure of a read of the Index that lacks `what`.
+fn gave_no(what: &str) -> Error {
+    Fault::new(
+        VaultErrorCode::IndexBroken,
+        format!("a search of the Index gave no {what}"),
+    )
+    .into()
+}
+
 /// The hits of a leg in `batch`: the `id`, and the leg score in the column
 /// `score`.
 fn candidates(batch: &RecordBatch, collection: &str, score: &str) -> Result<Vec<Candidate>, Error> {
-    let broken = |what: &str| {
-        Error::from(Fault::new(
-            VaultErrorCode::IndexBroken,
-            format!("a search of the Index gave no {what}"),
-        ))
-    };
-    let ids = batch
-        .column_by_name("id")
-        .and_then(|array| array.as_any().downcast_ref::<StringArray>())
-        .ok_or_else(|| broken("id"))?;
+    let ids = string_column(batch, "id")?;
     let scores = batch
         .column_by_name(score)
         .and_then(|array| array.as_any().downcast_ref::<Float32Array>())
-        .ok_or_else(|| broken("score"))?;
+        .ok_or_else(|| gave_no("score"))?;
     Ok((0..batch.num_rows())
         .filter(|n| !scores.is_null(*n))
         .map(|n| Candidate {
             collection: collection.to_owned(),
             id: ids.value(n).to_owned(),
             score: f64::from(scores.value(n)),
+            matched: None,
         })
         .collect())
 }
@@ -823,6 +1102,12 @@ impl Hits {
             found.lexical_score = hit.lexical;
             found.vector_score = hit.vector;
             found.rerank_score = hit.rerank;
+            if let Some(matched) = hit.matched {
+                found.vector_match = VectorMatch::default()
+                    .with_column(matched.column)
+                    .with_position(matched.position)
+                    .into();
+            }
             return Some(Ok(SearchItem {
                 item: Some(Item::Hit(Box::new(found))),
                 ..SearchItem::default()
@@ -881,6 +1166,7 @@ mod tests {
             collection: collection.to_owned(),
             id: id.to_owned(),
             score,
+            matched: None,
         }
     }
 

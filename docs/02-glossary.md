@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.72, 20 October 2026.
+Document 2 of the Scheda package. Version 0.73, 20 October 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -140,7 +140,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **Lexical search** — ranked full-text (BM25) over Projector columns marked `fts`, by Lance's inverted index (lower case, no stemming, no phrases). Not grep, SQL `LIKE`, or a file scan at query time.
 
-**Vector search** — in-process nearest neighbours by cosine distance (an IVF_PQ index ranked again with the full vectors, and an exact scan of the rows no index covers yet) over embeddings of Projector columns marked `vector`. Embedding weights are not stored in the Vault. An external vector database is not the Index.
+**Vector search** — in-process nearest neighbours by cosine distance (an IVF_PQ index ranked again with the full vectors, and an exact scan of the rows no index covers yet) over embeddings of Projector columns marked `vector`, one per text (a `text list` column gives several); a Document is ranked once, by its text closest to the query. Embedding weights are not stored in the Vault. An external vector database is not the Index.
 
 **Embedder** — a port that turns Projector text into vectors. Optional. `Describe` gives the model id and the vector length (`EmbedderDescriptor`; both are recorded with the Index, so an embedder of another model finds it `INDEX_STALE` and is never mixed in). `Embed` takes a stream of texts and returns a stream of vectors in the same order; the implementation forms the portions its model wants. `EmbedQuery` embeds one search text. Without an embedder, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network. Its codes are `EmbedderErrorCode` (`UNAVAILABLE`, retryable; `REFUSED`).
 

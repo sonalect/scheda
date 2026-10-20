@@ -18,4 +18,5 @@ mod query;
 mod reads;
 mod runtime;
 mod search;
+mod texts;
 mod write;
