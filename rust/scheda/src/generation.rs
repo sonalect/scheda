@@ -317,12 +317,13 @@ impl Generation {
             }
             // A table that cannot be removed now (a reader holds a file of
             // it open) stays listed, and the next round tries again.
-            let removed = [".lance", ".files.lance"].iter().all(|suffix| {
-                match fs::remove_dir_all(self.dir.join(format!("{}{suffix}", table.name))) {
-                    Ok(()) => true,
-                    Err(err) => err.kind() == std::io::ErrorKind::NotFound,
-                }
-            });
+            let removed =
+                [".lance", ".files.lance"].iter().all(|suffix| {
+                    match fs::remove_dir_all(self.dir.join(format!("{}{suffix}", table.name))) {
+                        Ok(()) => true,
+                        Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+                    }
+                });
             !removed
         });
     }

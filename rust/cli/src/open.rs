@@ -1,8 +1,6 @@
 //! The request that opens the Vault, built from the global flags: the
 //! options, the secrets they name, and the ports. Everything wrong with the
-//! flags is `INVALID_ARGUMENT` here, before the Vault is touched. The ports
-//! the flags name are given to the library as they are; this version of it
-//! accepts none, and a Vault opened with one fails with `UNIMPLEMENTED`.
+//! flags is `INVALID_ARGUMENT` here, before the Vault is touched.
 
 use std::path::Path;
 
@@ -14,7 +12,7 @@ use scheda::v1::{Author, Encryption, OpenMode, OpenOptions, VaultOpening};
 
 use crate::args::{Cli, ModeArg};
 use crate::stdio::{invalid, unreadable};
-use crate::{http, model2vec};
+use crate::{http, model2vec, projector};
 
 /// The request that opens the Vault the flags name.
 ///
@@ -33,6 +31,7 @@ pub(crate) fn opening(cli: &Cli) -> Result<VaultOpening, Error> {
     Ok(VaultOpening {
         path: Some(path.to_owned()),
         options: options(cli)?.into(),
+        projector: projector::whole_file().into(),
         embedder: embedder(cli)?.into(),
         reranker: reranker(cli)?.into(),
         ..VaultOpening::default()
@@ -73,6 +72,12 @@ fn options(cli: &Cli) -> Result<OpenOptions, Error> {
     }
     if let Some(millis) = cli.write_timeout_ms {
         options = options.with_write_timeout_ms(millis);
+    }
+    if let Some(millis) = cli.index_wait_timeout_ms {
+        options = options.with_index_wait_timeout_ms(millis);
+    }
+    if let Some(depth) = cli.filter_max_depth {
+        options = options.with_filter_max_depth(depth);
     }
     options.encryption = encryption(
         cli.encryption_passphrase_env_var.as_deref(),

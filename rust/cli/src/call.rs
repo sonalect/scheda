@@ -6,12 +6,13 @@ use scheda::parse_command;
 use scheda::v1::document_selection::Selection;
 use scheda::v1::{
     CollectionDeclaration, CollectionDeletion, CollectionOperation, DocumentCreation,
-    DocumentDeletion, DocumentId, DocumentOperation, DocumentSelection, DocumentUpdate,
-    DocumentUpsert, Ids, Listing, MirrorSetting, VaultDocumentOperation, VaultErrorCode,
+    DocumentDeletion, DocumentId, DocumentOperation, DocumentQuery, DocumentSearch,
+    DocumentSelection, DocumentUpdate, DocumentUpsert, Ids, Listing, MirrorSetting,
+    VaultDocumentOperation, VaultErrorCode, VaultQuery, VaultSearch,
 };
 use scheda::{Error, Fault};
 
-use crate::args::{CollectionCommand, Command, MirrorCommand};
+use crate::args::{CollectionCommand, Command, IndexCommand, MirrorCommand};
 use crate::stdio::{json_arg, json_lines, raw_bytes};
 
 /// One rpc, with its request when it takes one. A batch holds the
@@ -35,10 +36,18 @@ pub(crate) enum Call {
     BatchCollections(Vec<Result<CollectionOperation, Error>>),
     /// `Vault.BatchDocuments`.
     BatchDocuments(Vec<Result<VaultDocumentOperation, Error>>),
+    /// `Vault.QueryDocuments`.
+    QueryDocuments(VaultQuery),
+    /// `Vault.CountDocuments`.
+    CountDocuments(VaultQuery),
+    /// `Vault.SearchDocuments`.
+    SearchDocuments(VaultSearch),
     /// A call on the collection with this name.
     Collection(String, CollectionCall),
     /// A call on the mirror.
     Mirror(MirrorCall),
+    /// A call on the Index.
+    Index(IndexCall),
 }
 
 /// One rpc of `Collection`.
@@ -52,6 +61,9 @@ pub(crate) enum CollectionCall {
     Upsert(DocumentUpsert),
     Delete(DocumentDeletion),
     Batch(Vec<Result<DocumentOperation, Error>>),
+    Query(DocumentQuery),
+    Count(DocumentQuery),
+    Search(DocumentSearch),
 }
 
 /// One rpc of `Mirror`.
@@ -64,7 +76,50 @@ pub(crate) enum MirrorCall {
     Sync,
 }
 
+/// One rpc of `Index`.
+pub(crate) enum IndexCall {
+    Status,
+    Watch { until_settled: bool },
+    Reindex,
+}
+
 impl Call {
+    /// Whether the call answers from the Index, and so waits for it to
+    /// reach the state of the Vault at open first.
+    pub(crate) fn reads_index(&self) -> bool {
+        matches!(
+            self,
+            Call::QueryDocuments(_)
+                | Call::CountDocuments(_)
+                | Call::SearchDocuments(_)
+                | Call::Collection(
+                    _,
+                    CollectionCall::Query(_) | CollectionCall::Count(_) | CollectionCall::Search(_)
+                )
+        )
+    }
+
+    /// Makes a call that reads the Index answer once the Index reflects
+    /// the state the token `token` names: the request's `notBefore`, unless
+    /// it names its own.
+    pub(crate) fn wait_for(&mut self, token: String) {
+        let not_before = match self {
+            Call::QueryDocuments(query) | Call::CountDocuments(query) => &mut query.not_before,
+            Call::SearchDocuments(search) => match search.search.as_option_mut() {
+                Some(search) => &mut search.not_before,
+                None => return,
+            },
+            Call::Collection(_, CollectionCall::Query(query) | CollectionCall::Count(query)) => {
+                &mut query.not_before
+            }
+            Call::Collection(_, CollectionCall::Search(search)) => &mut search.not_before,
+            _ => return,
+        };
+        if not_before.is_none() {
+            *not_before = Some(token);
+        }
+    }
+
     /// The call a subcommand makes, with its input read and parsed.
     ///
     /// # Errors
@@ -93,6 +148,21 @@ impl Call {
             ),
             Command::BatchCollections => Call::BatchCollections(json_lines(parse_command)),
             Command::BatchDocuments => Call::BatchDocuments(json_lines(parse_command)),
+            Command::QueryDocuments { query } => Call::QueryDocuments(json_arg(
+                query.as_deref(),
+                "--query",
+                parse_command::<VaultQuery>,
+            )?),
+            Command::CountDocuments { query } => Call::CountDocuments(json_arg(
+                query.as_deref(),
+                "--query",
+                parse_command::<VaultQuery>,
+            )?),
+            Command::SearchDocuments { search } => Call::SearchDocuments(json_arg(
+                search.as_deref(),
+                "--search",
+                parse_command::<VaultSearch>,
+            )?),
             Command::Collection { name, command } => {
                 Call::Collection(name, collection_call(command)?)
             }
@@ -107,6 +177,11 @@ impl Call {
                 MirrorCommand::Push => MirrorCall::Push,
                 MirrorCommand::Pull => MirrorCall::Pull,
                 MirrorCommand::Sync => MirrorCall::Sync,
+            }),
+            Command::Index { command } => Call::Index(match command {
+                IndexCommand::Status => IndexCall::Status,
+                IndexCommand::Watch { until_settled } => IndexCall::Watch { until_settled },
+                IndexCommand::Reindex => IndexCall::Reindex,
             }),
         })
     }
@@ -215,5 +290,20 @@ fn collection_call(command: CollectionCommand) -> Result<CollectionCall, Error> 
             })
         }
         CollectionCommand::Batch => CollectionCall::Batch(json_lines(parse_command)),
+        CollectionCommand::Query { query } => CollectionCall::Query(json_arg(
+            query.as_deref(),
+            "--query",
+            parse_command::<DocumentQuery>,
+        )?),
+        CollectionCommand::Count { query } => CollectionCall::Count(json_arg(
+            query.as_deref(),
+            "--query",
+            parse_command::<DocumentQuery>,
+        )?),
+        CollectionCommand::Search { search } => CollectionCall::Search(json_arg(
+            search.as_deref(),
+            "--search",
+            parse_command::<DocumentSearch>,
+        )?),
     })
 }

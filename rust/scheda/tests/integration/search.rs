@@ -1791,6 +1791,8 @@ mod on_lance {
                 &json!({"title": "kitten late", "topic": "kitten"}),
             )
             .await;
+            fx.put_unwaited("log", "late-line", &json!({"title": "kitten line"}))
+                .await;
             assert_eq!(current(&fx.path), live);
             assert_eq!(count(&notes).await, 4);
 
@@ -1798,6 +1800,13 @@ mod on_lance {
             let head = fx.vault.info(Empty::default()).await.unwrap().version;
             let state = wait_state(&index, |state| reindexed(state, &head)).await;
             assert_ne!(current(&fx.path), live, "switched");
+            // The journal id maps are at the state the Index shows.
+            let maps = std::fs::read_to_string(fx.path.join(".scheda/index/commit")).unwrap();
+            // `main {oid}`: no isolated repository in this Vault.
+            assert_eq!(
+                maps.trim().strip_prefix("main ").map(str::to_owned),
+                state.version
+            );
             assert_eq!(count(&notes).await, 5, "the write made meanwhile is there");
             assert!(ids(&run(&notes, lexical).await).contains(&"late".to_owned()));
             // The state after the switch contains the one before.

@@ -15,6 +15,7 @@ mod exec;
 mod http;
 mod model2vec;
 mod open;
+mod projector;
 mod stdio;
 
 use std::io::Write;
@@ -27,6 +28,7 @@ use scheda::{Error, Fault};
 
 use args::Cli;
 use call::Call;
+use exec::Failed;
 
 #[global_allocator]
 static GLOBAL: MiMalloc = MiMalloc;
@@ -34,14 +36,18 @@ static GLOBAL: MiMalloc = MiMalloc;
 fn main() -> ExitCode {
     match run(std::env::args_os()) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            emit_report(&scheda::error_report(&error));
+        Err(failed) => {
+            let report = match failed {
+                Failed::Error(error) => scheda::error_report(&error),
+                Failed::Report(report) => *report,
+            };
+            emit_report(&report);
             ExitCode::FAILURE
         }
     }
 }
 
-fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Error> {
+fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Failed> {
     let cli = match Cli::try_parse_from(args) {
         Ok(cli) => cli,
         Err(err) => {
@@ -53,13 +59,14 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Error> 
                 let _ = err.print();
                 return Ok(());
             }
-            return Err(stdio::invalid(err.to_string()));
+            return Err(stdio::invalid(err.to_string()).into());
         }
     };
     let opening = match cli.command {
         args::Command::SchedaInfo => None,
         _ => Some(open::opening(&cli)?),
     };
+    let wait = !cli.no_wait;
     let call = Call::prepare(cli.command)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -70,7 +77,7 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Error> 
                     .with_source(err),
             )
         })?;
-    runtime.block_on(exec::execute(call, opening))
+    runtime.block_on(exec::execute(call, opening, wait))
 }
 
 /// Writes the report as one line on stderr. There is nowhere else to say

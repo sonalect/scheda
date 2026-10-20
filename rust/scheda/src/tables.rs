@@ -1381,10 +1381,23 @@ mod tests {
         )
         .await
         .unwrap();
+        let mut watch = vault.indexer().watch();
+        // The state now; each item after it is one the indexer published.
+        watch.next().await.unwrap().unwrap();
         crate::indexer::hooks::release(&path);
         wait_indexed(&vault).await;
         assert_eq!(rows(&vault, "notes").await.len(), 1);
         assert_eq!(rows(&vault, "log").await.len(), 1);
+        // The state the round published is not ahead of the stored state
+        // it shows.
+        let head = Some(crate::testing::head(&vault).await);
+        loop {
+            let state = watch.next().await.unwrap().unwrap();
+            if state.version == head {
+                assert_eq!(state.stored_version, state.version);
+                break;
+            }
+        }
         vault.close().await.unwrap();
     }
 

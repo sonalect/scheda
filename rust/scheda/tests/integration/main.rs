@@ -6,6 +6,7 @@ mod common;
 mod probe;
 
 mod collections;
+mod consumer;
 mod documents;
 mod index;
 mod mirror;

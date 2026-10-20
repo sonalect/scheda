@@ -514,11 +514,11 @@ made async by `22`.
 
 ### L9. CLI, Python driver, consumer test
 
-- [ ] The CLI per §8.3: the new fields in its JSON, the summary of a
+- [x] The CLI per §8.3: the new fields in its JSON, the summary of a
       query, the replies of writes, `--index-wait-timeout-ms`,
       `--filter-max-depth`; its Projector and the `index` subcommand back
       (L8 removed them); the Python driver follows.
-- [ ] `tests/consumer.rs` rewritten to the anchor consumer's use after
+- [x] `tests/consumer.rs` rewritten to the anchor consumer's use after
       this change: vector-only search on one collection, a write's token
       passed to the search, `Index.Reindex` while searches go on.
 - *Check:* `tests/consumer.rs` green; the CLI and the library give the

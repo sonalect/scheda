@@ -146,6 +146,16 @@ they print `PROBE-…` lines with `--nocapture`, poll 10 ms, debug build).
     It caught up until `HEAD` stood still; it now catches up once and
     switches, as D4 says (`search.rs`,
     `a_process_killed_while_it_indexes_leaves_an_index_that_opens_counts_and_searches`).
+4. **Fixed. The status showed the Index ahead of the stored state.** A
+    round published `stored_version` from its look and `version` from the
+    later `HEAD` of its work; both are now the state the round reached
+    (`tables.rs`, `a_collection_declared_while_a_round_runs_gets_its_table`).
+5. **Fixed. A rebuild's catch-up left the journal id maps behind.** It
+    brought the tables to the later `HEAD` and not the maps, so the
+    published `version` claimed more than the maps held and the next round
+    took the lock at once; the maps now catch up first and the tables to
+    their state (`indexer.rs`,
+    `a_rebuild_waits_for_the_lock_and_a_second_request_is_aborted`).
 
 ## Checked and fine
 

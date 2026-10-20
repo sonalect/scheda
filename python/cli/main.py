@@ -47,7 +47,6 @@ _DEFAULT_RERANKER_URL = "http://127.0.0.1:8081/v1/"
 _DEFAULT_RERANKER_MODEL = "Qwen/Qwen3-Reranker-0.6B"
 _DEFAULT_JINA_EMBEDDER_MODEL = "jinaai/jina-embeddings-v5-text-small"
 _DEFAULT_JINA_RERANKER_MODEL = "jinaai/jina-reranker-v3.5"
-_ALL_FILTER_JSON = '{"all":{}}'
 _DEFAULT_FIND_COUNT = 50
 _DEFAULT_SEARCH_K = 10
 # How many fused hits the reranker scores when a search reranks: at least `k`.
@@ -334,9 +333,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     find_cmd.add_argument(
         "--filter",
-        default=_ALL_FILTER_JSON,
+        default=None,
         metavar="JSON",
-        help=f"Protobuf JSON Filter (default: {_ALL_FILTER_JSON})",
+        help="Protobuf JSON Filter (default: none, every Document)",
     )
     find_cmd.add_argument("--offset", type=int, default=0, metavar="N")
     find_cmd.add_argument(
@@ -1672,30 +1671,35 @@ class SchedaCli:
         *,
         collection: str | None,
         collections: list[str],
-        filter_json: str,
+        filter_json: str | None,
         paging: tuple[int, int],
         include_raw: bool,
     ) -> dict[str, Any]:
-        """A query and its count: `{"total": N, "documents": [...]}`."""
+        """A query and its total: `{"total": N, "documents": [...]}`.
+
+        The total is the summary the query streams first.
+        """
         offset, limit = paging
-        body: dict[str, Any] = {"filter": _parse_filter_object(filter_json)}
+        page: dict[str, Any] = {"offset": offset, "limit": limit}
+        if filter_json:
+            page["filter"] = _parse_filter_object(filter_json)
         if collection is None and collections:
-            body["collections"] = {"names": collections}
-        page = dict(body, offset=offset, limit=limit)
+            page["collections"] = {"names": collections}
         if include_raw:
             page["includeRaw"] = True
         if collection is not None:
-            scope: tuple[str, ...] = ("collection", collection)
-            query_cmd, count_cmd = "query", "count"
+            scope: tuple[str, ...] = ("collection", collection, "query")
         else:
-            scope = ()
-            query_cmd, count_cmd = "query-documents", "count-documents"
-        count = self._run_json(*scope, count_cmd, "--query", json.dumps(body))
-        documents = self._run_lines(*scope, query_cmd, "--query", json.dumps(page))
-        return {
-            "total": int(count.get("count", 0)),
-            "documents": [_readable(document) for document in documents],
-        }
+            scope = ("query-documents",)
+        items = self._run_lines(*scope, "--query", json.dumps(page))
+        total = 0
+        documents: list[dict[str, Any]] = []
+        for item in items:
+            if "summary" in item:
+                total = int(item["summary"].get("total", 0))
+            elif "document" in item:
+                documents.append(_readable(item["document"]))
+        return {"total": total, "documents": documents}
 
     def search(
         self,

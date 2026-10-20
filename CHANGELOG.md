@@ -383,20 +383,31 @@ changes; they grow with each part of the move.
   stdin), parsed strictly; a batch reads JSON Lines from stdin and writes
   all or nothing; each write takes `--note`. The open options are global
   flags (`--mode`, `--mirror`, `--auto-sync`, `--author-name` and
-  `--author-email`, `--writer`, `--write-timeout-ms`), and so are the
+  `--author-email`, `--writer`, `--write-timeout-ms`,
+  `--index-wait-timeout-ms`, `--filter-max-depth`), and so are the
   reranker flags, now a port of the Vault used by a search with
   `rerankLimit`. A process indexes only with an embedder flag (the
-  whole-file Projector marks `body` `vector`), unless a collection sets
-  `excludeVectorIndex`. A query, count, or search waits up to 60 s for
-  the Index first, and `index reindex` waits for the rebuild to end
-  (`--no-wait` skips both); `index watch --until-settled` replaces
-  `wait-indexed`. An HTTP embedder or reranker failure carries the port's
+  whole-file Projector marks `body` `vector` and gives it a scalar
+  index), unless a collection sets `excludeVectorIndex`. A query, count,
+  or search answers once the Index has reached the state of the Vault at
+  open (its `notBefore`, unless the request sets one), and fails with
+  `DEADLINE_EXCEEDED` past `--index-wait-timeout-ms` (60 s) instead of
+  answering without the latest write; `index reindex` waits for the
+  rebuild to end; `--no-wait` skips both. `query` and `query-documents`
+  print the summary first (`{"summary": {"total": "N"}}`), then one
+  `{"document": …}` per line. A write prints its `DocumentWriteResult`
+  (`{"document": …, "version": …}`), a batch its result with `version`.
+  `index watch --until-settled` replaces `wait-indexed` and stops once
+  `version` equals `storedVersion` and no rebuild runs, or on
+  `lastError`. An HTTP embedder or reranker failure carries the port's
   code: `UNAVAILABLE` (retryable for a transport failure, 408, 429, and
   5xx; not for 401 and 403) or `REFUSED`.
 - The CLI test driver (`python/cli`) speaks the new subcommands and
   matches `VAULT_ERROR_CODE_NOT_FOUND`; it passes the embedder on every
   call that should index, and `--lexical-only` ranks by the lexical leg
-  only (`vectorWeight: 0`).
+  only (`vectorWeight: 0`). `find --filter` takes the typed filter
+  (default: none), and its total is the summary of the query, not a
+  second call.
 - Rust toolchain and `rust-version` (MSRV) raised from 1.99.0 to 1.99.1:
   build Scheda with Rust 1.99.1 or newer.
 - The test gate checks behaviour only: the OPS-1 / OPS-2 timing bands are
@@ -414,11 +425,6 @@ changes; they grow with each part of the move.
   `.scheda/index/`): the first round of the Index on Lance removes it and
   builds the Index again. `Vault.Check` skips the Lance tables while a
   round of the indexer holds `.scheda/index.lock`.
-- CLI: the subcommands `query`, `count`, `search`, `query-documents`,
-  `count-documents`, `search-documents`, and `index`, and the flag
-  `--no-wait`. The CLI no longer gives the Vault its Projector
-  (`scheda-cli/whole-file@1`). The embedder and reranker flags stay and
-  reach the library, which takes them as the Vault's ports.
 - The proto packages `api`, `api.v1`, and `api.collection.v1`, and their
   Rust paths `scheda_api::api::…`, among them `api.v1.Error` with its codes,
   `repeat`, and helper functions (`Error::invalid`, `Error::io_not_found`,

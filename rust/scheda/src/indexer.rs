@@ -565,10 +565,12 @@ impl Context {
         // The commits are written: the lock goes before anyone is told.
         drop(lock);
         let applied = applied?;
-        let head = look.head;
         self.shared.publish(|inner| {
+            // The round read `HEAD` again for its work, after its look: the
+            // state it brought the Index to is the newest stored state it
+            // knows, so the Index is never shown ahead of it.
             inner.state.version = Some(applied.state.token());
-            inner.state.stored_version = Some(head.token());
+            inner.state.stored_version = Some(applied.state.token());
             inner.state.pending = Some(0);
             inner.state.role = Some(false);
             inner.state.last_error = buffa::MessageField::none();
@@ -773,22 +775,19 @@ impl Context {
             // made while it was built appear at the switch, those made
             // while it caught up in the next round. Waiting for `HEAD` to
             // stand still would never switch under a steady stream of
-            // writes.
-            let repos = Arc::clone(&self.repos);
-            let (now, declarations) = blocking(move |_cx| {
-                let views = repos.views().context("read HEAD")?;
-                let declarations =
-                    collection::load(views.of(Repo::Main)).context("read the collections")?;
-                Ok((State::of(&views), declarations))
-            })
-            .await?;
-            if now != to {
+            // writes. The journal id maps catch up first, and the tables
+            // to the state they reached, so the whole Index is at one.
+            let again = {
+                let context = self.clone();
+                blocking(move |cx| context.maps(cx, false)).await?
+            };
+            if again.head != to {
                 work.plan = usable(
-                    tables::plan(&calls, Arc::new(declarations)).await?,
+                    tables::plan(&calls, Arc::clone(&again.declarations)).await?,
                     Some(&work.commit),
                 )?;
-                work.bring_to(now).await?;
-                to = now;
+                work.bring_to(again.head).await?;
+                to = again.head;
             }
         }
         // The tables read every file the maps read: their counts are the
