@@ -1,6 +1,6 @@
 # 05. Collection declaration
 
-Document 5 of the Scheda package. Version 0.52, 19 October 2026.
+Document 5 of the Scheda package. Version 0.53, 20 October 2026.
 
 Normative rules for collection declarations as data in the Vault: where
 they live, discovery, kind, journal caps, singleton `id`, isolation,
@@ -201,7 +201,7 @@ collection; `Search` then uses the lexical
 leg only. Either flag, or both. `Search` is `UNIMPLEMENTED` only when the
 collection has no remaining search leg (both flags, or encrypted —
 SCH-16). Both flags are redundant on `encrypted` and allowed. A
-`journal` may set either flag. Default for each is `false`. Per-field
+`journal` may set either flag. Default for each is `false`. Changing a flag is never `INDEX_STALE`: the next indexer round rebuilds the table of that collection to gain or lose its values and vectors, and counts, queries, and searches answer meanwhile and follow the declaration (`06` IDX-9). Per-field
 FTS / vector marks are not declaration keys; they belong on the
 `Projector` (`06` / `13`). *Check (**search**):* a `Query` that names a
 lexically excluded collection is `UNIMPLEMENTED` (`tests/query.rs`:
@@ -212,7 +212,7 @@ vector leg, and one with both legs left out is `UNIMPLEMENTED` when named
 (`tests/search.rs`:
 `search::a_collection_that_leaves_the_vector_index_out_is_searched_by_the_lexical_leg`,
 `search::a_collection_that_leaves_the_lexical_index_out_is_searched_by_the_vector_leg`,
-`search::a_collection_with_both_legs_left_out_is_unimplemented_when_named`);
+`search::a_collection_with_both_legs_left_out_is_unimplemented_when_named`); flipping a flag keeps the Index fresh and rebuilds the table (`tables::tests::flipping_an_exclusion_flag_rebuilds_the_table_and_leaves_the_index_fresh`);
 the marks decide what is indexed (`collection::tests`:
 `the_marks_are_read_and_decide_what_is_indexed`).
 
@@ -221,18 +221,19 @@ the marks decide what is indexed (`collection::tests`:
 ## 5. Journal segments (numbers)
 
 **SCH-14. Size cap is required for `journal`.** The declaration sets
-`segment_max_bytes`. If omitted, the default is **8 MiB** (8 × 1024 ×
-1024). The implementation rejects a cap greater than **32 MiB** (still
+`segment_max_bytes`. If omitted, the default is **1 MiB** (1024 ×
+1024): every append rewrites its open segment as a new git object, so the
+cap bounds that cost. The implementation rejects a cap greater than **32 MiB** (still
 under typical host warn/reject limits of ~50 / ~100 MiB; GIT-6).
 Optional: `segment_max_lines`, calendar rotation (`daily` UTC). Rotation
 is still size-first: a cap hit closes the segment even mid-day. Caps may
 change on a later `Vault.UpdateCollection`. *Check:* a default journal
-rotates at 8 MiB; a cap of `48 MiB` is `INVALID_ARGUMENT`; a cap or a line
+rotates at 1 MiB; a cap of `48 MiB` is `INVALID_ARGUMENT`; a cap or a line
 cap of `0` is `INVALID_ARGUMENT` (`collection::tests`:
 `journal_limits_are_checked_and_the_default_cap_is_filled_in`); after the
 cap, the next `Create` does not grow the closed file (MOD-10;
 `journal::tests`: `rotation_by_size_closes_a_segment_without_changing_it`,
-`rotation_by_line_count`, `daily_rotation_names_by_date_and_starts_a_new_segment_on_a_new_day`).
+`rotation_by_line_count`, `daily_rotation_names_by_date_and_starts_a_new_segment_on_a_new_day`); a journal with no cap rotates at 1 MiB, and a segment already over it is closed by the next append (`idmap::tests::a_journal_with_no_cap_rotates_at_one_mebibyte`).
 
 Closed segments are never rewritten. Sequence files are eight lowercase
 hex digits, then the clone's writer identity (`00000001-alice.jsonl`),
@@ -340,7 +341,7 @@ generation 2 load (`collection::tests`: `the_fixtures_of_generation_two_load`).
 | `schema.standard` | one of three | Empty mapping. `standard` kind. File: `{name}/{id}`. |
 | `schema.journal` | one of three | `journal` kind. Caps below. |
 | `schema.singleton` | one of three | Mapping with `id` (MOD-7). Same slug as Document `id` (library); an extension, if any, is part of `id`. |
-| `schema.journal.segmentMaxBytes` (`segment_max_bytes`) | `journal` only | Integer bytes. Omitted → **8 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
+| `schema.journal.segmentMaxBytes` (`segment_max_bytes`) | `journal` only | Integer bytes. Omitted → **1 MiB**. If set, 1…**32 MiB** (SCH-14). `0` is invalid. |
 | `schema.journal.segmentMaxLines` (`segment_max_lines`) | `journal` only | Optional integer line cap. If set, ≥ `1`. |
 | `schema.journal.daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
 | `schema.isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Documents under `{vault}/.isolated/{name}/`. Listed as isolated (ISO-3). |

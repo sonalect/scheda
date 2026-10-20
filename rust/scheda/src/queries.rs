@@ -172,14 +172,36 @@ impl Reading {
             .map_or(&[], |shape| shape.columns.as_slice())
     }
 
-    /// The `vector` columns of `collection`, as this Vault sees them: none
-    /// when its Projector marks none, or the collection is
-    /// `exclude_vector_index`.
-    pub(crate) fn vectors(&self, collection: &str) -> &[String] {
+    /// The `vector` columns of `collection` a search can use: those the
+    /// Vault's declaration keeps (none when the collection is
+    /// `exclude_vector_index`) that the Index's table holds. A table not
+    /// rebuilt yet after a flag moved holds other vectors than the
+    /// declaration gives; a search follows both. A collection the Index
+    /// holds no table of yet has the declaration's.
+    pub(crate) fn vectors(&self, collection: &str) -> Vec<String> {
+        let held = self.commit.tables.get(collection);
         self.plan
             .shapes
             .get(collection)
-            .map_or(&[], |shape| shape.vectors.as_slice())
+            .map_or(&[][..], |shape| shape.vectors.as_slice())
+            .iter()
+            .filter(|name| held.is_none_or(|table| table.shape.vectors.contains(name)))
+            .cloned()
+            .collect()
+    }
+
+    /// The `fts` columns of `collection` a search can use: those the
+    /// Vault's declaration keeps (none when the collection is
+    /// `exclude_lexical_index`) that the Index's table holds.
+    pub(crate) fn fts_columns(&self, collection: &str) -> Vec<String> {
+        let Some(held) = self.commit.tables.get(collection) else {
+            return Vec::new();
+        };
+        self.columns(collection)
+            .iter()
+            .filter(|column| column.fts && held.shape.columns.iter().any(|c| c.name == column.name))
+            .map(|column| column.name.clone())
+            .collect()
     }
 
     /// The table of `collection` in the snapshot, when the Index holds one.

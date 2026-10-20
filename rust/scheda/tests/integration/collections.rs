@@ -101,7 +101,7 @@ fn create_returns_the_collection_with_defaults_and_writes_none() {
         let made = vault.create_collection(journal("log")).await.unwrap();
         assert_eq!(
             serde_json::to_value(&made).unwrap(),
-            json!({"name": "log", "schema": {"journal": {"segmentMaxBytes": "8388608"}}})
+            json!({"name": "log", "schema": {"journal": {"segmentMaxBytes": "1048576"}}})
         );
         let file = read(&path, "log/.collection.yaml");
         assert!(file.contains("journal"), "{file}");
@@ -232,14 +232,14 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
         let stored = declared(&vault, "cache").await;
         assert_eq!(
             serde_json::to_value(&stored).unwrap()["schema"]["journal"]["segmentMaxBytes"],
-            "8388608"
+            "1048576"
         );
         let update = collection(json!({
             "name": "cache", "schema": {"journal": {"segmentMaxLines": "100"}, "excludeLexicalIndex": true}
         }));
         let reply = vault.update_collection(update).await.unwrap();
         let reply = serde_json::to_value(&reply).unwrap();
-        assert_eq!(reply["schema"]["journal"]["segmentMaxBytes"], "8388608");
+        assert_eq!(reply["schema"]["journal"]["segmentMaxBytes"], "1048576");
         assert_eq!(reply["schema"]["journal"]["segmentMaxLines"], "100");
         let file = read(&path, "cache/.collection.yaml");
         assert!(file.contains("future_top: 7"), "{file}");

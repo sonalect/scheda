@@ -250,7 +250,11 @@ impl Vault {
     }
 
     /// Checks the whole Vault and reports every problem it finds, the empty
-    /// report when it is sound.
+    /// report when it is sound. It reads the marker of the commit `HEAD`
+    /// names first: another generation, a broken marker, or none is one
+    /// problem about `.scheda.yaml` and the only one. A collection file that
+    /// does not load is a problem with its path; the other collections are
+    /// still checked.
     ///
     /// # Errors
     ///

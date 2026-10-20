@@ -927,7 +927,7 @@ pub const __STANDARD_JSON_ANY: ::buffa::type_registry::JsonAnyEntry = ::buffa::t
 #[derive(::serde::Serialize, ::serde::Deserialize)]
 #[serde(default)]
 pub struct Journal {
-    /// Bytes per segment. Unset: 8 MiB. Set: 1 byte to 32 MiB.
+    /// Bytes per segment. Unset: 1 MiB. Set: 1 byte to 32 MiB.
     ///
     /// Field 1: `segment_max_bytes`
     #[serde(

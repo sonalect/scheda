@@ -87,6 +87,22 @@ pub(crate) async fn create_collection(
     service::write_collection(&Pass::enter(vault)?, CollectionWrites::create(declaration)).await
 }
 
+/// The collection the JSON `declaration` declares, updated.
+#[cfg(feature = "index")]
+pub(crate) async fn update_collection(
+    vault: &Arc<Vault>,
+    declaration: serde_json::Value,
+) -> Result<CollectionDeclaration, Error> {
+    let declaration: CollectionDeclaration =
+        serde_json::from_value(declaration).map_err(|err| {
+            Error::new(
+                scheda_api::v1::VaultErrorCode::InvalidArgument,
+                err.to_string(),
+            )
+        })?;
+    service::write_collection(&Pass::enter(vault)?, CollectionWrites::update(declaration)).await
+}
+
 /// `Collection.Create` in `collection`.
 pub(crate) async fn create(
     vault: &Arc<Vault>,

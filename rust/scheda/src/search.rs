@@ -306,12 +306,7 @@ async fn run(
             || lit(true),
             |filter| filter::compile(filter, table.columns()),
         );
-        let fts: Vec<String> = table
-            .columns()
-            .iter()
-            .filter(|column| column.fts)
-            .map(|column| column.name.clone())
-            .collect();
+        let fts = reading.fts_columns(decl.name());
         if ask.lexical_weight > 0.0 && !fts.is_empty() && !text.trim().is_empty() {
             lexical.extend(
                 lexical_leg(
@@ -328,7 +323,7 @@ async fn run(
         if queries_of_vector_leg.is_empty() {
             continue;
         }
-        for column in reading.vectors(decl.name()) {
+        for column in &reading.vectors(decl.name()) {
             let found = vector_leg_on(
                 dataset.clone(),
                 decl.name().to_owned(),
@@ -485,7 +480,7 @@ async fn vector_leg(
         return Ok(VectorLeg::VECTOR_LEG_NO_EMBEDDER);
     }
     for (decl, _, dataset) in tables {
-        for column in reading.vectors(decl.name()) {
+        for column in &reading.vectors(decl.name()) {
             if holds_vector(dataset.clone(), digest_name(column)).await? {
                 return Ok(VectorLeg::VECTOR_LEG_RAN);
             }
@@ -525,12 +520,7 @@ async fn like_of(reading: &Reading, key: &DocumentKey) -> Result<Like, Error> {
     let Some(table) = reading.table(&collection) else {
         return Err(not_held(&collection, &id));
     };
-    let fts: Vec<String> = table
-        .columns()
-        .iter()
-        .filter(|column| column.fts)
-        .map(|column| column.name.clone())
-        .collect();
+    let fts = reading.fts_columns(&collection);
     let vectors: Vec<String> = reading
         .vectors(&collection)
         .iter()

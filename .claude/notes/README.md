@@ -12,6 +12,12 @@ Project state, deferred work, and measurements that outlive one session
 
 ## Pointers
 
+- Before the release: `docs/23-full-review.md` — the full review of
+  20 October 2026 on `main` at `34e61d1` (R1–R22, decisions D1–D9,
+  stages S1–S5), approved by the owner the same day: every finding is
+  fixed before the release `0.22.0`, tokio 1.54.0 taken inside its
+  quarantine on his word. R1–R3 and R5 were reproduced by throwaway
+  probes (removed); the gate was green.
 - Current work order: `docs/21-lance-index.md` — the Index on Lance in
   place of Tantivy and USearch, queries by a typed filter, a state
   token for freshness (approved by the owner 19 October 2026, D1–D18).

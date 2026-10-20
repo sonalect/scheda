@@ -36,11 +36,14 @@ pub trait VaultSync: ::core::marker::Send + ::core::marker::Sync {
         ::protocontract::Error,
     >;
     /// Checks the whole Vault, file by file, and lists every problem it
-    /// finds: collection declarations, journal lines, duplicate ids, an
-    /// unfinished merge (from git's own state, not from the bytes of a file),
-    /// the gitignore of isolated collections, and the owner-only modes under
-    /// `{vault}/.scheda/`. It fails only when it cannot run; what it finds is
-    /// the report.
+    /// finds: the marker `.scheda.yaml` (another generation, a broken file,
+    /// or none is the only problem reported, since nothing else can then be
+    /// read), collection declarations (a file that does not load is a problem
+    /// with its path, and the other collections are still checked), journal
+    /// lines, duplicate ids, an unfinished merge (from git's own state, not
+    /// from the bytes of a file), the gitignore of isolated collections, and
+    /// the owner-only modes under `{vault}/.scheda/`. It fails only when it
+    /// cannot run; what it finds is the report.
     fn check(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,
@@ -283,11 +286,14 @@ pub trait VaultAsync: ::core::marker::Send + ::core::marker::Sync {
         >,
     > + ::core::marker::Send;
     /// Checks the whole Vault, file by file, and lists every problem it
-    /// finds: collection declarations, journal lines, duplicate ids, an
-    /// unfinished merge (from git's own state, not from the bytes of a file),
-    /// the gitignore of isolated collections, and the owner-only modes under
-    /// `{vault}/.scheda/`. It fails only when it cannot run; what it finds is
-    /// the report.
+    /// finds: the marker `.scheda.yaml` (another generation, a broken file,
+    /// or none is the only problem reported, since nothing else can then be
+    /// read), collection declarations (a file that does not load is a problem
+    /// with its path, and the other collections are still checked), journal
+    /// lines, duplicate ids, an unfinished merge (from git's own state, not
+    /// from the bytes of a file), the gitignore of isolated collections, and
+    /// the owner-only modes under `{vault}/.scheda/`. It fails only when it
+    /// cannot run; what it finds is the report.
     fn check(
         &self,
         empty: ::buffa_types::google::protobuf::Empty,

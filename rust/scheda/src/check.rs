@@ -4,17 +4,20 @@
 //! A check collects instead of failing on the first problem (D15): each
 //! function returns the [`Problem`]s it found, and fails only when it cannot
 //! run (an I/O failure, git). The `Check` call that puts them in a
-//! `CheckReport`, after it has read the marker, is built on [`run`].
+//! `CheckReport` is built on [`run`], which reads the marker first and the
+//! collection files one by one, so one file that does not load is a problem
+//! of the report and not a failure of the call.
 
 use scheda_api::v1::{Problem, VaultErrorCode};
 
-use crate::collection::Declarations;
+use crate::collection::{self, Declarations};
 use crate::documents::check_documents;
 use crate::error::{Context, Error, Fault};
 use crate::fs::check_scheda_owner_only;
 use crate::idmap::check_journal_id_maps;
 use crate::isolated::{self, check_perimeter};
 use crate::journal::check_journals;
+use crate::marker;
 use crate::repo::{self, Repo, Repos};
 use crate::vault::Vault;
 
@@ -94,24 +97,55 @@ pub(crate) fn check_changed(
     Ok(problems)
 }
 
+/// The problem a marker failure stands for, when it is one the marker's
+/// content causes (another generation, a broken file); any other failure is
+/// the call's own.
+fn marker_problem(error: Error) -> Result<Problem, Error> {
+    if (error.is(VaultErrorCode::Generation) || error.is(VaultErrorCode::InvalidArgument))
+        && let Some(fault) = error.downcast_ref::<Fault>()
+    {
+        return Ok(problem_of(fault));
+    }
+    Err(error)
+}
+
 /// Runs every check over `vault` and returns the problems, in the order of
-/// the layers: the owner-only modes of `.scheda/`, the unmerged entries, the
-/// perimeter of the isolated tree, the Document files, the journal
-/// segments, and the id maps of the journals (the last three over the
-/// commits `HEAD` names), and the files a person changed and did not commit.
-/// No problem means the Vault is sound as far as the checks go.
+/// the layers: the marker of the commit `HEAD` names, the owner-only modes
+/// of `.scheda/`, the unmerged entries, the perimeter of the isolated tree,
+/// the collection files, the Document files, the journal segments, and the
+/// id maps of the journals (the last four over the commits `HEAD` names),
+/// and the files a person changed and did not commit. No problem means the
+/// Vault is sound as far as the checks go.
+///
+/// A marker of another generation or one that does not parse
+/// (`GENERATION`, `INVALID_ARGUMENT`), and a commit with no marker
+/// (`NOT_A_VAULT`), are one problem with the path `.scheda.yaml`, and no
+/// other check runs: nothing else in the commit can be read as this build
+/// reads it. A collection file that does not load is a problem with its
+/// path, and the other checks run over the collections that do.
 ///
 /// It fails only when a check cannot run; see the checks for when.
 pub(crate) fn run(vault: &Vault) -> Result<Vec<Problem>, Error> {
     let path = vault.path();
     let repos = vault.repos();
+    let views = repos.views()?;
+    match marker::read(views.of(Repo::Main)) {
+        Ok(Some(_)) => {}
+        Ok(None) => {
+            return Ok(vec![problem(
+                VaultErrorCode::NotAVault,
+                Some(marker::FILE),
+                "the commit HEAD names holds no Vault marker",
+            )]);
+        }
+        Err(error) => return Ok(vec![marker_problem(error)?]),
+    }
     let mut problems = check_scheda_owner_only(path).context("check: .scheda")?;
     problems.extend(check_unmerged(repos)?);
     problems.extend(check_perimeter(repos)?);
-    let views = repos.views()?;
-    let declarations = vault
-        .declarations_in(views.of(Repo::Main))
-        .context("check: the collections")?;
+    let (declarations, faults) =
+        collection::load_each(views.of(Repo::Main)).context("check: the collections")?;
+    problems.extend(faults.iter().map(problem_of));
     problems.extend(check_documents(&views, &declarations, vault.encryption())?);
     problems.extend(check_journals(&views, &declarations)?);
     problems.extend(check_journal_id_maps(
@@ -427,6 +461,63 @@ mod tests {
                 .success()
         );
         assert!(run(&vault).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_collection_file_that_does_not_load_is_a_problem_and_the_other_checks_go_on() {
+        let scratch = Scratch::vault("bad-collection");
+        scratch.write("notes/a.md", b"text");
+        scratch.commit("fixture");
+        let vault = scratch.open().await;
+        assert!(run(&vault).await.unwrap().is_empty());
+        // A person commits a collection file that names no kind, and a
+        // change in a sound collection that stays uncommitted.
+        scratch.write("bad/.collection.yaml", b"name: bad\n");
+        scratch.commit("a broken collection");
+        scratch.write("notes/a.md", b"modified");
+        let problems = run(&vault).await.unwrap();
+        assert_eq!(
+            found(&problems),
+            [
+                (
+                    VaultErrorCode::InvalidArgument,
+                    "bad/.collection.yaml".to_owned()
+                ),
+                (VaultErrorCode::FailedPrecondition, "notes/a.md".to_owned()),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_marker_of_another_generation_is_the_one_problem() {
+        let scratch = Scratch::vault("generation");
+        scratch.write("notes/a.md", b"text");
+        scratch.commit("fixture");
+        let vault = scratch.open().await;
+        assert!(run(&vault).await.unwrap().is_empty());
+        scratch.write(".scheda.yaml", b"version: 3\n");
+        scratch.write("bad/.collection.yaml", b"name: bad\n");
+        scratch.commit("another generation");
+        scratch.write("notes/a.md", b"modified");
+        let problems = run(&vault).await.unwrap();
+        assert_eq!(
+            found(&problems),
+            [(VaultErrorCode::Generation, ".scheda.yaml".to_owned())]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_commit_without_the_marker_is_the_one_problem() {
+        let scratch = Scratch::vault("no-marker");
+        scratch.commit("fixture");
+        let vault = scratch.open().await;
+        std::fs::remove_file(scratch.0.join(".scheda.yaml")).unwrap();
+        scratch.commit("no marker");
+        let problems = run(&vault).await.unwrap();
+        assert_eq!(
+            found(&problems),
+            [(VaultErrorCode::NotAVault, ".scheda.yaml".to_owned())]
+        );
     }
 
     #[tokio::test]

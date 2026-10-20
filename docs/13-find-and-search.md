@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.60, 20 October 2026.
+Document 13 of the Scheda package. Version 0.61, 20 October 2026.
 
 How a query and a search must work. Messages: `api/scheda/v1/query.proto`, `ports.proto`, `index.proto`. Index columns: `Projector.Columns(collection)`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat a search as a query string only, are wrong.
 
@@ -69,7 +69,7 @@ A `Filter` leaf names a `column`: `id`, or a column the Projector declares. It d
 - A value is of the kind of its column: a text, an integer, a number, a boolean (on a `text list`, a text). Another kind is `INVALID_ARGUMENT`.
 - A filter deeper than `OpenOptions.filter_max_depth` (default 32, at most 100) is `INVALID_ARGUMENT`: a leaf is one level, each `all_of`, `any_of`, or `none_of` one more.
 
-The columns are checked against what this Vault's Projector declares now. An Index built for other columns or another projection is `INDEX_STALE` (`06` IDX-9).
+The columns are checked against what this Vault's Projector declares now, before the exclusion flags of the collection (SCH-9): a flag changed never makes the Index stale. An Index built for other columns or another projection is `INDEX_STALE` (`06` IDX-9).
 
 ### Steps
 
@@ -126,7 +126,7 @@ In each indexer round (`06` IDX-9), for each changed Document, for **each** Proj
 1. Take the text of that column. A blank text (only whitespace) has no vector.
 2. Hash that exact text as a git blob (SHA-1 of `blob {len}\0{bytes}`). That digest is stored beside the vector, in `_digest_{name}` of the row.
 3. A text whose digest the table already holds for that Document keeps its stored vector: the embedder is not called for it. Vectors the embedder returned before a failed try of the round are kept in the indexing Vault's memory the same way, by digest, until a round succeeds, and so are the Projector's answers, by Document and the digest of its bytes: a try after an embedder failure neither embeds nor projects again what the earlier tries got.
-4. Every other text goes to `Embedder.Embed` in one stream per round, in the order of the Documents; the embedder forms its own portions. A failure ends the stream: the vectors that came before it are kept (step 3). A text the embedder refuses (`REFUSED`) leaves its Document without that vector, and the round goes on.
+4. Every other text goes to `Embedder.Embed` in one stream per round, in the order of the Documents; the embedder forms its own portions. A failure ends the stream: the vectors that came before it are kept (step 3). A text the embedder refuses (`REFUSED`) leaves its Document without that vector, and the round goes on. The refusal is confirmed on the text alone, since an embedder that batches refuses a whole portion for one text: the first text left without a vector is sent alone; if it is embedded alone, the culprit is looked for among the texts after it by halving, and only the text refused alone keeps no vector.
 5. Each vector is stored in `_vector_{name}` of the Document's row, which the round upserts by `id`; a changed Document replaces its row and a deleted one loses it, vectors with it. There is no key map.
 
 Do not glue several columns into one blob. One value, one vector. Do not hash the Document file or a git tree: the digest is of the embedder text, so a commit that changes other bytes of the Document does not re-embed it. A journal segment that grew by appending gives only its new lines; one changed otherwise is projected again line by line, and its unchanged lines keep their vectors by digest.
@@ -155,7 +155,7 @@ Steps:
 6. The ranking is computed whole, but it holds keys and scores only. The stream's first item is the `SearchSummary`; the Documents are read from git as the stream reaches them, at the state the Index reflects, so a large `k` reads no file ahead; `include_raw` true fills `raw` of each hit's Document, unset or false omits it (`tests/search.rs`: `the_documents_carry_their_raw_only_when_asked_and_a_deleted_one_is_no_hit`). A hit whose file that state lacks is skipped.
 7. `SearchSummary.vector_leg` is the first item of every reply, early empty ones included. It is decided before step 3 from what the Vault already holds (no extra I/O, no diff), the first that applies: `VECTOR_LEG_NOT_ASKED` (`vector_weight` 0); `VECTOR_LEG_NO_VECTOR_COLLECTION` (no selected collection has a vector column: excluded or encrypted, no Projector, or no Projector column marked `vector`; decided from the Projector's columns, not from what the Index holds); `VECTOR_LEG_NO_EMBEDDER`; `VECTOR_LEG_NO_VECTORS` (the Index holds none yet); else `VECTOR_LEG_RAN`. A vector-only search (`lexical_weight` 0) with no hits and any value but `RAN` did not search vectors at all, which is how a caller tells that from "nothing matched" without `Index.Status` (`tests/search.rs`: `the_summary_names_why_the_vector_leg_did_not_run`, `the_summary_names_a_vault_without_a_vector_collection_or_without_vectors`). An embedder of another model is not a reason of the summary: that Vault finds the Index `INDEX_STALE` and the search fails.
 
-Index never built → `INDEX_REBUILDING` (retryable); a file of the Index that does not read → `INDEX_BROKEN` until `Index.Reindex`; another projection, other columns, or another embedder model than this Vault's → `INDEX_STALE` (`06` IDX-2, IDX-9, QRY-4). A rebuild of a built Index is none of these: the live Index answers until the switch. Never another Vault’s ids, and never an empty answer in place of those codes. `not_before` that the Index does not reach in time → `DEADLINE_EXCEEDED`. What the caller put in the request, a filter or a weight, that the library refuses is `INVALID_ARGUMENT`, never an Index code.
+Index never built → `INDEX_REBUILDING` (retryable); a file of the Index that does not read → `INDEX_BROKEN` until `Index.Reindex`; another projection, other Projector columns, or another embedder model than this Vault's → `INDEX_STALE` (`06` IDX-2, IDX-9, QRY-4). A rebuild of a built Index is none of these: the live Index answers until the switch. Never another Vault’s ids, and never an empty answer in place of those codes. `not_before` that the Index does not reach in time → `DEADLINE_EXCEEDED`. What the caller put in the request, a filter or a weight, that the library refuses is `INVALID_ARGUMENT`, never an Index code.
 
 ### Reranker
 

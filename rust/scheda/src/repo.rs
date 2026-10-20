@@ -371,7 +371,6 @@ impl Repos {
     /// The state of `repo` at `commit` (`None`: no commit), whatever `HEAD`
     /// names now. `None` when the repository lacks that commit: the history
     /// was rewritten and cleaned up.
-    #[cfg(feature = "index")]
     pub(crate) fn snapshot_at(
         &self,
         repo: Repo,

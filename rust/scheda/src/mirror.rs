@@ -19,6 +19,11 @@
 //!   on both sides differently is `MIRROR_CONFLICT` with nothing changed. A
 //!   join is one commit with both parents, the Vault's first.
 //!
+//! `HEAD` moves only to a commit this build can read: the marker of the
+//! mirror's commit (or of the join) must be of this generation, and every
+//! collection file in it must load. Otherwise the pull fails (`GENERATION`,
+//! `NOT_A_VAULT`, `INVALID_ARGUMENT`) with nothing changed.
+//!
 //! Isolated collections never leave the machine: only the repository of the
 //! Vault is fetched or pushed, and the nested repository under `.isolated/`
 //! is never contacted, whatever remote it has.
@@ -38,7 +43,7 @@ use crate::error::{self, Context, Error, Fault, lib_fault, redact_remote_text};
 use crate::gate::Pass;
 use crate::repo::{self, Repo};
 use crate::vault::Vault;
-use crate::{git, stored};
+use crate::{collection, git, marker, stored};
 
 /// The message of the commit that joins the history of the mirror to the
 /// Vault's.
@@ -170,12 +175,14 @@ impl Vault {
         };
         let theirs_commit = git.find_commit(theirs).map_err(lib_fault)?;
         let Some(ours) = snap.commit() else {
+            self.readable_commit(theirs)?;
             return lock.advance_to(&snap, theirs, "pull the mirror");
         };
         if ours == theirs || git.graph_descendant_of(ours, theirs).map_err(lib_fault)? {
             return Ok(());
         }
         if git.graph_descendant_of(theirs, ours).map_err(lib_fault)? {
+            self.readable_commit(theirs)?;
             return lock.advance_to(&snap, theirs, "pull the mirror");
         }
         let ours_commit = git.find_commit(ours).map_err(lib_fault)?;
@@ -192,7 +199,35 @@ impl Vault {
                 &[&ours_commit, &theirs_commit],
             )
             .map_err(lib_fault)?;
+        self.readable_commit(joined)?;
         lock.advance_to(&snap, joined, JOIN_MESSAGE)
+    }
+
+    /// Whether this build can read the Vault `commit` holds, before `HEAD`
+    /// moves to it: a marker of this generation, and every collection file
+    /// loading. Nothing is changed; the declarations are read again by the
+    /// next call that needs them.
+    fn readable_commit(&self, commit: Oid) -> Result<(), Error> {
+        let Some(target) = self.repos().snapshot_at(Repo::Main, Some(commit))? else {
+            return Err(Fault::new(
+                VaultErrorCode::Replication,
+                "the commit to move to is not in the repository",
+            )
+            .into());
+        };
+        let marker = marker::read(&target).context("check the mirror's commit")?;
+        if marker.is_none() {
+            return Err(Error::from(
+                Fault::new(
+                    VaultErrorCode::NotAVault,
+                    "the mirror's commit holds no Vault marker",
+                )
+                .with_path(marker::FILE),
+            )
+            .context("check the mirror's commit"));
+        }
+        collection::load(&target).context("check the mirror's commit")?;
+        Ok(())
     }
 }
 
@@ -271,13 +306,21 @@ pub(crate) async fn push(pass: &Pass) -> Result<Empty, Error> {
 /// mirror's writes`). The work tree follows `HEAD` as after a write; a file
 /// a person changed is left as it is.
 ///
+/// `HEAD` never moves to a commit this build cannot read: before it moves,
+/// the marker of the commit (the one the mirror holds, or the join) must be
+/// of this generation, and every collection file in it must load.
+///
 /// # Errors
 ///
 /// `NOT_FOUND` without a mirror; `MIRROR_CONFLICT` naming the paths when a
-/// path was changed on both sides differently, with the Vault, its work
-/// tree, and git's index as they were; `ABORTED` (retryable) when the write
-/// lock is not free within `write_timeout_ms` or `HEAD` moved under the
-/// pull; the codes of [`push`] for the network.
+/// path was changed on both sides differently; `GENERATION` when the marker
+/// of the commit to move to is of another generation, `NOT_A_VAULT` when it
+/// has no marker, `INVALID_ARGUMENT` (naming `.scheda.yaml`, or the
+/// collection file) when the marker or a collection file does not load; in
+/// each of these, the Vault, its work tree, and git's index are as they
+/// were. `ABORTED` (retryable) when the write lock is not free within
+/// `write_timeout_ms` or `HEAD` moved under the pull; the codes of [`push`]
+/// for the network.
 pub(crate) async fn pull(pass: &Pass) -> Result<Empty, Error> {
     pull_now(pass).await.context("pull from the mirror")?;
     pass.vault().clear_sync_failure();

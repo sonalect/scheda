@@ -21,7 +21,7 @@ use crate::stored::{self, Format, Unknowns};
 const MIB: u64 = 1024 * 1024;
 
 /// Bytes per journal segment when the declaration sets no limit.
-pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = 8 * MIB;
+pub(crate) const DEFAULT_SEGMENT_MAX_BYTES: u64 = MIB;
 
 const COLLECTION_FILENAMES: [&str; 3] = [".collection.yaml", ".collection.yml", ".collection.json"];
 const LEFTOVER_SCHEMA_FILENAMES: [&str; 3] = [".schema.yaml", ".schema.yml", ".schema.json"];
@@ -188,40 +188,73 @@ impl Declarations {
 /// declaration files, a leftover `.schema.*` file, a file that is not a
 /// valid `Collection`, or a directory name other than the collection's
 /// `name` is `INVALID_ARGUMENT`, with the path of the file; one bad file
-/// fails the whole load. A commit with no tree (an unborn branch) has no
-/// declarations.
+/// fails the whole load (see [`load_each`] for the load that goes on). A
+/// commit with no tree (an unborn branch) has no declarations.
 pub(crate) fn load(snap: &Snap) -> Result<Declarations, Error> {
+    let (declarations, faults) = load_each(snap)?;
+    match faults.into_iter().next() {
+        Some(fault) => Err(Error::from(fault).context("load a collection")),
+        None => Ok(declarations),
+    }
+}
+
+/// Reads the declarations of the commit of `snap` one directory at a time,
+/// as [`load`] does, but a directory that does not load does not stop the
+/// others: the declarations that load come back with a [`Fault`] (code
+/// `INVALID_ARGUMENT`, the path of the file) for each directory that does
+/// not, in directory-name order.
+///
+/// # Errors
+///
+/// Only when the commit cannot be read (`STORAGE` or `REPLICATION`).
+pub(crate) fn load_each(snap: &Snap) -> Result<(Declarations, Vec<Fault>), Error> {
     let mut collections = BTreeMap::new();
+    let mut faults = Vec::new();
     let Some(entries) = snap.list("").context("read the root of the Vault")? else {
-        return Ok(Declarations::default());
+        return Ok((Declarations::default(), faults));
     };
     for entry in entries {
         if entry.node.kind != NodeKind::Dir || entry.name.starts_with('.') {
             continue;
         }
-        let dir_name = entry.name;
-        let files = snap
-            .list(&dir_name)
-            .map_err(|fault| fault.with_path(dir_name.clone()))
-            .context("read a collection directory")?
-            .unwrap_or_default();
-        refuse_leftover_schema_file(&files, &dir_name)?;
-        let Some(file_name) = find_declaration_file(&files, &dir_name)? else {
-            continue;
-        };
-        let rel = format!("{dir_name}/{file_name}");
-        let bytes = snap
-            .read(&rel)
-            .map_err(|fault| fault.with_path(rel.clone()))
-            .context("read a collection file")?
-            .map(|blob| blob.bytes)
-            .unwrap_or_default();
-        let declaration = declare(&bytes, &rel, &dir_name)
-            .map_err(|fault| fault.with_path(rel))
-            .context("load a collection")?;
-        collections.insert(dir_name, declaration);
+        match load_dir(snap, &entry.name)? {
+            Ok(Some(declaration)) => {
+                collections.insert(entry.name, declaration);
+            }
+            Ok(None) => {}
+            Err(fault) => faults.push(fault),
+        }
     }
-    Ok(Declarations { collections })
+    Ok((Declarations { collections }, faults))
+}
+
+/// The declaration of the collection directory `dir_name`: `None` when it
+/// holds no declaration file. The inner `Err` is what the directory holds
+/// wrong; the outer one is a failure to read it.
+fn load_dir(snap: &Snap, dir_name: &str) -> Result<Result<Option<Declaration>, Fault>, Error> {
+    let files = snap
+        .list(dir_name)
+        .map_err(|fault| fault.with_path(dir_name))
+        .context("read a collection directory")?
+        .unwrap_or_default();
+    if let Err(fault) = refuse_leftover_schema_file(&files, dir_name) {
+        return Ok(Err(fault));
+    }
+    let file_name = match find_declaration_file(&files, dir_name) {
+        Ok(Some(name)) => name,
+        Ok(None) => return Ok(Ok(None)),
+        Err(fault) => return Ok(Err(fault)),
+    };
+    let rel = format!("{dir_name}/{file_name}");
+    let bytes = snap
+        .read(&rel)
+        .map_err(|fault| fault.with_path(rel.clone()))
+        .context("read a collection file")?
+        .map(|blob| blob.bytes)
+        .unwrap_or_default();
+    Ok(declare(&bytes, &rel, dir_name)
+        .map(Some)
+        .map_err(|fault| fault.with_path(rel)))
 }
 
 /// Encodes `collection` as the bytes of a declaration file in `format`,
@@ -331,21 +364,20 @@ fn has_file(files: &[Child], name: &str) -> bool {
         .any(|child| child.name == name && child.node.kind == NodeKind::File)
 }
 
-fn refuse_leftover_schema_file(files: &[Child], dir_name: &str) -> Result<(), Error> {
+fn refuse_leftover_schema_file(files: &[Child], dir_name: &str) -> Result<(), Fault> {
     for name in LEFTOVER_SCHEMA_FILENAMES {
         if has_file(files, name) {
             return Err(Fault::new(
                 VaultErrorCode::InvalidArgument,
                 format!("{dir_name} holds the leftover schema file {name}"),
             )
-            .with_path(format!("{dir_name}/{name}"))
-            .into());
+            .with_path(format!("{dir_name}/{name}")));
         }
     }
     Ok(())
 }
 
-fn find_declaration_file(files: &[Child], dir_name: &str) -> Result<Option<&'static str>, Error> {
+fn find_declaration_file(files: &[Child], dir_name: &str) -> Result<Option<&'static str>, Fault> {
     let mut found = None;
     for name in COLLECTION_FILENAMES {
         if !has_file(files, name) {
@@ -356,8 +388,7 @@ fn find_declaration_file(files: &[Child], dir_name: &str) -> Result<Option<&'sta
                 VaultErrorCode::InvalidArgument,
                 format!("the collection directory {dir_name} has more than one declaration file"),
             )
-            .with_path(format!("{dir_name}/{name}"))
-            .into());
+            .with_path(format!("{dir_name}/{name}")));
         }
         found = Some(name);
     }

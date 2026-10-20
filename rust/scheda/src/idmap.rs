@@ -19,7 +19,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::SystemTime;
 
@@ -370,55 +370,146 @@ impl IdMaps {
         Some(map)
     }
 
-    /// The line of `id` in the journal `decl`, as the commit of `snap`
-    /// holds it: the segment the map names; else the segments that differ
-    /// between the map's state and `snap`; and only a journal with no map
-    /// (or one whose state is gone from its repository) is scanned whole.
     /// The segment the map of `decl` places the line `id` in, if the map
     /// has the line. A hint: a segment changed by hand may say otherwise.
     pub(crate) fn segment_of(&self, decl: &Declaration, id: &str) -> Option<String> {
         self.load(decl.name())?.segment_of(id).map(str::to_owned)
     }
 
+    /// The line of `id` in the journal `decl`, as the commit of `snap`
+    /// holds it. See [`Lookup`].
     pub(crate) fn find(
         &self,
         snap: &Snap,
         decl: &Declaration,
         id: &str,
     ) -> Result<Option<Line>, Fault> {
-        let Some(map) = self.load(decl.name()) else {
-            return journal::find_journal_scan(snap, decl, id);
-        };
-        if let Some(segment) = map.segment_of(id) {
-            if let Some(bytes) = journal::read_segment(snap, Path::new(segment))?
-                && let Some(line) = journal::parse_segment(&bytes)
-                    .into_iter()
-                    .find(|line| line.id == id)
-            {
+        self.lookup(snap, decl).find(id)
+    }
+
+    /// A lookup of the lines of the journal `decl` as the commit of `snap`
+    /// holds them, for one call that asks about many ids.
+    pub(crate) fn lookup<'a>(&self, snap: &'a Snap, decl: &'a Declaration) -> Lookup<'a> {
+        Lookup {
+            snap,
+            decl,
+            map: self.load(decl.name()),
+            unmapped: None,
+        }
+    }
+}
+
+/// The segments no map vouches for: those still to read, those read, and
+/// the segment of each id read so far.
+#[derive(Debug)]
+struct Unmapped {
+    /// The segments not read yet, the next one last.
+    left: Vec<PathBuf>,
+    read: Vec<PathBuf>,
+    ids: HashMap<String, usize>,
+}
+
+/// Finds lines of one journal at one commit: the segment the map names for
+/// the id (read and confirmed); else the segments that differ between the
+/// map's state and the commit; and only a journal with no map (or one whose
+/// state is gone from its repository, or one the map is wrong about) is
+/// scanned. The segments that are not the map's are read in order, only as
+/// far as a question needs, each once, and their ids kept: one question
+/// stops at the segment that holds its id, and many questions read the
+/// segments once between them.
+#[derive(Debug)]
+pub(crate) struct Lookup<'a> {
+    snap: &'a Snap,
+    decl: &'a Declaration,
+    map: Option<Arc<IdMap>>,
+    unmapped: Option<Unmapped>,
+}
+
+impl Lookup<'_> {
+    /// The line of `id`, if the journal has it.
+    pub(crate) fn find(&mut self, id: &str) -> Result<Option<Line>, Fault> {
+        if let Some(map) = self.map.clone()
+            && let Some(segment) = map.segment_of(id)
+        {
+            if let Some(line) = self.line_in(Path::new(segment), id)? {
                 return Ok(Some(line));
             }
             // The map is wrong about this id: the segment was changed by
-            // hand. Nothing but a scan can say.
-            return journal::find_journal_scan(snap, decl, id);
+            // hand. Nothing but a scan can say, and the map is not to be
+            // trusted for any other id.
+            self.map = None;
+            self.unmapped = None;
         }
-        let dir = isolated::vault_rel(decl, "");
-        let Some(changed) = snap.changed_since(map.state.oid(decl.repo()), Some(&dir))? else {
-            return journal::find_journal_scan(snap, decl, id);
+        let snap = self.snap;
+        let unmapped = match self.unmapped.take() {
+            Some(unmapped) => unmapped,
+            None => self.list_unmapped()?,
         };
-        let touched: HashSet<String> = changed.into_iter().map(|delta| delta.path).collect();
-        for path in journal::list_segments(snap, decl)? {
-            if !touched.contains(&journal::rel_str(&path)) {
+        let unmapped = self.unmapped.insert(unmapped);
+        if let Some(path) = unmapped.ids.get(id).map(|at| unmapped.read[*at].clone()) {
+            return self.line_in(&path, id);
+        }
+        while let Some(path) = unmapped.left.pop() {
+            let Some(bytes) = journal::read_segment(snap, &path)? else {
                 continue;
+            };
+            let at = unmapped.read.len();
+            unmapped.read.push(path);
+            let mut found = None;
+            for line in journal::parse_segment(&bytes) {
+                if found.is_none() && line.id == id {
+                    unmapped.ids.entry(line.id.clone()).or_insert(at);
+                    found = Some(line);
+                } else {
+                    unmapped.ids.entry(line.id).or_insert(at);
+                }
             }
-            if let Some(bytes) = journal::read_segment(snap, &path)?
-                && let Some(line) = journal::parse_segment(&bytes)
-                    .into_iter()
-                    .find(|line| line.id == id)
-            {
-                return Ok(Some(line));
+            if found.is_some() {
+                return Ok(found);
             }
         }
         Ok(None)
+    }
+
+    fn line_in(&self, path: &Path, id: &str) -> Result<Option<Line>, Fault> {
+        let Some(bytes) = journal::read_segment(self.snap, path)? else {
+            return Ok(None);
+        };
+        Ok(journal::parse_segment(&bytes)
+            .into_iter()
+            .find(|line| line.id == id))
+    }
+
+    /// The segments the map does not vouch for, none read yet.
+    fn list_unmapped(&self) -> Result<Unmapped, Fault> {
+        let changed = match &self.map {
+            Some(map) => {
+                let dir = isolated::vault_rel(self.decl, "");
+                self.snap
+                    .changed_since(map.state.oid(self.decl.repo()), Some(&dir))?
+                    .map(|deltas| {
+                        deltas
+                            .into_iter()
+                            .map(|delta| delta.path)
+                            .collect::<HashSet<String>>()
+                    })
+            }
+            None => None,
+        };
+        let mut left: Vec<PathBuf> = journal::list_segments(self.snap, self.decl)?
+            .into_iter()
+            .filter(|path| {
+                changed
+                    .as_ref()
+                    .is_none_or(|changed| changed.contains(&journal::rel_str(path)))
+            })
+            .collect();
+        left.reverse();
+        Ok(Unmapped {
+            left,
+            read: Vec::new(),
+            ids: HashMap::new(),
+        })
     }
 }
 
@@ -519,12 +610,15 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
-    use scheda_api::v1::{DocumentCreation, OpenOptions, VaultErrorCode};
+    use scheda_api::v1::{DocumentCreation, DocumentWriteResult, OpenOptions, VaultErrorCode};
 
     use super::{IdMap, check_journal_id_maps, in_collection};
+    use crate::document_calls::Writes;
+    use crate::error::Error;
     use crate::index::{Index, State};
-    use crate::repo::{Repo, Repos, fixture};
-    use crate::testing::{create, create_collection, open};
+    use crate::journal::list_segments;
+    use crate::repo::{Repo, Repos, blob_reads, fixture};
+    use crate::testing::{create, create_collection, open, step};
     use crate::vault::Vault;
 
     struct Scratch(PathBuf);
@@ -573,6 +667,79 @@ mod tests {
             vault.indexer().stop().await.unwrap();
             (path, vault)
         }
+
+        /// A Vault with the journal `log`, capped at 40 bytes a segment
+        /// (five lines of `l00: {}`), and `lines` lines in it, its indexer
+        /// stopped after it built the id map of all of them.
+        async fn segmented(&self, lines: usize) -> (PathBuf, Arc<Vault>) {
+            let vault = open(&self.0, OpenOptions::default().with_index_poll_ms(10))
+                .await
+                .unwrap();
+            create_collection(
+                &vault,
+                serde_json::json!({"name": "log", "schema": {"journal": {"segment_max_bytes": 40}}}),
+            )
+            .await
+            .unwrap();
+            for n in 0..lines {
+                create(&vault, "log", creation(&format!("l{n:02}"), false))
+                    .await
+                    .unwrap();
+            }
+            let path = self.0.canonicalize().unwrap();
+            let deadline = Instant::now() + Duration::from_secs(20);
+            while Index::new(&path).read_commit().unwrap().map(State::token)
+                != Some(State::of(&Repos::new(&path).views().unwrap()).token())
+            {
+                assert!(Instant::now() < deadline, "the Index never caught up");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            vault.indexer().stop().await.unwrap();
+            (path, vault)
+        }
+    }
+
+    fn creation(id: &str, keep_existing: bool) -> DocumentCreation {
+        DocumentCreation {
+            id: Some(id.to_owned()),
+            raw: Some(b"{}".to_vec()),
+            note: Some("test".to_owned()),
+            keep_existing: Some(keep_existing),
+            ..Default::default()
+        }
+    }
+
+    /// One `Collection.Create` in `log`, its write one blocking step: the
+    /// result, and how many blobs that step read.
+    async fn append(
+        vault: &Arc<Vault>,
+        request: DocumentCreation,
+    ) -> (Result<DocumentWriteResult, Error>, u64) {
+        let writes = step(vault, move |cx, vault| {
+            vault.precheck_documents(cx, Writes::one("log", request))
+        })
+        .await
+        .unwrap();
+        let held = vault.committer().acquire().await.unwrap();
+        step(vault, move |cx, vault| {
+            // The count of blob reads is of one thread: the whole write
+            // is one step.
+            let before = blob_reads();
+            let result = vault
+                .write_document_held(cx, held, writes)
+                .map(|(result, _)| result);
+            Ok((result, blob_reads() - before))
+        })
+        .await
+        .unwrap()
+    }
+
+    fn segments(path: &Path, vault: &Vault) -> usize {
+        let declarations = vault.declarations_now().unwrap();
+        let snap = Repos::new(path).snapshot(Repo::Main).unwrap();
+        list_segments(&snap, declarations.get("log").unwrap())
+            .unwrap()
+            .len()
     }
 
     impl Drop for Scratch {
@@ -630,6 +797,144 @@ mod tests {
         // So is a map that names a segment the commit does not hold.
         craft(&path, head(&path), &[("old", "log/00000042-zz.jsonl")]);
         assert!(find(&vault, &path, "old"));
+    }
+
+    #[tokio::test]
+    async fn an_append_to_a_journal_with_a_map_reads_the_open_segment_and_no_other() {
+        let scratch = Scratch::new("append-reads");
+        let (path, vault) = scratch.segmented(52).await;
+        let closed = segments(&path, &vault);
+        assert!(closed >= 8, "{closed} segments");
+        let (result, reads) = append(&vault, creation("fresh", false)).await;
+        result.unwrap();
+        // The size of the open segment says it is not full (no blob read);
+        // one read gets its bytes to append to: the id was checked through
+        // the map, which names every segment already, with no read.
+        assert_eq!(reads, 1, "of {closed} segments");
+        assert!(reads < closed as u64);
+    }
+
+    #[tokio::test]
+    async fn an_id_the_map_names_or_a_segment_changed_since_it_holds_is_already_there() {
+        let scratch = Scratch::new("append-duplicate");
+        let (path, vault) = scratch.segmented(52).await;
+        // In a closed segment the map names.
+        let (result, _) = append(&vault, creation("l03", false)).await;
+        assert_eq!(
+            result.unwrap_err().code(),
+            VaultErrorCode::AlreadyExists.into()
+        );
+        let (result, _) = append(&vault, creation("l03", true)).await;
+        let kept = result.unwrap();
+        assert_eq!(kept.document.raw.as_deref(), Some(&b"{}"[..]));
+        assert_eq!(segments(&path, &vault), 11, "nothing was stored");
+        // Appended after the map's state, in a segment changed since.
+        let mut late = creation("late", false);
+        late.raw = Some(b"{\"late\":1}".to_vec());
+        append(&vault, late).await.0.unwrap();
+        let (result, _) = append(&vault, creation("late", false)).await;
+        assert_eq!(
+            result.unwrap_err().code(),
+            VaultErrorCode::AlreadyExists.into()
+        );
+        let (result, _) = append(&vault, creation("late", true)).await;
+        assert_eq!(
+            result.unwrap().document.raw.as_deref(),
+            Some(&b"{\"late\":1}"[..])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_journal_with_no_map_refuses_a_duplicate_as_well() {
+        let scratch = Scratch::new("append-no-map");
+        let (path, vault) = scratch.segmented(12).await;
+        std::fs::remove_file(Index::new(&path).ids_file("log")).unwrap();
+        let (result, _) = append(&vault, creation("l01", false)).await;
+        assert_eq!(
+            result.unwrap_err().code(),
+            VaultErrorCode::AlreadyExists.into()
+        );
+        let (result, _) = append(&vault, creation("l11", true)).await;
+        assert!(result.unwrap().document.raw.is_some());
+        append(&vault, creation("fresh", false)).await.0.unwrap();
+        // A map whose state is gone from the repository is no map either.
+        let unknown = State::parse(&format!("main {}", "ab".repeat(20))).unwrap();
+        craft(&path, unknown, &[]);
+        let (result, _) = append(&vault, creation("fresh", false)).await;
+        assert_eq!(
+            result.unwrap_err().code(),
+            VaultErrorCode::AlreadyExists.into()
+        );
+        // A map that is wrong about an id falls back to a scan.
+        craft(&path, head(&path), &[("l02", "log/00000042-zz.jsonl")]);
+        let (result, _) = append(&vault, creation("l02", false)).await;
+        assert_eq!(
+            result.unwrap_err().code(),
+            VaultErrorCode::AlreadyExists.into()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lookup_with_no_map_reads_the_segments_only_as_far_as_its_id_and_each_once() {
+        let scratch = Scratch::new("lookup-no-map");
+        // Six segments of five lines.
+        let (path, vault) = scratch.segmented(30).await;
+        std::fs::remove_file(Index::new(&path).ids_file("log")).unwrap();
+        step(&vault, move |_cx, vault| {
+            let declarations = vault.declarations_now()?;
+            let decl = declarations.get("log").unwrap();
+            let snap = Repos::new(&path).snapshot(Repo::Main)?;
+            let mut lookup = vault.id_maps().lookup(&snap, decl);
+            // The count of blob reads is of one thread: the whole check is
+            // one step.
+            let before = blob_reads();
+            assert_eq!(lookup.find("l01")?.unwrap().id, "l01");
+            assert_eq!(blob_reads() - before, 1, "the first segment holds it");
+            let before = blob_reads();
+            assert_eq!(lookup.find("l12")?.unwrap().id, "l12");
+            assert_eq!(blob_reads() - before, 2, "the second and third segments");
+            let before = blob_reads();
+            assert_eq!(lookup.find("l03")?.unwrap().id, "l03");
+            assert_eq!(blob_reads() - before, 1, "the segment read before, again");
+            let before = blob_reads();
+            assert!(lookup.find("absent")?.is_none());
+            assert_eq!(blob_reads() - before, 3, "the three segments not read yet");
+            let before = blob_reads();
+            assert!(lookup.find("absent")?.is_none());
+            assert_eq!(blob_reads() - before, 0, "every segment was read once");
+            Ok(())
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_journal_with_no_cap_rotates_at_one_mebibyte() {
+        let scratch = Scratch::new("default-cap");
+        let (path, vault) = scratch.vault().await;
+        let big = |id: &str| {
+            let mut request = creation(id, false);
+            request.raw = Some(format!("{{\"p\":\"{}\"}}", "x".repeat(300_000)).into_bytes());
+            request
+        };
+        // `old` and three lines of 300 KB fit in one MiB, the next does
+        // not: it opens the second segment.
+        for id in ["b1", "b2", "b3"] {
+            append(&vault, big(id)).await.0.unwrap();
+        }
+        assert_eq!(segments(&path, &vault), 1);
+        append(&vault, big("b4")).await.0.unwrap();
+        assert_eq!(segments(&path, &vault), 2);
+        // A segment over the cap, however it came to be, is closed by the
+        // next append, which opens a new one.
+        std::fs::write(
+            path.join(format!("log/00000009-{}.jsonl", vault.writer())),
+            format!("big: {}\n", "x".repeat(1_100_000)),
+        )
+        .unwrap();
+        fixture::commit_all(&path);
+        append(&vault, creation("after", false)).await.0.unwrap();
+        assert_eq!(segments(&path, &vault), 4, "`after` opened a new segment");
     }
 
     #[tokio::test]

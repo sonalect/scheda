@@ -10,7 +10,9 @@ pub enum EmbedderErrorCode {
     /// The model cannot answer now; the same call may succeed later.
     /// Retryable.
     EMBEDDER_ERROR_CODE_UNAVAILABLE = 1i32,
-    /// The model will never embed this input.
+    /// The model will never embed this input. Scheda confirms a refusal on
+    /// the text alone: a refused portion is split until the text that causes
+    /// it is found, and only that text keeps no vector.
     EMBEDDER_ERROR_CODE_REFUSED = 2i32,
 }
 impl EmbedderErrorCode {

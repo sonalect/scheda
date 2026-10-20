@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.80, 20 October 2026.
+Document 14 of the Scheda package. Version 0.81, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -115,7 +115,10 @@ fails with the code of its port (`EmbedderErrorCode`, `RerankerErrorCode`):
 
 Code names are `EMBEDDER_ERROR_CODE_UNAVAILABLE`,
 `EMBEDDER_ERROR_CODE_REFUSED`, `RERANKER_ERROR_CODE_UNAVAILABLE`, and
-`RERANKER_ERROR_CODE_REFUSED`. A failure of the embedder in the
+`RERANKER_ERROR_CODE_REFUSED`. The HTTP embedder sends portions, so one
+text can make the embedder refuse a whole portion: the indexer confirms
+a refusal on the text alone (`06` IDX-9), and only that text keeps no
+vector. A failure of the embedder in the
 background indexer is not the failure of a command: it shows as
 `lastError` of the Index state (`index status`, `index watch`).
 

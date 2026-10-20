@@ -1,6 +1,6 @@
 # 03. Model
 
-Document 3 of the Scheda package. Version 0.26, 19 October 2026.
+Document 3 of the Scheda package. Version 0.27, 20 October 2026.
 
 Normative data model: collection kinds, Document identity, and paths. Terms
 are in `02`. File bytes, git, and locks are in `04`. The collection
@@ -59,11 +59,13 @@ Document; the path may name a closed segment (`journal::tests`:
 **MOD-4. `id` is unique in the collection.** A second `Create` with the
 same `id` is `ALREADY_EXISTS` (or, with `keep_existing`, returns the stored
 Document and writes nothing). Uniqueness is across all segments of a
-`journal`. *Check:* create, create the same `id` → `ALREADY_EXISTS`
+`journal`; an append checks it through the id map of the journal and the
+segments changed since the map (`06` IDX-5), not by reading every segment,
+and a journal with no map is scanned. *Check:* create, create the same `id` → `ALREADY_EXISTS`
 (`tests/documents.rs`: `the_table_holds_for_a_standard_collection`,
 `the_table_holds_for_a_journal`); two segments that both contain the same
 `id` are an `ALREADY_EXISTS` problem in the `Vault.Check` report
-(`journal::tests`: `the_check_collects_every_problem_of_every_journal`).
+(`journal::tests`: `the_check_collects_every_problem_of_every_journal`). *Check:* a duplicate `id` is `ALREADY_EXISTS` (and `keep_existing` returns the stored payload) when the line is in a closed segment the map names and when it was appended after the map's state; a journal with no map, a map whose state is gone, and a map that is wrong about the `id` still refuse it (`idmap::tests`: `an_id_the_map_names_or_a_segment_changed_since_it_holds_is_already_there`, `a_journal_with_no_map_refuses_a_duplicate_as_well`).
 
 **MOD-5. `id` is the path (standard / singleton).** The library derives the
 `standard` file from `id`: `{name}/{id}`, where `/` is a directory. It

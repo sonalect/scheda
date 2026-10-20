@@ -45,6 +45,7 @@ use crate::commit::{Change, Held};
 use crate::documents::{self, Found, Plain};
 use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
+use crate::idmap::{IdMaps, Lookup};
 use crate::repo::{Repo, Snap};
 use crate::{isolated, journal, stored};
 
@@ -665,7 +666,13 @@ impl crate::vault::Vault {
                 lock.snapshot(Repo::Isolated)?
             }
         };
-        let mut ledger = Ledger::new(&snap, &declarations, encryption, self.writer());
+        let mut ledger = Ledger::new(
+            &snap,
+            &declarations,
+            self.id_maps(),
+            encryption,
+            self.writer(),
+        );
         ledger.count(&inspected);
         let mut drafts = Vec::with_capacity(writes.len());
         for (index, (write, inspected)) in writes.into_iter().zip(inspected).enumerate() {
@@ -840,8 +847,11 @@ impl Slot {
 }
 
 /// The lines a call has appended to a journal, and the ids the journal has.
-struct JournalState {
-    ids: HashSet<String>,
+struct JournalState<'a> {
+    /// The lines the journal had before the call, found through its id map.
+    stored: Lookup<'a>,
+    /// The ids this call has appended.
+    appended: HashSet<String>,
     /// The whole new bytes of each segment appended to, by path.
     pending: BTreeMap<PathBuf, Vec<u8>>,
 }
@@ -851,12 +861,13 @@ struct JournalState {
 struct Ledger<'a> {
     snap: &'a Snap,
     declarations: &'a Declarations,
+    id_maps: &'a IdMaps,
     encryption: Option<&'a Encryption>,
     writer: &'a str,
     /// The files more than one operation of the call is about.
     repeated: HashSet<String>,
     slots: BTreeMap<String, Slot>,
-    journals: BTreeMap<String, JournalState>,
+    journals: BTreeMap<String, JournalState<'a>>,
     trailers: Vec<String>,
 }
 
@@ -864,12 +875,14 @@ impl<'a> Ledger<'a> {
     fn new(
         snap: &'a Snap,
         declarations: &'a Declarations,
+        id_maps: &'a IdMaps,
         encryption: Option<&'a Encryption>,
         writer: &'a str,
     ) -> Ledger<'a> {
         Ledger {
             snap,
             declarations,
+            id_maps,
             encryption,
             writer,
             repeated: HashSet::new(),
@@ -893,7 +906,8 @@ impl<'a> Ledger<'a> {
     }
 
     fn apply(&mut self, step: Step, inspected: Inspected) -> Result<Draft, Error> {
-        let Some(decl) = self.declarations.get(&step.collection) else {
+        let declarations: &'a Declarations = self.declarations;
+        let Some(decl) = declarations.get(&step.collection) else {
             return Err(Fault::new(
                 VaultErrorCode::NotFound,
                 format!("the collection {} is not declared", step.collection),
@@ -907,7 +921,7 @@ impl<'a> Ledger<'a> {
     }
 
     /// Appends one line to a journal.
-    fn append(&mut self, decl: &Declaration, step: Step, line: &[u8]) -> Result<Draft, Error> {
+    fn append(&mut self, decl: &'a Declaration, step: Step, line: &[u8]) -> Result<Draft, Error> {
         let Verb::Create { keep_existing } = step.verb else {
             return Err(Fault::new(
                 VaultErrorCode::Unimplemented,
@@ -918,11 +932,22 @@ impl<'a> Ledger<'a> {
         let state = match self.journals.entry(step.collection.clone()) {
             Entry::Occupied(entry) => entry.into_mut(),
             Entry::Vacant(entry) => entry.insert(JournalState {
-                ids: journal::stored_ids(self.snap, decl)?,
+                stored: self.id_maps.lookup(self.snap, decl),
+                appended: HashSet::new(),
                 pending: BTreeMap::new(),
             }),
         };
-        if state.ids.contains(&step.id) {
+        let existing = if state.appended.contains(&step.id) {
+            let line = state.pending.values().find_map(|bytes| {
+                journal::parse_segment(bytes)
+                    .into_iter()
+                    .find(|stored| stored.id == step.id)
+            });
+            Some(line.ok_or_else(|| storage("a line of the journal could not be read again"))?)
+        } else {
+            state.stored.find(&step.id)?
+        };
+        if let Some(existing) = existing {
             if !keep_existing {
                 return Err(Fault::new(
                     VaultErrorCode::AlreadyExists,
@@ -933,25 +958,11 @@ impl<'a> Ledger<'a> {
                 )
                 .into());
             }
-            let payload = state
-                .pending
-                .values()
-                .find_map(|bytes| {
-                    journal::parse_segment(bytes)
-                        .into_iter()
-                        .find(|stored| stored.id == step.id)
-                })
-                .map_or_else(
-                    || journal::find_journal_scan(self.snap, decl, &step.id),
-                    |stored| Ok(Some(stored)),
-                )?
-                .ok_or_else(|| storage("a line of the journal could not be read again"))?
-                .payload;
             return Ok(Draft::Stored {
                 collection: step.collection,
                 id: step.id,
                 revision: None,
-                raw: Raw::Value(payload),
+                raw: Raw::Value(existing.payload),
             });
         }
         let today = journal::today_utc()?;
@@ -968,7 +979,7 @@ impl<'a> Ledger<'a> {
             Entry::Vacant(entry) => entry.insert(read_segment(self.snap, &path)?),
         };
         content.extend_from_slice(line);
-        state.ids.insert(step.id.clone());
+        state.appended.insert(step.id.clone());
         self.trailers
             .push(trailer(&step.collection, &step.id, &step.note));
         Ok(Draft::Stored {

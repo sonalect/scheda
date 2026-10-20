@@ -975,3 +975,204 @@ fn a_pull_holds_the_write_lock_and_a_write_of_another_handle_waits_for_it() {
         assert_settled(&path, &[]);
     });
 }
+
+/// A commit on top of the mirror's branch made with plain git in a second
+/// clone: each `(path, Some(text))` is written, each `(path, None)` is
+/// removed. Returns the commit the mirror now holds.
+fn commit_by_hand(
+    scratch: &Scratch,
+    name: &str,
+    mirror: &Path,
+    edits: &[(&str, Option<&str>)],
+) -> String {
+    let dir = scratch.join(name);
+    git(
+        &scratch.join("."),
+        &["clone", "--quiet", &url(mirror), name],
+    );
+    for (rel, text) in edits {
+        match text {
+            Some(text) => write(&dir, rel, text),
+            None => std::fs::remove_file(dir.join(rel)).unwrap(),
+        }
+    }
+    git(&dir, &["add", "--all"]);
+    git(&dir, &["commit", "--quiet", "--message", "by hand"]);
+    git(&dir, &["push", "--quiet", "origin", "HEAD:main"]);
+    mirror_head(mirror)
+}
+
+/// What a refused pull must leave: `HEAD`, the work tree, git's index, and
+/// the calls that read the Vault.
+struct Standing {
+    head: String,
+    files: Vec<(String, Vec<u8>)>,
+    index: String,
+    status: String,
+}
+
+impl Standing {
+    fn of(path: &Path) -> Standing {
+        Standing {
+            head: head(path),
+            files: snapshot(&path.join("notes")),
+            index: git_out(path, &["ls-files", "--stage"]),
+            status: git_out(path, &["status", "--porcelain"]),
+        }
+    }
+}
+
+/// The pull of `vault` at `path` is refused with `code`, naming `file`
+/// when given, and the Vault stands as `before` says.
+async fn assert_refused(
+    vault: &DynVaultAsync,
+    path: &Path,
+    code: Code,
+    file: Option<&str>,
+    before: &Standing,
+) {
+    let error = pull(vault).await.unwrap_err();
+    assert!(error.is(code), "{error}");
+    let report = scheda::error_report(&error);
+    assert_eq!(report.path.as_deref(), file, "{error}");
+    let after = Standing::of(path);
+    assert_eq!(after.head, before.head);
+    assert_eq!(after.files, before.files);
+    assert_eq!(after.index, before.index);
+    assert_eq!(after.status, before.status);
+    vault.list_collections(Empty::default()).await.unwrap();
+    assert!(
+        vault
+            .check(Empty::default())
+            .await
+            .unwrap()
+            .problems
+            .is_empty()
+    );
+    assert_eq!(read(vault, "a.md").await, "one");
+}
+
+#[test]
+fn a_pull_of_a_mirror_of_another_generation_is_generation_and_changes_nothing() {
+    both(|| async {
+        let scratch = Scratch::new("pull-generation");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        commit_by_hand(
+            &scratch,
+            "hand",
+            &mirror,
+            &[(".scheda.yaml", Some("version: 3\n"))],
+        );
+        let before = Standing::of(&path);
+        assert_refused(&a, &path, Code::Generation, Some(".scheda.yaml"), &before).await;
+        // `Sync` stops at the refused pull.
+        let error = mirror_of(&a)
+            .await
+            .sync(Empty::default())
+            .await
+            .unwrap_err();
+        assert!(error.is(Code::Generation));
+        assert_eq!(head(&path), before.head);
+    });
+}
+
+#[test]
+fn a_join_with_a_mirror_of_another_generation_is_generation_and_changes_nothing() {
+    both(|| async {
+        let scratch = Scratch::new("join-generation");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        commit_by_hand(
+            &scratch,
+            "hand",
+            &mirror,
+            &[(".scheda.yaml", Some("version: 3\n"))],
+        );
+        put(&a, "own.md", "own").await;
+        let before = Standing::of(&path);
+        let commits_before = commits(&path);
+        assert_refused(&a, &path, Code::Generation, Some(".scheda.yaml"), &before).await;
+        assert_eq!(read(&a, "own.md").await, "own");
+        // The join commit may stay in the object store, unreferenced.
+        assert_eq!(commits(&path), commits_before);
+    });
+}
+
+#[test]
+fn a_pull_of_a_collection_file_that_does_not_load_is_invalid_argument_naming_it() {
+    both(|| async {
+        let scratch = Scratch::new("pull-bad-collection");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        commit_by_hand(
+            &scratch,
+            "hand",
+            &mirror,
+            &[("bad/.collection.yaml", Some("name: bad\n"))],
+        );
+        let before = Standing::of(&path);
+        assert_refused(
+            &a,
+            &path,
+            Code::InvalidArgument,
+            Some("bad/.collection.yaml"),
+            &before,
+        )
+        .await;
+        assert!(!path.join("bad").exists());
+    });
+}
+
+#[test]
+fn a_pull_of_a_commit_without_the_marker_is_not_a_vault_and_changes_nothing() {
+    both(|| async {
+        let scratch = Scratch::new("pull-no-marker");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, a) = clone_of(&scratch, "a", &mirror).await;
+        commit_by_hand(&scratch, "hand", &mirror, &[(".scheda.yaml", None)]);
+        let before = Standing::of(&path);
+        assert_refused(&a, &path, Code::NotAVault, Some(".scheda.yaml"), &before).await;
+        assert!(path.join(".scheda.yaml").exists());
+    });
+}
+
+#[test]
+fn auto_sync_at_open_keeps_a_refused_pull_as_the_sync_failure() {
+    both(|| async {
+        let scratch = Scratch::new("auto-pull-generation");
+        let mirror = seeded(&scratch, "m", &[("a.md", "one")]).await;
+        let (path, first) = clone_of(&scratch, "a", &mirror).await;
+        drop(first);
+        commit_by_hand(
+            &scratch,
+            "hand",
+            &mirror,
+            &[(".scheda.yaml", Some("version: 3\n"))],
+        );
+        let before = head(&path);
+        let again = open(
+            &path,
+            OpenOptions::default()
+                .with_mirror(url(&mirror))
+                .with_auto_sync(true),
+        )
+        .await
+        .unwrap();
+        assert_eq!(head(&path), before);
+        assert_eq!(read(&again, "a.md").await, "one");
+        let info = mirror_of(&again)
+            .await
+            .info(Empty::default())
+            .await
+            .unwrap();
+        let failure = info.last_auto_sync_error.as_option().expect("a failure");
+        assert!(
+            failure
+                .code
+                .as_deref()
+                .is_some_and(|code| code.contains("GENERATION")),
+            "{failure:?}"
+        );
+    });
+}

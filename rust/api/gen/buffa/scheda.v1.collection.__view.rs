@@ -1348,7 +1348,7 @@ impl ::serde::Serialize for StandardOwnedView {
 /// names the segment files.
 #[derive(Clone, Debug, Default)]
 pub struct JournalView<'a> {
-    /// Bytes per segment. Unset: 8 MiB. Set: 1 byte to 32 MiB.
+    /// Bytes per segment. Unset: 1 MiB. Set: 1 byte to 32 MiB.
     ///
     /// Field 1: `segment_max_bytes`
     pub segment_max_bytes: ::core::option::Option<u64>,
@@ -1641,7 +1641,7 @@ impl JournalOwnedView {
     pub fn into_bytes(self) -> ::buffa::bytes::Bytes {
         self.0.into_bytes()
     }
-    /// Bytes per segment. Unset: 8 MiB. Set: 1 byte to 32 MiB.
+    /// Bytes per segment. Unset: 1 MiB. Set: 1 byte to 32 MiB.
     ///
     /// Field 1: `segment_max_bytes`
     #[must_use]

@@ -27,7 +27,14 @@
 //! vector the live generation holds for that Document's text. The vectors
 //! it gives are kept in memory until the round succeeds, so a round tried
 //! again after a failure sends only the texts still without one. A text it
-//! refuses keeps no vector.
+//! refuses keeps no vector, and only that text: a refusal of a portion is
+//! split until the text that causes it is found.
+//!
+//! **A declaration flag** (`exclude_lexical_index`, `exclude_vector_index`)
+//! decides what a table holds, not whether the Index is fresh: the Index
+//! records what the Projector declared for a collection beside the shape of
+//! its table, [`stale`] compares the first, and a round rebuilds a table
+//! whose shape is not the one the declaration gives now.
 //!
 //! **A journal segment** that grew by appending (its old bytes are a
 //! prefix of the new ones) gives only its new lines; one changed otherwise
@@ -47,7 +54,7 @@ use scheda_blocking::{Blocking, blocking};
 use crate::collection::{Declaration, Declarations, Kind as CollectionKind};
 use crate::documents::WalkState;
 use crate::error::{Context, Error, Fault};
-use crate::generation::{self, Commit, Embedder, Generation, Retired};
+use crate::generation::{self, Commit, Declared, Embedder, Generation, Retired};
 use crate::id::require_document_id;
 use crate::index::{Counts, State};
 use crate::ports::{EmbedderPort, Installed, ProjectorPort};
@@ -78,11 +85,15 @@ impl Calls {
 
 /// What the Index would be, made by this Vault for one set of declared
 /// collections: its ports, and the shape of the table of each collection it
-/// indexes.
+/// indexes (the declaration's exclusions applied) beside what the Projector
+/// declared for it.
 #[derive(Clone, Debug)]
 pub(crate) struct Plan {
     pub(crate) ports: generation::Ports,
     pub(crate) shapes: BTreeMap<String, Shape>,
+    /// What the Projector declared for each of those collections, before
+    /// the exclusions: what [`stale`] compares.
+    pub(crate) declared: BTreeMap<String, Declared>,
     /// The collections the plan is of: a round brings exactly these
     /// forward, so a collection declared after the plan was made cannot
     /// lack its shape.
@@ -107,6 +118,7 @@ pub(crate) fn indexed(decl: &Declaration) -> bool {
 /// The failure of the Projector.
 pub(crate) async fn plan(calls: &Calls, declarations: Arc<Declarations>) -> Result<Plan, Error> {
     let mut shapes = BTreeMap::new();
+    let mut declared = BTreeMap::new();
     let mut needs_embedder: Option<String> = None;
     for decl in declarations.iter().filter(|decl| indexed(decl)) {
         let schema: Option<IndexSchema> = match &calls.projector {
@@ -133,6 +145,17 @@ pub(crate) async fn plan(calls: &Calls, declarations: Arc<Declarations>) -> Resu
         if !vectors.is_empty() && needs_embedder.is_none() {
             needs_embedder = Some(decl.name().to_owned());
         }
+        declared.insert(
+            decl.name().to_owned(),
+            Declared {
+                vectors: columns
+                    .iter()
+                    .filter(|column| column.vector)
+                    .map(|column| column.name.clone())
+                    .collect(),
+                columns: columns.clone(),
+            },
+        );
         shapes.insert(
             decl.name().to_owned(),
             Shape {
@@ -174,6 +197,7 @@ pub(crate) async fn plan(calls: &Calls, declarations: Arc<Declarations>) -> Resu
             embedder,
         },
         shapes,
+        declared,
         lacking,
         declarations,
     })
@@ -210,7 +234,8 @@ pub(crate) async fn can_rebuild(
 }
 
 /// Why `commit`, an Index built with other ports, is stale for a Vault of
-/// `plan`; `None` when it is not.
+/// `plan`; `None` when it is not. A collection's `exclude_lexical_index` and
+/// `exclude_vector_index` never make it stale.
 pub(crate) fn stale(commit: &Commit, plan: &Plan) -> Option<String> {
     if commit.ports.projection != plan.ports.projection {
         return Some(String::from(
@@ -226,13 +251,15 @@ pub(crate) fn stale(commit: &Commit, plan: &Plan) -> Option<String> {
             "the Index was built with another embedder model or vector length than this Vault's",
         ));
     }
-    // A Vault without an embedder knows no vector length; the embedder of
-    // one that has it was compared above.
+    // What the Projector declared, not what the table holds: a flag of the
+    // collection's declaration changes the table, and the round rebuilds
+    // it, but it leaves the Index fresh. The vector length is not compared
+    // per collection: the Index's embedder, compared above, fixes it, and
+    // a collection whose vectors are excluded holds none, so a Vault with
+    // an embedder and one without agree on it.
     for (collection, table) in &commit.tables {
-        if let Some(shape) = plan.shapes.get(collection)
-            && (shape.columns != table.shape.columns
-                || shape.vectors != table.shape.vectors
-                || (plan.ports.embedder.is_some() && shape.dimensions != table.shape.dimensions))
+        if let Some(declared) = plan.declared.get(collection)
+            && *declared != table.declared
         {
             return Some(format!(
                 "the Index holds other columns of the collection {collection} than this Vault's Projector gives"
@@ -444,12 +471,18 @@ impl Work<'_> {
         }
         for decl in declarations.iter().filter(|decl| indexed(decl)) {
             let name = decl.name();
-            let Some(shape) = self.plan.shapes.get(name).cloned() else {
+            let (Some(shape), Some(declared)) = (
+                self.plan.shapes.get(name).cloned(),
+                self.plan.declared.get(name).cloned(),
+            ) else {
                 unreachable!("a plan has the shape of every collection it indexes");
             };
             let known = self.commit.tables.get(name).cloned();
             let scope = match (&known, &deltas) {
                 (None, _) | (_, None) => Scope::Whole,
+                // A table of another shape (a declaration flag moved, or
+                // the vector length) gains or loses its columns: whole.
+                (Some(known), _) if known.shape != shape => Scope::Whole,
                 (Some(_), Some(None)) => Scope::Compare,
                 (Some(_), Some(Some(deltas))) => {
                     if deltas
@@ -492,6 +525,7 @@ impl Work<'_> {
                 generation::Table {
                     name: table_name,
                     shape,
+                    declared,
                     versions: table.versions(),
                 },
             );
@@ -816,8 +850,17 @@ impl Work<'_> {
     }
 
     /// Asks the embedder for the vectors of `wanted` (digest, text) the
-    /// cache lacks, once per distinct text, and keeps them in the cache. A
-    /// text it refuses is remembered and keeps no vector.
+    /// cache lacks, once per distinct text, and keeps them in the cache.
+    ///
+    /// A refusal is charged to the text alone: an embedder that batches
+    /// refuses a whole portion for one text in it, and the vectors it
+    /// returned before the refusal are kept. The first text left without a
+    /// vector is sent alone; refused alone, it is remembered and keeps no
+    /// vector. Embedded alone, it is innocent, and the culprit is looked
+    /// for among the texts after it by halving, so a portion of `n` texts
+    /// costs about `log n` more calls per culprit, not one call per text.
+    /// The texts after the culprit go on as one call. Any other failure
+    /// ends the call.
     async fn embed_wanted(&mut self, wanted: Vec<(String, String)>) -> Result<(), Error> {
         let Some(embedder) = self.calls.embedder.clone() else {
             return Err(Fault::new(
@@ -827,28 +870,86 @@ impl Work<'_> {
             .into());
         };
         let mut seen = HashSet::new();
-        let mut texts: Vec<(String, String)> = wanted
+        let pending: Vec<(String, String)> = wanted
             .into_iter()
             .filter(|(digest, _)| seen.insert(digest.clone()))
             .collect();
-        while !texts.is_empty() {
-            let (digests, batch): (Vec<String>, Vec<String>) = texts.drain(..).unzip();
-            let stopped = Arc::clone(&self.stopped);
-            let embedded = embedder.embed(batch.clone(), move || stopped()).await;
-            let done = embedded.vectors.len();
-            for (digest, vector) in digests.iter().zip(embedded.vectors) {
-                self.cache.vectors.insert(digest.clone(), vector);
-            }
-            match embedded.failure {
-                None => {}
-                Some(error) if error.is(EmbedderErrorCode::Refused) && done < digests.len() => {
-                    self.cache.refused.insert(digests[done].clone());
-                    texts = digests.into_iter().zip(batch).skip(done + 1).collect();
-                }
-                Some(error) => return Err(error),
-            }
+        let mut start = 0;
+        while start < pending.len() {
+            let Some(done) = self.send(&embedder, &pending[start..]).await? else {
+                break;
+            };
+            start = self.confirm(&embedder, &pending, start + done).await?;
         }
         Ok(())
+    }
+
+    /// Finds the text that caused a refusal. `pending[first]` is the first
+    /// text without a vector after a refused call. Returns the index of the
+    /// text after the culprit found, from which the texts go on untried.
+    async fn confirm(
+        &mut self,
+        embedder: &Arc<EmbedderPort>,
+        pending: &[(String, String)],
+        first: usize,
+    ) -> Result<usize, Error> {
+        if self
+            .send(embedder, &pending[first..=first])
+            .await?
+            .is_some()
+        {
+            self.cache.refused.insert(pending[first].0.clone());
+            return Ok(first + 1);
+        }
+        // The suspects are `pending[lo..hi]`; each step moves `lo` up or
+        // `hi` down, so the loop ends.
+        let mut lo = first + 1;
+        let mut hi = pending.len();
+        while lo < hi {
+            if hi - lo == 1 {
+                if self.send(embedder, &pending[lo..hi]).await?.is_some() {
+                    self.cache.refused.insert(pending[lo].0.clone());
+                }
+                return Ok(hi);
+            }
+            let mid = lo + (hi - lo) / 2;
+            match self.send(embedder, &pending[lo..mid]).await? {
+                None => lo = mid,
+                Some(done) => {
+                    lo += done;
+                    hi = mid;
+                }
+            }
+        }
+        Ok(lo)
+    }
+
+    /// One call to the embedder with `texts`: keeps the vectors it gives.
+    /// `None` when it embedded them all, `Some(n)` when it refused after
+    /// `n` vectors.
+    ///
+    /// # Errors
+    ///
+    /// Any failure of the embedder but a refusal, a stop included.
+    async fn send(
+        &mut self,
+        embedder: &Arc<EmbedderPort>,
+        texts: &[(String, String)],
+    ) -> Result<Option<usize>, Error> {
+        let batch: Vec<String> = texts.iter().map(|(_, text)| text.clone()).collect();
+        let stopped = Arc::clone(&self.stopped);
+        let embedded = embedder.embed(batch, move || stopped()).await;
+        let done = embedded.vectors.len();
+        for ((digest, _), vector) in texts.iter().zip(embedded.vectors) {
+            self.cache.vectors.insert(digest.clone(), vector);
+        }
+        match embedded.failure {
+            None => Ok(None),
+            Some(error) if error.is(EmbedderErrorCode::Refused) && done < texts.len() => {
+                Ok(Some(done))
+            }
+            Some(error) => Err(error),
+        }
     }
 }
 
@@ -1690,6 +1791,283 @@ mod tests {
         assert!(rows.values().all(|(_, _, vector)| *vector));
         vault.close().await.unwrap();
         counted.await.unwrap();
+    }
+
+    /// The names of the columns of the table of `collection`, and the number
+    /// of rows that hold a vector, at the versions the live commit names.
+    async fn held(vault: &Arc<Vault>, collection: &str) -> (Vec<String>, usize) {
+        let (dir, name) = live_table(vault, collection).await;
+        let root = Index::new(vault.path()).root().to_path_buf();
+        let collection = collection.to_owned();
+        let version = blocking(move |cx| {
+            let generation = Layout::new(&root).current(cx)?.unwrap();
+            let commit = generation.read_commit(cx)?.unwrap();
+            Ok(commit.tables.get(&collection).unwrap().versions.rows)
+        })
+        .await
+        .unwrap();
+        let dataset = Dataset::open(dir.join(format!("{name}.lance")).to_str().unwrap())
+            .await
+            .unwrap()
+            .checkout_version(version)
+            .await
+            .unwrap();
+        let names = dataset
+            .schema()
+            .fields
+            .iter()
+            .map(|field| field.name.clone())
+            .collect();
+        let batch = dataset.scan().try_into_batch().await.unwrap();
+        let vectors = batch
+            .column_by_name("_vector_body")
+            .map_or(0, |column| column.len() - column.null_count());
+        (names, vectors)
+    }
+
+    /// The count of `collection` as `Reading` and the queries give it now.
+    async fn counted(vault: &Arc<Vault>, collection: &str) -> Result<u64, Error> {
+        counted_by(vault, collection, serde_json::json!({})).await
+    }
+
+    /// The count of the Documents of `collection` that match the JSON
+    /// `query`.
+    async fn counted_by(
+        vault: &Arc<Vault>,
+        collection: &str,
+        query: serde_json::Value,
+    ) -> Result<u64, Error> {
+        let pass = crate::gate::Pass::enter(vault)?;
+        let reading = crate::queries::Reading::of(&pass).await?;
+        let query: scheda_api::v1::DocumentQuery = serde_json::from_value(query).unwrap();
+        Ok(
+            crate::queries::find_in_collection(&pass, &reading, collection, &query, false)
+                .await?
+                .total,
+        )
+    }
+
+    /// A text search of `collection`, as it answers now.
+    async fn searched(vault: &Arc<Vault>, collection: &str) -> Result<(), Error> {
+        let pass = crate::gate::Pass::enter(vault)?;
+        let reading = crate::queries::Reading::of(&pass).await?;
+        let search: scheda_api::v1::DocumentSearch =
+            serde_json::from_value(serde_json::json!({"text": "body number"})).unwrap();
+        crate::search::in_collection(&pass, &reading, collection, &search).await?;
+        Ok(())
+    }
+
+    /// Declares `notes` with `schema` (JSON), with the indexer held, and
+    /// asks what a caller can ask before the round that rebuilds the table
+    /// runs: a count and a search answer, and a filter on the columns of an
+    /// `exclude_lexical_index` collection is refused as the declaration
+    /// says. Then lets the round run.
+    async fn flipped(vault: &Arc<Vault>, schema: serde_json::Value, lexical_excluded: bool) {
+        let path = vault.path().to_path_buf();
+        crate::indexer::hooks::hold(&path);
+        crate::testing::update_collection(
+            vault,
+            serde_json::json!({"name": "notes", "schema": schema}),
+        )
+        .await
+        .unwrap();
+        wait_until("the held round", || crate::indexer::hooks::waiting(&path)).await;
+        assert_eq!(counted(vault, "notes").await.unwrap(), 10);
+        assert!(searched(vault, "notes").await.is_ok());
+        let filtered = counted_by(
+            vault,
+            "notes",
+            serde_json::json!({"filter": {"term": {"column": "n", "value": {"integer": 3}}}}),
+        )
+        .await;
+        if lexical_excluded {
+            assert!(filtered.unwrap_err().is(VaultErrorCode::Unimplemented));
+        } else {
+            assert!(filtered.is_ok(), "{filtered:?}");
+        }
+        crate::indexer::hooks::release(&path);
+        wait_indexed(vault).await;
+        assert!(
+            !vault.indexer().status().last_error.is_set(),
+            "{:?}",
+            vault.indexer().status()
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn flipping_an_exclusion_flag_rebuilds_the_table_and_leaves_the_index_fresh() {
+        let scratch = Scratch::new("flip-exclusions");
+        let (ports, _, _) = ports();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        batch(&vault, "notes", notes(10, 0)).await.unwrap();
+        wait_indexed(&vault).await;
+        let (names, vectors) = held(&vault, "notes").await;
+        assert!(names.contains(&String::from("title")) && vectors == 10);
+
+        // Lexical off: the table loses its value columns, keeps its vectors.
+        flipped(
+            &vault,
+            serde_json::json!({"standard": {}, "exclude_lexical_index": true}),
+            true,
+        )
+        .await;
+        assert_eq!(counted(&vault, "notes").await.unwrap(), 10);
+        let (names, vectors) = held(&vault, "notes").await;
+        assert!(!names.contains(&String::from("title")) && !names.contains(&String::from("n")));
+        assert_eq!(vectors, 10);
+
+        // Lexical on again: the values are back.
+        flipped(&vault, serde_json::json!({"standard": {}}), false).await;
+        let notes_rows = rows(&vault, "notes").await;
+        assert_eq!(notes_rows.len(), 10);
+        assert_eq!(
+            notes_rows.get("n003.md"),
+            Some(&(Some(String::from("Note 3")), Some(3), true))
+        );
+        assert_eq!(
+            counted_by(
+                &vault,
+                "notes",
+                serde_json::json!({"filter": {"term": {"column": "n", "value": {"integer": 3}}}})
+            )
+            .await
+            .unwrap(),
+            1
+        );
+
+        // Vectors off: the table loses its vectors, keeps its values.
+        flipped(
+            &vault,
+            serde_json::json!({"standard": {}, "exclude_vector_index": true}),
+            false,
+        )
+        .await;
+        assert_eq!(counted(&vault, "notes").await.unwrap(), 10);
+        let (names, vectors) = held(&vault, "notes").await;
+        assert!(names.contains(&String::from("title")));
+        assert_eq!(vectors, 0);
+
+        // Vectors on again: every Document has its vector.
+        flipped(&vault, serde_json::json!({"standard": {}}), false).await;
+        let notes_rows = rows(&vault, "notes").await;
+        assert_eq!(notes_rows.len(), 10);
+        assert!(
+            notes_rows
+                .values()
+                .all(|(title, _, vector)| title.is_some() && *vector)
+        );
+        assert_eq!(
+            notes_rows.get("n007.md"),
+            Some(&(Some(String::from("Note 7")), Some(7), true))
+        );
+        vault.close().await.unwrap();
+    }
+
+    /// Indexes 30 Documents of `notes` with an embedder of portion 8 that
+    /// refuses a whole portion that holds a text with `bad`, and the
+    /// Document number `bad_at` has such a text. Returns the calls the
+    /// embedder got.
+    async fn embed_with_a_refusing_portion(name: &str, bad_at: usize) -> usize {
+        let scratch = Scratch::new(name);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let embedder = {
+            let calls = Arc::clone(&calls);
+            FixedEmbedder::new(
+                "model-a",
+                4,
+                NonZeroUsize::new(8).unwrap(),
+                move |texts: Vec<String>| {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    if texts.iter().any(|text| text.contains("bad")) {
+                        return Err(Failure::new(EmbedderErrorCode::Refused, "a bad text").into());
+                    }
+                    Ok(texts
+                        .iter()
+                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                        .collect())
+                },
+            )
+        };
+        let ports = Ports {
+            projector: Some(ProjectorRef::from_sync(Pipes {
+                projected: Arc::new(AtomicUsize::new(0)),
+            })),
+            embedder: Some(EmbedderRef::from_sync(embedder)),
+            reranker: None,
+        };
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        let operations: Vec<DocumentOperation> = (0..30)
+            .map(|n| {
+                let body = if n == bad_at {
+                    String::from("bad body")
+                } else {
+                    format!("body number {n}")
+                };
+                DocumentOperation {
+                    operation: Some(Operation::Upsert(Box::new(upsert_of(
+                        &format!("n{n:03}.md"),
+                        format!("Note {n}|{n}|{body}").as_bytes(),
+                    )))),
+                    ..DocumentOperation::default()
+                }
+            })
+            .collect();
+        batch(&vault, "notes", operations).await.unwrap();
+        wait_indexed(&vault).await;
+        assert!(
+            !vault.indexer().status().last_error.is_set(),
+            "the round succeeded"
+        );
+        let rows = rows(&vault, "notes").await;
+        assert_eq!(rows.len(), 30);
+        for (id, (_, _, vector)) in &rows {
+            assert_eq!(
+                *vector,
+                *id != format!("n{bad_at:03}.md"),
+                "only the Document with the bad text lacks its vector: {id}"
+            );
+        }
+        vault.close().await.unwrap();
+        calls.load(Ordering::SeqCst)
+    }
+
+    /// A refusal of a portion is charged to the text that causes it. The
+    /// calls (one per portion of 8) are at most: the first call through the
+    /// failing portion (4 portions of 30), the culprit's predecessors alone
+    /// (1), the halving (at most ceil(log2 29) = 5 steps of at most 2
+    /// portions), the culprit alone (1), and the texts after it in one call
+    /// (4 portions at most).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_refused_portion_costs_only_the_text_that_causes_it_its_vector() {
+        let bound = 4 + 1 + 5 * 2 + 1 + 4;
+        let middle = embed_with_a_refusing_portion("refused-middle", 12).await;
+        assert!(middle <= bound, "{middle} calls, at most {bound}");
+        let first = embed_with_a_refusing_portion("refused-first", 16).await;
+        assert!(first <= bound, "{first} calls, at most {bound}");
     }
 
     #[test]

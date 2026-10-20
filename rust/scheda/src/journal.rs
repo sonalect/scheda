@@ -14,7 +14,7 @@
 //! work tree. Appending a line, and the id maps of the Index, belong to the
 //! writes. A segment is named here by its Vault-relative path.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 use std::iter::FusedIterator;
 use std::path::{Path, PathBuf};
@@ -317,25 +317,6 @@ impl Iterator for JournalLines<'_> {
 
 #[cfg(test)]
 impl FusedIterator for JournalLines<'_> {}
-
-/// Scans the segments in append order for the line with `id`. A line that
-/// does not parse and a torn tail are passed over. The first line with the
-/// id is the answer; `None` when there is none.
-pub(crate) fn find_journal_scan(
-    snap: &Snap,
-    decl: &Declaration,
-    id: &str,
-) -> Result<Option<Line>, Fault> {
-    for path in list_segments(snap, decl)? {
-        let Some(bytes) = read_segment(snap, &path)? else {
-            continue;
-        };
-        if let Some(line) = parse_segment(&bytes).into_iter().find(|line| line.id == id) {
-            return Ok(Some(line));
-        }
-    }
-    Ok(None)
-}
 
 /// Sort key that puts the segments of one journal in append order.
 pub(crate) type SegmentOrder = (u8, String, u32, String, String);
@@ -643,19 +624,6 @@ pub(crate) fn segment_for_append_in(
     Ok(dir.join(name))
 }
 
-/// Every id the lines of a journal have, from its segments in the commit of
-/// `snap`. A line that does not parse and a torn tail are passed over.
-pub(crate) fn stored_ids(snap: &Snap, decl: &Declaration) -> Result<HashSet<String>, Fault> {
-    let mut ids = HashSet::new();
-    for path in list_segments(snap, decl)? {
-        let Some(bytes) = read_segment(snap, &path)? else {
-            continue;
-        };
-        ids.extend(parse_segment(&bytes).into_iter().map(|line| line.id));
-    }
-    Ok(ids)
-}
-
 /// Today's date in UTC, `YYYY-MM-DD`, as segment names carry it.
 pub(crate) fn today_utc() -> Result<String, Fault> {
     let secs = SystemTime::now()
@@ -781,8 +749,8 @@ mod tests {
     use scheda_api::v1::VaultErrorCode;
 
     use super::{
-        JournalLines, Limits, check_journals, civil_from_unix_days, encode_line, find_journal_scan,
-        list_segments, next_segment_name, parse_hex_seq, parse_line, parse_segment,
+        JournalLines, Limits, check_journals, civil_from_unix_days, encode_line, list_segments,
+        next_segment_name, parse_hex_seq, parse_line, parse_segment, read_segment,
         segment_belongs_to, segment_for_append, segment_is_full, segment_order, segment_writer,
         split_lines, today_utc,
     };
@@ -923,10 +891,17 @@ mod tests {
         assert_eq!(parse_segment(&bytes)[1].payload, payload, "parsed back");
         scratch.write("log/00000001-w.jsonl", &bytes);
         let snap = scratch.snap(&log);
-        let found = find_journal_scan(&snap, &log, "second").unwrap().unwrap();
+        let find = |id: &str| {
+            list_segments(&snap, &log)
+                .unwrap()
+                .into_iter()
+                .filter_map(|path| read_segment(&snap, &path).unwrap())
+                .find_map(|bytes| parse_segment(&bytes).into_iter().find(|line| line.id == id))
+        };
+        let found = find("second").unwrap();
         assert_eq!(found.id, "second");
         assert_eq!(found.payload, payload);
-        assert_eq!(find_journal_scan(&snap, &log, "third").unwrap(), None);
+        assert_eq!(find("third"), None);
     }
 
     #[test]
