@@ -37,7 +37,9 @@ use crate::filter::{self, all, any};
 use crate::gate::Pass;
 use crate::generation::{Commit, Generation, Layout};
 use crate::index::{Index, State};
+use crate::journal::SegmentMemo;
 use crate::ports::task;
+use crate::repo::{Repo, Snap};
 use crate::store::{Column, Kind, lance_fault};
 use crate::tables::{self, Calls, Plan};
 use crate::vault::Vault;
@@ -69,9 +71,9 @@ impl Reading {
     /// Vault's; the failure of git, of the Index, or of the Projector.
     pub(crate) async fn of(pass: &Pass) -> Result<Reading, Error> {
         let root = Index::new(pass.vault().path()).root().to_path_buf();
-        let (declarations, live) = pass
+        let (head, declarations, live) = pass
             .step(move |cx, vault| {
-                let declarations = vault.declarations_now()?;
+                let (head, declarations) = vault.declarations_at_head()?;
                 let live = match Layout::new(&root).current(cx)? {
                     Some(generation) => {
                         let commit = generation.read_commit(cx)?;
@@ -79,7 +81,7 @@ impl Reading {
                     }
                     None => None,
                 };
-                Ok((declarations, live))
+                Ok((head, declarations, live))
             })
             .await?;
         let Some((generation, commit)) = live else {
@@ -92,7 +94,7 @@ impl Reading {
         let calls = Calls::of(pass.vault().ports());
         // A Vault that lacks the embedder its `vector` columns need does
         // not index, and reads the Index all the same.
-        let plan = tables::plan(&calls, Arc::clone(&declarations)).await?;
+        let plan = tables::plan(&calls, head, Arc::clone(&declarations)).await?;
         if let Some(reason) = tables::stale(&commit, &plan) {
             return Err(Fault::new(VaultErrorCode::IndexStale, reason).into());
         }
@@ -814,6 +816,7 @@ pub(crate) struct Page {
     state: State,
     include_raw: bool,
     declarations: BTreeMap<String, Declaration>,
+    reader: Reader,
 }
 
 impl Page {
@@ -840,6 +843,7 @@ impl Page {
             state: reading.state(),
             include_raw,
             declarations,
+            reader: Reader::default(),
         }
     }
 
@@ -857,7 +861,15 @@ impl Page {
             let Some(decl) = self.declarations.get(&hit.collection) else {
                 continue;
             };
-            return match read_document(cx, vault, decl, self.state, &hit.id, self.include_raw) {
+            return match read_document(
+                cx,
+                vault,
+                decl,
+                self.state,
+                &hit.id,
+                self.include_raw,
+                &mut self.reader,
+            ) {
                 Ok(Some(document)) => Some(Ok(QueryItem {
                     item: Some(QueryArm::Document(Box::new(document))),
                     ..QueryItem::default()
@@ -874,8 +886,41 @@ impl Page {
     }
 }
 
+/// What a reader of many Documents of one page keeps between them: the
+/// snapshot of each repository it read at, and the last journal segment it
+/// read (see [`SegmentMemo`]). A page of lines of one segment takes one
+/// snapshot and reads the segment once, not once per line.
+#[derive(Debug, Default)]
+pub(crate) struct Reader {
+    snaps: Vec<Snap>,
+    segment: SegmentMemo,
+}
+
+/// The snapshot of `repo` in `snaps`, taken once: at the commit `state`
+/// names, or the state of `repo` now when the commit left it.
+fn snap_of<'a>(
+    snaps: &'a mut Vec<Snap>,
+    vault: &Vault,
+    repo: Repo,
+    state: State,
+) -> Result<&'a Snap, Fault> {
+    if !snaps.iter().any(|snap| snap.repo() == repo) {
+        let snap = match vault.repos().snapshot_at(repo, state.oid(repo))? {
+            Some(snap) => snap,
+            None => vault.repos().snapshot(repo)?,
+        };
+        snaps.push(snap);
+    }
+    snaps
+        .iter()
+        .find(|snap| snap.repo() == repo)
+        .ok_or_else(|| Fault::new(VaultErrorCode::Storage, "the snapshot of a page is gone"))
+}
+
 /// The Document `id` of `decl` at `state`: its keys and revision, and its
 /// bytes with `include_raw`. `None` when that state does not hold it.
+/// `reader` is the one of the page the call belongs to; every call of a
+/// page passes the same `state` and the same `reader`.
 pub(crate) fn read_document(
     _cx: &Blocking,
     vault: &Vault,
@@ -883,19 +928,16 @@ pub(crate) fn read_document(
     state: State,
     id: &str,
     include_raw: bool,
+    reader: &mut Reader,
 ) -> Result<Option<Document>, Error> {
-    let repo = decl.repo();
-    let snap = match vault.repos().snapshot_at(repo, state.oid(repo))? {
-        Some(snap) => snap,
-        // The commit left its repository: read the state now.
-        None => vault.repos().snapshot(repo)?,
-    };
+    let Reader { snaps, segment } = reader;
+    let snap = snap_of(snaps, vault, decl.repo(), state)?;
     let mut document = Document::default()
         .with_collection(decl.name().to_owned())
         .with_id(id.to_owned());
     if decl.kind() == CollectionKind::Journal {
         if include_raw {
-            let Some(line) = vault.id_maps().find(&snap, decl, id)? else {
+            let Some(line) = vault.id_maps().find_with(snap, decl, id, segment)? else {
                 return Ok(None);
             };
             document.raw = Some(line.payload);
@@ -903,7 +945,7 @@ pub(crate) fn read_document(
         return Ok(Some(document));
     }
     if include_raw {
-        let Some(found) = documents::read_found(&snap, decl, id, vault.encryption())? else {
+        let Some(found) = documents::read_found(snap, decl, id, vault.encryption())? else {
             return Ok(None);
         };
         document.revision = Some(found.revision());
@@ -1004,5 +1046,56 @@ fn descends(git: &git2::Repository, commit: git2::Oid, ancestor: git2::Oid) -> R
         Ok(descends) => Ok(descends),
         Err(err) if err.code() == git2::ErrorCode::NotFound => Ok(false),
         Err(err) => Err(crate::error::lib_fault(err).into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use scheda_api::v1::OpenOptions;
+
+    use super::*;
+    use crate::repo::blob_reads;
+    use crate::testing::{journal_of_lines, open, step};
+
+    #[tokio::test]
+    async fn a_page_of_journal_lines_reads_their_segment_once() {
+        let dir = std::env::var_os("TEST_TMPDIR")
+            .map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+            .join(format!("scheda-page-segment-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vault = open(&dir, OpenOptions::default().with_write_timeout_ms(2000))
+            .await
+            .unwrap();
+        journal_of_lines(&vault, "log", 60).await;
+
+        let pass = Pass::enter(&vault).unwrap();
+        let reading = Reading::of(&pass).await.unwrap();
+        let query = DocumentQuery::default()
+            .with_limit(50)
+            .with_include_raw(true);
+        let found = find_in_collection(&pass, &reading, "log", &query, true)
+            .await
+            .unwrap();
+        assert_eq!(found.hits.len(), 50);
+        let mut page = Page::new(found, &reading, true);
+        // The count of blob reads is of one thread: the page is read to the
+        // end inside one step.
+        let (documents, reads) = step(&vault, move |cx, vault| {
+            let before = blob_reads();
+            let mut documents = 0;
+            while let Some(item) = page.next(cx, vault) {
+                if matches!(item?.item, Some(QueryArm::Document(_))) {
+                    documents += 1;
+                }
+            }
+            Ok((documents, blob_reads() - before))
+        })
+        .await
+        .unwrap();
+        assert_eq!(documents, 50, "every line of the page is given");
+        // The id map names the segment of each line, and the blob of that
+        // segment is read for the first line and kept for the 49 others.
+        assert_eq!(reads, 1, "the segment is read once for the page");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

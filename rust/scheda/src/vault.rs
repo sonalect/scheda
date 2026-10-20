@@ -229,35 +229,48 @@ impl Vault {
         Ok(State::of(&self.repos.views().context("read HEAD")?))
     }
 
-    /// Removes the Projector when `projector` is `None`, which a Vault that
-    /// has none takes as nothing to do.
+    /// Installs `projector`, or removes the Projector when it is `None`,
+    /// which a Vault that has none takes as nothing to do. The indexer is
+    /// woken: its next round is with the new port, not after the poll or
+    /// the pause of a failed round.
     ///
     /// # Errors
     ///
-    /// `UNIMPLEMENTED` for a Projector: this version of Scheda has no Index
-    /// to use one.
+    /// In a build with the feature `index`, `INVALID_ARGUMENT` for a
+    /// reference that holds no implementation or a descriptor that breaks
+    /// its rules, and the failure of the Projector's `describe`. In a build
+    /// without it, `UNIMPLEMENTED` for a Projector: there is no Index to use
+    /// one.
     pub(crate) async fn set_projector(&self, projector: Option<ProjectorRef>) -> Result<(), Error> {
-        self.ports.set_projector(projector).await
+        self.ports.set_projector(projector).await?;
+        self.committer.signal().ports_changed();
+        Ok(())
     }
 
-    /// Removes the embedder when `embedder` is `None`, which a Vault that
-    /// has none takes as nothing to do.
+    /// Installs `embedder`, or removes the embedder when it is `None`,
+    /// which a Vault that has none takes as nothing to do. The indexer is
+    /// woken, as by [`Vault::set_projector`].
     ///
     /// # Errors
     ///
     /// As [`Vault::set_projector`], for an embedder.
     pub(crate) async fn set_embedder(&self, embedder: Option<EmbedderRef>) -> Result<(), Error> {
-        self.ports.set_embedder(embedder).await
+        self.ports.set_embedder(embedder).await?;
+        self.committer.signal().ports_changed();
+        Ok(())
     }
 
-    /// Removes the reranker when `reranker` is `None`, which a Vault that
-    /// has none takes as nothing to do.
+    /// Installs `reranker`, or removes the reranker when it is `None`,
+    /// which a Vault that has none takes as nothing to do. The indexer is
+    /// woken, as by [`Vault::set_projector`].
     ///
     /// # Errors
     ///
     /// As [`Vault::set_projector`], for a reranker.
     pub(crate) async fn set_reranker(&self, reranker: Option<RerankerRef>) -> Result<(), Error> {
-        self.ports.set_reranker(reranker).await
+        self.ports.set_reranker(reranker).await?;
+        self.committer.signal().ports_changed();
+        Ok(())
     }
 
     /// The canonical path of the work tree.
@@ -270,8 +283,15 @@ impl Vault {
     /// again when `HEAD` names another (another handle or process wrote, or
     /// a person committed); resolving `HEAD` costs no process.
     pub(crate) fn declarations_now(&self) -> Result<Arc<Declarations>, Error> {
+        Ok(self.declarations_at_head()?.1)
+    }
+
+    /// [`Vault::declarations_now`] with the commit of the main repository
+    /// they were read from: what the Projector's columns are kept by.
+    pub(crate) fn declarations_at_head(&self) -> Result<(Option<Oid>, Arc<Declarations>), Error> {
         let snap = self.repos.snapshot(Repo::Main)?;
-        self.declarations_in(&snap)
+        let declarations = self.declarations_in(&snap)?;
+        Ok((snap.commit(), declarations))
     }
 
     /// The collections declared in the commit of `snap`, a snapshot of the

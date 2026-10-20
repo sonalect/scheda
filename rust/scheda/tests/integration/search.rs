@@ -100,6 +100,7 @@ mod on_lance {
         }
 
         fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
+            self.calls.columned.fetch_add(1, Ordering::SeqCst);
             let text = ColumnKind::COLUMN_KIND_TEXT;
             Ok(IndexSchema {
                 columns: vec![
@@ -160,6 +161,8 @@ mod on_lance {
         queries: Mutex<Vec<String>>,
         embedded: AtomicUsize,
         projected: AtomicUsize,
+        /// How many times the Projector was asked for columns.
+        columned: AtomicUsize,
         held: AtomicBool,
         hold_after: AtomicUsize,
     }
@@ -264,7 +267,16 @@ mod on_lance {
     };
 
     async fn open_with(path: &Path, ports: &Ports, calls: &Arc<Calls>) -> DynVaultAsync {
-        let mut request = opening(path, options());
+        open_polled(path, ports, calls, options()).await
+    }
+
+    async fn open_polled(
+        path: &Path,
+        ports: &Ports,
+        calls: &Arc<Calls>,
+        options: OpenOptions,
+    ) -> DynVaultAsync {
+        let mut request = opening(path, options);
         request.projector = ProjectorRef::from_sync(Docs {
             projection: ports.projection,
             vectors: ports.vectors,
@@ -672,6 +684,39 @@ mod on_lance {
             for search in [json!({"text": "kitten"}), json!({"text": "kitten", "k": 0})] {
                 assert_eq!(ids(&run(&notes, search).await).len(), 10);
             }
+        });
+    }
+
+    #[test]
+    fn k_offset_and_rerank_limit_at_their_maximum_answer_with_the_hits_there_are() {
+        both(|| async {
+            let fx = Fixture::new("search-maximum").await;
+            fx.corpus().await;
+            let notes = fx.collection("notes").await;
+            let whole = ids(&run(&notes, json!({"text": "kitten", "k": 4})).await);
+            assert_eq!(whole.len(), 4);
+            let max = u32::MAX;
+
+            let all = run(&notes, json!({"text": "kitten", "k": max})).await;
+            assert_eq!(ids(&all), whole, "k at its maximum is every hit there is");
+
+            let beyond = run(&notes, json!({"text": "kitten", "offset": max})).await;
+            assert!(ids(&beyond).is_empty(), "no hit lies past the maximum");
+            assert_eq!(summary(&beyond), VectorLeg::VECTOR_LEG_RAN);
+
+            let beyond = run(&notes, json!({"text": "kitten", "k": max, "offset": max})).await;
+            assert!(ids(&beyond).is_empty());
+
+            let asked = Asked::default();
+            fx.vault.set_reranker(reranker(&[], &asked)).await.unwrap();
+            let reranked = run(
+                &notes,
+                json!({"text": "kitten", "k": 4, "rerank_limit": max}),
+            )
+            .await;
+            assert_eq!(ids(&reranked).len(), 4);
+            let reranked = run(&notes, json!({"text": "kitten", "rerank_limit": max})).await;
+            assert_eq!(ids(&reranked).len(), 4, "the hits there are, not the limit");
         });
     }
 
@@ -1288,7 +1333,7 @@ mod on_lance {
     /// through the index finds at least 95 % of the exact 300 nearest, and
     /// a Document written after the index was built is found by its token.
     #[test]
-    fn a_search_through_the_vector_index_finds_the_exact_nearest() {
+    fn a_search_through_the_vector_index_finds_the_exact_nearest_and_bounds_k_at_its_maximum() {
         tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
@@ -1362,6 +1407,36 @@ mod on_lance {
                 }
                 eprintln!("recall at k 300: {recall:?}");
                 assert!(recall.iter().all(|value| *value >= 0.95), "{recall:?}");
+
+                // `k` at its maximum reaches the index as the rows it holds:
+                // the last ten of them come back, not an allocation of
+                // billions.
+                let started = Instant::now();
+                let found = run(
+                    &notes,
+                    json!({
+                        "text": "c3-q", "k": u32::MAX, "offset": ROWS - 10, "lexical_weight": 0
+                    }),
+                )
+                .await;
+                let last = ids(&found);
+                eprintln!(
+                    "k at maximum: {} hits in {:?}",
+                    last.len(),
+                    started.elapsed()
+                );
+                assert!(!last.is_empty() && last.len() <= 10, "{}", last.len());
+                let found = run(
+                    &notes,
+                    json!({"text": "c3-q", "offset": u32::MAX, "lexical_weight": 0}),
+                )
+                .await;
+                assert!(ids(&found).is_empty());
+                let page: DocumentQuery =
+                    serde_json::from_value(json!({"limit": u32::MAX, "offset": ROWS - 10}))
+                        .unwrap();
+                let documents = items(notes.query(page).await.unwrap()).await;
+                assert_eq!(documents.len(), 11, "the summary and the last ten");
 
                 // A write after the index was built: found through its
                 // token, before the index is brought over it.
@@ -1941,6 +2016,225 @@ mod on_lance {
             let vault = open_with(&fx.path, &HYBRID, &fx.calls).await;
             wait_indexed(&vault).await;
             assert_eq!(count(&collection(&vault, "notes").await.unwrap()).await, 7);
+            vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    /// An embedder that is described and then fails every `Embed`.
+    struct Unavailable;
+
+    impl EmbedderSync for Unavailable {
+        fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
+            Ok(EmbedderDescriptor::default()
+                .with_model_id("topics@1")
+                .with_dimensions(4))
+        }
+
+        fn embed(
+            &self,
+            _texts: BoxIter<'static, Result<Text, Error>>,
+        ) -> Result<BoxIter<'static, Result<Vector, Error>>, Error> {
+            Err(scheda::Fault::new(Code::Unavailable, "the embedder is down").into())
+        }
+
+        fn embed_query(&self, _query: Query) -> Result<Vector, Error> {
+            Err(scheda::Fault::new(Code::Unavailable, "the embedder is down").into())
+        }
+    }
+
+    /// A Vault that polls once an hour, with the Projector of a `vector`
+    /// column and no embedder, and one Document in `notes`. Returns the
+    /// scratch, the Vault, and the state token of its `HEAD`.
+    async fn hourly(name: &str) -> (Scratch, DynVaultAsync, Option<String>) {
+        let scratch = Scratch::new(name);
+        let path = scratch.join("vault");
+        crate::common::vault(&path);
+        let calls = Arc::new(Calls::default());
+        let ports = Ports {
+            model: None,
+            ..HYBRID
+        };
+        let vault = open_polled(
+            &path,
+            &ports,
+            &calls,
+            options().with_index_poll_ms(3_600_000),
+        )
+        .await;
+        let head = collection(&vault, "notes")
+            .await
+            .unwrap()
+            .upsert(
+                DocumentUpsert::default()
+                    .with_id("a")
+                    .with_raw(json!({"topic": "cat"}).to_string().into_bytes())
+                    .with_note("test"),
+            )
+            .await
+            .unwrap()
+            .version;
+        (scratch, vault, head)
+    }
+
+    /// Waits for the state of `index` to pass `done`, for a few seconds: a
+    /// wake that came from nothing but the poll would take an hour.
+    async fn soon(index: &DynIndexAsync, done: impl Fn(&IndexState) -> bool) -> IndexState {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let state = index.status(Empty::default()).await.unwrap();
+            if done(&state) {
+                return state;
+            }
+            assert!(Instant::now() < deadline, "{state:?}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn error_code(state: &IndexState) -> Option<&str> {
+        state
+            .last_error
+            .as_option()
+            .and_then(|report| report.code.as_deref())
+    }
+
+    #[test]
+    fn setting_the_embedder_wakes_an_indexer_that_waits_for_it() {
+        both(|| async {
+            let (_scratch, vault, head) = hourly("search-wake-lacking").await;
+            let index = index_of(&vault).await;
+            let state = soon(&index, |state| {
+                state.stored_version == head && state.last_error.is_set()
+            })
+            .await;
+            assert_eq!(
+                error_code(&state),
+                Some("VAULT_ERROR_CODE_FAILED_PRECONDITION"),
+                "it lacks an embedder: {state:?}"
+            );
+            assert_ne!(state.version, head, "and does not index");
+
+            let calls = Arc::new(Calls::default());
+            vault
+                .set_embedder(EmbedderRef::from_sync(Topics {
+                    model: "topics@1",
+                    calls,
+                }))
+                .await
+                .unwrap();
+            soon(&index, |state| state.version == head).await;
+            vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn setting_an_embedder_ends_the_pause_after_a_failed_round() {
+        both(|| async {
+            let (_scratch, vault, head) = hourly("search-wake-backoff").await;
+            let index = index_of(&vault).await;
+            soon(&index, |state| state.stored_version == head).await;
+            vault
+                .set_embedder(EmbedderRef::from_sync(Unavailable))
+                .await
+                .unwrap();
+            // The embedder is there, so the round runs and fails; the pause
+            // after it is an hour.
+            let state = soon(&index, |state| {
+                state.stored_version == head
+                    && error_code(state) == Some("VAULT_ERROR_CODE_UNAVAILABLE")
+            })
+            .await;
+            assert_ne!(state.version, head);
+
+            let calls = Arc::new(Calls::default());
+            vault
+                .set_embedder(EmbedderRef::from_sync(Topics {
+                    model: "topics@1",
+                    calls,
+                }))
+                .await
+                .unwrap();
+            soon(&index, |state| state.version == head).await;
+            vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    /// Waits until `calls` counts at least `least` asks for columns.
+    async fn columned_at_least(calls: &Calls, least: usize) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while calls.columned.load(Ordering::SeqCst) < least {
+            assert!(Instant::now() < deadline, "columns not asked {least} times");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    #[test]
+    fn the_projector_is_asked_for_columns_once_per_collection_installed_projector_and_head() {
+        both(|| async {
+            // `notes` and `log`.
+            const COLLECTIONS: usize = 2;
+            let fx = Fixture::new("search-columns-once").await;
+            assert_eq!(fx.calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+            // Ten counts at one `HEAD` after the indexer asked ask nothing.
+            let notes = fx.collection("notes").await;
+            for _ in 0..10 {
+                count(&notes).await;
+            }
+            assert_eq!(fx.calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+            fx.vault.close(Empty::default()).await.unwrap();
+
+            // A Vault whose Projector is of another projection finds the
+            // Index stale at every look, 10 ms apart.
+            let calls = Arc::new(Calls::default());
+            let other = Ports {
+                projection: "docs@2",
+                ..HYBRID
+            };
+            let vault = open_with(&fx.path, &other, &calls).await;
+            let index = index_of(&vault).await;
+            // A Vault whose `HEAD` the Index reflects is current and plans
+            // nothing; a write moves it.
+            let notes = collection(&vault, "notes").await.unwrap();
+            let write = |id: &'static str| {
+                DocumentUpsert::default()
+                    .with_id(id)
+                    .with_raw(json!({"title": id}).to_string().into_bytes())
+                    .with_note("test")
+            };
+            let head = notes.upsert(write("first")).await.unwrap().version;
+            soon(&index, |state| {
+                state.stored_version == head
+                    && error_code(state) == Some("VAULT_ERROR_CODE_INDEX_STALE")
+            })
+            .await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert_eq!(calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+
+            // Queries of the stale Vault fail and ask nothing either.
+            for _ in 0..10 {
+                let error = notes.count(DocumentQuery::default()).await.unwrap_err();
+                assert!(error.is(Code::IndexStale), "{error}");
+            }
+            assert_eq!(calls.columned.load(Ordering::SeqCst), COLLECTIONS);
+
+            // A write moves `HEAD`: asked again, once.
+            let head = notes.upsert(write("moved")).await.unwrap().version;
+            soon(&index, |state| state.stored_version == head).await;
+            columned_at_least(&calls, 2 * COLLECTIONS).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert_eq!(calls.columned.load(Ordering::SeqCst), 2 * COLLECTIONS);
+
+            // A new Projector, the same projection, is asked again.
+            vault
+                .set_projector(ProjectorRef::from_sync(Docs {
+                    projection: "docs@2",
+                    vectors: true,
+                    calls: Arc::clone(&calls),
+                }))
+                .await
+                .unwrap();
+            columned_at_least(&calls, 3 * COLLECTIONS).await;
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            assert_eq!(calls.columned.load(Ordering::SeqCst), 3 * COLLECTIONS);
             vault.close(Empty::default()).await.unwrap();
         });
     }

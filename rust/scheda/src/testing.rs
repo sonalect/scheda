@@ -62,6 +62,34 @@ pub(crate) async fn wait_indexed(vault: &Arc<Vault>) {
     }
 }
 
+/// A journal `name` of `lines` lines `l00`, `l01`, ... in one segment, with
+/// its Index built.
+#[cfg(feature = "index")]
+pub(crate) async fn journal_of_lines(vault: &Arc<Vault>, name: &str, lines: usize) {
+    create_collection(
+        vault,
+        serde_json::json!({
+            "name": name,
+            "schema": {"journal": {"segment_max_bytes": 1_000_000}}
+        }),
+    )
+    .await
+    .unwrap();
+    for n in 0..lines {
+        create(
+            vault,
+            name,
+            DocumentCreation::default()
+                .with_id(format!("l{n:02}"))
+                .with_raw(format!("{{\"n\":{n}}}").into_bytes())
+                .with_note("test"),
+        )
+        .await
+        .unwrap();
+    }
+    wait_indexed(vault).await;
+}
+
 /// Runs `step` on `vault` as a call of an object runs one: inside the gate,
 /// on the blocking pool.
 pub(crate) async fn step<T, F>(vault: &Arc<Vault>, step: F) -> Result<T, Error>

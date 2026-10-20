@@ -63,31 +63,54 @@ pub(crate) fn encode_line(id: &str, payload: &[u8]) -> Result<Vec<u8>, Fault> {
     Ok(line)
 }
 
-/// Parses one line without its `\n`. A line with no `: `, with an empty id
-/// or an id that is not UTF-8, or one that holds a `\r`, is
-/// `INVALID_ARGUMENT`.
-pub(crate) fn parse_line(line: &[u8]) -> Result<Line, Fault> {
+/// Why a line does not parse.
+enum Reject {
+    Empty,
+    Cr,
+    NoDelimiter,
+    EmptyId,
+    NotUtf8(std::str::Utf8Error),
+}
+
+/// The id and the payload of one line without its `\n`, borrowed from it.
+/// The rules of a line live here.
+fn split_line(line: &[u8]) -> Result<(&str, &[u8]), Reject> {
     if line.is_empty() {
-        return Err(invalid("the journal line is empty"));
+        return Err(Reject::Empty);
     }
     if line.contains(&b'\r') {
-        return Err(invalid("the journal line holds a CR"));
+        return Err(Reject::Cr);
     }
     let Some(at) = line
         .windows(DELIMITER.len())
         .position(|window| window == DELIMITER)
     else {
-        return Err(invalid("the journal line has no ': ' after its id"));
+        return Err(Reject::NoDelimiter);
     };
     if at == 0 {
-        return Err(invalid("the journal line has an empty id"));
+        return Err(Reject::EmptyId);
     }
-    let id = std::str::from_utf8(&line[..at])
-        .map_err(|err| invalid("the journal line has an id that is not UTF-8").with_source(err))?;
-    Ok(Line {
-        id: id.to_owned(),
-        payload: line[at + DELIMITER.len()..].to_vec(),
-    })
+    let id = std::str::from_utf8(&line[..at]).map_err(Reject::NotUtf8)?;
+    Ok((id, &line[at + DELIMITER.len()..]))
+}
+
+/// Parses one line without its `\n`. A line with no `: `, with an empty id
+/// or an id that is not UTF-8, or one that holds a `\r`, is
+/// `INVALID_ARGUMENT`.
+pub(crate) fn parse_line(line: &[u8]) -> Result<Line, Fault> {
+    match split_line(line) {
+        Ok((id, payload)) => Ok(Line {
+            id: id.to_owned(),
+            payload: payload.to_vec(),
+        }),
+        Err(Reject::Empty) => Err(invalid("the journal line is empty")),
+        Err(Reject::Cr) => Err(invalid("the journal line holds a CR")),
+        Err(Reject::NoDelimiter) => Err(invalid("the journal line has no ': ' after its id")),
+        Err(Reject::EmptyId) => Err(invalid("the journal line has an empty id")),
+        Err(Reject::NotUtf8(err)) => {
+            Err(invalid("the journal line has an id that is not UTF-8").with_source(err))
+        }
+    }
 }
 
 /// Splits the bytes of a segment into its complete lines (each without its
@@ -105,15 +128,70 @@ pub(crate) fn split_lines(bytes: &[u8]) -> (Vec<&[u8]>, Option<&[u8]>) {
     (lines, (!tail.is_empty()).then_some(tail))
 }
 
-/// The lines of a segment that parse, in order. A line that does not parse
-/// and a tail without `\n` are left out; reading a journal strictly is
-/// [`LinesState`], and [`check_journals`] reports what is left out.
-pub(crate) fn parse_segment(bytes: &[u8]) -> Vec<Line> {
+/// The lines of a segment that parse, in order, as `(id, payload)` borrowed
+/// from `bytes`: nothing is copied. A line that does not parse and a tail
+/// without `\n` are left out; reading a journal strictly is [`LinesState`],
+/// and [`check_journals`] reports what is left out. These are the rules of
+/// a segment; [`find_line`] is built on them.
+pub(crate) fn lines(bytes: &[u8]) -> impl Iterator<Item = (&str, &[u8])> {
     split_lines(bytes)
         .0
         .into_iter()
-        .filter_map(|line| parse_line(line).ok())
+        .filter_map(|line| split_line(line).ok())
+}
+
+/// The first line of a segment with the id `id`, copied; every other line
+/// is only looked at.
+pub(crate) fn find_line(bytes: &[u8], id: &str) -> Option<Line> {
+    lines(bytes)
+        .find(|(line_id, _)| *line_id == id)
+        .map(|(line_id, payload)| Line {
+            id: line_id.to_owned(),
+            payload: payload.to_vec(),
+        })
+}
+
+/// The lines of a segment that parse, in order, copied (see [`lines`]); the
+/// tests compare the borrowed walk with it. Nothing in the library copies a
+/// whole segment.
+#[cfg(test)]
+pub(crate) fn parse_segment(bytes: &[u8]) -> Vec<Line> {
+    lines(bytes)
+        .map(|(id, payload)| Line {
+            id: id.to_owned(),
+            payload: payload.to_vec(),
+        })
         .collect()
+}
+
+/// The bytes of the last segment a reader took through it, with the id of
+/// its blob. A reader that asks for many lines of one segment (a page of a
+/// query) reads the blob once: the next ask finds the node of the path in
+/// the tree, which reads no blob, and the same blob id is the same bytes,
+/// whichever snapshot asks. Only one segment is kept, so the memory is
+/// bounded by it.
+#[derive(Debug, Default)]
+pub(crate) struct SegmentMemo {
+    last: Option<(git2::Oid, Vec<u8>)>,
+}
+
+impl SegmentMemo {
+    /// The bytes of the segment `path` in the commit of `snap`; `None` when
+    /// the commit holds no such file.
+    pub(crate) fn read(&mut self, snap: &Snap, path: &Path) -> Result<Option<&[u8]>, Fault> {
+        let rel = rel_str(path);
+        let Some(node) = snap.lookup(&rel)? else {
+            return Ok(None);
+        };
+        if node.kind != NodeKind::File {
+            return Ok(None);
+        }
+        if self.last.as_ref().map(|(id, _)| *id) != Some(node.id) {
+            let bytes = snap.blob(node.id).map_err(|fault| fault.with_path(&rel))?;
+            self.last = Some((node.id, bytes));
+        }
+        Ok(self.last.as_ref().map(|(_, bytes)| bytes.as_slice()))
+    }
 }
 
 /// When a segment is full: the limits of a declared journal.
@@ -749,8 +827,8 @@ mod tests {
     use scheda_api::v1::VaultErrorCode;
 
     use super::{
-        JournalLines, Limits, check_journals, civil_from_unix_days, encode_line, list_segments,
-        next_segment_name, parse_hex_seq, parse_line, parse_segment, read_segment,
+        JournalLines, Limits, check_journals, civil_from_unix_days, encode_line, find_line, lines,
+        list_segments, next_segment_name, parse_hex_seq, parse_line, parse_segment, read_segment,
         segment_belongs_to, segment_for_append, segment_is_full, segment_order, segment_writer,
         split_lines, today_utc,
     };
@@ -923,6 +1001,33 @@ mod tests {
             parsed.iter().map(|l| l.id.as_str()).collect::<Vec<_>>(),
             ["a", "b"]
         );
+    }
+
+    #[test]
+    fn the_borrowed_walk_and_find_line_follow_the_rules_of_parse_segment() {
+        // A line that does not parse, an empty id, a CR, a repeated id, and
+        // a torn tail.
+        let bytes = b"a: 1\nbroken\n: x\nb: 2\r\na: 3\nb: \xff\nc: 4\nd: ";
+        let walked: Vec<(String, Vec<u8>)> = lines(bytes)
+            .map(|(id, payload)| (id.to_owned(), payload.to_vec()))
+            .collect();
+        let parsed: Vec<(String, Vec<u8>)> = parse_segment(bytes)
+            .into_iter()
+            .map(|line| (line.id, line.payload))
+            .collect();
+        assert_eq!(walked, parsed);
+        assert_eq!(
+            walked.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(),
+            ["a", "a", "b", "c"]
+        );
+        // The first line with the id wins, as in `parse_segment`.
+        assert_eq!(find_line(bytes, "a").unwrap().payload, b"1");
+        assert_eq!(find_line(bytes, "b").unwrap().payload, b"\xff");
+        assert_eq!(find_line(bytes, "c").unwrap().payload, b"4");
+        // The torn tail and the lines that do not parse are not found.
+        assert!(find_line(bytes, "d").is_none());
+        assert!(find_line(bytes, "broken").is_none());
+        assert!(find_line(b"", "a").is_none());
     }
 
     #[test]

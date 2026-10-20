@@ -472,10 +472,31 @@ projection), D9 (tokio 1.54.0).
 
 ### S2. Indexer and ports
 
-- [ ] R6. Setting a port wakes the indexer.
-- [ ] R12. The Projector's columns once per projection and `HEAD`.
-- [ ] R10. A journal line is found without copying its segment.
-- [ ] R11 (D6) and R18 (D8).
+- [x] R6. Setting a port wakes the indexer (`tests/search.rs`:
+      `setting_the_embedder_wakes_an_indexer_that_waits_for_it`,
+      `setting_an_embedder_ends_the_pause_after_a_failed_round`).
+- [x] R12. The Projector's columns once per installed Projector and
+      `HEAD`, kept in the port (`tests/search.rs`:
+      `the_projector_is_asked_for_columns_once_per_collection_installed_projector_and_head`).
+- [x] R10. A journal line is found without copying its segment, and a
+      page reads a segment once
+      (`queries::tests::a_page_of_journal_lines_reads_their_segment_once`,
+      `search::tests::the_rerank_read_of_journal_lines_reads_their_segment_once`,
+      `journal::tests::the_borrowed_walk_and_find_line_follow_the_rules_of_parse_segment`).
+- [x] R11 (D6) and R18 (D8). Measured on a table with a 1024-dimension
+      vector column: a single-Document round on a tail of 4 000 unindexed
+      rows wrote 4.25 MB before and about 20 KB after; a build of 10 000
+      rows in ten rounds left 224 MB before and 71 MB after. A table is
+      compacted once it holds eight small fragments, or one with more than
+      half its rows deleted (`store::tests`:
+      `rounds_of_one_document_compact_only_once_the_small_fragments_pile_up`,
+      `a_fragment_is_rewritten_once_most_of_its_rows_are_deleted`). Lance
+      allocated by the limit (`k` = `u32::MAX` aborted on 34 GB); a leg's
+      depth is bounded by the rows of the table (`tests/search.rs`:
+      `k_offset_and_rerank_limit_at_their_maximum_answer_with_the_hits_there_are`,
+      `a_search_through_the_vector_index_finds_the_exact_nearest_and_bounds_k_at_its_maximum`;
+      `tests/query.rs`:
+      `limit_and_offset_at_their_maximum_answer_with_the_documents_there_are`).
 
 ### S3. Mirror and files
 

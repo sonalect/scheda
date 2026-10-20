@@ -407,6 +407,42 @@ mod on_lance {
     }
 
     #[test]
+    fn limit_and_offset_at_their_maximum_answer_with_the_documents_there_are() {
+        both(|| async {
+            let scratch = Scratch::new("query-maximum");
+            let (_path, _vault, notes) = fixture(&scratch).await;
+            let (whole, total) = ids(&notes, serde_json::json!({})).await;
+            assert_eq!(total, 6);
+            let max = u32::MAX;
+            for order in [
+                serde_json::json!([]),
+                serde_json::json!([{"column": "score", "descending": true}]),
+            ] {
+                let (ordered, _) = ids(&notes, serde_json::json!({"orderBy": order})).await;
+                let (all, total) =
+                    ids(&notes, serde_json::json!({"orderBy": order, "limit": max})).await;
+                assert_eq!((all, total), (ordered.clone(), 6), "{order}");
+                let (all, _) = ids(
+                    &notes,
+                    serde_json::json!({"orderBy": order, "limit": max, "offset": 2}),
+                )
+                .await;
+                assert_eq!(all, ordered[2..], "{order}");
+                let (none, total) = ids(
+                    &notes,
+                    serde_json::json!({"orderBy": order, "limit": max, "offset": max}),
+                )
+                .await;
+                assert_eq!((none.len(), total), (0, 6), "{order}");
+                let (none, _) =
+                    ids(&notes, serde_json::json!({"orderBy": order, "offset": max})).await;
+                assert!(none.is_empty(), "{order}");
+            }
+            assert_eq!(whole.len(), 6);
+        });
+    }
+
+    #[test]
     fn a_column_no_collection_declares_a_value_of_another_kind_and_a_deep_filter_are_invalid() {
         both(|| async {
             let scratch = Scratch::new("query-invalid");

@@ -938,11 +938,10 @@ impl<'a> Ledger<'a> {
             }),
         };
         let existing = if state.appended.contains(&step.id) {
-            let line = state.pending.values().find_map(|bytes| {
-                journal::parse_segment(bytes)
-                    .into_iter()
-                    .find(|stored| stored.id == step.id)
-            });
+            let line = state
+                .pending
+                .values()
+                .find_map(|bytes| journal::find_line(bytes, &step.id));
             Some(line.ok_or_else(|| storage("a line of the journal could not be read again"))?)
         } else {
             state.stored.find(&step.id)?

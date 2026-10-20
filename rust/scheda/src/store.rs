@@ -65,6 +65,27 @@ use crate::error::{Context, Error, Fault};
 /// a million) rewrites the largest fragment on every compaction.
 const TARGET_ROWS_PER_FRAGMENT: usize = 16_384;
 
+/// The small fragments (fewer rows than [`TARGET_ROWS_PER_FRAGMENT`]) a
+/// table may hold before a round compacts them. A round that writes
+/// adds one small fragment, and Lance merges every small fragment with
+/// its neighbours, so compacting at each round rewrites the partly full
+/// tail again and again: one Document written to a table with vectors
+/// rewrote the whole tail (about 4 KB a row at 1024 dimensions; 4 MB for a
+/// tail of 1 000 rows, measured). Compacting once per this many fragments
+/// writes the tail `SMALL_FRAGMENTS - 1` times less often per round, and a
+/// read pays for at most `SMALL_FRAGMENTS - 1` fragments beyond the
+/// compacted ones, each small: eight is a few more files to open next to
+/// the tens that a table of 16 384-row fragments reaches at a million rows.
+const SMALL_FRAGMENTS: usize = 8;
+
+/// The share of a fragment's rows that may be deleted before the fragment
+/// is rewritten on its own (Lance's own default is 0.1). Past one half a
+/// rewrite writes no more live rows than the deleted ones it reclaims, so
+/// the bytes written stay within one row for each row deleted, however
+/// often the rows are replaced; below one half the rewrite would write
+/// the larger share, again and again, for a smaller one reclaimed.
+const MATERIALIZE_DELETIONS: f32 = 0.5;
+
 /// Below this many rows a table gets no vector index: an exact scan is
 /// fast enough, and IVF has too little to train on.
 pub(crate) const VECTOR_INDEX_ROWS: usize = 10_000;
@@ -734,7 +755,9 @@ impl Table {
     }
 
     /// Keeps the table cheap to read after a round that wrote to it:
-    /// compaction of the small fragments; the indices on `id`, the
+    /// compaction of the small fragments once [`SMALL_FRAGMENTS`] of them
+    /// have piled up (or one has most of its rows deleted); the indices
+    /// on `id`, the
     /// `scalar_index` and `fts` columns, and, from
     /// [`VECTOR_INDEX_ROWS`] rows on, the `vector` columns; the indices
     /// brought over new rows when many are unindexed or every
@@ -752,17 +775,22 @@ impl Table {
         let mut rows = Dataset::clone(&self.rows);
         let options = CompactionOptions {
             target_rows_per_fragment: TARGET_ROWS_PER_FRAGMENT,
+            materialize_deletions_threshold: MATERIALIZE_DELETIONS,
             ..CompactionOptions::default()
         };
-        compact_files(&mut rows, options.clone(), None)
-            .await
-            .map_err(lance_fault)
-            .context("compact the rows")?;
+        if wants_compaction(&rows) {
+            compact_files(&mut rows, options.clone(), None)
+                .await
+                .map_err(lance_fault)
+                .context("compact the rows")?;
+        }
         let mut files = Dataset::clone(&self.files);
-        compact_files(&mut files, options, None)
-            .await
-            .map_err(lance_fault)
-            .context("compact the files")?;
+        if wants_compaction(&files) {
+            compact_files(&mut files, options, None)
+                .await
+                .map_err(lance_fault)
+                .context("compact the files")?;
+        }
         let created = self.create_indices(&mut rows).await?;
         let total = rows.count_rows(None).await.map_err(lance_fault)?;
         if total > 0 && !created {
@@ -961,6 +989,31 @@ fn strings<'a>(batch: &'a RecordBatch, name: &str) -> Result<&'a StringArray, Fa
         .column_by_name(name)
         .and_then(|array| array.as_any().downcast_ref::<StringArray>())
         .ok_or_else(|| broken(format!("the column {name} of the Index is missing")))
+}
+
+/// Whether `dataset` holds [`SMALL_FRAGMENTS`] small fragments, or one
+/// with more than [`MATERIALIZE_DELETIONS`] of its rows deleted. Read from
+/// the fragment metadata of the manifest; no data is read.
+fn wants_compaction(dataset: &Dataset) -> bool {
+    let mut small = 0;
+    for fragment in dataset.get_fragments() {
+        let metadata = fragment.metadata();
+        let Some(physical) = metadata.physical_rows else {
+            continue;
+        };
+        if physical < TARGET_ROWS_PER_FRAGMENT {
+            small += 1;
+        }
+        let deleted = metadata
+            .deletion_file
+            .as_ref()
+            .and_then(|file| file.num_deleted_rows)
+            .unwrap_or(0);
+        if physical > 0 && deleted as f32 / physical as f32 > MATERIALIZE_DELETIONS {
+            return true;
+        }
+    }
+    small >= SMALL_FRAGMENTS
 }
 
 fn broken(message: impl Into<String>) -> Fault {
@@ -1185,8 +1238,8 @@ mod tests {
             let marker = format!("m{round}");
             let rows: Vec<Row> = (0..50).map(|n| titled(n, &marker)).collect();
             table.upsert(&rows).await.unwrap();
-            // Compaction every round, the indices made at once and brought
-            // over the new rows every fiftieth.
+            // Compaction as the small fragments pile up, the indices made
+            // at once and brought over the new rows every fiftieth.
             table.maintain(round + 1).await.unwrap();
             if round % 50 == 49 || round == 0 {
                 let titles = titles_of(&table.rows).await;
@@ -1213,25 +1266,67 @@ mod tests {
             .collect()
     }
 
-    #[tokio::test(flavor = "multi_thread")]
-    async fn compaction_after_small_writes_rewrites_only_the_small_fragments() {
-        let scratch = Scratch::new("compaction");
+    /// The rows of each fragment of `rows`, and the deleted ones of each.
+    fn fragment_rows(rows: &Dataset) -> Vec<(usize, usize)> {
+        rows.get_fragments()
+            .iter()
+            .map(|fragment| {
+                let metadata = fragment.metadata();
+                (
+                    metadata.physical_rows.unwrap_or(0),
+                    metadata
+                        .deletion_file
+                        .as_ref()
+                        .and_then(|file| file.num_deleted_rows)
+                        .unwrap_or(0),
+                )
+            })
+            .collect()
+    }
+
+    /// A table with one large fragment of 20 000 rows, made and kept as it
+    /// is.
+    async fn table_with_a_large_fragment(scratch: &Scratch) -> Table {
         let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
         let large: Vec<Row> = (0..20_000)
             .map(|n| titled(n, &format!("a title of some length, number {n}")))
             .collect();
         table.upsert(&large).await.unwrap();
         table.maintain(1).await.unwrap();
+        assert_eq!(fragment_rows(&table.rows), vec![(20_000, 0)]);
+        table
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rounds_of_one_document_compact_only_once_the_small_fragments_pile_up() {
+        let scratch = Scratch::new("compaction");
+        let mut table = table_with_a_large_fragment(&scratch).await;
         let dir = scratch.0.join("t0.lance");
         let before = data_files(&dir);
         let large_bytes: u64 = before.values().sum();
-        for write in 0..5 {
-            let small: Vec<Row> = (0..10)
-                .map(|n| titled(30_000 + write * 10 + n, "a small write"))
-                .collect();
-            table.upsert(&small).await.unwrap();
+        for write in 0..SMALL_FRAGMENTS - 1 {
+            table
+                .upsert(&[titled(30_000 + write, "a small write")])
+                .await
+                .unwrap();
+            table.maintain(2 + write as u64).await.unwrap();
+            assert_eq!(
+                table.rows.get_fragments().len(),
+                2 + write,
+                "round {write}: each Document adds a fragment, none is rewritten"
+            );
         }
-        table.maintain(2).await.unwrap();
+        // The round that brings the small fragments to the count.
+        table
+            .upsert(&[titled(40_000, "the last small write")])
+            .await
+            .unwrap();
+        table.maintain(100).await.unwrap();
+        assert_eq!(
+            fragment_rows(&table.rows),
+            vec![(20_000, 0), (SMALL_FRAGMENTS, 0)],
+            "the small fragments are one"
+        );
         let after = data_files(&dir);
         assert!(
             before.keys().all(|name| after.contains_key(name)),
@@ -1244,14 +1339,27 @@ mod tests {
             .sum();
         assert!(
             written * 20 < large_bytes,
-            "{written} bytes written for 50 rows next to {large_bytes}"
+            "{written} bytes written for {SMALL_FRAGMENTS} rows next to {large_bytes}"
         );
-        assert_eq!(
-            table.rows.get_fragments().len(),
-            2,
-            "the five small fragments are one"
-        );
-        assert_eq!(titles_of(&table.rows).await.len(), 20_050);
+        assert_eq!(titles_of(&table.rows).await.len(), 20_000 + SMALL_FRAGMENTS);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_fragment_is_rewritten_once_most_of_its_rows_are_deleted() {
+        let scratch = Scratch::new("deletions");
+        let mut table = table_with_a_large_fragment(&scratch).await;
+        // Deleted rows below the share stay in the fragment, hidden by its
+        // deletion file.
+        let some: Vec<String> = (0..9_000).map(|n| format!("r{n:05}")).collect();
+        table.delete_rows("id", &some).await.unwrap();
+        table.maintain(2).await.unwrap();
+        assert_eq!(fragment_rows(&table.rows), vec![(20_000, 9_000)]);
+        // Past it the fragment is written again with the rows it still has.
+        let more: Vec<String> = (9_000..11_000).map(|n| format!("r{n:05}")).collect();
+        table.delete_rows("id", &more).await.unwrap();
+        table.maintain(3).await.unwrap();
+        assert_eq!(fragment_rows(&table.rows), vec![(9_000, 0)]);
+        assert_eq!(titles_of(&table.rows).await.len(), 9_000);
     }
 
     #[test]

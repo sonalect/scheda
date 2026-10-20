@@ -793,18 +793,18 @@ impl IndexAsync for IndexObject {
         let root = crate::index::Index::new(self.vault.path())
             .root()
             .to_path_buf();
-        let (declarations, live) = pass
+        let (head, declarations, live) = pass
             .step(move |cx, vault| {
-                let declarations = vault.declarations_now()?;
+                let (head, declarations) = vault.declarations_at_head()?;
                 let live = match crate::generation::Layout::new(&root).current(cx)? {
                     Some(generation) => generation.read_commit(cx)?,
                     None => None,
                 };
-                Ok((declarations, live))
+                Ok((head, declarations, live))
             })
             .await?;
         let calls = crate::tables::Calls::of(self.vault.ports());
-        crate::tables::can_rebuild(&calls, declarations, live.as_ref())
+        crate::tables::can_rebuild(&calls, head, declarations, live.as_ref())
             .await
             .context("Index.Reindex")?;
         self.vault.indexer().reindex().await?;

@@ -2,7 +2,8 @@
 //! `HEAD`, on the runtime that opened the Vault.
 //!
 //! The task sleeps on a [`Signal`]. A write of this handle that moved
-//! `HEAD` (main or nested), and `Reindex`, wake it at once; otherwise it
+//! `HEAD` (main or nested), `Reindex`, and a port set or removed, wake it
+//! at once; otherwise it
 //! looks at `HEAD` every `index_poll_ms`, which finds the writes of other
 //! processes, commits made by hand, and pulls. A look reads two ref files
 //! and two small files of the Index and starts no process.
@@ -82,8 +83,15 @@ pub(crate) struct Signal {
 
 impl Signal {
     /// `HEAD` moved, or a rebuild was asked for: look now. A wake that
-    /// comes while the indexer is at a round counts once it is done.
+    /// comes while the indexer is at a round counts once it is done, and
+    /// one that comes while it pauses after a failed round ends the pause.
     pub(crate) fn moved(&self) {
+        self.wake.notify_one();
+    }
+
+    /// A port of the Vault was set or removed: look now, with it. Counts as
+    /// [`Signal::moved`] does.
+    pub(crate) fn ports_changed(&self) {
         self.wake.notify_one();
     }
 
@@ -681,6 +689,7 @@ impl Context {
     async fn plan(&self, look: &Look) -> Result<Option<Plan>, Error> {
         let repos = Arc::clone(&self.repos);
         let head = look.head;
+        let main = head.oid(Repo::Main);
         let declarations = blocking(move |_cx| {
             let Some(views) = repos.views_at(head.oid(Repo::Main), head.oid(Repo::Isolated))?
             else {
@@ -693,7 +702,7 @@ impl Context {
         })
         .await?;
         let calls = Calls::of(&self.ports);
-        let plan = tables::plan(&calls, Arc::new(declarations)).await?;
+        let plan = tables::plan(&calls, main, Arc::new(declarations)).await?;
         let stale = match look.commit() {
             Some(commit) if !look.asked => tables::stale(commit, &plan),
             _ => None,
@@ -798,7 +807,12 @@ impl Context {
                 _ => None,
             };
             usable(
-                tables::plan(&calls, Arc::clone(&maps.declarations)).await?,
+                tables::plan(
+                    &calls,
+                    maps.head.oid(Repo::Main),
+                    Arc::clone(&maps.declarations),
+                )
+                .await?,
                 live_commit,
             )?
         };
@@ -887,7 +901,12 @@ impl Context {
             };
             if again.head != to {
                 work.plan = usable(
-                    tables::plan(&calls, Arc::clone(&again.declarations)).await?,
+                    tables::plan(
+                        &calls,
+                        again.head.oid(Repo::Main),
+                        Arc::clone(&again.declarations),
+                    )
+                    .await?,
                     Some(&work.commit),
                 )?;
                 work.bring_to(again.head).await?;

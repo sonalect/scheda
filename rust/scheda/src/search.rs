@@ -63,7 +63,7 @@ use crate::filter;
 use crate::gate::Pass;
 use crate::index::State;
 use crate::ports::task;
-use crate::queries::{self, Reading, Table};
+use crate::queries::{self, Reader, Reading, Table};
 use crate::store::{Column, digest_name, lance_fault, vector_name};
 use crate::vault::Vault;
 
@@ -173,6 +173,13 @@ impl<'a> Ask<'a> {
             .max(self.rerank_limit.unwrap_or(0))
             .max(DEPTH_FLOOR)
     }
+}
+
+/// The hits one leg asks of a table that holds `rows` rows: the depth and
+/// one more (the Document a `like` search leaves out), bounded by the rows
+/// the table holds, and at least one.
+fn reach_in(depth: usize, rows: usize) -> usize {
+    depth.saturating_add(1).min(rows).max(1)
 }
 
 /// `Collection.Search` without the Documents.
@@ -302,6 +309,10 @@ async fn run(
     let mut lexical = Vec::new();
     let mut nearest: HashMap<(String, String), f64> = HashMap::new();
     for (decl, table, dataset) in &tables {
+        // Lance allocates for the limit it is given, so a `k`, `offset`, or
+        // `rerank_limit` of billions would abort the process. The table
+        // cannot answer with more rows than it holds.
+        let reach = reach_in(depth, dataset.count_rows(None).await.map_err(lance_fault)?);
         let prefilter = ask.filter.map_or_else(
             || lit(true),
             |filter| filter::compile(filter, table.columns()),
@@ -315,7 +326,7 @@ async fn run(
                     text.clone(),
                     fts,
                     prefilter.clone(),
-                    depth + 1,
+                    reach,
                 )
                 .await?,
             );
@@ -330,7 +341,7 @@ async fn run(
                 vector_name(column),
                 queries_of_vector_leg.clone(),
                 prefilter.clone(),
-                depth + 1,
+                reach,
             )
             .await?;
             for candidate in found {
@@ -701,9 +712,10 @@ fn read_all(
     state: State,
     keys: &[(String, String)],
 ) -> Result<Vec<Option<Document>>, Error> {
+    let mut reader = Reader::default();
     keys.iter()
         .map(|(collection, id)| match declarations.get(collection) {
-            Some(decl) => queries::read_document(cx, vault, decl, state, id, true)
+            Some(decl) => queries::read_document(cx, vault, decl, state, id, true, &mut reader)
                 .context("read a Document to rerank"),
             None => Ok(None),
         })
@@ -718,6 +730,7 @@ pub(crate) struct Hits {
     state: State,
     include_raw: bool,
     declarations: BTreeMap<String, Declaration>,
+    reader: Reader,
 }
 
 impl Hits {
@@ -732,6 +745,7 @@ impl Hits {
             state: reading.state(),
             include_raw,
             declarations: found.declarations,
+            reader: Reader::default(),
         }
     }
 
@@ -756,6 +770,7 @@ impl Hits {
                 self.state,
                 &hit.id,
                 self.include_raw,
+                &mut self.reader,
             ) {
                 Ok(Some(document)) => document,
                 // The Index holds a Document the state it reflects lacks:
@@ -786,6 +801,43 @@ mod tests {
     use lance::deps::arrow_array::builder::{ListBuilder, StringBuilder};
 
     use super::*;
+
+    #[tokio::test]
+    async fn the_rerank_read_of_journal_lines_reads_their_segment_once() {
+        use scheda_api::v1::OpenOptions;
+
+        use crate::repo::blob_reads;
+        use crate::testing::{journal_of_lines, open, step};
+
+        let dir = std::env::var_os("TEST_TMPDIR")
+            .map_or_else(std::env::temp_dir, std::path::PathBuf::from)
+            .join(format!("scheda-rerank-segment-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let vault = open(&dir, OpenOptions::default().with_write_timeout_ms(2000))
+            .await
+            .unwrap();
+        journal_of_lines(&vault, "log", 60).await;
+        let declarations: BTreeMap<String, Declaration> = vault
+            .declarations_now()
+            .unwrap()
+            .iter()
+            .map(|decl| (decl.name().to_owned(), decl.clone()))
+            .collect();
+        let keys: Vec<(String, String)> = (0..50)
+            .map(|n| ("log".to_owned(), format!("l{n:02}")))
+            .collect();
+        let state = step(&vault, |cx, vault| vault.state_now(cx)).await.unwrap();
+        let (documents, reads) = step(&vault, move |cx, vault| {
+            let before = blob_reads();
+            let documents = read_all(cx, vault, &declarations, state, &keys)?;
+            Ok((documents, blob_reads() - before))
+        })
+        .await
+        .unwrap();
+        assert!(documents.iter().all(Option::is_some), "every line is read");
+        assert_eq!(reads, 1, "the segment is read once for the 50 hits");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn candidate(collection: &str, id: &str, score: f64) -> Candidate {
         Candidate {
@@ -839,6 +891,14 @@ mod tests {
         assert_eq!(numbers.depth(), 70);
         numbers.rerank_limit = Some(200);
         assert_eq!(numbers.depth(), 200);
+    }
+
+    #[test]
+    fn a_leg_asks_for_no_more_hits_than_the_table_holds() {
+        assert_eq!(reach_in(70, 12_000), 71);
+        assert_eq!(reach_in(70, 20), 20);
+        assert_eq!(reach_in(usize::MAX, 12_000), 12_000);
+        assert_eq!(reach_in(70, 0), 1, "a leg is never asked for none");
     }
 
     #[test]

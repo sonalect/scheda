@@ -636,6 +636,18 @@ impl RerankerPort {
 pub(crate) struct ProjectorPort {
     port: DynProjectorAsync,
     descriptor: ProjectorDescriptor,
+    /// The answers of `columns` for one state of `HEAD`. A new install is a
+    /// new port, so its answers start empty.
+    kept: tokio::sync::Mutex<Kept>,
+}
+
+/// What a projector answered to `columns` at the commit `head` of the main
+/// repository, the one the declarations were read from.
+#[cfg(feature = "index")]
+#[derive(Default)]
+struct Kept {
+    head: Option<git2::Oid>,
+    columns: std::collections::BTreeMap<String, Option<IndexSchema>>,
 }
 
 /// Installs a projector: takes its async form, then reads and validates its
@@ -650,7 +662,11 @@ async fn install_projector(port: &ProjectorRef) -> Result<ProjectorPort, Error> 
     stored::validate(&descriptor)
         .map_err(|fault| invalid_reply("the descriptor of the projector", fault))
         .context("Projector::describe: check the descriptor")?;
-    Ok(ProjectorPort { port, descriptor })
+    Ok(ProjectorPort {
+        port,
+        descriptor,
+        kept: tokio::sync::Mutex::default(),
+    })
 }
 
 #[cfg(feature = "index")]
@@ -660,18 +676,38 @@ impl ProjectorPort {
         self.descriptor.projection_id.as_deref().unwrap_or_default()
     }
 
-    /// The columns of `collection`, or `None` when the projector declares
-    /// none: its Documents are indexed by identity only.
+    /// The columns of `collection` as declared in the commit `head` of the
+    /// main repository, or `None` when the projector declares none: its
+    /// Documents are indexed by identity only.
+    ///
+    /// The projector is asked once per collection and per `head`: an answer
+    /// is kept until a call names another `head`, and so is shared by the
+    /// indexer and by every query. A failed call is not kept. Callers that
+    /// ask at the same time wait for each other, so the projector is not
+    /// asked twice at once.
     ///
     /// # Errors
     ///
     /// `INVALID_ARGUMENT` when the columns break the rules of an
     /// `IndexSchema` (a name used twice, a reserved name, an unset kind);
     /// the failure of the port otherwise.
-    pub(crate) async fn columns(&self, collection: String) -> Result<Option<IndexSchema>, Error> {
+    pub(crate) async fn columns(
+        &self,
+        head: Option<git2::Oid>,
+        collection: String,
+    ) -> Result<Option<IndexSchema>, Error> {
+        let mut kept = self.kept.lock().await;
+        if kept.head != head {
+            kept.head = head;
+            kept.columns.clear();
+        }
+        if let Some(schema) = kept.columns.get(&collection) {
+            return Ok(schema.clone());
+        }
         let port = self.port.clone();
+        let asked = collection.clone();
         let schema = task(async move {
-            port.columns(CollectionKey::default().with_name(collection))
+            port.columns(CollectionKey::default().with_name(asked))
                 .await
         })
         .await
@@ -679,7 +715,9 @@ impl ProjectorPort {
         stored::validate(&schema)
             .map_err(|fault| invalid_reply("the columns of the projector", fault))
             .context("Projector::columns: check the columns")?;
-        Ok((!schema.columns.is_empty()).then_some(schema))
+        let schema = (!schema.columns.is_empty()).then_some(schema);
+        kept.columns.insert(collection, schema.clone());
+        Ok(schema)
     }
 
     /// The values of the columns for one Document, or `None` when the
@@ -1664,14 +1702,14 @@ mod tests {
             IndexDoc::default(),
         ))
         .await
-        .columns(String::from("notes"))
+        .columns(None, String::from("notes"))
         .await
         .unwrap()
         .unwrap();
         assert_eq!(schema.columns.len(), 2);
         let none = projector(proj(Vec::new(), IndexDoc::default()))
             .await
-            .columns(String::from("notes"))
+            .columns(None, String::from("notes"))
             .await
             .unwrap();
         assert!(none.is_none());
@@ -1683,7 +1721,7 @@ mod tests {
         ] {
             let error = projector(proj(columns, IndexDoc::default()))
                 .await
-                .columns(String::from("notes"))
+                .columns(None, String::from("notes"))
                 .await
                 .unwrap_err();
             assert!(error.is(VaultErrorCode::InvalidArgument));

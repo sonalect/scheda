@@ -110,20 +110,25 @@ pub(crate) fn indexed(decl: &Declaration) -> bool {
     !decl.encrypted()
 }
 
-/// The plan of a Vault with `calls`, for `declarations`: the Projector is
-/// asked for the columns of each collection.
+/// The plan of a Vault with `calls`, for `declarations` read from the commit
+/// `head` of the main repository: the Projector is asked for the columns of
+/// each collection, once per collection and `head` (it keeps its answers).
 ///
 /// # Errors
 ///
 /// The failure of the Projector.
-pub(crate) async fn plan(calls: &Calls, declarations: Arc<Declarations>) -> Result<Plan, Error> {
+pub(crate) async fn plan(
+    calls: &Calls,
+    head: Option<Oid>,
+    declarations: Arc<Declarations>,
+) -> Result<Plan, Error> {
     let mut shapes = BTreeMap::new();
     let mut declared = BTreeMap::new();
     let mut needs_embedder: Option<String> = None;
     for decl in declarations.iter().filter(|decl| indexed(decl)) {
         let schema: Option<IndexSchema> = match &calls.projector {
             Some(projector) => projector
-                .columns(decl.name().to_owned())
+                .columns(head, decl.name().to_owned())
                 .await
                 .with_context(|| format!("the columns of {}", decl.name()))?,
             None => None,
@@ -213,10 +218,11 @@ pub(crate) async fn plan(calls: &Calls, declarations: Arc<Declarations>) -> Resu
 /// Projector.
 pub(crate) async fn can_rebuild(
     calls: &Calls,
+    head: Option<Oid>,
     declarations: Arc<Declarations>,
     live: Option<&Commit>,
 ) -> Result<(), Error> {
-    if let Some(what) = plan(calls, declarations).await?.lacking {
+    if let Some(what) = plan(calls, head, declarations).await?.lacking {
         return Err(Fault::new(
             VaultErrorCode::FailedPrecondition,
             format!("this Vault lacks {what}; give it one to rebuild the Index"),

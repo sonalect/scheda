@@ -30,7 +30,7 @@ use crate::collection::{Declaration, Declarations, Kind};
 use crate::error::{Context, Error, Fault, io};
 use crate::index::{Index, Round, Side, State};
 use crate::isolated;
-use crate::journal::{self, Line};
+use crate::journal::{self, Line, SegmentMemo};
 use crate::repo::{Delta, Snap, Views};
 
 const HEADER: &str = "scheda-ids 1";
@@ -384,7 +384,19 @@ impl IdMaps {
         decl: &Declaration,
         id: &str,
     ) -> Result<Option<Line>, Fault> {
-        self.lookup(snap, decl).find(id)
+        self.find_with(snap, decl, id, &mut SegmentMemo::default())
+    }
+
+    /// [`find`](Self::find), reading the segment through `memo`: a reader
+    /// that finds many lines (a page) passes the same memo each time.
+    pub(crate) fn find_with(
+        &self,
+        snap: &Snap,
+        decl: &Declaration,
+        id: &str,
+        memo: &mut SegmentMemo,
+    ) -> Result<Option<Line>, Fault> {
+        self.lookup(snap, decl).find_with(id, memo)
     }
 
     /// A lookup of the lines of the journal `decl` as the commit of `snap`
@@ -428,10 +440,21 @@ pub(crate) struct Lookup<'a> {
 impl Lookup<'_> {
     /// The line of `id`, if the journal has it.
     pub(crate) fn find(&mut self, id: &str) -> Result<Option<Line>, Fault> {
+        self.find_with(id, &mut SegmentMemo::default())
+    }
+
+    /// [`find`](Self::find), reading each segment through `memo`: the
+    /// segment it read last is not read again for the next id. Only the
+    /// line found is copied.
+    pub(crate) fn find_with(
+        &mut self,
+        id: &str,
+        memo: &mut SegmentMemo,
+    ) -> Result<Option<Line>, Fault> {
         if let Some(map) = self.map.clone()
             && let Some(segment) = map.segment_of(id)
         {
-            if let Some(line) = self.line_in(Path::new(segment), id)? {
+            if let Some(line) = self.line_in(Path::new(segment), id, memo)? {
                 return Ok(Some(line));
             }
             // The map is wrong about this id: the segment was changed by
@@ -447,21 +470,24 @@ impl Lookup<'_> {
         };
         let unmapped = self.unmapped.insert(unmapped);
         if let Some(path) = unmapped.ids.get(id).map(|at| unmapped.read[*at].clone()) {
-            return self.line_in(&path, id);
+            return self.line_in(&path, id, memo);
         }
         while let Some(path) = unmapped.left.pop() {
-            let Some(bytes) = journal::read_segment(snap, &path)? else {
+            let Some(bytes) = memo.read(snap, &path)? else {
                 continue;
             };
             let at = unmapped.read.len();
             unmapped.read.push(path);
             let mut found = None;
-            for line in journal::parse_segment(&bytes) {
-                if found.is_none() && line.id == id {
-                    unmapped.ids.entry(line.id.clone()).or_insert(at);
-                    found = Some(line);
-                } else {
-                    unmapped.ids.entry(line.id).or_insert(at);
+            for (line_id, payload) in journal::lines(bytes) {
+                if found.is_none() && line_id == id {
+                    found = Some(Line {
+                        id: line_id.to_owned(),
+                        payload: payload.to_vec(),
+                    });
+                }
+                if !unmapped.ids.contains_key(line_id) {
+                    unmapped.ids.insert(line_id.to_owned(), at);
                 }
             }
             if found.is_some() {
@@ -471,13 +497,16 @@ impl Lookup<'_> {
         Ok(None)
     }
 
-    fn line_in(&self, path: &Path, id: &str) -> Result<Option<Line>, Fault> {
-        let Some(bytes) = journal::read_segment(self.snap, path)? else {
+    fn line_in(
+        &self,
+        path: &Path,
+        id: &str,
+        memo: &mut SegmentMemo,
+    ) -> Result<Option<Line>, Fault> {
+        let Some(bytes) = memo.read(self.snap, path)? else {
             return Ok(None);
         };
-        Ok(journal::parse_segment(&bytes)
-            .into_iter()
-            .find(|line| line.id == id))
+        Ok(journal::find_line(bytes, id))
     }
 
     /// The segments the map does not vouch for, none read yet.
