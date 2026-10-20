@@ -1047,6 +1047,171 @@ mod tests {
         assert!(plan.contains("ANNIvfPartition"), "{plan}");
     }
 
+    /// A shape of text columns only: `title` (fts) and `kind` (a scalar
+    /// index).
+    fn texts() -> Shape {
+        Shape {
+            columns: vec![
+                column("title", false, true, false),
+                column("kind", true, false, false),
+            ],
+            vectors: Vec::new(),
+            dimensions: None,
+        }
+    }
+
+    /// The row `n` with the title `title`.
+    fn titled(n: usize, title: &str) -> Row {
+        let id = format!("r{n:05}");
+        Row {
+            file: format!("notes/{id}"),
+            order: id.clone(),
+            id,
+            values: BTreeMap::from([
+                (String::from("title"), Value::Text(title.to_owned())),
+                (String::from("kind"), Value::Text(format!("k{}", n % 3))),
+            ]),
+            embeddings: BTreeMap::new(),
+        }
+    }
+
+    /// Every title of `rows` by id, a row that is there twice with two.
+    async fn titles_of(rows: &Dataset) -> BTreeMap<String, Vec<String>> {
+        let mut scanner = rows.scan();
+        scanner.project(&["id", "title"]).unwrap();
+        let batch = scanner.try_into_batch().await.unwrap();
+        let ids = strings(&batch, "id").unwrap();
+        let titles = strings(&batch, "title").unwrap();
+        let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for n in 0..batch.num_rows() {
+            out.entry(ids.value(n).to_owned())
+                .or_default()
+                .push(titles.value(n).to_owned());
+        }
+        out
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_round_cut_short_is_rolled_back_to_the_versions_the_commit_names() {
+        let scratch = Scratch::new("restore");
+        let first: Vec<Row> = (0..10).map(|n| titled(n, "one")).collect();
+        let second: Vec<Row> = (5..20).map(|n| titled(n, "two")).collect();
+        let gone = [String::from("r00000")];
+
+        // The round that ran to its end, in a table of its own.
+        let mut whole = Table::open(&scratch.0, "t1", texts(), None).await.unwrap();
+        whole.upsert(&first).await.unwrap();
+        whole.upsert(&second).await.unwrap();
+        whole.delete_rows("id", &gone).await.unwrap();
+        let wanted = titles_of(&whole.rows).await;
+
+        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        table.upsert(&first).await.unwrap();
+        let committed = table.versions();
+        // A round that wrote past the commit, then was killed.
+        table.upsert(&second).await.unwrap();
+        drop(table);
+        // A reader opens the version the commit names.
+        let path = scratch.0.join("t0.lance");
+        let reader = Dataset::open(path.to_str().unwrap())
+            .await
+            .unwrap()
+            .checkout_version(committed.rows)
+            .await
+            .unwrap();
+        let read = titles_of(&reader).await;
+        assert_eq!(read.len(), 10);
+        assert!(read.values().all(|titles| titles == &["one"]));
+
+        // The next round starts from the commit and ends as the whole one.
+        let mut again = Table::open(&scratch.0, "t0", texts(), Some(committed))
+            .await
+            .unwrap();
+        assert_eq!(titles_of(&again.rows).await, read);
+        again.upsert(&second).await.unwrap();
+        again.delete_rows("id", &gone).await.unwrap();
+        assert_eq!(titles_of(&again.rows).await, wanted);
+    }
+
+    /// lancedb #3177 / #3515: an upsert of existing rows after compaction
+    /// and index optimisation must not leave a row twice.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn two_hundred_upserts_of_the_same_rows_never_leave_a_row_twice() {
+        let scratch = Scratch::new("upserts");
+        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        for round in 0..200_u64 {
+            let marker = format!("m{round}");
+            let rows: Vec<Row> = (0..50).map(|n| titled(n, &marker)).collect();
+            table.upsert(&rows).await.unwrap();
+            // Compaction every round, the indices made at once and brought
+            // over the new rows every fiftieth.
+            table.maintain(round + 1).await.unwrap();
+            if round % 50 == 49 || round == 0 {
+                let titles = titles_of(&table.rows).await;
+                assert_eq!(titles.len(), 50, "round {round}");
+                assert!(
+                    titles.values().all(|titles| titles == &[marker.as_str()]),
+                    "round {round}: {titles:?}"
+                );
+            }
+        }
+    }
+
+    /// The bytes of each data file of the table at `dir`, by name.
+    fn data_files(dir: &Path) -> BTreeMap<String, u64> {
+        std::fs::read_dir(dir.join("data"))
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                (
+                    entry.file_name().to_string_lossy().into_owned(),
+                    entry.metadata().unwrap().len(),
+                )
+            })
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn compaction_after_small_writes_rewrites_only_the_small_fragments() {
+        let scratch = Scratch::new("compaction");
+        let mut table = Table::open(&scratch.0, "t0", texts(), None).await.unwrap();
+        let large: Vec<Row> = (0..20_000)
+            .map(|n| titled(n, &format!("a title of some length, number {n}")))
+            .collect();
+        table.upsert(&large).await.unwrap();
+        table.maintain(1).await.unwrap();
+        let dir = scratch.0.join("t0.lance");
+        let before = data_files(&dir);
+        let large_bytes: u64 = before.values().sum();
+        for write in 0..5 {
+            let small: Vec<Row> = (0..10)
+                .map(|n| titled(30_000 + write * 10 + n, "a small write"))
+                .collect();
+            table.upsert(&small).await.unwrap();
+        }
+        table.maintain(2).await.unwrap();
+        let after = data_files(&dir);
+        assert!(
+            before.keys().all(|name| after.contains_key(name)),
+            "the large fragment is kept as it was"
+        );
+        let written: u64 = after
+            .iter()
+            .filter(|(name, _)| !before.contains_key(*name))
+            .map(|(_, bytes)| bytes)
+            .sum();
+        assert!(
+            written * 20 < large_bytes,
+            "{written} bytes written for 50 rows next to {large_bytes}"
+        );
+        assert_eq!(
+            table.rows.get_fragments().len(),
+            2,
+            "the five small fragments are one"
+        );
+        assert_eq!(titles_of(&table.rows).await.len(), 20_050);
+    }
+
     #[test]
     fn a_version_is_pruned_once_its_successor_is_an_hour_old() {
         let now = 10 * HOUR;

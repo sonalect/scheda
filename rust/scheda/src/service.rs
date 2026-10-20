@@ -803,7 +803,7 @@ impl IndexAsync for IndexObject {
             })
             .await?;
         let calls = crate::tables::Calls::of(self.vault.ports());
-        crate::tables::can_rebuild(&calls, &declarations, live.as_ref())
+        crate::tables::can_rebuild(&calls, declarations, live.as_ref())
             .await
             .context("Index.Reindex")?;
         self.vault.indexer().reindex()?;

@@ -338,20 +338,20 @@ D1, D14, D18.
 D6, D7, D8, D9, D10, D11, D12, D13. A new module (`store.rs`), used by
 nothing else yet.
 
-- [ ] Async on the caller's runtime (D13, `22`): Lance's futures awaited
+- [x] Async on the caller's runtime (D13, `22`): Lance's futures awaited
       in Scheda's async code, the blocking steps behind `22`'s gate.
-- [ ] A dataset per collection: created from the Projector's columns
+- [x] A dataset per collection: created from the Projector's columns
       (D8, D9), opened, its schema checked against the columns; the
       generation folder and `current` (D6).
-- [ ] Upsert of whole rows and delete by `id` (D12); `commit` naming
+- [x] Upsert of whole rows and delete by `id` (D12); `commit` naming
       the version of each dataset and table of files, read by readers;
       restore of a dataset ahead of `commit` (D7).
-- [ ] Owner-only modes on every file Lance writes (Lance writes with the
+- [x] Owner-only modes on every file Lance writes (Lance writes with the
       process umask): applied after each commit, as `restrict_tree` did
       for Tantivy in `0.22`; `Vault.Check` skips the datasets while a
       round holds `index.lock`, as it skipped `lexical/` (L8 removed both
       with Tantivy).
-- [ ] Maintenance (D11): compaction, index optimisation, delta merge,
+- [x] Maintenance (D11): compaction, index optimisation, delta merge,
       prune an hour after a version was replaced.
 - *Check:* a reader opens the versions `commit` names; a dataset written
   past `commit` by a killed round is restored, and the next round ends with
@@ -374,23 +374,23 @@ nothing else yet.
 `index.lock`, the wake and the look at `HEAD`, who indexes, the journal
 id maps. Lance is a new side of its round.
 
-- [ ] The parts of a round: the journal id maps (unchanged), then each
+- [x] The parts of a round: the journal id maps (unchanged), then each
       dataset brought from its own state to `HEAD` (D7), then
       `index/{generation}/commit` last.
-- [ ] The Index object (`Status`, `Watch`, `Reindex`) and the ports (a
+- [x] The Index object (`Status`, `Watch`, `Reindex`) and the ports (a
       Projector, an embedder, a reranker) accepted again, with who
       indexes (D17); L8 left them `UNIMPLEMENTED`.
-- [ ] Projection once per changed Document, embedding only the texts
+- [x] Projection once per changed Document, embedding only the texts
       whose digest changed; the in-memory cache of vectors across failed
       tries kept.
-- [ ] A changed journal segment indexes only its new lines when its old
+- [x] A changed journal segment indexes only its new lines when its old
       bytes are a prefix of the new ones; the whole segment otherwise
       (`index-risks.md` item 7).
-- [ ] The stop is honoured between the portions of an `Embed` stream:
+- [x] The stop is honoured between the portions of an `Embed` stream:
       closing a Vault does not wait for a whole round's embedding
       (`index-risks.md` item 5).
-- [ ] Maintenance after a round that wrote rows (D11).
-- [ ] The table of files of each collection, and the catch-up that
+- [x] Maintenance after a round that wrote rows (D11).
+- [x] The table of files of each collection, and the catch-up that
       compares the tree of `HEAD` with it when the old commit, or an object
       the difference needs, is gone (D17).
 - *Check:* a write is found by a query and a search once the Index
@@ -413,17 +413,17 @@ id maps. Lance is a new side of its round.
 
 D4, D17.
 
-- [ ] A rebuild builds the next generation from the snapshot it starts
+- [x] A rebuild builds the next generation from the snapshot it starts
       at, catches it up to `HEAD`, and switches `current` under
       `index.lock`; the live generation stays at its state meanwhile. The
       old generation is deleted an hour after the switch (Windows: a file
       still open is tried again later). Generation names are unique.
-- [ ] `Index.Reindex` starts a rebuild with the Vault's ports; the indexer
+- [x] `Index.Reindex` starts a rebuild with the Vault's ports; the indexer
       starts one by itself only for an Index that does not exist (D2). A
       Vault with other ports than the Index was built with is
       `INDEX_STALE` (D17).
-- [ ] `IndexState.rebuild` reports its stage, its cause, and its counts.
-- [ ] `open` removes an Index of the `0.22` layout (D2), and the first
+- [x] `IndexState.rebuild` reports its stage, its cause, and its counts.
+- [x] `open` removes an Index of the `0.22` layout (D2), and the first
       build starts (`CAUSE_NEW`); moved here from L8.
 - *Check:* queries and searches answer from the live generation for the
   whole length of a rebuild, and from the new one after the switch.

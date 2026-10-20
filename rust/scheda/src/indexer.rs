@@ -631,7 +631,7 @@ impl Context {
         })
         .await?;
         let calls = Calls::of(&self.ports);
-        let plan = tables::plan(&calls, &declarations).await?;
+        let plan = tables::plan(&calls, Arc::new(declarations)).await?;
         let stale = match look.commit() {
             Some(commit) if !look.asked => tables::stale(commit, &plan),
             _ => None,
@@ -671,6 +671,8 @@ impl Context {
     /// the Lance tables, each with its commit last.
     #[cfg(feature = "index")]
     async fn apply(&self, look: &Look, plan: Plan, cache: &mut Cache) -> Result<Applied, Error> {
+        #[cfg(test)]
+        hooks::after_look(&self.vault).await;
         let maps = {
             let context = self.clone();
             let asked = look.asked;
@@ -689,6 +691,21 @@ impl Context {
             .await?
         };
         let rebuild = look.asked || maps.reset || !matches!(live, Some((_, Some(_))));
+        // The plan is of the collections declared where the round brings
+        // the Index: made again when `HEAD` moved since the look.
+        let calls = Calls::of(&self.ports);
+        let plan = if maps.head == look.head {
+            plan
+        } else {
+            let live_commit = match (&live, rebuild) {
+                (Some((_, Some(commit))), false) => Some(commit),
+                _ => None,
+            };
+            usable(
+                tables::plan(&calls, Arc::clone(&maps.declarations)).await?,
+                live_commit,
+            )?
+        };
         let cause = if look.asked {
             rebuild::Cause::CAUSE_REINDEX
         } else {
@@ -741,35 +758,38 @@ impl Context {
             repos: Arc::clone(&self.repos),
             generation: generation.clone(),
             commit,
-            plan: &plan,
-            calls: &Calls::of(&self.ports),
+            plan,
+            calls: &calls,
             cache,
             tick: &mut tick,
             stopped,
             counts: Counts::default(),
         };
         let mut to = maps.head;
-        let mut declarations = maps.declarations;
-        loop {
-            work.bring_to(to, &declarations).await?;
-            if !rebuild {
-                break;
-            }
-            // A rebuild catches up with the writes made while it ran, then
-            // switches.
+        work.bring_to(to).await?;
+        if rebuild {
+            // A rebuild catches up once, with the tree difference, to the
+            // `HEAD` of the moment it is built, then switches: the writes
+            // made while it was built appear at the switch, those made
+            // while it caught up in the next round. Waiting for `HEAD` to
+            // stand still would never switch under a steady stream of
+            // writes.
             let repos = Arc::clone(&self.repos);
-            let (now, now_declarations) = blocking(move |_cx| {
+            let (now, declarations) = blocking(move |_cx| {
                 let views = repos.views().context("read HEAD")?;
                 let declarations =
                     collection::load(views.of(Repo::Main)).context("read the collections")?;
                 Ok((State::of(&views), declarations))
             })
             .await?;
-            if now == to {
-                break;
+            if now != to {
+                work.plan = usable(
+                    tables::plan(&calls, Arc::new(declarations)).await?,
+                    Some(&work.commit),
+                )?;
+                work.bring_to(now).await?;
+                to = now;
             }
-            to = now;
-            declarations = now_declarations;
         }
         // The tables read every file the maps read: their counts are the
         // round's.
@@ -829,7 +849,7 @@ impl Context {
         let views = self.repos.views().context("read HEAD")?;
         let head = State::of(&views);
         let declarations =
-            collection::load(views.of(Repo::Main)).context("read the collections")?;
+            Arc::new(collection::load(views.of(Repo::Main)).context("read the collections")?);
         if !asked && committed == Some(head) {
             return Ok(Maps {
                 head,
@@ -998,7 +1018,29 @@ struct Maps {
     rebuilt: Option<rebuild::Cause>,
     /// The collections declared at `head`.
     #[cfg(feature = "index")]
-    declarations: Declarations,
+    declarations: Arc<Declarations>,
+}
+
+/// `plan`, when a round can bring the Index forward with it: the Vault
+/// lacks no port, and `commit`, the Index it brings forward, was built
+/// with the same ports and columns.
+///
+/// # Errors
+///
+/// `FAILED_PRECONDITION` naming the port the Vault lacks; `INDEX_STALE`.
+#[cfg(feature = "index")]
+fn usable(plan: Plan, commit: Option<&Commit>) -> Result<Plan, Error> {
+    if let Some(what) = &plan.lacking {
+        return Err(Fault::new(
+            VaultErrorCode::FailedPrecondition,
+            format!("this Vault lacks {what}"),
+        )
+        .into());
+    }
+    if let Some(reason) = commit.and_then(|commit| tables::stale(commit, &plan)) {
+        return Err(Fault::new(VaultErrorCode::IndexStale, reason).into());
+    }
+    Ok(plan)
 }
 
 fn rebuild_of(stage: rebuild::Stage, counts: Counts, cause: Option<rebuild::Cause>) -> Rebuild {
@@ -1027,7 +1069,7 @@ fn panicked(payload: &(dyn std::any::Any + Send)) -> Error {
 }
 
 /// What the unit tests do to a round: stretch it, count the rounds at work
-/// at once, make it panic.
+/// at once, make it panic, hold it after its look.
 #[cfg(test)]
 pub(crate) mod hooks {
     use std::collections::HashMap;
@@ -1044,6 +1086,10 @@ pub(crate) mod hooks {
         most: usize,
         panics: usize,
         fails: usize,
+        #[cfg(feature = "index")]
+        held: bool,
+        #[cfg(feature = "index")]
+        waiting: bool,
     }
 
     static HOOKS: Mutex<Option<HashMap<PathBuf, Hook>>> = Mutex::new(None);
@@ -1072,6 +1118,37 @@ pub(crate) mod hooks {
     /// The next round on `vault` to reach its work fails.
     pub(crate) fn fail_once(vault: &Path) {
         with(vault, |hook| hook.fails += 1);
+    }
+
+    /// The rounds on `vault` wait after their look, with the lock taken,
+    /// until [`release`].
+    #[cfg(feature = "index")]
+    pub(crate) fn hold(vault: &Path) {
+        with(vault, |hook| hook.held = true);
+    }
+
+    /// The rounds on `vault` go on.
+    #[cfg(feature = "index")]
+    pub(crate) fn release(vault: &Path) {
+        with(vault, |hook| hook.held = false);
+    }
+
+    /// Whether a round on `vault` waits at the hold.
+    #[cfg(feature = "index")]
+    pub(crate) fn waiting(vault: &Path) -> bool {
+        with(vault, |hook| hook.waiting)
+    }
+
+    /// Where a held round waits: after its look and its plan, before it
+    /// reads `HEAD` again for its work.
+    #[cfg(feature = "index")]
+    pub(crate) async fn after_look(vault: &Path) {
+        while with(vault, |hook| {
+            hook.waiting = hook.held;
+            hook.held
+        }) {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     /// A round at work; counted until dropped.

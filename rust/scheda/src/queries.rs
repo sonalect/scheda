@@ -92,7 +92,7 @@ impl Reading {
         let calls = Calls::of(pass.vault().ports());
         // A Vault that lacks the embedder its `vector` columns need does
         // not index, and reads the Index all the same.
-        let plan = tables::plan(&calls, &declarations).await?;
+        let plan = tables::plan(&calls, Arc::clone(&declarations)).await?;
         if let Some(reason) = tables::stale(&commit, &plan) {
             return Err(Fault::new(VaultErrorCode::IndexStale, reason).into());
         }

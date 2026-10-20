@@ -69,12 +69,17 @@ impl Calls {
     }
 }
 
-/// What the Index would be, made by this Vault: its ports, and the shape of
-/// the table of each collection it indexes.
+/// What the Index would be, made by this Vault for one set of declared
+/// collections: its ports, and the shape of the table of each collection it
+/// indexes.
 #[derive(Clone, Debug)]
 pub(crate) struct Plan {
     pub(crate) ports: generation::Ports,
     pub(crate) shapes: BTreeMap<String, Shape>,
+    /// The collections the plan is of: a round brings exactly these
+    /// forward, so a collection declared after the plan was made cannot
+    /// lack its shape.
+    pub(crate) declarations: Arc<Declarations>,
     /// The port this Vault lacks to index, when it lacks one: the embedder
     /// a `vector` column needs. Such a Vault reads the Index, and its
     /// searches run without the vector leg, but it writes nothing there;
@@ -93,7 +98,7 @@ pub(crate) fn indexed(decl: &Declaration) -> bool {
 /// # Errors
 ///
 /// The failure of the Projector.
-pub(crate) async fn plan(calls: &Calls, declarations: &Declarations) -> Result<Plan, Error> {
+pub(crate) async fn plan(calls: &Calls, declarations: Arc<Declarations>) -> Result<Plan, Error> {
     let mut shapes = BTreeMap::new();
     let mut needs_embedder: Option<String> = None;
     for decl in declarations.iter().filter(|decl| indexed(decl)) {
@@ -163,6 +168,7 @@ pub(crate) async fn plan(calls: &Calls, declarations: &Declarations) -> Result<P
         },
         shapes,
         lacking,
+        declarations,
     })
 }
 
@@ -176,7 +182,7 @@ pub(crate) async fn plan(calls: &Calls, declarations: &Declarations) -> Result<P
 /// Projector.
 pub(crate) async fn can_rebuild(
     calls: &Calls,
-    declarations: &Declarations,
+    declarations: Arc<Declarations>,
     live: Option<&Commit>,
 ) -> Result<(), Error> {
     if let Some(what) = plan(calls, declarations).await?.lacking {
@@ -261,7 +267,9 @@ pub(crate) struct Work<'a> {
     pub(crate) repos: Arc<Repos>,
     pub(crate) generation: Generation,
     pub(crate) commit: Commit,
-    pub(crate) plan: &'a Plan,
+    /// The plan of the state the next [`Work::bring_to`] brings the tables
+    /// to.
+    pub(crate) plan: Plan,
     pub(crate) calls: &'a Calls,
     pub(crate) cache: &'a mut Cache,
     /// Called with what was read; an error ends the round (the indexer
@@ -340,17 +348,15 @@ struct Source {
 impl Work<'_> {
     /// Brings every collection of the generation from the state of its
     /// commit (none: from nothing) to the state `to`, whose snapshots are
-    /// at the commits it names. Updates `self.commit`; writes no `commit`.
+    /// at the commits it names; `self.plan` is of the collections declared
+    /// at `to`. Updates `self.commit`; writes no `commit`.
     ///
     /// # Errors
     ///
     /// A failure of git, of Lance, or of a port; the error the tick
     /// returns.
-    pub(crate) async fn bring_to(
-        &mut self,
-        to: State,
-        declarations: &Declarations,
-    ) -> Result<(), Error> {
+    pub(crate) async fn bring_to(&mut self, to: State) -> Result<(), Error> {
+        let declarations = Arc::clone(&self.plan.declarations);
         if let Some(embedder) = &self.calls.embedder {
             self.cache.keep_for(embedder.model_id());
         }
@@ -385,7 +391,7 @@ impl Work<'_> {
         for decl in declarations.iter().filter(|decl| indexed(decl)) {
             let name = decl.name();
             let Some(shape) = self.plan.shapes.get(name).cloned() else {
-                continue;
+                unreachable!("a plan has the shape of every collection it indexes");
             };
             let known = self.commit.tables.get(name).cloned();
             let scope = match (&known, &deltas) {
@@ -1013,20 +1019,24 @@ fn read(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, HashMap};
     use std::num::NonZeroUsize;
     use std::path::PathBuf;
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
 
     use buffa_types::google::protobuf::Empty;
     use lance::Dataset;
     use lance::deps::arrow_array::{Array, Int64Array, StringArray};
+    use protocontract::Failure;
+    use scheda_api::v1::document_operation::Operation;
     use scheda_api::v1::embedder_ref::EmbedderRef;
     use scheda_api::v1::projector_ref::ProjectorRef;
     use scheda_api::v1::{
-        CollectionKey, ColumnKind, DocumentCreation, IndexColumn, IndexDoc, IndexSchema,
-        IndexValue, OpenOptions, ProjectorDescriptor, ProjectorSync, RawDocument,
+        CollectionKey, ColumnKind, DocumentCreation, DocumentOperation, EmbedderErrorCode,
+        IndexColumn, IndexDoc, IndexSchema, IndexValue, OpenOptions, ProjectorDescriptor,
+        ProjectorSync, RawDocument,
     };
     use scheda_blocking::blocking;
 
@@ -1034,7 +1044,9 @@ mod tests {
     use crate::generation::Layout;
     use crate::index::Index;
     use crate::ports::{FixedEmbedder, Ports};
-    use crate::testing::{create, create_collection, open_with, upsert, upsert_of, wait_indexed};
+    use crate::testing::{
+        batch, create, create_collection, open_with, upsert, upsert_of, wait_indexed,
+    };
     use crate::vault::Vault;
     use scheda_api::v1::index_value::Value;
 
@@ -1246,6 +1258,11 @@ mod tests {
             .unwrap();
         }
         wait_indexed(&vault).await;
+        assert_eq!(
+            projected.load(Ordering::SeqCst),
+            4,
+            "one Project per changed Document"
+        );
         let notes = rows(&vault, "notes").await;
         assert_eq!(
             notes.get("a.md"),
@@ -1289,7 +1306,21 @@ mod tests {
             "the body did not change: no text embedded"
         );
 
-        // An appended line is the one line projected.
+        // A segment of 200 lines and one more appended: the one line is
+        // projected.
+        let lines: Vec<DocumentOperation> = (0..200)
+            .map(|n| DocumentOperation {
+                operation: Some(Operation::Create(Box::new(
+                    DocumentCreation::default()
+                        .with_id(format!("m{n:03}"))
+                        .with_raw(format!("Line {n}|{n}|said {n}").into_bytes())
+                        .with_note("test"),
+                ))),
+                ..DocumentOperation::default()
+            })
+            .collect();
+        batch(&vault, "log", lines).await.unwrap();
+        wait_indexed(&vault).await;
         let before = projected.load(Ordering::SeqCst);
         create(
             &vault,
@@ -1302,8 +1333,217 @@ mod tests {
         .await
         .unwrap();
         wait_indexed(&vault).await;
-        assert_eq!(rows(&vault, "log").await.len(), 3);
+        assert_eq!(rows(&vault, "log").await.len(), 203);
         assert_eq!(projected.load(Ordering::SeqCst), before + 1);
         vault.close().await.unwrap();
+    }
+
+    /// A collection declared after a round looked at `HEAD` and before it
+    /// read `HEAD` again for its work is in the Index the round makes: the
+    /// plan is of the collections where the round brings the Index.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_collection_declared_while_a_round_runs_gets_its_table() {
+        let scratch = Scratch::new("declared-meanwhile");
+        let (ports, _, _) = ports();
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&vault).await;
+        let path = vault.path().to_path_buf();
+        crate::indexer::hooks::hold(&path);
+        upsert(&vault, "notes", upsert_of("a.md", b"Alpha|1|first body"))
+            .await
+            .unwrap();
+        wait_until("the held round", || crate::indexer::hooks::waiting(&path)).await;
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "log", "schema": {"journal": {}}}),
+        )
+        .await
+        .unwrap();
+        create(
+            &vault,
+            "log",
+            DocumentCreation::default()
+                .with_id("l1")
+                .with_raw(b"Line|7|said".to_vec())
+                .with_note("test"),
+        )
+        .await
+        .unwrap();
+        crate::indexer::hooks::release(&path);
+        wait_indexed(&vault).await;
+        assert_eq!(rows(&vault, "notes").await.len(), 1);
+        assert_eq!(rows(&vault, "log").await.len(), 1);
+        vault.close().await.unwrap();
+    }
+
+    /// The bytes of the `commit` of the live generation.
+    async fn live_commit(vault: &Arc<Vault>) -> Vec<u8> {
+        let root = Index::new(vault.path()).root().to_path_buf();
+        blocking(move |cx| {
+            let generation = Layout::new(&root).current(cx)?.unwrap();
+            Ok(std::fs::read(generation.dir().join("commit")).unwrap())
+        })
+        .await
+        .unwrap()
+    }
+
+    /// Waits up to a minute for `done`.
+    async fn wait_until(what: &str, done: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !done() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// `count` Documents of `notes` in one batch, each with a body of its
+    /// own.
+    fn notes(count: usize, from: usize) -> Vec<DocumentOperation> {
+        (from..from + count)
+            .map(|n| DocumentOperation {
+                operation: Some(Operation::Upsert(Box::new(upsert_of(
+                    &format!("n{n:03}.md"),
+                    format!("Note {n}|{n}|body number {n}").as_bytes(),
+                )))),
+                ..DocumentOperation::default()
+            })
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_embedder_that_fails_moves_no_commit_fails_no_write_and_is_asked_only_for_the_rest()
+    {
+        let scratch = Scratch::new("failing-embedder");
+        let broken = Arc::new(AtomicBool::new(false));
+        let embedded: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
+        let embedder = {
+            let broken = Arc::clone(&broken);
+            let embedded = Arc::clone(&embedded);
+            FixedEmbedder::new(
+                "model-a",
+                4,
+                NonZeroUsize::MIN,
+                move |texts: Vec<String>| {
+                    let mut done = embedded.lock().unwrap();
+                    if broken.load(Ordering::SeqCst) && done.len() >= 5 {
+                        return Err(Failure::new(EmbedderErrorCode::Unavailable, "down")
+                            .with_retryable(true)
+                            .into());
+                    }
+                    for text in &texts {
+                        *done.entry(text.clone()).or_default() += 1;
+                    }
+                    Ok(texts
+                        .iter()
+                        .map(|text| vec![text.len() as f32, 1.0, 2.0, 3.0])
+                        .collect())
+                },
+            )
+        };
+        let ports = Ports {
+            projector: Some(ProjectorRef::from_sync(Pipes {
+                projected: Arc::default(),
+            })),
+            embedder: Some(EmbedderRef::from_sync(embedder)),
+            reranker: None,
+        };
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&vault).await;
+        let live = live_commit(&vault).await;
+
+        broken.store(true, Ordering::SeqCst);
+        batch(&vault, "notes", notes(10, 0)).await.unwrap();
+        wait_until("the failure", || {
+            vault.indexer().status().last_error.is_set() && embedded.lock().unwrap().len() == 5
+        })
+        .await;
+        assert_eq!(live_commit(&vault).await, live, "no commit moved");
+        batch(&vault, "notes", notes(1, 10)).await.unwrap();
+
+        broken.store(false, Ordering::SeqCst);
+        wait_indexed(&vault).await;
+        let done = embedded.lock().unwrap().clone();
+        assert_eq!(done.len(), 11);
+        assert!(
+            done.values().all(|times| *times == 1),
+            "a text embedded before the failure is not sent again: {done:?}"
+        );
+        let rows = rows(&vault, "notes").await;
+        assert_eq!(rows.len(), 11);
+        assert!(rows.values().all(|(_, _, vector)| *vector));
+        vault.close().await.unwrap();
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn closing_a_vault_in_the_middle_of_a_slow_embedding_returns_within_one_portion() {
+        const PORTION: Duration = Duration::from_millis(200);
+        let scratch = Scratch::new("slow-embedder");
+        let asked = Arc::new(AtomicUsize::new(0));
+        let embedder = {
+            let asked = Arc::clone(&asked);
+            FixedEmbedder::new(
+                "model-a",
+                4,
+                NonZeroUsize::MIN,
+                move |texts: Vec<String>| {
+                    asked.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(PORTION);
+                    Ok(texts.iter().map(|_| vec![1.0, 1.0, 2.0, 3.0]).collect())
+                },
+            )
+        };
+        let ports = Ports {
+            projector: Some(ProjectorRef::from_sync(Pipes {
+                projected: Arc::default(),
+            })),
+            embedder: Some(EmbedderRef::from_sync(embedder)),
+            reranker: None,
+        };
+        let vault = open_with(
+            &scratch.0,
+            OpenOptions::default().with_index_poll_ms(10),
+            ports,
+        )
+        .await
+        .unwrap();
+        create_collection(
+            &vault,
+            serde_json::json!({"name": "notes", "schema": {"standard": {}}}),
+        )
+        .await
+        .unwrap();
+        wait_indexed(&vault).await;
+        batch(&vault, "notes", notes(40, 0)).await.unwrap();
+        wait_until("the embedding", || asked.load(Ordering::SeqCst) >= 2).await;
+        let started = Instant::now();
+        vault.close().await.unwrap();
+        let took = started.elapsed();
+        // The whole round would take 40 portions.
+        assert!(took < PORTION * 4, "close took {took:?}");
+        assert!(asked.load(Ordering::SeqCst) < 10);
     }
 }

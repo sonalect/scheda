@@ -129,6 +129,24 @@ they print `PROBE-…` lines with `--nocapture`, poll 10 ms, debug build).
     `version` stay behind. `06` IDX-9 now says what the code does.
     *Recommendation:* keep the behaviour, amend the D23 sentence.
 
+## Found while building the Index on Lance (20 October 2026)
+
+1. **Low. `like` on a long Document asks BM25 with all its words.** The
+    lexical leg of `like` matches every word of the Document's `fts`
+    columns (`search.rs`); `0.22` used Tantivy's `MoreLikeThis`, which
+    picks the most telling terms. Correct, but slow for a long text.
+    *Recommendation:* when a consumer searches `like` on long Documents,
+    keep the top terms by tf-idf before the query; measure first.
+2. **Fixed. A collection declared during a round lacked its table.** The
+    round's plan was of the collections at its look, its work of a later
+    `HEAD`; fixed by making the plan carry its declarations and making it
+    again when `HEAD` moved (`tables.rs`,
+    `a_collection_declared_while_a_round_runs_gets_its_table`).
+3. **Fixed. A rebuild never switched under a steady stream of writes.**
+    It caught up until `HEAD` stood still; it now catches up once and
+    switches, as D4 says (`search.rs`,
+    `a_process_killed_while_it_indexes_leaves_an_index_that_opens_counts_and_searches`).
+
 ## Checked and fine
 
 - A reset, rebase, or rewriting pull is applied incrementally (tree

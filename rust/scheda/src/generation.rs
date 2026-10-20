@@ -306,7 +306,8 @@ impl Generation {
     }
 
     /// Removes the folders of the tables `commit` dropped more than an hour
-    /// ago, and forgets them. Under `index.lock`; `commit` is written after.
+    /// ago, and forgets those it removed. Under `index.lock`; `commit` is
+    /// written after.
     pub(crate) fn sweep_tables(&self, _cx: &Blocking, commit: &mut Commit) {
         let lifetime = u64::try_from(VERSION_LIFETIME.as_millis()).unwrap_or(u64::MAX);
         let now = now_millis();
@@ -314,10 +315,15 @@ impl Generation {
             if now.saturating_sub(table.at) < lifetime {
                 return true;
             }
-            for suffix in [".lance", ".files.lance"] {
-                let _ = fs::remove_dir_all(self.dir.join(format!("{}{suffix}", table.name)));
-            }
-            false
+            // A table that cannot be removed now (a reader holds a file of
+            // it open) stays listed, and the next round tries again.
+            let removed = [".lance", ".files.lance"].iter().all(|suffix| {
+                match fs::remove_dir_all(self.dir.join(format!("{}{suffix}", table.name))) {
+                    Ok(()) => true,
+                    Err(err) => err.kind() == std::io::ErrorKind::NotFound,
+                }
+            });
+            !removed
         });
     }
 

@@ -46,9 +46,10 @@ fn without_the_index_the_two_calls_are_unimplemented() {
 
 #[cfg(feature = "index")]
 mod on_lance {
+    use std::collections::{BTreeMap, BTreeSet};
     use std::num::NonZeroUsize;
     use std::path::{Path, PathBuf};
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
@@ -57,16 +58,18 @@ mod on_lance {
     use scheda::v1::document_operation::Operation;
     use scheda::v1::embedder_ref::EmbedderRef;
     use scheda::v1::projector_ref::ProjectorRef;
+    use scheda::v1::query_item::Item as QueryArm;
+    use scheda::v1::rebuild;
     use scheda::v1::reranker_ref::RerankerRef;
     use scheda::v1::search_item::Item;
     use scheda::v1::search_summary::VectorLeg;
     use scheda::v1::{
         CollectionAsync, CollectionDeclaration, CollectionKey, ColumnKind, Document,
-        DocumentCreation, DocumentDeletion, DocumentOperation, DocumentUpsert, DynCollectionAsync,
-        DynVaultAsync, EmbedderDescriptor, EmbedderSync, IndexAsync, IndexColumn, IndexDoc,
-        IndexSchema, IndexValue, OpenOptions, ProjectorDescriptor, ProjectorSync, Query,
-        RawDocument, SchedaAsync, SearchHit, SearchItem, Text, VaultAsync, VaultErrorCode as Code,
-        Vector, index_value,
+        DocumentCreation, DocumentDeletion, DocumentOperation, DocumentQuery, DocumentUpsert,
+        DynCollectionAsync, DynIndexAsync, DynVaultAsync, EmbedderDescriptor, EmbedderSync,
+        IndexAsync, IndexColumn, IndexDoc, IndexSchema, IndexState, IndexValue, OpenOptions,
+        ProjectorDescriptor, ProjectorSync, Query, RawDocument, SchedaAsync, SearchHit, SearchItem,
+        Text, VaultAsync, VaultErrorCode as Code, Vector, index_value,
     };
     use scheda::{Error, FixedReranker, Scheda};
     use serde_json::{Value, json};
@@ -82,10 +85,13 @@ mod on_lance {
 
     /// A Projector of JSON Documents with four text columns: `title` and
     /// `body` (searched), `topic` (embedded, when the Projector marks
-    /// vectors), and `kind` (a scalar index, for filters).
+    /// vectors), and `kind` (a scalar index, for filters). It counts its
+    /// `Project` calls, and holds each while `Calls.held` is set, and for
+    /// good each after the first `Calls.hold_after` (0: none).
     struct Docs {
         projection: &'static str,
         vectors: bool,
+        calls: Arc<Calls>,
     }
 
     impl ProjectorSync for Docs {
@@ -107,6 +113,11 @@ mod on_lance {
         }
 
         fn project(&self, document: RawDocument) -> Result<IndexDoc, Error> {
+            let call = self.calls.projected.fetch_add(1, Ordering::SeqCst) + 1;
+            let after = self.calls.hold_after.load(Ordering::SeqCst);
+            while self.calls.held.load(Ordering::SeqCst) || (after > 0 && call > after) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
             let json: Value =
                 serde_json::from_slice(&document.raw.unwrap_or_default()).unwrap_or_default();
             let mut doc = IndexDoc::default();
@@ -142,11 +153,15 @@ mod on_lance {
         vector
     }
 
-    /// What the embedder was asked.
+    /// What the ports were asked, and whether the Projector holds its
+    /// calls.
     #[derive(Default)]
     struct Calls {
         queries: Mutex<Vec<String>>,
         embedded: AtomicUsize,
+        projected: AtomicUsize,
+        held: AtomicBool,
+        hold_after: AtomicUsize,
     }
 
     impl Calls {
@@ -253,6 +268,7 @@ mod on_lance {
         request.projector = ProjectorRef::from_sync(Docs {
             projection: ports.projection,
             vectors: ports.vectors,
+            calls: Arc::clone(calls),
         })
         .into();
         if let Some(model) = ports.model {
@@ -1155,6 +1171,9 @@ mod on_lance {
             let found = ids(&run(&notes, json!({"text": "kitten", "k": 10})).await);
             assert!(!found.contains(&"cat2".to_owned()), "{found:?}");
             assert!(found.contains(&"cat1".to_owned()));
+            // And from the queries.
+            assert_eq!(listed(&notes).await, ["car1", "cat1", "dog1"]);
+            assert_eq!(count(&notes).await, 3);
 
             // A stream dropped early leaves the Vault usable.
             let mut stream = notes
@@ -1283,6 +1302,7 @@ mod on_lance {
                 request.projector = ProjectorRef::from_sync(Docs {
                     projection: "docs@1",
                     vectors: true,
+                    calls: Arc::default(),
                 })
                 .into();
                 request.embedder = EmbedderRef::from_sync(Points).into();
@@ -1364,5 +1384,555 @@ mod on_lance {
                 assert_eq!(ids(&found), ["late"]);
                 vault.close(Empty::default()).await.unwrap();
             });
+    }
+
+    /// The ids a query of all of `target` lists, in order.
+    async fn listed(target: &DynCollectionAsync) -> Vec<String> {
+        let stream = target.query(DocumentQuery::default()).await.unwrap();
+        items(stream)
+            .await
+            .into_iter()
+            .filter_map(|item| match item.unwrap().item {
+                Some(QueryArm::Document(document)) => document.id,
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// How many Documents of `target` the Index counts.
+    async fn count(target: &DynCollectionAsync) -> u64 {
+        target
+            .count(DocumentQuery::default())
+            .await
+            .unwrap()
+            .count
+            .unwrap_or_default()
+    }
+
+    async fn index_of(vault: &DynVaultAsync) -> DynIndexAsync {
+        vault
+            .index(Empty::default())
+            .await
+            .unwrap()
+            .to_async_inline()
+            .unwrap()
+    }
+
+    /// The name of the live generation of the Index of the Vault at `path`.
+    fn current(path: &Path) -> String {
+        std::fs::read_to_string(path.join(".scheda/index/current"))
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+
+    /// The generations under the Index of the Vault at `path`.
+    fn generations(path: &Path) -> BTreeSet<String> {
+        std::fs::read_dir(path.join(".scheda/index"))
+            .map(|entries| {
+                entries
+                    .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+                    .filter(|name| name.starts_with("g-"))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Every file below `dir` with its bytes.
+    fn files_below(dir: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
+        let mut out = BTreeMap::new();
+        let mut pending = vec![dir.to_path_buf()];
+        while let Some(next) = pending.pop() {
+            for entry in std::fs::read_dir(&next).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    pending.push(path);
+                } else {
+                    out.insert(path.clone(), std::fs::read(&path).unwrap());
+                }
+            }
+        }
+        out
+    }
+
+    /// Waits until the state of `index` passes `done`, for up to the
+    /// deadline of the tests.
+    async fn wait_state(index: &DynIndexAsync, done: impl Fn(&IndexState) -> bool) -> IndexState {
+        let deadline = Instant::now() + DEADLINE;
+        loop {
+            let state = index.status(Empty::default()).await.unwrap();
+            if done(&state) {
+                return state;
+            }
+            assert!(Instant::now() < deadline, "{state:?}");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    fn stage(state: &IndexState) -> Option<rebuild::Stage> {
+        state
+            .rebuild
+            .as_option()
+            .and_then(|rebuild| rebuild.stage)
+            .and_then(|stage| stage.as_known())
+    }
+
+    /// Whether `state` is that of a rebuild `Index.Reindex` asked for, done,
+    /// at the state `head`.
+    fn reindexed(state: &IndexState, head: &Option<String>) -> bool {
+        let cause = state
+            .rebuild
+            .as_option()
+            .and_then(|rebuild| rebuild.cause)
+            .and_then(|cause| cause.as_known());
+        stage(state) == Some(rebuild::Stage::STAGE_DONE)
+            && cause == Some(rebuild::Cause::CAUSE_REINDEX)
+            && state.version == *head
+    }
+
+    /// The Documents of `notes` the commit of `HEAD` of the Vault at `path`
+    /// holds.
+    fn stored_notes(path: &Path) -> u64 {
+        crate::probe::git_out(path, &["ls-tree", "--name-only", "HEAD", "notes/"])
+            .lines()
+            .filter(|line| !line.ends_with(".collection.yaml"))
+            .count() as u64
+    }
+
+    fn multi_thread() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+    }
+
+    /// Starts this test binary again as the child of the test `name`, with
+    /// `variable` naming the Vault at `path`.
+    fn spawn_child(name: &str, variable: &str, path: &Path) -> std::process::Child {
+        std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--test-threads=1", "--quiet"])
+            .env(variable, path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap()
+    }
+
+    const KILLED_WHILE_INDEXING: &str = "SCHEDA_TEST_KILLED_WHILE_INDEXING";
+    const KILLED_AFTER: &str = "SCHEDA_TEST_KILLED_AFTER";
+
+    /// `count` upserts of `notes` from the number `from` on.
+    fn kittens(from: usize, count: usize) -> Vec<DocumentOperation> {
+        (from..from + count)
+            .map(|n| DocumentOperation {
+                operation: Some(Operation::Upsert(Box::new(
+                    DocumentUpsert::default()
+                        .with_id(format!("k{n:06}"))
+                        .with_raw(
+                            json!({"title": format!("kitten {n}"), "topic": "cat kitten"})
+                                .to_string()
+                                .into_bytes(),
+                        )
+                        .with_note("test"),
+                ))),
+                ..DocumentOperation::default()
+            })
+            .collect()
+    }
+
+    /// The child of the kill test. With `after` 0, it writes Documents in
+    /// batches until it is killed, while its indexer writes them into the
+    /// Index. Otherwise it writes 600 Documents at once and holds the
+    /// round at the Document `after + 1`: the rows of the portions before
+    /// it are in the Lance table, past the versions the `commit` names.
+    /// It says so by the file `.scheda/held`.
+    async fn write_until_killed(path: &Path, after: usize) {
+        let calls = Arc::new(Calls::default());
+        calls.hold_after.store(after, Ordering::SeqCst);
+        let vault = open_with(path, &HYBRID, &calls).await;
+        let notes = collection(&vault, "notes").await.unwrap();
+        let base = stored_notes(path) as usize * 10;
+        if after > 0 {
+            notes.batch(stream_of(kittens(base, 600))).await.unwrap();
+            while calls.projected.load(Ordering::SeqCst) <= after {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            std::fs::write(path.join(".scheda/held"), "").unwrap();
+            loop {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+            }
+        }
+        let mut next = base;
+        loop {
+            notes.batch(stream_of(kittens(next, 20))).await.unwrap();
+            next += 20;
+        }
+    }
+
+    /// The spike's `kill`: a process killed by SIGKILL in the middle of its
+    /// indexer's upserts leaves an Index another process opens, counts, and
+    /// searches, and brings to the stored state.
+    #[test]
+    fn a_process_killed_while_it_indexes_leaves_an_index_that_opens_counts_and_searches() {
+        if let Ok(path) = std::env::var(KILLED_WHILE_INDEXING) {
+            let after = std::env::var(KILLED_AFTER)
+                .ok()
+                .and_then(|after| after.parse().ok())
+                .unwrap_or(0);
+            multi_thread().block_on(write_until_killed(Path::new(&path), after));
+            return;
+        }
+        multi_thread().block_on(async {
+            let scratch = Scratch::new("search-killed");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            // The Index exists: the children's rounds bring it forward.
+            let first = open_with(&path, &HYBRID, &Arc::default()).await;
+            wait_indexed(&first).await;
+            first.close(Empty::default()).await.unwrap();
+            // Held after one portion of 256 rows and after two; then
+            // killed at a moment of a steady stream of writes.
+            for after in [300_usize, 530, 0] {
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "search::on_lance::a_process_killed_while_it_indexes_leaves_an_index_that_opens_counts_and_searches",
+                        "--test-threads=1",
+                        "--quiet",
+                    ])
+                    .env(KILLED_WHILE_INDEXING, &path)
+                    .env(KILLED_AFTER, after.to_string())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                    .unwrap();
+                let deadline = Instant::now() + DEADLINE;
+                let ready = if after > 0 {
+                    path.join(".scheda/held")
+                } else {
+                    path.join(".scheda/index/current")
+                };
+                while !ready.exists() {
+                    assert!(Instant::now() < deadline, "the child is not ready ({after})");
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                if after == 0 {
+                    tokio::time::sleep(Duration::from_millis(400)).await;
+                }
+                child.kill().unwrap();
+                child.wait().unwrap();
+                let _ = std::fs::remove_file(path.join(".scheda/held"));
+
+                let calls = Arc::new(Calls::default());
+                let vault = open_with(&path, &HYBRID, &calls).await;
+                let notes = collection(&vault, "notes").await.unwrap();
+                // It reads at once what the commit names...
+                run(&notes, json!({"text": "kitten", "k": 5})).await;
+                // ...and the next rounds bring it to the stored state.
+                wait_indexed(&vault).await;
+                assert_eq!(count(&notes).await, stored_notes(&path), "{after}");
+                let found = run(&notes, json!({"text": "kitten", "k": 5})).await;
+                assert_eq!(summary(&found), VectorLeg::VECTOR_LEG_RAN, "{after}");
+                assert_eq!(ids(&found).len(), 5, "{after}");
+                vault.close(Empty::default()).await.unwrap();
+            }
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn every_file_of_the_index_is_owner_only_after_a_round() {
+        use std::os::unix::fs::PermissionsExt;
+
+        both(|| async {
+            let fx = Fixture::new("search-modes").await;
+            fx.corpus().await;
+            let mut pending = vec![fx.path.join(".scheda/index")];
+            let mut seen = 0;
+            while let Some(next) = pending.pop() {
+                let mode = std::fs::symlink_metadata(&next)
+                    .unwrap()
+                    .permissions()
+                    .mode();
+                assert_eq!(mode & 0o077, 0, "{} is {mode:o}", next.display());
+                seen += 1;
+                if next.is_dir() {
+                    for entry in std::fs::read_dir(&next).unwrap() {
+                        pending.push(entry.unwrap().path());
+                    }
+                }
+            }
+            assert!(seen > 20, "the Lance tables are there: {seen}");
+        });
+    }
+
+    /// An isolated repository made again has none of the commits the Index
+    /// stands on: the Index compares the tree with its table of files,
+    /// embeds no unchanged text, and ends as a rebuild would.
+    #[test]
+    fn an_isolated_repository_made_again_is_caught_up_without_a_rebuild() {
+        both(|| async {
+            let fx = Fixture::new("search-isolated-again").await;
+            fx.vault
+                .create_collection(declaration(json!({
+                    "name": "secret",
+                    "schema": {"standard": {}, "isolated": true}
+                })))
+                .await
+                .unwrap();
+            for (id, topic) in [("s1", "cat kitten"), ("s2", "dog puppy"), ("s3", "car")] {
+                fx.put_unwaited(
+                    "secret",
+                    id,
+                    &json!({"title": format!("{id} words"), "topic": topic}),
+                )
+                .await;
+            }
+            fx.collection("secret")
+                .await
+                .delete(DocumentDeletion::default().with_id("s3").with_note("t"))
+                .await
+                .unwrap();
+            wait_indexed(&fx.vault).await;
+            let generation = current(&fx.path);
+            let embedded = fx.calls.embedded.load(Ordering::SeqCst);
+
+            // Made again while no round runs: the indexer sees the old
+            // repository or the new one, never none.
+            let lock = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(fx.path.join(".scheda/index.lock"))
+                .unwrap();
+            let lock = tokio::task::spawn_blocking(move || {
+                lock.lock().unwrap();
+                lock
+            })
+            .await
+            .unwrap();
+            let nested = fx.path.join(".isolated");
+            let head = std::fs::read_to_string(nested.join(".git/HEAD")).unwrap();
+            let branch = head
+                .trim()
+                .trim_start_matches("ref: refs/heads/")
+                .to_owned();
+            std::fs::remove_dir_all(nested.join(".git")).unwrap();
+            crate::common::git(&nested, &["init", "--quiet", "--initial-branch", &branch]);
+            crate::common::git(&nested, &["add", "--all"]);
+            crate::common::git(&nested, &["commit", "--quiet", "--message", "made again"]);
+            drop(lock);
+            fx.put(
+                "secret",
+                "s4",
+                &json!({"title": "s4 words", "topic": "truck"}),
+            )
+            .await;
+
+            assert_eq!(current(&fx.path), generation, "no rebuild");
+            assert_eq!(
+                fx.calls.embedded.load(Ordering::SeqCst),
+                embedded + 1,
+                "only the new text is embedded"
+            );
+            let secret = fx.collection("secret").await;
+            let caught_up = listed(&secret).await;
+            assert_eq!(caught_up, ["s1", "s2", "s4"]);
+            let ranked = keys(&run(&secret, json!({"text": "words", "k": 10})).await);
+
+            let index = index_of(&fx.vault).await;
+            index.reindex(Empty::default()).await.unwrap();
+            let head = fx.vault.info(Empty::default()).await.unwrap().version;
+            wait_state(&index, |state| reindexed(state, &head)).await;
+            assert_ne!(current(&fx.path), generation, "the rebuild switched");
+            assert_eq!(listed(&secret).await, caught_up);
+            assert_eq!(
+                keys(&run(&secret, json!({"text": "words", "k": 10})).await),
+                ranked
+            );
+        });
+    }
+
+    #[test]
+    fn a_rebuild_answers_from_the_live_generation_and_switches_with_the_writes_made_meanwhile() {
+        both(|| async {
+            let fx = Fixture::new("search-rebuild").await;
+            fx.corpus().await;
+            let notes = fx.collection("notes").await;
+            let index = index_of(&fx.vault).await;
+            let before = index
+                .status(Empty::default())
+                .await
+                .unwrap()
+                .version
+                .unwrap();
+            let live = current(&fx.path);
+
+            // The Projector holds the rebuild at its first Document.
+            fx.calls.held.store(true, Ordering::SeqCst);
+            let projected = fx.calls.projected.load(Ordering::SeqCst);
+            index.reindex(Empty::default()).await.unwrap();
+            let deadline = Instant::now() + DEADLINE;
+            while fx.calls.projected.load(Ordering::SeqCst) == projected {
+                assert!(Instant::now() < deadline, "the rebuild did not start");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            let state = index.status(Empty::default()).await.unwrap();
+            assert_eq!(stage(&state), Some(rebuild::Stage::STAGE_RUNNING));
+            assert_eq!(state.version.as_deref(), Some(before.as_str()));
+            // The live generation answers meanwhile, and takes writes.
+            assert_eq!(count(&notes).await, 4);
+            let lexical = json!({"text": "kitten", "vector_weight": 0});
+            assert_eq!(ids(&run(&notes, lexical.clone()).await).len(), 2);
+            fx.put_unwaited(
+                "notes",
+                "late",
+                &json!({"title": "kitten late", "topic": "kitten"}),
+            )
+            .await;
+            assert_eq!(current(&fx.path), live);
+            assert_eq!(count(&notes).await, 4);
+
+            fx.calls.held.store(false, Ordering::SeqCst);
+            let head = fx.vault.info(Empty::default()).await.unwrap().version;
+            let state = wait_state(&index, |state| reindexed(state, &head)).await;
+            assert_ne!(current(&fx.path), live, "switched");
+            assert_eq!(count(&notes).await, 5, "the write made meanwhile is there");
+            assert!(ids(&run(&notes, lexical).await).contains(&"late".to_owned()));
+            // The state after the switch contains the one before.
+            let after = state.version.unwrap();
+            let ancestor =
+                crate::common::command(&fx.path, &["merge-base", "--is-ancestor", &before, &after])
+                    .status()
+                    .unwrap();
+            assert!(
+                ancestor.success(),
+                "{before} is not in the history of {after}"
+            );
+        });
+    }
+
+    const KILLED_DURING_REBUILD: &str = "SCHEDA_TEST_KILLED_DURING_REBUILD";
+
+    /// The child of the rebuild kill test: starts a rebuild its Projector
+    /// holds, and waits to be killed.
+    async fn rebuild_until_killed(path: &Path) {
+        let calls = Arc::new(Calls::default());
+        calls.held.store(true, Ordering::SeqCst);
+        let vault = open_with(path, &HYBRID, &calls).await;
+        index_of(&vault)
+            .await
+            .reindex(Empty::default())
+            .await
+            .unwrap();
+        loop {
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    }
+
+    #[test]
+    fn a_process_killed_during_a_rebuild_leaves_the_live_generation_serving() {
+        if let Ok(path) = std::env::var(KILLED_DURING_REBUILD) {
+            multi_thread().block_on(rebuild_until_killed(Path::new(&path)));
+            return;
+        }
+        multi_thread().block_on(async {
+            let fx = Fixture::new("search-rebuild-killed").await;
+            fx.corpus().await;
+            let live = current(&fx.path);
+            fx.vault.close(Empty::default()).await.unwrap();
+            let mut child = spawn_child(
+                "search::on_lance::a_process_killed_during_a_rebuild_leaves_the_live_generation_serving",
+                KILLED_DURING_REBUILD,
+                &fx.path,
+            );
+            let deadline = Instant::now() + DEADLINE;
+            while generations(&fx.path).len() < 2 {
+                assert!(Instant::now() < deadline, "the child started no rebuild");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            child.kill().unwrap();
+            child.wait().unwrap();
+
+            let vault = open_with(&fx.path, &HYBRID, &fx.calls).await;
+            let notes = collection(&vault, "notes").await.unwrap();
+            assert_eq!(current(&fx.path), live);
+            assert_eq!(count(&notes).await, 4, "the live generation serves");
+            // The next round removes the generation the rebuild left.
+            notes
+                .upsert(
+                    DocumentUpsert::default()
+                        .with_id("after")
+                        .with_raw(json!({"title": "after"}).to_string().into_bytes())
+                        .with_note("test"),
+                )
+                .await
+                .unwrap();
+            wait_indexed(&vault).await;
+            assert_eq!(generations(&fx.path), BTreeSet::from([live.clone()]));
+            assert_eq!(current(&fx.path), live);
+            assert_eq!(count(&notes).await, 5);
+            vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_vault_of_other_ports_writes_nothing_under_the_index_and_its_writes_are_indexed_later() {
+        both(|| async {
+            let fx = Fixture::new("search-stale-writes").await;
+            fx.corpus().await;
+            fx.vault.close(Empty::default()).await.unwrap();
+            let others = [
+                Ports {
+                    projection: "docs@2",
+                    ..HYBRID
+                },
+                Ports {
+                    vectors: false,
+                    ..HYBRID
+                },
+                Ports {
+                    model: Some("topics@2"),
+                    ..HYBRID
+                },
+            ];
+            for (n, ports) in others.iter().enumerate() {
+                let before = files_below(&fx.path.join(".scheda/index"));
+                let other = open_with(&fx.path, ports, &fx.calls).await;
+                let head = collection(&other, "notes")
+                    .await
+                    .unwrap()
+                    .upsert(
+                        DocumentUpsert::default()
+                            .with_id(format!("o{n}"))
+                            .with_raw(json!({"title": "other"}).to_string().into_bytes())
+                            .with_note("test"),
+                    )
+                    .await
+                    .unwrap()
+                    .version;
+                let state = wait_state(&index_of(&other).await, |state| {
+                    state.stored_version == head && state.last_error.is_set()
+                })
+                .await;
+                assert_eq!(
+                    state.last_error.as_option().unwrap().code.as_deref(),
+                    Some("VAULT_ERROR_CODE_INDEX_STALE"),
+                    "{n}"
+                );
+                other.close(Empty::default()).await.unwrap();
+                assert!(
+                    files_below(&fx.path.join(".scheda/index")) == before,
+                    "a stale Vault wrote under the Index ({n})"
+                );
+            }
+            // With the ports of the Index again, the writes made meanwhile
+            // are indexed.
+            let vault = open_with(&fx.path, &HYBRID, &fx.calls).await;
+            wait_indexed(&vault).await;
+            assert_eq!(count(&collection(&vault, "notes").await.unwrap()).await, 7);
+            vault.close(Empty::default()).await.unwrap();
+        });
     }
 }
