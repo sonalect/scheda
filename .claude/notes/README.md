@@ -8,12 +8,12 @@ Project state, deferred work, and measurements that outlive one session
 | [flaky-tests.md](flaky-tests.md) | Races the tmpfs gate exposed, their fixes, how to reproduce |
 | [api-objects.md](api-objects.md) | The approved object API (Scheda, Vault, Collection, Mirror, Index; service references): thirteen decisions, what is open |
 | [p8-follow-ups.md](p8-follow-ups.md) | Small follow-ups found while building the CLI and the consumer test (P8): a vector-leg reason, CLI waits, the docs pass |
-| [index-risks.md](index-risks.md) | Audit of the indexer (19 October 2026): thirteen risks with probes and recommendations, to discuss; probes in `index-probes.patch` |
+| [index-risks.md](index-risks.md) | Audit of the indexer (19 October 2026): the six risks that the move to Lance left, and what was found while building it; probes of the old Index in `index-probes.patch` |
 
 ## Pointers
 
 - Current work order: `docs/21-lance-index.md` — the Index on Lance in
-  place of Tantivy and USearch, queries as an SQL predicate, a state
+  place of Tantivy and USearch, queries by a typed filter, a state
   token for freshness (approved by the owner 19 October 2026, D1–D18).
   Work goes on the branch `lance-index`, stage by stage in the order of
   §3, a commit after each stage under the usual gates. L0: the contract

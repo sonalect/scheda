@@ -695,7 +695,7 @@ copies only what it still needs after a port call:
 Recommendation: yes.
 
 **D11. Threads, and async at the edges.** *Settled with the owner,
-17 October 2026.*
+17 October 2026; superseded by `22` (Scheda async only on tokio).*
 
 - **The background work runs on dedicated OS threads, in every build.**
   The indexer does blocking work only: files and `fsync`, git, Tantivy

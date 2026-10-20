@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.73, 19 October 2026.
+Document 14 of the Scheda package. Version 0.80, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -8,17 +8,20 @@ global flags, makes the one call, prints the reply, closes the Vault, and
 exits. The reply is the Protobuf JSON of the contract; a failure is an
 `ErrorReport` on stderr.
 
-An unset embedder means no vector leg: a search is lexical only (`13`).
-An unset reranker means RRF order.
+An unset embedder means the process indexes no collection with a `vector`
+column, and its searches run without the vector leg (`13`). An unset
+reranker means RRF order.
+
+The process runs on a multi-thread tokio runtime (`22` D10); its flags,
+JSON, and exit codes are those of the contract.
 
 The CLI gives every Vault it opens a **whole-file Projector**
 (`projection_id` `scheda-cli/whole-file@1`): one text column `body`
-(marks `find`, `fts`, and `vector`) whose value is the whole Document when
-it is UTF-8 text. A Filter leaf on a Projector column other than `body`
-is `INVALID_ARGUMENT`; `id` is always allowed. A leaf in a query of the
-Vault (`query-documents`, `count-documents`, `search-documents`) names its
-`collection` (`13`). The Projector is the CLI's: the library installs none
-when a program passes none.
+(marks `scalar_index`, `fts`, and `vector`) whose value is the whole
+Document when it is UTF-8 text. A Filter leaf on a column other than `body`
+is `INVALID_ARGUMENT`; `id` is always allowed. One filter applies to every
+collection in scope, in a query of the Vault too (`13`). The Projector is
+the CLI's: the library installs none when a program passes none.
 
 Because `body` carries the `vector` mark, a CLI process indexes only when
 it has an embedder flag, unless the collection sets `exclude_vector_index`.
@@ -70,7 +73,9 @@ All of them go before the subcommand or after it.
 | `--reranker-cohere-url URL` | Cohere or Jina rerank API root (`http`/`https`). The CLI `POST`s `{URL}rerank`. With `--reranker-model`, or neither. Implements the `Reranker` port, used by a search with `rerankLimit`. |
 | `--reranker-model NAME` | The JSON `model` of the rerank body. |
 | `--reranker-api-key-env-var NAME` | Read `NAME` and send `Authorization: Bearer`. Only with the HTTP reranker flags. |
-| `--no-wait` | Do not wait for the Index before a query, a count, or a search, and do not wait for the rebuild after `index reindex`. |
+| `--index-wait-timeout-ms N` | `OpenOptions.index_wait_timeout_ms`: how long a query, a count, or a search waits for the Index to reach the state it needs (`notBefore`); past it the call is `DEADLINE_EXCEEDED`. Unset: 60 000. |
+| `--filter-max-depth N` | `OpenOptions.filter_max_depth`: how deep a filter may nest. Unset: 32; at most 100. |
+| `--no-wait` | Send no `notBefore` with a query, a count, or a search (the Index answers as it is), and do not wait for the rebuild after `index reindex`. |
 
 Every wrong or contradictory set of these flags is `INVALID_ARGUMENT`
 before the Vault is touched. There is no flag that takes the encryption
@@ -150,27 +155,31 @@ its commit note; the CLI supplies no default and an empty one is
 
 A CLI command is its own process and `Vault.Close` stops its indexer, so
 the commits of earlier commands are indexed by whichever later process has
-the ports. A query, a count, or a search therefore first waits, up to 60 s,
-on `Index.Watch` for a settled state: the Index has a `version`, `pending`
-is 0, no rebuild runs, or `lastError` is set. Past the deadline the call
-runs as the Index is, and fails with its own code
-(`INDEX_REBUILDING`). `--no-wait` skips the wait. `index reindex` waits for
-the rebuild it started to end; a failed rebuild is its failure.
+the ports. A query, a count, or a search therefore carries a `notBefore`:
+the `version` of `Vault.Info` taken when the Vault is opened, unless the
+request JSON sets its own. The call waits until the Index reflects that
+state, and past `--index-wait-timeout-ms` (60 s) fails with
+`DEADLINE_EXCEEDED` (retryable) instead of answering without the latest
+write. `--no-wait` sends no `notBefore`: the call answers from the Index as
+it is. `index reindex` waits for the rebuild it started to end; a failed
+rebuild is its failure. `--no-wait` skips that wait too.
 
 *Check:* `rust/cli/tests/cli.rs`: `no_wait_queries_the_index_as_it_is_and_waiting_sees_the_write`,
-`index_watch_until_settled_and_reindex_end`.
+`index_watch_until_settled_and_reindex_end`. A query prints the summary
+first, a write prints its `version`, and the CLI and the library give the
+same JSON: `the_cli_and_the_library_give_the_same_json_and_code`,
+`writes_round_trip_with_a_note`, `queries_and_searches_run_across_collections`.
 
 **Known gaps** (small, listed in `.claude/notes/p8-follow-ups.md`):
 
-- `index status` in a new process prints `{}`: the process asks before its
-  indexer has looked at the Index. Use `index watch --until-settled`; the
-  last line is the settled state.
 - A process without an embedder flag does not index a collection with a
-  `vector` column, so on a Vault no process has indexed yet a query waits
-  the 60 s and then fails (`INDEX_REBUILDING`, or `INVALID_ARGUMENT` for a
-  column the Index does not know yet).
-- `index watch` without `--until-settled` learns that its reader has gone
-  only when it writes the next state.
+  `vector` column (the whole-file Projector marks `body` `vector`), so on a
+  Vault no process has indexed yet a query waits `--index-wait-timeout-ms`
+  and then fails (`DEADLINE_EXCEEDED`). Index it with a process that has an
+  embedder flag (`index watch --until-settled`), or declare the collection
+  with `excludeVectorIndex`. The indexer of the process without the embedder
+  reports `lastError` as `FAILED_PRECONDITION` naming the embedder (`index
+  watch`).
 
 ---
 
@@ -179,17 +188,17 @@ the rebuild it started to end; a failed rebuild is its failure.
 | Command | Args |
 |---|---|
 | `scheda-info` | `Scheda.Info`: the version and features of this build. Opens no Vault; no `--vault`. |
-| `info` | `Vault.Info`: `path`, `indexPath`, `writer`. With `--mode create-new` it makes the Vault. |
+| `info` | `Vault.Info`: `path`, `indexPath`, `writer`, `version` (the state token of the stored state). With `--mode create-new` it makes the Vault. |
 | `check` | `Vault.Check`: `CheckReport`; `{}` when the Vault is sound. |
 | `list-collections` | `Vault.ListCollections`: the `CollectionDeclaration`s. |
 | `create-collection` | `NAME [--schema JSON]` (or stdin). JSON is the `Schema`, for example `{"standard":{}}`. |
 | `update-collection` | `NAME [--schema JSON]` (or stdin). |
 | `delete-collection` | `NAME` [`--ignore-missing`]. |
 | `batch-collections` | JSON Lines of `CollectionOperation` on stdin; all or none. |
-| `batch-documents` | JSON Lines of `VaultDocumentOperation` (`{"collection":…,"operation":{"create":{…}}}`) on stdin; all or none. |
-| `query-documents` | `[--query JSON]` (`VaultQuery`). |
+| `batch-documents` | JSON Lines of `VaultDocumentOperation` (`{"collection":…,"operation":{"create":{…}}}`) on stdin; all or none. Prints the `DocumentBatchResult`: `results` and `version`. |
+| `query-documents` | `[--query JSON]` (`VaultQuery`: `collections`, `filter`, `orderBy`, `offset`, `limit`, `startAfter`, `includeRaw`, `notBefore`). First line `{"summary":{"total":"N"}}`, then one `{"document":…}` per line. |
 | `count-documents` | `[--query JSON]` (`VaultQuery`). Prints `{"count":"N"}`. |
-| `search-documents` | `[--search JSON]` (`VaultSearch`). First line the summary (`vectorLeg`), then one hit per line. |
+| `search-documents` | `[--search JSON]` (`VaultSearch`). First line the summary (`{"summary":{"vectorLeg":…}}`), then one `{"hit":…}` per line. |
 | `collection` | `NAME <subcommand>` |
 | `mirror` | `<subcommand>` |
 | `index` | `<subcommand>` |
@@ -201,9 +210,14 @@ sealed. An unknown name is `NOT_FOUND`. An isolated name is an ordinary
 query: the one Vault Index holds those Documents (ISO-4), and a set that
 mixes isolated with plain names is one page. An encrypted name is
 `UNIMPLEMENTED`, because no Index holds one (ISO-4). A collection with
-both Index legs excluded is `UNIMPLEMENTED` on a search; one with
-`exclude_lexical_index` alone is `UNIMPLEMENTED` on a query. Keys and
-revisions only unless the request sets `includeRaw`.
+both Index legs excluded is `UNIMPLEMENTED` on a search when named; one
+with `exclude_lexical_index` is `UNIMPLEMENTED` on a query that filters or
+orders when named. Left unnamed, such collections are left out of the
+Vault's scope. Keys and revisions only unless the request sets
+`includeRaw`. The filter is the typed tree of `13` §3 (`allOf`, `anyOf`,
+`noneOf`, `term`, `terms`, `range`, `exists`, `prefix`); a key of the
+earlier Tantivy tree (`all`, `phrase`, `regex`, …) is `INVALID_ARGUMENT`
+naming its path.
 
 `DeleteCollection`, `UpdateCollection`, and the batches follow the rules in
 the rpc comments of `api/scheda/v1/vault.proto` and `collection.proto`.
@@ -221,14 +235,14 @@ is refused.
 | `get` | `--id ID`. The `Document`: `collection`, `id`, `raw` (Base64), `revision`. |
 | `get-many` | `--ids ID,…`, or a listing: [`--limit N`] [`--start-after ID`] (not with `--ids`). [`--include-raw`]. Reads files, not the Index. |
 | `history` | `--id ID`. The past versions, newest first, one `DocumentHistoryEntry` per line. A journal is `UNIMPLEMENTED`. |
-| `create` | `--id ID` (`--file PATH` or stdin bytes) `--note TEXT` [`--keep-existing`]. In a journal, appends a line. Present → `ALREADY_EXISTS`, or the stored Document with `--keep-existing`. |
-| `update` | `--id ID` (`--file` or stdin) `--note TEXT` [`--revision REV`]. Absent → `NOT_FOUND`; another stored revision → `FAILED_PRECONDITION`. A journal is `UNIMPLEMENTED`. |
-| `upsert` | `--id ID` (`--file` or stdin) `--note TEXT`. A journal is `UNIMPLEMENTED`. |
-| `delete` | `--id ID` `--note TEXT` [`--revision REV`] [`--ignore-missing`]. A journal is `UNIMPLEMENTED`. |
-| `batch` | JSON Lines of `DocumentOperation` (`{"create":{"id":…,"raw":…,"note":…}}`) on stdin; all or none. |
-| `query` | `[--query JSON]` (`DocumentQuery`: `filter`, `includeRaw`, `offset`, `limit`, `startAfter`). This collection only; a leaf names no collection. |
-| `count` | `[--query JSON]`. |
-| `search` | `[--search JSON]` (`DocumentSearch`: `text` or `like`, `filter`, `k`, `lexicalWeight`, `vectorWeight`, `rerankLimit`, `includeRaw`, `offset`). |
+| `create` | `--id ID` (`--file PATH` or stdin bytes) `--note TEXT` [`--keep-existing`]. In a journal, appends a line. Present → `ALREADY_EXISTS`, or the stored Document with `--keep-existing`. Prints a `DocumentWriteResult`: `{"document":…,"version":…}`. |
+| `update` | `--id ID` (`--file` or stdin) `--note TEXT` [`--revision REV`]. Absent → `NOT_FOUND`; another stored revision → `FAILED_PRECONDITION`. A journal is `UNIMPLEMENTED`. Prints a `DocumentWriteResult`. |
+| `upsert` | `--id ID` (`--file` or stdin) `--note TEXT`. A journal is `UNIMPLEMENTED`. Prints a `DocumentWriteResult`. |
+| `delete` | `--id ID` `--note TEXT` [`--revision REV`] [`--ignore-missing`]. A journal is `UNIMPLEMENTED`. Prints `{"version":…}`. |
+| `batch` | JSON Lines of `DocumentOperation` (`{"create":{"id":…,"raw":…,"note":…}}`) on stdin; all or none. Prints the `DocumentBatchResult` with `version`. |
+| `query` | `[--query JSON]` (`DocumentQuery`: `filter`, `orderBy` as `[{"column":…,"descending":…}]`, `offset`, `limit`, `startAfter`, `includeRaw`, `notBefore`). This collection only. First line `{"summary":{"total":"N"}}`, then one `{"document":…}` per line. |
+| `count` | `[--query JSON]`. Prints `{"count":"N"}`. |
+| `search` | `[--search JSON]` (`DocumentSearch`: `text` or `like`, `filter`, `k`, `lexicalWeight`, `vectorWeight`, `rerankLimit`, `includeRaw`, `offset`, `notBefore`). |
 
 Bytes of any kind are a Document (STO-2); empty bytes are allowed. A
 `--file` that cannot be read is `INVALID_ARGUMENT`; the path is in the
@@ -270,9 +284,13 @@ network. The mirror never carries `.isolated/` (ISO-6).
 | `watch` | `Index.Watch`: the state, then each change, one line each. [`--until-settled`] stops after the first settled state. |
 | `reindex` | `Index.Reindex`: rebuild the Index with the ports of this process, wait until the rebuild is done (unless `--no-wait`), print `{}`. |
 
-`IndexState` is `version` (the commit the Index covers), `pending`, `role`,
-`modelMismatch`, `rebuild` (`stage`, `documentsRead`, `documentsSkipped`,
-`segmentsRead`), and `lastError`; unset fields are left out.
+`IndexState` is `version` (the state the Index reflects), `storedVersion`
+(the stored state the indexer last saw), `pending`, `role`, `rebuild`
+(`stage`, `cause`, `documentsRead`, `documentsSkipped`, `segmentsRead`),
+and `lastError`; unset fields are left out. `index watch --until-settled`
+stops at the first state in which `version` equals `storedVersion` and no
+rebuild runs, or at the first with a `lastError`. `index reindex` builds a
+new generation beside the live one, which answers meanwhile.
 
 ---
 
@@ -292,9 +310,9 @@ scheda --vault ./vault collection notes create --id giant-panda.md \
   --file ./panda.md --note 'add panda'
 scheda --vault ./vault collection notes get --id giant-panda.md
 scheda --vault ./vault collection notes query \
-  --query '{"filter":{"phrase":{"field":"body","terms":["giant","panda"]}},"limit":10}'
+  --query '{"filter":{"prefix":{"column":"id","prefix":"giant"}},"limit":10}'
 scheda --vault ./vault query-documents \
-  --query '{"collections":{"names":["notes"]},"filter":{"all":{}},"includeRaw":true}'
+  --query '{"collections":{"names":["notes"]},"includeRaw":true}'
 scheda --vault ./vault collection notes search \
   --search '{"text":"bamboo","k":2,"vectorWeight":0}'
 scheda --vault ./vault index watch --until-settled
@@ -398,9 +416,9 @@ built with one model. `--lexical-only` keeps them: the Vault indexes with
 the embedder, and only the ranking changes. It sets `vectorWeight: 0` on
 the `DocumentSearch` and turns the reranker off.
 
-`find` is `query-documents` (Vault) or `collection NAME query`, with a
-`count-documents` / `count` for the total (`--filter` default
-`{"all":{}}`, `--offset` 0, `--count` 50; the request's `limit`). Stdout is
+`find` is `query-documents` (Vault) or `collection NAME query`; the total
+is the summary the query streams first (`--filter` default none, every
+Document; `--offset` 0, `--count` 50; the request's `limit`). Stdout is
 YAML: `total`, then each `Document` (`---` between documents; `raw` as text
 and only with `--include-raw`). `search --text` / `--query` / `--topic ID`
 runs `search-documents` or `collection NAME search`, and prints `vectorLeg`

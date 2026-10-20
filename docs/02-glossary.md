@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.60, 19 October 2026.
+Document 2 of the Scheda package. Version 0.70, 20 October 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -114,27 +114,35 @@ For `standard`, `{collection}/{id}` (`/` in `id` is a directory). For `journal`,
 
 ## 5. Derived layer
 
-**Index** — the disposable search layer.
+**Index** — the disposable search layer, on Lance.
 
-Built from the commits of the Vault, not the work tree, and kept at git `HEAD` by the indexer thread of an open Vault that has every port the Index needs (`06` IDX-9), one round at a time under `index.lock` (eventually consistent; `Index.Status` and `Index.Watch` report the state it reached). One state, the file `commit`, covers the whole Index: the lexical side, the vector side, and the journal `id` maps. Stored under `{vault}/.scheda/index/` (gitignored), not committed with the Vault, safe to delete. A rebuild empties it and indexes `HEAD` from nothing; meanwhile queries are `INDEX_REBUILDING`. A damaged Index must not serve stale ids: queries fail with an Index code. `Collection.Get` and `Collection.History` do not use it: they read the commit at `HEAD` (IDX-10).
+Built from the commits of the Vault, not the work tree, and kept at git `HEAD` by the indexer of an open Vault that has every port the Index needs (`06` IDX-9), one round at a time under `index.lock` (eventually consistent; `Index.Status` and `Index.Watch` report the state it reached, and a call that names a **state token** waits for it). Stored under `{vault}/.scheda/index/` (gitignored), not committed with the Vault, safe to delete. It holds, per indexed collection, a table of the Projector's typed columns with the full-text and vector indices on them, and a table of the files the rows came from; one `commit` file per **Index generation** names the state and the version of every table, so a reader sees one state across all collections. The journal `id` maps live beside it with their own `commit`. A round writes changed rows in place, not the whole Index. A rebuild (`Index.Reindex`, or the first build) is made beside the live Index, which keeps answering until the switch. A damaged Index must not serve stale ids: queries fail with an Index code. `Collection.Get` and `Collection.History` do not use it: they read the commit at `HEAD` (IDX-10).
 
 Do not confuse with git's staging area, with the Vault, or with source of truth. If the Index and the commit at `HEAD` disagree, the commit wins for `Collection.Get` and `Collection.History`. Queries and searches trust the Index for which `id`s exist, then read those Documents.
 
-Identity columns (`collection`, `id`, ordinal) are the library's. Every other column comes from a **Projector**.
+Identity columns (`id`, `file`, `order`) are the library's. Every other column comes from a **Projector**.
+
+**Index generation** — one build of the tables of the Index: the folder `{vault}/.scheda/index/g-…/`. `current` names the live one. `Index.Reindex` makes another beside it and switches by one atomic write; the old one is removed an hour later. Not the **generation** of the Vault format.
+
+**State token** — the opaque text that names a stored state of the Vault: the commit of the main repository and, when there is one, of the nested repository. A write returns the token of the state it made (`DocumentWriteResult.version`), `Vault.Info` the token of the stored state now, and `IndexState` two: `version`, the state the Index reflects, and `stored_version`, the stored state the indexer last saw (the Index is behind while they differ). Equal tokens are the same state; the caller compares them and passes them, nothing more.
+
+**`not_before`** — a request field of a query, a count, or a search that holds a state token. The call waits until the Index reflects a state that contains it, up to `OpenOptions.index_wait_timeout_ms`; past it, `DEADLINE_EXCEEDED`. A token whose commit left the history of `HEAD` does not wait. Unset: the call answers at once from what the Index holds.
+
+**Filter** — the condition of a query or the prefilter of a search: a typed tree the caller fills (`all_of`, `any_of`, `none_of`; the leaves `term`, `terms`, `range`, `exists`, `prefix`) over `id` and the Projector's columns. The library checks it against the columns and runs it in the Index; no caller writes the query language of the engine. Two-valued: a Document without a value in a column fails a condition on it, and `none_of` it holds.
 
 **Projector** — a caller-supplied port that declares Index columns and fills them from Document bytes.
 
-Not Vault data. Not a field of a declaration. A port, like Embedder and Reranker. `Projector.Describe` names the projection (`ProjectorDescriptor.projection_id`, for example `notes@4`: the projection and its version together), read once when the Projector is given to a Vault and stored with the Index; a Projector of another projection makes the Index `INDEX_STALE` for that Vault until an `Index.Reindex` from a Vault with the new Projector. `Projector.Columns` names the typed columns of a collection (find / FTS / vector marks). `Projector.Project` returns values for those columns of one Document. A write does not call `Project` to accept or reject the Document. A failed or empty `Project` leaves the Document out of the lexical and vector indexes; `Collection.Get` still returns the file. Without a Projector, a query on identity (`all`, `term` on `id`) still works; a leaf on any other field is `INVALID_ARGUMENT`; a search has no content to rank.
+Not Vault data. Not a field of a declaration. A port, like Embedder and Reranker. `Projector.Describe` names the projection (`ProjectorDescriptor.projection_id`, for example `notes@4`: the projection and its version together), read once when the Projector is given to a Vault and recorded with the Index; a Projector of another projection, or one that gives other columns, makes the Index `INDEX_STALE` for that Vault until an `Index.Reindex` from a Vault with the new Projector. `Projector.Columns` names the typed columns of a collection (`scalar_index` / `fts` / `vector` marks). `Projector.Project` returns values for those columns of one Document. A write does not call `Project` to accept or reject the Document. A `Project` that refuses the Document leaves it out of the Index, and one that gives no values leaves it with its identity only; `Collection.Get` still returns the file. Without a Projector, a query that names only `id` still works; any other column is `INVALID_ARGUMENT`; a search has no content to rank.
 
 Do not confuse with Embedder (text → vector) or with the Index (the files under `.scheda/`).
 
 **Port** — a service the caller implements and Scheda calls: `Embedder`, `Reranker`, `Projector`. A port reaches a Vault as a reference (`EmbedderRef`, `RerankerRef`, `ProjectorRef`) in `Scheda.Open` or later (`Vault.SetEmbedder`, `SetReranker`, `SetProjector`, and a `Remove…` for each), in the form its implementation has (blocking or async). A port is optional; Scheda ships no model and does not know what a Document holds.
 
-**Lexical search** — ranked full-text (BM25 or equivalent) over Projector columns marked FTS. Not grep, SQL `LIKE`, or a file scan at query time.
+**Lexical search** — ranked full-text (BM25) over Projector columns marked `fts`, by Lance's inverted index (lower case, no stemming, no phrases). Not grep, SQL `LIKE`, or a file scan at query time.
 
-**Vector search** — in-process ANN nearest neighbours (HNSW or equivalent) over embeddings of Projector columns marked for vectors. Embedding weights are not stored in the Vault. An external vector database is not the Index.
+**Vector search** — in-process nearest neighbours by cosine distance (an IVF_PQ index ranked again with the full vectors, and an exact scan of the rows no index covers yet) over embeddings of Projector columns marked `vector`. Embedding weights are not stored in the Vault. An external vector database is not the Index.
 
-**Embedder** — a port that turns Projector text into vectors. Optional. `Describe` gives the model id and the vector length (`EmbedderDescriptor`; the model id is stored with the vectors, so an embedder of another model is seen, not mixed in). `Embed` takes a stream of texts and returns a stream of vectors in the same order; the implementation forms the portions its model wants. `EmbedQuery` embeds one search text. Without an embedder, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network. Its codes are `EmbedderErrorCode` (`UNAVAILABLE`, retryable; `REFUSED`).
+**Embedder** — a port that turns Projector text into vectors. Optional. `Describe` gives the model id and the vector length (`EmbedderDescriptor`; both are recorded with the Index, so an embedder of another model finds it `INDEX_STALE` and is never mixed in). `Embed` takes a stream of texts and returns a stream of vectors in the same order; the implementation forms the portions its model wants. `EmbedQuery` embeds one search text. Without an embedder, vector search is off; the rest of Scheda still works. An embedder that uses the network is passed in explicitly; core open/write/lexical rebuild with `auto_sync` off do not call the network. Its codes are `EmbedderErrorCode` (`UNAVAILABLE`, retryable; `REFUSED`).
 
 **Hybrid search** — one `Collection.Search` (or `Vault.SearchDocuments`) call that runs the lexical and vector legs when both are available, then fuses ranks with Reciprocal Rank Fusion, weighted by `lexical_weight` and `vector_weight`. An optional reranker then reorders. The result is a summary of the legs, then ordered Documents with scores, not a model-written answer.
 
@@ -144,6 +152,8 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 ## 6. Access
 
+**Async only** — in Rust, the objects are async on the caller's tokio runtime, a multi-thread or a current-thread one, and have no blocking form of their own. A caller without async code builds a multi-thread runtime and takes `to_sync()` of a reference inside it (protocontract's `Blocking`); on a current-thread runtime that form fails with `CANNOT_BLOCK`. A call that is dropped stops at its next `await`.
+
 **Library API** — the operations every implementation must provide: the rpcs of `api/scheda/v1/*.proto`, whose comments are the per-method contract (`07` keeps what spans methods). Language-neutral as a contract. The first binding is Rust.
 
 **Object** — the contract is a set of objects, each a service, reached from the one before it: `Scheda` opens a `Vault`; a `Vault` gives a `Collection`, its `Mirror`, and its `Index`.
@@ -152,11 +162,11 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`Scheda.Open`** — attach to a Vault, or create one, as `OpenOptions.mode` says: `OPEN_MODE_OPEN_OR_CREATE` (the default), `OPEN_MODE_OPEN_EXISTING`, `OPEN_MODE_CREATE_NEW`. Returns a `VaultRef`. Path exists as a Vault → open. A set `OpenOptions.mirror` must match the URL of `origin` (`INVALID_ARGUMENT` otherwise); unset attaches and does not change `origin`. Path missing and `mirror` set → clone. Path missing → new local Vault with no mirror. Reads the mirror locally on an existing tree (no fetch unless `auto_sync`). `Scheda.Open` takes no lock of its own: its writes (the marker of a new Vault, the `auto_sync` pull) take the write lock as any write does. More than one Vault may be open in one process; two on one path are two Vaults, as in two processes. Roots do not leak into each other's search. Ports are caller code, given as references.
 
-**`Scheda.Info` / `Vault.Info`** — the version and features of the build (`SchedaInfo`); the path, Index path, and writer identity of one Vault (`VaultInfo`). Not a live handle. Collections are listed by `Vault.ListCollections` (declarations: kind, isolation, encryption, caps), not Document fields.
+**`Scheda.Info` / `Vault.Info`** — the version and features of the build (`SchedaInfo`); the path, Index path, writer identity, and state token (`version`) of one Vault (`VaultInfo`). Not a live handle. Collections are listed by `Vault.ListCollections` (declarations: kind, isolation, encryption, caps), not Document fields.
 
-**`Vault.Close`** — end the Vault: new calls of it and of every object reached from it fail with `FAILED_PRECONDITION`; it returns when the running calls have ended, the indexer has stopped, and no lock is held. A second `Close` is nothing to do. A Vault whose references are all dropped closes by itself.
+**`Vault.Close`** — end the Vault: new calls of it and of every object reached from it fail with `FAILED_PRECONDITION`, as does a wait for `not_before`; it returns when the running calls have ended, the indexer task has stopped, and no lock is held. A second `Close` is nothing to do. A Vault whose references are all dropped closes by itself, without waiting: it tells its indexer to stop, and that ends after its current round.
 
-**Write** — a call that changes the Vault: `Collection.Create`, `Update`, `Upsert`, `Delete`; `Vault.CreateCollection`, `UpdateCollection`, `DeleteCollection`. It is atomic: when it returns `Ok` the write is stored, and an error means nothing was written. One write is one git commit; the API shows no commit, no transaction, and no `HEAD`.
+**Write** — a call that changes the Vault: `Collection.Create`, `Update`, `Upsert`, `Delete`; `Vault.CreateCollection`, `UpdateCollection`, `DeleteCollection`. It is atomic: when it returns `Ok` the write is stored, and an error means nothing was written. One write is one git commit and returns the state token of the Vault it made; the API shows no commit, no transaction, and no `HEAD`.
 
 **Write stream** (batch) — several writes sent as one stream of operations: `Collection.Batch`, `Vault.BatchDocuments`, `Vault.BatchCollections`. All happen, or none, in one commit; an error names the operation by its index. A batch holds Document writes or collection writes, never both. Nothing is held while the caller builds the stream.
 
@@ -178,9 +188,9 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`Collection.History`** — git history of one Document by `id`, newest first, as a stream of versions (revision, time, author, note, bytes). Same identity path as `Collection.Get` (validate `id`, then that file). Not an Index lookup. After `Delete`, the commits that stored the file remain. `UNIMPLEMENTED` on a `journal`.
 
-**`Collection.Query`** — select Documents with a Tantivy query tree (`Filter`: boolean must / should / must_not, term, phrase, range, `all`, …), including identity `id`. Field names other than identity come from the Projector. On `Vault.QueryDocuments`: a set of collection names (empty = this Vault, non-isolated; a named isolated collection is an ordinary query). On Collection: that collection only. The exact set of matches, without scores, in a stable order (`id`; one `journal` in append order). Query the Index, then open the files for the `(collection, id)`s it returns. A lazy stream, paged by `offset` / `limit` / `start_after`; `Count` gives the number without opening a file. Not by meaning: that is `Search`.
+**`Collection.Query`** — select Documents with a `Filter` (a typed tree: `all_of`, `any_of`, `none_of`, `term`, `terms`, `range`, `exists`, `prefix`), over `id` and the Projector's columns. On `Vault.QueryDocuments`: a set of collection names (empty = this Vault, neither isolated nor encrypted; a named isolated collection is an ordinary query), and one filter applies to every collection in the set. On Collection: that collection only. The exact set of matches, without scores, in a stable order (`order_by` keys, then the collection, then `id`; one `journal` in append order). A stream: first a `QuerySummary` with the `total` of matches, counted in the same snapshot as the page, then the Documents; paged by `offset` / `limit` / `start_after`. `Count` gives the number without opening a file. Not by meaning: that is `Search`.
 
-**`Collection.Search`** — hybrid retrieval (BM25 + ANN, RRF) by relevance. Same collection-name set as `Query` (`Vault.SearchDocuments`). An optional `Filter` pre-cuts both legs. `include_raw` fills the Documents' `raw`. Ranks; does not select.
+**`Collection.Search`** — hybrid retrieval (BM25 + nearest neighbours, RRF) by relevance. Same collection-name set as `Query` (`Vault.SearchDocuments`). An optional `Filter` pre-cuts both legs. `include_raw` fills the Documents' `raw`. Ranks; does not select.
 
 **`Vault.CreateCollection`** — write one collection declaration (`CollectionDeclaration`) as `{name}/.collection.yaml`, and return it as stored, defaults filled in. Not a raw path write. `UpdateCollection`, `DeleteCollection` (an empty collection only), and `BatchCollections` complete the set. An isolated collection's Document files go under `{vault}/.isolated/`, whose nested git is made if needed.
 
@@ -196,7 +206,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`Mirror.Sync`** — `Pull`, then `Push`. Against a mirror that holds nothing yet it pushes. Independent of `auto_sync`.
 
-**`reindex`** (`Index.Reindex`) — ask the indexer to rebuild the Index from the commits at `HEAD` with this Vault's ports, and return at once; the rebuild empties the Index first and embeds every text again. The way to move vectors to a new embedder model or the Index to a new projection, and to repair an `INDEX_BROKEN` one.
+**`reindex`** (`Index.Reindex`) — ask the indexer to build a new Index generation from the commits at `HEAD` with this Vault's ports, and return at once; the live Index keeps answering queries and searches, frozen at its state, until the switch, and the writes made meanwhile appear at the switch. Every text is embedded again. The only way the projection, the columns, or the embedder model of the Index change, and the way to repair an `INDEX_BROKEN` one.
 
 **`Vault.Check`** — validate the Vault file by file and return a report of every problem (code, path, message): collection declarations, journal lines, duplicate ids, an unfinished merge (from git's own state), the gitignore of isolated collections, owner-only modes, and files a person changed and did not commit. Does not type-check Document contents. The call fails only when it cannot run.
 

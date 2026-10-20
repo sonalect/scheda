@@ -1,8 +1,9 @@
 //! The services of the contract: [`Scheda`], the root a caller makes, and
 //! the objects an open Vault gives, each behind a reference: the Vault
-//! itself, one collection, and the mirror. They are async only. This version
-//! of Scheda has no Index: `Vault.Index`, the queries, the counts, and the
-//! searches answer `UNIMPLEMENTED`.
+//! itself, one collection, the mirror, and the Index. They are async only.
+//! A build without the feature `index` has no Index: `Vault.Index`, the
+//! queries, the counts, the searches, and every port answer
+//! `UNIMPLEMENTED`.
 //!
 //! The objects of one Vault share it and its gate. Every call enters the
 //! gate first; `Vault.Close` shuts it, waits for the calls inside to end,

@@ -7,7 +7,12 @@
 //! processes, commits made by hand, and pulls. A look reads two ref files
 //! and two small files of the Index and starts no process.
 //!
-//! Every handle indexes: there is no port a handle could lack.
+//! A handle indexes when it has every port the Index needs: a Vault whose
+//! Projector or embedder is of other ports than the Index was built with
+//! finds it stale, and one that lacks the embedder a `vector` column needs
+//! does not index; the status says which, and such a handle still reads
+//! the Index others keep. A build without the feature `index` keeps the
+//! journal id maps only, in every handle.
 //!
 //! A round takes `flock` on `index.lock` without waiting (another indexer
 //! holds it: the round is skipped and looked at again later), reads `HEAD`

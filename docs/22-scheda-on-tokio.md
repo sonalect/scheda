@@ -301,7 +301,7 @@ D1, D3, D4, D5, D6, D7, D8, D11.
 - [x] `Close` and drop per D7. Each blocking step carries a pass of the
       gate, so `Close` waits for the step of a call that was dropped, and
       returns with every lock let go.
-- [ ] Ports in their async form (D8): written in `21` L3, since `21` L8
+- [x] Ports in their async form (D8): written in `21` L3, since `21` L8
       makes every port `UNIMPLEMENTED` until then.
 - *Check:* `rust/scheda/tests` on `#[tokio::test]`, on both runtime
   flavors, green; a write whose future is dropped is stored; a push
@@ -332,7 +332,7 @@ D10.
 
 ### A5. Docs
 
-- [ ] `07` (the API: async only, `Blocking` for a blocking caller),
+- [x] `07` (the API: async only, `Blocking` for a blocking caller),
       `14` (the CLI, unchanged behaviour), `20` D11 (superseded by this
       work order), README, `CHANGELOG.md`.
 

@@ -526,7 +526,7 @@ made async by `22`.
 
 ### L10. Docs pass and release
 
-- [ ] `06` (the Index on Lance), `13` (queries by filter, searches), `07`,
+- [x] `06` (the Index on Lance), `13` (queries by filter, searches), `07`,
       `14`, `02`, README, `.claude/notes/index-risks.md` (closed items
       removed), `CHANGELOG.md`; with `22` A5.
 - [ ] Release `0.23.0` (breaking: minor while major is 0,

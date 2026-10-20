@@ -13,8 +13,8 @@ are `standard` (one file per Document; the path is the `id`), `journal`
 in the Vault names the kind and perimeter, not Document fields. Columns for
 queries and searches come from a caller **Projector** passed when the Vault
 is opened. The library does not know a consumer's types or file format.
-The **Index** is derived, lives under `{vault}/.scheda/` (gitignored), and
-can be deleted and rebuilt from files. A folder is a Vault when it is a git
+The **Index** is derived (it is built on Lance), lives under
+`{vault}/.scheda/` (gitignored), and can be deleted and rebuilt from files. A folder is a Vault when it is a git
 working tree with the committed marker file `.scheda.yaml` (`version: 2`,
 the generation); `Scheda.Open` with the default mode creates a missing
 Vault, and adds the marker in one commit to a git working tree that lacks
@@ -44,7 +44,7 @@ between: **files stay the source of truth**, git stays the history, and a
 library gives structured access and search without inventing a second store.
 
 **How it is useful.** A program can query and search (BM25, in-process
-ANN, RRF) and write Documents without treating the Index as the database:
+nearest neighbours, RRF) and write Documents without treating the Index as the database:
 wipe the Index, rebuild, get the same files back. An AI agent gets the same
 calls as the library (plus `Vault.ListCollections` from collection
 declarations and `Vault.CreateCollection`), not a looser “write any Markdown
@@ -55,13 +55,17 @@ The library does not score Documents for a UI, does not call a language
 model, and does not know a profession.
 
 **Status: the 0.22 proto contract is built on the branch `proto-contract`**
-(`docs/20`): the API as protobuf services and objects, with a sync form and
-an async form (`tokio` feature); one commit per write call and batches that
-are all or nothing; a Vault that never needs the Index to read or write; an
-Index that follows git `HEAD` in a background thread, so queries are
-eventually consistent (`Index.Status`, `Index.Watch`) and an old or damaged
-Index rebuilds itself; hybrid search (BM25 + in-process ANN + RRF, with a
-caller `Embedder` and `Reranker`) as crate features; one mirror
+(`docs/20`): the API as protobuf services and objects, async only on the
+caller's tokio runtime (a blocking caller wraps an object with `to_sync()`
+inside a multi-thread runtime, `docs/22`); one commit per write call, which
+returns the state token of the Vault it made, and batches that are all or
+nothing; a Vault that never needs the Index to read or write; an Index on
+Lance (`docs/21`) that follows git `HEAD` in a background task, so queries
+are eventually consistent unless a call names the token of its write
+(`not_before`; `Index.Status`, `Index.Watch`), and that is rebuilt beside
+the live one only when the caller asks (`Index.Reindex`); queries by a typed
+filter and hybrid search (BM25 + in-process nearest neighbours + RRF, with a
+caller `Embedder` and `Reranker`) in the feature `index`; one mirror
 (`Mirror.Push`, `Pull`, `Sync`, `auto_sync`); isolated collections that never
 leave the machine; collection encryption (`encrypt` feature); and a CLI that
 encodes every rpc (`docs/14`). The step-by-step work orders of the earlier
@@ -78,8 +82,8 @@ The design is a numbered package in `docs/`, in English.
 | [03-model.md](docs/03-model.md)                       | Collection kinds, Document `id` and paths, bytes, journal envelope                                               |
 | [04-files-and-git.md](docs/04-files-and-git.md)       | Files as truth, write lock, one commit per write, the mirror, `auto_sync`, clone, no LFS                                                |
 | [05-collection-declaration.md](docs/05-collection-declaration.md) | Collection declaration: kind, perimeter, journal caps; the generation is the marker's                                     |
-| [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index, who indexes, `Collection.Get`                                                                                               |
-| [13-find-and-search.md](docs/13-find-and-search.md)   | Queries select, searches rank: Tantivy Filter, hybrid BM25 + USearch, Projector columns, optional reranker                   |
+| [06-index-and-search.md](docs/06-index-and-search.md) | Disposable Index on Lance, its generations, who indexes, rebuild beside the live Index, `not_before`, `Collection.Get`                                                                                               |
+| [13-find-and-search.md](docs/13-find-and-search.md)   | Queries select, searches rank: the typed Filter, hybrid BM25 + nearest neighbours, Projector columns, optional reranker                   |
 | [14-cli.md](docs/14-cli.md)                           | The `scheda` CLI: one subcommand per rpc, global flags, JSON in and out (`--embedder-openai-url` or `--model2vec-embedder`; `--reranker-cohere-url`) |
 | [07-api.md](docs/07-api.md)                           | What spans the calls of the contract (objects, write model, errors, `Close`); each rpc is described in `api/scheda/v1`                                                       |
 | [08-agent.md](docs/08-agent.md)                       | Same calls for an AI agent, declaration listing, thin transport                                                  |
@@ -121,19 +125,18 @@ Target crates use the platform CRT (dynamic glibc on Linux). Git
 operations invoke the system **`git`** executable (`git` must be on
 `PATH`). Git is not behind a feature: `https://`, `http://`, `ssh://`,
 `git@`, and file remotes all work, and authentication, `~/.ssh/config`,
-and host-key checking match a plain `git` command. Features
-`find` and `search` are opt-in: Tantivy `find` and hybrid `search`
-(BM25 + USearch). `search` turns `find` on. `simd` turns `search` on
-and enables USearch SIMD kernels. `openmp` is opt-in (Linux
-`libomp-dev`). `tokio` is opt-in: the async form of the objects
-(`SchedaAsync`, `VaultAsync`, `CollectionAsync`, …), whose calls run on
-Tokio's blocking pool. There are no default features: `cargo add scheda` is
-git plus Documents, without Tantivy, USearch, or Tokio. Add `features = ["search", "simd"]` for ANN + SIMD,
-or `features = ["find"]` for Tantivy only. USearch needs a C++17 compiler: **g++** (Linux),
-**clang++** / Xcode CLT (macOS), **MSVC** Build Tools (Windows). A
-build without `search` does not need C++. Bazel on Debian 13, macOS,
-and Windows amd64 links `find`, `search`, and `simd`. GitHub Actions
-CI for those jobs is currently disabled.
+and host-key checking match a plain `git` command. Features:
+`index` is on by default: the Index on Lance (the crates `lance`,
+`lance-index`, `lance-linalg`, pinned exactly, no cloud object stores), its
+queries, counts, and searches, and the ports. Building it needs `protoc`
+(`PROTOC`, or `protoc` on `PATH`), and a cold build is long; `cargo add
+scheda --no-default-features` is git plus Documents, without Lance.
+`encrypt` is opt-in. Scheda is async only and needs a tokio runtime in the
+caller (`docs/22`): tokio is a required dependency, there is no `tokio`
+feature, and a blocking caller builds a multi-thread runtime and takes
+`to_sync()` of a reference inside it. Bazel on Debian 13, macOS, and
+Windows amd64 links `index`. GitHub Actions CI for those jobs is currently
+disabled.
 
 ```bash
 bazel build //rust/scheda:scheda
@@ -191,9 +194,9 @@ bazel run //bazel:format        # buildifier -mode=fix
 
 `cargo test` / `cargo clippy` still work for local iteration. `cargo test
 -p scheda --lib --no-default-features` is the fast loop: no feature, no
-Lance, no C++ compile. The default feature `index` (Lance) needs `protoc`
-to build (`PROTOC`, or `protoc` on `PATH`). For `find`
-/ `search` tests: `cargo test -p scheda --features search,simd`. GitHub
+Lance compile. The default feature `index` (Lance) needs `protoc`
+to build (`PROTOC`, or `protoc` on `PATH`); `cargo test -p scheda
+--all-features` runs the Index tests too. GitHub
 Actions CI (Bazel) is currently disabled.
 `cargo build --release` uses thin LTO, one codegen unit, and symbol strip.
 
@@ -281,33 +284,33 @@ bazel run //python/cli:cli_LLMs -- reindex
 `import` makes `.vault-test-LLMs` if needed, `create-collection`s from
 each `.collection.yaml`, then `create`s the missing Document files; the
 last step runs `index watch --until-settled` with the embedder flags, so
-that process indexes the writes and fills `.scheda/index/vector/`. `reindex`
-rebuilds the lexical and vector indexes from the commits (use it after a
-change of embedder model; an old Index format is rebuilt by itself). Stdout
+that process indexes the writes and fills the vectors in the Index. `reindex`
+builds a new Index generation from the commits beside the live one (use it
+after a change of embedder model; an Index of an earlier version is removed
+and built again by itself). Stdout
 of `reindex` is the settled `IndexState` as YAML. The CLI default Projector
 is one text column `body` (the whole Document, when it is UTF-8 text).
 
 #### 2. `find`
 
 A `Filter` on the `id` of a Document and the CLI column `body`. A query
-selects; it does not rank. `term` is the whole field value. A word in the
-file is `phrase` / `regex` on `body`, or a search. Other field names are
-`INVALID_ARGUMENT`. Stdout is YAML: `total` then each Document, `---`
-between documents (`raw` only with `--include-raw`). A leaf on `body` in a
-Vault-wide `find` names its `collection`; with `--collection NAME` it does
-not.
+selects; it does not rank. `term` is the whole value and `prefix` its
+beginning; a word in the file is a search. Other column names are
+`INVALID_ARGUMENT`. Stdout is YAML: `total` (from the summary the query
+streams first) then each Document, `---` between documents (`raw` only with
+`--include-raw`). One filter applies to every collection in scope;
+`--collection NAME` queries one collection.
 
 ```bash
 bazel run //python/cli:cli_LLMs -- find
 bazel run //python/cli:cli_LLMs -- find --collection mammals
-bazel run //python/cli:cli_LLMs -- find --collection mammals --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
-bazel run //python/cli:cli_LLMs -- find --filter '{"regex":{"field":"body","pattern":"bamboo","collection":"mammals"}}'
-bazel run //python/cli:cli_LLMs -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
+bazel run //python/cli:cli_LLMs -- find --collection mammals --filter '{"prefix":{"column":"id","prefix":"giant"}}'
+bazel run //python/cli:cli_LLMs -- find --filter '{"term":{"column":"id","value":{"text":"giant-panda"}}}'
 ```
 
 #### 3. `search`
 
-Hybrid BM25 + ANN, RRF, then the reranker. Hits are the top `k` after
+Hybrid BM25 + nearest neighbours, RRF, then the reranker. Hits are the top `k` after
 ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off (meaning
 only); `--lexical-only` sets `vectorWeight` `0` and turns the reranker off.
 `--no-reranker` keeps RRF order. `--topic` / bare `search` use
@@ -392,8 +395,8 @@ bazel run //python/cli:cli_model2vec -- reindex
 `import` makes `.vault-test-model2vec` if needed, `create-collection`s
 from each `.collection.yaml`, then `create`s the missing Document files. It
 does not load Model2Vec. `reindex` downloads the cache if needed, loads
-the embedder once, and fills `.scheda/index/vector/`. A later `reindex`
-rebuilds the lexical and vector indexes after a change of embedder model.
+the embedder once, and fills the vectors in the Index. A later `reindex`
+builds a new Index generation after a change of embedder model.
 Stdout of `reindex` is the settled `IndexState` as YAML. The CLI default
 Projector is one text column `body` (the whole Document, when it is UTF-8
 text).
@@ -401,24 +404,23 @@ text).
 #### 2. `find`
 
 A `Filter` on the `id` of a Document and the CLI column `body`. A query
-selects; it does not rank. `term` is the whole field value. A word in the
-file is `phrase` / `regex` on `body`, or a search. Other field names are
-`INVALID_ARGUMENT`. Stdout is YAML: `total` then each Document, `---`
-between documents (`raw` only with `--include-raw`). A leaf on `body` in a
-Vault-wide `find` names its `collection`; with `--collection NAME` it does
-not.
+selects; it does not rank. `term` is the whole value and `prefix` its
+beginning; a word in the file is a search. Other column names are
+`INVALID_ARGUMENT`. Stdout is YAML: `total` (from the summary the query
+streams first) then each Document, `---` between documents (`raw` only with
+`--include-raw`). One filter applies to every collection in scope;
+`--collection NAME` queries one collection.
 
 ```bash
 bazel run //python/cli:cli_model2vec -- find
 bazel run //python/cli:cli_model2vec -- find --collection mammals
-bazel run //python/cli:cli_model2vec -- find --collection mammals --filter '{"phrase":{"field":"body","terms":["giant","panda"]}}'
-bazel run //python/cli:cli_model2vec -- find --filter '{"regex":{"field":"body","pattern":"bamboo","collection":"mammals"}}'
-bazel run //python/cli:cli_model2vec -- find --filter '{"term":{"field":"id","value":"giant-panda"}}'
+bazel run //python/cli:cli_model2vec -- find --collection mammals --filter '{"prefix":{"column":"id","prefix":"giant"}}'
+bazel run //python/cli:cli_model2vec -- find --filter '{"term":{"column":"id","value":{"text":"giant-panda"}}}'
 ```
 
 #### 3. `search`
 
-Hybrid BM25 + ANN, then RRF (no local reranker). Loads the Model2Vec
+Hybrid BM25 + nearest neighbours, then RRF (no local reranker). Loads the Model2Vec
 cache to embed the query (run `reindex` first). Hits are the top `k`
 after ranking (`k` unset → 10). `lexicalWeight` `0` turns BM25 off
 (meaning only). `--topic` / bare `search` use

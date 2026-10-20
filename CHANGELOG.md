@@ -278,8 +278,9 @@ changes; they grow with each part of the move.
   `VaultOpening`, and change at any time: `Vault.SetEmbedder`,
   `SetReranker`, `SetProjector`, and a `Remove…` for each; the indexer
   takes the new set into its next round. A reference that holds no
-  implementation, and an async port given outside a Tokio runtime, are
-  `INVALID_ARGUMENT`. The traits are the generated contract
+  implementation is `INVALID_ARGUMENT`. The Vault calls a port in its async
+  form: a blocking port runs on the blocking pool, an async one is awaited,
+  and a panic in either is `Panicked`. The traits are the generated contract
   (`EmbedderSync`, …): the embedder and the reranker take their items as
   a stream and form their own portions, `FixedEmbedder` and
   `FixedReranker` turn a portion function into one, and the descriptors
@@ -334,12 +335,17 @@ changes; they grow with each part of the move.
   Index holds keeps its vector, and the vectors of a failed round are
   kept for the next try. A text the embedder refuses (`REFUSED`) leaves
   the Document without that vector; a blank text has none.
-- Docs: `06` (IDX-1, IDX-2, IDX-5, IDX-9, QRY-4), `13`, `04`, `02`, and
-  `07` describe the Index as the indexer now builds it: one `commit` for
-  the whole Index and no generations; a rebuild empties the Index and
-  embeds every text again, with queries `INDEX_REBUILDING` meanwhile; a
-  damaged Index is `INDEX_BROKEN` until `Index.Reindex`; `Index.Status` /
-  `Index.Watch` replace `index_status` / `wait_indexed`.
+- Docs: `06`, `13`, `07`, `14`, `02`, and README describe the Index on Lance
+  and the async-only API as built: generations with one `commit` each and
+  a table of rows and a table of files per collection; queries by the typed
+  filter with `order_by`, the summary `total`, and `not_before`; searches
+  with a prefilter and per-collection BM25; the live Index frozen and
+  answering during a rebuild that only `Index.Reindex` starts; `INDEX_STALE`
+  for other ports; `Vault.Close`, dropped calls, and `to_sync()` on a
+  multi-thread runtime (`CANNOT_BLOCK` on a current-thread one); and the
+  CLI with `notBefore`, `--index-wait-timeout-ms`, `--filter-max-depth`, and
+  the replies of writes. The glossary gains Index generation, state token,
+  `not_before`, and Filter. `20` D11 is marked superseded by `22`.
 - Docs: `01`–`10`, `13`, `14`, and README describe the 0.22 contract: the
   objects and their calls, Documents as bytes, the write model (one
   commit per write or batch, writers taking turns), one mirror, the ports,
