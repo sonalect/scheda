@@ -919,9 +919,8 @@ where
         Q: Fn(String) -> QFut + Send + Sync + 'static,
         QFut: Future<Output = Result<Vec<f32>, Error>> + Send + 'static,
     {
-        let query = move |text| -> BoxFuture<'static, Result<Vec<f32>, Error>> {
-            Box::pin(query(text))
-        };
+        let query =
+            move |text| -> BoxFuture<'static, Result<Vec<f32>, Error>> { Box::pin(query(text)) };
         FixedEmbedderAsync {
             query: Some(Box::new(query)),
             ..self

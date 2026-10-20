@@ -1050,12 +1050,12 @@ mod tests {
 
     use scheda_api::v1::VaultErrorCode;
 
+    #[cfg(all(unix, feature = "index"))]
+    use super::NodeKind;
     use super::{
         Repo, Repos, changed_paths, fixture, index_has_prefix, init_repository, is_work_tree,
         origin_url, require_work_tree, unmerged_paths,
     };
-    #[cfg(all(unix, feature = "index"))]
-    use super::NodeKind;
     #[cfg(all(unix, feature = "index"))]
     use crate::error::Error;
     use crate::git::{git, isolate_test_git_env};
