@@ -571,6 +571,12 @@ fn the_batches_of_the_consumer(target: &Arc<dyn CollectionSync>, path: &Path) {
     assert_eq!(first.version.as_deref(), Some(after_first.as_str()));
     let count = commits(path);
     let revisions = shape(&first);
+    // One write: every version it made, the deletion included, has its id.
+    let write = history(target, "replaced")[0].write_id.clone();
+    assert!(write.as_deref().is_some_and(|id| !id.is_empty()));
+    assert_eq!(history(target, "kept")[0].write_id, write);
+    assert_eq!(history(target, "gone")[0].write_id, write);
+    assert_ne!(history(target, "gone")[1].write_id, write, "the seed");
 
     let second = send(target, make());
     assert_eq!(shape(&second), revisions, "the same results");

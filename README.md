@@ -54,9 +54,10 @@ install; without an embedder, vector search is off and the rest still works.
 The library does not score Documents for a UI, does not call a language
 model, and does not know a profession.
 
-**Status: release `0.22.0` holds the proto contract (`docs/20`), the Index
+**Status: release `0.22.1` holds the proto contract (`docs/20`), the Index
 on Lance (`docs/21`), Scheda on tokio (`docs/22`), and the fixes of the
-full review (`docs/23`).** What it holds: the API as protobuf services and objects, async only on the
+full review (`docs/23`), with the write id of a version in a Document's
+history and async fixed-portion adapters (`CHANGELOG.md`).** What it holds: the API as protobuf services and objects, async only on the
 caller's tokio runtime (a blocking caller wraps an object with `to_sync()`
 inside a multi-thread runtime, `docs/22`); one commit per write call, which
 returns the state token of the Vault it made, and batches that are all or

@@ -8,6 +8,40 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.22.1] - 2026-10-20
+
+Two compatible additions; nothing changes for a caller of `0.22.0`.
+
+### Added
+
+- `DocumentHistoryEntry.write_id` (field 6; `writeId` in Protobuf JSON and
+  in the output of the CLI's `collection NAME history`): an opaque id of
+  the write that made the version, compared for equality only. Every
+  version one write made has the same one: one call, or one
+  `Collection.Batch` or `Vault.BatchDocuments`, across Documents and
+  collections. Two writes never share one, also in the same second with
+  the same note, isolated collections included. It is the same on every
+  read, after a reopen, and in a clone, and the version that deleted a
+  Document has one too. A caller that keeps one record under ids that
+  change over time (deleting it under the old id and creating it under the
+  new one in one batch) joins the two versions of that batch by it.
+- `FixedEmbedderAsync` and `FixedRerankerAsync`: the async forms of the
+  fixed-portion adapters, for a model client that is async. They implement
+  `EmbedderAsync` and `RerankerAsync`, so a Vault awaits them on its
+  runtime, with no blocking pool and no thread held while the function's
+  future waits. `FixedEmbedderAsync::new(model_id, dimensions, portion, f)`
+  takes an `f(Vec<String>)` that returns a future of
+  `Result<Vec<Vec<f32>>, Error>`; `FixedRerankerAsync::new(portion, f)`
+  takes an `f(Arc<str>, Vec<Document>)` that returns a future of
+  `Result<Vec<f64>, Error>`, the query shared by every portion. Hand them
+  over with `EmbedderRef::from_async` and `RerankerRef::from_async`. They
+  portion as `FixedEmbedder` and `FixedReranker` do (the two forms share
+  one portioning): portions of at most the given size, the last partial
+  portion when the input ends, results in order, `EmbedQuery` a portion of
+  one, a count that does not match `INVALID_ARGUMENT`, a failure of the
+  function the end of the stream, the model id and dimensions read once at
+  install.
+
 ## [0.22.0] - 2026-10-20
 
 This release is breaking. The whole API is protobuf services in one
@@ -2478,6 +2512,7 @@ Defects of `0.21.0` that a caller could meet:
 ## Links
 
 - [Unreleased]
+- [0.22.1]
 - [0.22.0]
 - [0.21.0]
 - [0.20.1]
@@ -2534,7 +2569,8 @@ Defects of `0.21.0` that a caller could meet:
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/sonalect/scheda/compare/v0.22.0...HEAD
+[Unreleased]: https://github.com/sonalect/scheda/compare/v0.22.1...HEAD
+[0.22.1]: https://github.com/sonalect/scheda/releases/tag/v0.22.1
 [0.22.0]: https://github.com/sonalect/scheda/releases/tag/v0.22.0
 [0.21.0]: https://github.com/sonalect/scheda/releases/tag/v0.21.0
 [0.20.1]: https://github.com/sonalect/scheda/releases/tag/v0.20.1

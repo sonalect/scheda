@@ -1248,6 +1248,21 @@ pub struct DocumentHistoryEntry {
         skip_serializing_if = "::core::option::Option::is_none"
     )]
     pub raw: ::core::option::Option<::buffa::alloc::vec::Vec<u8>>,
+    /// The write that made this version: opaque, compared for equality only.
+    /// Every version one write made has the same one (one call, or one
+    /// `Collection.Batch` or `Vault.BatchDocuments`, whatever Documents and
+    /// collections it wrote), and two writes never share one in a Vault. It
+    /// does not change: the same on every read, after a reopen, and in a
+    /// clone. Set on every version, the one that deleted the Document
+    /// included.
+    ///
+    /// Field 6: `write_id`
+    #[serde(
+        rename = "writeId",
+        alias = "write_id",
+        skip_serializing_if = "::core::option::Option::is_none"
+    )]
+    pub write_id: ::core::option::Option<::buffa::alloc::string::String>,
     #[serde(skip)]
     #[doc(hidden)]
     pub __buffa_unknown_fields: ::buffa::UnknownFields,
@@ -1260,6 +1275,7 @@ impl ::core::fmt::Debug for DocumentHistoryEntry {
             .field("author", &self.author)
             .field("note", &self.note)
             .field("raw", &self.raw)
+            .field("write_id", &self.write_id)
             .finish()
     }
 }
@@ -1296,6 +1312,16 @@ impl DocumentHistoryEntry {
     ///Sets [`Self::raw`] to `Some(value)`, consuming and returning `self`.
     pub fn with_raw(mut self, value: impl Into<::buffa::alloc::vec::Vec<u8>>) -> Self {
         self.raw = Some(value.into());
+        self
+    }
+    #[must_use = "with_* setters return `self` by value; assign or chain the result"]
+    #[inline]
+    ///Sets [`Self::write_id`] to `Some(value)`, consuming and returning `self`.
+    pub fn with_write_id(
+        mut self,
+        value: impl Into<::buffa::alloc::string::String>,
+    ) -> Self {
+        self.write_id = Some(value.into());
         self
     }
 }
@@ -1344,6 +1370,9 @@ impl ::buffa::Message for DocumentHistoryEntry {
         if let Some(ref v) = self.raw {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.write_id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -1378,6 +1407,9 @@ impl ::buffa::Message for DocumentHistoryEntry {
         }
         if let Some(ref v) = self.raw {
             ::buffa::types::put_shared_bytes_field(5u32, v, buf);
+        }
+        if let Some(ref v) = self.write_id {
+            ::buffa::types::put_string_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -1446,6 +1478,18 @@ impl ::buffa::Message for DocumentHistoryEntry {
                     buf,
                 )?;
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                ::buffa::types::merge_string(
+                    self
+                        .write_id
+                        .get_or_insert_with(::buffa::alloc::string::String::new),
+                    buf,
+                )?;
+            }
             _ => {
                 self.__buffa_unknown_fields
                     .push(::buffa::encoding::decode_unknown_field(tag, buf, ctx)?);
@@ -1459,6 +1503,7 @@ impl ::buffa::Message for DocumentHistoryEntry {
         self.author = ::buffa::MessageField::none();
         self.note = ::core::option::Option::None;
         self.raw = ::core::option::Option::None;
+        self.write_id = ::core::option::Option::None;
         self.__buffa_unknown_fields.clear();
     }
 }

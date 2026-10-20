@@ -1835,6 +1835,16 @@ pub struct DocumentHistoryEntryView<'a> {
     ///
     /// Field 5: `raw`
     pub raw: ::core::option::Option<&'a [u8]>,
+    /// The write that made this version: opaque, compared for equality only.
+    /// Every version one write made has the same one (one call, or one
+    /// `Collection.Batch` or `Vault.BatchDocuments`, whatever Documents and
+    /// collections it wrote), and two writes never share one in a Vault. It
+    /// does not change: the same on every read, after a reopen, and in a
+    /// clone. Set on every version, the one that deleted the Document
+    /// included.
+    ///
+    /// Field 6: `write_id`
+    pub write_id: ::core::option::Option<&'a str>,
     pub __buffa_unknown_fields: ::buffa::UnknownFieldsView<'a>,
 }
 impl<'a> ::buffa::MessageView<'a> for DocumentHistoryEntryView<'a> {
@@ -1930,6 +1940,13 @@ impl<'a> ::buffa::MessageView<'a> for DocumentHistoryEntryView<'a> {
                 )?;
                 view.raw = Some(::buffa::types::borrow_bytes(&mut cur)?);
             }
+            6u32 => {
+                ::buffa::encoding::check_wire_type(
+                    tag,
+                    ::buffa::encoding::WireType::LengthDelimited,
+                )?;
+                view.write_id = Some(::buffa::types::borrow_str(&mut cur)?);
+            }
             _ => {
                 ::buffa::encoding::skip_field_depth(tag, &mut cur, ctx.depth())?;
                 let span_len = before_tag.len() - cur.len();
@@ -1979,6 +1996,7 @@ impl<'a> ::buffa::MessageView<'a> for DocumentHistoryEntryView<'a> {
             },
             note: self.note.map(|s| s.to_string()),
             raw: self.raw.map(|b| (b).to_vec()),
+            write_id: self.write_id.map(|s| s.to_string()),
             __buffa_unknown_fields: self.__buffa_unknown_fields.to_owned()?.into(),
             ..::core::default::Default::default()
         })
@@ -2015,6 +2033,9 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentHistoryEntryView<'a> {
         if let Some(ref v) = self.raw {
             size += 1u64 + ::buffa::types::bytes_encoded_len(v) as u64;
         }
+        if let Some(ref v) = self.write_id {
+            size += 1u64 + ::buffa::types::string_encoded_len(v) as u64;
+        }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
     }
@@ -2050,6 +2071,9 @@ impl<'a> ::buffa::ViewEncode<'a> for DocumentHistoryEntryView<'a> {
         }
         if let Some(ref v) = self.raw {
             ::buffa::types::put_shared_bytes_field(5u32, v, buf);
+        }
+        if let Some(ref v) = self.write_id {
+            ::buffa::types::put_string_field(6u32, v, buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -2090,6 +2114,9 @@ impl<'__a> ::serde::Serialize for DocumentHistoryEntryView<'__a> {
         }
         if let ::core::option::Option::Some(__v) = self.raw {
             __map.serialize_entry("raw", &::buffa::json_helpers::BytesJson(__v))?;
+        }
+        if let ::core::option::Option::Some(__v) = self.write_id {
+            __map.serialize_entry("writeId", __v)?;
         }
         __map.end()
     }
@@ -2228,6 +2255,19 @@ impl DocumentHistoryEntryOwnedView {
     #[must_use]
     pub fn raw(&self) -> ::core::option::Option<&'_ [u8]> {
         self.0.reborrow().raw
+    }
+    /// The write that made this version: opaque, compared for equality only.
+    /// Every version one write made has the same one (one call, or one
+    /// `Collection.Batch` or `Vault.BatchDocuments`, whatever Documents and
+    /// collections it wrote), and two writes never share one in a Vault. It
+    /// does not change: the same on every read, after a reopen, and in a
+    /// clone. Set on every version, the one that deleted the Document
+    /// included.
+    ///
+    /// Field 6: `write_id`
+    #[must_use]
+    pub fn write_id(&self) -> ::core::option::Option<&'_ str> {
+        self.0.reborrow().write_id
     }
 }
 impl ::core::convert::From<::buffa::OwnedView<DocumentHistoryEntryView<'static>>>

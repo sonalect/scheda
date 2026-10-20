@@ -3,19 +3,23 @@
 //! snapshot) and `Vault.Check` (a report). The laziness checks count blob
 //! reads, which only the library can; they are unit tests in `src/reads.rs`.
 
+use std::collections::HashSet;
+
 use buffa_types::google::protobuf::Empty;
 use scheda::v1::SchedaAsync;
+use scheda::v1::document_operation::Operation;
 use scheda::v1::document_selection::Selection;
 use scheda::v1::{
-    CollectionAsync, CollectionDeclaration, Document, DocumentDeletion, DocumentHistoryEntry,
-    DocumentId, DocumentSelection, DocumentUpsert, DynCollectionAsync, DynVaultAsync, Ids, Listing,
-    OpenOptions, VaultAsync, VaultErrorCode as Code,
+    CollectionAsync, CollectionDeclaration, Document, DocumentCreation, DocumentDeletion,
+    DocumentHistoryEntry, DocumentId, DocumentOperation, DocumentSelection, DocumentUpsert,
+    DynCollectionAsync, DynVaultAsync, Ids, Listing, OpenOptions, VaultAsync,
+    VaultDocumentOperation, VaultErrorCode as Code,
 };
 use scheda::{Error, Scheda};
 use serde_json::json;
 
 use crate::common::{
-    Scratch, all, both, git, next, open, opening, snapshot, vault as built_vault, write,
+    Scratch, all, both, git, next, open, opening, snapshot, stream_of, vault as built_vault, write,
 };
 
 async fn declare(vault: &DynVaultAsync, value: serde_json::Value) {
@@ -131,6 +135,45 @@ async fn history(collection: &DynCollectionAsync, id: &str) -> Vec<DocumentHisto
     all(collection.history(key(id)).await.unwrap())
         .await
         .unwrap()
+}
+
+/// The `write_id` of each version, newest first.
+async fn write_ids(collection: &DynCollectionAsync, id: &str) -> Vec<String> {
+    history(collection, id)
+        .await
+        .into_iter()
+        .map(|version| version.write_id.unwrap())
+        .collect()
+}
+
+fn deleting(id: &str, note: &str) -> Operation {
+    Operation::Delete(Box::new(
+        DocumentDeletion::default().with_id(id).with_note(note),
+    ))
+}
+
+fn creating(id: &str, raw: &str, note: &str) -> Operation {
+    Operation::Create(Box::new(
+        DocumentCreation::default()
+            .with_id(id)
+            .with_raw(raw.as_bytes().to_vec())
+            .with_note(note),
+    ))
+}
+
+fn in_collection(operation: Operation) -> DocumentOperation {
+    DocumentOperation {
+        operation: Some(operation),
+        ..DocumentOperation::default()
+    }
+}
+
+fn in_vault(collection: &str, operation: Operation) -> VaultDocumentOperation {
+    VaultDocumentOperation {
+        collection: Some(collection.to_owned()),
+        operation: in_collection(operation).into(),
+        ..VaultDocumentOperation::default()
+    }
 }
 
 #[test]
@@ -527,6 +570,135 @@ fn history_lists_versions_newest_first_with_revision_author_note_and_bytes() {
             .map(|v| v.time.as_option().unwrap().seconds)
             .collect();
         assert!(times.windows(2).all(|pair| pair[0] >= pair[1]));
+        let writes: HashSet<_> = versions.iter().map(|v| v.write_id.clone()).collect();
+        assert_eq!(writes.len(), 4, "four writes, four write ids");
+        assert!(!writes.contains(&None) && !writes.contains(&Some(String::new())));
+    });
+}
+
+#[test]
+fn one_write_gives_every_version_it_made_one_write_id() {
+    both(|| async {
+        let (_scratch, _path, vault) = fresh("reads-write-id-batch").await;
+        let notes = collection(&vault, "notes").await;
+        let config = collection(&vault, "config").await;
+        put(&notes, "old.md", "record", "seed").await;
+        // A record that moves from one id to another, and a write to another
+        // collection, in one batch of the Vault.
+        vault
+            .batch_documents(stream_of(vec![
+                in_vault("notes", deleting("old.md", "move")),
+                in_vault("notes", creating("new.md", "record", "move")),
+                in_vault("config", creating("settings", "S", "move")),
+            ]))
+            .await
+            .unwrap();
+        let old = history(&notes, "old.md").await;
+        assert_eq!(old.len(), 2);
+        assert_eq!(
+            old[0].raw.as_deref().unwrap_or_default(),
+            b"",
+            "the deletion"
+        );
+        let moved = old[0].write_id.clone().unwrap();
+        assert!(!moved.is_empty(), "the deleting version has one");
+        assert_ne!(old[1].write_id.as_deref(), Some(moved.as_str()), "the seed");
+        assert_eq!(
+            write_ids(&notes, "new.md").await,
+            std::slice::from_ref(&moved)
+        );
+        assert_eq!(
+            write_ids(&config, "settings").await,
+            std::slice::from_ref(&moved)
+        );
+
+        // A batch of one collection, too.
+        notes
+            .batch(stream_of(vec![
+                in_collection(deleting("new.md", "again")),
+                in_collection(creating("newer.md", "record", "again")),
+            ]))
+            .await
+            .unwrap();
+        let new = write_ids(&notes, "new.md").await;
+        assert_eq!(new.len(), 2);
+        assert_eq!(new[1], moved);
+        assert_ne!(new[0], moved);
+        assert_eq!(write_ids(&notes, "newer.md").await, [new[0].clone()]);
+    });
+}
+
+#[test]
+fn two_writes_in_one_second_with_one_note_have_two_write_ids() {
+    both(|| async {
+        let (_scratch, _path, vault) = fresh("reads-write-id-second").await;
+        let notes = collection(&vault, "notes").await;
+        let diary = collection(&vault, "diary").await;
+        // The same move as two calls instead of one batch. A second may tick
+        // between them; then the pair is written again under other ids.
+        for attempt in 0..5 {
+            let (from, to) = (format!("from{attempt}.md"), format!("to{attempt}.md"));
+            put(&notes, &from, "record", "seed").await;
+            notes
+                .delete(DocumentDeletion::default().with_id(&from).with_note("move"))
+                .await
+                .unwrap();
+            put(&notes, &to, "record", "move").await;
+            put(&diary, &to, "record", "move").await;
+            let deletion = history(&notes, &from).await.remove(0);
+            let creation = history(&notes, &to).await.remove(0);
+            let isolated = history(&diary, &to).await.remove(0);
+            if deletion.time != creation.time || creation.time != isolated.time {
+                continue;
+            }
+            assert_eq!(deletion.note, creation.note);
+            let ids: HashSet<_> = [deletion.write_id, creation.write_id, isolated.write_id]
+                .into_iter()
+                .collect();
+            assert_eq!(ids.len(), 3, "three writes, the isolated one included");
+            return;
+        }
+        panic!("no attempt wrote its three versions in one second");
+    });
+}
+
+#[test]
+fn a_write_id_is_the_same_on_every_read_after_a_reopen_and_in_a_clone() {
+    both(|| async {
+        let (scratch, path, vault) = fresh("reads-write-id-stable").await;
+        let notes = collection(&vault, "notes").await;
+        put(&notes, "a.md", "one", "first").await;
+        put(&notes, "a.md", "two", "second").await;
+        notes
+            .delete(
+                DocumentDeletion::default()
+                    .with_id("a.md")
+                    .with_note("gone"),
+            )
+            .await
+            .unwrap();
+        let ids = write_ids(&notes, "a.md").await;
+        assert_eq!(ids.len(), 3);
+        assert_eq!(write_ids(&notes, "a.md").await, ids, "every read");
+        vault.close(Empty::default()).await.unwrap();
+
+        let vault = open(&path, OpenOptions::default()).await.unwrap();
+        let notes = collection(&vault, "notes").await;
+        assert_eq!(write_ids(&notes, "a.md").await, ids, "after a reopen");
+
+        let copy = scratch.join("clone");
+        git(
+            &path,
+            &[
+                "clone",
+                "--quiet",
+                &path.to_string_lossy(),
+                &copy.to_string_lossy(),
+            ],
+        );
+        let clone = open(&copy, OpenOptions::default()).await.unwrap();
+        let notes = collection(&clone, "notes").await;
+        assert_eq!(write_ids(&notes, "a.md").await, ids, "in a clone");
     });
 }
 

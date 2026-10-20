@@ -1,6 +1,6 @@
 # 13. Find and search
 
-Document 13 of the Scheda package. Version 0.63, 20 October 2026.
+Document 13 of the Scheda package. Version 0.64, 20 October 2026.
 
 How a query and a search must work. Messages: `api/scheda/v1/query.proto`, `ports.proto`, `index.proto`. Index columns: `Projector.Columns(collection)`, not collection-declaration keys (`05`). This document is the target. Implementations that concatenate all columns into one vector, or treat a search as a query string only, are wrong.
 
@@ -111,6 +111,8 @@ Scheda sends the texts one by one. The implementation gathers them into the port
 
 Zero is not representable in either size. Absence of a vector leg is no embedder at all, not a zero `dimensions`.
 
+*Fixed portions.* A model that wants no more than "these texts, those vectors" needs no stream code of its own: the library's fixed-portion adapters read the texts one by one, call one function of the program with portions of at most the size it gives, call it with the last partial portion when the texts end, and send the vectors back in order; `EmbedQuery` is a portion of one; a function that gives another count than its portion fails the stream with `INVALID_ARGUMENT`, and a failure of the function ends the stream; `Describe` gives the model id and dimensions the program gave, read once at install. `FixedEmbedder::new(model_id, dimensions, portion, f)` takes a blocking `f(Vec<String>) -> Result<Vec<Vec<f32>>, Error>` and is handed over as `EmbedderRef::from_sync(…)`: Scheda calls it on the blocking pool. `FixedEmbedderAsync::new` takes the same arguments with an `f` that returns a future of that result, and is handed over as `EmbedderRef::from_async(…)`: Scheda awaits it on the runtime the Vault was opened on, with no blocking pool, and no thread is held while the future waits. Both forms share one portioning (`ports::tests::the_adapter_calls_its_function_with_portions_and_flushes_the_last_one`, `the_adapter_fails_the_stream_when_its_function_miscounts_or_fails`, `a_failed_text_ends_the_adapter_stream_and_its_portion_is_not_run`, `the_async_adapters_await_their_futures_on_the_runtime_thread`; `tests/ports.rs`: `the_async_embedding_adapter_portions_as_the_blocking_one_and_awaits_its_function`).
+
 CLI hook (`14`): `--embedder-openai-url` plus `--embedder-model` and
 `--embedder-dimensions` (OpenAI `POST` `{URL}embeddings`), or
 `--model2vec-embedder DIR`. All three HTTP flags or none. The CLI's `model_id` is the `--embedder-model` name (HTTP) or an identity of the model files (Model2Vec), never a URL or a path (`14`). Unset → the process indexes no collection with a `vector` column, and its searches run without the vector leg. The CLI is that program; Scheda still does not ship weights.
@@ -169,6 +171,8 @@ Score(stream ScoreItem) → stream DocumentScore
 ```
 
 The implementation gathers the Documents into the portions its model wants, as `Embed` does. No reranker → order is RRF. A search sets `rerank_limit` to ask for a rerank; set without a reranker, also after `Vault.RemoveReranker`, it is `INVALID_ARGUMENT` (`tests/search.rs`: `rerank_limit_needs_a_reranker_and_covers_the_page`). Network inside the reranker is the program's problem. The library does not load a ranking model (QRY-5).
+
+*Fixed portions.* As for the embedder: `FixedReranker::new(portion, f)` takes a blocking `f(&str, Vec<Document>) -> Result<Vec<f64>, Error>` (`RerankerRef::from_sync`), and `FixedRerankerAsync::new(portion, f)` an `f(Arc<str>, Vec<Document>)` that returns a future of that result (`RerankerRef::from_async`): the query is shared by every portion and the future may keep it. Each reads the query first and then the Documents, portions them, and checks the count as the embedder adapters do (`ports::tests::the_reranker_adapter_scores_in_portions_and_in_order`, `the_reranker_adapter_fails_the_stream_when_its_function_miscounts_or_fails`; `tests/ports.rs`: `the_async_reranking_adapter_reads_the_query_first_and_scores_in_order`). Async adapters installed on a Vault index a `vector` column and serve a reranked search on a current-thread and a multi-thread runtime (`tests/search.rs`: `async_fixed_adapters_index_a_vector_column_and_serve_a_search`).
 
 **How many candidates it sees is the caller's choice.** Fusion depth and rerank depth answer two different questions: fusing is cheap and wants to be wide, while a cross-encoder costs tens of milliseconds per pair on a CPU and wants to be as narrow as the caller can accept. Unset `rerank_limit` means no rerank. Set to N, both legs retrieve `max(offset + k, N, 50)` and the reranker scores the first N of the fused list (or every hit that exists if the corpus is smaller), before the library returns those Documents. A large N is more BM25 and nearest-neighbour retrieval and more Document reads, not only more model calls. `rerank_limit` is at least 1 (protovalidate), because scoring nothing is what passing no reranker already means. A value below the effective `k` is `INVALID_ARGUMENT`, because a page where some hits carry `rerank_score` and some do not cannot be told from a truncated one (the same test).
 

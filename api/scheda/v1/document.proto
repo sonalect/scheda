@@ -106,6 +106,14 @@ message DocumentHistoryEntry {
   // Document. For an encrypted collection, the bytes as given, not the
   // armor; reading them takes the Vault's secret.
   bytes raw = 5;
+  // The write that made this version: opaque, compared for equality only.
+  // Every version one write made has the same one (one call, or one
+  // `Collection.Batch` or `Vault.BatchDocuments`, whatever Documents and
+  // collections it wrote), and two writes never share one in a Vault. It
+  // does not change: the same on every read, after a reopen, and in a
+  // clone. Set on every version, the one that deleted the Document
+  // included.
+  string write_id = 6;
 }
 
 // The request of `Collection.Create`.

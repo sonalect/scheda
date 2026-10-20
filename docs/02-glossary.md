@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.70, 20 October 2026.
+Document 2 of the Scheda package. Version 0.71, 20 October 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -186,7 +186,7 @@ Do not confuse with Embedder (text → vector) or with the Index (the files unde
 
 **`Delete`** — delete a `standard` or `singleton` Document. Unlinks the file; absent is `NOT_FOUND`, or nothing with `ignore_missing`. `UNIMPLEMENTED` on a `journal`. After the file is gone, `Collection.History` still answers from git.
 
-**`Collection.History`** — git history of one Document by `id`, newest first, as a stream of versions (revision, time, author, note, bytes). Same identity path as `Collection.Get` (validate `id`, then that file). Not an Index lookup. After `Delete`, the commits that stored the file remain. `UNIMPLEMENTED` on a `journal`.
+**`Collection.History`** — git history of one Document by `id`, newest first, as a stream of versions (revision, time, author, note, bytes, and the `write_id` that every version one write made shares). Same identity path as `Collection.Get` (validate `id`, then that file). Not an Index lookup. After `Delete`, the commits that stored the file remain. `UNIMPLEMENTED` on a `journal`.
 
 **`Collection.Query`** — select Documents with a `Filter` (a typed tree: `all_of`, `any_of`, `none_of`, `term`, `terms`, `range`, `exists`, `prefix`), over `id` and the Projector's columns. On `Vault.QueryDocuments`: a set of collection names (empty = this Vault, neither isolated nor encrypted; a named isolated collection is an ordinary query), and one filter applies to every collection in the set. On Collection: that collection only. The exact set of matches, without scores, in a stable order (`order_by` keys, then the collection, then `id`; one `journal` in append order). A stream: first a `QuerySummary` with the `total` of matches, counted in the same snapshot as the page, then the Documents; paged by `offset` / `limit` / `start_after`. `Count` gives the number without opening a file. Not by meaning: that is `Search`.
 

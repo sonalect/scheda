@@ -30,24 +30,26 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::num::NonZeroUsize;
+use std::pin::Pin;
 use std::sync::Arc;
 #[cfg(feature = "index")]
 use std::sync::{Mutex, PoisonError};
+use std::task::Poll;
 
 use buffa_types::google::protobuf::Empty;
-use protocontract::BoxIter;
+use protocontract::{BoxFuture, BoxIter, Stream};
 use scheda_api::v1::embedder_ref::EmbedderRef;
 use scheda_api::v1::projector_ref::ProjectorRef;
 use scheda_api::v1::reranker_ref::RerankerRef;
 use scheda_api::v1::score_item::Item;
 #[cfg(feature = "index")]
 use scheda_api::v1::{
-    CollectionKey, DynEmbedderAsync, DynProjectorAsync, DynRerankerAsync, EmbedderAsync, IndexDoc,
-    IndexSchema, ProjectorAsync, ProjectorDescriptor, Query, RawDocument, RerankerAsync,
+    CollectionKey, DynEmbedderAsync, DynProjectorAsync, DynRerankerAsync, IndexDoc, IndexSchema,
+    ProjectorAsync, ProjectorDescriptor, RawDocument,
 };
 use scheda_api::v1::{
-    Document, DocumentScore, EmbedderDescriptor, EmbedderSync, RerankerSync, ScoreItem, Text,
-    VaultErrorCode, Vector,
+    Document, DocumentScore, EmbedderAsync, EmbedderDescriptor, EmbedderSync, Query, RerankerAsync,
+    RerankerSync, ScoreItem, Text, VaultErrorCode, Vector,
 };
 
 #[cfg(feature = "index")]
@@ -757,7 +759,8 @@ impl ProjectorPort {
 ///
 /// The function must return one vector per text of its portion, in order;
 /// a count that does not match fails the stream with `INVALID_ARGUMENT`.
-/// A failure of the function ends the stream.
+/// A failure of the function ends the stream. For a function that waits on
+/// an async client, [`FixedEmbedderAsync`] does the same without a thread.
 pub struct FixedEmbedder<F> {
     model_id: String,
     dimensions: u32,
@@ -795,9 +798,7 @@ where
     F: Fn(Vec<String>) -> Result<Vec<Vec<f32>>, Error> + Send + Sync + 'static,
 {
     fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
-        Ok(EmbedderDescriptor::default()
-            .with_model_id(self.model_id.clone())
-            .with_dimensions(self.dimensions))
+        Ok(descriptor(&self.model_id, self.dimensions))
     }
 
     fn embed(
@@ -805,35 +806,138 @@ where
         texts: BoxIter<'static, Result<Text, Error>>,
     ) -> Result<BoxIter<'static, Result<Vector, Error>>, Error> {
         let embed = Arc::clone(&self.embed);
-        let input = texts.map(|text| text.map(|text| text.text.unwrap_or_default()));
         Ok(Box::new(Portions::new(
-            Box::new(input),
+            Box::new(texts.map(text_of)),
             self.portion,
-            Box::new(move |portion| {
-                Ok(embed(portion)?
-                    .into_iter()
-                    .map(|values| Vector {
-                        values,
-                        ..Vector::default()
-                    })
-                    .collect())
-            }),
+            Box::new(move |portion| Ok(vectors(embed(portion)?))),
         )))
     }
 
-    fn embed_query(&self, query: scheda_api::v1::Query) -> Result<Vector, Error> {
-        let mut vectors = (self.embed)(vec![query.text.unwrap_or_default()])?;
-        match (vectors.pop(), vectors.is_empty()) {
-            (Some(values), true) => Ok(Vector {
-                values,
-                ..Vector::default()
-            }),
-            _ => Err(Fault::new(
-                VaultErrorCode::InvalidArgument,
-                "the embedding function did not give exactly one vector for the query",
-            )
-            .into()),
+    fn embed_query(&self, query: Query) -> Result<Vector, Error> {
+        query_vector((self.embed)(vec![query.text.unwrap_or_default()])?)
+    }
+}
+
+/// An embedder made of one async function over a portion of texts: the
+/// async form of [`FixedEmbedder`], for a model client that is async.
+///
+/// `FixedEmbedderAsync` implements the async embedder: Scheda awaits it on
+/// the runtime the Vault was opened on, with no blocking pool, and no thread
+/// is held while the function's future waits. It portions as
+/// [`FixedEmbedder`] does: it reads the texts one by one, calls the function
+/// with portions of at most the size given, calls it with the last partial
+/// portion when the texts end, and sends the vectors back in order.
+/// `EmbedQuery` is a portion of one. One portion is in flight at a time.
+///
+/// The future must give one vector per text of its portion, in order; a
+/// count that does not match fails the stream with `INVALID_ARGUMENT`. A
+/// failure of the function ends the stream. A stream that is dropped drops
+/// the future in flight.
+///
+/// A Vault takes it as `EmbedderRef::from_async(FixedEmbedderAsync::new(…))`.
+/// The future owns what it uses: the function clones the client it holds
+/// into an `async move` block.
+pub struct FixedEmbedderAsync<F> {
+    model_id: String,
+    dimensions: u32,
+    portion: NonZeroUsize,
+    embed: Arc<F>,
+}
+
+impl<F, Fut> FixedEmbedderAsync<F>
+where
+    F: Fn(Vec<String>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Vec<Vec<f32>>, Error>> + Send + 'static,
+{
+    /// An embedder of the model `model_id` that gives vectors of
+    /// `dimensions` values, calling `embed` with portions of at most
+    /// `portion` texts and awaiting its future.
+    ///
+    /// Scheda reads `model_id` and `dimensions` once, when the embedder is
+    /// installed, and refuses an empty model or no dimensions.
+    pub fn new(
+        model_id: impl Into<String>,
+        dimensions: u32,
+        portion: NonZeroUsize,
+        embed: F,
+    ) -> FixedEmbedderAsync<F> {
+        FixedEmbedderAsync {
+            model_id: model_id.into(),
+            dimensions,
+            portion,
+            embed: Arc::new(embed),
         }
+    }
+}
+
+impl<F, Fut> EmbedderAsync for FixedEmbedderAsync<F>
+where
+    F: Fn(Vec<String>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Vec<Vec<f32>>, Error>> + Send + 'static,
+{
+    async fn describe(&self, _empty: Empty) -> Result<EmbedderDescriptor, Error> {
+        Ok(descriptor(&self.model_id, self.dimensions))
+    }
+
+    async fn embed<R>(
+        &self,
+        texts: R,
+    ) -> Result<impl Stream<Item = Result<Vector, Error>> + Send + use<F, Fut, R>, Error>
+    where
+        R: Stream<Item = Result<Text, Error>> + Send + 'static,
+    {
+        let embed = Arc::clone(&self.embed);
+        Ok(PortionStream::new(
+            Box::pin(texts),
+            text_of,
+            self.portion,
+            Box::new(move |portion| {
+                let reply = embed(portion);
+                Box::pin(async move { Ok(vectors(reply.await?)) })
+            }),
+        ))
+    }
+
+    async fn embed_query(&self, query: Query) -> Result<Vector, Error> {
+        query_vector((self.embed)(vec![query.text.unwrap_or_default()]).await?)
+    }
+}
+
+/// What both forms of the fixed embedder describe.
+fn descriptor(model_id: &str, dimensions: u32) -> EmbedderDescriptor {
+    EmbedderDescriptor::default()
+        .with_model_id(model_id)
+        .with_dimensions(dimensions)
+}
+
+/// The text of an item of an `Embed` stream.
+fn text_of(text: Result<Text, Error>) -> Result<String, Error> {
+    Ok(text?.text.unwrap_or_default())
+}
+
+/// The replies for the vectors a portion function gave.
+fn vectors(values: Vec<Vec<f32>>) -> Vec<Vector> {
+    values
+        .into_iter()
+        .map(|values| Vector {
+            values,
+            ..Vector::default()
+        })
+        .collect()
+}
+
+/// The vector of a query: the only one the portion function gave for it.
+fn query_vector(mut vectors: Vec<Vec<f32>>) -> Result<Vector, Error> {
+    match (vectors.pop(), vectors.is_empty()) {
+        (Some(values), true) => Ok(Vector {
+            values,
+            ..Vector::default()
+        }),
+        _ => Err(Fault::new(
+            VaultErrorCode::InvalidArgument,
+            "the embedding function did not give exactly one vector for the query",
+        )
+        .into()),
     }
 }
 
@@ -849,7 +953,9 @@ where
 ///
 /// The function must return one score per Document of its portion, in
 /// order; a count that does not match fails the stream with
-/// `INVALID_ARGUMENT`. A failure of the function ends the stream.
+/// `INVALID_ARGUMENT`. A failure of the function ends the stream. For a
+/// function that waits on an async client, [`FixedRerankerAsync`] does the
+/// same without a thread.
 pub struct FixedReranker<F> {
     portion: NonZeroUsize,
     score: Arc<F>,
@@ -877,54 +983,234 @@ where
         &self,
         mut score_items: BoxIter<'static, Result<ScoreItem, Error>>,
     ) -> Result<BoxIter<'static, Result<DocumentScore, Error>>, Error> {
-        let query = match score_items.next() {
-            Some(Ok(ScoreItem {
-                item: Some(Item::Query(query)),
-                ..
-            })) => query,
-            Some(Err(error)) => return Err(error),
-            _ => {
-                return Err(Fault::new(
-                    VaultErrorCode::InvalidArgument,
-                    "the first item of a score stream is the query",
-                )
-                .into());
-            }
-        };
-        let documents = score_items.map(|item| match item?.item {
-            Some(Item::Document(document)) => Ok(*document),
-            _ => Err(Error::from(Fault::new(
-                VaultErrorCode::InvalidArgument,
-                "every item of a score stream after the first is a Document",
-            ))),
-        });
+        let query = query_of(score_items.next())?;
         let score = Arc::clone(&self.score);
         Ok(Box::new(Portions::new(
-            Box::new(documents),
+            Box::new(score_items.map(document_of)),
             self.portion,
-            Box::new(move |portion| {
-                Ok(score(&query, portion)?
-                    .into_iter()
-                    .map(|score| DocumentScore::default().with_score(score))
-                    .collect())
-            }),
+            Box::new(move |portion| Ok(scores(score(&query, portion)?))),
         )))
     }
 }
 
-/// What a portion function does: one reply per item of the portion.
+/// A reranker made of one async function over a query and a portion of
+/// Documents: the async form of [`FixedReranker`], for a model client that
+/// is async.
+///
+/// `FixedRerankerAsync` implements the async reranker: Scheda awaits it on
+/// the runtime the Vault was opened on, with no blocking pool, and no thread
+/// is held while the function's future waits. It portions as
+/// [`FixedReranker`] does: it reads the query (the first item) and then the
+/// Documents one by one, calls the function with portions of at most the
+/// size given, calls it with the last partial portion when the Documents
+/// end, and sends the scores back in order. One portion is in flight at a
+/// time.
+///
+/// The function gets the query as an `Arc<str>` that its future may keep:
+/// every portion shares the one copy. The future must give one score per
+/// Document of its portion, in order; a count that does not match fails the
+/// stream with `INVALID_ARGUMENT`. A failure of the function ends the
+/// stream. A stream that is dropped drops the future in flight.
+///
+/// A Vault takes it as `RerankerRef::from_async(FixedRerankerAsync::new(…))`.
+pub struct FixedRerankerAsync<F> {
+    portion: NonZeroUsize,
+    score: Arc<F>,
+}
+
+impl<F, Fut> FixedRerankerAsync<F>
+where
+    F: Fn(Arc<str>, Vec<Document>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Vec<f64>, Error>> + Send + 'static,
+{
+    /// A reranker that calls `score` with the query and portions of at most
+    /// `portion` Documents, and awaits its future.
+    pub fn new(portion: NonZeroUsize, score: F) -> FixedRerankerAsync<F> {
+        FixedRerankerAsync {
+            portion,
+            score: Arc::new(score),
+        }
+    }
+}
+
+impl<F, Fut> RerankerAsync for FixedRerankerAsync<F>
+where
+    F: Fn(Arc<str>, Vec<Document>) -> Fut + Send + Sync + 'static,
+    Fut: Future<Output = Result<Vec<f64>, Error>> + Send + 'static,
+{
+    async fn score<R>(
+        &self,
+        score_items: R,
+    ) -> Result<impl Stream<Item = Result<DocumentScore, Error>> + Send + use<F, Fut, R>, Error>
+    where
+        R: Stream<Item = Result<ScoreItem, Error>> + Send + 'static,
+    {
+        let mut score_items = Box::pin(score_items);
+        let first = std::future::poll_fn(|cx| score_items.as_mut().poll_next(cx)).await;
+        let query: Arc<str> = Arc::from(query_of(first)?);
+        let score = Arc::clone(&self.score);
+        Ok(PortionStream::new(
+            score_items,
+            document_of,
+            self.portion,
+            Box::new(move |portion| {
+                let reply = score(Arc::clone(&query), portion);
+                Box::pin(async move { Ok(scores(reply.await?)) })
+            }),
+        ))
+    }
+}
+
+/// The query of a score stream: its first item.
+fn query_of(first: Option<Result<ScoreItem, Error>>) -> Result<String, Error> {
+    match first {
+        Some(Ok(ScoreItem {
+            item: Some(Item::Query(query)),
+            ..
+        })) => Ok(query),
+        Some(Err(error)) => Err(error),
+        _ => Err(Fault::new(
+            VaultErrorCode::InvalidArgument,
+            "the first item of a score stream is the query",
+        )
+        .into()),
+    }
+}
+
+/// The Document of an item of a score stream after the first.
+fn document_of(item: Result<ScoreItem, Error>) -> Result<Document, Error> {
+    match item?.item {
+        Some(Item::Document(document)) => Ok(*document),
+        _ => Err(Fault::new(
+            VaultErrorCode::InvalidArgument,
+            "every item of a score stream after the first is a Document",
+        )
+        .into()),
+    }
+}
+
+/// The replies for the scores a portion function gave.
+fn scores(values: Vec<f64>) -> Vec<DocumentScore> {
+    values
+        .into_iter()
+        .map(|score| DocumentScore::default().with_score(score))
+        .collect()
+}
+
+/// The portioning of the fixed adapters, both forms: it cuts the items of
+/// an input into portions of at most `size`, has the portion function run
+/// on each, checks that it gave one result per item, and gives the results
+/// one by one, in order. The input is read only once every result before is
+/// given; when it ends, the last partial portion is run too. A failure of
+/// the input or of the function, or a count that does not match, is the
+/// last item: nothing is read or run after it.
+///
+/// It reads and calls nothing itself. A driver asks [`Cut::step`] what to
+/// do next, does it, and hands back what came of it: [`Portions`] by calling
+/// an iterator and a function, [`PortionStream`] by polling a stream and a
+/// future.
+struct Cut<X, Y> {
+    size: usize,
+    /// The items read for the next portion.
+    portion: Vec<X>,
+    /// How many items the portion being run has.
+    running: usize,
+    /// The results of the last portion run, not given yet.
+    ready: VecDeque<Y>,
+    /// Whether the input may give more items.
+    open: bool,
+    /// The failure to give once `ready` is empty.
+    failure: Option<Error>,
+}
+
+/// What a driver of [`Cut`] does next.
+enum Step<X, Y> {
+    /// Give this item of the reply.
+    Give(Result<Y, Error>),
+    /// Read the next item of the input and hand it to [`Cut::read`].
+    Read,
+    /// Run the portion function on these items and hand its result to
+    /// [`Cut::ran`].
+    Run(Vec<X>),
+    /// The reply has ended.
+    End,
+}
+
+impl<X, Y> Cut<X, Y> {
+    fn new(size: NonZeroUsize) -> Cut<X, Y> {
+        Cut {
+            size: size.get(),
+            portion: Vec::new(),
+            running: 0,
+            ready: VecDeque::new(),
+            open: true,
+            failure: None,
+        }
+    }
+
+    fn step(&mut self) -> Step<X, Y> {
+        if let Some(reply) = self.ready.pop_front() {
+            return Step::Give(Ok(reply));
+        }
+        if let Some(error) = self.failure.take() {
+            return Step::Give(Err(error));
+        }
+        if self.open && self.portion.len() < self.size {
+            return Step::Read;
+        }
+        if self.portion.is_empty() {
+            return Step::End;
+        }
+        self.running = self.portion.len();
+        Step::Run(std::mem::take(&mut self.portion))
+    }
+
+    /// The next item of the input; `None` when it ended.
+    fn read(&mut self, item: Option<Result<X, Error>>) {
+        match item {
+            Some(Ok(item)) => self.portion.push(item),
+            Some(Err(error)) => self.fail(error),
+            None => self.open = false,
+        }
+    }
+
+    /// What the portion function gave for the portion of the last
+    /// [`Step::Run`].
+    fn ran(&mut self, replies: Result<Vec<Y>, Error>) {
+        match replies {
+            Ok(replies) if replies.len() == self.running => self.ready.extend(replies),
+            Ok(replies) => self.fail(
+                Fault::new(
+                    VaultErrorCode::InvalidArgument,
+                    format!(
+                        "the portion function gave {} results for a portion of {}",
+                        replies.len(),
+                        self.running
+                    ),
+                )
+                .into(),
+            ),
+            Err(error) => self.fail(error),
+        }
+    }
+
+    fn fail(&mut self, error: Error) {
+        self.open = false;
+        self.portion.clear();
+        self.failure = Some(error);
+    }
+}
+
+/// What a blocking portion function does: one reply per item of the
+/// portion.
 type PortionFn<X, Y> = Box<dyn Fn(Vec<X>) -> Result<Vec<Y>, Error> + Send + Sync>;
 
-/// A reply stream made by cutting an input stream into portions of at most
-/// `size` items, calling a function on each, and giving its results one by
-/// one. The input is read as the replies are asked for; when it ends, the
-/// last partial portion goes to the function too.
+/// The reply of a blocking fixed adapter: [`Cut`] driven by reading an
+/// iterator and calling a function, as the replies are asked for.
 struct Portions<X, Y> {
-    /// `None` once the input ended or the stream failed.
-    input: Option<BoxIter<'static, Result<X, Error>>>,
-    size: usize,
+    input: BoxIter<'static, Result<X, Error>>,
     run: PortionFn<X, Y>,
-    ready: VecDeque<Y>,
+    cut: Cut<X, Y>,
 }
 
 impl<X, Y> Portions<X, Y> {
@@ -934,10 +1220,9 @@ impl<X, Y> Portions<X, Y> {
         run: PortionFn<X, Y>,
     ) -> Portions<X, Y> {
         Portions {
-            input: Some(input),
-            size: size.get(),
+            input,
             run,
-            ready: VecDeque::new(),
+            cut: Cut::new(size),
         }
     }
 }
@@ -947,53 +1232,78 @@ impl<X, Y> Iterator for Portions<X, Y> {
 
     fn next(&mut self) -> Option<Result<Y, Error>> {
         loop {
-            if let Some(reply) = self.ready.pop_front() {
-                return Some(Ok(reply));
+            match self.cut.step() {
+                Step::Give(reply) => return Some(reply),
+                Step::Read => self.cut.read(self.input.next()),
+                Step::Run(portion) => self.cut.ran((self.run)(portion)),
+                Step::End => return None,
             }
-            let input = self.input.as_mut()?;
-            let mut portion = Vec::with_capacity(self.size);
-            let mut ended = false;
-            let mut failure = None;
-            while portion.len() < self.size {
-                match input.next() {
-                    Some(Ok(item)) => portion.push(item),
-                    Some(Err(error)) => {
-                        failure = Some(error);
-                        break;
-                    }
-                    None => {
-                        ended = true;
-                        break;
-                    }
+        }
+    }
+}
+
+/// What an async portion function does: one reply per item of the portion,
+/// once its future is done.
+type PortionFuture<X, Y> = Box<dyn Fn(Vec<X>) -> BoxFuture<'static, Result<Vec<Y>, Error>> + Send>;
+
+/// The reply of an async fixed adapter: [`Cut`] driven by polling the input
+/// stream and the future of the portion function, on the task that polls
+/// the reply. Nothing blocks: a poll that finds either one waiting returns
+/// `Pending`, and its waker wakes the task.
+struct PortionStream<I: Stream, X, Y> {
+    input: Pin<Box<I>>,
+    /// Takes an item of the input apart.
+    take: fn(I::Item) -> Result<X, Error>,
+    run: PortionFuture<X, Y>,
+    /// The future of the portion being run.
+    running: Option<BoxFuture<'static, Result<Vec<Y>, Error>>>,
+    cut: Cut<X, Y>,
+}
+
+impl<I: Stream, X, Y> PortionStream<I, X, Y> {
+    fn new(
+        input: Pin<Box<I>>,
+        take: fn(I::Item) -> Result<X, Error>,
+        size: NonZeroUsize,
+        run: PortionFuture<X, Y>,
+    ) -> PortionStream<I, X, Y> {
+        PortionStream {
+            input,
+            take,
+            run,
+            running: None,
+            cut: Cut::new(size),
+        }
+    }
+}
+
+impl<I, X, Y> Stream for PortionStream<I, X, Y>
+where
+    I: Stream,
+    X: Unpin,
+    Y: Unpin,
+{
+    type Item = Result<Y, Error>;
+
+    fn poll_next(
+        self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<Option<Result<Y, Error>>> {
+        let this = self.get_mut();
+        loop {
+            if let Some(running) = &mut this.running {
+                let replies = std::task::ready!(running.as_mut().poll(cx));
+                this.running = None;
+                this.cut.ran(replies);
+            }
+            match this.cut.step() {
+                Step::Give(reply) => return Poll::Ready(Some(reply)),
+                Step::Read => {
+                    let item = std::task::ready!(this.input.as_mut().poll_next(cx));
+                    this.cut.read(item.map(this.take));
                 }
-            }
-            if failure.is_some() || ended {
-                self.input = None;
-            }
-            if let Some(error) = failure {
-                return Some(Err(error));
-            }
-            if portion.is_empty() {
-                return None;
-            }
-            let count = portion.len();
-            match (self.run)(portion) {
-                Ok(replies) if replies.len() == count => self.ready.extend(replies),
-                Ok(replies) => {
-                    self.input = None;
-                    return Some(Err(Fault::new(
-                        VaultErrorCode::InvalidArgument,
-                        format!(
-                            "the portion function gave {} results for a portion of {count}",
-                            replies.len()
-                        ),
-                    )
-                    .into()));
-                }
-                Err(error) => {
-                    self.input = None;
-                    return Some(Err(error));
-                }
+                Step::Run(portion) => this.running = Some((this.run)(portion)),
+                Step::End => return Poll::Ready(None),
             }
         }
     }
@@ -1352,98 +1662,268 @@ mod tests {
         }
     }
 
+    /// The two forms of a fixed-portion adapter.
+    #[derive(Clone, Copy, Debug)]
+    enum Form {
+        Blocking,
+        Async,
+    }
+
+    const FORMS: [Form; 2] = [Form::Blocking, Form::Async];
+
+    /// A fixed embedder of `model-a` over `embed`, in `form`. The async one
+    /// awaits a yield before it calls `embed`, so each of its futures waits
+    /// once.
+    fn fixed_embedder<F>(form: Form, portion: usize, embed: F) -> EmbedderRef
+    where
+        F: Fn(Vec<String>) -> Result<Vec<Vec<f32>>, Error> + Send + Sync + 'static,
+    {
+        let portion = NonZeroUsize::new(portion).unwrap();
+        match form {
+            Form::Blocking => {
+                EmbedderRef::from_sync(FixedEmbedder::new("model-a", DIMS as u32, portion, embed))
+            }
+            Form::Async => {
+                let embed = Arc::new(embed);
+                EmbedderRef::from_async(FixedEmbedderAsync::new(
+                    "model-a",
+                    DIMS as u32,
+                    portion,
+                    move |texts| {
+                        let embed = Arc::clone(&embed);
+                        async move {
+                            tokio::task::yield_now().await;
+                            embed(texts)
+                        }
+                    },
+                ))
+            }
+        }
+    }
+
+    /// A fixed reranker over `score`, in `form`, installed; the async one
+    /// as [`fixed_embedder`].
+    fn fixed_reranker<F>(form: Form, portion: usize, score: F) -> Arc<RerankerPort>
+    where
+        F: Fn(&str, Vec<Document>) -> Result<Vec<f64>, Error> + Send + Sync + 'static,
+    {
+        let portion = NonZeroUsize::new(portion).unwrap();
+        let port = match form {
+            Form::Blocking => RerankerRef::from_sync(FixedReranker::new(portion, score)),
+            Form::Async => {
+                let score = Arc::new(score);
+                RerankerRef::from_async(FixedRerankerAsync::new(
+                    portion,
+                    move |query: Arc<str>, documents| {
+                        let score = Arc::clone(&score);
+                        async move {
+                            tokio::task::yield_now().await;
+                            score(&query, documents)
+                        }
+                    },
+                ))
+            }
+        };
+        Arc::new(RerankerPort {
+            port: port.to_async_offload().unwrap(),
+        })
+    }
+
     #[tokio::test]
     async fn the_adapter_calls_its_function_with_portions_and_flushes_the_last_one() {
-        let portions = Arc::new(Mutex::new(Vec::new()));
-        let log = Arc::clone(&portions);
-        let adapter = FixedEmbedder::new(
-            "model-a",
-            DIMS as u32,
-            NonZeroUsize::new(10).unwrap(),
-            move |portion: Vec<String>| {
+        for form in FORMS {
+            let portions = Arc::new(Mutex::new(Vec::new()));
+            let log = Arc::clone(&portions);
+            let adapter = fixed_embedder(form, 10, move |portion: Vec<String>| {
                 log.lock().unwrap().push(portion.len());
                 Ok(portion.iter().map(|text| vector_for(text)).collect())
-            },
-        );
-        let texts = texts(25);
-        let port = install_embedder(&EmbedderRef::from_sync(adapter))
-            .await
-            .unwrap();
-        let by_hand = install_embedder(&EmbedderRef::from_sync(ByHand))
-            .await
-            .unwrap();
-        let got = port
-            .embed(texts.clone(), || false)
-            .await
-            .into_result()
-            .unwrap();
-        assert_eq!(*portions.lock().unwrap(), [10, 10, 5]);
-        assert_eq!(
-            got,
-            by_hand.embed(texts, || false).await.into_result().unwrap()
-        );
-        assert_eq!(
-            port.embed_query(String::from("q")).await.unwrap(),
-            vector_for("q")
-        );
-        assert_eq!(
-            *portions.lock().unwrap(),
-            [10, 10, 5, 1],
-            "a portion of one"
-        );
+            });
+            let texts = texts(25);
+            let port = install_embedder(&adapter).await.unwrap();
+            let by_hand = install_embedder(&EmbedderRef::from_sync(ByHand))
+                .await
+                .unwrap();
+            let got = port
+                .embed(texts.clone(), || false)
+                .await
+                .into_result()
+                .unwrap();
+            assert_eq!(*portions.lock().unwrap(), [10, 10, 5], "{form:?}");
+            assert_eq!(
+                got,
+                by_hand.embed(texts, || false).await.into_result().unwrap()
+            );
+            assert_eq!(
+                port.embed_query(String::from("q")).await.unwrap(),
+                vector_for("q")
+            );
+            assert_eq!(
+                *portions.lock().unwrap(),
+                [10, 10, 5, 1],
+                "a portion of one, {form:?}"
+            );
+            assert_eq!(port.model_id(), "model-a");
+            assert_eq!(port.dimensions(), DIMS);
+        }
     }
 
     #[tokio::test]
     async fn the_adapter_fails_the_stream_when_its_function_miscounts_or_fails() {
-        let count = FixedEmbedder::new(
-            "model-a",
-            DIMS as u32,
-            NonZeroUsize::new(4).unwrap(),
-            |portion: Vec<String>| {
+        for form in FORMS {
+            let count = install_embedder(&fixed_embedder(form, 4, |portion: Vec<String>| {
                 Ok(portion
                     .iter()
                     .skip(1)
                     .map(|text| vector_for(text))
                     .collect())
-            },
-        );
-        let embedded = install_embedder(&EmbedderRef::from_sync(count))
+            }))
             .await
-            .unwrap()
-            .embed(texts(6), || false)
-            .await;
-        assert!(embedded.vectors.is_empty());
-        let error = embedded.failure.unwrap();
-        assert!(error.is(VaultErrorCode::InvalidArgument));
+            .unwrap();
+            let embedded = count.embed(texts(6), || false).await;
+            assert!(embedded.vectors.is_empty());
+            let error = embedded.failure.unwrap();
+            assert!(error.is(VaultErrorCode::InvalidArgument), "{form:?}");
+            let error = count.embed_query(String::from("q")).await.unwrap_err();
+            assert!(error.is(VaultErrorCode::InvalidArgument), "{form:?}");
 
-        let calls = Arc::new(AtomicUsize::new(0));
-        let counter = Arc::clone(&calls);
-        let failing = FixedEmbedder::new(
-            "model-a",
-            DIMS as u32,
-            NonZeroUsize::new(4).unwrap(),
-            move |portion: Vec<String>| {
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&calls);
+            let failing = fixed_embedder(form, 4, move |portion: Vec<String>| {
                 if counter.fetch_add(1, Ordering::SeqCst) == 1 {
                     return Err(Failure::new(EmbedderErrorCode::Unavailable, "down")
                         .with_retryable(true)
                         .into());
                 }
                 Ok(portion.iter().map(|text| vector_for(text)).collect())
+            });
+            let embedded = install_embedder(&failing)
+                .await
+                .unwrap()
+                .embed(texts(10), || false)
+                .await;
+            assert_eq!(embedded.vectors.len(), 4, "the first portion is kept");
+            let error = embedded.failure.unwrap();
+            assert!(error.is(EmbedderErrorCode::Unavailable) && error.retryable());
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                2,
+                "the stream ends at the failure, {form:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn a_failed_text_ends_the_adapter_stream_and_its_portion_is_not_run() {
+        let failed = || -> Result<Text, Error> {
+            Err(Failure::new(EmbedderErrorCode::Unavailable, "no text").into())
+        };
+        let items = || {
+            vec![
+                Ok(Text::default().with_text("a")),
+                Ok(Text::default().with_text("b")),
+                Ok(Text::default().with_text("c")),
+                failed(),
+                Ok(Text::default().with_text("d")),
+            ]
+        };
+        let embed = |log: Arc<Mutex<Vec<usize>>>| {
+            move |portion: Vec<String>| {
+                log.lock().unwrap().push(portion.len());
+                Ok(portion.iter().map(|text| vector_for(text)).collect())
+            }
+        };
+        let portion = NonZeroUsize::new(2).unwrap();
+
+        let blocking_log = Arc::new(Mutex::new(Vec::new()));
+        let adapter = FixedEmbedder::new("m", 3, portion, embed(Arc::clone(&blocking_log)));
+        let blocking: Vec<Result<Vector, Error>> =
+            EmbedderSync::embed(&adapter, Box::new(items().into_iter()))
+                .unwrap()
+                .collect();
+
+        let async_log = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&async_log);
+        let adapter = FixedEmbedderAsync::new("m", 3, portion, move |texts| {
+            std::future::ready(embed(Arc::clone(&log))(texts))
+        });
+        let reply = EmbedderAsync::embed(&adapter, IterStream::new(items().into_iter()))
+            .await
+            .unwrap();
+        let mut reply = std::pin::pin!(reply);
+        let mut asynced = Vec::new();
+        while let Some(item) = next(reply.as_mut()).await {
+            asynced.push(item);
+        }
+
+        for (got, log) in [(blocking, blocking_log), (asynced, async_log)] {
+            assert_eq!(got.len(), 3, "two vectors, then the failure, then the end");
+            assert!(got[..2].iter().all(Result::is_ok));
+            assert!(
+                got[2]
+                    .as_ref()
+                    .unwrap_err()
+                    .is(EmbedderErrorCode::Unavailable)
+            );
+            assert_eq!(*log.lock().unwrap(), [2], "`c` is never run");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_async_adapters_await_their_futures_on_the_runtime_thread() {
+        let here = std::thread::current().id();
+        let threads = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&threads);
+        let embedder = FixedEmbedderAsync::new(
+            "model-a",
+            DIMS as u32,
+            NonZeroUsize::new(2).unwrap(),
+            move |texts: Vec<String>| {
+                let seen = Arc::clone(&seen);
+                async move {
+                    // A timer of this current-thread runtime: it fires only
+                    // while nothing holds the one thread.
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    seen.lock().unwrap().push(std::thread::current().id());
+                    Ok(texts.iter().map(|text| vector_for(text)).collect())
+                }
             },
         );
-        let embedded = install_embedder(&EmbedderRef::from_sync(failing))
+        let port = install_embedder(&EmbedderRef::from_async(embedder))
             .await
-            .unwrap()
-            .embed(texts(10), || false)
-            .await;
-        assert_eq!(embedded.vectors.len(), 4, "the first portion is kept");
-        let error = embedded.failure.unwrap();
-        assert!(error.is(EmbedderErrorCode::Unavailable) && error.retryable());
+            .unwrap();
+        let got = port.embed(texts(5), || false).await.into_result().unwrap();
+        assert_eq!(got, expected(&texts(5)));
         assert_eq!(
-            calls.load(Ordering::SeqCst),
-            2,
-            "the stream ends at the failure"
+            port.embed_query(String::from("q")).await.unwrap(),
+            vector_for("q")
         );
+
+        let seen = Arc::clone(&threads);
+        let reranker = RerankerRef::from_async(FixedRerankerAsync::new(
+            NonZeroUsize::new(2).unwrap(),
+            move |_query: Arc<str>, documents: Vec<Document>| {
+                let seen = Arc::clone(&seen);
+                async move {
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    seen.lock().unwrap().push(std::thread::current().id());
+                    Ok(vec![1.0; documents.len()])
+                }
+            },
+        ));
+        let reranker = RerankerPort {
+            port: reranker.to_async_offload().unwrap(),
+        };
+        let documents = vec![document("a", "1"), document("b", "2"), document("c", "3")];
+        let scores = reranker.score(String::from("q"), documents).await.unwrap();
+        assert_eq!(scores, [1.0, 1.0, 1.0]);
+
+        let threads = threads.lock().unwrap();
+        assert_eq!(
+            threads.len(),
+            3 + 1 + 2,
+            "the portions of both, and the query"
+        );
+        assert!(threads.iter().all(|thread| *thread == here));
     }
 
     fn document(id: &str, raw: &str) -> Document {
@@ -1546,35 +2026,67 @@ mod tests {
 
     #[tokio::test]
     async fn the_reranker_adapter_scores_in_portions_and_in_order() {
-        let portions = Arc::new(Mutex::new(Vec::new()));
-        let log = Arc::clone(&portions);
-        let adapter = FixedReranker::new(
-            NonZeroUsize::new(3).unwrap(),
-            move |query: &str, portion: Vec<Document>| {
+        for form in FORMS {
+            let portions = Arc::new(Mutex::new(Vec::new()));
+            let log = Arc::clone(&portions);
+            let adapter = fixed_reranker(form, 3, move |query: &str, portion: Vec<Document>| {
                 log.lock().unwrap().push((query.to_owned(), portion.len()));
                 Ok(portion
                     .iter()
                     .map(|document| document.raw.as_deref().unwrap_or_default().len() as f64)
                     .collect())
-            },
-        );
-        let documents: Vec<Document> = (1..=7)
-            .map(|n| document(&format!("d{n}"), &"x".repeat(n)))
-            .collect();
-        let scores = reranker(adapter)
-            .score(String::from("q"), documents)
-            .await
-            .unwrap();
-        assert_eq!(scores, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
-        let log = portions.lock().unwrap();
-        assert_eq!(
-            *log,
-            [
-                ("q".to_owned(), 3),
-                ("q".to_owned(), 3),
-                ("q".to_owned(), 1)
-            ]
-        );
+            });
+            let documents: Vec<Document> = (1..=7)
+                .map(|n| document(&format!("d{n}"), &"x".repeat(n)))
+                .collect();
+            let scores = adapter.score(String::from("q"), documents).await.unwrap();
+            assert_eq!(scores, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0]);
+            let log = portions.lock().unwrap();
+            assert_eq!(
+                *log,
+                [
+                    ("q".to_owned(), 3),
+                    ("q".to_owned(), 3),
+                    ("q".to_owned(), 1)
+                ],
+                "{form:?}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn the_reranker_adapter_fails_the_stream_when_its_function_miscounts_or_fails() {
+        let documents =
+            || -> Vec<Document> { (1..=5).map(|n| document(&format!("d{n}"), "x")).collect() };
+        for form in FORMS {
+            let short = fixed_reranker(form, 2, |_: &str, portion: Vec<Document>| {
+                Ok(vec![0.0; portion.len() - 1])
+            });
+            let error = short
+                .score(String::from("q"), documents())
+                .await
+                .unwrap_err();
+            assert!(error.is(VaultErrorCode::InvalidArgument), "{form:?}");
+
+            let calls = Arc::new(AtomicUsize::new(0));
+            let counter = Arc::clone(&calls);
+            let failing = fixed_reranker(form, 2, move |_: &str, portion: Vec<Document>| {
+                if counter.fetch_add(1, Ordering::SeqCst) == 1 {
+                    return Err(Failure::new(RerankerErrorCode::Refused, "no").into());
+                }
+                Ok(vec![0.0; portion.len()])
+            });
+            let error = failing
+                .score(String::from("q"), documents())
+                .await
+                .unwrap_err();
+            assert!(error.is(RerankerErrorCode::Refused), "{form:?}");
+            assert_eq!(
+                calls.load(Ordering::SeqCst),
+                2,
+                "the stream ends at the failure, {form:?}"
+            );
+        }
     }
 
     /// A projector that records the address of the bytes it was given.

@@ -1,6 +1,6 @@
 # 07. Library API
 
-Document 7 of the Scheda package. Version 2.13, 20 October 2026.
+Document 7 of the Scheda package. Version 2.14, 20 October 2026.
 
 Language-neutral contract: objects, operations, arguments, outcomes, and
 error codes. The messages and the services are `api/scheda/v1/*.proto`
@@ -147,7 +147,7 @@ Each item below was the per-method contract of `0.21`. It moved into the comment
 The crate `scheda` is the first binding. It must:
 
 - implement every rpc above through the generated async traits (`VaultAsync`, `CollectionAsync`, `MirrorAsync`, `IndexAsync`, `SchedaAsync`); the blocking traits (`VaultSync`, …) come from `to_sync()` on a reference (LIB-6);
-- keep the objects private: the public surface is `scheda::Scheda` (the root), `scheda::v1`, `Error`, `Fault`, `Context`, `error_report`, `redact_remote_text`, `parse_command`, the fixed-portion adapters `FixedEmbedder` and `FixedReranker`, and, with `encrypt`, `parse_age_identity`;
+- keep the objects private: the public surface is `scheda::Scheda` (the root), `scheda::v1`, `Error`, `Fault`, `Context`, `error_report`, `redact_remote_text`, `parse_command`, the fixed-portion adapters `FixedEmbedder` and `FixedReranker` and their async forms `FixedEmbedderAsync` and `FixedRerankerAsync` (`13`), and, with `encrypt`, `parse_age_identity`;
 - use `Result` with `scheda::Error` carrying the LIB-5 codes (no `panic!` / `unwrap` / `expect` / `assert!` on the library path; tests may assert);
 - carry `[lints] workspace = true` as in this repository.
 

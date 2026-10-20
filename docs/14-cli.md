@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.83, 20 October 2026.
+Document 14 of the Scheda package. Version 0.84, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -242,7 +242,7 @@ is refused.
 | `describe` | The declaration of this collection. |
 | `get` | `--id ID`. The `Document`: `collection`, `id`, `raw` (Base64), `revision`. |
 | `get-many` | `--ids ID,…`, or a listing: [`--limit N`] [`--start-after ID`] (not with `--ids`). [`--include-raw`]. Reads files, not the Index. |
-| `history` | `--id ID`. The past versions, newest first, one `DocumentHistoryEntry` per line. A journal is `UNIMPLEMENTED`. |
+| `history` | `--id ID`. The past versions, newest first, one `DocumentHistoryEntry` per line; `writeId` is the same on the versions one write made. A journal is `UNIMPLEMENTED`. |
 | `create` | `--id ID` (`--file PATH` or stdin bytes) `--note TEXT` [`--keep-existing`]. In a journal, appends a line. Present → `ALREADY_EXISTS`, or the stored Document with `--keep-existing`. Prints a `DocumentWriteResult`: `{"document":…,"version":…}`. |
 | `update` | `--id ID` (`--file` or stdin) `--note TEXT` [`--revision REV`]. Absent → `NOT_FOUND`; another stored revision → `FAILED_PRECONDITION`. A journal is `UNIMPLEMENTED`. Prints a `DocumentWriteResult`. |
 | `upsert` | `--id ID` (`--file` or stdin) `--note TEXT`. A journal is `UNIMPLEMENTED`. Prints a `DocumentWriteResult`. |

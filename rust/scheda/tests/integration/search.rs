@@ -72,7 +72,7 @@ mod on_lance {
         SchedaAsync, SearchHit, SearchItem, Text, VaultAsync, VaultErrorCode as Code, Vector,
         index_value,
     };
-    use scheda::{Error, FixedReranker, Scheda};
+    use scheda::{Error, FixedEmbedderAsync, FixedReranker, FixedRerankerAsync, Scheda};
     use serde_json::{Value, json};
 
     use super::{search_of, vault_search};
@@ -768,6 +768,110 @@ mod on_lance {
                 .err()
                 .unwrap();
             assert!(error.is(Code::InvalidArgument), "{error}");
+        });
+    }
+
+    #[test]
+    fn async_fixed_adapters_index_a_vector_column_and_serve_a_search() {
+        both(|| async {
+            let scratch = Scratch::new("search-async-adapters");
+            let path = scratch.join("vault");
+            crate::common::vault(&path);
+            // On a current-thread runtime every future of the functions runs
+            // on the one thread the test runs on.
+            let runtime = tokio::runtime::Handle::current().runtime_flavor();
+            let only_thread = (runtime == tokio::runtime::RuntimeFlavor::CurrentThread)
+                .then(|| std::thread::current().id());
+            let threads = Arc::new(Mutex::new(Vec::new()));
+            let calls = Arc::new(Calls::default());
+            let mut request = opening(&path, options());
+            request.projector = ProjectorRef::from_sync(Docs {
+                projection: "docs@1",
+                vectors: true,
+                calls: Arc::clone(&calls),
+            })
+            .into();
+            let seen = Arc::clone(&threads);
+            request.embedder = EmbedderRef::from_async(FixedEmbedderAsync::new(
+                "topics@1",
+                4,
+                NonZeroUsize::new(2).unwrap(),
+                move |texts: Vec<String>| {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        seen.lock().unwrap().push(std::thread::current().id());
+                        Ok(texts.iter().map(|text| topic_vector(text)).collect())
+                    }
+                },
+            ))
+            .into();
+            let seen = Arc::clone(&threads);
+            request.reranker = RerankerRef::from_async(FixedRerankerAsync::new(
+                NonZeroUsize::new(3).unwrap(),
+                move |query: Arc<str>, documents: Vec<Document>| {
+                    let seen = Arc::clone(&seen);
+                    async move {
+                        tokio::time::sleep(Duration::from_millis(1)).await;
+                        seen.lock().unwrap().push(std::thread::current().id());
+                        assert_eq!(&*query, "feline");
+                        // `cat1` first, then the rest.
+                        Ok(documents
+                            .iter()
+                            .map(|document| {
+                                if document.id.as_deref() == Some("cat1") {
+                                    2.0
+                                } else {
+                                    1.0
+                                }
+                            })
+                            .collect())
+                    }
+                },
+            ))
+            .into();
+            let vault = Scheda
+                .open(request)
+                .await
+                .unwrap()
+                .to_async_inline()
+                .unwrap();
+            let fx = Fixture {
+                _scratch: scratch,
+                path,
+                vault,
+                calls,
+            };
+            wait_indexed(&fx.vault).await;
+            fx.corpus().await;
+            let notes = fx.collection("notes").await;
+
+            // A synonym no title or body holds: only the vectors find it.
+            let found = run(
+                &notes,
+                json!({"text": "feline", "k": 2, "lexical_weight": 0}),
+            )
+            .await;
+            assert_eq!(summary(&found), VectorLeg::VECTOR_LEG_RAN);
+            let mut got = ids(&found);
+            got.sort();
+            assert_eq!(got, ["cat1", "cat2"]);
+
+            let found = run(
+                &notes,
+                json!({"text": "feline", "k": 2, "lexical_weight": 0, "rerank_limit": 4}),
+            )
+            .await;
+            let reranked = hits(&found);
+            assert_eq!(id_of(&reranked[0]), "cat1");
+            assert_eq!(reranked[0].rerank_score, Some(2.0));
+
+            let threads = threads.lock().unwrap().clone();
+            assert!(!threads.is_empty());
+            if let Some(only) = only_thread {
+                assert!(threads.iter().all(|thread| *thread == only));
+            }
+            fx.vault.close(Empty::default()).await.unwrap();
         });
     }
 

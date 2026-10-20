@@ -66,7 +66,7 @@ mod writer;
 #[cfg(feature = "encrypt")]
 pub use crypto::parse_age_identity;
 pub use error::{Context, Error, Fault, error_report, redact_remote_text};
-pub use ports::{FixedEmbedder, FixedReranker};
+pub use ports::{FixedEmbedder, FixedEmbedderAsync, FixedReranker, FixedRerankerAsync};
 pub use scheda_api::v1;
 pub use service::Scheda;
 pub use stored::parse_command;

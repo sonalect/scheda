@@ -526,7 +526,7 @@ impl HistoryStream {
     }
 
     fn step(&mut self, vault: &Vault) -> Result<Option<DocumentHistoryEntry>, Error> {
-        while let Some(Pending { info, .. }) = self.heap.pop() {
+        while let Some(Pending { id, info }) = self.heap.pop() {
             let mut parents = Vec::with_capacity(info.parents.len());
             for parent in &info.parents {
                 parents.push((*parent, self.snap.commit_info(*parent)?));
@@ -546,19 +546,24 @@ impl HistoryStream {
                 }
             }
             if written {
-                return self.entry(vault, here, &info).map(Some);
+                return self.entry(vault, here, id, &info).map(Some);
             }
         }
         Ok(None)
     }
 
+    /// The version the commit `commit` made: `blob` holds its bytes, `None`
+    /// when it deleted the Document. The id of the commit is the
+    /// `write_id`: one commit per write, the same in every clone.
     fn entry(
         &self,
         vault: &Vault,
         blob: Option<Oid>,
+        commit: Oid,
         info: &CommitInfo,
     ) -> Result<DocumentHistoryEntry, Error> {
         let mut entry = DocumentHistoryEntry {
+            write_id: Some(commit.to_string()),
             time: MessageField::some(Timestamp::from_unix_secs(info.seconds)),
             author: MessageField::some(
                 Author::default()

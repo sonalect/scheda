@@ -466,6 +466,11 @@ fn writes_round_trip_with_a_note() {
     let history = run_on(&path, &["collection", NOTES, "history", "--id", "a"]).lines();
     let notes: Vec<&Value> = history.iter().map(|entry| &entry["note"]).collect();
     assert_eq!(notes, [&json!("second"), &json!("put")], "newest first");
+    let writes: Vec<&str> = history
+        .iter()
+        .map(|entry| entry["writeId"].as_str().unwrap())
+        .collect();
+    assert!(writes.iter().all(|id| !id.is_empty()) && writes[0] != writes[1]);
 
     let listing = run_on(&path, &["collection", NOTES, "get-many"]).lines();
     let ids: Vec<&Value> = listing.iter().map(|doc| &doc["id"]).collect();

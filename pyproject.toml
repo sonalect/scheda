@@ -1,6 +1,6 @@
 [project]
 name = "scheda"
-version = "0.22.0"
+version = "0.22.1"
 description = "Testdata driver for the scheda CLI and locked vLLM HTTP embedder/reranker sidecars. Not a language binding."
 requires-python = ">=3.14,<3.15"
 license = "Apache-2.0"

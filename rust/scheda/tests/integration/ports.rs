@@ -1,25 +1,26 @@
 //! The ports through the public handle: with the Index (`index`), `open`
 //! and the `Set*` calls install each, asking its descriptor once; a build
 //! without it has no Index to use one and refuses each
-//! (`UNIMPLEMENTED`). And the fixed-portion adapters, called as the blocking
-//! traits they implement.
+//! (`UNIMPLEMENTED`). And the fixed-portion adapters, called as the traits
+//! they implement, blocking and async.
 
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use buffa_types::google::protobuf::Empty;
-use protocontract::BoxIter;
+use protocontract::{BoxIter, IterStream};
 use scheda::v1::embedder_ref::EmbedderRef;
 use scheda::v1::reranker_ref::RerankerRef;
 use scheda::v1::score_item::Item;
 use scheda::v1::{
-    Document, DocumentScore, EmbedderDescriptor, EmbedderSync, OpenOptions, Query, RerankerSync,
-    SchedaAsync, ScoreItem, Text, VaultAsync, VaultErrorCode as Code, VaultOpening, Vector,
+    Document, DocumentScore, EmbedderAsync, EmbedderDescriptor, EmbedderSync, OpenOptions, Query,
+    RerankerAsync, RerankerSync, SchedaAsync, ScoreItem, Text, VaultAsync, VaultErrorCode as Code,
+    VaultOpening, Vector,
 };
-use scheda::{Error, FixedEmbedder, FixedReranker, Scheda};
+use scheda::{Error, FixedEmbedder, FixedEmbedderAsync, FixedReranker, FixedRerankerAsync, Scheda};
 
-use crate::common::{Scratch, both, open, opening, snapshot, vault};
+use crate::common::{Scratch, all, both, open, opening, snapshot, vault};
 
 const DIMS: u32 = 3;
 
@@ -333,6 +334,124 @@ fn the_reranking_adapter_reads_the_query_first_and_scores_in_order() {
                 ..ScoreItem::default()
             })));
         let error = adapter.score(no_query).err().unwrap();
+        assert!(
+            error.is(Code::InvalidArgument),
+            "the first item must be the query"
+        );
+    });
+}
+
+/// The items of a score stream: the query, then a Document of `n` bytes for
+/// each `n` from 1 to `count`.
+fn score_items(query: &str, count: usize) -> Vec<Result<ScoreItem, Error>> {
+    std::iter::once(Item::Query(query.to_owned()))
+        .chain((1..=count).map(|n| {
+            Item::from(
+                Document::default()
+                    .with_id(format!("d{n}"))
+                    .with_raw(vec![0u8; n]),
+            )
+        }))
+        .map(|item| {
+            Ok(ScoreItem {
+                item: Some(item),
+                ..ScoreItem::default()
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn the_async_embedding_adapter_portions_as_the_blocking_one_and_awaits_its_function() {
+    both(|| async {
+        let portions = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&portions);
+        let adapter = FixedEmbedderAsync::new(
+            "model-a",
+            DIMS,
+            NonZeroUsize::new(10).unwrap(),
+            move |portion: Vec<String>| {
+                let log = Arc::clone(&log);
+                async move {
+                    tokio::task::yield_now().await;
+                    log.lock().unwrap().push(portion.len());
+                    Ok(portion.iter().map(|text| vector_for(text)).collect())
+                }
+            },
+        );
+        let descriptor = adapter.describe(Empty::default()).await.unwrap();
+        assert_eq!(descriptor.model_id.as_deref(), Some("model-a"));
+        assert_eq!(descriptor.dimensions, Some(DIMS));
+
+        let input = texts(25)
+            .into_iter()
+            .map(|text| Ok(Text::default().with_text(text)))
+            .collect::<Vec<Result<Text, Error>>>();
+        let got = all(adapter
+            .embed(IterStream::new(input.into_iter()))
+            .await
+            .unwrap())
+        .await
+        .unwrap();
+        assert_eq!(*portions.lock().unwrap(), [10, 10, 5]);
+        let expected: Vec<Vec<f32>> = texts(25).iter().map(|text| vector_for(text)).collect();
+        let values: Vec<Vec<f32>> = got.into_iter().map(|vector| vector.values).collect();
+        assert_eq!(values, expected);
+
+        let query = adapter
+            .embed_query(Query::default().with_text("query"))
+            .await
+            .unwrap();
+        assert_eq!(query.values, vector_for("query"));
+        assert_eq!(*portions.lock().unwrap(), [10, 10, 5, 1]);
+    });
+}
+
+#[test]
+fn the_async_reranking_adapter_reads_the_query_first_and_scores_in_order() {
+    both(|| async {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&calls);
+        let adapter = FixedRerankerAsync::new(
+            NonZeroUsize::new(4).unwrap(),
+            move |query: Arc<str>, portion: Vec<Document>| {
+                let log = Arc::clone(&log);
+                async move {
+                    tokio::task::yield_now().await;
+                    log.lock().unwrap().push((query.to_string(), portion.len()));
+                    Ok(portion
+                        .iter()
+                        .map(|document| document.raw.as_deref().unwrap_or_default().len() as f64)
+                        .collect())
+                }
+            },
+        );
+        let reply = adapter
+            .score(IterStream::new(score_items("what", 9).into_iter()))
+            .await
+            .unwrap();
+        let scores: Vec<f64> = all(reply)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|score: DocumentScore| score.score.unwrap_or(-1.0))
+            .collect();
+        assert_eq!(scores, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]);
+        assert_eq!(
+            *calls.lock().unwrap(),
+            [
+                ("what".to_owned(), 4),
+                ("what".to_owned(), 4),
+                ("what".to_owned(), 1)
+            ]
+        );
+
+        let no_query = score_items("what", 1).into_iter().skip(1);
+        let error = adapter
+            .score(IterStream::new(no_query))
+            .await
+            .err()
+            .unwrap();
         assert!(
             error.is(Code::InvalidArgument),
             "the first item must be the query"
