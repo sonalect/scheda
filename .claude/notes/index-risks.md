@@ -9,9 +9,7 @@ collection breaking every vector search, a journal append re-indexing its
 segment, `vectors` read and written whole, and the wording of D23 on the
 lexical side (`21` §4 has the table). What stays is below, reworded for the
 Index on Lance. Nothing here is decided yet. Each item has a severity,
-the evidence, and a recommendation. The probes of the old Index are in
-`index-probes.patch` beside this note (they apply to the tree of
-`b31fb46`, not to the present one).
+the evidence, and a recommendation.
 
 ## Findings that stay, most severe first
 

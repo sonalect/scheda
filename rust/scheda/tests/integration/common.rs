@@ -150,6 +150,45 @@ pub fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
     out
 }
 
+/// Waits until a write of this process waits for the write lock of the Vault
+/// at `path`, which the test holds (`held` files of `.scheda/commit.lock`
+/// are open in the test already). A write that waits has the lock file open
+/// and tries the lock again and again, so the open file is its mark.
+///
+/// Only Linux lists the open files of a process (`/proc/self/fd`). Elsewhere
+/// no state shows a waiting write, and the wait is a margin of 300 ms: a
+/// slow runner can make a test that follows it check less, never pass for a
+/// wrong reason, as long as the test says so where it relies on it.
+pub async fn write_waits_for_the_lock(path: &Path, held: usize) {
+    let lock = path.join(".scheda/commit.lock");
+    #[cfg(target_os = "linux")]
+    {
+        let lock = std::fs::canonicalize(&lock).unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+        loop {
+            let open = std::fs::read_dir("/proc/self/fd")
+                .unwrap()
+                .filter_map(|entry| std::fs::read_link(entry.ok()?.path()).ok())
+                .filter(|target| *target == lock)
+                .count();
+            if open > held {
+                return;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no write waits for {}",
+                lock.display()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (lock, held);
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    }
+}
+
 /// Runs `test` on a current-thread runtime, then on a multi-thread one:
 /// Scheda never blocks a thread of the runtime, so it works on both.
 pub fn both<F, Fut>(test: F)

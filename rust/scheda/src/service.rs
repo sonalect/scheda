@@ -959,6 +959,9 @@ mod tests {
             let vault = Arc::clone(&vault);
             async move { vault.close().await }
         });
+        // A margin, and only an upper bound: the commit is held until `go`,
+        // so `Close` cannot end before it, whatever the runner's speed; a
+        // slow runner only makes this check weaker.
         tokio::time::sleep(Duration::from_millis(200)).await;
         assert!(!closing.is_finished(), "Close waits for the commit");
         go.send(()).unwrap();

@@ -23,6 +23,7 @@ use std::process::ExitCode;
 
 use clap::Parser;
 use clap::error::ErrorKind as ClapErrorKind;
+use protocontract::ErrorCode;
 use scheda::v1::{ErrorReport, VaultErrorCode};
 use scheda::{Error, Fault};
 
@@ -41,7 +42,7 @@ fn main() -> ExitCode {
                 Failed::Error(error) => scheda::error_report(&error),
                 Failed::Report(report) => *report,
             };
-            emit_report(&report);
+            emit_report(&with_hint(report));
             ExitCode::FAILURE
         }
     }
@@ -78,6 +79,19 @@ fn run(args: impl IntoIterator<Item = std::ffi::OsString>) -> Result<(), Failed>
             )
         })?;
     runtime.block_on(exec::execute(call, opening, wait))
+}
+
+/// The report with what a person does about it, when there is one: an Index
+/// built by other ports than this command line gives (its Projector is
+/// `scheda-cli/whole-file@2` now) is read again by one `index reindex`.
+fn with_hint(mut report: ErrorReport) -> ErrorReport {
+    if report.code.as_deref() == Some(ErrorCode::name(VaultErrorCode::IndexStale)) {
+        let message = report.message.take().unwrap_or_default();
+        report.message = Some(format!(
+            "{message}; run `scheda index reindex` once to build the Index again"
+        ));
+    }
+    report
 }
 
 /// Writes the report as one line on stderr. There is nowhere else to say

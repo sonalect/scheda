@@ -2629,8 +2629,11 @@ pub struct DocumentQuery {
     /// A state token: `version` of a write's reply, of `Vault.Info`, or of
     /// `IndexState`. The call answers once the Index reflects a state that
     /// contains it, waiting up to `OpenOptions.index_wait_timeout_ms`; past
-    /// it, `DEADLINE_EXCEEDED`. A token whose commit is no longer in the
-    /// history of `HEAD` (a reset, a pull that rewrote it) does not wait. A
+    /// it, `DEADLINE_EXCEEDED`. An Index built with other ports than this
+    /// Vault's, with no `Index.Reindex` asked for or running on this handle, is
+    /// `INDEX_STALE` at once: waiting cannot mend it. A token whose commit is
+    /// no longer in the history of `HEAD` (a reset, a pull that rewrote it)
+    /// does not wait. A
     /// token that is not one, `INVALID_ARGUMENT`. Unset: answer at once from
     /// what the Index holds.
     ///

@@ -132,7 +132,10 @@ fn join_failed(error: tokio::task::JoinError) -> Error {
     if error.is_panic() {
         Error::new(
             RuntimeCode::Panicked,
-            format!("a blocking step panicked: {}", message(&error.into_panic())),
+            format!(
+                "a blocking step panicked: {}",
+                panic_message(error.into_panic().as_ref())
+            ),
         )
     } else {
         Failure::new(
@@ -144,8 +147,20 @@ fn join_failed(error: tokio::task::JoinError) -> Error {
     }
 }
 
-/// The message of a panic, when it has one.
-fn message(payload: &Box<dyn Any + Send>) -> &str {
+/// The message of a panic: the text `panic!` was given, as a `&str` or a
+/// `String` (what [`std::panic::panic_any`] carries for any other type has
+/// none). Takes the payload a [`tokio::task::JoinError::into_panic`] or a
+/// [`std::panic::catch_unwind`] returns.
+///
+/// ```
+/// let payload = std::panic::catch_unwind(|| panic!("boom")).unwrap_err();
+/// assert_eq!(scheda_blocking::panic_message(payload.as_ref()), "boom");
+///
+/// let other = std::panic::catch_unwind(|| std::panic::panic_any(7_u8)).unwrap_err();
+/// assert_eq!(scheda_blocking::panic_message(other.as_ref()), "no message");
+/// ```
+#[must_use]
+pub fn panic_message(payload: &(dyn Any + Send)) -> &str {
     payload
         .downcast_ref::<&str>()
         .copied()

@@ -23,6 +23,7 @@ use serde_json::json;
 
 use crate::common::{
     Scratch, both, collection, mirror, open, opening, snapshot, vault as built_vault,
+    write_waits_for_the_lock,
 };
 
 /// Opens a Vault as `request` asks.
@@ -184,8 +185,9 @@ fn close_waits_for_a_running_write_and_holds_no_lock_after() {
             let outcome = notes.upsert(upsert("a.md", "while closing")).await;
             (Instant::now(), outcome)
         });
-        // The write waits for the lock this test holds.
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // The write waits for the lock this test holds: closing before it
+        // does would fail the write, and the test with it.
+        write_waits_for_the_lock(&path, 1).await;
         let closer = {
             let vault = vault.clone();
             tokio::spawn(async move {
@@ -193,6 +195,9 @@ fn close_waits_for_a_running_write_and_holds_no_lock_after() {
                 Instant::now()
             })
         };
+        // A margin, and only an upper bound: a close that does not wait ends
+        // within it on a runner that is not stalled, and the order of the
+        // two ends is checked below without a clock.
         tokio::time::sleep(Duration::from_millis(300)).await;
         assert!(!closer.is_finished(), "close waits for the running write");
         drop(held);

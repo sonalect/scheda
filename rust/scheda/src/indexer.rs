@@ -301,6 +301,16 @@ impl Indexer {
         self.shared.lock().state.clone()
     }
 
+    /// Whether this handle has a rebuild asked for or running. Both flags
+    /// clear together, in the same step that publishes the new generation's
+    /// state, so a reader that sees neither and then reads the live
+    /// generation sees the generation the rebuild made.
+    #[cfg(feature = "index")]
+    pub(crate) fn rebuild_pending(&self) -> bool {
+        let inner = self.shared.lock();
+        inner.requested || inner.running
+    }
+
     /// A stream of the state now, then of each change. It holds no lock
     /// while it waits and ends only when the indexer does; a watcher that
     /// drops it is gone at once.
@@ -328,7 +338,8 @@ impl Indexer {
     ///
     /// # Errors
     ///
-    /// `PANICKED` when the task died by a panic that was not in a round.
+    /// `PANICKED` when the task died by a panic that was not in a round;
+    /// `CANCELLED` when the runtime ended it first.
     pub(crate) async fn stop(&self) -> Result<(), Error> {
         self.shared.signal.stop();
         let task = self
@@ -338,10 +349,12 @@ impl Indexer {
             .take();
         let ended = match task {
             Some(task) => task.await.map_err(|error| {
-                Error::new(
-                    RuntimeCode::Panicked,
-                    format!("the indexer task failed: {error}"),
-                )
+                let code = if error.is_cancelled() {
+                    RuntimeCode::Cancelled
+                } else {
+                    RuntimeCode::Panicked
+                };
+                Error::new(code, format!("the indexer task failed: {error}"))
             }),
             None => Ok(()),
         };
@@ -726,8 +739,13 @@ impl Context {
                 || inner.state.stored_version != stored
         };
         if differs {
+            let asked = look.asked;
             self.shared.publish(|inner| {
-                inner.requested = false;
+                // Only a request this look saw is over: one asked since, by
+                // `reindex`, stands for the next round.
+                if asked {
+                    inner.requested = false;
+                }
                 inner.state.version = version;
                 inner.state.stored_version = stored;
                 inner.state.role = Some(false);
@@ -1179,14 +1197,12 @@ fn rebuild_of(stage: rebuild::Stage, counts: Counts, cause: Option<rebuild::Caus
 
 /// The error of a round that panicked.
 fn panicked(payload: &(dyn std::any::Any + Send)) -> Error {
-    let what = payload
-        .downcast_ref::<&str>()
-        .map(|text| (*text).to_owned())
-        .or_else(|| payload.downcast_ref::<String>().cloned())
-        .unwrap_or_else(|| String::from("without a message"));
     Error::new(
         RuntimeCode::Panicked,
-        format!("an indexing round panicked: {what}"),
+        format!(
+            "an indexing round panicked: {}",
+            scheda_blocking::panic_message(payload)
+        ),
     )
 }
 
@@ -1320,6 +1336,7 @@ mod tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    use protocontract::RuntimeCode;
     use scheda_api::v1::{DocumentCreation, IndexState, OpenOptions, VaultErrorCode};
 
     use super::{HISTORY, Indexer, Signal, Watch, hooks};
@@ -1517,6 +1534,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_reports_a_cancelled_task_as_cancelled_and_a_panicked_one_as_panicked() {
+        let scratch = Scratch::new("stop-ended");
+        for (name, ends) in [("cancelled", false), ("panicked", true)] {
+            let indexer = Indexer::new(Arc::new(Signal::default()), &scratch.0.join(name));
+            let task = if ends {
+                tokio::spawn(async { std::panic::panic_any(String::from("the task panics")) })
+            } else {
+                tokio::spawn(std::future::pending())
+            };
+            if !ends {
+                task.abort();
+            }
+            *indexer.task.lock().unwrap() = Some(task);
+            let error = indexer.stop().await.unwrap_err();
+            assert_eq!(error.is(RuntimeCode::Cancelled), !ends, "{name}: {error}");
+            assert_eq!(error.is(RuntimeCode::Panicked), ends, "{name}: {error}");
+        }
+    }
+
+    #[tokio::test]
     async fn a_rebuild_waits_for_the_lock_and_a_second_request_is_aborted() {
         let scratch = Scratch::new("rebuild");
         let vault = scratch.open().await;
@@ -1530,6 +1567,9 @@ mod tests {
         vault.indexer().reindex().await.unwrap();
         let error = vault.indexer().reindex().await.unwrap_err();
         assert!(error.is(VaultErrorCode::Aborted));
+        // A margin: a rebuild that waits for the lock shows no sign, so
+        // only time lets a wrongly begun rebuild show itself. A slow runner
+        // makes this check weaker, and never fails it.
         tokio::time::sleep(Duration::from_millis(60)).await;
         let state = vault.indexer().status();
         assert_eq!(

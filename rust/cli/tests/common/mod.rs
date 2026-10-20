@@ -213,20 +213,26 @@ pub fn run_on_with(vault: &Path, args: &[&str], setup: &Setup) -> Run {
 }
 
 /// The projection id of the Projector of the command line.
-pub const PROJECTION_ID: &str = "scheda-cli/whole-file@1";
+pub const PROJECTION_ID: &str = "scheda-cli/whole-file@2";
 
 /// The Projector of the command line written again as a port: one text
 /// column, `body`, that holds the whole Document. A Vault opened with it
 /// shares its Index with the command line.
 pub fn whole_file() -> ProjectorRef {
-    ProjectorRef::from_sync(WholeFile)
+    whole_file_as(PROJECTION_ID)
 }
 
-struct WholeFile;
+/// [`whole_file`] under another projection id: an Index it builds is stale
+/// for the command line.
+pub fn whole_file_as(projection_id: &'static str) -> ProjectorRef {
+    ProjectorRef::from_sync(WholeFile(projection_id))
+}
+
+struct WholeFile(&'static str);
 
 impl ProjectorSync for WholeFile {
     fn describe(&self, _empty: Empty) -> Result<ProjectorDescriptor, Error> {
-        Ok(ProjectorDescriptor::default().with_projection_id(PROJECTION_ID))
+        Ok(ProjectorDescriptor::default().with_projection_id(self.0))
     }
 
     fn columns(&self, _collection: CollectionKey) -> Result<IndexSchema, Error> {
@@ -235,7 +241,6 @@ impl ProjectorSync for WholeFile {
                 IndexColumn::default()
                     .with_name("body")
                     .with_kind(ColumnKind::COLUMN_KIND_TEXT)
-                    .with_scalar_index(true)
                     .with_fts(true)
                     .with_vector(true),
             ],

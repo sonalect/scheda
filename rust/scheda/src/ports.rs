@@ -270,14 +270,12 @@ where
         Ok(outcome) => outcome,
         Err(error) if error.is_panic() => {
             let payload = error.into_panic();
-            let message = payload
-                .downcast_ref::<&str>()
-                .copied()
-                .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
-                .unwrap_or("no message");
             Err(Error::new(
                 protocontract::RuntimeCode::Panicked,
-                format!("a port panicked: {message}"),
+                format!(
+                    "a port panicked: {}",
+                    scheda_blocking::panic_message(payload.as_ref())
+                ),
             ))
         }
         Err(error) => Err(Error::new(

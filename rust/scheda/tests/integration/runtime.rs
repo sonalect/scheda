@@ -23,7 +23,7 @@ use tokio::runtime::{Builder, Runtime};
 
 use crate::common::{
     Scratch, all, both, collection, command, git, mirror, open, opening, snapshot, stream_of,
-    vault as built_vault,
+    vault as built_vault, write_waits_for_the_lock,
 };
 
 /// How long a step may take before the test gives up on it.
@@ -467,7 +467,7 @@ fn a_write_waiting_for_the_write_lock_holds_no_pool_thread_and_aborts_at_the_dea
                 let notes = notes.clone();
                 async move { notes.upsert(upsert("a.md", "late")).await }
             });
-            tokio::time::sleep(Duration::from_millis(300)).await;
+            write_waits_for_the_lock(&path, 1).await;
             assert!(!waiting.is_finished(), "the write waits for the lock");
             // The single pool thread is free: a read gets through.
             let started = Instant::now();
@@ -484,6 +484,10 @@ fn a_write_waiting_for_the_write_lock_holds_no_pool_thread_and_aborts_at_the_dea
                 let vault = vault.clone();
                 async move { vault.create_collection(declaration("more")).await }
             });
+            // A write queued behind another has nothing open yet that shows
+            // it (it holds no file before its turn). The margin makes the
+            // check below stronger on a slow runner, and a faster one never
+            // fails it: the lock is held, so `other` cannot finish.
             tokio::time::sleep(Duration::from_millis(100)).await;
             assert!(!other.is_finished());
             assert!(
@@ -532,7 +536,7 @@ fn a_write_dropped_while_it_waits_for_the_lock_writes_nothing_and_takes_no_lock(
             let notes = notes.clone();
             async move { notes.upsert(upsert("a.md", "dropped")).await }
         });
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        write_waits_for_the_lock(&path, 1).await;
         waiting.abort();
         assert!(waiting.await.unwrap_err().is_cancelled());
         drop(held);

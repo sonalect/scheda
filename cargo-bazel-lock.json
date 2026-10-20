@@ -1,5 +1,5 @@
 {
-  "checksum": "1f2520cc56d7d58d117e17a7f5d1eea158b675eab0ed3c4e8cd188fb057e46b9",
+  "checksum": "d764cd9d84b5a4f4098821e767ff5cb1f965bbea71c920dd22d194da5eade7bb",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -2183,7 +2183,7 @@
             "target": "pin_project_lite"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -6355,7 +6355,7 @@
             "target": "tempfile"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -6463,7 +6463,7 @@
             "target": "parking_lot"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -6653,7 +6653,7 @@
               "target": "sqlparser"
             },
             {
-              "id": "tokio 1.53.3",
+              "id": "tokio 1.54.0",
               "target": "tokio"
             },
             {
@@ -6708,7 +6708,7 @@
             "target": "log"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -6818,7 +6818,7 @@
             "target": "rand"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -6918,7 +6918,7 @@
             "target": "object_store"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -7010,7 +7010,7 @@
             "target": "regex"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -7098,7 +7098,7 @@
             "target": "object_store"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -8111,7 +8111,7 @@
             "target": "petgraph"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -8431,7 +8431,7 @@
             "target": "pin_project_lite"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -11822,7 +11822,7 @@
             "target": "slab"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -12711,7 +12711,7 @@
             "target": "smallvec"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -12777,7 +12777,7 @@
             "target": "rustls_native_certs"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -12882,7 +12882,7 @@
             "target": "socket2"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -15379,7 +15379,7 @@
             "target": "snafu"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -15794,7 +15794,7 @@
             "target": "tempfile"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -15949,7 +15949,7 @@
             "target": "prost"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -16152,7 +16152,7 @@
             "target": "prost"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -16306,7 +16306,7 @@
             "target": "serde"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -16594,7 +16594,7 @@
             "target": "tempfile"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -16714,7 +16714,7 @@
             "target": "serde_json"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -16830,7 +16830,7 @@
               "target": "tempfile"
             },
             {
-              "id": "tokio 1.53.3",
+              "id": "tokio 1.54.0",
               "target": "tokio"
             },
             {
@@ -17262,7 +17262,7 @@
             "target": "snafu"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -19883,7 +19883,7 @@
               "target": "thiserror"
             },
             {
-              "id": "tokio 1.53.3",
+              "id": "tokio 1.54.0",
               "target": "tokio"
             },
             {
@@ -20002,7 +20002,7 @@
               "target": "thiserror"
             },
             {
-              "id": "tokio 1.53.3",
+              "id": "tokio 1.54.0",
               "target": "tokio"
             },
             {
@@ -21710,7 +21710,7 @@
             "target": "futures_core"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -21946,7 +21946,7 @@
               "target": "thiserror"
             },
             {
-              "id": "tokio 1.53.3",
+              "id": "tokio 1.54.0",
               "target": "tokio"
             },
             {
@@ -23457,7 +23457,7 @@
                 "target": "pin_project_lite"
               },
               {
-                "id": "tokio 1.53.3",
+                "id": "tokio 1.54.0",
                 "target": "tokio"
               },
               {
@@ -24564,6 +24564,10 @@
             "target": "buffa_types"
           },
           {
+            "id": "futures-util 0.3.34",
+            "target": "futures_util"
+          },
+          {
             "id": "git2 0.21.0",
             "target": "git2"
           },
@@ -24608,7 +24612,7 @@
             "target": "serde_json"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -24624,7 +24628,7 @@
         "Apache-2.0"
       ],
       "name": "scheda",
-      "package_url": "https://github.com/amsokol/scheda",
+      "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
       "targets": [
         {
@@ -24672,7 +24676,7 @@
         "Apache-2.0"
       ],
       "name": "scheda-api",
-      "package_url": "https://github.com/amsokol/scheda",
+      "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
       "targets": [
         {
@@ -24692,7 +24696,7 @@
             "target": "protocontract"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -24704,7 +24708,7 @@
         "Apache-2.0"
       ],
       "name": "scheda-blocking",
-      "package_url": "https://github.com/amsokol/scheda",
+      "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
       "targets": [
         {
@@ -24756,7 +24760,7 @@
             "target": "sha2"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -24771,7 +24775,7 @@
         "Apache-2.0"
       ],
       "name": "scheda-cli",
-      "package_url": "https://github.com/amsokol/scheda",
+      "package_url": "https://github.com/sonalect/scheda",
       "repository": null,
       "targets": [],
       "version": "0.21.0"
@@ -27707,7 +27711,7 @@
       ],
       "version": "0.21.4"
     },
-    "tokio 1.53.3": {
+    "tokio 1.54.0": {
       "common_attrs": {
         "crate_features": {
           "common": [
@@ -27858,8 +27862,8 @@
       "package_url": "https://github.com/tokio-rs/tokio",
       "repository": {
         "Http": {
-          "sha256": "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e",
-          "url": "https://static.crates.io/crates/tokio/1.53.3/download"
+          "sha256": "a0c168a474b95bfecfe908a65d4bdffc523144b649a74c09c286afb35d53e0bc",
+          "url": "https://static.crates.io/crates/tokio/1.54.0/download"
         }
       },
       "targets": [
@@ -27870,7 +27874,7 @@
           }
         }
       ],
-      "version": "1.53.3"
+      "version": "1.54.0"
     },
     "tokio-macros 2.7.2": {
       "common_attrs": {
@@ -27926,7 +27930,7 @@
             "target": "rustls"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           }
         ],
@@ -27975,7 +27979,7 @@
             "target": "pin_project_lite"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -28062,7 +28066,7 @@
               "target": "pin_project_lite"
             },
             {
-              "id": "tokio 1.53.3",
+              "id": "tokio 1.54.0",
               "target": "tokio"
             }
           ],
@@ -28187,7 +28191,7 @@
             "target": "sync_wrapper"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -28273,7 +28277,7 @@
             "target": "pin_project_lite"
           },
           {
-            "id": "tokio 1.53.3",
+            "id": "tokio 1.54.0",
             "target": "tokio"
           },
           {
@@ -29944,7 +29948,7 @@
           "selects": {
             "cfg(all(target_os = \"emscripten\", wasm_bindgen_unstable_tokio))": [
               {
-                "id": "tokio 1.53.3",
+                "id": "tokio 1.54.0",
                 "target": "tokio"
               }
             ]
@@ -32108,6 +32112,7 @@
     "buffa 0.9.2",
     "buffa-types 0.9.2",
     "clap 4.6.7",
+    "futures-util 0.3.34",
     "git2 0.21.0",
     "lance 13.0.0",
     "lance-index 13.0.0",
@@ -32122,7 +32127,7 @@
     "serde_ignored 0.1.14",
     "serde_json 1.0.154",
     "sha2 0.11.1",
-    "tokio 1.53.3",
+    "tokio 1.54.0",
     "ureq 3.4.2",
     "yaml_serde 0.10.7"
   ],

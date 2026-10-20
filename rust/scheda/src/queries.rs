@@ -17,6 +17,7 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
+use futures_util::{StreamExt, stream};
 use lance::Dataset;
 use lance::dataset::scanner::ColumnOrdering;
 use lance::deps::arrow_array::{
@@ -43,6 +44,13 @@ use crate::repo::{Repo, Snap};
 use crate::store::{Column, Kind, lance_fault};
 use crate::tables::{self, Calls, Plan};
 use crate::vault::Vault;
+
+/// How many collections of one Vault-wide query or search the Index reads at
+/// once. Measured on 8 collections of 2000 and 5000 Documents (multi-thread
+/// runtime): 4 at once took a third to two fifths of the time of one at a
+/// time, 8 at once added nothing to a search. It also bounds the scans, and
+/// the memory they hold, that one call opens, whatever the core count.
+pub(crate) const TABLES_AT_ONCE: usize = 4;
 
 /// The filter depth when `OpenOptions.filter_max_depth` is unset.
 const DEFAULT_FILTER_DEPTH: u32 = 32;
@@ -772,13 +780,12 @@ pub(crate) async fn find_in_vault(
         (true, Some(limit)) => Some(u64::from(limit) + u64::from(query.offset.unwrap_or(0))),
         (true, None) => None,
     };
-    let mut total = 0;
-    let mut hits = Vec::new();
+    let mut asks = Vec::new();
     for decl in &scope {
         let Some(table) = reading.table(decl.name()) else {
             continue;
         };
-        let part = read_part(Ask {
+        asks.push(Ask {
             table,
             collection: decl.name().to_owned(),
             filter: filter.clone(),
@@ -787,8 +794,19 @@ pub(crate) async fn find_in_vault(
             tie: tie_column(decl),
             skip: None,
             limit: reach,
-        })
-        .await?;
+        });
+    }
+    // `buffered` yields in the order of `asks`, whichever table ends first,
+    // so the merge below does not depend on completion order.
+    let parts: Vec<Result<Part, Error>> = stream::iter(asks)
+        .map(read_part)
+        .buffered(TABLES_AT_ONCE)
+        .collect()
+        .await;
+    let mut total = 0;
+    let mut hits = Vec::new();
+    for part in parts {
+        let part = part?;
         total += part.total;
         hits.extend(part.hits);
     }
@@ -967,7 +985,10 @@ pub(crate) fn read_document(
 ///
 /// # Errors
 ///
-/// `INVALID_ARGUMENT` for text that is not a token; `DEADLINE_EXCEEDED`
+/// `INVALID_ARGUMENT` for text that is not a token; `INDEX_STALE` when the
+/// Index was built with other ports than this Vault's and this handle has
+/// no rebuild asked for or running (waiting cannot mend it; a rebuild
+/// asked for, `Index.Reindex`, is waited for); `DEADLINE_EXCEEDED`
 /// (retryable) when the Index does not reach it within
 /// `OpenOptions.index_wait_timeout_ms`; `FAILED_PRECONDITION` when the
 /// Vault closes meanwhile.
@@ -986,11 +1007,25 @@ pub(crate) async fn not_before(pass: &Pass, not_before: Option<&str>) -> Result<
             .version
             .as_deref()
             .and_then(State::of_token);
+        // The flag is read before the Index: a rebuild that ends between the
+        // two has already published its generation, which the read sees.
+        let rebuilding = vault.indexer().rebuild_pending();
         if pass
             .step(move |cx, vault| reached(cx, vault, have, want))
             .await?
         {
             return Ok(());
+        }
+        // An Index stale for this Vault stays so unless a rebuild of this
+        // handle makes it fresh: waiting out the timeout would hide the
+        // reason behind a retryable `DEADLINE_EXCEEDED`.
+        if !rebuilding {
+            match Reading::of(pass).await {
+                Err(error) if error.is(VaultErrorCode::IndexStale) => return Err(error),
+                // Fresh, not built yet (`INDEX_REBUILDING`), or a failure the
+                // query itself meets next: the wait goes on.
+                _ => {}
+            }
         }
         tokio::select! {
             () = vault.gate().shutting() => return Err(crate::gate::closed()),

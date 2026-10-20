@@ -26,6 +26,3 @@ lint:
     - buf
     - google
     - protocontract
-breaking:
-  use:
-    - FILE

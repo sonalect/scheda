@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 description = "Git-backed document store: text files as truth, derived index, library API"
 readme = "../../README.md"
-documentation = "https://amsokol.github.io/scheda/scheda/"
+documentation = "https://sonalect.github.io/scheda/scheda/"
 
 [features]
 # `index` builds the Index of a Vault on Lance: its queries, counts, and
@@ -16,6 +16,7 @@ documentation = "https://amsokol.github.io/scheda/scheda/"
 # `.claude/rules/run-commands.md`).
 default = ["index"]
 index = [
+    "dep:futures-util",
     "dep:lance",
     "dep:lance-index",
     "dep:lance-linalg",
@@ -29,6 +30,7 @@ encrypt = ["dep:age"]
 age = { workspace = true, optional = true }
 buffa = { workspace = true }
 buffa-types = { workspace = true }
+futures-util = { workspace = true, optional = true }
 git2 = { workspace = true }
 lance = { workspace = true, optional = true }
 lance-index = { workspace = true, optional = true }
@@ -46,7 +48,6 @@ tokio = { workspace = true, features = ["macros", "process", "rt", "sync", "time
 yaml_serde = { workspace = true }
 
 [dev-dependencies]
-serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 [lints]

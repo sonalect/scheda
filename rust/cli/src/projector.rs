@@ -11,16 +11,18 @@ use scheda::v1::{
 
 /// The identity of the projection: the Index built by it is rebuilt when it
 /// changes.
-const PROJECTION_ID: &str = "scheda-cli/whole-file@1";
+const PROJECTION_ID: &str = "scheda-cli/whole-file@2";
 
 /// The reference the command line gives every Vault it opens.
 pub(crate) fn whole_file() -> ProjectorRef {
     ProjectorRef::from_sync(WholeFile)
 }
 
-/// Says that every collection has one text column, `body`, with a scalar
-/// index for the filter, the full-text search, and the vectors, and that its
-/// value is the whole Document when it is UTF-8 text.
+/// Says that every collection has one text column, `body`, with a
+/// full-text index and vectors, and that its value is the whole Document
+/// when it is UTF-8 text. It has no scalar index: that is a B-tree over the
+/// full text of every Document, about the size of the texts again. A filter
+/// on `body` scans.
 struct WholeFile;
 
 impl ProjectorSync for WholeFile {
@@ -34,7 +36,6 @@ impl ProjectorSync for WholeFile {
                 IndexColumn::default()
                     .with_name("body")
                     .with_kind(ColumnKind::COLUMN_KIND_TEXT)
-                    .with_scalar_index(true)
                     .with_fts(true)
                     .with_vector(true),
             ],

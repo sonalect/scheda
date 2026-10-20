@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.81, 20 October 2026.
+Document 14 of the Scheda package. Version 0.82, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -16,9 +16,14 @@ The process runs on a multi-thread tokio runtime (`22` D10); its flags,
 JSON, and exit codes are those of the contract.
 
 The CLI gives every Vault it opens a **whole-file Projector**
-(`projection_id` `scheda-cli/whole-file@1`): one text column `body`
-(marks `scalar_index`, `fts`, and `vector`) whose value is the whole
-Document when it is UTF-8 text. A Filter leaf on a column other than `body`
+(`projection_id` `scheda-cli/whole-file@2`): one text column `body`
+(marks `fts` and `vector`; no `scalar_index`, which would be a B-tree over
+the full text of every Document, and a Filter on `body` scans) whose value
+is the whole Document when it is UTF-8 text. An Index built under `@1` is
+`INDEX_STALE` for the CLI until one `index reindex`, and the CLI adds that
+command to the message of an `INDEX_STALE` failure (test
+`an_index_of_another_projection_is_stale_and_one_reindex_mends_it`). A
+Filter leaf on a column other than `body`
 is `INVALID_ARGUMENT`; `id` is always allowed. One filter applies to every
 collection in scope, in a query of the Vault too (`13`). The Projector is
 the CLI's: the library installs none when a program passes none.

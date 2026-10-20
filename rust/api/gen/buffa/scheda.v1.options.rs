@@ -277,7 +277,8 @@ pub struct OpenOptions {
     /// How long a query, a count, or a search with `not_before` waits for the
     /// Index to reach that state, in milliseconds. Past it the call is
     /// `DEADLINE_EXCEEDED`; `Vault.Close` ends the wait at once, with
-    /// `FAILED_PRECONDITION`. Unset: 60000.
+    /// `FAILED_PRECONDITION`. An Index stale for this Vault is `INDEX_STALE`
+    /// at once, without the wait. Unset: 60000.
     ///
     /// Field 10: `index_wait_timeout_ms`
     #[serde(

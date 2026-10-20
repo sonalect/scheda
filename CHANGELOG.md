@@ -145,6 +145,21 @@ changes; they grow with each part of the move.
   further try failed the same way. Scheda now confirms a refusal on the
   text alone: it sends the text alone, and splits the texts after it by
   halves until the culprit is found, so only that text keeps no vector.
+- `Vault.Close`: an indexer task the runtime cancelled is `CANCELLED`, not
+  `PANICKED`. A write whose swap of `HEAD` failed and whose note could not
+  be emptied either keeps the swap's error (`ABORTED`) as its code, with
+  the emptying failure as a frame of its stack.
+- The repository and documentation links of the crate and of this file
+  name `sonalect/scheda`, where the repository lives.
+- A query, count, or search with `not_before` on an Index built with other
+  ports than this Vault's (another projection, other Projector columns,
+  another embedder) waited out `index_wait_timeout_ms` and ended
+  `DEADLINE_EXCEEDED`, which is retryable, so a caller retried for good and
+  never learned the reason. It now fails `INDEX_STALE` at once, as a call
+  without `not_before` does. A rebuild this handle asked for
+  (`Index.Reindex`) or runs is still waited for. A `Reindex` asked while an
+  indexer round that had found the Index stale was ending was dropped; it
+  now stands for the next round.
 
 ### Changed
 
@@ -511,6 +526,14 @@ changes; they grow with each part of the move.
   Buf CLI v1.74.0, `protoc-gen-protovalidate-buffa` v0.10.4 (generated
   code unchanged), and patch and minor updates in the Python sidecar lock
   (`uv.lock`). No API or format change.
+- `tokio` 1.54.0 (from 1.53.3), taken two days inside the quarantine of
+  freshly published versions on the owner's word, after a check: it was
+  published to crates.io by Alice Ryhl (`Darksonn`), an owner of the
+  crate, 44 seconds after the GitHub release `tokio-1.54.0`, and the
+  package matches that tag's commit (`66d34e45`) file for file. It keeps
+  the order of waiters on a `Mutex` whose task ran out of its cooperative
+  budget, which the writes of a Vault rely on to take their turns in the
+  order they came, and fixes a `spawn_blocking` hang. No API change.
 - The Python sidecars and the CLI test driver use vllm 0.32.0 (it fixes
   PYSEC-2026-4319, a denial of service in vLLM's penalty handler) and
   huggingface-hub 2.2.0, with transformers 5.19.0, in `uv.lock`.
@@ -564,6 +587,17 @@ changes; they grow with each part of the move.
   build Scheda with Rust 1.99.1 or newer.
 - The test gate checks behaviour only: the OPS-1 / OPS-2 timing bands are
   a benchmark, not a gate check.
+- The projection of the command line's Projector is now
+  `scheda-cli/whole-file@2`: its `body` column no longer has a scalar index
+  (a B-tree over the full text of every Document, about the size of the
+  texts again); a filter on `body` scans. An Index built by an earlier
+  `scheda` is `INDEX_STALE` for this one until one `scheda index reindex`,
+  which the failure's message now says.
+- `Vault.QueryDocuments`, `Vault.CountDocuments`, and `Vault.SearchDocuments`
+  read up to four collections at once, not one after another. On 8
+  collections of 2000 to 5000 Documents (multi-thread runtime, debug build)
+  a query took 2.4 times less and a search 2.5 times less; the results, their
+  order, and their scores are the same.
 
 ### Removed
 
@@ -2649,63 +2683,63 @@ changes; they grow with each part of the move.
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/amsokol/scheda/compare/v0.21.0...HEAD
-[0.21.0]: https://github.com/amsokol/scheda/releases/tag/v0.21.0
-[0.20.1]: https://github.com/amsokol/scheda/releases/tag/v0.20.1
-[0.20.0]: https://github.com/amsokol/scheda/releases/tag/v0.20.0
-[0.19.0]: https://github.com/amsokol/scheda/releases/tag/v0.19.0
-[0.18.6]: https://github.com/amsokol/scheda/releases/tag/v0.18.6
-[0.18.5]: https://github.com/amsokol/scheda/releases/tag/v0.18.5
-[0.18.4]: https://github.com/amsokol/scheda/releases/tag/v0.18.4
-[0.18.3]: https://github.com/amsokol/scheda/releases/tag/v0.18.3
-[0.18.2]: https://github.com/amsokol/scheda/releases/tag/v0.18.2
-[0.18.1]: https://github.com/amsokol/scheda/releases/tag/v0.18.1
-[0.18.0]: https://github.com/amsokol/scheda/releases/tag/v0.18.0
-[0.17.1]: https://github.com/amsokol/scheda/releases/tag/v0.17.1
-[0.17.0]: https://github.com/amsokol/scheda/releases/tag/v0.17.0
-[0.16.3]: https://github.com/amsokol/scheda/releases/tag/v0.16.3
-[0.16.2]: https://github.com/amsokol/scheda/releases/tag/v0.16.2
-[0.16.1]: https://github.com/amsokol/scheda/releases/tag/v0.16.1
-[0.16.0]: https://github.com/amsokol/scheda/releases/tag/v0.16.0
-[0.15.2]: https://github.com/amsokol/scheda/releases/tag/v0.15.2
-[0.15.1]: https://github.com/amsokol/scheda/releases/tag/v0.15.1
-[0.15.0]: https://github.com/amsokol/scheda/releases/tag/v0.15.0
-[0.14.0]: https://github.com/amsokol/scheda/releases/tag/v0.14.0
-[0.13.0]: https://github.com/amsokol/scheda/releases/tag/v0.13.0
-[0.12.0]: https://github.com/amsokol/scheda/releases/tag/v0.12.0
-[0.11.3]: https://github.com/amsokol/scheda/releases/tag/v0.11.3
-[0.11.2]: https://github.com/amsokol/scheda/releases/tag/v0.11.2
-[0.11.1]: https://github.com/amsokol/scheda/releases/tag/v0.11.1
-[0.11.0]: https://github.com/amsokol/scheda/releases/tag/v0.11.0
-[0.10.3]: https://github.com/amsokol/scheda/releases/tag/v0.10.3
-[0.10.2]: https://github.com/amsokol/scheda/releases/tag/v0.10.2
-[0.10.1]: https://github.com/amsokol/scheda/releases/tag/v0.10.1
-[0.10.0]: https://github.com/amsokol/scheda/releases/tag/v0.10.0
-[0.9.12]: https://github.com/amsokol/scheda/releases/tag/v0.9.12
-[0.9.11]: https://github.com/amsokol/scheda/releases/tag/v0.9.11
-[0.9.10]: https://github.com/amsokol/scheda/releases/tag/v0.9.10
-[0.9.9]: https://github.com/amsokol/scheda/releases/tag/v0.9.9
-[0.9.8]: https://github.com/amsokol/scheda/releases/tag/v0.9.8
-[0.9.7]: https://github.com/amsokol/scheda/releases/tag/v0.9.7
-[0.9.6]: https://github.com/amsokol/scheda/releases/tag/v0.9.6
-[0.9.5]: https://github.com/amsokol/scheda/releases/tag/v0.9.5
-[0.9.4]: https://github.com/amsokol/scheda/releases/tag/v0.9.4
-[0.9.3]: https://github.com/amsokol/scheda/releases/tag/v0.9.3
-[0.9.2]: https://github.com/amsokol/scheda/releases/tag/v0.9.2
-[0.9.1]: https://github.com/amsokol/scheda/releases/tag/v0.9.1
-[0.9.0]: https://github.com/amsokol/scheda/releases/tag/v0.9.0
-[0.8.0]: https://github.com/amsokol/scheda/releases/tag/v0.8.0
-[0.7.1]: https://github.com/amsokol/scheda/releases/tag/v0.7.1
-[0.7.0]: https://github.com/amsokol/scheda/releases/tag/v0.7.0
-[0.6.0]: https://github.com/amsokol/scheda/releases/tag/v0.6.0
-[0.5.1]: https://github.com/amsokol/scheda/releases/tag/v0.5.1
-[0.5.0]: https://github.com/amsokol/scheda/releases/tag/v0.5.0
-[0.4.4]: https://github.com/amsokol/scheda/releases/tag/v0.4.4
-[0.4.3]: https://github.com/amsokol/scheda/releases/tag/v0.4.3
-[0.4.2]: https://github.com/amsokol/scheda/releases/tag/v0.4.2
-[0.4.1]: https://github.com/amsokol/scheda/releases/tag/v0.4.1
-[0.4.0]: https://github.com/amsokol/scheda/releases/tag/v0.4.0
-[0.3.0]: https://github.com/amsokol/scheda/releases/tag/v0.3.0
-[0.2.0]: https://github.com/amsokol/scheda/releases/tag/v0.2.0
-[0.1.0]: https://github.com/amsokol/scheda/releases/tag/v0.1.0
-[0.0.1]: https://github.com/amsokol/scheda/releases/tag/v0.0.1
+[Unreleased]: https://github.com/sonalect/scheda/compare/v0.21.0...HEAD
+[0.21.0]: https://github.com/sonalect/scheda/releases/tag/v0.21.0
+[0.20.1]: https://github.com/sonalect/scheda/releases/tag/v0.20.1
+[0.20.0]: https://github.com/sonalect/scheda/releases/tag/v0.20.0
+[0.19.0]: https://github.com/sonalect/scheda/releases/tag/v0.19.0
+[0.18.6]: https://github.com/sonalect/scheda/releases/tag/v0.18.6
+[0.18.5]: https://github.com/sonalect/scheda/releases/tag/v0.18.5
+[0.18.4]: https://github.com/sonalect/scheda/releases/tag/v0.18.4
+[0.18.3]: https://github.com/sonalect/scheda/releases/tag/v0.18.3
+[0.18.2]: https://github.com/sonalect/scheda/releases/tag/v0.18.2
+[0.18.1]: https://github.com/sonalect/scheda/releases/tag/v0.18.1
+[0.18.0]: https://github.com/sonalect/scheda/releases/tag/v0.18.0
+[0.17.1]: https://github.com/sonalect/scheda/releases/tag/v0.17.1
+[0.17.0]: https://github.com/sonalect/scheda/releases/tag/v0.17.0
+[0.16.3]: https://github.com/sonalect/scheda/releases/tag/v0.16.3
+[0.16.2]: https://github.com/sonalect/scheda/releases/tag/v0.16.2
+[0.16.1]: https://github.com/sonalect/scheda/releases/tag/v0.16.1
+[0.16.0]: https://github.com/sonalect/scheda/releases/tag/v0.16.0
+[0.15.2]: https://github.com/sonalect/scheda/releases/tag/v0.15.2
+[0.15.1]: https://github.com/sonalect/scheda/releases/tag/v0.15.1
+[0.15.0]: https://github.com/sonalect/scheda/releases/tag/v0.15.0
+[0.14.0]: https://github.com/sonalect/scheda/releases/tag/v0.14.0
+[0.13.0]: https://github.com/sonalect/scheda/releases/tag/v0.13.0
+[0.12.0]: https://github.com/sonalect/scheda/releases/tag/v0.12.0
+[0.11.3]: https://github.com/sonalect/scheda/releases/tag/v0.11.3
+[0.11.2]: https://github.com/sonalect/scheda/releases/tag/v0.11.2
+[0.11.1]: https://github.com/sonalect/scheda/releases/tag/v0.11.1
+[0.11.0]: https://github.com/sonalect/scheda/releases/tag/v0.11.0
+[0.10.3]: https://github.com/sonalect/scheda/releases/tag/v0.10.3
+[0.10.2]: https://github.com/sonalect/scheda/releases/tag/v0.10.2
+[0.10.1]: https://github.com/sonalect/scheda/releases/tag/v0.10.1
+[0.10.0]: https://github.com/sonalect/scheda/releases/tag/v0.10.0
+[0.9.12]: https://github.com/sonalect/scheda/releases/tag/v0.9.12
+[0.9.11]: https://github.com/sonalect/scheda/releases/tag/v0.9.11
+[0.9.10]: https://github.com/sonalect/scheda/releases/tag/v0.9.10
+[0.9.9]: https://github.com/sonalect/scheda/releases/tag/v0.9.9
+[0.9.8]: https://github.com/sonalect/scheda/releases/tag/v0.9.8
+[0.9.7]: https://github.com/sonalect/scheda/releases/tag/v0.9.7
+[0.9.6]: https://github.com/sonalect/scheda/releases/tag/v0.9.6
+[0.9.5]: https://github.com/sonalect/scheda/releases/tag/v0.9.5
+[0.9.4]: https://github.com/sonalect/scheda/releases/tag/v0.9.4
+[0.9.3]: https://github.com/sonalect/scheda/releases/tag/v0.9.3
+[0.9.2]: https://github.com/sonalect/scheda/releases/tag/v0.9.2
+[0.9.1]: https://github.com/sonalect/scheda/releases/tag/v0.9.1
+[0.9.0]: https://github.com/sonalect/scheda/releases/tag/v0.9.0
+[0.8.0]: https://github.com/sonalect/scheda/releases/tag/v0.8.0
+[0.7.1]: https://github.com/sonalect/scheda/releases/tag/v0.7.1
+[0.7.0]: https://github.com/sonalect/scheda/releases/tag/v0.7.0
+[0.6.0]: https://github.com/sonalect/scheda/releases/tag/v0.6.0
+[0.5.1]: https://github.com/sonalect/scheda/releases/tag/v0.5.1
+[0.5.0]: https://github.com/sonalect/scheda/releases/tag/v0.5.0
+[0.4.4]: https://github.com/sonalect/scheda/releases/tag/v0.4.4
+[0.4.3]: https://github.com/sonalect/scheda/releases/tag/v0.4.3
+[0.4.2]: https://github.com/sonalect/scheda/releases/tag/v0.4.2
+[0.4.1]: https://github.com/sonalect/scheda/releases/tag/v0.4.1
+[0.4.0]: https://github.com/sonalect/scheda/releases/tag/v0.4.0
+[0.3.0]: https://github.com/sonalect/scheda/releases/tag/v0.3.0
+[0.2.0]: https://github.com/sonalect/scheda/releases/tag/v0.2.0
+[0.1.0]: https://github.com/sonalect/scheda/releases/tag/v0.1.0
+[0.0.1]: https://github.com/sonalect/scheda/releases/tag/v0.0.1

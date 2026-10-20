@@ -40,6 +40,7 @@ rust_library(
     visibility = ["//visibility:public"],
     deps = _SCHEDA_DEPS + [
         "@scheda_cargo//:age",
+        "@scheda_cargo//:futures-util",
         "@scheda_cargo//:lance",
         "@scheda_cargo//:lance-index",
         "@scheda_cargo//:lance-linalg",
@@ -61,6 +62,7 @@ rust_test(
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
     crate_features = _SCHEDA_FEATURES,
+    visibility = ["//rust:__pkg__"],
 )
 
 rust_test(

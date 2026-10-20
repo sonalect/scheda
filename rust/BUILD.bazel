@@ -19,6 +19,7 @@ rust_clippy_test(
         "//rust/scheda:integration_test",
         "//rust/scheda:integration_thin_test",
         "//rust/scheda:scheda",
+        "//rust/scheda:scheda_test",
         "//rust/scheda:scheda_thin",
         "//rust/scheda:scheda_thin_test",
     ],

@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 
 use common::{
     Run, Scratch, Setup, collection, command, library, names, on, opening, run, run_on,
-    run_on_with, source,
+    run_on_with, source, whole_file_as,
 };
 
 /// A collection the Index keeps lexically only, so a process without an
@@ -1614,6 +1614,64 @@ fn a_search_that_reranks_without_a_reranker_is_invalid_argument() {
         .and_then(|items| items)
         .unwrap_err();
     assert!(error.is(VaultErrorCode::InvalidArgument));
+}
+
+#[test]
+fn an_index_of_another_projection_is_stale_and_one_reindex_mends_it() {
+    let scratch = Scratch::new("stale-projection");
+    let path = scratch.vault();
+    // A Vault made and indexed by the Projector the command line had before.
+    {
+        let mut request = opening(&path, "library");
+        request.projector = whole_file_as("scheda-cli/whole-file@1").into();
+        request.options = scheda::v1::OpenOptions::default()
+            .with_mode(OpenMode::OPEN_MODE_CREATE_NEW)
+            .with_writer("library")
+            .with_index_poll_ms(10)
+            .into();
+        let reference = common::runtime().block_on(Scheda.open(request)).unwrap();
+        let vault = {
+            let _inside = common::runtime().enter();
+            reference.to_sync().unwrap()
+        };
+        let declaration = format!(r#"{{"name":"{NOTES}","schema":{PLAIN}}}"#);
+        vault
+            .create_collection(parse_command(declaration.as_bytes()).unwrap())
+            .unwrap();
+        let creation = format!(r#"{{"id":"a","raw":"{}","note":"put"}}"#, b64(b"alpha"));
+        let written = collection(&vault, NOTES)
+            .create(parse_command(creation.as_bytes()).unwrap())
+            .unwrap()
+            .version;
+        // `settle` alone could hold at the state before the write: wait for
+        // the Index to reach the state the write made.
+        let index = vault.index(Empty::default()).unwrap();
+        let index = {
+            let _inside = common::runtime().enter();
+            index.to_sync().unwrap()
+        };
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let mut reached = false;
+        for state in index.watch(Empty::default()).unwrap() {
+            reached = state.unwrap().version == written;
+            if reached || Instant::now() >= deadline {
+                break;
+            }
+        }
+        assert!(reached, "the Index did not reach the write");
+        vault.close(Empty::default()).unwrap();
+    }
+
+    let query = r#"{"filter":{"prefix":{"column":"body","prefix":"alpha"}}}"#;
+    let stale = run_on(&path, &["collection", NOTES, "query", "--query", query]);
+    let report = stale.failure();
+    assert_eq!(report["code"], "VAULT_ERROR_CODE_INDEX_STALE");
+    let message = report["message"].as_str().unwrap_or_default();
+    assert!(message.contains("scheda index reindex"), "{message}");
+
+    assert_eq!(run_on(&path, &["index", "reindex"]).json(), json!({}));
+    let mended = run_on(&path, &["collection", NOTES, "query", "--query", query]).lines();
+    assert_eq!(mended[0], json!({"summary": {"total": "1"}}));
 }
 
 #[test]

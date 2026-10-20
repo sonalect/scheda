@@ -231,6 +231,18 @@ keep the plan per projection and per commit of the declarations, in the
 Vault; `SetProjector` and a new `HEAD` drop it. *Check:* a counting
 Projector: a stale Vault asks once per `HEAD`; ten queries ask once.
 
+**R23. A call that waits with `not_before` on an Index stale for its
+Vault waits out its timeout** (found while S4 was built). `queries.rs`
+`not_before` waited for the Index to reach the token before `Reading::of`
+looked at the ports, so a Vault whose Index was built with another
+projection, behind `HEAD`, waited `index_wait_timeout_ms` (60 s) and
+ended `DEADLINE_EXCEEDED`, retryable, though a call without `not_before`
+is `INDEX_STALE` at once. The test of the fix also showed a `Reindex`
+asked while a round that had found the Index stale was ending was
+dropped. *Change:* the wait asks `Reading::of` while no rebuild of this
+handle is asked for or running, and fails `INDEX_STALE` at once; the
+request is cleared only by the round whose look saw it.
+
 ### 2.3 Documents (release blockers)
 
 **R13. The crate documentation still says there is no Index.**
@@ -326,7 +338,8 @@ depth to the rows of the table if Lance allocates by the limit.
 **R19. Dead and duplicated pieces.**
 
 - `.claude/notes/index-probes.patch`: probes for the tree of `b31fb46`,
-  the Index before Lance; `index-risks.md` keeps only what is deferred.
+  the Index before Lance; `index-risks.md` keeps only what is deferred
+  (deleted in S4).
 - `buf.yaml` `breaking: use: FILE`: no breaking check runs, and
   `proto-changes.md` keeps no wire compatibility.
 - `pyproject.toml` version `0.18.6`; `Cargo.toml` `repository`,
@@ -528,8 +541,24 @@ projection), D9 (tokio 1.54.0).
 
 ### S4. Dependencies and cleanup
 
-- [ ] D9. tokio 1.54.0 after its check; the repin.
-- [ ] R17, R19, R20 (D7), R21 (after a measurement).
+- [x] D9. tokio 1.54.0 after its check (published by an owner, the
+      package matches the tag `tokio-1.54.0` at `66d34e45`); the repin; a
+      dropped push still kills its `git` (`tests/runtime.rs`:
+      `a_push_dropped_midway_leaves_the_commit_local_and_the_next_push_carries_it`).
+- [x] R17, R19, R20 (D7), R21 (after a measurement). R17: a waiting
+      write is seen by its open lock file (`write_waits_for_the_lock`); a
+      sleep stays only where nothing shows the state and it bounds an "at
+      most", with a comment. R19: all twelve items. R20:
+      `scheda-cli/whole-file@2` (`tests/cli.rs`:
+      `an_index_of_another_projection_is_stale_and_one_reindex_mends_it`).
+      R21: four collections at once, 2.4 times faster for a query and 2.5
+      for a search on eight collections (`tests/search.rs`:
+      `a_call_over_many_collections_answers_as_the_calls_over_each`).
+- [x] R23. A wait on an Index stale for the Vault fails `INDEX_STALE` at
+      once; a rebuild this handle asked for is waited for
+      (`tests/search.rs`:
+      `a_call_with_not_before_on_an_index_stale_for_the_vault_fails_at_once`,
+      `a_call_with_not_before_waits_for_the_reindex_this_handle_asked_for`).
 
 ### S5. Documents and the release
 

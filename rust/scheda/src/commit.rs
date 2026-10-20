@@ -509,9 +509,7 @@ impl WriteLock<'_> {
         #[cfg(test)]
         hooks::before_swap(vault, &repo.root(vault));
         if let Err(err) = swap(git, &branch, old, new, message) {
-            // Nothing was written to the work tree: the note goes.
-            empty_list(self.held.flock.file())?;
-            return Err(err);
+            return Err(after_failed_swap(self.held.flock.file(), err));
         }
         #[cfg(test)]
         hooks::after_swap(vault)?;
@@ -611,8 +609,7 @@ impl WriteLock<'_> {
         let paths: Vec<&str> = moved.iter().map(|(path, _)| path.as_str()).collect();
         write_list(self.held.flock.file(), &paths)?;
         if let Err(err) = swap(git, &branch, snap.commit(), new, message) {
-            empty_list(self.held.flock.file())?;
-            return Err(err);
+            return Err(after_failed_swap(self.held.flock.file(), err));
         }
         self.committer.signal.moved();
         let mut plan = Vec::with_capacity(moved.len());
@@ -863,6 +860,18 @@ fn empty_list(file: &File) -> Result<(), Error> {
         .and_then(|()| file.sync_all())
         .map_err(io)
         .context("clear the note of the write")
+}
+
+/// Empties the note after the swap of `HEAD` failed with `err`, since
+/// nothing was written to the work tree, and returns `err`: the reason the
+/// write failed. A note that cannot be emptied is no reason to lose it; the
+/// failure rides on `err` as a frame, and the next holder of the lock does
+/// what the note says.
+fn after_failed_swap(file: &File, err: Error) -> Error {
+    match empty_list(file) {
+        Ok(()) => err,
+        Err(emptying) => err.context(format_args!("the note was not emptied either: {emptying}")),
+    }
 }
 
 /// What the work tree and the index are to hold for one path.
@@ -1340,11 +1349,42 @@ mod tests {
     use buffa_types::google::protobuf::Empty;
     use scheda_api::v1::{OpenOptions, VaultErrorCode};
 
-    use super::{Change, FileMode, Repo, WriteLock, check_relative, hooks, pending};
+    use super::{
+        Change, FileMode, Repo, WriteLock, after_failed_swap, check_relative, hooks, pending,
+    };
     use crate::error::Error;
     use crate::git::git;
     use crate::testing::{create_collection, open, step};
     use crate::vault::Vault;
+
+    #[test]
+    fn a_note_that_cannot_be_emptied_keeps_the_error_of_the_swap() {
+        let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let path = base.join(format!("scheda-commit-note-{}", std::process::id()));
+        std::fs::write(&path, b"note").unwrap();
+        // A file opened for reading only: emptying it fails.
+        let read_only = std::fs::File::open(&path).unwrap();
+        let swap = Error::new(VaultErrorCode::Aborted, "HEAD moved");
+        let error = after_failed_swap(&read_only, swap);
+        assert!(error.is(VaultErrorCode::Aborted), "{error}");
+        assert!(
+            error
+                .stack()
+                .iter()
+                .any(|frame| frame.contains("the note was not emptied either")),
+            "{:?}",
+            error.stack()
+        );
+
+        // A note that can be emptied adds no frame.
+        let writable = std::fs::OpenOptions::new().write(true).open(&path).unwrap();
+        let swap = Error::new(VaultErrorCode::Aborted, "HEAD moved");
+        let error = after_failed_swap(&writable, swap);
+        assert!(error.is(VaultErrorCode::Aborted), "{error}");
+        assert!(error.stack().is_empty(), "{:?}", error.stack());
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 0);
+        std::fs::remove_file(&path).unwrap();
+    }
 
     /// Runs `work` inside a blocking step that holds the write lock of
     /// `vault`.

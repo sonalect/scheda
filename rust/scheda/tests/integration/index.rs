@@ -4,9 +4,9 @@
 //! shows itself, a layout that is not this one is made again, a round that
 //! fails changes nothing, and the thread ends with the handle.
 //!
-//! This version of Scheda has no Index object (`Vault.Index` is
-//! `UNIMPLEMENTED`), so what the tests can see of the indexer is its files,
-//! and they wait on `.scheda/index/commit`.
+//! Most tests see the indexer through its files and wait on
+//! `.scheda/index/commit`; one reads the Index object for the failure of a
+//! round.
 
 use std::fs::File;
 use std::future::Future;
@@ -405,6 +405,35 @@ fn a_round_that_fails_changes_no_commit_fails_no_write_and_the_next_one_succeeds
         std::fs::write(&folder, "in the way").unwrap();
         line(&vault, "one").await;
         assert!(found(&vault, "one").await, "the write is stored and read");
+        // The round has failed once the Index says so; only then does an
+        // unmoved commit show that a failed round changes none.
+        #[cfg(feature = "index")]
+        {
+            use scheda::v1::IndexAsync;
+
+            let index = vault
+                .index(Empty::default())
+                .await
+                .unwrap()
+                .to_async_inline()
+                .unwrap();
+            let deadline = Instant::now() + DEADLINE;
+            while !index
+                .status(Empty::default())
+                .await
+                .unwrap()
+                .last_error
+                .is_set()
+            {
+                assert!(Instant::now() < deadline, "the round did not fail");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        }
+        // A build without the feature has no Index to ask: nothing shows
+        // the failed round, so a margin stands for it. A slow runner makes
+        // the check below weaker (the round may not have run yet), never
+        // pass for a wrong reason.
+        #[cfg(not(feature = "index"))]
         tokio::time::sleep(Duration::from_millis(150)).await;
         assert_eq!(commit_file(&path).unwrap(), before, "no commit moved");
         line(&vault, "two").await;

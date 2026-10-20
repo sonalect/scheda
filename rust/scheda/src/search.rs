@@ -39,6 +39,7 @@
 
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
+use futures_util::{StreamExt, stream};
 use lance::Dataset;
 use lance::deps::arrow_array::{
     Array, FixedSizeListArray, Float32Array, ListArray, RecordBatch, StringArray,
@@ -306,50 +307,32 @@ async fn run(
             (None, None) => Vec::new(),
         };
     }
+    let mut legs = Vec::with_capacity(tables.len());
+    for entry in &tables {
+        legs.push(table_legs(
+            reading,
+            &ask,
+            depth,
+            &text,
+            &queries_of_vector_leg,
+            entry,
+        ));
+    }
+    // `buffered` yields in the order of `tables`, whichever ends first.
+    let legs: Vec<Result<Legs, Error>> = stream::iter(legs)
+        .buffered(queries::TABLES_AT_ONCE)
+        .collect()
+        .await;
     let mut lexical = Vec::new();
     let mut nearest: HashMap<(String, String), f64> = HashMap::new();
-    for (decl, table, dataset) in &tables {
-        // Lance allocates for the limit it is given, so a `k`, `offset`, or
-        // `rerank_limit` of billions would abort the process. The table
-        // cannot answer with more rows than it holds.
-        let reach = reach_in(depth, dataset.count_rows(None).await.map_err(lance_fault)?);
-        let prefilter = ask.filter.map_or_else(
-            || lit(true),
-            |filter| filter::compile(filter, table.columns()),
-        );
-        let fts = reading.fts_columns(decl.name());
-        if ask.lexical_weight > 0.0 && !fts.is_empty() && !text.trim().is_empty() {
-            lexical.extend(
-                lexical_leg(
-                    dataset.clone(),
-                    decl.name().to_owned(),
-                    text.clone(),
-                    fts,
-                    prefilter.clone(),
-                    reach,
-                )
-                .await?,
-            );
-        }
-        if queries_of_vector_leg.is_empty() {
-            continue;
-        }
-        for column in &reading.vectors(decl.name()) {
-            let found = vector_leg_on(
-                dataset.clone(),
-                decl.name().to_owned(),
-                vector_name(column),
-                queries_of_vector_leg.clone(),
-                prefilter.clone(),
-                reach,
-            )
-            .await?;
-            for candidate in found {
-                let distance = nearest
-                    .entry((candidate.collection, candidate.id))
-                    .or_insert(f64::INFINITY);
-                *distance = distance.min(candidate.score);
-            }
+    for leg in legs {
+        let (of_text, of_vectors) = leg?;
+        lexical.extend(of_text);
+        for candidate in of_vectors {
+            let distance = nearest
+                .entry((candidate.collection, candidate.id))
+                .or_insert(f64::INFINITY);
+            *distance = distance.min(candidate.score);
         }
     }
     let mut vector: Vec<Candidate> = nearest
@@ -419,6 +402,60 @@ async fn run(
         hits: hits.into_iter().skip(ask.offset).take(ask.k).collect(),
         declarations,
     })
+}
+
+/// The lexical candidates, and the vector candidates, of one collection.
+type Legs = (Vec<Candidate>, Vec<Candidate>);
+
+/// What the Index holds of one collection for a search: the lexical
+/// candidates, and the vector candidates of each of its `vector` columns.
+async fn table_legs(
+    reading: &Reading,
+    ask: &Ask<'_>,
+    depth: usize,
+    text: &str,
+    vector_queries: &[Vec<f32>],
+    entry: &(&Declaration, queries::Table, Dataset),
+) -> Result<Legs, Error> {
+    let (decl, table, dataset) = entry;
+    // Lance allocates for the limit it is given, so a `k`, `offset`, or
+    // `rerank_limit` of billions would abort the process. The table cannot
+    // answer with more rows than it holds.
+    let reach = reach_in(depth, dataset.count_rows(None).await.map_err(lance_fault)?);
+    let prefilter = ask.filter.map_or_else(
+        || lit(true),
+        |filter| filter::compile(filter, table.columns()),
+    );
+    let fts = reading.fts_columns(decl.name());
+    let mut lexical = Vec::new();
+    if ask.lexical_weight > 0.0 && !fts.is_empty() && !text.trim().is_empty() {
+        lexical = lexical_leg(
+            dataset.clone(),
+            decl.name().to_owned(),
+            text.to_owned(),
+            fts,
+            prefilter.clone(),
+            reach,
+        )
+        .await?;
+    }
+    let mut vector = Vec::new();
+    if !vector_queries.is_empty() {
+        for column in &reading.vectors(decl.name()) {
+            vector.extend(
+                vector_leg_on(
+                    dataset.clone(),
+                    decl.name().to_owned(),
+                    vector_name(column),
+                    vector_queries.to_vec(),
+                    prefilter.clone(),
+                    reach,
+                )
+                .await?,
+            );
+        }
+    }
+    Ok((lexical, vector))
 }
 
 /// Collection, then id.

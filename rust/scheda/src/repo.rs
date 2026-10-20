@@ -893,8 +893,7 @@ impl Snap {
             return Ok(None);
         }
         let odb = repo.odb().map_err(lib_fault)?;
-        let (size, kind) = odb.read_header(node.id).map_err(lib_fault)?;
-        let _ = kind;
+        let (size, _) = odb.read_header(node.id).map_err(lib_fault)?;
         Ok(Some(size as u64))
     }
 

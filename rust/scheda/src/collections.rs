@@ -275,7 +275,9 @@ impl crate::vault::Vault {
     /// The writes as one commit under the write lock `held`, which is let go
     /// when this returns. Also says whether a commit was made: only then is
     /// there anything to push. `indexed` puts the position of a failing
-    /// write into the error.
+    /// write into the error. The writes went through [`Writes::check`]
+    /// before the caller waited for the lock; what depends on the state of
+    /// the Vault is checked here, in [`apply`].
     fn write(
         &self,
         cx: &Blocking,
@@ -283,12 +285,6 @@ impl crate::vault::Vault {
         writes: &[Write],
         indexed: bool,
     ) -> Result<(Vec<Outcome>, bool), Error> {
-        for (index, write) in writes.iter().enumerate() {
-            write
-                .check()
-                .map_err(Error::from)
-                .with_context(|| frame(indexed, index))?;
-        }
         if writes.is_empty() {
             return Ok((Vec::new(), false));
         }

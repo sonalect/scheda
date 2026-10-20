@@ -1692,6 +1692,8 @@ mod on_lance {
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
                 if after == 0 {
+                    // Any moment of the round is a moment to kill at, so the
+                    // length of this pause decides nothing the test claims.
                     tokio::time::sleep(Duration::from_millis(400)).await;
                 }
                 child.kill().unwrap();
@@ -2158,6 +2160,233 @@ mod on_lance {
         });
     }
 
+    /// A Vault indexed by `HYBRID`, closed, and opened again by another
+    /// projection with a long `index_wait_timeout_ms`; a write of it moved
+    /// `HEAD` past the Index. The Vault, and the token of the write.
+    async fn stale_and_behind(name: &str) -> (Fixture, DynVaultAsync, String) {
+        let fx = Fixture::new(name).await;
+        fx.corpus().await;
+        fx.vault.close(Empty::default()).await.unwrap();
+        let other = Ports {
+            projection: "docs@2",
+            ..HYBRID
+        };
+        let vault = open_polled(
+            &fx.path,
+            &other,
+            &Arc::new(Calls::default()),
+            options().with_index_wait_timeout_ms(60_000),
+        )
+        .await;
+        let notes = collection(&vault, "notes").await.unwrap();
+        let token = notes
+            .upsert(
+                DocumentUpsert::default()
+                    .with_id("late")
+                    .with_raw(
+                        json!({"title": "zeppelin", "topic": "truck"})
+                            .to_string()
+                            .into_bytes(),
+                    )
+                    .with_note("test"),
+            )
+            .await
+            .unwrap()
+            .version
+            .unwrap();
+        (fx, vault, token)
+    }
+
+    /// The calls with `not_before` that wait on the Index, with the error
+    /// each ended in or `None` when it answered.
+    async fn waiting_calls(
+        vault: &DynVaultAsync,
+        token: &str,
+    ) -> Vec<(&'static str, Option<Error>)> {
+        let notes = collection(vault, "notes").await.unwrap();
+        let query =
+            || serde_json::from_value::<DocumentQuery>(json!({"not_before": token})).unwrap();
+        let search = || search_of(json!({"text": "zeppelin", "not_before": token}));
+        let mut ended = Vec::new();
+        ended.push(("count", notes.count(query()).await.err()));
+        ended.push((
+            "query",
+            match notes.query(query()).await {
+                Ok(stream) => items(stream).await.into_iter().find_map(Result::err),
+                Err(error) => Some(error),
+            },
+        ));
+        ended.push((
+            "search",
+            match notes.search(search()).await {
+                Ok(stream) => items(stream).await.into_iter().find_map(Result::err),
+                Err(error) => Some(error),
+            },
+        ));
+        let vault_query =
+            serde_json::from_value::<scheda::v1::VaultQuery>(json!({"not_before": token})).unwrap();
+        ended.push((
+            "vault count",
+            vault.count_documents(vault_query).await.err(),
+        ));
+        ended
+    }
+
+    #[test]
+    fn a_call_with_not_before_on_an_index_stale_for_the_vault_fails_at_once() {
+        both(|| async {
+            let (_fx, vault, token) = stale_and_behind("search-wait-stale").await;
+            let started = Instant::now();
+            for (call, error) in waiting_calls(&vault, &token).await {
+                let error = error.unwrap_or_else(|| panic!("{call} answered"));
+                assert!(error.is(Code::IndexStale), "{call}: {error}");
+            }
+            // The timeout is a minute: the bound only fails a call that waited.
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "waited {:?}",
+                started.elapsed()
+            );
+            vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_call_with_not_before_waits_for_the_reindex_this_handle_asked_for() {
+        both(|| async {
+            let (_fx, vault, token) = stale_and_behind("search-wait-reindex").await;
+            index_of(&vault)
+                .await
+                .reindex(Empty::default())
+                .await
+                .unwrap();
+            for (call, error) in waiting_calls(&vault, &token).await {
+                assert!(error.is_none(), "{call}: {error:?}");
+            }
+            vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_call_over_many_collections_answers_as_the_calls_over_each() {
+        both(|| async {
+            // More collections than a call reads at once.
+            const COLLECTIONS: usize = 6;
+            let fx = Fixture::new("search-many-collections").await;
+            let names: Vec<String> = (0..COLLECTIONS).map(|c| format!("p{c}")).collect();
+            for name in &names {
+                fx.declare(name, json!({})).await;
+                let target = fx.collection(name).await;
+                let operations: Vec<DocumentOperation> = (0..9)
+                    .map(|i| DocumentOperation {
+                        operation: Some(Operation::Upsert(Box::new(
+                            DocumentUpsert::default()
+                                .with_id(format!("d{i}"))
+                                .with_raw(
+                                    json!({
+                                        "title": format!("{name} {i}"),
+                                        "body": format!("kitten {} {name}", "kitten ".repeat(i)),
+                                        "topic": "kitten",
+                                    })
+                                    .to_string()
+                                    .into_bytes(),
+                                )
+                                .with_note("test"),
+                        ))),
+                        ..DocumentOperation::default()
+                    })
+                    .collect();
+                target.batch(stream_of(operations)).await.unwrap();
+            }
+            wait_indexed(&fx.vault).await;
+
+            // A query: the Documents in the order of `id`, then of the
+            // collection, and the total, as the calls over each give them.
+            let scope = json!({"names": names});
+            let ordered = |scope: &Value| {
+                let request = json!({"collections": scope, "orderBy": [{"column": "id"}]});
+                let request: scheda::v1::VaultQuery = serde_json::from_value(request).unwrap();
+                let vault = fx.vault.clone();
+                async move {
+                    let mut total = 0;
+                    let mut keys = Vec::new();
+                    for item in items(vault.query_documents(request).await.unwrap()).await {
+                        match item.unwrap().item {
+                            Some(QueryArm::Summary(summary)) => total = summary.total.unwrap_or(0),
+                            Some(QueryArm::Document(document)) => keys.push((
+                                document.id.clone().unwrap_or_default(),
+                                document.collection.clone().unwrap_or_default(),
+                            )),
+                            None => {}
+                        }
+                    }
+                    (keys, total)
+                }
+            };
+            let mut expected = Vec::new();
+            let mut expected_total = 0;
+            for name in &names {
+                let (keys, total) = ordered(&json!({"names": [name]})).await;
+                expected.extend(keys);
+                expected_total += total;
+            }
+            expected.sort();
+            for _ in 0..5 {
+                let (keys, total) = ordered(&scope).await;
+                assert_eq!(keys, expected);
+                assert_eq!(total, expected_total);
+            }
+
+            // A search: the hits and their lexical scores, as the searches of
+            // each collection give them, and the same on each run.
+            let request = json!({"text": "kitten", "k": 100, "vector_weight": 0});
+            let mut scored = BTreeMap::new();
+            for name in &names {
+                let found = run(&fx.collection(name).await, request.clone()).await;
+                for hit in hits(&found) {
+                    let document = hit.document.as_option().unwrap();
+                    scored.insert(
+                        (
+                            document.collection.clone().unwrap(),
+                            document.id.clone().unwrap(),
+                        ),
+                        hit.lexical_score,
+                    );
+                }
+            }
+            assert_eq!(scored.len(), COLLECTIONS * 9);
+            let first = run_vault(&fx.vault, json!(names), request.clone()).await;
+            let ranked = |items: &[SearchItem]| -> Vec<(String, String, Option<f64>, Option<f64>)> {
+                hits(items)
+                    .iter()
+                    .map(|hit| {
+                        let document = hit.document.as_option().unwrap();
+                        (
+                            document.collection.clone().unwrap(),
+                            document.id.clone().unwrap(),
+                            hit.lexical_score,
+                            hit.score,
+                        )
+                    })
+                    .collect()
+            };
+            let first = ranked(&first);
+            assert_eq!(first.len(), scored.len());
+            for (collection, id, lexical, _) in &first {
+                assert_eq!(
+                    scored.get(&(collection.clone(), id.clone())),
+                    Some(lexical),
+                    "{collection} {id}"
+                );
+            }
+            for _ in 0..5 {
+                let again = run_vault(&fx.vault, json!(names), request.clone()).await;
+                assert_eq!(ranked(&again), first);
+            }
+            fx.vault.close(Empty::default()).await.unwrap();
+        });
+    }
+
     /// Waits until `calls` counts at least `least` asks for columns.
     async fn columned_at_least(calls: &Calls, least: usize) {
         let deadline = Instant::now() + Duration::from_secs(10);
@@ -2206,6 +2435,8 @@ mod on_lance {
                     && error_code(state) == Some("VAULT_ERROR_CODE_INDEX_STALE")
             })
             .await;
+            // A margin: an ask that must not come has no sign to wait for. A
+            // slow runner makes this check weaker, and never fails it.
             tokio::time::sleep(Duration::from_millis(300)).await;
             assert_eq!(calls.columned.load(Ordering::SeqCst), COLLECTIONS);
 
@@ -2220,6 +2451,8 @@ mod on_lance {
             let head = notes.upsert(write("moved")).await.unwrap().version;
             soon(&index, |state| state.stored_version == head).await;
             columned_at_least(&calls, 2 * COLLECTIONS).await;
+            // A margin: an ask that must not come has no sign to wait for. A
+            // slow runner makes this check weaker, and never fails it.
             tokio::time::sleep(Duration::from_millis(300)).await;
             assert_eq!(calls.columned.load(Ordering::SeqCst), 2 * COLLECTIONS);
 
@@ -2233,6 +2466,8 @@ mod on_lance {
                 .await
                 .unwrap();
             columned_at_least(&calls, 3 * COLLECTIONS).await;
+            // A margin: an ask that must not come has no sign to wait for. A
+            // slow runner makes this check weaker, and never fails it.
             tokio::time::sleep(Duration::from_millis(300)).await;
             assert_eq!(calls.columned.load(Ordering::SeqCst), 3 * COLLECTIONS);
             vault.close(Empty::default()).await.unwrap();

@@ -48,6 +48,8 @@ Set the same `MAJOR.MINOR.PATCH` everywhere:
 - Root `MODULE.bazel`: `module(version = …)`
 - Root `Cargo.toml`: `[workspace.package] version` (members use
   `version.workspace = true`)
+- Root `pyproject.toml`: `[project] version`, and the root `scheda` entry of
+  `uv.lock` (`version = …`, `source = { virtual = "." }`)
 - `CHANGELOG.md`: move `## [Unreleased]` notes into `## [MAJOR.MINOR.PATCH] -
   YYYY-MM-DD`; add the version to `## Links` and the reference definitions
   (`[Unreleased]` compare from the new tag, `[MAJOR.MINOR.PATCH]` release URL)
