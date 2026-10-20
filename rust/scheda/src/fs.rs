@@ -9,7 +9,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use scheda_api::v1::{Problem, VaultErrorCode};
 
-use crate::check::problem;
 use crate::error::{Context, Error, Fault, io};
 
 /// Numbers the temporary files of this process.
@@ -223,11 +222,6 @@ fn rename_replace_windows(tmp: &Path, path: &Path) -> Result<(), Error> {
 
 /// `path` relative to `vault`, in POSIX form (`a/b/c`). A path outside the
 /// Vault, or one that steps out with `..`, is `INVALID_ARGUMENT`.
-pub(crate) fn rel_posix(vault: &Path, path: &Path) -> Result<String, Error> {
-    rel_of(vault, path).map_err(Error::from)
-}
-
-/// [`rel_posix`] for the code that raises a [`Fault`] itself.
 pub(crate) fn rel_of(vault: &Path, path: &Path) -> Result<String, Fault> {
     let outside = || {
         Fault::new(
@@ -373,9 +367,9 @@ pub(crate) fn restrict_file_below(base: &Path, file: &Path) -> Result<(), Error>
 /// files). Every path with a wider mode is a `FAILED_PRECONDITION` problem
 /// with the Vault-relative path. Other systems do not inspect ACLs.
 pub(crate) fn check_scheda_owner_only(vault: &Path) -> Result<Vec<Problem>, Error> {
-    let mut problems = Vec::new();
     #[cfg(unix)]
     {
+        let mut problems = Vec::new();
         let scheda = vault.join(".scheda");
         if scheda.exists() {
             // A round of the indexer writes the generations of the Index
@@ -388,12 +382,13 @@ pub(crate) fn check_scheda_owner_only(vault: &Path) -> Result<Vec<Problem>, Erro
             check_owner_only_tree(vault, &scheda, skip_generations, &mut problems)?;
             drop(round);
         }
+        Ok(problems)
     }
     #[cfg(not(unix))]
     {
         let _ = vault;
+        Ok(Vec::new())
     }
-    Ok(problems)
 }
 
 fn set_mode(path: &Path, mode: u32) -> Result<(), Error> {
@@ -422,6 +417,9 @@ fn check_owner_only_tree(
     problems: &mut Vec<Problem>,
 ) -> Result<(), Error> {
     use std::os::unix::fs::PermissionsExt;
+
+    use crate::check::problem;
+
     if skip_generations
         && path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("index"))
         && path
@@ -439,7 +437,7 @@ fn check_owner_only_tree(
     if meta.file_type().is_symlink() {
         return Ok(());
     }
-    let rel = rel_posix(vault, path)?;
+    let rel = rel_of(vault, path)?;
     let mode = meta.permissions().mode() & 0o777;
     if meta.is_dir() {
         if mode != 0o700 {
@@ -483,10 +481,12 @@ mod tests {
 
     use scheda_api::v1::VaultErrorCode;
 
+    use super::{Flock, atomic_write, create_temporary, rel_of, remove_temporary};
+    #[cfg(unix)]
     use super::{
-        Flock, atomic_write, check_scheda_owner_only, create_temporary, reject_symlinks, rel_posix,
-        remove_temporary, restrict_dir, restrict_file, restrict_file_below,
+        check_scheda_owner_only, reject_symlinks, restrict_dir, restrict_file, restrict_file_below,
     };
+    use crate::error::Error;
 
     /// A scratch directory that is removed when the test ends.
     struct Scratch(PathBuf);
@@ -612,13 +612,13 @@ mod tests {
     }
 
     #[test]
-    fn rel_posix_joins_with_slashes_and_refuses_outside_paths() {
+    fn rel_of_joins_with_slashes_and_refuses_outside_paths() {
         let vault = Path::new("/v");
-        assert_eq!(rel_posix(vault, Path::new("/v/a/b")).unwrap(), "a/b");
-        assert_eq!(rel_posix(vault, Path::new("/v")).unwrap(), "");
-        let error = rel_posix(vault, Path::new("/w/a")).unwrap_err();
+        assert_eq!(rel_of(vault, Path::new("/v/a/b")).unwrap(), "a/b");
+        assert_eq!(rel_of(vault, Path::new("/v")).unwrap(), "");
+        let error = Error::from(rel_of(vault, Path::new("/w/a")).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
-        let error = rel_posix(vault, Path::new("/v/../w")).unwrap_err();
+        let error = Error::from(rel_of(vault, Path::new("/v/../w")).unwrap_err());
         assert!(error.is(VaultErrorCode::InvalidArgument));
     }
 

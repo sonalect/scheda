@@ -19,12 +19,26 @@ API or on-disk format changes bump the minor.
 
 ### Changed
 
-- The GitHub Actions CI workflow runs `bazel build //...` and
-  `bazel test //...` on six platforms: Linux, macOS, and Windows, each on
-  amd64 and arm64 (before: Debian 13 in a container, macOS, and Windows,
-  amd64 only). It names every test, so a test a platform cannot build
-  fails the run instead of being skipped. It still starts by hand
+- The GitHub Actions CI workflow runs on six platforms: Linux, macOS, and
+  Windows, each on amd64 and arm64 (before: Debian 13 in a container,
+  macOS, and Windows, amd64 only). Five run `bazel build //...` and
+  `bazel test //...`, naming every test, so a test a platform cannot
+  build fails the run instead of being skipped. Windows arm64 runs clippy
+  and the tests of the workspace with Cargo: there ring's build script
+  compiles with clang, and `rules_rust` hands every build script the
+  cl.exe flags of the C++ toolchain, which clang cannot read. macOS keeps
+  the test files on a RAM disk, as Linux keeps them on tmpfs; Windows
+  uses the output base `C:/b`, the shortest that keeps the C sources of
+  zstd and libgit2 under `MAX_PATH`. It still starts by hand
   (`workflow_dispatch`); only a run on `main` saves the Bazel caches.
+- The timeout of a `small` Bazel test is 300 s (was 180 s): the Lance
+  volume tests of `//rust/scheda:integration_test` take about three
+  minutes on a four-core CI runner.
+- On Windows, Bazel builds without the `fastbuild` feature of `rules_cc`,
+  which passed the linker `/DEBUG:FASTLINK`: Visual Studio 2026 dropped
+  the flag and warned (LNK4315) on every link.
+- The Rust toolchain archives Bazel downloads are checked against the
+  sha256 that static.rust-lang.org publishes for each, on the six hosts.
 
 ### Fixed
 
@@ -34,6 +48,11 @@ API or on-disk format changes bump the minor.
   and `bazel test //...` skipped every Rust target without a word. The hub
   now lists the six hosts: Linux, macOS, and Windows, each on x86_64 and
   arm64.
+- `scheda` and its tests compile on Windows again: imports and a helper
+  used only by the Unix code of the owner-only checks were unused there,
+  which the workspace's `warnings = "deny"` turns into errors. The CLI
+  test that writes to `/dev/full` runs on Linux only, the one system with
+  that device.
 
 ## [0.24.0] - 2026-10-21
 

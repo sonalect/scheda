@@ -10,6 +10,41 @@ rust = use_extension("@rules_rust//rust:extensions.bzl", "rust")
 # Host CRT on every OS.
 rust.toolchain(
     edition = RUST_EDITION,
+    # Every archive of the toolchain on the six hosts, with the sha256 that
+    # static.rust-lang.org publishes beside it (`<archive>.sha256`):
+    # rules_rust knows none for this version. Move them with RUST_VERSION.
+    sha256s = {
+        "cargo-1.99.1-aarch64-apple-darwin.tar.xz": "685e563d94db1f003ffa5f5831439eec02569b9950b69867953c8213269c1eaf",
+        "cargo-1.99.1-aarch64-pc-windows-msvc.tar.xz": "28ae5b9b72ae43aa01d2f6c1b285be59f8aef6eafc96f9e16b912c3c1363a638",
+        "cargo-1.99.1-aarch64-unknown-linux-gnu.tar.xz": "5156832e0c1254e9b49a79edabdc6d4c35f32f8fc1cf3ca700f268ff96087ab0",
+        "cargo-1.99.1-x86_64-apple-darwin.tar.xz": "6636dabcec164909d1c6eb9e2c596148787c84f7d3a02ff68a141569077f80b5",
+        "cargo-1.99.1-x86_64-pc-windows-msvc.tar.xz": "4adb46c3707dee790682f7769d86983841148111695f561c843c33daa2af0c9b",
+        "cargo-1.99.1-x86_64-unknown-linux-gnu.tar.xz": "53f3521949404d595efb06a55c12c5658d4ed1c75566f33d3d514eaebe70bd8a",
+        "clippy-1.99.1-aarch64-apple-darwin.tar.xz": "c463f31831196702fc544900a0dc4c1837905327507fbec751fe46e59ca098bf",
+        "clippy-1.99.1-aarch64-pc-windows-msvc.tar.xz": "6324b172cdda7ca117df406564a6c1f6634f983c06afc71c7a9fd46a4e34bfa8",
+        "clippy-1.99.1-aarch64-unknown-linux-gnu.tar.xz": "3bea76c26dcf30c176c0a8a8cc283eb59fabd754e24a68b4ca0701e5f3245f6b",
+        "clippy-1.99.1-x86_64-apple-darwin.tar.xz": "b5810174b696eaa05dd4ffd5b24c40a33c6d4bccc05fb72264006b7bfefb8c5d",
+        "clippy-1.99.1-x86_64-pc-windows-msvc.tar.xz": "eb20d3f60731450acecd7c6b108bec2eb4abd18321b383e6663a3f072fe9c0b3",
+        "clippy-1.99.1-x86_64-unknown-linux-gnu.tar.xz": "458339712a058e52cc4522ff9ef8b59cd1ea1340312216cd94194c464a3f6dc5",
+        "llvm-tools-1.99.1-aarch64-apple-darwin.tar.xz": "b348db9d79666aee4b5e2ff4269029fffd16815cbd47f47018cd0b06e4f815f5",
+        "llvm-tools-1.99.1-aarch64-pc-windows-msvc.tar.xz": "d1b503c317d5cee401a845b402cd65fdbdcce3272a007cb3b25ec4dcdfdd1b27",
+        "llvm-tools-1.99.1-aarch64-unknown-linux-gnu.tar.xz": "cd1818058908c1c4e99bd2843fe103df255157454e16186ec9cc3b5b5823b39c",
+        "llvm-tools-1.99.1-x86_64-apple-darwin.tar.xz": "3112e92b03b1cca4264a30ca602948d31976cd45db7de2bc7900efa25a39a045",
+        "llvm-tools-1.99.1-x86_64-pc-windows-msvc.tar.xz": "61b0ce740983240f48ceab73b6a1306a6c25bd7c92dc8135e47e8401b16d9b32",
+        "llvm-tools-1.99.1-x86_64-unknown-linux-gnu.tar.xz": "8429c5117debfb45c22cf2f97712ef00e0e94976c96cf92f661974a458ca7e84",
+        "rustc-1.99.1-aarch64-apple-darwin.tar.xz": "23948a0a9c162fd2952defb3fb0462c44e8fcfd1a4ab8a274a1e1bdb2cf810a3",
+        "rustc-1.99.1-aarch64-pc-windows-msvc.tar.xz": "4d89c7f3f9d8637c667332adf77b55f43c322ae0ff038e75493bb28e16369af2",
+        "rustc-1.99.1-aarch64-unknown-linux-gnu.tar.xz": "acdcdfe09ae1f103aa9a2b7f88903a9588bc2e99288af10e6fbf5514e2e49f25",
+        "rustc-1.99.1-x86_64-apple-darwin.tar.xz": "203feef2c2165d7dda1f30ccf75590f72a6abc52ce259ed1c418de84a6887698",
+        "rustc-1.99.1-x86_64-pc-windows-msvc.tar.xz": "7da83c2af1f209606b0160f25174d2867c7c7b73667c32c9e5fbcef4f5f45348",
+        "rustc-1.99.1-x86_64-unknown-linux-gnu.tar.xz": "2ff05ff9c08a90861e7f6e4065b40a8b87463b4576186fd613871c3e37f2091f",
+        "rust-std-1.99.1-aarch64-apple-darwin.tar.xz": "fe79d6ab5a0321de26463999d8c112b8ad3eafbcbcf822d66a2300b45dde1031",
+        "rust-std-1.99.1-aarch64-pc-windows-msvc.tar.xz": "044748841f47007a222dd5b3f5e9dacec1dae7386d7d308c5172d07ea7112fa0",
+        "rust-std-1.99.1-aarch64-unknown-linux-gnu.tar.xz": "e25668477083d6a9ddb87b9beb9c00742225f38233ccb4bfba3afa7a07427f52",
+        "rust-std-1.99.1-x86_64-apple-darwin.tar.xz": "484d5b88b424ddd29df196e1eb9420c8335bb5fac90a3c37140253345a8c65c4",
+        "rust-std-1.99.1-x86_64-pc-windows-msvc.tar.xz": "4fe09430ded40b8b3092b49f0a651178eb1f8154ef4d1f1a73f2a3595b2d956f",
+        "rust-std-1.99.1-x86_64-unknown-linux-gnu.tar.xz": "109b074225bf5b9ea3820890876bfdf4ed161adbfaf94b2b4b5984c85ee5d958",
+    },
     versions = [RUST_VERSION],
 )
 use_repo(rust, "rust_toolchains")

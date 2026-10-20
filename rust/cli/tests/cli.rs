@@ -1204,6 +1204,9 @@ fn a_reader_that_closes_stdout_ends_the_command_quietly() {
     );
 }
 
+/// Linux only: `/dev/full`, where every write fails with `ENOSPC`, is a
+/// Linux device.
+#[cfg(target_os = "linux")]
 #[test]
 fn another_stdout_failure_is_storage() {
     let scratch = Scratch::new("full");

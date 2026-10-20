@@ -1,7 +1,11 @@
 name: CI
 
-# The full `bazel build //...` and `bazel test //...` on six platforms:
-# Linux, macOS, and Windows, each on amd64 and arm64.
+# Six platforms: Linux, macOS, and Windows, each on amd64 and arm64. Five
+# run the full `bazel build //...` and `bazel test //...`. Windows arm64
+# builds and tests the Rust workspace with Cargo instead: there ring's build
+# script compiles with clang, and rules_rust hands every build script the
+# cl.exe flags of the C++ toolchain (`/nologo`, `/MD`, ...), which clang
+# reads as file names; rules_rust can add to those flags but not drop them.
 #
 # Automatic CI is disabled: a manual run (workflow_dispatch) on any branch.
 # Restore push/pull_request to re-enable.
@@ -57,12 +61,12 @@ jobs:
             bazelisk: bazelisk-windows-amd64.exe
             bazelisk_sha256: 092a8738d5b41aae7a85c42cc961b1034e3389aba43ffc20c0fabda7b43e095b
             exe: .exe
-          - platform: windows-arm64
-            runner: windows-11-arm
-            bazelisk: bazelisk-windows-arm64.exe
-            bazelisk_sha256: 8bc42bd5d7857f18a21440b906469bb6c7cf91a7c72364d4b1e5ec56a76fe94f
-            exe: .exe
     steps:
+      # The checkout runs `git init`, which warns while no default branch
+      # name is configured.
+      - name: Configure git
+        run: git config --global init.defaultBranch main
+
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -94,32 +98,38 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail
-          df -h /
-          sudo rm -rf \
-            /opt/az \
-            /opt/ghc \
-            /opt/hostedtoolcache \
-            /opt/microsoft \
-            /opt/pipx \
-            /usr/lib/jvm \
-            /usr/local/.ghcup \
-            /usr/local/graalvm \
-            /usr/local/lib/android \
-            /usr/local/share/boost \
-            /usr/local/share/powershell \
-            /usr/share/codeql \
-            /usr/share/dotnet \
-            /usr/share/miniconda \
-            /usr/share/sbt \
+          removed=(
+            /opt/az
+            /opt/ghc
+            /opt/hostedtoolcache
+            /opt/microsoft
+            /opt/pipx
+            /usr/lib/jvm
+            /usr/local/.ghcup
+            /usr/local/graalvm
+            /usr/local/lib/android
+            /usr/local/share/boost
+            /usr/local/share/powershell
+            /usr/share/codeql
+            /usr/share/dotnet
+            /usr/share/miniconda
+            /usr/share/sbt
             /usr/share/swift
+          )
           df -h /
-          # The image points these at the Android SDK and NDK removed
-          # above. rules_android, which protobuf depends on, reads
-          # ANDROID_HOME and fails on an SDK that is not there; an empty
-          # value is no SDK.
-          for var in ANDROID_HOME ANDROID_SDK_ROOT ANDROID_NDK ANDROID_NDK_HOME \
-            ANDROID_NDK_LATEST_HOME ANDROID_NDK_ROOT; do
-            echo "${var}=" >> "${GITHUB_ENV}"
+          sudo rm -rf "${removed[@]}"
+          df -h /
+          # The image's variables that point into what is gone are emptied,
+          # an empty value being none: rules_android, which protobuf
+          # depends on, fails on the SDK of ANDROID_HOME, and Bazel warns
+          # about the JDK of JAVA_HOME.
+          for name in $(compgen -e); do
+            for path in "${removed[@]}"; do
+              if [[ "${!name}" == "${path}" || "${!name}" == "${path}/"* ]]; then
+                echo "${name}=" >> "${GITHUB_ENV}"
+                break
+              fi
+            done
           done
 
       # Bazel's C++ toolchain links Rust with lld when it finds one and
@@ -141,13 +151,31 @@ jobs:
           # Git for Windows bash, for Bazel's shell actions and sh_test.
           echo "BAZEL_SH=C:/Program Files/Git/bin/bash.exe" >> "${GITHUB_ENV}"
           {
-            # Short output root: CARGO_MANIFEST_DIR repeats the bzlmod
-            # repository name and hits MAX_PATH (CreateProcess 267) under
-            # the runner's work directory.
-            echo "startup --output_user_root=C:/b"
+            # The shortest output base: the build script of a crate runs in
+            # a directory that names the crate's repository twice, and
+            # cl.exe, which knows no long paths, joins a relative include to
+            # it as it is written. zstd-sys's
+            # `zstd\lib\dictBuilder\..\compress\zstd_compress_internal.h`
+            # comes to 257 characters on amd64 and 259 on arm64, the most
+            # MAX_PATH allows; an output base of its own hash directory
+            # (--output_user_root) adds 9.
+            echo "startup --output_base=C:/b"
             echo "startup --windows_enable_symlinks"
             echo "build --symlink_prefix=/"
           } >> "${HOME}/.bazelrc"
+
+      # Test Vaults on a RAM disk, as `.bazelrc` puts them on tmpfs on
+      # Linux: each write syncs its file, which on macOS is F_FULLFSYNC, and
+      # the runner's disk takes long enough over those for the suites to
+      # time out. The gate checks behaviour, not disk speed.
+      - name: Put test files on a RAM disk
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          # 2 GiB in 512-byte sectors.
+          device="$(hdiutil attach -nomount ram://4194304 | tr -d '[:space:]')"
+          diskutil erasevolume APFS scheda-tests "${device}"
+          echo "test --test_tmpdir=/Volumes/scheda-tests/bazel-test" >> "${HOME}/.bazelrc"
 
       - name: Configure Bazel caches
         run: |
@@ -220,7 +248,10 @@ jobs:
           if [[ "${RUNNER_OS}" != "Windows" ]]; then
             tests+=(//python:lint //python:vuln)
           fi
-          bazel test //... --keep_going --test_output=errors "${tests[@]}"
+          # The timeout warnings name each test whose size does not fit its
+          # run time on this runner.
+          bazel test //... --keep_going --test_output=errors \
+            --test_verbose_timeout_warnings "${tests[@]}"
 
       # Stopped before the caches are saved, so nothing writes them then.
       - name: Stop Bazel
@@ -240,3 +271,79 @@ jobs:
             ${{ runner.temp }}/bazel-disk
             ${{ runner.temp }}/bazel-repo
           key: bazel-${{ matrix.platform }}-${{ hashFiles('.bazelversion', 'MODULE.bazel.lock', 'Cargo.lock') }}
+
+  # The Rust targets of the Bazel gate, as Cargo builds them: clippy and the
+  # tests of the workspace with every feature, and of `scheda` with none.
+  # The checks of the other files (buf, buildifier, markdownlint, ruff, the
+  # audits) do not depend on the platform and run in the Bazel jobs.
+  cargo:
+    name: windows-arm64
+    runs-on: windows-11-arm
+    timeout-minutes: 240
+    steps:
+      - name: Configure git
+        run: git config --global init.defaultBranch main
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The Lance crates compile .proto files in their build scripts. The
+      # protoc Bazel runs on this platform: protobuf publishes no Windows
+      # ARM64 build, and Windows 11 on ARM runs the x64 one. Same release
+      # and sha256 as bazel_utils_buf's pin.
+      - name: Install protoc
+        run: |
+          set -euo pipefail
+          dir="${RUNNER_TEMP}/protoc"
+          curl -fsSL -o "${RUNNER_TEMP}/protoc.zip" \
+            "https://github.com/protocolbuffers/protobuf/releases/download/v36.2/protoc-36.2-win64.zip"
+          echo "f0c128dc0d8492eceece83bb459a4c0e316764b929ffbf1aa416357fd644edd3  ${RUNNER_TEMP}/protoc.zip" | sha256sum -c
+          unzip -q -d "${dir}" "${RUNNER_TEMP}/protoc.zip"
+          echo "PROTOC=$(cygpath -w "${dir}/bin/protoc.exe")" >> "${GITHUB_ENV}"
+
+      # ring compiles its C and assembly with clang on Windows arm64.
+      - name: Find clang
+        run: |
+          set -euo pipefail
+          command -v clang
+          clang --version
+
+      - name: Install Rust
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null; then
+            curl -fsSL -o "${RUNNER_TEMP}/rustup-init.exe" \
+              "https://static.rust-lang.org/rustup/dist/aarch64-pc-windows-msvc/rustup-init.exe"
+            "${RUNNER_TEMP}/rustup-init.exe" -y --profile minimal --default-toolchain none
+            cygpath -w "${USERPROFILE}/.cargo/bin" >> "${GITHUB_PATH}"
+          fi
+
+      # rust-toolchain.toml selects the toolchain; clippy is added to it.
+      - name: Set up the toolchain
+        run: |
+          set -euo pipefail
+          rustup toolchain install
+          rustup component add clippy
+          rustc --version
+
+      - name: Clippy
+        run: |
+          set -euo pipefail
+          cargo clippy --locked --workspace --all-targets --all-features
+          cargo clippy --locked -p scheda --all-targets --no-default-features
+
+      - name: Test
+        # Bazel's test environment (`.bazelrc`): the runner's git
+        # configuration must not change outcomes.
+        env:
+          GIT_CONFIG_NOSYSTEM: "1"
+          GIT_CONFIG_GLOBAL: ""
+          GIT_CONFIG_SYSTEM: ""
+        run: |
+          set -euo pipefail
+          cargo test --locked --workspace --all-features
+          cargo test --locked -p scheda --no-default-features
+
+      - name: Disk space
+        if: always()
+        run: df -h

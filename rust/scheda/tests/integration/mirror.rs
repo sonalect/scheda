@@ -13,9 +13,7 @@ use scheda::v1::{
     OpenMode, OpenOptions, VaultAsync, VaultErrorCode as Code,
 };
 
-use crate::common::{
-    Scratch, both, command, git, open, snapshot, vault as built_vault, work_tree, write,
-};
+use crate::common::{Scratch, both, git, open, snapshot, vault as built_vault, work_tree, write};
 use crate::probe::{assert_settled, commits, git_out};
 
 fn standard(name: &str) -> CollectionDeclaration {
@@ -937,6 +935,8 @@ fn auto_sync_pulls_at_open() {
 #[cfg(unix)]
 fn hold_fetches(scratch: &Scratch, path: &Path) -> (PathBuf, PathBuf) {
     use std::os::unix::fs::PermissionsExt;
+
+    use crate::common::command;
 
     let started = scratch.join("fetch-started");
     let go = scratch.join("fetch-go");

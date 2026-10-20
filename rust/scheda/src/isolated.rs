@@ -149,7 +149,7 @@ mod tests {
 
     use scheda_api::v1::VaultErrorCode;
 
-    use super::{check_perimeter, nested_rel, records_dir, restrict_record, root, vault_rel};
+    use super::{check_perimeter, nested_rel, records_dir, root, vault_rel};
     use crate::collection::{Declaration, Declarations};
     use crate::git::{git, isolate_test_git_env};
     use crate::repo::{Repos, fixture};
@@ -202,6 +202,8 @@ mod tests {
     #[test]
     fn a_record_and_its_directories_become_owner_only() {
         use std::os::unix::fs::PermissionsExt;
+
+        use super::restrict_record;
 
         let scratch = Scratch::new("restrict");
         let vault = scratch.0.as_path();
