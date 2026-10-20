@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.23.0] - 2026-10-20
+
 This release is breaking: the two Index flags of a collection become one
 setting, and the Vault format moves to generation 3. To move from `0.22.1`
 (or `0.22.0`), migrate each Vault by hand (no code does it):
@@ -2592,6 +2594,7 @@ Defects of `0.21.0` that a caller could meet:
 ## Links
 
 - [Unreleased]
+- [0.23.0]
 - [0.22.1]
 - [0.22.0]
 - [0.21.0]
@@ -2649,7 +2652,8 @@ Defects of `0.21.0` that a caller could meet:
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/sonalect/scheda/compare/v0.22.1...HEAD
+[Unreleased]: https://github.com/sonalect/scheda/compare/v0.23.0...HEAD
+[0.23.0]: https://github.com/sonalect/scheda/releases/tag/v0.23.0
 [0.22.1]: https://github.com/sonalect/scheda/releases/tag/v0.22.1
 [0.22.0]: https://github.com/sonalect/scheda/releases/tag/v0.22.0
 [0.21.0]: https://github.com/sonalect/scheda/releases/tag/v0.21.0
