@@ -50,7 +50,11 @@ the evidence, and a recommendation. The probes of the old Index are in
    values and vector texts; looked up before `Project`; dropped with
    another `projection_id` and cleared when a round succeeds. The cap of
    the pause stays as it is. Test: an embedder that fails several tries,
-   one `Project` per changed Document.
+   one `Project` per changed Document. **Done:** `tables::Cache` holds the
+   answers beside the vectors, keyed by collection, Document id (the
+   Projector is given it), and the digest of the bytes projected (`tables.rs`:
+   `an_embedder_that_fails_moves_no_commit_fails_no_write_and_is_asked_only_for_the_rest`,
+   `the_answers_of_another_projection_and_the_vectors_of_another_model_are_forgotten`).
 
 3. **Low–medium. A `Reindex` from a second Vault rebuilds twice.**
    `ABORTED` covers only a request in the same Vault object; another Vault

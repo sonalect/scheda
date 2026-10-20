@@ -10,7 +10,10 @@
 //! is `exclude_vector_index`.
 //!
 //! **The Projector** gives the values, once per changed Document per
-//! round; the Document's bytes are moved into the call. Without a
+//! round; the Document's bytes are moved into the call. Its answers are
+//! kept in memory until the round succeeds, by Document and the digest of
+//! its bytes, so a round tried again after a failure asks it only for the
+//! Documents it has not answered. Without a
 //! Projector, for a collection without columns, and for a Document it gives
 //! no values for, only the identity is stored. A Document the Projector
 //! refuses, or gives a value of another kind than its column's, is left
@@ -30,6 +33,7 @@
 //! prefix of the new ones) gives only its new lines; one changed otherwise
 //! is indexed again whole.
 
+use std::collections::hash_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -238,30 +242,61 @@ pub(crate) fn stale(commit: &Commit, plan: &Plan) -> Option<String> {
     None
 }
 
-/// The vectors a Vault keeps between two tries of a round: those the
-/// embedder gave, by the digest of their text, and the texts it refused.
+/// What a Vault keeps between two tries of a round, so a try after a
+/// failure asks the ports only for what the earlier tries did not get:
+/// the vectors the embedder gave, by the digest of their text, and the
+/// texts it refused; the Projector's answers.
 #[derive(Default)]
 pub(crate) struct Cache {
     model: String,
     vectors: HashMap<String, Vec<f32>>,
     refused: HashSet<String>,
+    projection: String,
+    answers: HashMap<Asked, Answer>,
+}
+
+/// One `Project` call: the collection, the Document's id, and the digest
+/// of the bytes projected.
+#[derive(Eq, Hash, PartialEq)]
+struct Asked {
+    collection: String,
+    id: String,
+    digest: String,
+}
+
+/// What the Projector answered.
+enum Answer {
+    /// The values; none when it gave none (the Document is indexed by its
+    /// identity).
+    Values(Option<IndexDoc>),
+    /// It refused the Document, or gave a reply that breaks its rules.
+    Refused,
 }
 
 impl Cache {
-    /// Empties the cache when it holds what another model made.
-    fn keep_for(&mut self, model: &str) {
+    /// Forgets the vectors when they are of another model than `model`.
+    fn keep_vectors_of(&mut self, model: &str) {
         if self.model != model {
-            *self = Cache {
-                model: model.to_owned(),
-                ..Cache::default()
-            };
+            model.clone_into(&mut self.model);
+            self.vectors.clear();
+            self.refused.clear();
         }
     }
 
-    /// Forgets the vectors: the round that needed them succeeded.
+    /// Forgets the answers when they are of another projection than
+    /// `projection`.
+    fn keep_answers_of(&mut self, projection: &str) {
+        if self.projection != projection {
+            projection.clone_into(&mut self.projection);
+            self.answers.clear();
+        }
+    }
+
+    /// Forgets everything: the round that needed it succeeded.
     pub(crate) fn clear(&mut self) {
         self.vectors.clear();
         self.refused.clear();
+        self.answers.clear();
     }
 }
 
@@ -352,12 +387,13 @@ enum Read {
     },
 }
 
-/// One Document to project: its identity, and its bytes.
+/// One Document to project: its identity, its bytes, and their digest.
 struct Source {
     id: String,
     file: String,
     order: String,
     raw: Vec<u8>,
+    digest: String,
 }
 
 impl Work<'_> {
@@ -373,7 +409,10 @@ impl Work<'_> {
     pub(crate) async fn bring_to(&mut self, to: State) -> Result<(), Error> {
         let declarations = Arc::clone(&self.plan.declarations);
         if let Some(embedder) = &self.calls.embedder {
-            self.cache.keep_for(embedder.model_id());
+            self.cache.keep_vectors_of(embedder.model_id());
+        }
+        if let Some(projector) = &self.calls.projector {
+            self.cache.keep_answers_of(projector.projection_id());
         }
         if self.commit.ports.embedder.is_none() {
             self.commit.ports.embedder = self.plan.ports.embedder.clone();
@@ -565,12 +604,14 @@ impl Work<'_> {
                     bytes,
                 } => {
                     counts.documents_read += 1;
-                    files.push((path.clone(), blob.to_string()));
+                    let blob = blob.to_string();
+                    files.push((path.clone(), blob.clone()));
                     sources.push(Source {
                         order: id.clone(),
                         id,
                         file: path,
                         raw: bytes,
+                        digest: blob,
                     });
                 }
                 Read::DocumentGone { id } => gone_ids.push(id),
@@ -593,6 +634,7 @@ impl Work<'_> {
                             id,
                             file: path.clone(),
                             order,
+                            digest: digest_of(&payload),
                             raw: payload,
                         });
                     }
@@ -638,21 +680,33 @@ impl Work<'_> {
                 ..Row::default()
             };
             if projects && let Some(projector) = &self.calls.projector {
-                let values = match projector
-                    .project(decl.name().to_owned(), row.id.clone(), source.raw)
-                    .await
-                {
-                    Ok(values) => values,
-                    Err(error) if error.retryable() => {
-                        return Err(error.context(format!("project {}", row.id)));
-                    }
-                    // Refused, or a reply that breaks its rules: left out.
-                    Err(_) => {
-                        left_out.push(row.id);
-                        continue;
+                let asked = Asked {
+                    collection: decl.name().to_owned(),
+                    id: row.id.clone(),
+                    digest: source.digest,
+                };
+                let answer = match self.cache.answers.entry(asked) {
+                    Entry::Occupied(entry) => entry.into_mut(),
+                    Entry::Vacant(entry) => {
+                        let answer = match projector
+                            .project(decl.name().to_owned(), row.id.clone(), source.raw)
+                            .await
+                        {
+                            Ok(values) => Answer::Values(values),
+                            Err(error) if error.retryable() => {
+                                return Err(error.context(format!("project {}", row.id)));
+                            }
+                            Err(_) => Answer::Refused,
+                        };
+                        entry.insert(answer)
                     }
                 };
-                match values_of(&shape, values) {
+                let projected = match answer {
+                    Answer::Values(values) => values_of(&shape, values.as_ref()),
+                    // Refused, or a reply that breaks its rules: left out.
+                    Answer::Refused => None,
+                };
+                match projected {
                     Some((values, vector_texts)) => {
                         row.values = values;
                         for (column, text) in vector_texts {
@@ -829,9 +883,9 @@ fn gone_state() -> Error {
     .into()
 }
 
-/// The digest of a text: the git blob id of its bytes.
-fn digest_of(text: &str) -> String {
-    Oid::hash_object(ObjectType::Blob, text.as_bytes())
+/// The digest of a text or of bytes: their git blob id.
+fn digest_of(bytes: impl AsRef<[u8]>) -> String {
+    Oid::hash_object(ObjectType::Blob, bytes.as_ref())
         .map(|oid| oid.to_string())
         .unwrap_or_default()
 }
@@ -844,13 +898,13 @@ type Projected = (BTreeMap<String, Value>, Vec<(String, String)>);
 /// `vector` columns; `None` when a value is of another kind than its
 /// column's, which leaves the Document out. A key no column declares is
 /// ignored, and a value that is not finite is left out.
-fn values_of(shape: &Shape, values: Option<IndexDoc>) -> Option<Projected> {
+fn values_of(shape: &Shape, values: Option<&IndexDoc>) -> Option<Projected> {
     let mut out = BTreeMap::new();
     let mut texts = Vec::new();
     let Some(values) = values else {
         return Some((out, texts));
     };
-    let mut values = values.values;
+    let values = &values.values;
     for column in &shape.columns {
         let Some(value) = values
             .get(&column.name)
@@ -875,9 +929,9 @@ fn values_of(shape: &Shape, values: Option<IndexDoc>) -> Option<Projected> {
         out.insert(column.name.clone(), value);
     }
     for column in &shape.vectors {
-        match values.remove(column).and_then(|value| value.value) {
+        match values.get(column).and_then(|value| value.value.as_ref()) {
             Some(Value::Text(text)) if !text.trim().is_empty() => {
-                texts.push((column.clone(), text))
+                texts.push((column.clone(), text.clone()))
             }
             Some(Value::Text(_)) | None => {}
             Some(_) => return None,
@@ -1535,6 +1589,7 @@ mod tests {
     async fn an_embedder_that_fails_moves_no_commit_fails_no_write_and_is_asked_only_for_the_rest()
     {
         let scratch = Scratch::new("failing-embedder");
+        let projected = Arc::new(AtomicUsize::new(0));
         let broken = Arc::new(AtomicBool::new(false));
         let embedded: Arc<Mutex<HashMap<String, usize>>> = Arc::default();
         let embedder = {
@@ -1563,7 +1618,7 @@ mod tests {
         };
         let ports = Ports {
             projector: Some(ProjectorRef::from_sync(Pipes {
-                projected: Arc::default(),
+                projected: Arc::clone(&projected),
             })),
             embedder: Some(EmbedderRef::from_sync(embedder)),
             reranker: None,
@@ -1583,6 +1638,18 @@ mod tests {
         .unwrap();
         wait_indexed(&vault).await;
         let live = live_commit(&vault).await;
+        let failures = Arc::new(AtomicUsize::new(0));
+        let counted = {
+            let mut watch = vault.indexer().watch();
+            let failures = Arc::clone(&failures);
+            tokio::spawn(async move {
+                while let Some(Ok(state)) = watch.next().await {
+                    if state.last_error.is_set() {
+                        failures.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            })
+        };
 
         broken.store(true, Ordering::SeqCst);
         batch(&vault, "notes", notes(10, 0)).await.unwrap();
@@ -1593,6 +1660,12 @@ mod tests {
         assert_eq!(live_commit(&vault).await, live, "no commit moved");
         batch(&vault, "notes", notes(1, 10)).await.unwrap();
 
+        // Tried again until it fails twice more.
+        let tries = failures.load(Ordering::SeqCst);
+        wait_until("two more tries", || {
+            failures.load(Ordering::SeqCst) >= tries + 2
+        })
+        .await;
         broken.store(false, Ordering::SeqCst);
         wait_indexed(&vault).await;
         let done = embedded.lock().unwrap().clone();
@@ -1601,10 +1674,39 @@ mod tests {
             done.values().all(|times| *times == 1),
             "a text embedded before the failure is not sent again: {done:?}"
         );
+        assert_eq!(
+            projected.load(Ordering::SeqCst),
+            11,
+            "a Document projected before the failure is not projected again"
+        );
         let rows = rows(&vault, "notes").await;
         assert_eq!(rows.len(), 11);
         assert!(rows.values().all(|(_, _, vector)| *vector));
         vault.close().await.unwrap();
+        counted.await.unwrap();
+    }
+
+    #[test]
+    fn the_answers_of_another_projection_and_the_vectors_of_another_model_are_forgotten() {
+        let mut cache = super::Cache::default();
+        cache.keep_answers_of("a@1");
+        cache.keep_vectors_of("model-a");
+        cache.answers.insert(
+            super::Asked {
+                collection: String::from("notes"),
+                id: String::from("a.md"),
+                digest: String::from("d"),
+            },
+            super::Answer::Refused,
+        );
+        cache.vectors.insert(String::from("d"), vec![1.0]);
+        cache.keep_answers_of("a@1");
+        cache.keep_vectors_of("model-a");
+        assert_eq!((cache.answers.len(), cache.vectors.len()), (1, 1));
+        cache.keep_vectors_of("model-b");
+        assert_eq!((cache.answers.len(), cache.vectors.len()), (1, 0));
+        cache.keep_answers_of("a@2");
+        assert!(cache.answers.is_empty());
     }
 
     /// Asks `vault` for a rebuild and waits until it is done.

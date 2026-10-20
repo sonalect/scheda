@@ -125,7 +125,7 @@ In each indexer round (`06` IDX-9), for each changed Document, for **each** Proj
 
 1. Take the text of that column. A blank text (only whitespace) has no vector.
 2. Hash that exact text as a git blob (SHA-1 of `blob {len}\0{bytes}`). That digest is stored beside the vector, in `_digest_{name}` of the row.
-3. A text whose digest the table already holds for that Document keeps its stored vector: the embedder is not called for it. Vectors the embedder returned before a failed try of the round are kept in the indexing Vault's memory the same way, by digest, until a round succeeds.
+3. A text whose digest the table already holds for that Document keeps its stored vector: the embedder is not called for it. Vectors the embedder returned before a failed try of the round are kept in the indexing Vault's memory the same way, by digest, until a round succeeds, and so are the Projector's answers, by Document and the digest of its bytes: a try after an embedder failure neither embeds nor projects again what the earlier tries got.
 4. Every other text goes to `Embedder.Embed` in one stream per round, in the order of the Documents; the embedder forms its own portions. A failure ends the stream: the vectors that came before it are kept (step 3). A text the embedder refuses (`REFUSED`) leaves its Document without that vector, and the round goes on.
 5. Each vector is stored in `_vector_{name}` of the Document's row, which the round upserts by `id`; a changed Document replaces its row and a deleted one loses it, vectors with it. There is no key map.
 

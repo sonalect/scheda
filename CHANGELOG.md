@@ -332,8 +332,9 @@ changes; they grow with each part of the move.
   `Reindex` is `FAILED_PRECONDITION`, and its queries and searches read
   the Index other handles keep, the searches without the vector leg. A
   text of a `vector` column is embedded once: a text whose digest the
-  Index holds keeps its vector, and the vectors of a failed round are
-  kept for the next try. A rebuild with the embedder model and vector
+  Index holds keeps its vector, and the vectors and the Projector's
+  answers of a failed round are kept for the next try, so an embedder
+  outage does not project the changed Documents again on every try. A rebuild with the embedder model and vector
   length of the live generation takes the vectors it holds for the same
   text of the same Document; only another model embeds every text again. A text the embedder refuses (`REFUSED`) leaves
   the Document without that vector; a blank text has none.

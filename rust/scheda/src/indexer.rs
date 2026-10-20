@@ -404,12 +404,12 @@ struct Applied {
     rebuilt: Option<rebuild::Cause>,
 }
 
-/// What a round keeps between two tries: the vectors the embedder gave.
-/// Nothing in a build without the Index.
+/// What a round keeps between two tries: the vectors the embedder gave
+/// and the Projector's answers. Nothing in a build without the Index.
 #[derive(Default)]
 struct Kept {
     #[cfg(feature = "index")]
-    vectors: Cache,
+    cache: Cache,
 }
 
 /// What the look at the start of a round found.
@@ -561,7 +561,7 @@ impl Context {
             return Ok(Next::Idle);
         };
         #[cfg(feature = "index")]
-        let applied = self.apply(&look, plan, &mut kept.vectors).await;
+        let applied = self.apply(&look, plan, &mut kept.cache).await;
         #[cfg(not(feature = "index"))]
         let applied = {
             let _ = kept;
