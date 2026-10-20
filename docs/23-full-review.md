@@ -1,6 +1,6 @@
 # 23. Full review before the release
 
-Document 23 of the Scheda package. Version 0.3, 20 October 2026.
+Document 23 of the Scheda package. Version 0.4, 20 October 2026.
 
 Status: approved by the owner on 20 October 2026, decision by decision
 (§3). A full review of the repository (`full-review.md`) on `main` at
@@ -574,8 +574,9 @@ projection), D9 (tokio 1.54.0).
       `stored::tests::a_stale_key_of_the_open_options_is_refused_not_dropped`).
       The README row for this document is in; the rest of this box below
       is the release.
-- [ ] The version `0.22.0` (D1, `versioning`), `21` L10's box: on the
-      owner's word.
+- [x] The version `0.22.0` (D1, `versioning`), `21` L10's box: released
+      on the owner's word, 20 October 2026, after `full-review-fixes` was
+      merged into `main` by fast-forward.
 
 ---
 

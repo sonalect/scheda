@@ -54,9 +54,9 @@ install; without an embedder, vector search is off and the rest still works.
 The library does not score Documents for a UI, does not call a language
 model, and does not know a profession.
 
-**Status: `main` holds the 0.22 proto contract (`docs/20`), the Index on
-Lance (`docs/21`), Scheda on tokio (`docs/22`), and the fixes of the full
-review (`docs/23`); the release `0.22.0` is pending.** What it holds: the API as protobuf services and objects, async only on the
+**Status: release `0.22.0` holds the proto contract (`docs/20`), the Index
+on Lance (`docs/21`), Scheda on tokio (`docs/22`), and the fixes of the
+full review (`docs/23`).** What it holds: the API as protobuf services and objects, async only on the
 caller's tokio runtime (a blocking caller wraps an object with `to_sync()`
 inside a multi-thread runtime, `docs/22`); one commit per write call, which
 returns the state token of the Vault it made, and batches that are all or
@@ -98,9 +98,9 @@ The design is a numbered package in `docs/`, in English.
 | [18-review-fixes.md](docs/18-review-fixes.md) | Rust work order: fixes from the 5 October 2026 full review (S1–S8) |
 | [19-follow-ups.md](docs/19-follow-ups.md) | Rust work order (history): declarations follow the work tree, search vector-leg signal, `index_version` repeat, sync and async `transaction` (F1–F5 done) |
 | [20-proto-contract.md](docs/20-proto-contract.md) | The 0.22 contract: decisions D1–D24, the layers P1–P8 and R1–R5, what is out of scope |
-| [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, a typed filter, a state token for freshness (D1–D18, L0–L10, the contract C1–C35); its release box is open |
+| [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, a typed filter, a state token for freshness (D1–D18, L0–L10, the contract C1–C35); released as `0.22.0` |
 | [22-scheda-on-tokio.md](docs/22-scheda-on-tokio.md) | Rust work order: Scheda async only on the caller's tokio runtime, the blocking core behind a gate (D1–D12, A1–A5) |
-| [23-full-review.md](docs/23-full-review.md) | Rust work order: the full review before the release (R1–R23, D1–D9); stages S1–S5 done; the release `0.22.0` waits for the owner's word |
+| [23-full-review.md](docs/23-full-review.md) | Rust work order: the full review before the release (R1–R23, D1–D9); stages S1–S5 done, released as `0.22.0` |
 
 ## Layout
 

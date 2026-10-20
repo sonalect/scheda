@@ -8,6 +8,8 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+## [0.22.0] - 2026-10-20
+
 This release is breaking. The whole API is protobuf services in one
 package, `scheda.v1`, passed as references; Scheda is async, on the tokio
 runtime of its caller; the Index is on Lance in place of Tantivy and
@@ -2476,6 +2478,9 @@ Defects of `0.21.0` that a caller could meet:
 ## Links
 
 - [Unreleased]
+- [0.22.0]
+- [0.21.0]
+- [0.20.1]
 - [0.20.0]
 - [0.19.0]
 - [0.18.1]
@@ -2529,7 +2534,8 @@ Defects of `0.21.0` that a caller could meet:
 - [0.1.0]
 - [0.0.1]
 
-[Unreleased]: https://github.com/sonalect/scheda/compare/v0.21.0...HEAD
+[Unreleased]: https://github.com/sonalect/scheda/compare/v0.22.0...HEAD
+[0.22.0]: https://github.com/sonalect/scheda/releases/tag/v0.22.0
 [0.21.0]: https://github.com/sonalect/scheda/releases/tag/v0.21.0
 [0.20.1]: https://github.com/sonalect/scheda/releases/tag/v0.20.1
 [0.20.0]: https://github.com/sonalect/scheda/releases/tag/v0.20.0

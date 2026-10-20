@@ -19,9 +19,9 @@ Project state, deferred work, and measurements that outlive one session
   quarantine on his word. R1–R3 and R5 were reproduced by throwaway
   probes (removed); the gate was green. Done on the branch
   `full-review-fixes` (20 October 2026): S1–S4 and S5's documents, a
-  commit per stage, plus R23 found on the way; not merged, not pushed.
-  What remains is the release `0.22.0` (`versioning`), and `21` L10's
-  box, on the owner's word.
+  commit per stage, plus R23 found on the way; merged into `main` by
+  fast-forward and released as `0.22.0` on the owner's word the same day
+  (with `20`, `21`, and `22`).
 - Current work order: `docs/21-lance-index.md` — the Index on Lance in
   place of Tantivy and USearch, queries by a typed filter, a state
   token for freshness (approved by the owner 19 October 2026, D1–D18).

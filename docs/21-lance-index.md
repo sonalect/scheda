@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.4, 19 October 2026.
+Document 21 of the Scheda package. Version 0.5, 20 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -529,8 +529,10 @@ made async by `22`.
 - [x] `06` (the Index on Lance), `13` (queries by filter, searches), `07`,
       `14`, `02`, README, `.claude/notes/index-risks.md` (closed items
       removed), `CHANGELOG.md`; with `22` A5.
-- [ ] Release `0.23.0` (breaking: minor while major is 0,
-      `.claude/skills/versioning/SKILL.md`).
+- [x] Released as `0.22.0` (breaking: minor while major is 0,
+      `.claude/skills/versioning/SKILL.md`): `0.22.0` was never released
+      from `main`, so this work order, `20`, `22`, and `23` go out
+      together under it (`23` D1).
 - *Check:* `bazel test //...` green; markdownlint green.
 
 ---
