@@ -225,7 +225,7 @@ mod tests {
         /// and a `diary` isolated collection.
         fn vault(name: &str) -> Scratch {
             let scratch = Scratch::new(name);
-            scratch.write(".scheda.yaml", b"version: 2\n");
+            scratch.write(".scheda.yaml", b"version: 3\n");
             scratch.write(".gitignore", b".scheda/\n.isolated/\n");
             scratch.write(
                 "notes/.collection.yaml",
@@ -495,7 +495,7 @@ mod tests {
         scratch.commit("fixture");
         let vault = scratch.open().await;
         assert!(run(&vault).await.unwrap().is_empty());
-        scratch.write(".scheda.yaml", b"version: 3\n");
+        scratch.write(".scheda.yaml", b"version: 4\n");
         scratch.write("bad/.collection.yaml", b"name: bad\n");
         scratch.commit("another generation");
         scratch.write("notes/a.md", b"modified");

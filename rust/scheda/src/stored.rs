@@ -603,7 +603,7 @@ schema:
 
     #[test]
     fn a_broken_rule_is_invalid_argument_and_names_the_field() {
-        let fault = read::<VaultMarker>(b"version: 3\n", Format::Yaml).unwrap_err();
+        let fault = read::<VaultMarker>(b"version: 4\n", Format::Yaml).unwrap_err();
         assert!(fault.message().contains("version"), "{}", fault.message());
         assert!(code(fault).is(VaultErrorCode::InvalidArgument));
         let error = code(read::<CollectionDeclaration>(b"name: ''\n", Format::Yaml).unwrap_err());
@@ -625,6 +625,18 @@ schema:
         .unwrap_err();
         assert!(error.to_string().contains("extra"), "{error}");
         assert!(error.is(VaultErrorCode::InvalidArgument));
+    }
+
+    #[test]
+    fn a_retired_index_key_of_a_declaration_is_refused_not_dropped() {
+        // Dropped, `excludeVectorIndex` would index vectors the caller
+        // asked to leave out.
+        for key in ["excludeLexicalIndex", "excludeVectorIndex"] {
+            let json = format!(r#"{{"name": "c", "schema": {{"standard": {{}}, "{key}": true}}}}"#);
+            let error = parse_command::<CollectionDeclaration>(json.as_bytes()).unwrap_err();
+            assert!(error.to_string().contains(key), "{error}");
+            assert!(error.is(VaultErrorCode::InvalidArgument));
+        }
     }
 
     #[test]

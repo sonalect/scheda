@@ -379,9 +379,9 @@ message SearchSummary {
     VECTOR_LEG_UNSPECIFIED = 0;
     // Not asked for: `vector_weight` is 0.
     VECTOR_LEG_NOT_ASKED = 1;
-    // No collection in scope has a vector column: each is excluded or
-    // encrypted, the Vault has no Projector, or the Projector marks no
-    // column `vector`.
+    // No collection in scope has a vector column: each is not
+    // `INDEX_SCOPE_ALL` or is encrypted, the Vault has no Projector, or the
+    // Projector marks no column `vector`.
     VECTOR_LEG_NO_VECTOR_COLLECTION = 2;
     // The Vault has no embedder.
     VECTOR_LEG_NO_EMBEDDER = 3;

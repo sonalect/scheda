@@ -1,6 +1,6 @@
 # 21. The Index on Lance
 
-Document 21 of the Scheda package. Version 0.5, 20 October 2026.
+Document 21 of the Scheda package. Version 0.6, 20 October 2026.
 
 Status: approved by the owner on 19 October 2026. Decisions marked
 *settled* were taken with him in discussion; the others were proposed
@@ -251,9 +251,10 @@ upgrade one version at a time, deliberately, re-running L2's checks. The
 build scripts of `lance-datafusion`, `lance-encoding`, `lance-file`,
 `lance-index`, and `lance-table` need `protoc`: Cargo gets it from
 `PROTOC` (`run-commands.md` says so), Bazel from crate_universe
-annotations that hand those build scripts `//bazel:protoc` and
-`//bazel:protoc_include` (the well-known types, which prost-build reads from
-`PROTOC_INCLUDE`). Every new
+annotations that hand those build scripts `//bazel:protoc_prefix`: the
+prebuilt protoc of the proto toolchain and the well-known types, which
+prost-build reads from `PROTOC_INCLUDE`, never a protoc compiled from
+source. Every new
 crate version passes the two-day quarantine (`dependency-quarantine.md`;
 the spike found three too young: `arc-swap` 1.9.3, `cc` 1.9.0,
 `find-msvc-tools` 0.1.15). *Recommendation:* accept.
@@ -828,7 +829,9 @@ strict parse of the CLI.
 reasons hold, less `MODEL_MISMATCH` (C34) (L6 decides them from the Projector's columns, as the comments
 already say). `Schema.exclude_lexical_index` and `exclude_vector_index`:
 the same meaning, worded without "the lexical Index", so a file on disk
-keeps its sense and the `VaultMarker` generation does not change.
+keeps its sense and the `VaultMarker` generation does not change. (Later
+the two keys were replaced by `Schema.index_scope` with generation 3: the
+owner's decision of 20 October 2026.)
 `DocumentSearch.k` and `offset`, `CollectionNames`, `Count`, `marker.proto`,
 `mirror.proto`. `SearchHit` gains the definitions of its scores (BM25;
 `1 / (1 + d)` for the cosine distance `d`, as `0.22` computes it in

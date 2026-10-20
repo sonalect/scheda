@@ -1074,7 +1074,7 @@ mod tests {
             let dir = base.join(format!("scheda-vault-{name}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("notes")).unwrap();
-            std::fs::write(dir.join(".scheda.yaml"), "version: 2\nfuture: 1\n").unwrap();
+            std::fs::write(dir.join(".scheda.yaml"), "version: 3\nfuture: 1\n").unwrap();
             std::fs::write(
                 dir.join("notes/.collection.yaml"),
                 "name: notes\nschema:\n  standard: {}\n",

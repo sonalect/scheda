@@ -216,7 +216,7 @@ fn wanted() -> Vec<CollectionDeclaration> {
         json!({"name": "entries", "schema": {"standard": {}}}),
         json!({"name": "notes", "schema": {"standard": {}}}),
         json!({"name": "settings", "schema": {"singleton": {"id": "config.yaml"}}}),
-        json!({"name": "trail", "schema": {"standard": {}, "excludeVectorIndex": true}}),
+        json!({"name": "trail", "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_NO_VECTORS"}}),
     ];
     if cfg!(feature = "encrypt") {
         all.push(json!({"name": "secrets", "schema": {"standard": {}, "encrypted": true}}));
@@ -630,7 +630,7 @@ fn ensuring_the_collections_again_finds_nothing_to_do() {
         if item.name.as_deref() == Some("notes") {
             *item = declaration(json!({
                 "name": "notes",
-                "schema": {"standard": {}, "excludeVectorIndex": true},
+                "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_NO_VECTORS"},
             }));
         }
     }

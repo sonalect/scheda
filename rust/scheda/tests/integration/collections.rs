@@ -215,7 +215,7 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 2\n"),
+                (".scheda.yaml", "version: 3\n"),
                 (".gitignore", ".scheda/\n.isolated/\n"),
                 (
                     "cache/.collection.yaml",
@@ -235,7 +235,7 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
             "1048576"
         );
         let update = collection(json!({
-            "name": "cache", "schema": {"journal": {"segmentMaxLines": "100"}, "excludeLexicalIndex": true}
+            "name": "cache", "schema": {"journal": {"segmentMaxLines": "100"}, "indexScope": "INDEX_SCOPE_IDS"}
         }));
         let reply = vault.update_collection(update).await.unwrap();
         let reply = serde_json::to_value(&reply).unwrap();
@@ -251,14 +251,14 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
         // A JSON file stays a JSON file, with its unknown key.
         let reply = vault
             .update_collection(collection(
-                json!({"name": "notes", "schema": {"standard": {}, "exclude_vector_index": true}}),
+                json!({"name": "notes", "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_NO_VECTORS"}}),
             ))
             .await
             .unwrap();
         assert_eq!(reply.name.as_deref(), Some("notes"));
         let file = read(&path, "notes/.collection.json");
         assert!(file.contains("\"later\": true"), "{file}");
-        assert!(file.contains("excludeVectorIndex"), "{file}");
+        assert!(file.contains("indexScope"), "{file}");
         assert!(!path.join("notes/.collection.yaml").exists());
         assert_settled(&path, &[]);
         // A unknown key of a field that goes goes with it.
@@ -266,6 +266,67 @@ fn update_keeps_the_unknown_keys_of_the_file_and_writes_no_default() {
         let file = read(&path, "cache/.collection.yaml");
         assert!(file.contains("future_top: 7"), "{file}");
         assert!(!file.contains("future_inner"), "{file}");
+    });
+}
+
+#[test]
+fn an_undefined_index_scope_is_invalid_argument_and_stores_nothing() {
+    both(|| async {
+        let (_scratch, path, vault) = fresh("undefined-scope").await;
+        vault.create_collection(standard("notes")).await.unwrap();
+        let before = commits(&path);
+        for scope in [json!(9), json!(-1)] {
+            let declaration =
+                json!({"name": "other", "schema": {"standard": {}, "indexScope": scope}});
+            let error = vault
+                .create_collection(collection(declaration.clone()))
+                .await
+                .unwrap_err();
+            assert!(error.is(Code::InvalidArgument), "{declaration}");
+            let declaration =
+                json!({"name": "notes", "schema": {"standard": {}, "indexScope": scope}});
+            let error = vault
+                .update_collection(collection(declaration.clone()))
+                .await
+                .unwrap_err();
+            assert!(error.is(Code::InvalidArgument), "{declaration}");
+        }
+        assert_eq!(commits(&path), before, "nothing was stored");
+    });
+}
+
+#[test]
+fn a_retired_index_key_in_a_collection_file_is_read_past_kept_and_not_acted_on() {
+    both(|| async {
+        let scratch = Scratch::new("retired-key");
+        let path = scratch.join("vault");
+        work_tree(
+            &path,
+            &[
+                (".scheda.yaml", "version: 3\n"),
+                (".gitignore", ".scheda/\n.isolated/\n"),
+                (
+                    "notes/.collection.yaml",
+                    "name: notes\nschema:\n  standard: {}\n  excludeVectorIndex: true\n",
+                ),
+            ],
+        );
+        let vault = open(&path, OpenOptions::default()).await.unwrap();
+        let stored = serde_json::to_value(declared(&vault, "notes").await).unwrap();
+        assert!(stored["schema"].get("indexScope").is_none(), "{stored}");
+        assert!(
+            stored["schema"].get("excludeVectorIndex").is_none(),
+            "{stored}"
+        );
+        vault
+            .update_collection(collection(
+                json!({"name": "notes", "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_IDS"}}),
+            ))
+            .await
+            .unwrap();
+        let file = read(&path, "notes/.collection.yaml");
+        assert!(file.contains("excludeVectorIndex: true"), "{file}");
+        assert!(file.contains("indexScope: INDEX_SCOPE_IDS"), "{file}");
     });
 }
 
@@ -294,7 +355,7 @@ fn the_kind_isolated_and_encrypted_change_only_while_the_collection_is_empty() {
         // Other fields change while it holds Documents.
         vault
             .update_collection(collection(
-                json!({"name": "notes", "schema": {"standard": {}, "excludeLexicalIndex": true}}),
+                json!({"name": "notes", "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_IDS"}}),
             ))
             .await
             .unwrap();
@@ -490,7 +551,7 @@ fn a_batch_that_succeeds_is_one_commit_with_one_result_per_operation() {
             )),
             // Later operations see the earlier ones.
             Ok(operation(
-                json!({"update": {"name": "a", "schema": {"standard": {}, "excludeLexicalIndex": true}}}),
+                json!({"update": {"name": "a", "schema": {"standard": {}, "indexScope": "INDEX_SCOPE_IDS"}}}),
             )),
             Ok(operation(json!({"delete": {"name": "gone"}}))),
             Ok(operation(

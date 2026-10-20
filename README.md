@@ -15,7 +15,7 @@ queries and searches come from a caller **Projector** passed when the Vault
 is opened. The library does not know a consumer's types or file format.
 The **Index** is derived (it is built on Lance), lives under
 `{vault}/.scheda/` (gitignored), and can be deleted and rebuilt from files. A folder is a Vault when it is a git
-working tree with the committed marker file `.scheda.yaml` (`version: 2`,
+working tree with the committed marker file `.scheda.yaml` (`version: 3`,
 the generation); `Scheda.Open` with the default mode creates a missing
 Vault, and adds the marker in one commit to a git working tree that lacks
 it, unless `OpenOptions.mode` asks to open an existing Vault only
@@ -121,7 +121,7 @@ crates refer to them with `workspace = true`.
 
 ## Build
 
-The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.2.0**).
+The only hermetic build is Bazel (`.bazelversion`). Bazelisk (or Bazel **9.3.0**).
 Put `bazel` on `PATH`. The Rust toolchain and crates come from the Bazel module.
 Host architecture only: no linux `amd64` / `arm64` cross targets.
 Target crates use the platform CRT (dynamic glibc on Linux). Only `clone`,
@@ -132,9 +132,10 @@ process. Git is not behind a feature: `https://`, `http://`, `ssh://`,
 and host-key checking match a plain `git` command. Features:
 `index` is on by default: the Index on Lance (the crates `lance`,
 `lance-index`, `lance-linalg`, pinned exactly, no cloud object stores), its
-queries, counts, and searches, and the ports. Building it needs `protoc`
-(`PROTOC`, or `protoc` on `PATH`), and a cold build is long; `cargo add
-scheda --no-default-features` is git plus Documents, without Lance.
+queries, counts, and searches, and the ports. Building it with Cargo needs
+`protoc` (`PROTOC`, or `protoc` on `PATH`); Bazel runs the prebuilt protoc
+of the proto toolchain and compiles no protoc. A cold build is long; `cargo
+add scheda --no-default-features` is git plus Documents, without Lance.
 `encrypt` is opt-in. Scheda is async only and needs a tokio runtime in the
 caller (`docs/22`): tokio is a required dependency, there is no `tokio`
 feature, and a blocking caller builds a multi-thread runtime and takes

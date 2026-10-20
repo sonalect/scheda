@@ -115,26 +115,39 @@ impl Declaration {
             .unwrap_or(false)
     }
 
-    /// Whether the Index holds none of the Projector's columns of the
-    /// collection (`exclude_lexical_index`).
+    /// What the Index holds of the collection: `INDEX_SCOPE_UNSPECIFIED`
+    /// is `INDEX_SCOPE_ALL`, so the result is one of the three scopes. A
+    /// value the contract does not define never reaches a declaration the
+    /// Vault keeps: validation refuses it.
     #[cfg(feature = "index")]
-    pub(crate) fn excludes_columns(&self) -> bool {
-        self.collection
+    pub(crate) fn index_scope(&self) -> scheda_api::v1::IndexScope {
+        match self
+            .collection
             .schema
             .as_option()
-            .and_then(|schema| schema.exclude_lexical_index)
-            .unwrap_or(false)
+            .and_then(|schema| schema.index_scope)
+            .and_then(|scope| scope.as_known())
+        {
+            Some(
+                scope @ (scheda_api::v1::IndexScope::INDEX_SCOPE_NO_VECTORS
+                | scheda_api::v1::IndexScope::INDEX_SCOPE_IDS),
+            ) => scope,
+            _ => scheda_api::v1::IndexScope::INDEX_SCOPE_ALL,
+        }
     }
 
-    /// Whether the Index holds no vector of the collection
-    /// (`exclude_vector_index`).
+    /// Whether the Index holds the Projector's columns of the collection:
+    /// every scope but `INDEX_SCOPE_IDS`.
     #[cfg(feature = "index")]
-    pub(crate) fn excludes_vectors(&self) -> bool {
-        self.collection
-            .schema
-            .as_option()
-            .and_then(|schema| schema.exclude_vector_index)
-            .unwrap_or(false)
+    pub(crate) fn holds_columns(&self) -> bool {
+        self.index_scope() != scheda_api::v1::IndexScope::INDEX_SCOPE_IDS
+    }
+
+    /// Whether the Index holds the vectors of the collection: only
+    /// `INDEX_SCOPE_ALL`.
+    #[cfg(feature = "index")]
+    pub(crate) fn holds_vectors(&self) -> bool {
+        self.index_scope() == scheda_api::v1::IndexScope::INDEX_SCOPE_ALL
     }
 }
 
@@ -564,12 +577,82 @@ mod tests {
         let plain = declared("name: c\nschema:\n  standard: {}\n").unwrap();
         assert!(!plain.isolated() && !plain.encrypted());
         let marked = declared(
-            "name: c\nschema:\n  standard: {}\n  isolated: true\n  excludeLexicalIndex: true\n  exclude_vector_index: true\n",
+            "name: c\nschema:\n  standard: {}\n  isolated: true\n  indexScope: INDEX_SCOPE_IDS\n",
         )
         .unwrap();
         assert!(marked.isolated() && !marked.encrypted());
         let sealed = declared("name: c\nschema:\n  standard: {}\n  encrypted: true\n").unwrap();
         assert!(sealed.encrypted() && !sealed.isolated());
+    }
+
+    #[cfg(feature = "index")]
+    #[test]
+    fn the_index_scope_is_read_and_unset_is_all() {
+        use scheda_api::v1::IndexScope;
+        let scope = |extra: &str| {
+            declared(&format!("name: c\nschema:\n  standard: {{}}\n{extra}"))
+                .unwrap()
+                .index_scope()
+        };
+        assert_eq!(scope(""), IndexScope::INDEX_SCOPE_ALL);
+        assert_eq!(
+            scope("  indexScope: INDEX_SCOPE_UNSPECIFIED\n"),
+            IndexScope::INDEX_SCOPE_ALL
+        );
+        assert_eq!(
+            scope("  indexScope: INDEX_SCOPE_ALL\n"),
+            IndexScope::INDEX_SCOPE_ALL
+        );
+        assert_eq!(
+            scope("  indexScope: INDEX_SCOPE_NO_VECTORS\n"),
+            IndexScope::INDEX_SCOPE_NO_VECTORS
+        );
+        assert_eq!(
+            scope("  index_scope: INDEX_SCOPE_IDS\n"),
+            IndexScope::INDEX_SCOPE_IDS
+        );
+        let ids =
+            declared("name: c\nschema:\n  standard: {}\n  indexScope: INDEX_SCOPE_IDS\n").unwrap();
+        assert!(!ids.holds_columns() && !ids.holds_vectors());
+        let no_vectors =
+            declared("name: c\nschema:\n  standard: {}\n  indexScope: INDEX_SCOPE_NO_VECTORS\n")
+                .unwrap();
+        assert!(no_vectors.holds_columns() && !no_vectors.holds_vectors());
+        let all = declared("name: c\nschema:\n  standard: {}\n").unwrap();
+        assert!(all.holds_columns() && all.holds_vectors());
+    }
+
+    #[test]
+    fn an_undefined_index_scope_is_invalid_argument() {
+        assert!(invalid(
+            "name: c\nschema:\n  standard: {}\n  indexScope: 9\n"
+        ));
+        assert!(invalid(
+            "name: c\nschema:\n  standard: {}\n  indexScope: INDEX_SCOPE_EVERYTHING\n"
+        ));
+        assert!(invalid(
+            "name: c\nschema:\n  standard: {}\n  indexScope: -1\n"
+        ));
+    }
+
+    #[cfg(feature = "index")]
+    #[test]
+    fn the_retired_index_keys_are_read_past_kept_and_never_acted_on() {
+        let text = "name: c\nschema:\n  standard: {}\n  excludeLexicalIndex: true\n  excludeVectorIndex: true\n";
+        let declaration = declared(text).unwrap();
+        let paths: Vec<String> = declaration
+            .unknown
+            .iter()
+            .map(|field| path_string(field.path()))
+            .collect();
+        assert_eq!(
+            paths,
+            ["schema.excludeLexicalIndex", "schema.excludeVectorIndex"]
+        );
+        assert!(declaration.holds_columns() && declaration.holds_vectors());
+        let bytes = encode(&declaration.collection, &declaration.unknown, Format::Yaml).unwrap();
+        let again = declare(&bytes, "c/.collection.yaml", "c").unwrap();
+        assert_eq!(again.unknown.iter().count(), 2);
     }
 
     #[test]
@@ -691,7 +774,7 @@ mod tests {
     }
 
     #[test]
-    fn the_fixtures_of_generation_two_load() {
+    fn the_fixtures_of_generation_three_load() {
         let consumer = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("testdata/consumer");
         if consumer.is_dir() {
             let vault = Scratch::new("fixtures");

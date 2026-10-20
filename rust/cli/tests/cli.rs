@@ -37,7 +37,7 @@ use common::{
 /// A collection the Index keeps lexically only, so a process without an
 /// embedder indexes it.
 const NOTES: &str = "tc_notes";
-const PLAIN: &str = r#"{"standard":{},"excludeVectorIndex":true}"#;
+const PLAIN: &str = r#"{"standard":{},"indexScope":"INDEX_SCOPE_NO_VECTORS"}"#;
 
 /// A new Vault at the scratch path with the collection [`NOTES`].
 fn new_vault(scratch: &Scratch) -> PathBuf {
@@ -719,7 +719,13 @@ fn create_collection_rejects_an_unknown_schema_key_and_writes_nothing() {
     let scratch = Scratch::new("unknown-key");
     let path = new_vault(&scratch);
     let before = (tree(&path), commits(&path));
-    for key in ["fields", "version", "layout"] {
+    for key in [
+        "fields",
+        "version",
+        "layout",
+        "excludeLexicalIndex",
+        "excludeVectorIndex",
+    ] {
         let schema = format!(r#"{{"standard":{{}},"{key}":1}}"#);
         let failed = run_on(
             &path,
@@ -753,6 +759,36 @@ fn create_collection_rejects_an_unknown_schema_key_and_writes_nothing() {
             .unwrap()
             .contains("journal.extra")
     );
+}
+
+#[test]
+fn create_collection_rejects_an_undefined_index_scope_and_writes_nothing() {
+    let scratch = Scratch::new("undefined-scope");
+    let path = new_vault(&scratch);
+    let before = (tree(&path), commits(&path));
+    for value in [r#""INDEX_SCOPE_EVERYTHING""#, "9"] {
+        let schema = format!(r#"{{"standard":{{}},"indexScope":{value}}}"#);
+        let failed = run_on(
+            &path,
+            &["create-collection", "tc_scope", "--schema", &schema],
+        );
+        assert_eq!(
+            failed.code(),
+            "VAULT_ERROR_CODE_INVALID_ARGUMENT",
+            "{value}"
+        );
+        assert_eq!((tree(&path), commits(&path)), before, "{value}");
+    }
+    let defined = run_on(
+        &path,
+        &[
+            "create-collection",
+            "tc_scope",
+            "--schema",
+            r#"{"standard":{},"indexScope":"INDEX_SCOPE_IDS"}"#,
+        ],
+    );
+    assert_eq!(defined.json()["schema"]["indexScope"], "INDEX_SCOPE_IDS");
 }
 
 #[test]

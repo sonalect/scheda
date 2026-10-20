@@ -689,7 +689,8 @@ impl ProjectorPort {
     /// # Errors
     ///
     /// `INVALID_ARGUMENT` when the columns break the rules of an
-    /// `IndexSchema` (a name used twice, a reserved name, an unset kind);
+    /// `IndexSchema` (a name used twice, a reserved name, a kind unset,
+    /// `COLUMN_KIND_UNSPECIFIED`, or not defined);
     /// the failure of the port otherwise.
     pub(crate) async fn columns(
         &self,
@@ -2228,6 +2229,11 @@ mod tests {
             vec![column("id")],
             vec![column("collection")],
             vec![column("")],
+            vec![column("title").with_kind(ColumnKind::COLUMN_KIND_UNSPECIFIED)],
+            vec![IndexColumn {
+                kind: Some(buffa::EnumValue::Unknown(9)),
+                ..column("title")
+            }],
         ] {
             let error = projector(proj(columns, IndexDoc::default()))
                 .await

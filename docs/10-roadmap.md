@@ -1,6 +1,6 @@
 # 10. Phases, acceptance, and deferrals
 
-Document 10 of the Scheda package. Version 0.57, 20 October 2026.
+Document 10 of the Scheda package. Version 0.58, 20 October 2026.
 
 This document does not add product rules. It assigns the checkable requirements in `03`–`09` to a phase, states when a binding is accepted, lists size targets, open questions, and what is deliberately out. It also records which phases the first binding has passed and what it codes next. Terms are in `02`. Codes: `OPS`.
 
@@ -41,7 +41,7 @@ The collection declaration parses `isolated: true` (SCH-15). `Vault.ListCollecti
 - Signing commits with the key `OpenOptions.signing` names (`20` D22).
 - `Listen`, a watch on changes (`20` D7).
 - A `bytes_type` option in `protoc-gen-buffa` (`20` D10); `bytes` stays `Vec<u8>`.
-- The anchor consumer's move to `0.22.0` (its call sites, error mapping, and ports change), and moving its Vaults to generation 2 (`20` D1), by hand, in its own repository after the release.
+- The anchor consumer's move to `0.22.0` (its call sites, error mapping, and ports change), and moving its Vaults to generation 3 (`20` D1; the `CHANGELOG.md` steps), by hand, in its own repository after the release.
 - A file watcher (the indexer polls `HEAD`; an uncommitted edit is not indexed); journal line delete; REL-4; extra language bindings.
 
 ---

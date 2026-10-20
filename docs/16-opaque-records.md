@@ -1,6 +1,6 @@
 # 16. Opaque records
 
-Document 16 of the Scheda package. Version 0.6, 17 September 2026.
+Document 16 of the Scheda package. Version 0.7, 20 October 2026.
 
 Work order so Scheda stops owning the format of Record contents. Records
 become opaque UTF-8 bytes. Collection declaration keeps write mode and
@@ -91,8 +91,8 @@ later F stage without amending this section first.
    age armor aside from SCH-16) is **later**, not this plan. Encrypted
    collections stay whole-file age armor of the UTF-8 plaintext (F8).
 2. **Collection declaration stays. Field Schema goes.** Kind,
-   `isolated`, `encrypted`, journal caps, `exclude_lexical_index`,
-   `exclude_vector_index`, and singleton `id` remain Vault data.
+   `isolated`, `encrypted`, journal caps, `index_scope`,
+   and singleton `id` remain Vault data.
    `version` on the declaration is the **collection generation**: how
    the declaration file is shaped **and** how Record files of that
    collection sit on disk (not field-schema `read_as` / migrate; that
@@ -341,7 +341,7 @@ Close only after F3. Amend `05` only. Do not generate proto yet (F9).
 
 `05` becomes the collection declaration: where it lives, discovery,
 kind, journal caps, singleton `id`, `isolated`, `encrypted`,
-`exclude_lexical_index`, `exclude_vector_index`. No `fields` key and no
+`index_scope`. No `fields` key and no
 `version` key. Either is `invalid` (unknown / retired).
 
 - [x] Discovery: directories at the Vault root that are not dot-dirs and

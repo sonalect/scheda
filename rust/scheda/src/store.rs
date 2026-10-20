@@ -181,10 +181,10 @@ impl Column {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Shape {
     /// The columns whose values the table holds (none for a collection
-    /// `exclude_lexical_index`).
+    /// `INDEX_SCOPE_IDS`).
     pub(crate) columns: Vec<Column>,
     /// The `text` columns whose text is embedded, by name (none for a
-    /// collection `exclude_vector_index`).
+    /// collection that is not `INDEX_SCOPE_ALL`).
     pub(crate) vectors: Vec<String>,
     /// The length of a vector, when there is a `vector` column.
     pub(crate) dimensions: Option<u32>,

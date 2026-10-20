@@ -230,7 +230,7 @@ fn a_mirror_built_by_hand_that_is_a_vault_opens_with_its_documents() {
 }
 
 #[test]
-fn an_empty_mirror_gives_a_vault_of_generation_two_in_one_commit() {
+fn an_empty_mirror_gives_a_vault_of_generation_three_in_one_commit() {
     both(|| async {
         let scratch = Scratch::new("empty-mirror");
         let mirror = bare(&scratch, "m.git");
@@ -238,7 +238,7 @@ fn an_empty_mirror_gives_a_vault_of_generation_two_in_one_commit() {
         assert_eq!(commits(&path), 1);
         assert_eq!(
             std::fs::read_to_string(path.join(".scheda.yaml")).unwrap(),
-            "version: 2\n"
+            "version: 3\n"
         );
         let ignore = std::fs::read_to_string(path.join(".gitignore")).unwrap();
         assert!(ignore.lines().any(|line| line == ".scheda/"), "{ignore}");
@@ -263,7 +263,7 @@ fn a_plain_repository_as_mirror_gets_the_marker_on_top_of_its_history() {
         assert_eq!(git_out(&path, &["show", "HEAD~1:readme.md"]), "hello");
         assert_eq!(
             std::fs::read_to_string(path.join(".scheda.yaml")).unwrap(),
-            "version: 2\n"
+            "version: 3\n"
         );
         assert_settled(&path, &[]);
     });
@@ -274,7 +274,7 @@ fn a_mirror_with_a_marker_of_another_generation_is_generation_and_leaves_nothing
     both(|| async {
         let scratch = Scratch::new("generation");
         let other = scratch.join("other");
-        work_tree(&other, &[(".scheda.yaml", "version: 3\n")]);
+        work_tree(&other, &[(".scheda.yaml", "version: 4\n")]);
         let target = scratch.join("here/vault");
         let error = open(&target, OpenOptions::default().with_mirror(url(&other)))
             .await
@@ -1182,7 +1182,7 @@ fn a_pull_of_a_mirror_of_another_generation_is_generation_and_changes_nothing() 
             &scratch,
             "hand",
             &mirror,
-            &[(".scheda.yaml", Some("version: 3\n"))],
+            &[(".scheda.yaml", Some("version: 4\n"))],
         );
         let before = Standing::of(&path);
         assert_refused(&a, &path, Code::Generation, Some(".scheda.yaml"), &before).await;
@@ -1207,7 +1207,7 @@ fn a_join_with_a_mirror_of_another_generation_is_generation_and_changes_nothing(
             &scratch,
             "hand",
             &mirror,
-            &[(".scheda.yaml", Some("version: 3\n"))],
+            &[(".scheda.yaml", Some("version: 4\n"))],
         );
         put(&a, "own.md", "own").await;
         let before = Standing::of(&path);
@@ -1268,7 +1268,7 @@ fn auto_sync_at_open_keeps_a_refused_pull_as_the_sync_failure() {
             &scratch,
             "hand",
             &mirror,
-            &[(".scheda.yaml", Some("version: 3\n"))],
+            &[(".scheda.yaml", Some("version: 4\n"))],
         );
         let before = head(&path);
         let again = open(

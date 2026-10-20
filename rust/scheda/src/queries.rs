@@ -125,8 +125,7 @@ impl Reading {
     ///
     /// `NOT_FOUND` for a collection that is not declared; `UNIMPLEMENTED`
     /// for an encrypted one, which no Index holds, and, when `filtered`,
-    /// for one `exclude_lexical_index`, whose columns the Index does not
-    /// hold.
+    /// for one `INDEX_SCOPE_IDS`, whose columns the Index does not hold.
     pub(crate) fn collection(&self, name: &str, filtered: bool) -> Result<Declaration, Error> {
         let Some(decl) = self.declarations.get(name) else {
             return Err(Fault::new(
@@ -142,10 +141,12 @@ impl Reading {
             )
             .into());
         }
-        if filtered && decl.excludes_columns() {
+        if filtered && !decl.holds_columns() {
             return Err(Fault::new(
                 VaultErrorCode::Unimplemented,
-                format!("the collection {name} is exclude_lexical_index: the Index holds none of its columns"),
+                format!(
+                    "the collection {name} is INDEX_SCOPE_IDS: the Index holds none of its columns"
+                ),
             )
             .into());
         }
@@ -164,7 +165,7 @@ impl Reading {
                 .declarations
                 .iter()
                 .filter(|decl| !decl.isolated() && !decl.encrypted())
-                .filter(|decl| !filtered || !decl.excludes_columns())
+                .filter(|decl| !filtered || decl.holds_columns())
                 .cloned()
                 .collect());
         }
@@ -183,9 +184,9 @@ impl Reading {
     }
 
     /// The `vector` columns of `collection` a search can use: those the
-    /// Vault's declaration keeps (none when the collection is
-    /// `exclude_vector_index`) that the Index's table holds. A table not
-    /// rebuilt yet after a flag moved holds other vectors than the
+    /// Vault's declaration keeps (none unless the collection is
+    /// `INDEX_SCOPE_ALL`) that the Index's table holds. A table not
+    /// rebuilt yet after the scope moved holds other vectors than the
     /// declaration gives; a search follows both. A collection the Index
     /// holds no table of yet has the declaration's.
     pub(crate) fn vectors(&self, collection: &str) -> Vec<String> {
@@ -202,7 +203,7 @@ impl Reading {
 
     /// The `fts` columns of `collection` a search can use: those the
     /// Vault's declaration keeps (none when the collection is
-    /// `exclude_lexical_index`) that the Index's table holds.
+    /// `INDEX_SCOPE_IDS`) that the Index's table holds.
     pub(crate) fn fts_columns(&self, collection: &str) -> Vec<String> {
         let Some(held) = self.commit.tables.get(collection) else {
             return Vec::new();

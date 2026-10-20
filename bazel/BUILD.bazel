@@ -1,6 +1,6 @@
 load("@bazel_utils_bazel//:bazel.bzl", "buildifier_format", "buildifier_test")
+load("@bazel_utils_buf//:protoc_prefix.bzl", "protoc_prefix")
 load("@bazel_utils_md//:markdown.bzl", "markdownlint_test")
-load(":protoc_include.bzl", "protoc_include")
 
 buildifier_test(
     name = "lint",
@@ -26,19 +26,17 @@ markdownlint_test(
 
 exports_files(["rustdoc_pages_index.html"])
 
-# The `protoc` of module `protobuf`. The build scripts of the Lance crates run
-# it through crate_universe annotations (`rust.MODULE.bazel`), which cannot
-# see the root module's repository names, only `@@//` labels.
-alias(
-    name = "protoc",
-    actual = "@protobuf//:protoc",
+# The prebuilt `protoc` of the proto toolchain as `bin/protoc`, with the
+# well-known types Lance's protos import under `include/google/protobuf/`.
+# The build scripts of the Lance crates run it through crate_universe
+# annotations (`rust.MODULE.bazel`), which cannot see the root module's
+# repository names, only `@@//` labels. Never `@protobuf//:protoc`: that
+# target compiles protoc and the protobuf C++ library from source.
+protoc_prefix(
+    name = "protoc_prefix",
     visibility = ["//visibility:public"],
-)
-
-# The include directory that goes with it: `google/protobuf/any.proto` and the
-# other well-known types, which Lance's protos import.
-protoc_include(
-    name = "protoc_include",
-    srcs = ["@protobuf//:well_known_type_protos"],
-    visibility = ["//visibility:public"],
+    wkts = [
+        "@protobuf//:descriptor_proto_srcs",
+        "@protobuf//:well_known_type_protos",
+    ],
 )

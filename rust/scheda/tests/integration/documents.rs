@@ -1275,7 +1275,7 @@ fn a_document_committed_by_a_person_is_read_replaced_and_deleted() {
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 2\n"),
+                (".scheda.yaml", "version: 3\n"),
                 (
                     "notes/.collection.yaml",
                     "name: notes\nschema:\n  standard: {}\n",

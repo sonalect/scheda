@@ -15,7 +15,7 @@ use common::{Scratch, Setup, collection, library, names, run, run_on, run_on_wit
 
 const JOURNAL: &str = r#"{"journal":{}}"#;
 const SINGLETON: &str = r#"{"singleton":{"id":"main"}}"#;
-const PLAIN: &str = r#"{"standard":{},"excludeVectorIndex":true}"#;
+const PLAIN: &str = r#"{"standard":{},"indexScope":"INDEX_SCOPE_NO_VECTORS"}"#;
 
 /// A new Vault at the scratch path with the collections `ag_notes`
 /// (standard), `ag_log` (journal), `ag_one` (singleton), and `ag_local`
@@ -39,7 +39,7 @@ fn declared(scratch: &Scratch) -> PathBuf {
         ("ag_one", SINGLETON),
         (
             "ag_local",
-            r#"{"standard":{},"isolated":true,"excludeVectorIndex":true}"#,
+            r#"{"standard":{},"isolated":true,"indexScope":"INDEX_SCOPE_NO_VECTORS"}"#,
         ),
     ] {
         assert_eq!(
@@ -112,12 +112,9 @@ fn list_collections_matches_the_declaration_files() {
     assert_eq!(
         kinds,
         [
-            (
-                "ag_local",
-                vec!["excludeVectorIndex", "isolated", "standard"]
-            ),
+            ("ag_local", vec!["indexScope", "isolated", "standard"]),
             ("ag_log", vec!["journal"]),
-            ("ag_notes", vec!["excludeVectorIndex", "standard"]),
+            ("ag_notes", vec!["indexScope", "standard"]),
             ("ag_one", vec!["singleton"]),
         ]
     );

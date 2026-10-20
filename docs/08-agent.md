@@ -1,6 +1,6 @@
 # 08. Agent surface
 
-Document 8 of the Scheda package. Version 0.33, 19 October 2026.
+Document 8 of the Scheda package. Version 0.34, 20 October 2026.
 
 How an AI agent uses Scheda: the same calls as `07`, over a thin
 transport. Collection listing is `Vault.ListCollections` (AGT-1). The
@@ -33,7 +33,7 @@ Include when a mirror exists: `Mirror.Push`, `Mirror.Pull`, `Mirror.Sync`, and `
 
 ## 2. What the agent must not assume
 
-- That `Vault.ListCollections` lists queryable field names. Columns are the `Projector`'s (`13`). Collection-level `exclude_lexical_index` / `exclude_vector_index` still apply (SCH-9).
+- That `Vault.ListCollections` lists queryable field names. Columns are the `Projector`'s (`13`). A collection's `index_scope` still applies (SCH-9).
 - That `Collection.Search` is a language-model answer (QRY-3).
 - That a CLI write without `--note` is accepted, or that a batch is split into commits: a batch is one write and one commit (GIT-2).
 - That `open` pulled unless `auto_sync` was on and the pull was a fast-forward (GIT-10).

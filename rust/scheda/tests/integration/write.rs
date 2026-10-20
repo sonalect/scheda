@@ -24,11 +24,11 @@ async fn opened(path: &Path) -> DynVaultAsync {
     open(path, OpenOptions::default()).await.unwrap()
 }
 
-/// The marker is of generation 2 and `.gitignore` ignores Scheda's folders.
+/// The marker is of generation 3 and `.gitignore` ignores Scheda's folders.
 fn assert_marked(path: &Path) {
     assert_eq!(
         std::fs::read_to_string(path.join(".scheda.yaml")).unwrap(),
-        "version: 2\n"
+        "version: 3\n"
     );
     let ignore = std::fs::read_to_string(path.join(".gitignore")).unwrap();
     assert!(ignore.lines().any(|line| line == ".scheda/"), "{ignore}");

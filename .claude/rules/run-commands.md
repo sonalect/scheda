@@ -40,7 +40,12 @@ need `protoc`. Cargo: `protoc` on `PATH`, or `PROTOC=/path/to/protoc` (and
 `PROTOC_INCLUDE` when its `include/` directory is not next to the binary).
 Do not enable Lance's `protoc` feature: it builds protoc from source.
 Bazel needs nothing: `rust.MODULE.bazel` gives those build scripts
-`//bazel:protoc` and `//bazel:protoc_include`.
+`//bazel:protoc_prefix`, the prebuilt protoc of the proto toolchain with the
+well-known types (`protoc_prefix` of `bazel_utils_buf`). Anything else in
+Bazel that needs protoc takes it the same way or through the proto
+toolchain, never from `@protobuf//:protoc`: that `cc_binary` compiles protoc
+and the protobuf C++ library from source. `bazel/no_protobuf_source.bzl`,
+on in `.bazelrc`, fails a build that reaches one.
 
 ## No sandbox
 

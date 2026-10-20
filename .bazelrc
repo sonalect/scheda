@@ -11,6 +11,11 @@ common:linux --@pypi//venv=scheda
 common:macos --@pypi//venv=scheda
 # rules_rust tests need runfiles; Windows defaults this off.
 common --enable_runfiles
+# Nothing in the build compiles protoc or the protobuf C++ library: a target
+# that reaches `@protobuf//:protoc` or a C++ compile of module `protobuf`
+# fails its build (`bazel/no_protobuf_source.bzl`).
+build --aspects=//bazel:no_protobuf_source.bzl%no_protobuf_source
+build --output_groups=+no_protobuf_source
 # Host `git` on PATH. Scheda invokes the system git executable.
 # Do not inherit HOME: Bazel already gives tests a scratch home, and the
 # developer's ~/.gitconfig must not change outcomes. Empty GIT_CONFIG_*

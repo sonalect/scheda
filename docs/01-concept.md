@@ -1,6 +1,6 @@
 # 01. Concept
 
-Document 1 of the Scheda package. Version 0.52, 19 October 2026.
+Document 1 of the Scheda package. Version 0.53, 20 October 2026.
 
 This is the entry point. It is written so a reader can decide whether Scheda is the right kind of store before meeting collection declarations, git lock details, or the library API. Technical contracts live in later documents. Terms used here are defined in `02. Glossary`.
 
@@ -146,6 +146,6 @@ Checkable requirements live in `03`–`09` and `13`, and are gathered with phase
 
 ## 7. Status
 
-The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); the crate has no default features. Consumer readiness P0–P16 is in (`12` §4). Age encryption of a collection shipped as `0.6.0` (`12` P14), one Index for the Vault is in (`12` P15), and a secret in the CLI shipped as `12` P16. Extra language bindings and the rest of `10` §5 stay deferred. Opaque Records (`16` F0–F19) are in, and the proto contract of `20` (0.22, Vault generation 2) is the API. That crate is the first implementation, not the definition of the product.
+The repository currently holds this design package and the first Rust binding. In `scheda`, **core** (C0–C8, C10), **search** (C9), and **agent** (A0–A7) are accepted (`10`, `11`, `12`). Isolated I/O is in (`12` P4). The slug is the only `id` rule (`12` P5). `find` and `search` are opt-in crate features (`12` P8); the crate has no default features. Consumer readiness P0–P16 is in (`12` §4). Age encryption of a collection shipped as `0.6.0` (`12` P14), one Index for the Vault is in (`12` P15), and a secret in the CLI shipped as `12` P16. Extra language bindings and the rest of `10` §5 stay deferred. Opaque Records (`16` F0–F19) are in, and the proto contract of `20` (0.22, Vault generation 2; generation 3 replaced the two Index flags by `index_scope`) is the API. That crate is the first implementation, not the definition of the product.
 
 The product name is Scheda. The first package name is the Rust crate `scheda`. Neither name claims compatibility with another database.

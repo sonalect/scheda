@@ -8,6 +8,65 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+This release is breaking: the two Index flags of a collection become one
+setting, and the Vault format moves to generation 3. To move from `0.22.1`
+(or `0.22.0`), migrate each Vault by hand (no code does it):
+
+- Set the marker `.scheda.yaml` to `version: 3`.
+- In each collection file, replace the keys `excludeLexicalIndex` and
+  `excludeVectorIndex`: both `true` becomes `indexScope: INDEX_SCOPE_IDS`;
+  only `excludeVectorIndex: true` becomes
+  `indexScope: INDEX_SCOPE_NO_VECTORS`; only `excludeLexicalIndex: true`
+  has no equivalent, so drop it (the columns are then held too) or use
+  `INDEX_SCOPE_IDS` (no vectors); neither key set, drop both. Commit.
+- Until then `open` fails with `GENERATION`. A leftover old key in a
+  generation 3 file is read past and ignored, so remove it.
+- From `0.21.0`: the steps of `0.22.0` below, with the marker set straight
+  to `version: 3`, plus these.
+
+### Changed
+
+- `Schema.exclude_lexical_index` and `Schema.exclude_vector_index` are
+  replaced by one enum, `Schema.index_scope` (`indexScope` in Protobuf JSON
+  and in a collection file; field 6): `INDEX_SCOPE_ALL` (unset; identity,
+  values, and vectors), `INDEX_SCOPE_NO_VECTORS` (identity and values; the
+  embedder is never called for the collection and a search ranks it by the
+  lexical leg only), and `INDEX_SCOPE_IDS` (identity only; a query or count
+  that filters or orders, and a search of it, is `UNIMPLEMENTED`). An
+  undefined value is `INVALID_ARGUMENT`. Changing the scope never makes the
+  Index stale: the next round rebuilds the table of that collection. The
+  strict parse of a caller's command refuses a command that still carries
+  `excludeLexicalIndex` or `excludeVectorIndex`.
+- The Vault format is generation 3: `VaultMarker.version` is `3`, and a
+  Vault of generation 2 is `GENERATION`.
+
+### Removed
+
+- The state "values out, vectors kept" (`exclude_lexical_index` alone): the
+  vector leg alone ranking a collection without columns. A search of a
+  collection that holds identity only is now `UNIMPLEMENTED`, as before
+  when both flags were set.
+- `Schema.exclude_lexical_index` and `Schema.exclude_vector_index`, without
+  a reserved field number; field 6 is now `index_scope`.
+
+### Fixed
+
+- An `OpenOptions.mode` the contract does not define is `INVALID_ARGUMENT`.
+  It was taken as `OPEN_MODE_OPEN_OR_CREATE`, so `open` could create a
+  Vault the caller did not ask for.
+- A Projector column whose `kind` is `COLUMN_KIND_UNSPECIFIED` or not
+  defined makes its answer `INVALID_ARGUMENT`, as the contract says. The
+  column was left out of the Index without a word.
+- The Bazel build no longer compiles protoc and the protobuf C++ library
+  from source (about 2,800 C++ compile actions of protobuf, Abseil, and
+  zlib). The build scripts of the Lance crates run the prebuilt protoc of
+  the proto toolchain with the well-known types (`//bazel:protoc_prefix`,
+  `protoc_prefix` of `bazel_utils_buf`); `//bazel:protoc` and
+  `//bazel:protoc_include` are gone. A Bazel build or test that reaches
+  `@protobuf//:protoc` or a C++ compile of module `protobuf` now fails
+  (`bazel/no_protobuf_source.bzl`). Cargo is unchanged: `PROTOC`, or
+  `protoc` on `PATH`.
+
 ## [0.22.1] - 2026-10-20
 
 Two compatible additions; nothing changes for a caller of `0.22.0`.

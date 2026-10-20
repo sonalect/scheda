@@ -22,78 +22,50 @@ cargo = use_extension(
 )
 
 # The Lance crates compile .proto files in their build scripts with
-# prost-build, which runs the `protoc` named by `PROTOC`. Hand them the Bazel
-# `protoc` and its well-known-type include directory (`//bazel:protoc`,
-# `//bazel:protoc_include`, module `protobuf`).
+# prost-build, which runs the `protoc` named by `PROTOC` and imports the
+# well-known types from `PROTOC_INCLUDE`. Hand them the prebuilt protoc of the
+# proto toolchain (`//bazel:protoc_prefix`), never `@protobuf//:protoc`: that
+# target compiles protoc from source.
+LANCE_PROTOC_DATA = ["@@//bazel:protoc_prefix"]
+
+LANCE_PROTOC_ENV = {
+    "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+    "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include",
+}
+
 cargo.annotation(
-    build_script_data = [
-        "@@//bazel:protoc",
-        "@@//bazel:protoc_include",
-    ],
-    build_script_env = {
-        "PROTOC": "$(execpath @@//bazel:protoc)",
-        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
-    },
+    build_script_data = LANCE_PROTOC_DATA,
+    build_script_env = LANCE_PROTOC_ENV,
     crate = "lance",
     repositories = ["scheda_cargo"],
 )
 cargo.annotation(
-    build_script_data = [
-        "@@//bazel:protoc",
-        "@@//bazel:protoc_include",
-    ],
-    build_script_env = {
-        "PROTOC": "$(execpath @@//bazel:protoc)",
-        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
-    },
+    build_script_data = LANCE_PROTOC_DATA,
+    build_script_env = LANCE_PROTOC_ENV,
     crate = "lance-datafusion",
     repositories = ["scheda_cargo"],
 )
 cargo.annotation(
-    build_script_data = [
-        "@@//bazel:protoc",
-        "@@//bazel:protoc_include",
-    ],
-    build_script_env = {
-        "PROTOC": "$(execpath @@//bazel:protoc)",
-        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
-    },
+    build_script_data = LANCE_PROTOC_DATA,
+    build_script_env = LANCE_PROTOC_ENV,
     crate = "lance-encoding",
     repositories = ["scheda_cargo"],
 )
 cargo.annotation(
-    build_script_data = [
-        "@@//bazel:protoc",
-        "@@//bazel:protoc_include",
-    ],
-    build_script_env = {
-        "PROTOC": "$(execpath @@//bazel:protoc)",
-        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
-    },
+    build_script_data = LANCE_PROTOC_DATA,
+    build_script_env = LANCE_PROTOC_ENV,
     crate = "lance-file",
     repositories = ["scheda_cargo"],
 )
 cargo.annotation(
-    build_script_data = [
-        "@@//bazel:protoc",
-        "@@//bazel:protoc_include",
-    ],
-    build_script_env = {
-        "PROTOC": "$(execpath @@//bazel:protoc)",
-        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
-    },
+    build_script_data = LANCE_PROTOC_DATA,
+    build_script_env = LANCE_PROTOC_ENV,
     crate = "lance-index",
     repositories = ["scheda_cargo"],
 )
 cargo.annotation(
-    build_script_data = [
-        "@@//bazel:protoc",
-        "@@//bazel:protoc_include",
-    ],
-    build_script_env = {
-        "PROTOC": "$(execpath @@//bazel:protoc)",
-        "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)",
-    },
+    build_script_data = LANCE_PROTOC_DATA,
+    build_script_env = LANCE_PROTOC_ENV,
     crate = "lance-table",
     repositories = ["scheda_cargo"],
 )

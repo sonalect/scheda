@@ -1,10 +1,10 @@
 # 05. Collection declaration
 
-Document 5 of the Scheda package. Version 0.54, 20 October 2026.
+Document 5 of the Scheda package. Version 0.55, 20 October 2026.
 
 Normative rules for collection declarations as data in the Vault: where
 they live, discovery, kind, journal caps, singleton `id`, isolation,
-encryption, and collection-level Index exclusion; and the calls that
+encryption, and what the Index holds of a collection (`index_scope`); and the calls that
 write them. Terms are in `02`. Kinds and identity are in `03`. Index
 columns and `Projector` are `06` / `13`. Isolation trees stay `09`. Codes:
 `SCH`. Phase **core** unless marked **search** or **later**.
@@ -46,7 +46,7 @@ perimeter marks, not Document fields.
 (directory), kind (`standard` | `journal` | `singleton`, the one arm of
 `schema`), and the keys in §7 that apply to that kind (journal caps; fixed
 Document `id` for `singleton`; `isolated`; `encrypted`;
-`exclude_lexical_index`; `exclude_vector_index`). There is no `version`
+`index_scope`). There is no `version`
 (SCH-13) and no `fields` key. There is no layout template. Document file
 paths are fixed (MOD-8). Kind does not change while the collection holds
 Documents (MOD-2). Journal caps may change (SCH-14). *Check:* a file with
@@ -146,8 +146,8 @@ envelope (`03` MOD-5, MOD-7, MOD-16). The declaration does not add a
 pattern on top of the library slug (MOD-6).
 
 **SCH-7 (retired).** `no_body` and per-body `exclude_fts` /
-`exclude_vector`. There is no Scheda body. Collection-level Index
-exclusion is SCH-9.
+`exclude_vector`. There is no Scheda body. The collection-level
+Index scope is SCH-9.
 
 **SCH-8 (retired as a Schema rule).** Filter keys were Schema fields
 plus `body`. `Filter` field names other than identity come from the
@@ -178,7 +178,7 @@ and `Upsert` accept any bytes (MOD-11). They do not call
 on disk. `Collection.Get` by `id` returns the file bytes if the path
 exists (journal: the envelope payload). `Vault.Check` does not type-check
 Document contents (`03` MOD-13). A Document that `Project` rejects or
-omits stays out of the lexical and vector indexes; that is a `Projector`
+omits stays out of the Index; that is a `Projector`
 failure (`06`), not a Schema type check. *Check:* bytes that a later
 `Projector` would omit still return from `Get`; the write of those bytes
 succeeds (`tests/search.rs`:
@@ -188,37 +188,55 @@ the Document is out of the Index and its file stays; `tests/documents.rs`:
 
 ---
 
-## 4. Index exclusion
+## 4. Index scope
 
-**SCH-9. A collection may stay out of either Index.**
-`exclude_lexical_index: true` keeps the Projector's columns of every
-Document of that collection out of the Index: nothing of it is filtered,
-ordered, or searched by words. A `Query` or `Count` that names it and
-filters or orders is `UNIMPLEMENTED`, not an empty hit list; one that does
-neither lists or counts its Documents by id. The journal id map is a
-separate file and is still written, so keyed `Get` does not need the Index.
-`exclude_vector_index: true` keeps Documents out of the vector Index: the
-background indexer, the only caller of the embedder, never embeds that
-collection; `Search` then uses the lexical
-leg only. Either flag, or both. `Search` is `UNIMPLEMENTED` only when the
-collection has no remaining search leg (both flags, or encrypted —
-SCH-16). Both flags are redundant on `encrypted` and allowed. A
-`journal` may set either flag. Default for each is `false`. Changing a flag is never `INDEX_STALE`: the next indexer round rebuilds the table of that collection to gain or lose its values and vectors, and counts, queries, and searches answer meanwhile and follow the declaration (`06` IDX-9). Per-field
-FTS / vector marks are not declaration keys; they belong on the
-`Projector` (`06` / `13`). *Check (**search**):* a `Query` that names a
-lexically excluded collection and filters is `UNIMPLEMENTED`
+**SCH-9. A collection chooses what the Index holds of it.**
+`Schema.index_scope` (`indexScope`) is one of three scopes; unset
+(`INDEX_SCOPE_UNSPECIFIED`) is `INDEX_SCOPE_ALL`, and a value the contract
+does not define is `INVALID_ARGUMENT`.
+
+- `INDEX_SCOPE_ALL`: identity, the values of the Projector's columns, and
+  the vectors of its `vector` columns.
+- `INDEX_SCOPE_NO_VECTORS`: identity and the values; no vector. The
+  background indexer, the only caller of the embedder, never embeds that
+  collection, and `Search` ranks it by the lexical leg only.
+- `INDEX_SCOPE_IDS`: identity only. A `Query` or `Count` that names it and
+  filters or orders is `UNIMPLEMENTED`, not an empty hit list; one that
+  does neither lists or counts its Documents by id. A `Search` that names
+  it is `UNIMPLEMENTED`: no leg ranks it. In a Vault `Query` that filters
+  or orders, and in a Vault `Search` with an empty set, it is left out.
+
+The journal id map is a separate file and is still written in every scope,
+so keyed `Get` does not need the Index. The scope is redundant on
+`encrypted`, which no Index holds, and allowed; a `journal` may set it.
+Changing the scope is never `INDEX_STALE`: the next indexer round rebuilds
+the table of that collection to gain or lose its values and vectors, and
+counts, queries, and searches answer meanwhile and follow the declaration
+(`06` IDX-9). Per-field FTS / vector marks are not declaration keys; they
+belong on the `Projector` (`06` / `13`). *Check (**search**):* a `Query`
+that names an `INDEX_SCOPE_IDS` collection and filters is `UNIMPLEMENTED`
 (`tests/query.rs`:
 `an_isolated_collection_is_scanned_only_when_named_and_one_without_an_index_is_refused`);
-a `Search` on a collection with only `exclude_vector_index` still returns
-lexical hits, one with only `exclude_lexical_index` is searched by the
-vector leg, and one with both legs left out is `UNIMPLEMENTED` when named
-(`tests/search.rs`:
-`a_collection_a_leg_leaves_out_is_ranked_by_the_other_and_one_both_leave_out_is_unimplemented`); flipping a flag keeps the Index fresh and rebuilds the table (`tables::tests::flipping_an_exclusion_flag_rebuilds_the_table_and_leaves_the_index_fresh`);
-the marks are read from the declaration (`collection::tests::the_marks_are_read`),
-and a collection with `exclude_vector_index` is not embedded
-(`tests/search.rs`:
-`a_collection_a_leg_leaves_out_is_ranked_by_the_other_and_one_both_leave_out_is_unimplemented`
-counts the embedded texts).
+a `Search` on an `INDEX_SCOPE_NO_VECTORS` collection returns lexical hits
+and embeds none of its texts, and one on an `INDEX_SCOPE_IDS` collection
+is `UNIMPLEMENTED` when named (`tests/search.rs`:
+`a_collection_without_vectors_is_ranked_by_the_lexical_leg_and_an_ids_one_is_unimplemented`);
+moving a collection through the scopes keeps the Index fresh and rebuilds
+the table (`tables::tests`:
+`moving_a_collection_between_index_scopes_rebuilds_the_table_and_leaves_the_index_fresh`);
+the scope is read from the declaration, unset is `INDEX_SCOPE_ALL`, and an
+undefined value is `INVALID_ARGUMENT` (`collection::tests`:
+`the_index_scope_is_read_and_unset_is_all`,
+`an_undefined_index_scope_is_invalid_argument`; `tests/collections.rs`:
+`an_undefined_index_scope_is_invalid_argument_and_stores_nothing`). The
+keys `excludeLexicalIndex` and `excludeVectorIndex`, which `index_scope`
+replaced in generation 3, are unknown keys in a file: read past, kept, and
+never acted on (`collection::tests`:
+`the_retired_index_keys_are_read_past_kept_and_never_acted_on`;
+`tests/collections.rs`:
+`a_retired_index_key_in_a_collection_file_is_read_past_kept_and_not_acted_on`),
+and a caller's command that carries one is refused (`stored::tests`:
+`a_retired_index_key_of_a_declaration_is_refused_not_dropped`).
 
 ---
 
@@ -337,7 +355,7 @@ path (`collection::tests`: `load_reads_every_collection_directory_and_skips_the_
 
 `Vault.ListCollections` and `Collection.Describe` give each declaration as
 the message `CollectionDeclaration`, the same as the file. The fixtures of
-generation 2 load (`collection::tests`: `the_fixtures_of_generation_two_load`).
+generation 3 load (`collection::tests`: `the_fixtures_of_generation_three_load`).
 
 | Key | Required | Meaning |
 |---|---|---|
@@ -351,10 +369,9 @@ generation 2 load (`collection::tests`: `the_fixtures_of_generation_two_load`).
 | `schema.journal.daily` | `journal` only | Empty mapping. Calendar rotation UTC, still size-first. Omitted → no calendar rotation. |
 | `schema.isolated` | no | Boolean. Default `false`. `true` marks SCH-15: Documents under `{vault}/.isolated/{name}/`. Listed as isolated (ISO-3). |
 | `schema.encrypted` | no | Boolean. Default `false`. `true` marks SCH-16: Document files are age v1 armor and I/O needs the Vault secret. Independent of `isolated`. `true` on `journal` is `INVALID_ARGUMENT`. Listed as encrypted (ISO-3). |
-| `schema.excludeLexicalIndex` (`exclude_lexical_index`) | no | Boolean. Default `false`. `true` marks SCH-9: none of the Projector's columns of this collection is written to the Index. A `Query` that names it and filters or orders is `UNIMPLEMENTED`. |
-| `schema.excludeVectorIndex` (`exclude_vector_index`) | no | Boolean. Default `false`. `true` marks SCH-9: no Document of this collection is embedded or stored in the vector Index. |
+| `schema.indexScope` (`index_scope`) | no | Enum `IndexScope`. Unset → `INDEX_SCOPE_ALL`. `INDEX_SCOPE_NO_VECTORS` keeps the values and no vector; `INDEX_SCOPE_IDS` keeps the identity only (SCH-9). An undefined value is `INVALID_ARGUMENT`. |
 | `schema.document` | — | Retired kind key (before generation 2; the kind is `standard`). It names no kind this Scheda knows: a file whose only arm is `document` is `INVALID_ARGUMENT` (`collection::tests`: `the_old_kind_key_names_no_kind_and_is_invalid_argument`). |
-| `version`, `kind`, `declaration`, `fields`, `layout`, `body`, `id` | — | Retired keys of earlier generations. Unknown now: read past and kept, never acted on (SCH-3, SCH-13). |
+| `version`, `kind`, `declaration`, `fields`, `layout`, `body`, `id`, `excludeLexicalIndex`, `excludeVectorIndex` | — | Retired keys of earlier generations (the last two in generation 3, replaced by `indexScope`). Unknown now: read past and kept, never acted on (SCH-3, SCH-13). |
 
 `encrypted` on a `journal` is rejected. There is no field-declaration
 table. Nested `fields` / `values` / `edge` keys are unknown keys (SCH-3).

@@ -1113,28 +1113,14 @@ mod on_lance {
     }
 
     #[test]
-    fn a_collection_a_leg_leaves_out_is_ranked_by_the_other_and_one_both_leave_out_is_unimplemented()
-     {
+    fn a_collection_without_vectors_is_ranked_by_the_lexical_leg_and_an_ids_one_is_unimplemented() {
         both(|| async {
-            let fx = Fixture::new("search-excluded").await;
-            fx.declare("vec", json!({"exclude_lexical_index": true}))
+            let fx = Fixture::new("search-scopes").await;
+            fx.declare("words", json!({"indexScope": "INDEX_SCOPE_NO_VECTORS"}))
                 .await;
-            fx.declare("words", json!({"exclude_vector_index": true}))
+            fx.declare("quiet", json!({"indexScope": "INDEX_SCOPE_IDS"}))
                 .await;
-            fx.declare(
-                "quiet",
-                json!({"exclude_lexical_index": true, "exclude_vector_index": true}),
-            )
-            .await;
             let embedded = fx.calls.embedded.load(Ordering::SeqCst);
-            for (id, title, topic) in [
-                ("v1", "kitten", "cat kitten feline"),
-                ("v2", "kitten too", "kitten feline"),
-                ("v3", "puppy", "dog puppy canine"),
-            ] {
-                fx.put_unwaited("vec", id, &json!({"title": title, "topic": topic}))
-                    .await;
-            }
             fx.put_unwaited(
                 "words",
                 "w1",
@@ -1147,36 +1133,26 @@ mod on_lance {
                 .await;
             assert_eq!(
                 fx.calls.embedded.load(Ordering::SeqCst),
-                embedded + 3 + 1,
-                "the texts of vec and notes only"
+                embedded + 1,
+                "the text of notes only: the embedder is never called for words or quiet"
             );
 
-            // Without its columns: the vector leg alone ranks it.
-            let vec = fx.collection("vec").await;
-            let found = run(&vec, json!({"text": "kitten", "k": 3})).await;
-            assert_eq!(summary(&found), VectorLeg::VECTOR_LEG_RAN);
-            assert_eq!(ids(&found).len(), 3);
-            assert!(hits(&found).iter().all(|hit| hit.lexical_score.is_none()));
-            let found = run(
-                &vec,
-                json!({"like": {"collection": "vec", "id": "v1"}, "k": 1}),
-            )
-            .await;
-            assert_eq!(ids(&found), ["v2"]);
-            // A filter needs the columns.
-            let filter = json!({"exists": {"column": "kind"}});
-            let error = refused(&vec, json!({"text": "kitten", "filter": filter})).await;
-            assert!(error.is(Code::Unimplemented), "{error}");
-
-            // Without its vectors: the lexical leg alone.
-            let found = run(&fx.collection("words").await, json!({"text": "kryptonite"})).await;
+            // Without its vectors: the lexical leg alone, filter included.
+            let words = fx.collection("words").await;
+            let found = run(&words, json!({"text": "kryptonite"})).await;
             assert_eq!(ids(&found), ["w1"]);
+            assert_eq!(summary(&found), VectorLeg::VECTOR_LEG_NO_VECTOR_COLLECTION);
             assert!(hits(&found)[0].lexical_score.is_some());
             assert!(hits(&found)[0].vector_score.is_none());
+            let filter = json!({"exists": {"column": "kind"}});
+            run(&words, json!({"text": "kryptonite", "filter": filter})).await;
 
-            // Without both: refused when named, left out of the Vault's
-            // scope.
-            let error = refused(&fx.collection("quiet").await, json!({"text": "kitten"})).await;
+            // Identity only: refused when named, with a filter or without,
+            // left out of the Vault's scope.
+            let quiet = fx.collection("quiet").await;
+            let error = refused(&quiet, json!({"text": "kitten"})).await;
+            assert!(error.is(Code::Unimplemented), "{error}");
+            let error = refused(&quiet, json!({"text": "kitten", "filter": filter})).await;
             assert!(error.is(Code::Unimplemented), "{error}");
             let error = fx
                 .vault
@@ -1187,7 +1163,6 @@ mod on_lance {
             assert!(error.is(Code::Unimplemented), "{error}");
             let all =
                 keys(&run_vault(&fx.vault, json!([]), json!({"text": "kitten", "k": 10})).await);
-            assert!(all.contains(&key("vec", "v1")));
             assert!(all.contains(&key("notes", "n1")));
             assert!(all.iter().all(|(collection, _)| collection != "quiet"));
         });

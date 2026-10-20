@@ -1,6 +1,6 @@
 # 14. CLI
 
-Document 14 of the Scheda package. Version 0.84, 20 October 2026.
+Document 14 of the Scheda package. Version 0.85, 20 October 2026.
 
 The `scheda` binary: a thin encoding of `07`. Each subcommand is one rpc
 of the contract (`api/scheda/v1`). The process opens the Vault from the
@@ -29,7 +29,7 @@ collection in scope, in a query of the Vault too (`13`). The Projector is
 the CLI's: the library installs none when a program passes none.
 
 Because `body` carries the `vector` mark, a CLI process indexes only when
-it has an embedder flag, unless the collection sets `exclude_vector_index`.
+it has an embedder flag, unless the collection's `indexScope` is not `INDEX_SCOPE_ALL`.
 The Index follows `HEAD` in the background of whichever process has the
 ports (`06` IDX-9); a short CLI process indexes what it finds and stops
 when it closes.
@@ -185,7 +185,7 @@ same JSON: `the_cli_and_the_library_give_the_same_json_and_code`,
   Vault no process has indexed yet a query waits `--index-wait-timeout-ms`
   and then fails (`DEADLINE_EXCEEDED`). Index it with a process that has an
   embedder flag (`index watch --until-settled`), or declare the collection
-  with `excludeVectorIndex`. The indexer of the process without the embedder
+  with `indexScope` `INDEX_SCOPE_NO_VECTORS`. The indexer of the process without the embedder
   reports `lastError` as `FAILED_PRECONDITION` naming the embedder (`index
   watch`).
 
@@ -218,9 +218,8 @@ sealed. An unknown name is `NOT_FOUND`. An isolated name is an ordinary
 query: the one Vault Index holds those Documents (ISO-4), and a set that
 mixes isolated with plain names is one page. An encrypted name is
 `UNIMPLEMENTED`, because no Index holds one (ISO-4). A collection with
-both Index legs excluded is `UNIMPLEMENTED` on a search when named; one
-with `exclude_lexical_index` is `UNIMPLEMENTED` on a query that filters or
-orders when named. Left unnamed, such collections are left out of the
+`INDEX_SCOPE_IDS` is `UNIMPLEMENTED` on a search when named, and on a query
+that filters or orders when named. Left unnamed, such collections are left out of the
 Vault's scope. Keys and revisions only unless the request sets
 `includeRaw`. The filter is the typed tree of `13` §3 (`allOf`, `anyOf`,
 `noneOf`, `term`, `terms`, `range`, `exists`, `prefix`); a key of the
@@ -306,14 +305,14 @@ new generation beside the live one, which answers meanwhile.
 
 Each runs against a scratch Vault. With no embedder flag, a collection
 whose Documents the CLI Projector would embed is not indexed, so the first
-example excludes the vector leg: with `excludeVectorIndex`, a process
+example holds no vectors: with `INDEX_SCOPE_NO_VECTORS`, a process
 without an embedder indexes the collection for the filter and the lexical
 search.
 
 ```text
 scheda --vault ./vault --mode create-new info
 scheda --vault ./vault create-collection notes \
-  --schema '{"standard":{},"excludeVectorIndex":true}'
+  --schema '{"standard":{},"indexScope":"INDEX_SCOPE_NO_VECTORS"}'
 scheda --vault ./vault collection notes create --id giant-panda.md \
   --file ./panda.md --note 'add panda'
 scheda --vault ./vault collection notes get --id giant-panda.md

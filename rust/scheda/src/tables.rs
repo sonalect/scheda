@@ -5,9 +5,9 @@
 //! Document of a `standard` or `singleton` collection, and each line of a
 //! journal's segments, read from the commit of the state the round moves
 //! to (isolated collections from the nested repository). Its identity
-//! always; the values of its columns unless the collection is
-//! `exclude_lexical_index`; the vectors of its `vector` columns unless it
-//! is `exclude_vector_index`.
+//! always; the values of its columns and the vectors of its `vector`
+//! columns as its `IndexScope` says: both for `INDEX_SCOPE_ALL`, the values
+//! only for `INDEX_SCOPE_NO_VECTORS`, neither for `INDEX_SCOPE_IDS`.
 //!
 //! **The Projector** gives the values, once per changed Document per
 //! round; the Document's bytes are moved into the call. Its answers are
@@ -30,11 +30,11 @@
 //! refuses keeps no vector, and only that text: a refusal of a portion is
 //! split until the text that causes it is found.
 //!
-//! **A declaration flag** (`exclude_lexical_index`, `exclude_vector_index`)
-//! decides what a table holds, not whether the Index is fresh: the Index
-//! records what the Projector declared for a collection beside the shape of
-//! its table, [`stale`] compares the first, and a round rebuilds a table
-//! whose shape is not the one the declaration gives now.
+//! **A declaration's `index_scope`** decides what a table holds, not
+//! whether the Index is fresh: the Index records what the Projector
+//! declared for a collection beside the shape of its table, [`stale`]
+//! compares the first, and a round rebuilds a table whose shape is not the
+//! one the declaration gives now.
 //!
 //! **A journal segment** that grew by appending (its old bytes are a
 //! prefix of the new ones) gives only its new lines; one changed otherwise
@@ -85,14 +85,14 @@ impl Calls {
 
 /// What the Index would be, made by this Vault for one set of declared
 /// collections: its ports, and the shape of the table of each collection it
-/// indexes (the declaration's exclusions applied) beside what the Projector
+/// indexes (the declaration's `index_scope` applied) beside what the Projector
 /// declared for it.
 #[derive(Clone, Debug)]
 pub(crate) struct Plan {
     pub(crate) ports: generation::Ports,
     pub(crate) shapes: BTreeMap<String, Shape>,
     /// What the Projector declared for each of those collections, before
-    /// the exclusions: what [`stale`] compares.
+    /// the scope: what [`stale`] compares.
     pub(crate) declared: BTreeMap<String, Declared>,
     /// The collections the plan is of: a round brings exactly these
     /// forward, so a collection declared after the plan was made cannot
@@ -136,16 +136,14 @@ pub(crate) async fn plan(
         let columns: Vec<Column> = schema
             .map(|schema| schema.columns.iter().filter_map(Column::of).collect())
             .unwrap_or_default();
-        let exclude_lexical = decl.excludes_columns();
-        let exclude_vector = decl.excludes_vectors();
-        let vectors: Vec<String> = if exclude_vector {
-            Vec::new()
-        } else {
+        let vectors: Vec<String> = if decl.holds_vectors() {
             columns
                 .iter()
                 .filter(|column| column.vector)
                 .map(|column| column.name.clone())
                 .collect()
+        } else {
+            Vec::new()
         };
         if !vectors.is_empty() && needs_embedder.is_none() {
             needs_embedder = Some(decl.name().to_owned());
@@ -164,7 +162,11 @@ pub(crate) async fn plan(
         shapes.insert(
             decl.name().to_owned(),
             Shape {
-                columns: if exclude_lexical { Vec::new() } else { columns },
+                columns: if decl.holds_columns() {
+                    columns
+                } else {
+                    Vec::new()
+                },
                 vectors,
                 dimensions: None,
             },
@@ -240,8 +242,8 @@ pub(crate) async fn can_rebuild(
 }
 
 /// Why `commit`, an Index built with other ports, is stale for a Vault of
-/// `plan`; `None` when it is not. A collection's `exclude_lexical_index` and
-/// `exclude_vector_index` never make it stale.
+/// `plan`; `None` when it is not. A collection's `index_scope` never makes it
+/// stale.
 pub(crate) fn stale(commit: &Commit, plan: &Plan) -> Option<String> {
     if commit.ports.projection != plan.ports.projection {
         return Some(String::from(
@@ -257,12 +259,12 @@ pub(crate) fn stale(commit: &Commit, plan: &Plan) -> Option<String> {
             "the Index was built with another embedder model or vector length than this Vault's",
         ));
     }
-    // What the Projector declared, not what the table holds: a flag of the
-    // collection's declaration changes the table, and the round rebuilds
-    // it, but it leaves the Index fresh. The vector length is not compared
-    // per collection: the Index's embedder, compared above, fixes it, and
-    // a collection whose vectors are excluded holds none, so a Vault with
-    // an embedder and one without agree on it.
+    // What the Projector declared, not what the table holds: the
+    // `index_scope` of the collection's declaration changes the table, and
+    // the round rebuilds it, but it leaves the Index fresh. The vector
+    // length is not compared per collection: the Index's embedder, compared
+    // above, fixes it, and a collection that is not `INDEX_SCOPE_ALL` holds
+    // none, so a Vault with an embedder and one without agree on it.
     for (collection, table) in &commit.tables {
         if let Some(declared) = plan.declared.get(collection)
             && *declared != table.declared
@@ -1450,29 +1452,36 @@ mod tests {
             .downcast_ref::<StringArray>()
             .unwrap()
             .clone();
-        let titles = batch
-            .column_by_name("title")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .unwrap()
-            .clone();
-        let ns = batch
-            .column_by_name("n")
-            .unwrap()
-            .as_any()
-            .downcast_ref::<Int64Array>()
-            .unwrap()
-            .clone();
-        let vectors = batch.column_by_name("_vector_body").unwrap().clone();
+        // A table of an `INDEX_SCOPE_IDS` collection holds no value column,
+        // and one of a collection without vectors holds no vector column.
+        let titles = batch.column_by_name("title").map(|column| {
+            column
+                .as_any()
+                .downcast_ref::<StringArray>()
+                .unwrap()
+                .clone()
+        });
+        let ns = batch.column_by_name("n").map(|column| {
+            column
+                .as_any()
+                .downcast_ref::<Int64Array>()
+                .unwrap()
+                .clone()
+        });
+        let vectors = batch.column_by_name("_vector_body").cloned();
         (0..batch.num_rows())
             .map(|n| {
                 (
                     ids.value(n).to_owned(),
                     (
-                        (!titles.is_null(n)).then(|| titles.value(n).to_owned()),
-                        (!ns.is_null(n)).then(|| ns.value(n)),
-                        !vectors.is_null(n),
+                        titles
+                            .as_ref()
+                            .filter(|titles| !titles.is_null(n))
+                            .map(|titles| titles.value(n).to_owned()),
+                        ns.as_ref()
+                            .filter(|ns| !ns.is_null(n))
+                            .map(|ns| ns.value(n)),
+                        vectors.as_ref().is_some_and(|vectors| !vectors.is_null(n)),
                     ),
                 )
             })
@@ -1863,32 +1872,36 @@ mod tests {
         Ok(())
     }
 
-    /// Declares `notes` with `schema` (JSON), with the indexer held, and
-    /// asks what a caller can ask before the round that rebuilds the table
-    /// runs: a count and a search answer, and a filter on the columns of an
-    /// `exclude_lexical_index` collection is refused as the declaration
-    /// says. Then lets the round run.
-    async fn flipped(vault: &Arc<Vault>, schema: serde_json::Value, lexical_excluded: bool) {
+    /// Declares `notes` with `scope` (the name of its `IndexScope`), with
+    /// the indexer held, and asks what a caller can ask before the round
+    /// that rebuilds the table runs: a count and a search answer (a search
+    /// of an `INDEX_SCOPE_IDS` collection is refused), and a filter on the
+    /// columns of an `INDEX_SCOPE_IDS` collection is refused as the
+    /// declaration says. Then lets the round run.
+    async fn moved_to(vault: &Arc<Vault>, scope: &str) {
+        let ids = scope == "INDEX_SCOPE_IDS";
         let path = vault.path().to_path_buf();
         crate::indexer::hooks::hold(&path);
         crate::testing::update_collection(
             vault,
-            serde_json::json!({"name": "notes", "schema": schema}),
+            serde_json::json!({"name": "notes", "schema": {"standard": {}, "indexScope": scope}}),
         )
         .await
         .unwrap();
         wait_until("the held round", || crate::indexer::hooks::waiting(&path)).await;
         assert_eq!(counted(vault, "notes").await.unwrap(), 10);
-        assert!(searched(vault, "notes").await.is_ok());
+        let found = searched(vault, "notes").await;
         let filtered = counted_by(
             vault,
             "notes",
             serde_json::json!({"filter": {"term": {"column": "n", "value": {"integer": 3}}}}),
         )
         .await;
-        if lexical_excluded {
+        if ids {
+            assert!(found.unwrap_err().is(VaultErrorCode::Unimplemented));
             assert!(filtered.unwrap_err().is(VaultErrorCode::Unimplemented));
         } else {
+            assert!(found.is_ok(), "{found:?}");
             assert!(filtered.is_ok(), "{filtered:?}");
         }
         crate::indexer::hooks::release(&path);
@@ -1901,8 +1914,9 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn flipping_an_exclusion_flag_rebuilds_the_table_and_leaves_the_index_fresh() {
-        let scratch = Scratch::new("flip-exclusions");
+    async fn moving_a_collection_between_index_scopes_rebuilds_the_table_and_leaves_the_index_fresh()
+     {
+        let scratch = Scratch::new("move-scopes");
         let (ports, _, _) = ports();
         let vault = open_with(
             &scratch.0,
@@ -1922,22 +1936,29 @@ mod tests {
         let (names, vectors) = held(&vault, "notes").await;
         assert!(names.contains(&String::from("title")) && vectors == 10);
 
-        // Lexical off: the table loses its value columns, keeps its vectors.
-        flipped(
-            &vault,
-            serde_json::json!({"standard": {}, "exclude_lexical_index": true}),
-            true,
-        )
-        .await;
+        // ALL to NO_VECTORS: the table loses its vectors, keeps its values.
+        moved_to(&vault, "INDEX_SCOPE_NO_VECTORS").await;
+        assert_eq!(counted(&vault, "notes").await.unwrap(), 10);
+        let (names, vectors) = held(&vault, "notes").await;
+        assert!(names.contains(&String::from("title")));
+        assert_eq!(vectors, 0);
+
+        // NO_VECTORS to IDS: the table loses its values too.
+        moved_to(&vault, "INDEX_SCOPE_IDS").await;
         assert_eq!(counted(&vault, "notes").await.unwrap(), 10);
         let (names, vectors) = held(&vault, "notes").await;
         assert!(!names.contains(&String::from("title")) && !names.contains(&String::from("n")));
-        assert_eq!(vectors, 10);
+        assert_eq!(vectors, 0);
 
-        // Lexical on again: the values are back.
-        flipped(&vault, serde_json::json!({"standard": {}}), false).await;
+        // IDS to ALL: the values and every vector are back.
+        moved_to(&vault, "INDEX_SCOPE_ALL").await;
         let notes_rows = rows(&vault, "notes").await;
         assert_eq!(notes_rows.len(), 10);
+        assert!(
+            notes_rows
+                .values()
+                .all(|(title, _, vector)| title.is_some() && *vector)
+        );
         assert_eq!(
             notes_rows.get("n003.md"),
             Some(&(Some(String::from("Note 3")), Some(3), true))
@@ -1953,27 +1974,21 @@ mod tests {
             1
         );
 
-        // Vectors off: the table loses its vectors, keeps its values.
-        flipped(
-            &vault,
-            serde_json::json!({"standard": {}, "exclude_vector_index": true}),
-            false,
-        )
-        .await;
-        assert_eq!(counted(&vault, "notes").await.unwrap(), 10);
+        // ALL to IDS, then IDS to NO_VECTORS, then back to ALL.
+        moved_to(&vault, "INDEX_SCOPE_IDS").await;
         let (names, vectors) = held(&vault, "notes").await;
-        assert!(names.contains(&String::from("title")));
+        assert!(!names.contains(&String::from("title")));
         assert_eq!(vectors, 0);
-
-        // Vectors on again: every Document has its vector.
-        flipped(&vault, serde_json::json!({"standard": {}}), false).await;
+        moved_to(&vault, "INDEX_SCOPE_NO_VECTORS").await;
         let notes_rows = rows(&vault, "notes").await;
         assert_eq!(notes_rows.len(), 10);
         assert!(
             notes_rows
                 .values()
-                .all(|(title, _, vector)| title.is_some() && *vector)
+                .all(|(title, _, vector)| title.is_some() && !*vector)
         );
+        moved_to(&vault, "INDEX_SCOPE_ALL").await;
+        let notes_rows = rows(&vault, "notes").await;
         assert_eq!(
             notes_rows.get("n007.md"),
             Some(&(Some(String::from("Note 7")), Some(7), true))

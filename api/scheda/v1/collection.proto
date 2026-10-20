@@ -133,6 +133,22 @@ message CollectionDeclaration {
   Schema schema = 2 [(buf.validate.field) = {required: true}];
 }
 
+// What the Index holds of the Documents of a collection.
+enum IndexScope {
+  // As `INDEX_SCOPE_ALL`.
+  INDEX_SCOPE_UNSPECIFIED = 0;
+  // Identity, the values of the Projector's columns, and the vectors of
+  // its `vector` columns.
+  INDEX_SCOPE_ALL = 1;
+  // Identity and the values; no vector: the embedder is never called for
+  // the collection, and a search ranks it by the lexical leg only.
+  INDEX_SCOPE_NO_VECTORS = 2;
+  // Identity only: its Documents are listed and counted by id. A query or
+  // count of it that filters or orders, and a search of it, is
+  // `UNIMPLEMENTED`, not answered empty. The journal id map is still kept.
+  INDEX_SCOPE_IDS = 3;
+}
+
 // The kind of a collection and how its Documents are kept.
 message Schema {
   option (buf.validate.message).cel = {
@@ -161,17 +177,20 @@ message Schema {
   // the Vault's secret. Independent of `isolated`. A journal may not set
   // it.
   bool encrypted = 5;
-  // The Index holds none of the columns of this collection, only its
-  // identity and, unless `exclude_vector_index`, its vectors: a query of
-  // it, or a search of it with a `filter`, is refused (`UNIMPLEMENTED`), not
-  // answered empty, and the lexical leg passes it by. The journal id map
-  // is still kept. Redundant, and allowed, on `encrypted`, which no Index
-  // holds.
-  bool exclude_lexical_index = 6;
-  // No Document of this collection is embedded or holds a vector in the
-  // Index; the embedder is never called for it. Redundant, and allowed,
-  // on `encrypted`.
-  bool exclude_vector_index = 7;
+  // What the Index holds of this collection; unset is `INDEX_SCOPE_ALL`.
+  // Redundant, and allowed, on `encrypted`, which no Index holds. A change
+  // never makes the Index stale: the next round rebuilds the table of this
+  // collection.
+  IndexScope index_scope = 6 [(buf.validate.field) = {
+    enum: {defined_only: true}
+    cel: [
+      {
+        id: "schema.index_scope.defined"
+        message: "must be a defined IndexScope value"
+        expression: "this in [0, 1, 2, 3]"
+      }
+    ]
+  }];
 }
 
 // The `standard` kind. No option of its own.

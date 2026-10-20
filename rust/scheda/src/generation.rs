@@ -62,9 +62,8 @@ pub(crate) struct Embedder {
 }
 
 /// What the Projector declares for one collection, before the collection's
-/// `exclude_lexical_index` and `exclude_vector_index` are applied: the
-/// part of an Index's freshness that belongs to the Projector, not to a
-/// declaration flag. The vector length is not here: the Index's embedder
+/// `index_scope` is applied: the part of an Index's freshness that belongs
+/// to the Projector, not to the declaration's scope. The vector length is not here: the Index's embedder
 /// fixes it.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct Declared {
@@ -79,11 +78,11 @@ pub(crate) struct Declared {
 pub(crate) struct Table {
     /// The folder name of its datasets (`t{n}`).
     pub(crate) name: String,
-    /// Its columns as the table holds them: the declaration's exclusions
+    /// Its columns as the table holds them: the declaration's `index_scope`
     /// applied.
     pub(crate) shape: Shape,
     /// What the Projector declared for the collection when the table was
-    /// built, before any exclusion.
+    /// built, before any scope.
     pub(crate) declared: Declared,
     /// The versions a reader opens.
     pub(crate) versions: Versions,

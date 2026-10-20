@@ -1,6 +1,6 @@
 # 02. Glossary
 
-Document 2 of the Scheda package. Version 0.71, 20 October 2026.
+Document 2 of the Scheda package. Version 0.72, 20 October 2026.
 
 This document is normative. Terms defined here bind the rest of the package, the on-disk Vault, and every language implementation. If another document uses a word differently, that document is wrong.
 
@@ -38,7 +38,7 @@ Do not confuse with the Vault. Scheda is the code. The Vault is the directory.
 
 ## 2. Units on disk
 
-**Vault** — a git working tree that holds collections and the marker file `.scheda.yaml` (`version: 2`, the generation of the Vault format, committed to git).
+**Vault** — a git working tree that holds collections and the marker file `.scheda.yaml` (`version: 3`, the generation of the Vault format, committed to git).
 
 The Vault root is a git repository. Documents are ordinary files in that tree. A mirror is optional. A person opens the Vault in an editor and in `git` without the library.
 
@@ -58,7 +58,7 @@ Which collections exist, their kind, isolation, encryption, journal caps, single
 
 Do not confuse with types in the library source, or with a consumer's document schema. Consumer collection names must not appear in `rust/scheda/src`. Test data may name them.
 
-**Schema** — the part of a collection declaration that names the kind and the perimeter (`CollectionDeclaration.schema`: the kind arm, `isolated`, `encrypted`, the Index exclusions).
+**Schema** — the part of a collection declaration that names the kind and the perimeter (`CollectionDeclaration.schema`: the kind arm, `isolated`, `encrypted`, `index_scope`).
 
 Not a field list. The crate once used `{name}/.schema.yaml` with a field list. That is gone. A leftover `.schema.yaml` is `INVALID_ARGUMENT`. Use **collection declaration**.
 

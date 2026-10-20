@@ -747,7 +747,7 @@ mod on_lance {
                 ),
                 (
                     "bare",
-                    serde_json::json!({"standard": {}, "excludeLexicalIndex": true}),
+                    serde_json::json!({"standard": {}, "indexScope": "INDEX_SCOPE_IDS"}),
                 ),
             ] {
                 let declaration: CollectionDeclaration =

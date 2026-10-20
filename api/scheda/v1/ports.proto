@@ -231,6 +231,13 @@ message IndexColumn {
       defined_only: true
       not_in: [0]
     }
+    cel: [
+      {
+        id: "index_column.kind.defined"
+        message: "must be a defined ColumnKind value other than COLUMN_KIND_UNSPECIFIED"
+        expression: "this in [1, 2, 3, 4, 5]"
+      }
+    ]
   }];
   // The Index keeps a scalar index on it, so a `Filter` or an order on it
   // reads that index instead of every row. A Filter may name any column;

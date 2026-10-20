@@ -1599,7 +1599,7 @@ mod tests {
         vault.close().await.unwrap();
         // A person's edits: one of a listed path, one of another.
         std::fs::write(scratch.0.join(".gitignore"), "edited\n").unwrap();
-        std::fs::write(scratch.0.join(".scheda.yaml"), "version: 2\n# edited\n").unwrap();
+        std::fs::write(scratch.0.join(".scheda.yaml"), "version: 3\n# edited\n").unwrap();
         std::fs::create_dir_all(scratch.0.join("dir")).unwrap();
         std::fs::write(scratch.0.join("dir/ghost.txt"), "not in HEAD").unwrap();
         std::fs::write(scratch.0.join("kept.txt"), "kept").unwrap();

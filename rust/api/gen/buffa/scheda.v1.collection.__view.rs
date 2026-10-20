@@ -577,21 +577,15 @@ pub struct SchemaView<'a> {
     ///
     /// Field 5: `encrypted`
     pub encrypted: ::core::option::Option<bool>,
-    /// The Index holds none of the columns of this collection, only its
-    /// identity and, unless `exclude_vector_index`, its vectors: a query of
-    /// it, or a search of it with a `filter`, is refused (`UNIMPLEMENTED`), not
-    /// answered empty, and the lexical leg passes it by. The journal id map
-    /// is still kept. Redundant, and allowed, on `encrypted`, which no Index
-    /// holds.
+    /// What the Index holds of this collection; unset is `INDEX_SCOPE_ALL`.
+    /// Redundant, and allowed, on `encrypted`, which no Index holds. A change
+    /// never makes the Index stale: the next round rebuilds the table of this
+    /// collection.
     ///
-    /// Field 6: `exclude_lexical_index`
-    pub exclude_lexical_index: ::core::option::Option<bool>,
-    /// No Document of this collection is embedded or holds a vector in the
-    /// Index; the embedder is never called for it. Redundant, and allowed,
-    /// on `encrypted`.
-    ///
-    /// Field 7: `exclude_vector_index`
-    pub exclude_vector_index: ::core::option::Option<bool>,
+    /// Field 6: `index_scope`
+    pub index_scope: ::core::option::Option<
+        ::buffa::EnumValue<super::super::IndexScope>,
+    >,
     pub kind: ::core::option::Option<
         super::super::__buffa::view::oneof::schema::Kind<'a>,
     >,
@@ -646,16 +640,9 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
                     tag,
                     ::buffa::encoding::WireType::Varint,
                 )?;
-                view.exclude_lexical_index = Some(
-                    ::buffa::types::decode_bool(&mut cur)?,
+                view.index_scope = Some(
+                    ::buffa::EnumValue::from(::buffa::types::decode_int32(&mut cur)?),
                 );
-            }
-            7u32 => {
-                ::buffa::encoding::check_wire_type(
-                    tag,
-                    ::buffa::encoding::WireType::Varint,
-                )?;
-                view.exclude_vector_index = Some(::buffa::types::decode_bool(&mut cur)?);
             }
             1u32 => {
                 ::buffa::encoding::check_wire_type(
@@ -774,8 +761,7 @@ impl<'a> ::buffa::MessageView<'a> for SchemaView<'a> {
         ::core::result::Result::Ok(super::super::Schema {
             isolated: self.isolated,
             encrypted: self.encrypted,
-            exclude_lexical_index: self.exclude_lexical_index,
-            exclude_vector_index: self.exclude_vector_index,
+            index_scope: self.index_scope,
             kind: match self.kind.as_ref() {
                 ::core::option::Option::Some(v) => {
                     ::core::option::Option::Some(
@@ -857,11 +843,8 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         if self.encrypted.is_some() {
             size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
         }
-        if self.exclude_lexical_index.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
-        }
-        if self.exclude_vector_index.is_some() {
-            size += 1u64 + ::buffa::types::BOOL_ENCODED_LEN as u64;
+        if let Some(ref v) = self.index_scope {
+            size += 1u64 + ::buffa::types::int32_encoded_len(v.to_i32()) as u64;
         }
         size += self.__buffa_unknown_fields.encoded_len() as u64;
         ::buffa::saturate_size(size)
@@ -908,11 +891,8 @@ impl<'a> ::buffa::ViewEncode<'a> for SchemaView<'a> {
         if let Some(v) = self.encrypted {
             ::buffa::types::put_bool_field(5u32, v, buf);
         }
-        if let Some(v) = self.exclude_lexical_index {
-            ::buffa::types::put_bool_field(6u32, v, buf);
-        }
-        if let Some(v) = self.exclude_vector_index {
-            ::buffa::types::put_bool_field(7u32, v, buf);
+        if let Some(ref v) = self.index_scope {
+            ::buffa::types::put_int32_field(6u32, v.to_i32(), buf);
         }
         self.__buffa_unknown_fields.write_to(buf);
     }
@@ -941,11 +921,8 @@ impl<'__a> ::serde::Serialize for SchemaView<'__a> {
         if let ::core::option::Option::Some(__v) = self.encrypted {
             __map.serialize_entry("encrypted", &__v)?;
         }
-        if let ::core::option::Option::Some(__v) = self.exclude_lexical_index {
-            __map.serialize_entry("excludeLexicalIndex", &__v)?;
-        }
-        if let ::core::option::Option::Some(__v) = self.exclude_vector_index {
-            __map.serialize_entry("excludeVectorIndex", &__v)?;
+        if let ::core::option::Option::Some(ref __v) = self.index_scope {
+            __map.serialize_entry("indexScope", __v)?;
         }
         if let ::core::option::Option::Some(ref __ov) = self.kind {
             match __ov {
@@ -1066,26 +1043,17 @@ impl SchemaOwnedView {
     pub fn encrypted(&self) -> ::core::option::Option<bool> {
         self.0.reborrow().encrypted
     }
-    /// The Index holds none of the columns of this collection, only its
-    /// identity and, unless `exclude_vector_index`, its vectors: a query of
-    /// it, or a search of it with a `filter`, is refused (`UNIMPLEMENTED`), not
-    /// answered empty, and the lexical leg passes it by. The journal id map
-    /// is still kept. Redundant, and allowed, on `encrypted`, which no Index
-    /// holds.
+    /// What the Index holds of this collection; unset is `INDEX_SCOPE_ALL`.
+    /// Redundant, and allowed, on `encrypted`, which no Index holds. A change
+    /// never makes the Index stale: the next round rebuilds the table of this
+    /// collection.
     ///
-    /// Field 6: `exclude_lexical_index`
+    /// Field 6: `index_scope`
     #[must_use]
-    pub fn exclude_lexical_index(&self) -> ::core::option::Option<bool> {
-        self.0.reborrow().exclude_lexical_index
-    }
-    /// No Document of this collection is embedded or holds a vector in the
-    /// Index; the embedder is never called for it. Redundant, and allowed,
-    /// on `encrypted`.
-    ///
-    /// Field 7: `exclude_vector_index`
-    #[must_use]
-    pub fn exclude_vector_index(&self) -> ::core::option::Option<bool> {
-        self.0.reborrow().exclude_vector_index
+    pub fn index_scope(
+        &self,
+    ) -> ::core::option::Option<::buffa::EnumValue<super::super::IndexScope>> {
+        self.0.reborrow().index_scope
     }
     /// Oneof `kind`.
     #[must_use]

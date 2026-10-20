@@ -230,17 +230,17 @@ pub(crate) async fn in_vault(
     run(pass, reading, scope, inner).await
 }
 
-/// Whether a leg can rank the Documents of `decl`: the Index holds its
-/// columns, or its vectors.
+/// Whether a leg can rank the Documents of `decl`: the Index holds more
+/// than its identity.
 fn searchable(decl: &Declaration) -> bool {
-    !(decl.excludes_columns() && decl.excludes_vectors())
+    decl.holds_columns()
 }
 
 fn unsearchable(decl: &Declaration) -> Error {
     Fault::new(
         VaultErrorCode::Unimplemented,
         format!(
-            "the collection {} is exclude_lexical_index and exclude_vector_index: no leg ranks it",
+            "the collection {} is INDEX_SCOPE_IDS: no leg ranks it",
             decl.name()
         ),
     )

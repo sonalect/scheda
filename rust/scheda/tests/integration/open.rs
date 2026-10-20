@@ -133,7 +133,7 @@ fn create_new_refuses_a_vault_and_the_other_modes_open_it() {
 #[test]
 fn another_generation_is_generation_in_every_mode_and_before_any_collection_file() {
     both(|| async {
-        for version in ["1", "3"] {
+        for version in ["1", "2", "4"] {
             let scratch = Scratch::new("generation");
             let path = scratch.join("old");
             work_tree(
@@ -165,7 +165,7 @@ fn an_unknown_key_in_the_marker_and_a_leftover_version_in_a_collection_file_open
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 2\nsomething: later\n"),
+                (".scheda.yaml", "version: 3\nsomething: later\n"),
                 (
                     "notes/.collection.yaml",
                     "version: 1\nname: notes\nschema:\n  standard: {}\n",
@@ -204,7 +204,7 @@ fn an_invalid_collection_file_fails_open_and_writes_nothing() {
         work_tree(
             &path,
             &[
-                (".scheda.yaml", "version: 2\n"),
+                (".scheda.yaml", "version: 3\n"),
                 (
                     "notes/.collection.yaml",
                     "name: notes\nschema:\n  document: {}\n",
@@ -254,6 +254,13 @@ fn options_that_break_a_rule_are_invalid_argument() {
             .err()
             .unwrap();
         assert!(error.is(Code::InvalidArgument));
+        // A mode the contract does not define is refused, not taken as the
+        // default: it must not create what the caller did not ask for.
+        let missing = scratch.join("missing");
+        let options: OpenOptions = serde_json::from_str(r#"{"mode": 9}"#).unwrap();
+        let error = open(&missing, options).await.err().unwrap();
+        assert!(error.is(Code::InvalidArgument), "{error}");
+        assert!(!missing.exists());
     });
 }
 

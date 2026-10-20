@@ -55,6 +55,13 @@ message OpenOptions {
   // What `open` may do with the path. Unset: `OPEN_MODE_OPEN_OR_CREATE`.
   OpenMode mode = 7 [(buf.validate.field) = {
     enum: {defined_only: true}
+    cel: [
+      {
+        id: "open_options.mode.defined"
+        message: "must be a defined OpenMode value"
+        expression: "this in [0, 1, 2, 3]"
+      }
+    ]
   }];
   // How long a write call waits for the write lock, in milliseconds. Past
   // it the call is `ABORTED` and writes nothing; once it holds the lock it

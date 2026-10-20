@@ -41,7 +41,7 @@ impl ::protovalidate_buffa::Validate for VaultMarker {
         }
         if self.version.is_some() {
             if let Some(v) = self.version {
-                if v != 2i32 {
+                if v != 3i32 {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {
@@ -136,7 +136,7 @@ impl ::protovalidate_buffa::Validate for __buffa::view::VaultMarkerView<'_> {
         }
         if self.version.is_some() {
             if let Some(v) = self.version {
-                if v != 2i32 {
+                if v != 3i32 {
                     violations
                         .push(::protovalidate_buffa::Violation {
                             field: ::protovalidate_buffa::FieldPath {

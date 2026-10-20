@@ -1,6 +1,6 @@
 # 19. Follow-ups to 0.19: declarations, search signals, transactions
 
-Document 19 of the Scheda package. Version 0.2, 5 October 2026.
+Document 19 of the Scheda package. Version 0.3, 20 October 2026.
 
 Status: F1–F5 done, docs pass done (5 October 2026).
 
@@ -139,7 +139,7 @@ and replaced only in `restore_recorded`, `reload_after_restore` (after
 - *Check:* handle A open; handle B (another process in one test, same
   process in another) commits `create_collection("x")`; `A.collection("x")`
   succeeds without reopening A.
-- *Check:* B changes `exclude_vector_index` on a collection A knows;
+- *Check:* B changes `index_scope` on a collection A knows;
   after `A.wait_indexed`, A's `info()` shows the new declaration.
 - *Check:* A has an open transaction with its own uncommitted
   `create_collection("y")`; a reload triggered by B's commit keeps `y`.

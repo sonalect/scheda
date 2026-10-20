@@ -1,5 +1,5 @@
 {
-  "checksum": "cf5435641bc67a5d929cde71ba79ee62069ff87e706a20496ac453ca82f907f9",
+  "checksum": "46435b2f09a86115ad068cfafee0e8d686a130c6a0e5f0f29fd0ad1dd0bcb61c",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -15134,12 +15134,11 @@
     "lance 13.0.0": {
       "build_script_attrs": {
         "build_script_env": {
-          "PROTOC": "$(execpath @@//bazel:protoc)",
-          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)"
+          "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include"
         },
         "data": [
-          "@@//bazel:protoc",
-          "@@//bazel:protoc_include"
+          "@@//bazel:protoc_prefix"
         ],
         "deps": [
           {
@@ -15852,12 +15851,11 @@
     "lance-datafusion 13.0.0": {
       "build_script_attrs": {
         "build_script_env": {
-          "PROTOC": "$(execpath @@//bazel:protoc)",
-          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)"
+          "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include"
         },
         "data": [
-          "@@//bazel:protoc",
-          "@@//bazel:protoc_include"
+          "@@//bazel:protoc_prefix"
         ],
         "deps": [
           {
@@ -16041,12 +16039,11 @@
     "lance-encoding 13.0.0": {
       "build_script_attrs": {
         "build_script_env": {
-          "PROTOC": "$(execpath @@//bazel:protoc)",
-          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)"
+          "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include"
         },
         "data": [
-          "@@//bazel:protoc",
-          "@@//bazel:protoc_include"
+          "@@//bazel:protoc_prefix"
         ],
         "deps": [
           {
@@ -16205,12 +16202,11 @@
     "lance-file 13.0.0": {
       "build_script_attrs": {
         "build_script_env": {
-          "PROTOC": "$(execpath @@//bazel:protoc)",
-          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)"
+          "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include"
         },
         "data": [
-          "@@//bazel:protoc",
-          "@@//bazel:protoc_include"
+          "@@//bazel:protoc_prefix"
         ],
         "deps": [
           {
@@ -16361,12 +16357,11 @@
     "lance-index 13.0.0": {
       "build_script_attrs": {
         "build_script_env": {
-          "PROTOC": "$(execpath @@//bazel:protoc)",
-          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)"
+          "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include"
         },
         "data": [
-          "@@//bazel:protoc",
-          "@@//bazel:protoc_include"
+          "@@//bazel:protoc_prefix"
         ],
         "deps": [
           {
@@ -17141,12 +17136,11 @@
     "lance-table 13.0.0": {
       "build_script_attrs": {
         "build_script_env": {
-          "PROTOC": "$(execpath @@//bazel:protoc)",
-          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_include)"
+          "PROTOC": "$(execpath @@//bazel:protoc_prefix)/bin/protoc",
+          "PROTOC_INCLUDE": "$(execpath @@//bazel:protoc_prefix)/include"
         },
         "data": [
-          "@@//bazel:protoc",
-          "@@//bazel:protoc_include"
+          "@@//bazel:protoc_prefix"
         ],
         "deps": [
           {

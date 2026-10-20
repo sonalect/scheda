@@ -96,13 +96,13 @@ pub fn work_tree(dir: &Path, files: &[(&str, &str)]) {
     );
 }
 
-/// A Vault of generation 2 at `dir` with the collection `notes` (a
+/// A Vault of generation 3 at `dir` with the collection `notes` (a
 /// standard collection) and the collection `log` (a journal).
 pub fn vault(dir: &Path) {
     work_tree(
         dir,
         &[
-            (".scheda.yaml", "version: 2\n"),
+            (".scheda.yaml", "version: 3\n"),
             (
                 "notes/.collection.yaml",
                 "name: notes\nschema:\n  standard: {}\n",

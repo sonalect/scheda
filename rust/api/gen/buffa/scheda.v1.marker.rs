@@ -15,7 +15,7 @@
 pub struct VaultMarker {
     /// The format generation of the Vault: the shape of its files and their
     /// layout. Field number 1 in every generation, so that a later Scheda
-    /// reads it before it decides how to read the rest. This generation is 2;
+    /// reads it before it decides how to read the rest. This generation is 3;
     /// another is `GENERATION`.
     ///
     /// Field 1: `version`

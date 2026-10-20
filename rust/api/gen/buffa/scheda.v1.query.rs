@@ -5222,9 +5222,9 @@ pub mod search_summary {
         VECTOR_LEG_UNSPECIFIED = 0i32,
         /// Not asked for: `vector_weight` is 0.
         VECTOR_LEG_NOT_ASKED = 1i32,
-        /// No collection in scope has a vector column: each is excluded or
-        /// encrypted, the Vault has no Projector, or the Projector marks no
-        /// column `vector`.
+        /// No collection in scope has a vector column: each is not
+        /// `INDEX_SCOPE_ALL` or is encrypted, the Vault has no Projector, or the
+        /// Projector marks no column `vector`.
         VECTOR_LEG_NO_VECTOR_COLLECTION = 2i32,
         /// The Vault has no embedder.
         VECTOR_LEG_NO_EMBEDDER = 3i32,
