@@ -25,7 +25,8 @@ the evidence, and a recommendation. The probes of the old Index are in
    Only the caller starts a rebuild. *Recommendation:* when the model and
    vector length are the same as the live generation's, seed the digest
    cache of the round with the live generation's vectors before the
-   rebuild; measure first at the anchor consumer's size.
+   rebuild; measure first at the anchor consumer's size. **Decided by the
+   owner, 20 October 2026: to do.**
 
 2. **Medium. An embedder outage multiplies the Projector work.** While the
    embedder fails, each try of the round projects the changed Documents
@@ -36,7 +37,14 @@ the evidence, and a recommendation. The probes of the old Index are in
    model projects its changed Documents every few seconds. No probe on
    Lance yet. *Recommendation:* keep the round's projections in memory
    across failed tries, as the vectors are, and give embedder failures a
-   longer cap (minutes).
+   longer cap (minutes). **Decided by the owner, 20 October 2026: to do,
+   as proposed to him:** a second in-memory cache beside the vectors',
+   keyed by the collection and the digest of the content (the git blob of
+   a Document's file, the hash of a journal line), holding the Projector's
+   values and vector texts; looked up before `Project`; dropped with
+   another `projection_id` and cleared when a round succeeds. The cap of
+   the pause stays as it is. Test: an embedder that fails several tries,
+   one `Project` per changed Document.
 
 3. **Low–medium. A `Reindex` from a second Vault rebuilds twice.**
    `ABORTED` covers only a request in the same Vault object; another Vault
@@ -44,7 +52,14 @@ the evidence, and a recommendation. The probes of the old Index are in
    the first. It is cheaper than before, since the live Index answers
    meanwhile, but it is the cost of item 1 again. *Recommendation:* drop a
    pending request when the Index was switched after it with the same
-   projection, columns, and model.
+   projection, columns, and model. **Decided by the owner, 20 October
+   2026: to do, as proposed to him:** `Reindex` records the live
+   generation (`current`) at the request, with no clock; the round, under
+   `index.lock`, finds another live generation whose `commit` has this
+   Vault's ports and shapes: the request is done, no rebuild runs, and the
+   status shows the asked rebuild done (running, then done) so a waiter
+   ends as usual; otherwise it rebuilds. Test: two Vaults on one path ask
+   at once; each text goes to the embedder once; both see it done.
 
 4. **Low. Temp names can collide between processes.** `.scheda.{n}.tmp`
    counts from 0 in every process; a writer whose `create_new` fails
@@ -53,7 +68,9 @@ the evidence, and a recommendation. The probes of the old Index are in
    (the journal id maps, `commit`, `current`) until the next write of the
    same file. Lance names its own files. *Recommendation:* add the pid to
    the name; sweep `index/**/.scheda.*.tmp` at the start of a round, under
-   the lock.
+   the lock. **Decided by the owner, 20 October 2026: to do, as proposed**
+   (`.scheda.{pid}.{n}.tmp`; the sweep only where nothing writes without
+   `index.lock` — check that before it lands).
 
 5. **Low (unverified, Windows). Deleting a generation, or a file a reader
    holds open, may fail.** The old generation is removed an hour after the
@@ -61,13 +78,19 @@ the evidence, and a recommendation. The probes of the old Index are in
    delete an open or mapped file. The removal is tried again later, but no
    test holds a reader open on Windows. *Recommendation:* a Windows test:
    hold a snapshot, `Reindex`, wait out the margin (with a shortened
-   margin), expect the generation gone.
+   margin), expect the generation gone. **Decided by the owner, 20 October
+   2026: deferred** — a separate piece of work once Windows can be tested
+   (a Windows target or a Windows run in CI).
 
 6. **Low. Renames are not followed by a directory `fsync`.** For `commit`,
    `current`, and the id maps, the order relies on rename durability; after
    a power loss (not a kill) a journaling filesystem keeps that order in
    practice. Lance has its own commit protocol for the tables.
-   *Recommendation:* accept; note it.
+   *Recommendation:* accept; note it. **Decided by the owner, 20 October
+   2026: accepted as it is.** The temp file is synced before its rename;
+   a rename lost to a power loss leaves the previous `commit` or `current`,
+   which the next round brings forward (the Index is derived; the
+   Documents are in git).
 
 ## Found while building the Index on Lance (20 October 2026)
 
@@ -77,6 +100,8 @@ the evidence, and a recommendation. The probes of the old Index are in
     picks the most telling terms. Correct, but slow for a long text.
     *Recommendation:* when a consumer searches `like` on long Documents,
     keep the top terms by tf-idf before the query; measure first.
+    **Decided by the owner, 20 October 2026: deferred** until a consumer
+    needs `like` on long Documents.
 
 Fixed in the same work, each with a test (kept here so the same trap is
 not set again): a collection declared during a round lacked its table
@@ -113,6 +138,8 @@ hygiene.
 
 ## How to apply
 
-Discuss the numbered items with the owner; record the decisions in a
-work-order document and turn the matching cases into regression tests when
-an item is fixed. Delete this note once every item is decided.
+Every item is decided (20 October 2026). Items 1–4 of the first list are
+to do, as recorded at each: build each with its test under the usual
+gates, then mark it done here. Items 5 and the `like` item wait for their
+trigger; item 6 stays as it is. Delete this note once 1–4 are done and
+the deferred ones are moved to the work order that takes them.
