@@ -1,5 +1,5 @@
 {
-  "checksum": "fe5750e441716d24fa5222ed496322bbb8c022c707444994cbf2828b3eea5b07",
+  "checksum": "f5a2edbef9a175c5e96da155acc4c7229a5d458c3474c2915245de903cfa262f",
   "conditions": {
     "aarch64-apple-darwin": [
       "aarch64-apple-darwin"
@@ -24159,6 +24159,10 @@
             "target": "libgit2_sys"
           },
           {
+            "id": "libz-sys 1.1.30",
+            "target": "libz_sys"
+          },
+          {
             "id": "protocontract 0.4.1",
             "target": "protocontract"
           },
@@ -31378,6 +31382,7 @@
     "lance-index 13.0.0",
     "lance-linalg 13.0.0",
     "libgit2-sys 0.18.8+1.9.7",
+    "libz-sys 1.1.30",
     "mimalloc 3.5.3",
     "model2vec-rs 0.3.0",
     "protocontract 0.4.1",

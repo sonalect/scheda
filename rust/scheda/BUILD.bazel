@@ -22,6 +22,7 @@ _SCHEDA_DEPS = [
     "@scheda_cargo//:buffa-types",
     "@scheda_cargo//:git2",
     "@scheda_cargo//:libgit2-sys",
+    "@scheda_cargo//:libz-sys",
     "@scheda_cargo//:protocontract",
     "@scheda_cargo//:protovalidate-buffa",
     "@scheda_cargo//:regex",
@@ -67,6 +68,8 @@ rust_test(
 
 # The memory tests (`memory::`, ignored by the other targets): each measures
 # the allocations of the whole process, so they run alone, one at a time.
+# `manual`: `bazel test //...` tests behaviour, not performance, so these run
+# only by hand: `bazel test //rust/scheda:scheda_memory_test`.
 # Cargo: `cargo test -p scheda --lib -- --ignored --test-threads=1 memory::`.
 rust_test(
     name = "scheda_memory_test",
@@ -79,6 +82,7 @@ rust_test(
     compile_data = glob(["testdata/**"]),
     crate = ":scheda",
     crate_features = _SCHEDA_FEATURES,
+    tags = ["manual"],
     visibility = ["//rust:__pkg__"],
 )
 

@@ -844,6 +844,15 @@ impl Table {
         })
     }
 
+    /// Adds `rows`, none of which the table holds, as a new fragment: a
+    /// fixture of a large table, written without the join of an upsert.
+    #[cfg(test)]
+    pub(crate) async fn append_new(&mut self, rows: &[Row]) -> Result<(), Error> {
+        self.rows = append(&self.rows, rows_batch(&self.shape, rows)?).await?;
+        self.written = true;
+        Ok(())
+    }
+
     /// The shape of the table.
     pub(crate) fn shape(&self) -> &Shape {
         &self.shape

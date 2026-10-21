@@ -920,7 +920,9 @@ async fn lexical_leg(
 ///
 /// No filter is given Lance when the search has none: with one, even
 /// `true`, Lance first marks the rows it admits, about 20 to 40 bytes a
-/// row of the table (measured on 200 000 rows), before it reads a vector.
+/// row it admits (measured on 200 000 rows all admitted), before it reads
+/// a vector. A filter on a column with a B-tree index marks them through
+/// the index: 100 rows of 1 000 000 hold what 100 of 100 000 do.
 #[expect(
     clippy::too_many_arguments,
     reason = "the leg owns what it moves into its task"
@@ -1494,16 +1496,31 @@ mod memory {
     }
 
     fn shape() -> Shape {
+        shape_of(DIMENSIONS)
+    }
+
+    /// `topic`, a `vector` column of vectors of `dimensions` values, and
+    /// `kind`, with a B-tree index.
+    fn shape_of(dimensions: usize) -> Shape {
         Shape {
-            columns: vec![Column {
-                name: String::from("topic"),
-                kind: Kind::Text,
-                scalar_index: false,
-                fts: false,
-                vector: true,
-            }],
+            columns: vec![
+                Column {
+                    name: String::from("topic"),
+                    kind: Kind::Text,
+                    scalar_index: false,
+                    fts: false,
+                    vector: true,
+                },
+                Column {
+                    name: String::from("kind"),
+                    kind: Kind::Text,
+                    scalar_index: true,
+                    fts: false,
+                    vector: false,
+                },
+            ],
             vectors: vec![String::from("topic")],
-            dimensions: Some(DIMENSIONS as u32),
+            dimensions: Some(dimensions as u32),
         }
     }
 
@@ -1587,6 +1604,106 @@ mod memory {
         assert!(
             peaks[1] < peaks[0] + MARGIN,
             "200 000 rows held {} KB, 20 000 rows {} KB",
+            peaks[1] / 1024,
+            peaks[0] / 1024
+        );
+    }
+
+    /// A table of `rows` rows with vectors of 16 values, of which every
+    /// `rows / 100`-th is of the kind `rare`, its indices made.
+    async fn filtered_table_of(dir: &std::path::Path, rows: usize) -> Dataset {
+        const SHORT: usize = 16;
+        let mut table = Stored::open(dir, "t0", shape_of(SHORT), None)
+            .await
+            .unwrap();
+        let every = rows / 100;
+        for start in (0..rows).step_by(50_000) {
+            let chunk: Vec<Row> = (start..rows.min(start + 50_000))
+                .map(|n| {
+                    let id = format!("r{n:07}");
+                    let kind = if n % every == 0 { "rare" } else { "common" };
+                    Row {
+                        file: format!("notes/{id}"),
+                        order: id.clone(),
+                        id,
+                        values: BTreeMap::from([(
+                            String::from("kind"),
+                            scheda_api::v1::index_value::Value::Text(kind.to_owned()),
+                        )]),
+                        embeddings: BTreeMap::from([(
+                            String::from("topic"),
+                            vec![Embedding {
+                                position: 0,
+                                vector: vector_of(n)[..SHORT].to_vec(),
+                                digest: format!("d{n}"),
+                            }],
+                        )]),
+                    }
+                })
+                .collect();
+            table.append_new(&chunk).await.unwrap();
+        }
+        table.maintain(1, None).await.unwrap();
+        let versions = table.versions();
+        let path = dir.join("t0.lance");
+        Dataset::open(path.to_str().unwrap())
+            .await
+            .unwrap()
+            .checkout_version(versions.rows)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore = "measures the memory of the process: run alone, by the memory target"]
+    async fn an_exact_search_filtered_to_a_hundred_rows_holds_as_much_of_a_large_table() {
+        const MARGIN: usize = 2 * 1024 * 1024;
+        let _alone = crate::testing::alone().await;
+        let base = std::env::var_os("TEST_TMPDIR").map_or_else(std::env::temp_dir, PathBuf::from);
+        let mut peaks = Vec::new();
+        for rows in [100_000, 1_000_000] {
+            let dir = base.join(format!(
+                "scheda-filtered-memory-{rows}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&dir);
+            crate::testing::remove_when_the_test_ends(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            let started = std::time::Instant::now();
+            let dataset = filtered_table_of(&dir, rows).await;
+            let made = started.elapsed();
+            let query = Float32Array::from(vector_of(7)[..16].to_vec());
+            let filter = col("kind").eq(lit("rare"));
+            let narrow = move |scanner: &mut Scanner| {
+                scanner.filter_expr(filter.clone());
+            };
+            let look = Look {
+                exact: true,
+                below: None,
+            };
+            let (found, memory) = measured(nearest_rows(
+                &dataset,
+                &vector_name("topic"),
+                &query,
+                (10, rows),
+                look,
+                &["id"],
+                &narrow,
+            ))
+            .await;
+            let found: usize = found.unwrap().iter().map(RecordBatch::num_rows).sum();
+            // The ten, and again the rows at the distance of the last.
+            assert!(found > 10, "ten of the hundred: {found}");
+            eprintln!(
+                "an exact search of 100 of {rows} rows (made in {made:?}): peak {} KB, allocated {} KB",
+                memory.peak / 1024,
+                memory.allocated / 1024
+            );
+            peaks.push(memory.peak);
+        }
+        assert!(
+            peaks[1] < peaks[0] + MARGIN,
+            "1 000 000 rows held {} KB, 100 000 rows {} KB",
             peaks[1] / 1024,
             peaks[0] / 1024
         );

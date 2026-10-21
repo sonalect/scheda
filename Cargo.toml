@@ -27,6 +27,7 @@ lance = { version = "=13.0.0", default-features = false }
 lance-index = { version = "=13.0.0", default-features = false }
 lance-linalg = { version = "=13.0.0", default-features = false }
 libgit2-sys = "=0.18.8"
+libz-sys = { version = "=1.1.30", default-features = false, features = ["libc"] }
 mimalloc = { git = "https://github.com/amsokol/mimalloc", tag = "v3.5.3", features = [
     "override",
 ] }

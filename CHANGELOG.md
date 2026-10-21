@@ -8,6 +8,70 @@ API or on-disk format changes bump the minor.
 
 ## [Unreleased]
 
+### Changed
+
+- A write, a batch of Documents, and the join of a pull each store their
+  objects (the blobs, the trees on their paths, and the commit) as exactly
+  one pack, complete on disk before the branch moves. Nothing is left as a
+  loose object, in the Vault's repository and in `.isolated/` alike. The
+  repository's objects are no longer packed at the end of a write when
+  loose ones pile up. A write into a Vault with a work tree syncs 13 files
+  and folders to disk, counted with `strace`, whatever the depth of its
+  path (it was 18 at the top of a collection and 24 three folders down).
+- Packs are merged in the background, by one task for each open Vault,
+  woken after each write and at open. The merge is geometric (factor 2, the
+  split rule of `git repack --geometric`) among the packs below a cap of
+  64 MiB or 100 000 objects; a pack at the cap is never merged again, and a
+  merge stops taking packs once what it has taken reaches the cap. It
+  copies the compressed entries of the packs it merges into one pack that
+  the git library's indexer checks and indexes, so nothing is compressed
+  again; merged packs keep the size of the packs of the writes. Loose
+  objects a person's `git` commands leave join a merge, and cause one when
+  there are more than 1 000. A pack with a `.keep` file and a multi-pack
+  index are left alone. The task works under `{vault}/.scheda/pack.lock`,
+  taken without waiting, and never under the write lock, so a background
+  merge never holds up a write. `Vault.Close` cancels a merge in progress
+  and waits only for that, so no lock is held after it returns; a cancelled
+  merge leaves what a killed one leaves (every object readable, nothing
+  lost), and the merge runs again after the next open. A background merge
+  that fails is not reported; the bound below surfaces a failure that lasts.
+- The packs below the cap number fewer than 32 at every moment. A write, a
+  batch, and the join of a pull that would leave 32 merge first, under
+  `.scheda/pack.lock` (they wait for a merge of the task that holds it),
+  until fewer remain, and then write. When that merge fails, the write
+  fails with its error (`STORAGE` for a file) and writes nothing: `HEAD` and
+  the work tree are as they were. This holds for the command line, which
+  closes a Vault milliseconds after it opens it.
+- The git library's object cache is 16 MiB for the process, set at the
+  first `Open` whoever used the library before (a process that read
+  repositories through `git2` first has its default, 256 MiB, until then).
+  The repository handles of a Vault are opened again after a merge removed
+  packs, because the library keeps every pack it has seen open.
+- A read that does not find an object while a merge replaces the packs
+  that held it reads again, once, with `.scheda/pack.lock` taken shared, so
+  no pack can be removed meanwhile; a merge removes a pack only after the
+  pack that replaces it is complete. Without it, a read could fail with
+  "object not found" for an object the Vault holds: the git library looks
+  at the folder of packs once after a miss, and could see the old pack
+  there and find it gone when it opened it.
+- A Vault of `0.25` opens as it is: the format on disk is the one git
+  reads, and the packs of the old kind are merged like any other.
+
+### Fixed
+
+- Reading the declarations of the Vault, which every write, query,
+  search, and index round does, listed the folder of each collection to
+  find its declaration file: every Document's entry, about 60 MB for a
+  collection of 1 000 000 Documents. It now looks the few file names up.
+  A write there still takes about 1.6 s, the cost of git rewriting a
+  folder of a million entries.
+
+- The documentation of an exact search with a filter: the rows Lance
+  marks before it scans are those the filter admits, found through the
+  column's B-tree index when it has one, so the memory grows with the
+  matches, not with the table (100 matches: 0.4 MB in 100 000 rows,
+  0.5 MB in 1 000 000). A memory test proves it.
+
 ## [0.25.0] - 2026-10-21
 
 ### Added

@@ -36,6 +36,7 @@ lance = { workspace = true, optional = true }
 lance-index = { workspace = true, optional = true }
 lance-linalg = { workspace = true, optional = true }
 libgit2-sys = { workspace = true }
+libz-sys = { workspace = true }
 protocontract = { workspace = true }
 protovalidate-buffa = { workspace = true }
 regex = { workspace = true }

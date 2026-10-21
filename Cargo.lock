@@ -5322,6 +5322,7 @@ dependencies = [
  "lance-index",
  "lance-linalg",
  "libgit2-sys",
+ "libz-sys",
  "protocontract",
  "protovalidate-buffa",
  "regex",

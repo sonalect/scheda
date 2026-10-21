@@ -29,6 +29,7 @@ mod crypto;
 mod document_calls;
 mod documents;
 mod error;
+mod fallback;
 #[cfg(feature = "index")]
 mod filter;
 mod fs;
@@ -53,6 +54,7 @@ mod repo;
 #[cfg(feature = "index")]
 mod search;
 mod service;
+mod sha1;
 #[cfg(feature = "index")]
 mod store;
 mod stored;

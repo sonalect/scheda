@@ -541,25 +541,25 @@ fn in_child(future: impl Future<Output = ()>) {
 }
 
 /// The role of a child process alone on its runtime, so the task count is
-/// its own: each open Vault adds the task of its indexer, and `close` and a
-/// drop end it.
+/// its own: each open Vault adds two tasks, its indexer and its packer, and
+/// `close` and a drop end both.
 async fn count_indexer_tasks(path: &Path) {
     let base = alive_tasks();
     let one = opened(&path.join("one")).await;
-    wait_until("open to start the task", || alive_tasks() == base + 1).await;
+    wait_until("open to start the tasks", || alive_tasks() == base + 2).await;
     let two = opened(&path.join("two")).await;
-    wait_until("a task for each handle", || alive_tasks() == base + 2).await;
+    wait_until("two tasks for each handle", || alive_tasks() == base + 4).await;
     // A task that has ended is counted until the runtime has seen it end, so
     // the count is waited for, not read once.
     one.close(Empty::default()).await.unwrap();
-    wait_until("close to end its task", || alive_tasks() == base + 1).await;
+    wait_until("close to end its tasks", || alive_tasks() == base + 2).await;
     drop(two);
-    wait_until("a drop to end its task", || alive_tasks() == base).await;
+    wait_until("a drop to end its tasks", || alive_tasks() == base).await;
     // Closed while a round is at work.
     let three = opened(&path.join("three")).await;
     three.create_collection(journal("log")).await.unwrap();
     three.close(Empty::default()).await.unwrap();
-    wait_until("close to end the task of a round at work", || {
+    wait_until("close to end the tasks of a round at work", || {
         alive_tasks() == base
     })
     .await;

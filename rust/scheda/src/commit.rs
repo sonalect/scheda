@@ -55,7 +55,7 @@ use crate::fs::{Flock, atomic_write, reject_symlinks, restrict_dir};
 use crate::index::State;
 use crate::indexer::Signal;
 use crate::isolated;
-use crate::pack;
+use crate::pack::{self, Merges, Overlay};
 pub(crate) use crate::repo::Repo;
 use crate::repo::{NodeKind, Repos, Snap};
 
@@ -210,6 +210,9 @@ pub(crate) struct Committer {
     /// Woken when a commit of this handle moves `HEAD`: the indexer looks
     /// at once.
     signal: Arc<Signal>,
+    /// Woken when a commit of this handle ends: the merge task of the Vault
+    /// looks at the packs.
+    pack: Arc<Merges>,
 }
 
 impl Committer {
@@ -224,6 +227,7 @@ impl Committer {
         let timeout = options
             .write_timeout_ms
             .map_or(DEFAULT_TIMEOUT, |ms| Duration::from_millis(u64::from(ms)));
+        let pack = Arc::new(Merges::new(pack::limits_of(root), repos.pack_generation()));
         Ok(Committer {
             root: root.to_path_buf(),
             timeout,
@@ -231,7 +235,13 @@ impl Committer {
             repos,
             turn: Arc::new(Queue::new(())),
             signal: Arc::new(Signal::default()),
+            pack,
         })
+    }
+
+    /// What this handle's commits wake besides the indexer: the merge task.
+    pub(crate) fn merges(&self) -> Arc<Merges> {
+        Arc::clone(&self.pack)
     }
 
     /// What this handle's commits wake: the indexer's signal.
@@ -370,7 +380,13 @@ fn lock_path(root: &Path) -> PathBuf {
 
 /// Opens `{vault}/.scheda/{name}`, owner-only, creating it and `.scheda/`
 /// on first use.
-fn open_lock_file(_cx: &Blocking, root: &Path, name: &str) -> Result<File, Error> {
+pub(crate) fn open_lock_file(_cx: &Blocking, root: &Path, name: &str) -> Result<File, Error> {
+    open_lock_file_at(root, name)
+}
+
+/// As [`open_lock_file`], for code that is on a blocking thread without a
+/// token: the write path, which waits for another lock.
+pub(crate) fn open_lock_file_at(root: &Path, name: &str) -> Result<File, Error> {
     let path = root.join(".scheda").join(name);
     if let Some(dir) = path.parent()
         && !dir.is_dir()
@@ -491,6 +507,9 @@ impl WriteLock<'_> {
             repo.inner(change.path())?;
             reject_symlinks(vault, &vault.join(change.path())).context("check the path")?;
         }
+        // The write lock is held and nothing is built yet: too many packs
+        // are merged first, and a merge that fails fails the write here.
+        pack::make_room(git, vault, &self.committer.pack)?;
         let branch = branch_of(git)?;
         let Some((new, blobs)) = build_commit(
             git,
@@ -521,15 +540,19 @@ impl WriteLock<'_> {
         if settle(vault, snap, &plan, Mode::Write)? {
             empty_list(self.held.flock.file())?;
         }
-        let stored = changes
-            .iter()
-            .map(|change| match change {
-                Change::Put { bytes, .. } => bytes.len() as u64,
-                Change::Remove { .. } => 0,
-            })
-            .sum();
-        pack_loose(git, stored);
+        self.committer.pack.wake();
         Ok(Some(new))
+    }
+
+    /// Merges packs of `git` first when there are too many, as a write does
+    /// before it builds its commit: for the join of a pull. The caller
+    /// holds this lock.
+    ///
+    /// # Errors
+    ///
+    /// The error of the merge: nothing is stored then.
+    pub(crate) fn make_room(&self, git: &Repository) -> Result<(), Error> {
+        pack::make_room(git, self.root(), &self.committer.pack)
     }
 
     /// The author and committer a commit of this handle is made with.
@@ -633,17 +656,9 @@ impl WriteLock<'_> {
         if settle(vault, snap, &plan, Mode::Write)? {
             empty_list(self.held.flock.file())?;
         }
-        pack_loose(git, 0);
+        self.committer.pack.wake();
         Ok(())
     }
-}
-
-/// Packs the loose objects of `git` when there are too many. The commit is
-/// stored by now, and packing only changes how the objects are kept, so a
-/// failure here is not the write's: the objects stay loose and the next
-/// write tries again. `stored` is the bytes of blobs the write stored.
-fn pack_loose(git: &Repository, stored: u64) {
-    let _ = pack::pack_if_due(git, &pack::Limits::DEFAULT, stored);
 }
 
 /// Whether a path of a tree that came from a mirror may be written into the
@@ -692,9 +707,11 @@ pub(crate) fn branch_of(git: &Repository) -> Result<String, Error> {
 /// What a commit stored for a path: the id of the blob of a `Put`.
 type Blobs = Vec<Option<Oid>>;
 
-/// Writes the blobs, the tree on the tree of `snap`, and the commit, and
-/// returns the id of the commit with the blob ids in the order of
-/// `changes` (`None` for a removal); `None` when the tree does not change.
+/// Builds the blobs, the tree on the tree of `snap`, and the commit, and
+/// stores exactly those objects as one pack, complete on disk before this
+/// returns. Returns the id of the commit with the blob ids in the order of
+/// `changes` (`None` for a removal); `None` when the tree does not change,
+/// with nothing stored.
 fn build_commit(
     git: &Repository,
     snap: &Snap,
@@ -703,16 +720,18 @@ fn build_commit(
     who: &Signature<'_>,
 ) -> Result<Option<(Oid, Blobs)>, Error> {
     let repo = snap.repo();
+    let overlay = Overlay::over(git)?;
+    let mem = overlay.repo();
     let mut blobs: Blobs = Vec::with_capacity(changes.len());
     let tree = if let Some(old) = snap.tree() {
-        let base = git.find_tree(old).map_err(lib_fault)?;
+        let base = mem.find_tree(old).map_err(lib_fault)?;
         let mut update = TreeUpdateBuilder::new();
         for change in changes {
             let inner = repo.inner(change.path())?;
             match change {
                 Change::Put { bytes, mode, path } => {
                     refuse_collision(snap, path)?;
-                    let id = git.blob(bytes).map_err(lib_fault)?;
+                    let id = mem.blob(bytes).map_err(lib_fault)?;
                     update.upsert(inner, id, mode.git());
                     blobs.push(Some(id));
                 }
@@ -725,7 +744,7 @@ fn build_commit(
                 }
             }
         }
-        let tree = update.create_updated(git, &base).map_err(lib_fault)?;
+        let tree = update.create_updated(mem, &base).map_err(lib_fault)?;
         if tree == old {
             return Ok(None);
         }
@@ -738,7 +757,7 @@ fn build_commit(
         for change in changes {
             match change {
                 Change::Put { bytes, mode, path } => {
-                    let id = git.blob(bytes).map_err(lib_fault)?;
+                    let id = mem.blob(bytes).map_err(lib_fault)?;
                     let want = Want {
                         id,
                         mode: *mode,
@@ -755,23 +774,29 @@ fn build_commit(
         if index.is_empty() {
             return Ok(None);
         }
-        index.write_tree_to(git).map_err(lib_fault)?
+        index.write_tree_to(mem).map_err(lib_fault)?
     };
-    let tree = git.find_tree(tree).map_err(lib_fault)?;
+    let tree = mem.find_tree(tree).map_err(lib_fault)?;
     let mut text = message.to_owned();
     if !text.ends_with('\n') {
         text.push('\n');
     }
     let parent = match snap.commit() {
-        Some(id) => Some(git.find_commit(id).map_err(lib_fault)?),
+        Some(id) => Some(mem.find_commit(id).map_err(lib_fault)?),
         None => None,
     };
     let parents: Vec<&git2::Commit<'_>> = parent.iter().collect();
     // No reference is given: the commit is only written to the object
     // database, and `swap` moves the branch.
-    let id = git
+    let id = mem
         .commit(None, who, who, &text, &tree, &parents)
         .map_err(lib_fault)?;
+    let mut touched: Vec<(&str, Option<Oid>)> = Vec::with_capacity(changes.len());
+    for (change, blob) in changes.iter().zip(&blobs) {
+        touched.push((repo.inner(change.path())?, *blob));
+    }
+    drop((tree, parent));
+    overlay.store(git, id, &touched)?;
     Ok(Some((id, blobs)))
 }
 

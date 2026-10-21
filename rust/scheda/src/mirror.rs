@@ -48,6 +48,7 @@ use scheda_blocking::Blocking;
 use crate::commit::{Held, branch_of};
 use crate::error::{self, Context, Error, Fault, lib_fault, redact_remote_text};
 use crate::gate::Pass;
+use crate::pack::Overlay;
 use crate::repo::{self, Repo};
 use crate::vault::Vault;
 use crate::{collection, git, marker, stored};
@@ -179,7 +180,6 @@ impl Vault {
             Err(err) if err.code() == ErrorCode::NotFound => return Ok(()),
             Err(err) => return Err(lib_fault(err).into()),
         };
-        let theirs_commit = git.find_commit(theirs).map_err(lib_fault)?;
         let Some(ours) = snap.commit() else {
             self.readable_commit(theirs)?;
             return lock.advance_to(&snap, theirs, "pull the mirror");
@@ -191,11 +191,18 @@ impl Vault {
             self.readable_commit(theirs)?;
             return lock.advance_to(&snap, theirs, "pull the mirror");
         }
-        let ours_commit = git.find_commit(ours).map_err(lib_fault)?;
-        let tree = join_trees(git, &ours_commit, &theirs_commit).context("join")?;
-        let tree = git.find_tree(tree).map_err(lib_fault)?;
+        // Too many packs are merged first, as for a write.
+        lock.make_room(git)?;
+        // The join is built in memory over the repository, and its trees and
+        // its commit are stored as one pack before `HEAD` moves.
+        let overlay = Overlay::over(git)?;
+        let mem = overlay.repo();
+        let ours_commit = mem.find_commit(ours).map_err(lib_fault)?;
+        let theirs_commit = mem.find_commit(theirs).map_err(lib_fault)?;
+        let (tree, paths) = join_trees(mem, &ours_commit, &theirs_commit).context("join")?;
+        let tree = mem.find_tree(tree).map_err(lib_fault)?;
         let who = lock.signature()?;
-        let joined = git
+        let joined = mem
             .commit(
                 None,
                 &who,
@@ -205,6 +212,10 @@ impl Vault {
                 &[&ours_commit, &theirs_commit],
             )
             .map_err(lib_fault)?;
+        let touched: Vec<(&str, Option<Oid>)> =
+            paths.iter().map(|path| (path.as_str(), None)).collect();
+        drop((tree, ours_commit, theirs_commit));
+        overlay.store(git, joined, &touched)?;
         self.readable_commit(joined)?;
         lock.advance_to(&snap, joined, JOIN_MESSAGE)
     }
@@ -422,15 +433,19 @@ fn short_name(reference: &str) -> &str {
 }
 
 /// The tree of the join of `ours` and `theirs`: the tree of `ours` with what
-/// only `theirs` changed since their merge base. Histories with no merge base
-/// join as if the base were empty.
+/// only `theirs` changed since their merge base, and the paths `theirs`
+/// changed. Histories with no merge base join as if the base were empty.
 ///
 /// # Errors
 ///
 /// `MIRROR_CONFLICT` naming the paths both sides changed differently, or
 /// that would put a file where the other side has a folder; nothing is
 /// stored but objects no reference names.
-fn join_trees(git: &Repository, ours: &Commit<'_>, theirs: &Commit<'_>) -> Result<Oid, Error> {
+fn join_trees(
+    git: &Repository,
+    ours: &Commit<'_>,
+    theirs: &Commit<'_>,
+) -> Result<(Oid, Vec<String>), Error> {
     let base = match git.merge_base(ours.id(), theirs.id()) {
         Ok(id) => Some(
             git.find_commit(id)
@@ -464,7 +479,9 @@ fn join_trees(git: &Repository, ours: &Commit<'_>, theirs: &Commit<'_>) -> Resul
     if !conflicts.is_empty() {
         return Err(conflict(&conflicts).into());
     }
-    Ok(update.create_updated(git, &ours_tree).map_err(lib_fault)?)
+    let tree = update.create_updated(git, &ours_tree).map_err(lib_fault)?;
+    let paths = others.keys().cloned().collect();
+    Ok((tree, paths))
 }
 
 fn conflict(paths: &[&str]) -> Fault {
@@ -874,7 +891,7 @@ mod tests {
             repo.find_commit(ours).unwrap(),
             repo.find_commit(theirs).unwrap(),
         );
-        let tree = super::join_trees(&repo, &ours, &theirs).unwrap();
+        let tree = super::join_trees(&repo, &ours, &theirs).unwrap().0;
         assert_eq!(names(&repo, tree), ["both", "keep", "mine", "theirs"]);
     }
 
@@ -909,7 +926,7 @@ mod tests {
                 &[("same", Some("1")), ("r", Some("r"))],
             ))
             .unwrap();
-        let tree = super::join_trees(&repo, &left, &right).unwrap();
+        let tree = super::join_trees(&repo, &left, &right).unwrap().0;
         assert_eq!(names(&repo, tree), ["l", "r", "same"]);
         let clash = repo
             .find_commit(commit_on(&repo, None, &[("same", Some("2"))]))

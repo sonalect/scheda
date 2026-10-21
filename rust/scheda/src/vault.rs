@@ -25,6 +25,7 @@ use crate::gate::{Gate, Pass};
 use crate::idmap::IdMaps;
 use crate::index::{Index, State};
 use crate::indexer::Indexer;
+use crate::pack::Packer;
 use crate::ports::{Installed, Ports};
 use crate::repo::{self, Repo, Repos, Snap};
 use crate::{git, marker, stored, writer};
@@ -76,6 +77,8 @@ pub(crate) struct Vault {
     ports: Arc<Installed>,
     /// The thread that keeps the Index at the state of `HEAD`.
     indexer: Indexer,
+    /// The task that merges the packs of the repositories in the background.
+    packer: Packer,
     /// The id maps of the journals, as readers use them.
     id_maps: IdMaps,
     /// What every call passes, and `Close` shuts.
@@ -202,6 +205,7 @@ impl Vault {
             .indexer
             .start(Arc::clone(&vault.repos), Arc::clone(&vault.ports), poll)
             .context("Vault::open: start the indexer")?;
+        vault.packer.start(Arc::clone(&vault.repos));
         Ok(vault)
     }
 
@@ -442,7 +446,8 @@ impl Vault {
 
     /// Ends the Vault: new calls fail at once (`FAILED_PRECONDITION`); the
     /// calls inside, and the steps of calls that were dropped, are waited
-    /// for; then the indexer stops and is waited for (a round in progress
+    /// for; then a merge of packs in progress is cancelled and the indexer
+    /// stops, and both are waited for (a round in progress
     /// ends at its next step; nothing it left half done is believed,
     /// because the Index's `commit` is written last). The Vault holds no
     /// lock after that. A second call is nothing to do; two at once, the
@@ -454,6 +459,7 @@ impl Vault {
     pub(crate) async fn close(&self) -> Result<(), Error> {
         let _closing = self.closing.lock().await;
         self.gate.shut().await;
+        self.packer.stop().await;
         self.indexer
             .stop()
             .await
@@ -1006,6 +1012,7 @@ fn complete(_cx: &Blocking, parts: Parts, options: OpenOptions) -> Result<Vault,
     prepare_scheda(&canonical)?;
     let writer = writer::load_or_create(&canonical, options.writer.as_deref())?;
     let indexer = Indexer::new(committer.signal(), &canonical);
+    let packer = Packer::new(committer.merges(), &canonical);
     let id_maps = IdMaps::new(Index::new(&canonical));
     Ok(Vault {
         path: canonical,
@@ -1020,6 +1027,7 @@ fn complete(_cx: &Blocking, parts: Parts, options: OpenOptions) -> Result<Vault,
         sync_failure: Mutex::new(None),
         ports: Arc::new(Installed::default()),
         indexer,
+        packer,
         id_maps,
         gate: Gate::default(),
         closing: tokio::sync::Mutex::new(()),

@@ -105,6 +105,7 @@ The design is a numbered package in `docs/`, in English.
 | [21-lance-index.md](docs/21-lance-index.md) | Rust work order: the Index on Lance in place of Tantivy and USearch, a typed filter, a state token for freshness (D1–D18, L0–L10, the contract C1–C35); released as `0.22.0` |
 | [22-scheda-on-tokio.md](docs/22-scheda-on-tokio.md) | Rust work order: Scheda async only on the caller's tokio runtime, the blocking core behind a gate (D1–D12, A1–A5) |
 | [23-full-review.md](docs/23-full-review.md) | Rust work order: the full review before the release (R1–R23, D1–D9); stages S1–S5 done, released as `0.22.0` |
+| [24-generation-4.md](docs/24-generation-4.md) | Work order: the Vault of generation 4 (folders of bounded size, a Vault without a work tree, a pack per commit; D1–D15, P1–P10, stages G1–G7) |
 
 ## Layout
 

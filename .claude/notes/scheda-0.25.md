@@ -83,7 +83,10 @@ The anchor consumer confirmed S1–S4 on 21 October 2026; released as
   least 5 MiB and allocates about 6 MiB: the churn the consumer saw under
   `commit` frames.
 - An exact search with a filter: Lance marks the admitted rows first,
-  about 20 bytes a row of the table.
+  about 20 bytes a row it admits, through the column's B-tree index when
+  it has one. Measured after the release (owner's question, 21 October
+  2026): 100 matches hold 0.43 MB in 100 000 rows and 0.48 MB in 1 000 000;
+  the earlier figure was of a filter that admitted every row.
 - A cache limit in `OpenOptions` (owner's idea, 21 October 2026): only
   meaningful with a Lance session shared by the reads of one Vault across
   calls, which Scheda does not have (each query opens its datasets anew).
@@ -94,3 +97,10 @@ The anchor consumer confirmed S1–S4 on 21 October 2026; released as
   the first one retired at once (`commit.retired` holds one). Existing.
 - A write to a flat collection of 100 000 files diffs and rewrites a git
   tree of that size (libgit2): grows with the collection, outside S4.
+
+## Next round (owner, 21 October 2026)
+
+1. Folders of bounded size for a collection: `folder-layout.md`.
+2. Exact search with a filter: the mask is of the matches, through the
+   B-tree (`search::memory::an_exact_search_filtered_to_a_hundred_rows_holds_as_much_of_a_large_table`):
+   no change needed.

@@ -15,7 +15,7 @@ use scheda_api::v1::{CollectionDeclaration, Journal, VaultErrorCode};
 
 use crate::error::{Context, Error, Fault};
 use crate::id::require_slug;
-use crate::repo::{Child, NodeKind, Repo, Snap};
+use crate::repo::{NodeKind, Repo, Snap};
 use crate::stored::{self, Format, Unknowns};
 
 const MIB: u64 = 1024 * 1024;
@@ -245,11 +245,15 @@ pub(crate) fn load_each(snap: &Snap) -> Result<(Declarations, Vec<Fault>), Error
 /// holds no declaration file. The inner `Err` is what the directory holds
 /// wrong; the outer one is a failure to read it.
 fn load_dir(snap: &Snap, dir_name: &str) -> Result<Result<Option<Declaration>, Fault>, Error> {
+    // The names a directory may hold its declaration under, looked up:
+    // listing the directory would read the entry of every Document of the
+    // collection, on every read of the declarations.
+    let mut names = COLLECTION_FILENAMES.to_vec();
+    names.extend(LEFTOVER_SCHEMA_FILENAMES);
     let files = snap
-        .list(dir_name)
+        .files_named(dir_name, &names)
         .map_err(|fault| fault.with_path(dir_name))
-        .context("read a collection directory")?
-        .unwrap_or_default();
+        .context("read a collection directory")?;
     if let Err(fault) = refuse_leftover_schema_file(&files, dir_name) {
         return Ok(Err(fault));
     }
@@ -371,29 +375,24 @@ fn normalize(collection: &mut CollectionDeclaration) -> Result<Kind, Fault> {
 
 /// Whether `files` (the entries of a collection directory) holds a file
 /// called `name`.
-fn has_file(files: &[Child], name: &str) -> bool {
-    files
+fn refuse_leftover_schema_file(files: &[&str], dir_name: &str) -> Result<(), Fault> {
+    match files
         .iter()
-        .any(|child| child.name == name && child.node.kind == NodeKind::File)
-}
-
-fn refuse_leftover_schema_file(files: &[Child], dir_name: &str) -> Result<(), Fault> {
-    for name in LEFTOVER_SCHEMA_FILENAMES {
-        if has_file(files, name) {
-            return Err(Fault::new(
-                VaultErrorCode::InvalidArgument,
-                format!("{dir_name} holds the leftover schema file {name}"),
-            )
-            .with_path(format!("{dir_name}/{name}")));
-        }
+        .find(|name| LEFTOVER_SCHEMA_FILENAMES.contains(name))
+    {
+        Some(name) => Err(Fault::new(
+            VaultErrorCode::InvalidArgument,
+            format!("{dir_name} holds the leftover schema file {name}"),
+        )
+        .with_path(format!("{dir_name}/{name}"))),
+        None => Ok(()),
     }
-    Ok(())
 }
 
-fn find_declaration_file(files: &[Child], dir_name: &str) -> Result<Option<&'static str>, Fault> {
+fn find_declaration_file(files: &[&str], dir_name: &str) -> Result<Option<&'static str>, Fault> {
     let mut found = None;
     for name in COLLECTION_FILENAMES {
-        if !has_file(files, name) {
+        if !files.contains(&name) {
             continue;
         }
         if found.is_some() {
@@ -781,6 +780,88 @@ mod tests {
                 Some("cursor")
             );
             assert!(declarations.get("alias_bindings").unwrap().isolated());
+        }
+    }
+
+    /// The memory tests of the declarations.
+    #[cfg(feature = "index")]
+    mod memory {
+        use super::super::load;
+        use super::{Scratch, fixture};
+
+        /// A collection `notes` of `documents` files beside its declaration,
+        /// committed in one pack.
+        fn collection_of(scratch: &Scratch, documents: usize) {
+            use std::io::Write as _;
+
+            scratch.write(
+                "notes/.collection.yaml",
+                "name: notes\nschema:\n  standard: {}\n",
+            );
+            fixture::commit_all(&scratch.0);
+            let repo = git2::Repository::open(&scratch.0).unwrap();
+            let odb = repo.odb().unwrap();
+            let memory = odb.add_new_mempack_backend(1000).unwrap();
+            let head = repo.head().unwrap();
+            let parent = head.peel_to_commit().unwrap();
+            let mut index = git2::Index::new().unwrap();
+            index.read_tree(&parent.tree().unwrap()).unwrap();
+            for n in 0..documents {
+                let blob = repo.blob(format!("document {n}").as_bytes()).unwrap();
+                index
+                    .add(&git2::IndexEntry {
+                        ctime: git2::IndexTime::new(0, 0),
+                        mtime: git2::IndexTime::new(0, 0),
+                        dev: 0,
+                        ino: 0,
+                        mode: 0o100_644,
+                        uid: 0,
+                        gid: 0,
+                        file_size: 0,
+                        id: blob,
+                        flags: 0,
+                        flags_extended: 0,
+                        path: format!("notes/d{n:06}.md").into_bytes(),
+                    })
+                    .unwrap();
+            }
+            let tree = repo.find_tree(index.write_tree_to(&repo).unwrap()).unwrap();
+            let who = git2::Signature::now("Test", "test@example.test").unwrap();
+            let commit = repo
+                .commit(None, &who, &who, "documents", &tree, &[&parent])
+                .unwrap();
+            let mut pack = git2::Buf::new();
+            memory.dump(&repo, &mut pack).unwrap();
+            let mut writer = odb.packwriter().unwrap();
+            writer.write_all(&pack).unwrap();
+            writer.commit().unwrap();
+            memory.reset().unwrap();
+            repo.reference(head.name().unwrap(), commit, true, "documents")
+                .unwrap();
+        }
+
+        #[tokio::test]
+        #[ignore = "measures the memory of the process: run alone, by the memory target"]
+        async fn reading_the_declarations_costs_a_large_collection_what_it_costs_a_small_one() {
+            // Each read of the declarations used to list the directory of each
+            // collection: some 60 bytes of each Document's entry.
+            const MARGIN: u64 = 64 * 1024;
+            let _alone = crate::testing::alone().await;
+            let mut costs = Vec::new();
+            for documents in [1_000, 100_000] {
+                let scratch = Scratch::new(&format!("declarations-memory-{documents}"));
+                fixture::init(&scratch.0);
+                collection_of(&scratch, documents);
+                let snap = fixture::snap(&scratch.0);
+                let (declarations, memory) = crate::testing::measured(async { load(&snap) }).await;
+                assert!(declarations.unwrap().get("notes").is_some());
+                eprintln!(
+                    "the declarations beside {documents} Documents: allocated {} KB",
+                    memory.allocated / 1024
+                );
+                costs.push(memory.allocated);
+            }
+            assert!(costs[1] < costs[0] + MARGIN, "{costs:?}");
         }
     }
 }

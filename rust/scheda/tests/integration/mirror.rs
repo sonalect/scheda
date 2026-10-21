@@ -437,6 +437,13 @@ fn both_sides_changing_different_documents_join_in_one_commit_with_both_parents(
         );
         // Their commits, ours, and the join.
         assert_eq!(commits(&path_a), before + 2 + 1);
+        // The join is stored as a pack: its commit and its trees are not
+        // loose objects.
+        for object in ["HEAD", "HEAD^{tree}", "HEAD:notes"] {
+            let id = git_out(&path_a, &["rev-parse", object]);
+            let loose = path_a.join(".git/objects").join(&id[..2]).join(&id[2..]);
+            assert!(!loose.exists(), "{object} is a loose object");
+        }
         assert_eq!(read(&a, "from-a.md").await, "a");
         assert_eq!(read(&a, "from-b.md").await, "b");
         assert_eq!(read(&a, "a.md").await, "one");

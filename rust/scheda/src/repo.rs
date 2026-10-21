@@ -16,6 +16,7 @@
 
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use git2::{
@@ -67,13 +68,24 @@ impl Repo {
     }
 }
 
+/// The size of the git library's object cache, in bytes, for the process.
+/// The library caches every tree and commit up to 4 KB, up to 256 MiB; a
+/// process that reads a lot fills any budget it is given. 16 MiB keeps a
+/// random read within 15 % of the speed of 256 MiB, with a sixteenth of the
+/// memory.
+pub(crate) const OBJECT_CACHE_BYTES: isize = 16 * 1024 * 1024;
+
 /// Sets the options of the git library that belong to the process, once,
 /// before the first repository is opened: the files of git's own directory
 /// are flushed to disk when they are written (the library leaves that off,
-/// and a commit that a power loss can undo is not a stored write).
+/// and a commit that a power loss can undo is not a stored write), and the
+/// object cache is [`OBJECT_CACHE_BYTES`]. The cache budget is set whoever
+/// used the library before: a process that read repositories through `git2`
+/// first has the budget of the library's default until the first `Open`.
 ///
-/// A library that refuses the option fails every call that opens a
+/// A library that refuses the first option fails every call that opens a
 /// repository with `STORAGE`: writes that are not flushed are not offered.
+/// The same for the second.
 pub(crate) fn init_library() -> Result<(), Fault> {
     static OUTCOME: OnceLock<std::ffi::c_int> = OnceLock::new();
     let outcome = *OUTCOME.get_or_init(|| {
@@ -82,20 +94,34 @@ pub(crate) fn init_library() -> Result<(), Fault> {
         libgit2_sys::init();
         // SAFETY: the library is initialized, the option takes one `int`,
         // and `OnceLock` keeps this call from racing another thread's.
-        unsafe {
+        let flushed = unsafe {
             libgit2_sys::git_libgit2_opts(
                 libgit2_sys::GIT_OPT_ENABLE_FSYNC_GITDIR as std::ffi::c_int,
                 1 as std::ffi::c_int,
             )
+        };
+        if flushed < 0 {
+            return flushed;
+        }
+        // SAFETY: the option takes one `ssize_t` and the library guards the
+        // cache with a lock of its own; `OnceLock` keeps Scheda's calls from
+        // racing each other.
+        match unsafe { git2::opts::set_cache_max_size(OBJECT_CACHE_BYTES) } {
+            Ok(()) => 0,
+            Err(_) => 1,
         }
     });
-    if outcome < 0 {
-        return Err(Fault::new(
+    match outcome {
+        0 => Ok(()),
+        1 => Err(Fault::new(
+            VaultErrorCode::Storage,
+            "the git library refused to set the size of its object cache",
+        )),
+        _ => Err(Fault::new(
             VaultErrorCode::Storage,
             "the git library refused to flush its files to disk",
-        ));
+        )),
     }
-    Ok(())
 }
 
 /// The failure of a repository the library would not open. The repository's
@@ -155,7 +181,10 @@ fn unsupported_format(root: &Path, search_above: bool) -> Option<&'static str> {
 fn open_at(root: &Path) -> Result<Option<Repository>, Fault> {
     init_library()?;
     match Repository::open(root) {
-        Ok(repo) => Ok(Some(repo)),
+        Ok(repo) => {
+            crate::fallback::register(&repo)?;
+            Ok(Some(repo))
+        }
         Err(err) if err.code() == ErrorCode::NotFound => Ok(None),
         Err(err) => Err(open_fault(root, false, err)),
     }
@@ -350,15 +379,45 @@ pub(crate) fn changed_paths(repo: &Repository, dirs: &[String]) -> Result<Vec<St
 pub(crate) struct Repos {
     main: Arc<Pool>,
     nested: Arc<Pool>,
+    /// Counts the times a merge removed packs: see [`Repos::pack_generation`].
+    generation: Arc<AtomicU64>,
 }
 
 impl Repos {
     /// The repositories of the Vault at `vault`. Nothing is opened yet.
     pub(crate) fn new(vault: &Path) -> Repos {
+        let generation = Arc::new(AtomicU64::new(0));
         Repos {
-            main: Arc::new(Pool::new(Repo::Main.root(vault))),
-            nested: Arc::new(Pool::new(Repo::Isolated.root(vault))),
+            main: Arc::new(Pool::new(Repo::Main.root(vault), Arc::clone(&generation))),
+            nested: Arc::new(Pool::new(
+                Repo::Isolated.root(vault),
+                Arc::clone(&generation),
+            )),
+            generation,
         }
+    }
+
+    /// The counter a merge of packs raises after it removed packs.
+    ///
+    /// The git library never forgets a pack: one a merge unlinked stays
+    /// open and mapped in each repository handle that had seen it, and every
+    /// lookup of an object on that handle walks the whole list, so a handle
+    /// that lives through many merges gets slower with the history. A
+    /// repository that went back to its pool under an older count is
+    /// dropped, not leased again, and the next lease opens a new one. A
+    /// handle a reader still holds keeps working until it is dropped.
+    pub(crate) fn pack_generation(&self) -> Arc<AtomicU64> {
+        Arc::clone(&self.generation)
+    }
+
+    /// How many handles of the main repository wait in the pool.
+    #[cfg(test)]
+    pub(crate) fn idle_main(&self) -> usize {
+        self.main
+            .idle
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .len()
     }
 
     /// The folder of the Vault: the work tree of the main repository.
@@ -463,7 +522,9 @@ impl Views {
 /// The idle repositories of one path.
 struct Pool {
     root: PathBuf,
-    idle: Mutex<Vec<Repository>>,
+    /// Each with the count of [`Repos::pack_generation`] it was opened at.
+    idle: Mutex<Vec<(u64, Repository)>>,
+    generation: Arc<AtomicU64>,
 }
 
 impl std::fmt::Debug for Pool {
@@ -473,24 +534,27 @@ impl std::fmt::Debug for Pool {
 }
 
 impl Pool {
-    fn new(root: PathBuf) -> Pool {
+    fn new(root: PathBuf, generation: Arc<AtomicU64>) -> Pool {
         Pool {
             root,
             idle: Mutex::new(Vec::new()),
+            generation,
         }
     }
 
     /// An idle repository, or a newly opened one.
     fn lease(self: &Arc<Pool>) -> Result<Option<Lease>, Fault> {
+        let now = self.generation.load(Ordering::Acquire);
         // The list holds no invariant a panic could break, so a poisoned
         // lock is as good as a clean one.
-        let idle = self
-            .idle
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .pop();
+        let idle = {
+            let mut idle = self.idle.lock().unwrap_or_else(PoisonError::into_inner);
+            // A repository that saw packs a merge removed since is let go.
+            idle.retain(|(generation, _)| *generation == now);
+            idle.pop()
+        };
         let repo = match idle {
-            Some(repo) => repo,
+            Some((_, repo)) => repo,
             None => match open_at(&self.root)? {
                 Some(repo) => repo,
                 None => return Ok(None),
@@ -499,6 +563,7 @@ impl Pool {
         Ok(Some(Lease {
             pool: Arc::clone(self),
             repo: Some(repo),
+            generation: now,
         }))
     }
 }
@@ -507,6 +572,8 @@ impl Pool {
 pub(crate) struct Lease {
     pool: Arc<Pool>,
     repo: Option<Repository>,
+    /// The count of [`Repos::pack_generation`] it was leased at.
+    generation: u64,
 }
 
 impl std::fmt::Debug for Lease {
@@ -535,8 +602,10 @@ impl Drop for Lease {
                 .idle
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner);
-            if idle.len() < IDLE_MAX {
-                idle.push(repo);
+            if idle.len() < IDLE_MAX
+                && self.generation == self.pool.generation.load(Ordering::Acquire)
+            {
+                idle.push((self.generation, repo));
             }
         }
     }
@@ -929,6 +998,35 @@ impl Snap {
         let odb = repo.odb().map_err(lib_fault)?;
         let (size, _) = odb.read_header(node.id).map_err(lib_fault)?;
         Ok(Some(size as u64))
+    }
+
+    /// The names of `names` that the directory `rel` holds as files (not
+    /// folders or links), in the order of `names`: each looked up in the
+    /// directory's tree, which is read once and never listed, so a
+    /// directory of a million entries costs no more than one of ten.
+    pub(crate) fn files_named<'n>(
+        &self,
+        rel: &str,
+        names: &[&'n str],
+    ) -> Result<Vec<&'n str>, Fault> {
+        let Some(node) = self.lookup(rel)? else {
+            return Ok(Vec::new());
+        };
+        let Some(repo) = self.repository() else {
+            return Ok(Vec::new());
+        };
+        if node.kind != NodeKind::Dir {
+            return Ok(Vec::new());
+        }
+        let tree = repo.find_tree(node.id).map_err(lib_fault)?;
+        Ok(names
+            .iter()
+            .copied()
+            .filter(|name| {
+                tree.get_name(name)
+                    .is_some_and(|entry| Node::of(&entry).kind == NodeKind::File)
+            })
+            .collect())
     }
 
     /// The entries of the directory at `rel`, in the order of the tree.
